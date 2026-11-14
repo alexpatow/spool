@@ -114,7 +114,7 @@ Proprietary, included as the reference for stateful identity. Each record is res
 
 Two details are instructive. First, `ENTITY_ID` is not a stable identifier: the docs say values "depend on load order" ([audit tutorial](https://senzing.com/docs/tutorials/eda/eda_audit/)), and if an entity no longer exists "it was moved or deleted" ([replication guide](https://senzing.com/docs/tutorials/advanced_replication/)). The stable key is the pair of data source and record ID. Second, Senzing deliberately does not emit an ordered change log. Mutating calls return the list of affected entity IDs and the consumer re-reads them, because the engine is parallel and cannot promise an order.
 
-**For Spool.** Borrow attribute behaviours as the vocabulary for domain constraints, generic-value detection, sequence neutrality as a measurable property, and `why` as a required capability. Spool makes two different choices: its identity IDs do not depend on load order, and it keeps an ordered change log. Spool's sandbox sync needs ordered, replayable changes, which is affordable because Spool starts single-writer.
+**For Spool.** Borrow attribute behaviours as the vocabulary for domain constraints, generic-value detection, sequence neutrality as a measurable property, and `why` as a required capability. Spool makes two different choices: its identity IDs do not depend on load order, and it keeps an ordered change log. Spool's audit, review and undo need ordered, replayable changes, which is affordable because Spool has a single writer.
 
 ### nomenklatura and OpenSanctions
 
@@ -131,7 +131,7 @@ Where it differs from what Spool needs: it is Python and tied to the FollowTheMo
 
 The UK Department for Business and Trade built matchbox as a server that orchestrates dedupers and linkers over warehouse data. It was archived in 2026 in favour of [matchlab](https://github.com/uktrade/matchlab), "a local-first library for building, running and evaluating entity resolution pipelines". Matchlab is a lazy plan of steps with content-addressed caching, DuckDB underneath, Splink 5 as a dependency, a materialised `(root, leaf, key, source)` resolver table, and evaluation by sampling clusters for human judgement. Record identity is a content hash ("leaf"), which anchors judgements to data and not to keys.
 
-This is a data point for two of Spool's initial design goals, local-first execution and evaluation as a first-class capability: a team with a governed server product chose to go local-first, and they treat measurement as a first-class job. I did not find durable entity IDs across changing data in matchlab's docs; it is marked alpha.
+This is a data point for two of Spool's initial design goals, local-first execution and evaluation as a first-class capability: a team with a governed server product chose to go local-first, and they treat measurement as a first-class job. The architecture proposal keeps the second goal and departs from the first: Spool runs as one server, because persistent identity needs one owner of the evidence, and it stays a single process on one machine with DuckDB underneath. I did not find durable entity IDs across changing data in matchlab's docs; it is marked alpha.
 
 ### GoldenMatch
 
@@ -147,7 +147,7 @@ What I confirmed in the code ([identity/store.py](https://github.com/bensevernde
 
 Where it differs from Spool's design: the identity logic is in Python, the TypeScript package is a second implementation held at parity by conformance tests, and the Postgres extension embeds CPython through pyo3 ([extensions README](https://github.com/benseverndev-oss/goldenmatch/blob/main/packages/rust/extensions/README.md)). Its accuracy and scale figures, including a comparison with a hand-tuned Splink on `historical_50k`, are the project's own; I did not run them.
 
-**For Spool.** Treat it as independent confirmation of the table design (records, evidence edges, events, runs, redirect status on the identity) and of the compute versus control split. Spool chooses a narrower scope: one small identity engine behind thin language bindings, with matching left to interchangeable strategies.
+**For Spool.** Treat it as independent confirmation of the table design (records, evidence edges, events, runs, redirect status on the identity) and of the compute versus control split. Spool chooses a narrower scope: one small identity engine behind a server and thin clients, with matching left to interchangeable strategies.
 
 ### zer
 
@@ -200,7 +200,7 @@ The theoretical basis for separating match decisions from merge semantics is [Sw
 - From MusicBrainz and Wikidata: merged IDs redirect forever and are never reused.
 - From Senzing: attribute behaviours (frequency, exclusivity, stability), generic-value detection, a `why` answer for every decision, and order-independence as a goal to measure.
 - From GoldenMatch: the compute versus control split, a run table that fingerprints the configuration behind every decision, and a persisted blocking index for incremental candidates.
-- From matchlab: content-hashed record identity, and local-first as the default.
+- From matchlab: content-hashed record identity, and DuckDB on one machine as the default.
 - From dedupe and pyJedAI: clustering choices other than connected components, kept behind the reconciliation step.
 - From the LLM literature: verdicts with rationales, selection among candidates, and guardrails on model-proposed clusters.
 
@@ -228,7 +228,7 @@ Matching quality is contested ground with strong incumbents. The open space is n
 4. Benchmarks for identity behaviour over time, which do not exist publicly.
 5. A company-centred dataset with hard negatives such as subsidiaries and renames.
 
-The [architecture proposal](architecture-proposal.md) is built around items 1 to 4: its model section and sections 3 and 4 cover the first, sections 5 and 6 the second, section 3 the hook for the third, and section 9 the fourth and fifth.
+The [architecture proposal](architecture-proposal.md) is built around items 1, 2 and 4: its model section and sections 3 and 4 cover the first, sections 5 and 6 the second, and section 9 the fourth and fifth. It does not pursue item 3. Spool runs as one server that owns its store, so nothing is synchronised between copies.
 
 ## 8. Not verified
 

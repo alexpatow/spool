@@ -1,20 +1,22 @@
 # Spool architecture proposal: initial prototype
 
-A minimal Rust-first design for the first Spool prototype, grounded in the [landscape survey](landscape-survey.md). Dated 2026-11-13. Nothing here is built. Where the text says something was tested or measured, that was a throwaway local experiment with DuckDB's Rust bindings, not a benchmark.
+A minimal Rust-first design for the first Spool prototype, grounded in the [landscape survey](landscape-survey.md). Dated 2026-11-13, revised 2026-11-14. Nothing here is built. Where the text says something was tested or measured, that was a throwaway local experiment with DuckDB 2.0.0, through its Rust bindings or its Python package, not a benchmark.
 
-Milestone numbers refer to Spool's initial roadmap: (1) a Rust engine on DuckDB, (2) TypeScript and Python bindings, (3) the identity lifecycle across successive batches, (4) interchangeable resolution strategies, (5) extraction from unstructured documents, (6) sandbox synchronisation with a shared store, and (7) developer tooling.
+Spool's initial roadmap had seven milestones: (1) a Rust engine on DuckDB, (2) TypeScript and Python bindings, (3) the identity lifecycle across successive batches, (4) interchangeable resolution strategies, (5) extraction from unstructured documents, (6) sandbox synchronisation with a shared store, and (7) developer tooling. This proposal changes that roadmap. Unless the text says "initial", "Milestone N" refers to the proposed roadmap at the end of section 10.
 
 ## Summary of conclusions
 
 1. **Split the system into identity state and evidence.** Identity state (identities, which observation belongs to which identity, manual constraints, the log of changes) is small, typed and transactional, and its rules live in a pure Rust crate. Evidence (observations, candidate pairs, match judgements) is large and analytical, and lives in DuckDB tables that strategies query with SQL. Only identity state needs to be independent of DuckDB.
 2. **Replace a single "proposal" concept with two sharper things.** Strategies emit *judgements*: pairwise evidence with a verdict of match, no match or unsure. A framework-owned *reconciler* turns judgements plus current state into a *draft changeset*. Extensions never write identity operations, which makes Spool's central invariant, that extensions may propose identity changes but only the framework commits them, enforceable by construction.
 3. **Identity IDs are minted, never derived.** A UUIDv7 is assigned once, is never reused, and a merged ID redirects to its survivor permanently. By default the matcher can attach new observations to existing identities and create new ones, and can only *suggest* merging or splitting existing ones. That is what makes the design goal that a better matching model must not change existing IDs hold.
-4. **History is a hybrid.** An append-only changeset log is the source of truth. Current-state tables are a projection written in the same transaction and rebuildable from the log. Every operation carries its own precondition, which is the hook sandbox sync needs later.
+4. **History is a hybrid.** An append-only changeset log is the source of truth. Current-state tables are a projection written in the same transaction and rebuildable from the log. Every operation carries its own precondition, so a draft that waited for review is checked against the state it is committed to.
 5. **The matcher contract is a table shape, not a trait.** Observations in, `(left, right, verdict, score, detail)` out. Blocking, scoring, Splink, an LLM and a human reviewer all fit it. Clustering happens only in the reconciler.
-6. **Bindings are thin and the engine never calls into Python or JavaScript.** The host language drives a loop: pull candidates as Arrow, compute, push judgements as Arrow. Small things cross as typed objects. DuckDB relations never cross the boundary.
-7. **Start with two crates.** `spool-core` (no DuckDB, no Arrow) and `spool` (engine, DuckDB store, built-in strategy, metrics). Add the binding crates in Milestone 2 and split further only when a second implementation of something exists.
-8. **Milestone 1 must ingest two batches.** A single batch cannot show that IDs persist, which is the only thing that separates Spool from Splink. Changesets also have to exist in Milestone 1 because they are the write path; only their transport belongs in Milestone 6.
-9. **Entity types are declared, never built in.** Spool defines no company, person or any other type, and no two users have to agree on what a company looks like. A user declares a type and its feature columns, and the engine generates that type's feature table from the declaration. Companies appear in this document as the worked example and as the first benchmark fixture, nowhere in the engine.
+6. **Spool runs as one server, and clients are thin.** The engine is a Rust library, and `spool serve` wraps it in an HTTP API. The server owns the only store, so nothing is synchronised between copies. A client sends JSON for small things and Arrow for bulk, and contains no engine code, so there are no native bindings to build.
+7. **A Spool project is a directory.** Entity types, features and rules are files, and names come from paths. `spool build` compiles the directory into a manifest and writes a Dockerfile. The result is one container and one volume.
+8. **User code runs as child processes, never inside the engine.** Python and TypeScript files in the project run through `uv` and `bun`, and exchange Parquet files with the server. They produce evidence only. The workers are a bounded pool inside the one service.
+9. **Entity types are declared, never built in.** Spool defines no company, person or any other type, and no two users have to agree on what a company looks like. Companies appear in this document as the worked example and as the first benchmark fixture, nowhere in the engine.
+10. **Start with two crates.** `spool-core` (no DuckDB, no Arrow) and `spool` (engine, DuckDB store, project discovery, built-in strategy, metrics). Add the server in Milestone 2 and split further only when a second implementation of something exists.
+11. **Milestone 1 must ingest two batches.** A single batch cannot show that IDs persist, which is the only thing that separates Spool from Splink. Changesets also have to exist in Milestone 1 because they are the write path.
 
 ## Where this departs from the initial design goals
 
@@ -23,11 +25,13 @@ Spool's initial design goals and roadmap are the starting point for this proposa
 | Initial goal or assumption | Position | Why |
 | --- | --- | --- |
 | Three core abstractions: observations, proposals and changesets | Keep observations and changesets. Split proposals into judgements (evidence from strategies) and draft changesets (intent from the reconciler). | "Proposal" mixes what a matcher saw with what should change. A matcher that proposes a merge has to know identity state and operation semantics, which is the coupling Spool's design goals set out to avoid. nomenklatura already works this way ([survey, section 4](landscape-survey.md#nomenklatura-and-opensanctions)). |
-| An eventual layout of seven crates: core, DuckDB store, resolution, benchmarks, Node bindings, Python bindings and CLI | Two crates for Milestone 1, four after Milestone 2. | The initial plan treats these as logical boundaries and allows starting with fewer crates. The built-in strategy is SQL run through the store and the benchmark needs both, so `spool-duckdb`, `spool-resolution` and `spool-bench` would have no independent boundary yet. |
-| Core identity semantics are independent of any particular database | Apply it to identity state only. Let evidence handling be openly DuckDB-specific. | Abstracting the analytical engine means a SQL dialect layer. Splink carries `sqlglot` and per-backend code for this. A shared Postgres store needs the log and the projection, not candidate generation. |
-| Milestone 1 creates identities; Milestone 3 preserves them across batches | Move "second batch keeps its IDs" into Milestone 1. | Otherwise Milestone 1 validates nothing that Splink plus a UUID column would not. |
-| Milestone 6 defines identity changesets | Define the changeset format and preconditions in Milestone 1. Milestone 6 adds transport and conflict policy. | Changesets are the only way state changes. Retrofitting preconditions and stable observation IDs after data exists is a format migration. |
-| Milestone 2 bindings expose the core functionality | Include submitting judgements from Python and TypeScript in Milestone 2. | Calling `resolve()` from another language proves packaging. The extension path is the part of the language architecture that can fail. |
+| Local-first and sandbox-native: each sandbox resolves entities locally and synchronises changesets to a shared store (initial Milestone 6) | One server owns the store and does the work. Applications and agents call it. Nothing is synchronised between copies. | Matching a new record needs the existing evidence, so every sandbox would need a copy of it. While one process has a DuckDB file open, no other process can open it. One writer removes sync transport, conflict policy and duplicates created by two copies at once. Local development stays: `spool dev` is the same server on localhost. Section 5 has the full argument. |
+| TypeScript and Python are first-class interfaces to the engine through napi-rs and PyO3 bindings (initial Milestone 2) | No native bindings. A TypeScript client, and later a Python client, call the server's API. Python and TypeScript user code runs as child processes of the server. | With one server, a caller needs no engine in its own process. Bindings need native packages per platform and a matched set of crate versions: `pyo3-arrow` 0.21 pins `arrow` 60 and `pyo3` 0.30, while `arrow-pyarrow` 60 still wants `pyo3` 0.29. A client is a small package with no native code. |
+| The Rust engine does not run Python or JavaScript; the language SDKs orchestrate extensions written in their language | The engine still embeds no runtime. The server starts user code as child processes and exchanges files with them. | A server has no host language to drive the loop. Child processes keep every runtime out of the engine, and one file protocol serves any language (section 6). |
+| An eventual layout of seven crates: core, DuckDB store, resolution, benchmarks, Node bindings, Python bindings and CLI | Two crates for Milestone 1, three after Milestone 2. | The initial plan treats these as logical boundaries and allows starting with fewer crates. The built-in strategy is SQL run through the store and the benchmark needs both, so `spool-duckdb`, `spool-resolution` and `spool-bench` would have no independent boundary yet. |
+| Core identity semantics are independent of any particular database | Apply it to identity state only. Let evidence handling be openly DuckDB-specific. | Abstracting the analytical engine means a SQL dialect layer. Splink carries `sqlglot` and per-backend code for this. A second store for identity state would need the log and the projection, not candidate generation. |
+| Initial Milestone 1 creates identities; initial Milestone 3 preserves them across batches | Move "second batch keeps its IDs" into Milestone 1. | Otherwise Milestone 1 validates nothing that Splink plus a UUID column would not. |
+| Initial Milestone 6 defines identity changesets | Define the changeset format and preconditions in Milestone 1. | Changesets are the only way state changes. Retrofitting preconditions and stable observation IDs after data exists is a format migration. |
 | DuckDB relations are one of the cross-language data representations | Relations stay inside the engine. SQL text goes in and Arrow comes out. | A relation is a handle into one process's DuckDB instance. A second process cannot open the file at all while the engine holds it, even read-only (tested). |
 | The core owns canonical entity representations | Core owns *which* observations form an identity. Canonical attributes are derived views over evidence. | Storing a golden record as identity state makes every attribute rule an identity operation and works against the goal that evidence stays traceable. Relationships and temporal attributes are derived the same way. |
 | Persistent identity is an unoccupied space in open source | It is partly occupied. | nomenklatura, GoldenMatch and Zingg Enterprise each do part of it. The gap is narrower and is described in the [survey](landscape-survey.md#7-borrow-avoid-and-the-gap). |
@@ -54,6 +58,61 @@ Invariants the core enforces on every commit:
 
 Spool's central invariant, that extensions may propose identity changes but only the framework commits them, becomes: **extensions supply evidence; the framework decides and commits.** A user or agent may also author a changeset directly, for example a manual split. It goes through the same validation.
 
+## The project directory
+
+A Spool project is a directory in a git repository. It defines the entity types, how they are matched, and how the server is built. The conventions follow eve, a framework in which an agent is a directory of files ([agent files](https://eve.dev/docs/reference/agent-files), [deployment](https://eve.dev/docs/guides/deployment)):
+
+- **The path is the name.** `entities/company/` declares the entity type `company`, and `rules/match/same_domain.sql` is the rule `same_domain`. Nothing is registered by hand.
+- **Data files first.** SQL for features and rules, TOML for settings, Markdown for instructions. Code is used only where data cannot say it.
+- **A file replaces the default at the same path.** A project without `policy.toml` gets the default reconciliation policy.
+- **A build step compiles the directory into one artefact**, and a command lists what was discovered.
+
+```text
+my-project/
+├── spool.toml                    # optional project settings
+├── entities/
+│   └── company/                  # the directory name is the entity type
+│       ├── features.sql          # one query; its columns are the feature table (section 1)
+│       ├── rules/
+│       │   ├── block/*.sql       # candidate rules, one predicate per file (section 8)
+│       │   ├── match/*.sql
+│       │   └── no_match/*.sql
+│       ├── policy.toml           # replaces the default reconciliation policy
+│       ├── strategies/           # user code: splink.py, llm.ts (Milestone 4, section 6)
+│       ├── extract.md            # instructions for LLM extraction (Milestone 5)
+│       └── review.md             # guidance for whoever reviews this type's drafts (later)
+├── benchmarks/
+│   └── companies-small/          # a scenario; the path is its name (section 9)
+├── Dockerfile                    # written by `spool build`, then owned by the project
+└── .spool/                       # compiled manifest and the development database; not committed
+```
+
+A project with no `entities/company/` has no company type. A project that resolves people, products or papers has those directories.
+
+| Command | What it does |
+| --- | --- |
+| `spool init` | Scaffolds the directory. |
+| `spool dev` | Runs the server on localhost against a development database under `.spool/`, and applies file changes as they are saved. |
+| `spool info` | Lists the discovered entity types, rules and strategies, with diagnostics. |
+| `spool build` | Validates the project and compiles it into a manifest. Every SQL file is prepared against DuckDB, so a mistake fails the build, not a run. Writes a `Dockerfile` if the project has none. |
+| `spool apply` | Applies a manifest to a store: declares entity types and rebuilds the feature tables whose declaration changed. |
+| `spool serve` | Runs the server from a manifest and a store location. |
+| `spool bench` | Runs benchmark scenarios in-process (section 9). |
+
+Three rules keep deployment simple:
+
+1. **The directory is build-time input.** The engine reads only the manifest. The manifest has a content hash that is recorded with every run, so any judgement can be traced to the project version that produced it.
+2. **A project of data files needs only the `spool` binary.** Discovery and the build are in Rust, so no Node or Python is involved. Only a project with user code adds `uv` or `bun` to its image.
+3. **State is never in the image.** The image holds the binary, the manifest, and any user code with its dependencies. The store is a file on a volume, and its location is configuration.
+
+The generated Dockerfile starts from a published Spool base image, copies the project, installs user-code dependencies from their lockfiles, compiles the manifest, declares a volume for the store and runs `spool serve`. It belongs to the project and can be edited. The result is one container and one volume, run wherever containers run.
+
+Applying a changed definition to an existing store is an explicit step, never a side effect of a container starting. It rebuilds feature tables, which can take time. It cannot change an identity (section 1). `spool serve` refuses to start on a store whose applied manifest differs from its own.
+
+Tradeoff: the file layout becomes an interface that has to be documented and kept stable, and the model cannot be changed through the API. Changing an entity type means a build and a deploy. `spool dev` covers fast iteration, and `spool info` shows what the conventions resolved to.
+
+**Decide now:** a project directory with path-derived names, a manifest as the engine's only input, discovery and build in the Rust binary, state outside the image, an explicit apply step. **Defer:** packages of entity types that a project can mount, the Markdown instruction files, settings in `spool.toml` beyond the minimum.
+
 ## 1. DuckDB representation of observations, candidates and identity state
 
 All tables live in a `spool` schema so a user's own tables can share the file. The column types used below or available to feature columns (`UUID`, `JSON`, `STRUCT`, `LIST`, `MAP`) and the `uuidv7()` function are all in the stock DuckDB library (tested).
@@ -74,10 +133,10 @@ CREATE TABLE spool.observation (
   ingest_run     BIGINT      NOT NULL
 );
 
-CREATE TABLE spool.entity_type (          -- declared by the user; the engine ships none
+CREATE TABLE spool.entity_type (          -- declared by the project; the engine ships none
   entity_type      VARCHAR     NOT NULL,  -- any name: 'company', 'person', 'product', ...
   version          INTEGER     NOT NULL,  -- increases when the declaration changes
-  declaration      JSON        NOT NULL,  -- feature columns: name, DuckDB type, SQL expression
+  declaration      JSON        NOT NULL,  -- the features query and the columns inferred from it
   declaration_hash VARCHAR     NOT NULL,
   declared_at      TIMESTAMPTZ NOT NULL
 );
@@ -94,8 +153,9 @@ CREATE TABLE spool.features_company (
   declaration_version INTEGER NOT NULL  -- the declaration version that produced the row
 );
 
-CREATE TABLE spool.run (
+CREATE TABLE spool.run (                  -- also the task record a client polls (section 5)
   run_id BIGINT NOT NULL, kind VARCHAR NOT NULL,   -- 'ingest' | 'match' | 'reconcile' | 'bench'
+  status VARCHAR NOT NULL,                         -- 'running' | 'succeeded' | 'failed'
   strategy VARCHAR, strategy_version VARCHAR, config JSON, config_hash VARCHAR,
   engine_version VARCHAR NOT NULL, started_at TIMESTAMPTZ NOT NULL, finished_at TIMESTAMPTZ
 );
@@ -114,19 +174,20 @@ CREATE TABLE spool.judgement (            -- kept; cited by changesets through r
 );
 ```
 
-`spool.features_company` above is not part of Spool. It is what the engine generates from this declaration, which is one user's idea of a company:
+`spool.features_company` above is not part of Spool. It is what the engine generates from this file, which is one project's idea of a company:
 
-```toml
-entity_type = "company"
-features = [
-  { name = "name_norm",   type = "VARCHAR", sql = "lower(trim(payload->>'name'))" },
-  { name = "domain",      type = "VARCHAR", sql = "lower(payload->>'domain')" },
-  { name = "country",     type = "VARCHAR", sql = "upper(payload->>'country')" },
-  { name = "registry_id", type = "VARCHAR", sql = "payload->>'registry_id'" },
-]
+```sql
+-- entities/company/features.sql
+SELECT
+  observation_id,
+  lower(trim(payload->>'name')) AS name_norm,
+  lower(payload->>'domain')     AS domain,
+  upper(payload->>'country')    AS country,
+  payload->>'registry_id'       AS registry_id
+FROM observation
 ```
 
-Another user's `company` can have different columns, and a deployment that resolves people, products or papers declares those types and never has a `company` at all. The declaration is shown as TOML, but it is one of the typed objects of section 5, so an SDK passes it as a plain object.
+`observation` in this file is the engine's view of the type's observations. The query must return `observation_id` and at most one row per observation, and the engine checks both. DuckDB infers the column names and types from the query, so the file is the whole declaration (tested). Another project's `company` can have different columns.
 
 Identity state:
 
@@ -173,8 +234,8 @@ CREATE TABLE spool.meta (key VARCHAR NOT NULL, value VARCHAR NOT NULL);  -- form
 Design points:
 
 - **Raw payload and typed features are separate.** The payload is never rewritten, so a better normaliser can be rerun over history. Matchers read only the feature table.
-- **Feature tables are generated from a declaration, never hand-written.** A declaration lists feature columns, each with a name, a DuckDB type and a SQL expression over the observation's `payload`. The engine creates `spool.features_<entity_type>` from it and fills it with one `INSERT ... SELECT` per ingest. No engine code names a feature column, and `ingest` rejects a type that has not been declared.
-- **Changing a declaration changes no identity.** Declaring a changed definition for an existing type increases its version and rebuilds the feature table from the stored payloads. Identity state refers to observations and to the type's name, never to feature columns, so every identity ID stays in place. A match run records the declaration version it read, so its judgements stay traceable.
+- **Feature tables are generated from a declaration, never hand-written.** A declaration is one SQL query over the type's observations. The engine creates `spool.features_<entity_type>` from its result and fills it with one `INSERT ... SELECT` per ingest. No engine code names a feature column, and `ingest` rejects a type that has not been declared.
+- **Changing a declaration changes no identity.** Applying a changed query for an existing type increases its version and rebuilds the feature table from the stored payloads. Identity state refers to observations and to the type's name, never to feature columns, so every identity ID stays in place. A match run records the declaration version it read, so its judgements stay traceable.
 - **Typed columns, not one generic table.** A single features table holding JSON for every type would need no generation. It would also move normalisation into every matching query and give up the typed columns that blocking joins and similarity functions work on.
 - **Operations are rows, not a JSON blob.** A first load is one changeset with as many `assign` rows as observations, applied with `INSERT ... SELECT`. When measured, a one-million-operation changeset wrote its log rows and its projection rows in one transaction in 0.4 s.
 - **Membership keeps intervals.** "What was this identity at log position N" is a filter, and undoing a merge can read which observations it moved.
@@ -183,14 +244,14 @@ Design points:
 
 Tradeoffs of declared types:
 
-- A SQL expression cannot express every normaliser. Reducing a URL to its registrable domain needs the public suffix list, for example. Feature columns computed by the host language and pushed as Arrow cover that case, and are deferred until the bindings exist.
-- Expressions must be deterministic, or the table is not rebuildable. The engine cannot check that in general.
-- Declared names become SQL identifiers, so the engine restricts them to a fixed pattern. Expressions are SQL that the engine runs. That is acceptable in a sandbox its user owns, and it means a shared store must not accept declarations from a sandbox unreviewed, which is a question for sync.
-- The Arrow schema of feature rows differs per type, so an SDK cannot offer static types for them until it generates those from a declaration.
+- A SQL query cannot express every normaliser. Reducing a URL to its registrable domain needs the public suffix list, for example. Feature columns computed by user code (section 6) cover that case and come with Milestone 4.
+- The query must be deterministic, or the table is not rebuildable. The engine cannot check that in general.
+- The type's name becomes part of a table name, so the engine restricts directory names to a fixed pattern. The query is SQL that the engine runs. It comes only from the project directory, which is built into the server image; the API accepts no declarations.
+- Feature columns differ per type, so a client cannot offer static types for feature rows until it generates them from a manifest.
 
 Tradeoff: two write targets per commit (log and projection) and no database-level safety net. Mitigation is a standing test that the projection equals a replay of the log. A simpler log-versus-projection comparison over a million rows took 0.05 s when measured.
 
-**Decide now:** the evidence versus identity-state split, content-derived observation IDs, entity types declared at run time with versioned declarations and generated feature tables, operation rows, interval membership, a format version from the first commit. **Defer:** indexes and keys, host-computed feature columns, rebuilding a feature table after its declaration changes, retention of old candidates and judgements, how a retracted or deleted source record is represented.
+**Decide now:** the evidence versus identity-state split, content-derived observation IDs, entity types declared by the project with versioned declarations and generated feature tables, operation rows, interval membership, a format version from the first commit. **Defer:** indexes and keys, feature columns computed by user code, rebuilding a feature table after its declaration changes (Milestone 2), retention of old candidates and judgements, how a retracted or deleted source record is represented.
 
 ## 2. Separating Rust identity semantics from DuckDB persistence
 
@@ -210,6 +271,7 @@ pub enum Op {
     /// Attach (from = None), move, or detach (to = None). `from` is the precondition.
     Assign { observation: ObservationId, from: Option<IdentityId>, to: Option<IdentityId> },
     /// Moves every current member of `from` to `into` and redirects `from`.
+    /// Rejected if either identity's membership changed after the changeset's `base`.
     Merge { from: IdentityId, into: IdentityId },
     Constrain   { kind: ConstraintKind, a: ObservationId, b: ObservationId },
     Unconstrain { kind: ConstraintKind, a: ObservationId, b: ObservationId },
@@ -239,7 +301,7 @@ pub fn reconcile(evidence: &EvidenceSummary, state: &impl IdentityState, policy:
 
 The seam between the two halves is **SQL prepares, Rust decides**. DuckDB does the heavy join of judgements against current membership and returns a compact summary per new observation (which identities it matched, how many match and no-match judgements, the best score). The reconciler is a pure function over that summary. Core never sees SQL, and DuckDB never decides what a merge means.
 
-The DuckDB store in the `spool` crate implements `IdentityState` and one write: apply a `Validated` changeset by inserting log rows and updating projections in a single transaction. One conformance suite runs against both the in-memory state and the DuckDB store, and property tests compare random operation sequences between the two. A future Postgres shared store is a third implementation that must pass the same suite.
+The DuckDB store in the `spool` crate implements `IdentityState` and one write: apply a `Validated` changeset by inserting log rows and updating projections in a single transaction. One conformance suite runs against both the in-memory state and the DuckDB store, and property tests compare random operation sequences between the two. A second persistent store for identity state, such as Postgres, would be a third implementation that must pass the same suite.
 
 Split is deliberately not an operation. It is `CreateIdentity` plus `Assign` moves, usually with a `cannot_link` constraint so the matcher does not undo it, in one changeset. The original ID stays with whichever side the author leaves in place; the default policy keeps it with the larger side, as OpenSanctions does.
 
@@ -253,19 +315,21 @@ Tradeoff: validating in Rust means a changeset must fit in memory, which caps on
 
 | Option | Gives | Costs |
 | --- | --- | --- |
-| Event log only | One truth, full audit, natural sync unit | Every read replays or needs a cache, which is a projection by another name |
-| Versioned state only (interval rows) | Cheap time travel | No grouping of changes, no author or reason, no unit to sync or undo, intent is lost |
-| Hybrid | Fast reads, audit, undo, sync unit | Two writes per commit and the risk they diverge |
+| Event log only | One truth, full audit, a natural unit of review and undo | Every read replays or needs a cache, which is a projection by another name |
+| Versioned state only (interval rows) | Cheap time travel | No grouping of changes, no author or reason, no unit to review or undo, intent is lost |
+| Hybrid | Fast reads, audit, review, undo | Two writes per commit and the risk they diverge |
 
 Divergence is contained three ways: both writes share one transaction (tested: a rollback leaves both empty), the projection can be rebuilt from the log at any time, and replay equality is a standing test.
 
-Each operation is its own precondition: `Assign.from` must equal the observation's current identity, `Merge` needs both identities active, `CreateIdentity` needs an unused ID. Commit checks these against current state and does not require `base_seq` to be the latest. Two sandboxes that touch different identities therefore both commit cleanly against a shared store, and a stale changeset is rejected with the exact operation that conflicted. That is optimistic concurrency at the granularity of an identity, and it is all Milestone 6 needs from the format. It does not catch two sandboxes that each create an identity for the same new company: both commit and leave a duplicate. Detecting that is conflict policy and is deferred.
+Each operation is its own precondition. `Assign.from` must equal the observation's current identity. `CreateIdentity` needs an unused ID. `Merge` needs both identities active and their membership unchanged since the changeset's `base_seq`, because a merge moves every member and its author saw only the members that existed then. The membership intervals answer that check without a new field. Commit checks these against current state and does not require `base_seq` to be the latest.
+
+One server and one writer do not remove the need for this. A draft can wait for review while other runs commit, and two clients can author changesets at the same time. Drafts that touch different identities all commit cleanly, in whatever order they are approved. A stale one is rejected with the exact operation that conflicted.
 
 Undo is a new changeset computed by the framework from the log and the membership intervals: the inverse of a merge reinstates the merged ID and moves its former members back, so anyone who stored the old ID gets the right entity again. History is never rewritten.
 
 DuckDB as the log store has one measured cost: small transactions took about 5 ms each (five statements, durable file), so roughly 200 commits a second. That is fine for batch reconciliation and interactive corrections, and not suited to per-record streaming. Batching operations into fewer changesets is the answer for now.
 
-**Decide now:** hybrid, per-operation preconditions, permanent redirects, undo as a forward changeset. **Defer:** snapshots and log compaction, sync transport and conflict policy, hash-chaining the log for tamper evidence.
+**Decide now:** hybrid, per-operation preconditions, permanent redirects, undo as a forward changeset. **Defer:** snapshots and log compaction, hash-chaining the log for tamper evidence. **Not planned:** synchronising changesets between stores.
 
 ## 4. Minimal data contracts that keep matchers interchangeable
 
@@ -281,7 +345,7 @@ Plus one rule about scope: a run is told which observations are new, and it must
 
 Candidates and judgements have the same shape for every entity type. Features do not: their columns come from the type's declaration. A strategy is therefore written against a declaration's columns, and nothing in the engine or the contract fixes what those are.
 
-A strategy is anything that fills the judgements relation. That covers a SQL statement, a Rust function, a Python model, an LLM call and a human reviewer. Blocking and scoring can be one step or two; the contract does not care. In Milestone 1 the single built-in strategy is a plain Rust function that runs SQL rules supplied as configuration (section 8). There is no `Matcher` trait until a second native strategy exists.
+A strategy is anything that fills the judgements relation. That covers a SQL statement, a Rust function, a Python model, an LLM call and a human reviewer. Blocking and scoring can be one step or two; the contract does not care. In Milestone 1 the single built-in strategy is a plain Rust function that runs the SQL rules in the project directory (section 8). There is no `Matcher` trait until a second native strategy exists.
 
 What the contract leaves out, on purpose:
 
@@ -302,14 +366,14 @@ Tradeoff: pairwise judgements fit entity-centric strategies awkwardly. An LLM as
 
 **Decide now:** the three relations, verdict as the contract, clustering only in the reconciler, no automatic merges of existing identities by default. **Defer:** a strategy trait, policy plug-ins, entity-centric judgements, calibrated probabilities.
 
-## 5. Exposing the engine through napi-rs and PyO3
+## 5. Exposing the engine: one server and thin clients
 
-One Rust `Engine` type owns the database file and is the entire API. Bindings convert arguments and contain no domain logic.
+The engine is a Rust library. One `Engine` type owns the database file and is the entire API:
 
 ```rust
 impl Engine {
     pub fn open(path: &Path, options: Options) -> Result<Engine>;
-    pub fn declare_entity_type(&self, declaration: &EntityTypeDeclaration) -> Result<DeclarationVersion>;
+    pub fn apply(&self, manifest: &Manifest) -> Result<ApplyReport>;         // declares entity types, generates feature tables
     pub fn ingest(&self, source: &str, entity_type: &str, rows: impl RecordBatchReader) -> Result<IngestReport>;
     pub fn begin_run(&self, strategy: StrategyRef, scope: Scope) -> Result<RunId>;
     pub fn candidates(&self, run: RunId) -> Result<impl RecordBatchReader>;   // pairs with both sides' features
@@ -323,66 +387,121 @@ impl Engine {
 }
 ```
 
-- **Small values** (entity type declarations, changesets, drafts, reports, single lookups, configuration) cross as plain objects defined once with `serde`. napi-rs generates the TypeScript declarations; Python gets dataclass-like wrappers. The same serialised form is the log's exchange format and later the sync format, described by one versioned JSON Schema.
-- **Bulk data** crosses as Arrow. In Python, `pyo3-arrow` 0.21 implements the Arrow PyCapsule interface, so polars, pandas, pyarrow and DuckDB relations are accepted without Spool depending on pyarrow (from its documentation; not tested). In Node, the plan is an Arrow IPC stream in a `Buffer`, read with `apache-arrow`. That is one copy and is also not tested.
+`spool serve` wraps that type in an HTTP API. The server is the only process that opens the store. Applications and agents reach it through a client, and Spool does not run inside the caller's process or sandbox. Tests and benchmarks use the library directly, with no server.
+
+Why one server, and not an engine in each caller:
+
+- **Matching needs the existing evidence.** Resolving a new record means comparing it with what is already known. An engine in each caller needs a copy of that evidence, and choosing which part to copy is the blocking problem again.
+- **The server can be sized for the work.** A caller such as an agent sandbox may be small and short-lived. A network call to a larger machine is the better trade for analytical joins.
+- **A DuckDB file has one owner.** While the engine has the file open, no other process can open it, even read-only (tested). One server that owns the file fits that.
+- **One writer has nothing to synchronise.** Sync transport, conflict policy, and two copies each creating an identity for the same new entity all disappear.
+
+The routes are not designed yet. These are the operations the API has to carry:
+
+| Operation | Response |
+| --- | --- |
+| Ingest observations | A report, or a run ID for a large batch |
+| Start a run: match and reconcile new observations with a named strategy | The draft changeset and review items, or a run ID |
+| Read a run | Its status, and its result when finished |
+| Pull a run's candidates; submit judgements to a run | Arrow; a count |
+| List drafts; approve or reject one; commit a changeset the caller authored | The committed changeset, or the operations that were rejected |
+| Look up identities: by observation, by ID following redirects, members, history | JSON |
+
+- **A call that starts work says how long it will wait.** If the run finishes within that time, the response is the result. Otherwise it is the run ID, which the client reads until the run finishes. The run ID is `spool.run.run_id`, so tasks add no new concept.
+- **A run either commits its draft or leaves it for review**, as the caller asks. A draft left for review is how an agent experiments without changing shared identities.
+- **Small values are JSON**, defined once with `serde` and described by one versioned JSON Schema. Client types are generated from it. The same serialised form is the log's exchange format.
+- **Bulk data is Arrow**, as IPC streams in request and response bodies. Clients also accept plain objects for convenience, up to some thousands of rows.
 - **IDs cross as strings** in the first version. DuckDB exports `UUID` columns to Arrow as strings by default (tested), which is also what JavaScript and pandas users expect.
-- **Blocking work stays off the event loop and releases the GIL.** Every engine call that touches DuckDB is asynchronous in Node and releases the interpreter lock in Python.
-- **Parity is tested by hash.** With a seeded ID generator, the same fixture must produce the same changeset `content_hash` from Rust, Node and Python. Only Rust computes observation IDs and content hashes.
+- **The API is tested by hash.** With a seeded ID generator, the same fixture must produce the same changeset `content_hash` through the library and through the server. Only Rust computes observation IDs and content hashes.
 
-Three packaging facts to plan around:
+A client is a small package that speaks this API. The first is TypeScript, and a Python client is the same amount of work. No client contains engine code, so there are no native packages to build per platform. An agent built with a framework such as eve reaches Spool the same way: a tool in the agent calls the client.
 
-- `duckdb` 1.20000.2, `arrow` 60 and `napi` 3 require Rust 1.88, and `uuid` 1.29 requires 1.89. `pyo3-arrow` 0.21 pins `arrow` 60 and `pyo3` 0.30, while `arrow-pyarrow` 60 still wants `pyo3` 0.29. These crates must be upgraded as a set, pinned at the workspace root.
-- The `duckdb` crate links a prebuilt shared library by default (12 s clean build when measured, but a 96 MB library that must ship beside the binary) or compiles DuckDB from source with `bundled` (about 6 min 40 s on 4 cores when measured; I did not get as far as linking or running that build). Use the prebuilt library for development and decide the release linking in Milestone 2.
-- Bun's documentation says most Node-API modules work. napi-rs's WebAssembly target does not load in Bun or Deno. Test Bun in CI against the native addon and do not plan on WebAssembly.
+Scope of the server: one store, one writer and one tenant. Access is a bearer token. It scales up, not out. Tenancy, user management and provisioning compute are out of scope, which keeps Spool short of a hosted control plane. Inside the server, reads run concurrently and commits are serialised, so the log's order is the order of commit.
 
-Tradeoff: an engine-shaped API is less idiomatic than hand-designed SDKs. The TypeScript and Python packages add the idiomatic layer (accepting arrays of objects or data frames, async iteration) in their own language, on top of the same calls.
+Two packaging facts to plan around:
 
-**Decide now:** one engine API, serde objects plus Arrow as the only two crossing forms, hash-based parity tests. **Defer:** release linking of DuckDB, Windows on ARM, WebAssembly, the idiomatic SDK surface beyond a walking skeleton.
+- `duckdb` 1.20000.2 and `arrow` 60 require Rust 1.88, and `uuid` 1.29 requires 1.89. Pin them at the workspace root and upgrade `duckdb` and `arrow` together.
+- The `duckdb` crate links a prebuilt shared library by default (12 s clean build when measured, but a 96 MB library that must ship beside the binary) or compiles DuckDB from source with `bundled` (about 6 min 40 s on 4 cores when measured; I did not get as far as linking or running that build). Use the prebuilt library for development. A container image and a one-file install both favour the statically linked build for releases, at the cost of build time in CI. Decide in Milestone 2.
 
-## 6. Python and TypeScript extensions without embedded runtimes
+Tradeoff: a server has to be run, backed up and secured, where a library needed none of that. Every call crosses the network, which is small next to matching work and costly for per-record lookups, so lookups need batch forms. The library remains for Rust callers and for tests.
 
-The host language owns the loop, and the engine is called, never calling back:
+**Decide now:** the engine as a library with the server as a wrapper, JSON and Arrow as the only two wire forms, the run ID as the task handle, one tenant and one writer, no native bindings. **Defer:** route design, authentication beyond a bearer token, streaming a run's progress, a Python client, release linking of DuckDB, Windows on ARM.
 
-```python
-run = spool.begin_run(strategy="my-matcher@1")
-for pairs in spool.candidates(run):          # Arrow batches: left_id, right_id, left_*, right_*
-    spool.submit_judgements(run, my_model.score(pairs))
-draft = spool.reconcile(run)
-spool.commit(draft)
+## 6. Python and TypeScript user code without embedded runtimes
+
+The engine embeds no Python or JavaScript runtime and never calls into one. When a project contains user code, the server runs it as a child process and exchanges files with it.
+
+A user-code strategy is a file under `strategies/`. `entities/company/strategies/splink.py` is the strategy `splink` for companies. A `.py` file runs with `uv run` and a `.ts` file with `bun run`. Each tool is a single binary that runs the file and resolves its dependencies ([uv](https://docs.astral.sh/uv/guides/scripts/), [bun](https://bun.com/docs/runtime/typescript); from their documentation, not tested). `spool build` installs the dependencies into the image, so nothing is downloaded at run time.
+
+The protocol is a directory of files per task:
+
+```text
+$SPOOL_TASK_DIR/
+├── task.json             # run ID, entity type, strategy name, declaration version
+├── candidates.parquet    # written by the server: left_id, right_id, both sides' features
+└── judgements.parquet    # written by the user code: left_id, right_id, verdict, score, detail
 ```
 
-There are four places an extension plugs in. The first is a declaration, and the other three are "produce a relation":
+The server writes the inputs, starts the process with `SPOOL_TASK_DIR` set, waits, and reads the output. The exit code is the status and standard error is the log. IDs are strings in these files. Rust starts a command and never knows which language it is.
 
-1. **Entity types.** A declaration is a plain object whose feature expressions are SQL text, so it is written the same way from all three languages.
-2. **Observations.** Extractors and connectors run in the host language and call `ingest`. An LLM extraction pipeline is an upstream producer; the engine does not know it exists.
-3. **Candidates.** Either SQL text handed to the engine, which is portable across all three languages, or pairs computed by the host, such as nearest neighbours from an embedding index.
-4. **Judgements.** Anything, as in the loop above.
+I tested the exchange with DuckDB: the server process wrote the candidates file, a second process read it and wrote judgements, and the server read them back and found the row that named an unknown observation. The second process could not open the database file while the server held it.
+
+A small helper per language hides the files:
+
+```python
+# entities/company/strategies/splink.py
+from spool import strategy
+
+@strategy
+def judge(candidates):      # Arrow table: left_id, right_id, left_*, right_*
+    ...                     # any Python: Splink, a classifier, an LLM call
+    return judgements       # left_id, right_id, verdict, optional score and detail
+```
+
+Four rules keep this contained:
+
+1. **Workers stay inside the service.** They are a bounded pool of child processes, each with a timeout. Spool provisions no compute, holds no cloud credentials and starts no containers.
+2. **Tasks produce evidence only.** A task returns judgements, and later observations or feature columns. It never returns identity changes. The server alone reconciles and commits, in one transaction, so user code that crashes or hangs can fail a run and cannot corrupt an identity.
+3. **Only code built into the image runs.** The API takes data and the name of a strategy. It never takes code, so a caller cannot make the server run something new.
+4. **No workflow engine.** The pipeline is short and fixed: ingest, features, candidates, judgements, reconcile, commit. Each stage's output is stored per run, so after a restart a run resumes from its last finished stage. `spool.run` is the task record.
+
+There are four places an extension plugs in:
+
+1. **Entity types.** Files in the project directory.
+2. **Observations.** Clients post them through the API. An LLM extraction pipeline that runs in the caller is an upstream producer; the server does not know it exists. From Milestone 5, an extractor can also be user code in the project.
+3. **Candidates.** The SQL files under `rules/block/`, or pairs a user-code strategy computes itself, such as nearest neighbours from an embedding index.
+4. **Judgements.** SQL rules, a user-code strategy, or a client that pulls a run's candidates and submits judgements through the API. The last is how a review interface or an external system takes part.
 
 Reconciliation policy is configuration in the first versions. Someone who needs custom logic can author a changeset directly and it will be validated like any other.
 
 Consequences to accept:
 
-- The Rust CLI can run only native and SQL strategies. Benchmarking a Python matcher means starting the run from Python with the same benchmark specification. This is the price of not embedding runtimes, and I think it is right for now.
-- Only one process can have a sandbox file open. A studio or a second tool has to talk to the engine process and cannot read the file beside it. DuckDB 2.0's Quack protocol is the likely route when that matters.
-- A user who opens the same file with the Python `duckdb` package inside the engine's process may bypass the file lock, because two copies of the library share one process. I have not tested this. `Engine.query` exists so nobody needs to.
+- An image with user code carries `uv` or `bun` and the code's dependencies. A project of data files stays one binary.
+- User code is the operator's own code. It runs with the service's permissions, and Spool does not sandbox it.
+- Files cost a write and a read per task. That suits batches and is wrong for per-record calls, which stay with SQL rules.
+- A strategy that does its own blocking, as Splink does, needs feature rows and not candidate pairs. Whether the server writes those per task is settled in Milestone 4.
+- Only the server opens the store. A studio or any other tool goes through the API.
 
-**Decide now:** host-driven loop, no callbacks from the engine, SQL text as the portable way to push logic down. **Defer:** an out-of-process worker protocol (Arrow over stdio) for CLI-driven polyglot runs, policy plug-ins, multi-process access.
+**Decide now:** child processes and no embedded runtime, Parquet files as the task protocol, tasks that produce evidence only, no code accepted through the API, workers inside the one service. **Defer:** separate worker containers that pull tasks over the same protocol, a streaming protocol, per-task resource limits beyond a timeout, policy plug-ins.
 
-## 7. Arrow, DuckDB relations, or typed objects
+## 7. JSON, Arrow, Parquet or DuckDB relations
 
 | Use | Form | Reason |
 | --- | --- | --- |
-| Entity type declarations, changesets, drafts, review items, reports, configuration, single lookups | Typed objects | Small, structured, and they need schemas and good error messages |
-| Ingesting observations, pulling candidates, pushing judgements, exports, benchmark truth | Arrow record batch streams | Columnar and streamable; zero-copy into Python, one copy into Node |
+| Changesets, drafts, review items, reports, run status, single lookups | JSON objects over the API | Small, structured, and they need schemas and good error messages |
+| Ingesting many observations, pulling candidates, submitting judgements through the API | Arrow IPC streams | Columnar and streamable |
+| The server to user code and back | Parquet files in a task directory | Any language reads them, and a failed task leaves its inputs behind to inspect |
 | Blocking, comparison, aggregation, metrics | DuckDB SQL inside the engine | DuckDB already does it; string similarity functions are built in |
-| Datasets at rest, benchmark fixtures, later sync bundles | Parquet | Portable, and `COPY ... TO` works in the stock library |
-| Ad hoc inspection | SQL text in, Arrow out, against documented views | Gives SQL users everything without leaking a connection |
+| The project's definition | Files in the project directory, compiled to a manifest | Reviewable in git, validated at build |
+| Datasets at rest, benchmark fixtures, exports | Parquet | Portable, and `COPY ... TO` works in the stock library |
 
-The rule of thumb for SDK authors: accept plain objects for convenience up to some thousands of rows, convert them once in Rust, and document the Arrow path for anything larger. Simple examples never mention Arrow or DuckDB.
+The rule of thumb for client authors: accept plain objects for convenience up to some thousands of rows, convert them once, and document the Arrow path for anything larger. Simple examples never mention Arrow or DuckDB.
 
-A local test confirmed the internal half of this: an Arrow batch appended into a table, a blocking join with `jaro_winkler_similarity` read back as Arrow, and an in-memory Arrow batch joined against a stored table without first loading it into a table. That last one is how submitted judgements get validated against known observations.
+Testing confirmed the internal half of this: an Arrow batch appended into a table, a blocking join with `jaro_winkler_similarity` read back as Arrow, and an in-memory Arrow batch joined against a stored table without first loading it into a table. That last one is how submitted judgements get validated against known observations.
 
-**Decide now:** relations never cross the API. **Defer:** binary UUID columns in Arrow, a zero-copy path for Node.
+Ad hoc SQL through the API is deferred. `Engine.query` is read-only, but a read-only DuckDB connection can still read files on the server's disk through functions such as `read_csv` (tested). An endpoint that takes SQL from callers needs DuckDB's external-access controls first, and I have not tested those alongside the Parquet task files.
+
+**Decide now:** relations never cross the API. **Defer:** binary UUID columns in Arrow, an ad hoc SQL endpoint.
 
 ## 8. Integrating existing algorithms without leaking their assumptions
 
@@ -396,43 +515,41 @@ Every external algorithm sits behind an adapter that ends at the judgements rela
 
 How specific tools would attach:
 
-- **Splink.** A Python adapter exports features as Arrow, calls `predict` (or `predict_between` for new-versus-existing, which is marked experimental), and maps match weights to verdicts with the per-comparison levels in `detail`. Its model file is an opaque artefact referenced from `run.config`. It is the best candidate for the second strategy in Milestone 4 because it exercises the Python extension path and gives a credible baseline.
+- **Splink.** A Python strategy file reads features from Parquet, calls `predict` (or `predict_between` for new-versus-existing, which is marked experimental), and maps match weights to verdicts with the per-comparison levels in `detail`. Its model file is an opaque artefact in the project. It is the best candidate for the second strategy in Milestone 4 because it exercises the user-code path and gives a credible baseline.
 - **LLM matchers.** Verdict plus rationale, with `unsure` used freely. Selection-style prompts become one `match` and several `no_match` judgements.
 - **dedupe.** Use its pair scores; ignore its clustering.
 - **Zingg.** AGPL and Spark, so out of process only: read a Parquet export, write pairs. Low priority.
 
 Training data, model state and thresholds belong to the strategy. The framework records the configuration hash in `run` so any judgement can be traced to the exact model that made it.
 
-The built-in strategy for Milestone 1 is deliberately plain, and it knows nothing about any entity type. It is a rule runner. Its configuration is three sets of SQL predicates over a left row `l` and a right row `r` of the type's feature table:
+The built-in strategy for Milestone 1 is deliberately plain, and it knows nothing about any entity type. It is a rule runner. Its rules are SQL predicates over a left row `l` and a right row `r` of the type's feature table, one predicate per file:
 
-- `block` predicates generate the candidate pairs.
-- A candidate for which any `no_match` predicate holds is judged `no_match`.
-- Otherwise, a candidate for which any `match` predicate holds is judged `match`.
+- `rules/block/` predicates generate the candidate pairs.
+- A candidate for which any `rules/no_match/` predicate holds is judged `no_match`.
+- Otherwise, a candidate for which any `rules/match/` predicate holds is judged `match`.
 
-Other candidates get no judgement. The names of the predicates that held go in `detail`. For the example company declaration in section 1, a rule set could be:
+Other candidates get no judgement. The names of the predicates that held go in `detail`, and a predicate's name is its file name. For the example company declaration in section 1, a rule set could be:
 
-```toml
-block = [
-  "l.domain = r.domain",
-  "l.registry_id = r.registry_id",
-  "l.name_norm[:4] = r.name_norm[:4]",
-]
-
-[no_match]
-different_registry_id = "l.registry_id <> r.registry_id"
-
-[match]
-same_domain = "l.domain = r.domain"
-similar_name_same_country = "jaro_winkler_similarity(l.name_norm, r.name_norm) >= 0.92 AND l.country = r.country"
+```text
+entities/company/rules/
+├── block/
+│   ├── same_domain.sql                # l.domain = r.domain
+│   ├── same_registry_id.sql           # l.registry_id = r.registry_id
+│   └── name_prefix.sql                # l.name_norm[:4] = r.name_norm[:4]
+├── no_match/
+│   └── different_registry_id.sql      # l.registry_id <> r.registry_id
+└── match/
+    ├── same_domain.sql                # l.domain = r.domain
+    └── similar_name_same_country.sql  # jaro_winkler_similarity(l.name_norm, r.name_norm) >= 0.92 AND l.country = r.country
 ```
 
 A person type has its own columns and its own rules, and runs through the same code. Running SQL predicates keeps to Spool's non-goal of writing custom Rust implementations of algorithms DuckDB already handles efficiently. A native Fellegi-Sunter model is a later choice, not a prerequisite.
 
-**Decide now:** adapters end at judgements; the built-in strategy takes its rules as configuration and contains none. **Defer:** which adapters to ship, and whether Spool ever implements a probabilistic model natively.
+**Decide now:** adapters end at judgements; the built-in strategy reads its rules from the project and contains none. **Defer:** which adapters to ship, and whether Spool ever implements a probabilistic model natively.
 
 ## 9. Benchmarking resolution quality from the beginning
 
-The benchmark runs the ordinary path (ingest, match, reconcile, commit) and scores the committed state against a truth relation `(observation_id, true_entity)`. Nothing is special-cased, so a Rust, Python or TypeScript strategy is scored identically.
+The benchmark runs the ordinary path (ingest, match, reconcile, commit) and scores the committed state against a truth relation `(observation_id, true_entity)`. Nothing is special-cased, so a Rust, Python or TypeScript strategy is scored identically. `spool bench` uses the engine in-process, with no server, and starts user-code strategies the same way the server does.
 
 A benchmark is a **scenario**: an ordered list of steps (ingest this batch, apply this correction, switch to this strategy) with truth at each step. A single-batch dataset is a one-step scenario. The specification is a data file, not code.
 
@@ -453,7 +570,7 @@ Identity metrics, across steps. These are the ones no public benchmark has:
 | Split recovery | After a scripted wrong merge and a manual split, whether later batches keep the two sides apart |
 | Override persistence | Share of constraints still honoured after further batches and a strategy change |
 
-Datasets for day one: Splink's `fake_1000` as a smoke test, `historical_50k` and FEBRL as mid-sized checks, and a small hand-built company fixture committed to the repository that contains the hard cases of company resolution (aliases, legal versus trading names, domain changes, subsidiaries, stealth companies), split into two batches. Each fixture carries its own entity type declaration and rules. The three public datasets are person records and the fixture is company records, so the benchmark runs two unrelated entity types through one engine from the start. The public datasets are downloaded and checksummed at benchmark time, because I have not confirmed their redistribution terms.
+Datasets for day one: Splink's `fake_1000` as a smoke test, `historical_50k` and FEBRL as mid-sized checks, and a small hand-built company fixture committed to the repository that contains the hard cases of company resolution (aliases, legal versus trading names, domain changes, subsidiaries, stealth companies), split into two batches. Each fixture is a project directory with its own entity type and rules. The three public datasets are person records and the fixture is company records, so the benchmark runs two unrelated entity types through one engine from the start. The public datasets are downloaded and checksummed at benchmark time, because I have not confirmed their redistribution terms.
 
 Results are written as JSON. CI compares them with a committed baseline and fails on a regression, with false merges and ID stability treated as the strictest gates.
 
@@ -465,25 +582,25 @@ Metrics are implemented in Spool. The existing `er-evaluation` package is AGPL.
 
 ## 10. The smallest useful end-to-end implementation
 
-Milestone 1 is a Rust library, a test suite, and a thin command that runs one scenario.
+Milestone 1 is a Rust library, a test suite, and a thin command that runs one scenario. It has no server.
 
 ```text
 spool/
 ├── Cargo.toml                 # workspace; edition 2024; rust-version 1.89
 ├── crates/
 │   ├── spool-core/            # IDs, Op, Changeset, validate, reconcile, in-memory state
-│   └── spool/                 # Engine, DuckDB store, ingest, built-in SQL strategy, metrics; `spool` binary
+│   └── spool/                 # Engine, DuckDB store, project discovery, ingest, rule runner, metrics; `spool` binary
 └── benchmarks/
     ├── datasets.toml          # name, url, sha256, licence
-    └── identity/companies-small/   # type declaration, rules, two CSV batches, truth, scenario file
+    └── identity/companies-small/   # a project directory, two CSV batches, truth, scenario file
 ```
 
-Milestone 2 adds `crates/spool-node`, `crates/spool-python`, `packages/sdk` and `python/spool`. `spool-duckdb` is split out when a second store exists, `spool-resolution` when a second native strategy exists, and `spool-cli` when the command needs dependencies the library should not carry.
+Milestone 2 adds `crates/spool-cli`, which takes over the binary and holds the HTTP server and the `init`, `dev`, `build`, `apply` and `serve` commands, so the library carries no HTTP stack. It also adds `packages/client`, the TypeScript client. `spool-duckdb` is split out when a second store exists, and `spool-resolution` when a second native strategy exists.
 
 What it does:
 
 1. Open a database file and create the schema with a format version.
-2. Declare the fixture's entity type from its declaration file, which generates the feature table.
+2. Read the fixture's project directory and apply it, which generates the feature table.
 3. Ingest batch one from CSV: content-hashed observations and their feature rows.
 4. Run the built-in SQL strategy with the fixture's rules to produce candidates and judgements.
 5. Reconcile into a draft changeset, validate it, commit it, and print the identities.
@@ -492,7 +609,7 @@ What it does:
 
 Exit criteria, each a test:
 
-- The `fake_1000` person data runs through the same binary as the company fixture, with only the declaration and the rules differing.
+- The `fake_1000` person data runs through the same binary as the company fixture, with only the project directory differing.
 - Re-sent rows create no observations and no operations.
 - Every identity ID from batch one still exists after batch two, with the same members plus any additions.
 - A subsidiary with a different registry identifier is not attached to its parent.
@@ -502,21 +619,33 @@ Exit criteria, each a test:
 - Two runs with the same seed produce the same changeset content hashes.
 - A changeset with a stale precondition is rejected and names the conflicting operation.
 
-In scope for the types but not implemented: `Merge`, `Constrain`, `Unconstrain`, `Reinstate`. Out of scope: bindings, host-computed feature columns, changing a declaration after data exists, superseding observations, probabilistic or LLM matching, extraction, relationships, canonical attribute views, sync, the studio.
+In scope for the types but not implemented: `Merge`, `Constrain`, `Unconstrain`, `Reinstate`. Out of scope: the server and clients, user code, changing a declaration after data exists, superseding observations, probabilistic or LLM matching, extraction, relationships, canonical attribute views, the studio.
 
-Suggested reshaping of the later milestones: Milestone 2 is a walking skeleton of the bindings that includes submitting judgements and builds wheels and addons in CI, and it should not block Milestone 3. Milestone 3 implements merge, split, constraints, undo and superseding observations, plus the identity benchmark. Milestone 4 adds the Splink adapter as the second strategy.
+Proposed roadmap:
+
+1. **Engine.** The Rust library and command described above: a project directory with SQL features and rules, two batches, the changeset log, the benchmark.
+2. **Server and client.** `spool serve` and the API, runs as tasks, `init`, `dev`, `build` and `apply`, the generated Dockerfile, the TypeScript client.
+3. **Identity lifecycle.** Merge, split, constraints, undo and superseding observations, plus the identity benchmark.
+4. **User code.** The child-process protocol, Python first and then TypeScript, with Splink as the second strategy.
+5. **Extraction.** Observations from unstructured documents.
+6. **Developer tooling.** Inspection and a studio, both through the API.
+
+Milestones 2 and 3 do not depend on each other. Sandbox synchronisation, initial Milestone 6, is not in this roadmap.
 
 ## Decisions at a glance
 
 | Decide now | Defer |
 | --- | --- |
 | Evidence versus identity-state split; `spool-core` without DuckDB or Arrow | A Postgres store; any abstraction over evidence storage |
-| Entity types declared by the user; feature tables generated from the declaration; rules as configuration; no built-in types | Host-computed feature columns; rebuilding after a declaration changes; SDK types generated from a declaration |
+| One server that owns the store; thin clients; one tenant, one writer; no native bindings | Route design; richer authentication; a Python client |
+| A project directory with path-derived names, compiled to a manifest; state outside the image | Mountable packages of entity types; Markdown instruction files |
+| Entity types declared by the project; feature tables generated from a query; rules as files; no built-in types | Feature columns from user code; client types generated from a manifest |
+| User code as child processes over Parquet files; evidence only; workers inside the service | Separate worker containers; a streaming protocol; per-task resource limits |
 | Judgements and draft changesets in place of proposals | Entity-centric judgements; calibrated probabilities |
 | Minted UUIDv7 identity IDs, permanent redirects, content-derived observation IDs | Public ID formatting; binary IDs in Arrow |
-| Changeset log as truth, projection in the same transaction, per-operation preconditions | Sync transport, conflict policy, compaction, hash chaining |
+| Changeset log as truth, projection in the same transaction, per-operation preconditions | Compaction, hash chaining |
 | Operation set: create, assign, merge, constrain, unconstrain, reinstate | Implementing all but create and assign until Milestone 3 |
 | Default policy never merges or splits existing identities automatically | Policy plug-ins; automatic merges above a threshold |
-| One engine API; serde objects and Arrow as the only crossing forms; no callbacks into host languages | Out-of-process strategy protocol; multi-process access |
+| JSON and Arrow as the only wire forms; the run ID as the task handle | Streaming run progress; an ad hoc SQL endpoint |
 | Scenario-based benchmark with identity metrics and a CI baseline | GLEIF scenario generator; extraction and end-to-end suites |
 | Two crates; injected ID generator and clock; format version in the file | Further crate splits; release linking of DuckDB; indexes and keys |
