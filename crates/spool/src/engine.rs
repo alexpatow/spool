@@ -26,7 +26,7 @@ use crate::lookup::{
     self, HistoryEntry, IdentityFilter, IdentitySummary, IdentityView, ObservationFilter,
     ObservationRecord, StoreInfo,
 };
-use crate::metrics::{self, IdStability, Metrics};
+use crate::metrics::{self, Churn, IdStability, Metrics};
 use crate::project::{EntityTypeManifest, Manifest, hash_json};
 use crate::review::{self, ReviewFilter, ReviewRecord};
 use crate::rows::Rows;
@@ -797,6 +797,12 @@ impl Engine {
     /// Compares each observation's identity at two log positions.
     pub fn id_stability(&self, before: Seq, after: Seq) -> Result<IdStability> {
         self.read(|conn| metrics::id_stability(conn, before, after))
+    }
+
+    /// What changed between two log positions, against the number of
+    /// observations that arrived in between.
+    pub fn churn(&self, before: Seq, after: Seq, new_observations: u64) -> Result<Churn> {
+        self.read(|conn| metrics::churn(conn, before, after, new_observations))
     }
 }
 

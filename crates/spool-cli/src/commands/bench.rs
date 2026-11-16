@@ -12,8 +12,8 @@ use crate::args::Spec;
 pub const USAGE: &str = "\
 Usage: spool bench <scenario> [options]
 
-Runs a benchmark scenario: ingests each step's files, resolves, and scores
-committed state against the scenario's truth.
+Runs a benchmark scenario: ingests each step's files, applies its corrections,
+resolves, and scores committed state against the scenario's truth.
 
   <scenario>      a scenario.toml, or the directory that holds one
 
@@ -69,6 +69,22 @@ fn run(arguments: &Arguments) -> spool::Result<()> {
     println!("database  {}", db.display());
     let report = scenario.run(&engine, |step| print_step(&engine, step, arguments.list))?;
 
+    if let Some(order) = &report.order_sensitivity {
+        println!("\n== the batches in reverse order, without corrections ==");
+        println!(
+            "  same group    {} of {} observations ({})",
+            order.same_group,
+            order.observations,
+            share(order.agreement)
+        );
+        println!(
+            "  same pairs    {} of {} ({})",
+            order.pairs_in_both,
+            order.pairs_in_either,
+            share(order.pair_agreement)
+        );
+    }
+
     if let Some(out) = &arguments.out {
         write_results(out, &report)?;
         println!("\nresults   {}", out.display());
@@ -112,6 +128,16 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
         println!(
             "ingested  {} rows of `{}` from `{}`: {} new, {} already known",
             ingest.received, ingest.entity_type, ingest.source, ingest.inserted, ingest.duplicates
+        );
+    }
+    for correction in &step.corrections {
+        let name = match &correction.name {
+            Some(name) => format!(" `{name}`"),
+            None => String::new(),
+        };
+        println!(
+            "corrected {}{name}: changeset at {}",
+            correction.kind, correction.seq
         );
     }
     if step.resolve.resolved.is_empty() {
@@ -230,6 +256,39 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
         stability.observations,
         share(stability.strict)
     );
+    if stability.unchanged_following_redirects != stability.unchanged {
+        println!(
+            "                {} once merged IDs are followed ({})",
+            stability.unchanged_following_redirects,
+            share(stability.following_redirects)
+        );
+    }
+    let churn = &step.churn;
+    println!(
+        "  churn         {} identities created, {} merged, {} observations reassigned, for {} new observations",
+        churn.identities_created,
+        churn.identities_merged,
+        churn.observations_reassigned,
+        churn.new_observations
+    );
+    let splits = &step.split_recovery;
+    if splits.splits > 0 {
+        println!(
+            "  splits        {} of {} still apart ({})",
+            splits.kept_apart,
+            splits.splits,
+            share(splits.share)
+        );
+    }
+    let overrides = &step.override_persistence;
+    if overrides.constraints > 0 {
+        println!(
+            "  constraints   {} of {} still honoured ({})",
+            overrides.honoured,
+            overrides.constraints,
+            share(overrides.share)
+        );
+    }
     Ok(())
 }
 
