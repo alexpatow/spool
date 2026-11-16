@@ -5,10 +5,13 @@
 // it runs in.
 
 import type {
-  Changeset,
+  Authored,
   ChangesetId,
   ChangesetList,
+  CommitRequest,
   Committed,
+  ConstraintRecord,
+  DismissRequest,
   DraftRecord,
   DraftStatus,
   DraftSummary,
@@ -33,8 +36,11 @@ import type {
   RunRecord,
   RunStatus,
   Seq,
+  SplitReport,
+  SplitRequest,
   StartRunRequest,
   TypeResolution,
+  UndoRequest,
 } from "./types.ts";
 
 export type * from "./types.ts";
@@ -99,6 +105,15 @@ export interface DraftFilter {
 export interface ReviewFilter {
   status?: ReviewStatus;
   entity_type?: EntityType;
+}
+
+export interface ConstraintFilter {
+  /** Only constraints that name this observation. */
+  observation?: ObservationId;
+  /** Only constraints that name a member of this identity. */
+  identity?: IdentityId;
+  /** Also constraints that were removed. Default: only those in force. */
+  removed?: boolean;
 }
 
 export interface IdentityFilter {
@@ -324,9 +339,41 @@ export class SpoolClient {
   /**
    * Validates a changeset against current state and commits it. A changeset
    * that breaks a rule throws a `SpoolError` with the code `rejected`.
+   *
+   * Merging two identities, moving an observation and recording or removing
+   * a constraint are each a changeset of one operation. Without an `id` the
+   * server mints one, and without a `base` the changeset is taken to have
+   * been written against the head of the log.
    */
-  commit(changeset: Changeset): Promise<Committed> {
+  commit(changeset: CommitRequest): Promise<Committed> {
     return this.json("POST", "/v1/changesets", { json: changeset });
+  }
+
+  /**
+   * Takes back the changeset at a log position with a new changeset, which
+   * is validated like any other: it is rejected if state has moved on in a
+   * way the undo would trample. With `commit: false` the undo is returned
+   * and not made.
+   */
+  undo(seq: Seq, request: UndoRequest): Promise<Authored> {
+    return this.json("POST", `/v1/changesets/${seq}/undo`, { json: request });
+  }
+
+  /**
+   * Divides an identity in two. The larger side keeps the ID, and unless
+   * `keep_apart` is `false` a `cannot_link` constraint is recorded between
+   * the sides.
+   */
+  split(identity: IdentityId, request: SplitRequest): Promise<SplitReport> {
+    return this.json("POST", `/v1/identities/${identity}/split`, { json: request });
+  }
+
+  /** The constraints in force: pairs of observations that must or must not share an identity. */
+  async constraints(filter: ConstraintFilter = {}): Promise<ConstraintRecord[]> {
+    const { constraints } = await this.json<{ constraints: ConstraintRecord[] }>("GET", "/v1/constraints", {
+      query: { ...filter },
+    });
+    return constraints;
   }
 
   /** New IDs, for a caller that writes a changeset of its own. */
@@ -378,6 +425,18 @@ export class SpoolClient {
   async reviewItems(filter: ReviewFilter = {}): Promise<ReviewRecord[]> {
     const { items } = await this.json<{ items: ReviewRecord[] }>("GET", "/v1/review", { query: { ...filter } });
     return items;
+  }
+
+  reviewItem(item: number): Promise<ReviewRecord> {
+    return this.json("GET", `/v1/review/${item}`);
+  }
+
+  /**
+   * Closes a review item without giving its observations an identity. Later
+   * runs leave them alone.
+   */
+  dismissReview(item: number, request: DismissRequest): Promise<ReviewRecord> {
+    return this.json("POST", `/v1/review/${item}/dismiss`, { json: request });
   }
 
   // The wire
