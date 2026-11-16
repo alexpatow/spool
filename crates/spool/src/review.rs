@@ -3,26 +3,31 @@
 //! A review item names observations that were left without an identity and
 //! says why. It is evidence, like a judgement: it changes no identity, and
 //! nothing is committed on its account. It is open while any of its
-//! observations has no identity, and it closes in one of two ways:
+//! observations has no identity, and it closes in one of three ways:
 //!
 //! - `resolved`: a changeset gave every observation an identity. Any
 //!   changeset does this, whether a reviewer wrote it or a later run did.
 //! - `superseded`: a later run examined the observations again and raised an
 //!   item that differs, for example because they now match a third identity.
+//! - `dismissed`: a reviewer closed it without placing its observations.
 //!
 //! The observations of open items are in the scope of every later match run
 //! of their entity type, so an item is looked at again whenever state or
 //! rules may have changed. A run that reaches the same conclusion leaves the
-//! item as it is.
+//! item as it is. The observations of a dismissed item are not looked at
+//! again: they stay without an identity until a changeset places them.
 
 use std::collections::BTreeSet;
 
 use duckdb::{Connection, params};
 use serde::{Deserialize, Serialize};
-use spool_core::{EntityType, IdentityId, ObservationId, ReviewItem, RunId, Seq, StateError};
+use spool_core::{
+    Actor, EntityType, IdentityId, ObservationId, ReviewItem, RunId, Seq, StateError,
+};
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::store::parse;
+use crate::time::rfc3339;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -42,6 +47,7 @@ pub enum ReviewStatus {
     Open,
     Resolved,
     Superseded,
+    Dismissed,
 }
 
 impl ReviewStatus {
@@ -50,6 +56,7 @@ impl ReviewStatus {
             ReviewStatus::Open => "open",
             ReviewStatus::Resolved => "resolved",
             ReviewStatus::Superseded => "superseded",
+            ReviewStatus::Dismissed => "dismissed",
         }
     }
 }
@@ -73,6 +80,19 @@ pub struct ReviewRecord {
     pub resolved_seq: Option<Seq>,
     /// Superseded: the reconcile run that raised it again in another form.
     pub superseded_by: Option<RunId>,
+    /// Dismissed: who closed it, when and why.
+    #[serde(default)]
+    pub dismissed: Option<Dismissal>,
+}
+
+/// A reviewer's decision to close a review item without placing its
+/// observations.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct Dismissal {
+    pub by: Actor,
+    pub at: String,
+    pub reason: Option<String>,
 }
 
 /// Which review items to list. The default lists every item.
@@ -80,6 +100,8 @@ pub struct ReviewRecord {
 pub struct ReviewFilter {
     pub status: Option<ReviewStatus>,
     pub entity_type: Option<EntityType>,
+    /// Only the item with this ID.
+    pub id: Option<u64>,
 }
 
 impl ReviewFilter {
@@ -87,7 +109,7 @@ impl ReviewFilter {
     pub fn open() -> Self {
         Self {
             status: Some(ReviewStatus::Open),
-            entity_type: None,
+            ..Self::default()
         }
     }
 }
@@ -98,15 +120,17 @@ pub(crate) fn list(conn: &Connection, filter: &ReviewFilter) -> Result<Vec<Revie
         "SELECT review_id, run_id, entity_type, kind,
                 array_to_string(observation_ids::VARCHAR[], ','),
                 array_to_string(identity_ids::VARCHAR[], ','),
-                status, closed_seq, closed_run
+                status, closed_seq, closed_run, closed_by, epoch_us(closed_at), closed_reason
          FROM spool.review_item
          WHERE ($1::VARCHAR IS NULL OR status = $1::VARCHAR)
            AND ($2::VARCHAR IS NULL OR entity_type = $2::VARCHAR)
+           AND ($3::BIGINT IS NULL OR review_id = $3::BIGINT)
          ORDER BY review_id",
     )?;
     let mut rows = statement.query(params![
         filter.status.map(ReviewStatus::as_str),
         filter.entity_type.as_ref().map(EntityType::as_str),
+        filter.id.map(|id| id as i64),
     ])?;
     let mut items = Vec::new();
     while let Some(row) = rows.next()? {
@@ -135,10 +159,19 @@ pub(crate) fn list(conn: &Connection, filter: &ReviewFilter) -> Result<Vec<Revie
                 "open" => ReviewStatus::Open,
                 "resolved" => ReviewStatus::Resolved,
                 "superseded" => ReviewStatus::Superseded,
+                "dismissed" => ReviewStatus::Dismissed,
                 other => return Err(unknown("status", other).into()),
             },
             resolved_seq: row.get::<_, Option<i64>>(7)?.map(|seq| Seq(seq as u64)),
             superseded_by: row.get::<_, Option<i64>>(8)?.map(|run| RunId(run as u64)),
+            dismissed: match row.get::<_, Option<String>>(9)? {
+                Some(by) => Some(Dismissal {
+                    by: parse(&by)?,
+                    at: rfc3339(row.get::<_, Option<i64>>(10)?.unwrap_or_default()),
+                    reason: row.get(11)?,
+                }),
+                None => None,
+            },
         });
     }
     Ok(items)
@@ -299,7 +332,7 @@ pub(crate) fn record(
         conn.execute(
             &format!(
                 "INSERT INTO spool.review_item
-                 VALUES (?, ?, ?, ?, {}, {}, 'open', NULL, NULL)",
+                 VALUES (?, ?, ?, ?, {}, {}, 'open', NULL, NULL, NULL, NULL, NULL)",
                 uuid_list(&shape.observations),
                 uuid_list(&shape.identities)
             ),
@@ -338,4 +371,36 @@ pub(crate) fn resolve_assigned(conn: &Connection, seq: Seq) -> Result<()> {
         [seq.0 as i64],
     )?;
     Ok(())
+}
+
+/// Closes an open item as dismissed. Its observations keep having no
+/// identity, and later runs no longer examine them on its account.
+pub(crate) fn dismiss(
+    conn: &Connection,
+    id: u64,
+    actor: &Actor,
+    at_micros: i64,
+    reason: Option<&str>,
+) -> Result<ReviewRecord> {
+    let only = ReviewFilter {
+        id: Some(id),
+        ..ReviewFilter::default()
+    };
+    let item = list(conn, &only)?
+        .pop()
+        .ok_or(Error::UnknownReviewItem(id))?;
+    if item.status != ReviewStatus::Open {
+        return Err(Error::Review {
+            id,
+            message: format!("it is {} and cannot be dismissed", item.status.as_str()),
+        });
+    }
+    conn.execute(
+        "UPDATE spool.review_item
+         SET status = 'dismissed', closed_by = ?, closed_at = make_timestamptz(?),
+             closed_reason = ?
+         WHERE review_id = ?",
+        params![actor.to_string(), at_micros, reason, id as i64],
+    )?;
+    Ok(list(conn, &only)?.remove(0))
 }

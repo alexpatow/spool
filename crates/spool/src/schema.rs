@@ -7,7 +7,7 @@ use crate::error::{Error, Result};
 
 /// Written to `spool.meta` when a store is created and checked when one is
 /// opened.
-pub(crate) const FORMAT_VERSION: &str = "3";
+pub(crate) const FORMAT_VERSION: &str = "4";
 
 const TABLES: &str = "
 CREATE SCHEMA spool;
@@ -21,7 +21,7 @@ CREATE TABLE spool.observation (
   entity_type    VARCHAR     NOT NULL, -- a declared type
   source_id      VARCHAR     NOT NULL,
   source_key     VARCHAR,              -- key within the source: a row key, or an extracted mention's locator
-  supersedes     UUID,                 -- previous version of the same (source_id, source_key)
+  supersedes     UUID,                 -- previous version of the same (entity_type, source_id, source_key)
   payload        JSON        NOT NULL, -- attributes exactly as received
   evidence       JSON,                 -- where in the source the observation was found
   observed_at    TIMESTAMPTZ,          -- when the source says it held, if known
@@ -75,9 +75,12 @@ CREATE TABLE spool.review_item (       -- what a reconcile run would not decide;
   kind            VARCHAR NOT NULL,    -- 'possible_merge' | 'conflict'
   observation_ids UUID[]  NOT NULL,    -- the observations left without an identity
   identity_ids    UUID[]  NOT NULL,    -- the identities they matched; empty when the conflict is among the observations
-  status          VARCHAR NOT NULL,    -- 'open' | 'resolved' | 'superseded'
+  status          VARCHAR NOT NULL,    -- 'open' | 'resolved' | 'superseded' | 'dismissed'
   closed_seq      BIGINT,              -- resolved: the changeset after which every observation had an identity
-  closed_run      BIGINT               -- superseded: the reconcile run that raised it again in another form
+  closed_run      BIGINT,              -- superseded: the reconcile run that raised it again in another form
+  closed_by       VARCHAR,             -- dismissed: who decided, as an actor
+  closed_at       TIMESTAMPTZ,         -- dismissed: when
+  closed_reason   VARCHAR              -- dismissed: why, if the reviewer said
 );
 
 CREATE TABLE spool.draft (             -- a changeset a reconcile run drafted and left for review; kept
@@ -136,8 +139,9 @@ CREATE TABLE spool.identity (          -- projection
   identity_id UUID    NOT NULL,
   entity_type VARCHAR NOT NULL,
   created_seq BIGINT  NOT NULL,
-  merged_into UUID,                    -- always an active identity
-  merged_seq  BIGINT
+  merged_into  UUID,                   -- the active identity that stands for it; NULL while it is active
+  merged_seq   BIGINT,                 -- the merge that made it inactive
+  merge_target UUID                    -- the identity that merge named; not merged_into once that one is merged in turn
 );
 
 CREATE TABLE spool.membership (        -- projection with history; current rows have to_seq IS NULL
@@ -147,8 +151,8 @@ CREATE TABLE spool.membership (        -- projection with history; current rows 
   to_seq         BIGINT
 );
 
-CREATE TABLE spool.constraint_link (   -- projection with history
-  observation_a UUID    NOT NULL,
+CREATE TABLE spool.constraint_link (   -- projection with history; in force while to_seq IS NULL
+  observation_a UUID    NOT NULL,      -- observation_a < observation_b
   observation_b UUID    NOT NULL,
   kind          VARCHAR NOT NULL,
   from_seq      BIGINT  NOT NULL,
@@ -165,6 +169,11 @@ CREATE VIEW spool.identity_current AS
 CREATE VIEW spool.membership_current AS
   SELECT observation_id, identity_id, from_seq
   FROM spool.membership
+  WHERE to_seq IS NULL;
+
+CREATE VIEW spool.constraint_current AS
+  SELECT observation_a, observation_b, kind, from_seq
+  FROM spool.constraint_link
   WHERE to_seq IS NULL;
 
 CREATE VIEW spool.review_open AS

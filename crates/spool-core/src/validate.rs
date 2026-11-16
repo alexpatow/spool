@@ -1,12 +1,12 @@
 //! The rules every changeset must pass before a store applies it.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use serde::{Deserialize, Serialize};
 
-use crate::changeset::{Changeset, ContentHash, Op};
+use crate::changeset::{Changeset, ConstraintKind, ContentHash, Op};
 use crate::ids::{EntityType, IdentityId, ObservationId, Seq};
-use crate::state::{IdentityState, IdentityStatus, StateError};
+use crate::state::{Constraint, IdentityRecord, IdentityState, IdentityStatus, StateError};
 
 /// A changeset that passed [`validate`]. There is no other way to make one,
 /// and a store applies nothing else.
@@ -94,14 +94,89 @@ pub enum Reason {
         identity_type: EntityType,
     },
     #[error(
-        "observation {observation} was already assigned by operation {first_op}; a changeset may assign an observation once"
+        "observation {observation} was already moved by operation {first_op}; a changeset may move an observation once"
     )]
     ObservationAssignedTwice {
         observation: ObservationId,
         first_op: usize,
     },
-    #[error("`{kind}` operations are not implemented yet")]
-    NotImplemented { kind: String },
+    #[error("identity {identity} cannot be merged into itself")]
+    MergeIntoItself { identity: IdentityId },
+    #[error("identity {from} is a {from_type} and identity {into} is a {into_type}")]
+    IdentityTypeMismatch {
+        from: IdentityId,
+        from_type: EntityType,
+        into: IdentityId,
+        into_type: EntityType,
+    },
+    #[error(
+        "stale merge: the members of identity {identity} changed at log position {changed}, after the changeset's base {base}"
+    )]
+    StaleMerge {
+        identity: IdentityId,
+        changed: Seq,
+        base: Seq,
+    },
+    #[error(
+        "identity {identity} was given members by operation {first_op}, and merging it would move them again; a changeset may move an observation once"
+    )]
+    MembersMovedTwice {
+        identity: IdentityId,
+        first_op: usize,
+    },
+    #[error("identity {identity} is active, so there is nothing to reinstate")]
+    IdentityIsActive { identity: IdentityId },
+    #[error(
+        "identity {identity} was already merged or reinstated by operation {first_op}; a changeset may do that to an identity once"
+    )]
+    IdentityChangedTwice {
+        identity: IdentityId,
+        first_op: usize,
+    },
+    #[error("a constraint needs two observations, and both sides are {observation}")]
+    SameObservation { observation: ObservationId },
+    #[error("observation {a} is a {a_type} and observation {b} is a {b_type}")]
+    ConstraintAcrossTypes {
+        a: ObservationId,
+        a_type: EntityType,
+        b: ObservationId,
+        b_type: EntityType,
+    },
+    #[error("observations {a} and {b} already have a {} constraint", .kind.as_str())]
+    ConstraintExists {
+        kind: ConstraintKind,
+        a: ObservationId,
+        b: ObservationId,
+    },
+    #[error("observations {a} and {b} have no {} constraint", .kind.as_str())]
+    UnknownConstraint {
+        kind: ConstraintKind,
+        a: ObservationId,
+        b: ObservationId,
+    },
+    #[error(
+        "the {} constraint on observations {a} and {b} was already changed by operation {first_op}; a changeset may change a constraint once",
+        .kind.as_str()
+    )]
+    ConstraintChangedTwice {
+        kind: ConstraintKind,
+        a: ObservationId,
+        b: ObservationId,
+        first_op: usize,
+    },
+    #[error(
+        "observations {a} and {b} have a {} constraint, and would belong to identities {} and {}",
+        .kind.as_str(),
+        display_identity(.identity_a),
+        display_identity(.identity_b)
+    )]
+    ConstraintViolated {
+        kind: ConstraintKind,
+        a: ObservationId,
+        b: ObservationId,
+        identity_a: Option<IdentityId>,
+        identity_b: Option<IdentityId>,
+    },
 }
 
 fn display_identity(identity: &Option<IdentityId>) -> String {
@@ -129,6 +204,57 @@ impl ValidationError {
     }
 }
 
+/// An identity as the operations checked so far leave it.
+enum Known<'a> {
+    Missing,
+    Active(&'a EntityType),
+    /// Merged, and the identity that stands for it.
+    Merged(IdentityId),
+}
+
+/// What the operations checked so far have done, on top of the state the
+/// changeset would be committed to.
+#[derive(Default)]
+struct Pending<'a> {
+    existing: HashMap<IdentityId, Option<IdentityRecord>>,
+    created: HashMap<IdentityId, &'a EntityType>,
+    /// Merged by this changeset: the identity it was merged into, and by
+    /// which operation.
+    merged: HashMap<IdentityId, (IdentityId, usize)>,
+    reinstated: HashMap<IdentityId, usize>,
+    /// Identities that were given members, by the first operation that did.
+    received: HashMap<IdentityId, usize>,
+    /// Observations an `Assign` named, by the operation that did.
+    assigned: HashMap<ObservationId, usize>,
+    /// Where each assigned observation ends up.
+    placed: HashMap<ObservationId, Option<IdentityId>>,
+    constraints: BTreeSet<Constraint>,
+    constrained: HashMap<Constraint, usize>,
+}
+
+impl Pending<'_> {
+    fn identity(&self, id: &IdentityId) -> Known<'_> {
+        let entity_type = match self.created.get(id) {
+            Some(entity_type) => *entity_type,
+            None => match self.existing.get(id).and_then(Option::as_ref) {
+                None => return Known::Missing,
+                Some(record) => {
+                    if let IdentityStatus::MergedInto(survivor) = record.status
+                        && !self.reinstated.contains_key(id)
+                    {
+                        return Known::Merged(survivor);
+                    }
+                    &record.entity_type
+                }
+            },
+        };
+        match self.merged.get(id) {
+            Some((into, _)) => Known::Merged(*into),
+            None => Known::Active(entity_type),
+        }
+    }
+}
+
 /// Checks a changeset against the state it would be committed to.
 ///
 /// Operations are checked in order, each against the state the earlier ones
@@ -141,27 +267,34 @@ impl ValidationError {
 /// - an observation belongs to at most one identity, and is assigned only to
 ///   an active identity of its own entity type;
 /// - an identity ID is never reused;
-/// - a changeset assigns an observation at most once, because membership
-///   history has one position per changeset.
+/// - only active identities of one entity type are merged, and only if their
+///   members are the ones the author saw;
+/// - the state the changeset leaves behind breaks no constraint;
+/// - a changeset moves an observation at most once, and merges or reinstates
+///   an identity at most once, because history has one position per
+///   changeset.
 pub fn validate<S: IdentityState + ?Sized>(
     state: &S,
     changeset: Changeset,
 ) -> Result<Validated, ValidationError> {
     let mut rejections = Vec::new();
-    let mut reject = |op: Option<(usize, &Op)>, reason: Reason| {
-        rejections.push(Rejection {
-            op_index: op.map(|(index, _)| index),
-            op: op.map(|(_, op)| op.clone()),
-            reason,
-        });
-    };
+    macro_rules! reject {
+        ($op:expr, $reason:expr $(,)?) => {{
+            let op: Option<(usize, &Op)> = $op;
+            rejections.push(Rejection {
+                op_index: op.map(|(index, _)| index),
+                op: op.map(|(_, op)| op.clone()),
+                reason: $reason,
+            })
+        }};
+    }
 
     if changeset.ops.is_empty() {
-        reject(None, Reason::EmptyChangeset);
+        reject!(None, Reason::EmptyChangeset);
     }
     let head = state.head()?;
     if changeset.base > head {
-        reject(
+        reject!(
             None,
             Reason::BaseAhead {
                 base: changeset.base,
@@ -170,46 +303,72 @@ pub fn validate<S: IdentityState + ?Sized>(
         );
     }
     if let Some(seq) = state.changeset_seq(changeset.id)? {
-        reject(None, Reason::AlreadyCommitted { seq });
+        reject!(None, Reason::AlreadyCommitted { seq });
     }
 
     let mut observations = Vec::new();
     let mut identities = Vec::new();
+    let mut merging = Vec::new();
+    let mut merged_away = Vec::new();
     for op in &changeset.ops {
         match op {
-            Op::CreateIdentity { identity, .. } => identities.push(*identity),
+            Op::CreateIdentity { identity, .. } | Op::Reinstate { identity } => {
+                identities.push(*identity);
+            }
             Op::Assign {
                 observation, to, ..
             } => {
                 observations.push(*observation);
                 identities.extend(*to);
             }
-            _ => {}
+            Op::Merge { from, into } => {
+                identities.extend([*from, *into]);
+                merging.extend([*from, *into]);
+                merged_away.push(*from);
+            }
+            Op::Constrain { a, b, .. } | Op::Unconstrain { a, b, .. } => {
+                observations.extend([*a, *b]);
+            }
         }
+    }
+    for ids in [&mut identities, &mut merging, &mut merged_away] {
+        ids.sort_unstable();
+        ids.dedup();
     }
     observations.sort_unstable();
     observations.dedup();
-    identities.sort_unstable();
-    identities.dedup();
 
     let types: HashMap<_, _> = observations
         .iter()
         .copied()
         .zip(state.observation_types(&observations)?)
         .collect();
-    let assigned: HashMap<_, _> = observations
+    let mut assigned: HashMap<_, _> = observations
         .iter()
         .copied()
         .zip(state.assignments(&observations)?)
         .collect();
-    let existing: HashMap<_, _> = identities
+    let changed: HashMap<_, _> = merging
         .iter()
         .copied()
-        .zip(state.identities(&identities)?)
+        .zip(state.membership_changed(&merging)?)
         .collect();
 
-    let mut created: HashMap<IdentityId, &EntityType> = HashMap::new();
-    let mut assigned_by: HashMap<ObservationId, usize> = HashMap::new();
+    // The constraints this changeset names or could break: those on the
+    // observations it names, and those on the members a merge moves.
+    let mut pending = Pending {
+        existing: identities
+            .iter()
+            .copied()
+            .zip(state.identities(&identities)?)
+            .collect(),
+        constraints: state
+            .constraints_on(&observations)?
+            .into_iter()
+            .chain(state.constraints_of_members(&merged_away)?)
+            .collect(),
+        ..Pending::default()
+    };
 
     for (index, op) in changeset.ops.iter().enumerate() {
         let at = Some((index, op));
@@ -218,16 +377,16 @@ pub fn validate<S: IdentityState + ?Sized>(
                 identity,
                 entity_type,
             } => {
-                let exists = existing.get(identity).is_some_and(Option::is_some);
-                if exists || created.contains_key(identity) {
-                    reject(
+                let exists = pending.existing.get(identity).is_some_and(Option::is_some);
+                if exists || pending.created.contains_key(identity) {
+                    reject!(
                         at,
                         Reason::IdentityExists {
                             identity: *identity,
                         },
                     );
                 } else {
-                    created.insert(*identity, entity_type);
+                    pending.created.insert(*identity, entity_type);
                 }
             }
             Op::Assign {
@@ -236,7 +395,7 @@ pub fn validate<S: IdentityState + ?Sized>(
                 to,
             } => {
                 let Some(observation_type) = types.get(observation).and_then(Option::as_ref) else {
-                    reject(
+                    reject!(
                         at,
                         Reason::UnknownObservation {
                             observation: *observation,
@@ -244,20 +403,27 @@ pub fn validate<S: IdentityState + ?Sized>(
                     );
                     continue;
                 };
-                if let Some(first_op) = assigned_by.insert(*observation, index) {
-                    assigned_by.insert(*observation, first_op);
-                    reject(
+                if let Some(first_op) = pending.assigned.get(observation) {
+                    reject!(
                         at,
                         Reason::ObservationAssignedTwice {
                             observation: *observation,
-                            first_op,
+                            first_op: *first_op,
                         },
                     );
                     continue;
                 }
-                let actual = assigned.get(observation).copied().flatten();
+                pending.assigned.insert(*observation, index);
+                // A merge earlier in the changeset moved the members of the
+                // identity it merged away.
+                let before = assigned.get(observation).copied().flatten();
+                let moved = before.and_then(|identity| pending.merged.get(&identity).copied());
+                let actual = match moved {
+                    Some((into, _)) => Some(into),
+                    None => before,
+                };
                 if actual != *from {
-                    reject(
+                    reject!(
                         at,
                         Reason::StaleAssignment {
                             observation: *observation,
@@ -267,8 +433,18 @@ pub fn validate<S: IdentityState + ?Sized>(
                     );
                     continue;
                 }
+                if let Some((_, first_op)) = moved {
+                    reject!(
+                        at,
+                        Reason::ObservationAssignedTwice {
+                            observation: *observation,
+                            first_op,
+                        },
+                    );
+                    continue;
+                }
                 if from == to {
-                    reject(
+                    reject!(
                         at,
                         Reason::NoChange {
                             observation: *observation,
@@ -276,51 +452,286 @@ pub fn validate<S: IdentityState + ?Sized>(
                     );
                     continue;
                 }
+                pending.placed.insert(*observation, *to);
                 let Some(target) = to else { continue };
-                let identity_type = if let Some(entity_type) = created.get(target) {
-                    *entity_type
-                } else {
-                    match existing.get(target).and_then(Option::as_ref) {
-                        None => {
-                            reject(at, Reason::UnknownIdentity { identity: *target });
-                            continue;
-                        }
-                        Some(record) => match record.status {
-                            IdentityStatus::MergedInto(merged_into) => {
-                                reject(
-                                    at,
-                                    Reason::IdentityNotActive {
-                                        identity: *target,
-                                        merged_into,
-                                    },
-                                );
-                                continue;
-                            }
-                            IdentityStatus::Active => &record.entity_type,
-                        },
+                let identity_type = match pending.identity(target) {
+                    Known::Missing => {
+                        reject!(at, Reason::UnknownIdentity { identity: *target });
+                        continue;
                     }
+                    Known::Merged(merged_into) => {
+                        reject!(
+                            at,
+                            Reason::IdentityNotActive {
+                                identity: *target,
+                                merged_into,
+                            },
+                        );
+                        continue;
+                    }
+                    Known::Active(entity_type) => entity_type.clone(),
                 };
-                if identity_type != observation_type {
-                    reject(
+                if identity_type != *observation_type {
+                    reject!(
                         at,
                         Reason::EntityTypeMismatch {
                             observation: *observation,
                             observation_type: observation_type.clone(),
                             identity: *target,
-                            identity_type: identity_type.clone(),
+                            identity_type,
                         },
                     );
+                    continue;
+                }
+                pending.received.entry(*target).or_insert(index);
+            }
+            Op::Merge { from, into } => {
+                if from == into {
+                    reject!(at, Reason::MergeIntoItself { identity: *from });
+                    continue;
+                }
+                let mut entity_types = Vec::new();
+                for identity in [from, into] {
+                    match pending.identity(identity) {
+                        Known::Missing => reject!(
+                            at,
+                            Reason::UnknownIdentity {
+                                identity: *identity,
+                            },
+                        ),
+                        Known::Merged(merged_into) => reject!(
+                            at,
+                            Reason::IdentityNotActive {
+                                identity: *identity,
+                                merged_into,
+                            },
+                        ),
+                        Known::Active(entity_type) => entity_types.push(entity_type.clone()),
+                    }
+                }
+                let [from_type, into_type] = entity_types.as_slice() else {
+                    continue;
+                };
+                if from_type != into_type {
+                    reject!(
+                        at,
+                        Reason::IdentityTypeMismatch {
+                            from: *from,
+                            from_type: from_type.clone(),
+                            into: *into,
+                            into_type: into_type.clone(),
+                        },
+                    );
+                    continue;
+                }
+                if let Some(first_op) = pending.reinstated.get(from) {
+                    reject!(
+                        at,
+                        Reason::IdentityChangedTwice {
+                            identity: *from,
+                            first_op: *first_op,
+                        },
+                    );
+                    continue;
+                }
+                if let Some(first_op) = pending.received.get(from) {
+                    reject!(
+                        at,
+                        Reason::MembersMovedTwice {
+                            identity: *from,
+                            first_op: *first_op,
+                        },
+                    );
+                    continue;
+                }
+                let stale = [from, into].into_iter().find_map(|identity| {
+                    let changed = changed.get(identity).copied().unwrap_or(Seq::ZERO);
+                    (changed > changeset.base).then_some((*identity, changed))
+                });
+                if let Some((identity, changed)) = stale {
+                    reject!(
+                        at,
+                        Reason::StaleMerge {
+                            identity,
+                            changed,
+                            base: changeset.base,
+                        },
+                    );
+                    continue;
+                }
+                pending.merged.insert(*from, (*into, index));
+                pending.received.entry(*into).or_insert(index);
+            }
+            Op::Reinstate { identity } => {
+                let first_op = pending
+                    .merged
+                    .get(identity)
+                    .map(|(_, first_op)| *first_op)
+                    .or_else(|| pending.reinstated.get(identity).copied());
+                if let Some(first_op) = first_op {
+                    reject!(
+                        at,
+                        Reason::IdentityChangedTwice {
+                            identity: *identity,
+                            first_op,
+                        },
+                    );
+                    continue;
+                }
+                match pending.identity(identity) {
+                    Known::Missing => reject!(
+                        at,
+                        Reason::UnknownIdentity {
+                            identity: *identity,
+                        },
+                    ),
+                    Known::Active(_) => reject!(
+                        at,
+                        Reason::IdentityIsActive {
+                            identity: *identity,
+                        },
+                    ),
+                    Known::Merged(_) => {
+                        pending.reinstated.insert(*identity, index);
+                    }
                 }
             }
-            Op::Merge { .. }
-            | Op::Constrain { .. }
-            | Op::Unconstrain { .. }
-            | Op::Reinstate { .. } => reject(
-                at,
-                Reason::NotImplemented {
-                    kind: op.kind().to_owned(),
+            Op::Constrain { kind, a, b } | Op::Unconstrain { kind, a, b } => {
+                if a == b {
+                    reject!(at, Reason::SameObservation { observation: *a });
+                    continue;
+                }
+                let known =
+                    |observation: &ObservationId| types.get(observation).and_then(Option::as_ref);
+                let (a_type, b_type) = match (known(a), known(b)) {
+                    (Some(a_type), Some(b_type)) => (a_type, b_type),
+                    (None, _) => {
+                        reject!(at, Reason::UnknownObservation { observation: *a });
+                        continue;
+                    }
+                    (_, None) => {
+                        reject!(at, Reason::UnknownObservation { observation: *b });
+                        continue;
+                    }
+                };
+                if a_type != b_type {
+                    reject!(
+                        at,
+                        Reason::ConstraintAcrossTypes {
+                            a: *a,
+                            a_type: a_type.clone(),
+                            b: *b,
+                            b_type: b_type.clone(),
+                        },
+                    );
+                    continue;
+                }
+                let constraint = Constraint::new(*kind, *a, *b);
+                if let Some(first_op) = pending.constrained.get(&constraint) {
+                    reject!(
+                        at,
+                        Reason::ConstraintChangedTwice {
+                            kind: *kind,
+                            a: *a,
+                            b: *b,
+                            first_op: *first_op,
+                        },
+                    );
+                    continue;
+                }
+                let in_force = pending.constraints.contains(&constraint);
+                if matches!(op, Op::Constrain { .. }) {
+                    // A pair has one constraint. Both kinds at once would
+                    // hold only while one of the two has no identity.
+                    let other = Constraint::new(
+                        match kind {
+                            ConstraintKind::MustLink => ConstraintKind::CannotLink,
+                            ConstraintKind::CannotLink => ConstraintKind::MustLink,
+                        },
+                        *a,
+                        *b,
+                    );
+                    let existing = if in_force {
+                        Some(*kind)
+                    } else if pending.constraints.contains(&other) {
+                        Some(other.kind)
+                    } else {
+                        None
+                    };
+                    if let Some(kind) = existing {
+                        reject!(at, Reason::ConstraintExists { kind, a: *a, b: *b },);
+                        continue;
+                    }
+                    pending.constraints.insert(constraint);
+                } else {
+                    if !in_force {
+                        reject!(
+                            at,
+                            Reason::UnknownConstraint {
+                                kind: *kind,
+                                a: *a,
+                                b: *b,
+                            },
+                        );
+                        continue;
+                    }
+                    pending.constraints.remove(&constraint);
+                }
+                pending.constrained.insert(constraint, index);
+            }
+        }
+    }
+
+    // Each operation held. What is left is the state they add up to: no
+    // constraint in force may be broken by it.
+    if rejections.is_empty() {
+        let mut others: Vec<ObservationId> = pending
+            .constraints
+            .iter()
+            .flat_map(|constraint| [constraint.a, constraint.b])
+            .filter(|observation| !assigned.contains_key(observation))
+            .collect();
+        others.sort_unstable();
+        others.dedup();
+        let found = state.assignments(&others)?;
+        assigned.extend(others.into_iter().zip(found));
+
+        // Where an observation ends up, and the operation that moved it.
+        let end = |observation: &ObservationId| -> (Option<IdentityId>, Option<usize>) {
+            if let Some(to) = pending.placed.get(observation) {
+                return (*to, pending.assigned.get(observation).copied());
+            }
+            let before = assigned.get(observation).copied().flatten();
+            match before.and_then(|identity| pending.merged.get(&identity)) {
+                Some((into, index)) => (Some(*into), Some(*index)),
+                None => (before, None),
+            }
+        };
+        for constraint in &pending.constraints {
+            let ((identity_a, moved_a), (identity_b, moved_b)) =
+                (end(&constraint.a), end(&constraint.b));
+            if constraint.holds(identity_a, identity_b) {
+                continue;
+            }
+            // The last operation that had a part in it is the one to name.
+            let index = [
+                moved_a,
+                moved_b,
+                pending.constrained.get(constraint).copied(),
+            ]
+            .into_iter()
+            .flatten()
+            .max();
+            reject!(
+                index.map(|index| (index, &changeset.ops[index])),
+                Reason::ConstraintViolated {
+                    kind: constraint.kind,
+                    a: constraint.a,
+                    b: constraint.b,
+                    identity_a,
+                    identity_b,
                 },
-            ),
+            );
         }
     }
 

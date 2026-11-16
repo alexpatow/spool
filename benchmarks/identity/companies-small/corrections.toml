@@ -1,0 +1,81 @@
+# The companies of `scenario.toml`, with a reviewer at work between the batches.
+#
+# It measures what resolution alone cannot: what a wrong merge costs, whether
+# a split survives the next batch, and whether the reviewer's decisions are
+# still honoured at the end.
+#
+#   a merge that is undone   the two Atlas Trading companies, merged and put back
+#   a merge that is split    the two Pioneer Supplies companies, merged and split apart
+#   a missed match           "Orchard" is ORCHARD FOODS LIMITED, which only a reviewer knows
+#   a review item            c-117 fits both Pioneer Supplies companies, and a reviewer places it
+
+project = "."
+
+[truth]
+file = "truth.csv"
+
+[[step]]
+name = "batch one"
+
+[[step.ingest]]
+file = "batch-1-crm.csv"
+source = "crm"
+entity_type = "company"
+key = "id"
+
+[[step.ingest]]
+file = "batch-1-registry.csv"
+source = "registry"
+entity_type = "company"
+key = "number"
+
+[[step]]
+name = "two wrong merges"
+
+[[step.correct]]
+name = "atlas"
+merge = ["crm:c-109", "crm:c-108"]
+reason = "same name, taken for one company"
+
+[[step.correct]]
+merge = ["registry:X0000010", "registry:X0000009"]
+reason = "same name, taken for one company"
+
+[[step]]
+name = "the merges are put right"
+
+[[step.correct]]
+undo = "atlas"
+
+[[step.correct]]
+split = ["registry:X0000010"]
+reason = "the Bristol company is another company"
+
+[[step.correct]]
+merge = ["crm:c-111", "registry:X0000011"]
+reason = "Orchard is Orchard Foods"
+
+[[step.correct]]
+must_link = ["crm:c-111", "registry:X0000011"]
+
+[[step]]
+name = "batch two"
+
+[[step.ingest]]
+file = "batch-2-crm.csv"
+source = "crm"
+entity_type = "company"
+key = "id"
+
+[[step.ingest]]
+file = "batch-2-registry.csv"
+source = "registry"
+entity_type = "company"
+key = "number"
+
+[[step]]
+name = "the review item is placed"
+
+[[step.correct]]
+assign = ["crm:c-117", "registry:X0000010"]
+reason = "the Bristol company"

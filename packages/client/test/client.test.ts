@@ -218,6 +218,132 @@ describe("drafts", () => {
   });
 });
 
+describe("a reviewer", () => {
+  const actor = "user:reviewer";
+
+  async function thing(client: SpoolClient, key: string) {
+    const { observations } = await client.observations({ source: "shop", key });
+    expect(observations).toHaveLength(1);
+    return observations[0]!;
+  }
+
+  async function keys(client: SpoolClient, identity: string): Promise<string[]> {
+    const view = await client.identity(identity);
+    return view.members.map((member) => member.key!).sort();
+  }
+
+  test("merges two identities and takes the merge back", async () => {
+    const { client } = await thingsServer(9);
+    await ingestThings(client, [
+      { id: "1", code: "anvil" },
+      { id: "2", code: "hammer" },
+    ]);
+    await client.startRun({ entity_type: "thing" });
+    const anvil = (await thing(client, "1")).identity!;
+    const hammer = (await thing(client, "2")).identity!;
+
+    // No ID and no base: the server mints one and takes the head of the log.
+    const merged = await client.commit({
+      actor,
+      reason: "one tool",
+      ops: [{ op: "merge", from: anvil, into: hammer }],
+    });
+    expect(merged.seq).toBe(2);
+    // The merged ID still answers, with the identity that stands for it.
+    expect(await client.identity(anvil)).toMatchObject({ id: anvil, current: hammer });
+    expect(await keys(client, anvil)).toEqual(["1", "2"]);
+
+    const preview = await client.undo(merged.seq, { actor, commit: false });
+    expect(preview.committed ?? null).toBeNull();
+    expect(preview.changeset.ops.map((op) => op.op)).toEqual(["reinstate", "assign"]);
+    expect((await client.changesets()).head).toBe(2);
+
+    const undone = await client.undo(merged.seq, { actor });
+    expect(undone.committed?.seq).toBe(3);
+    expect(await client.identity(anvil)).toMatchObject({ id: anvil, current: anvil });
+    expect(await keys(client, anvil)).toEqual(["1"]);
+    expect(await keys(client, hammer)).toEqual(["2"]);
+
+    expect((await failureOf(client.undo(99, { actor }))).code).toBe("not_found");
+    // A merge written before the undo is stale, and says so.
+    const stale = await failureOf(
+      client.commit({ actor, base: 1, ops: [{ op: "merge", from: anvil, into: hammer }] }),
+    );
+    expect(stale.code).toBe("rejected");
+    expect(stale.rejections[0]).toMatchObject({ op_index: 0, reason: { reason: "stale_merge" } });
+  });
+
+  test("splits an identity, and the constraint keeps the sides apart", async () => {
+    const { client } = await thingsServer(10);
+    await ingestThings(client, [
+      { id: "1", code: "anvil" },
+      { id: "2", code: "anvil" },
+      { id: "3", code: "anvil" },
+    ]);
+    await client.startRun({ entity_type: "thing" });
+    const third = await thing(client, "3");
+    const anvils = third.identity!;
+
+    const split = await client.split(anvils, { observations: [third.id], actor, reason: "another anvil" });
+    expect(split).toMatchObject({ kept: anvils, moved: [third.id] });
+    expect(await keys(client, anvils)).toEqual(["1", "2"]);
+    expect(await keys(client, split.identity)).toEqual(["3"]);
+
+    const constraints = await client.constraints();
+    expect(constraints).toHaveLength(1);
+    expect(constraints[0]).toMatchObject({ kind: "cannot_link", from: split.committed.seq });
+    expect([constraints[0]!.a, constraints[0]!.b]).toContain(third.id);
+    expect(await client.constraints({ observation: third.id })).toEqual(constraints);
+    expect(await client.constraints({ identity: split.identity })).toEqual(constraints);
+
+    // Merging the sides again would break the constraint.
+    const merge = await failureOf(
+      client.commit({ actor, ops: [{ op: "merge", from: split.identity, into: anvils }] }),
+    );
+    expect(merge.rejections[0]).toMatchObject({ reason: { reason: "constraint_violated" } });
+
+    // A fourth anvil matches both sides, and is left for the reviewer, who
+    // closes the item without placing it.
+    await ingestThings(client, [{ id: "4", code: "anvil" }]);
+    await client.startRun({ entity_type: "thing" });
+    const [item] = await client.reviewItems({ status: "open" });
+    expect(item!.kind).toBe("possible_merge");
+    expect(await client.reviewItem(item!.id)).toEqual(item!);
+
+    const dismissed = await client.dismissReview(item!.id, { actor, reason: "not ours" });
+    expect(dismissed).toMatchObject({ status: "dismissed", dismissed: { by: actor, reason: "not ours" } });
+    expect(await client.reviewItems({ status: "open" })).toEqual([]);
+    expect(await client.startRun({ entity_type: "thing" })).toBeNull();
+    expect((await thing(client, "4")).identity ?? null).toBeNull();
+    expect((await failureOf(client.dismissReview(item!.id, { actor }))).code).toBe("conflict");
+    expect((await failureOf(client.reviewItem(999))).code).toBe("not_found");
+
+    // Removing the constraint leaves it in the history.
+    const { a, b } = constraints[0]!;
+    const removed = await client.commit({ actor, ops: [{ op: "unconstrain", kind: "cannot_link", a, b }] });
+    expect(await client.constraints()).toEqual([]);
+    expect(await client.constraints({ removed: true })).toMatchObject([{ a, b, to: removed.seq }]);
+  });
+
+  test("a row that changed supersedes the one before", async () => {
+    const { client } = await thingsServer(11);
+    await ingestThings(client, [{ id: "1", code: "anvil" }]);
+    await client.startRun({ entity_type: "thing" });
+    const first = await thing(client, "1");
+
+    const run = await ingestThings(client, [{ id: "1", code: "anvil", weight: "50kg" }]);
+    expect(run.ingest?.superseded).toBe(1);
+    await client.startRun({ entity_type: "thing" });
+
+    const { observations } = await client.observations({ source: "shop", key: "1" });
+    expect(observations).toHaveLength(2);
+    const second = observations.find((observation) => observation.id !== first.id)!;
+    expect(second.supersedes).toBe(first.id);
+    expect((await client.observation(first.id)).superseded_by).toBe(second.id);
+    expect(second.identity).toBe(first.identity!);
+  });
+});
+
 describe("a run judged by the caller", () => {
   test("candidates are read, judged and reconciled", async () => {
     const { client } = await thingsServer(4);

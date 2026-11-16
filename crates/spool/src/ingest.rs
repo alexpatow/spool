@@ -47,10 +47,15 @@ pub struct IngestReport {
     pub inserted: u64,
     /// Rows that were already known, or repeated within this call.
     pub duplicates: u64,
+    /// Observations created as a new version of a row the source had sent
+    /// before under the same key with other content.
+    #[serde(default)]
+    pub superseded: u64,
 }
 
 /// The rows of one incoming batch that were not seen earlier in this call,
-/// as a batch of `observation_id`, `source_key`, `payload` and `evidence`.
+/// as a batch of `ord`, `observation_id`, `source_key`, `payload` and
+/// `evidence`. `ord` is the row's position in the call.
 pub(crate) fn stage(
     source: &str,
     incoming: &RecordBatch,
@@ -77,6 +82,7 @@ pub(crate) fn stage(
         readers.push((field.name().as_str(), Reader::new(incoming.column(index))?));
     }
 
+    let mut ords = Vec::new();
     let mut ids = Vec::new();
     let mut keys = Vec::new();
     let mut payloads = Vec::new();
@@ -131,6 +137,7 @@ pub(crate) fn stage(
             .map_err(|error| fail(format!("the payload cannot be encoded: {error}")))?;
         let id = ObservationId::derive(source, key.as_deref(), &payload);
         if seen.insert(id) {
+            ords.push(row_number as i64);
             ids.push(Some(id.to_string()));
             keys.push(key);
             payloads.push(Some(payload));
@@ -142,6 +149,7 @@ pub(crate) fn stage(
         return Ok(None);
     }
     Ok(Some(batch(vec![
+        ("ord", Column::Integer(ords)),
         ("observation_id", Column::Text(ids)),
         ("source_key", Column::Text(keys)),
         ("payload", Column::Text(payloads)),

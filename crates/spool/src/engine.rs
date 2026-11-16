@@ -1,7 +1,7 @@
 //! The engine: one type that owns the store and is the whole API.
 
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 
@@ -11,10 +11,11 @@ use duckdb::{Connection, params};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use spool_core::{
-    Changeset, ChangesetId, Clock, Committed, Draft, EntityType, EvidenceSummary, IdGenerator,
-    IdentityId, IdentityLink, IdentityStatus, IdentityStore, LogEntry, MemoryState, NewObservation,
-    NewPair, ObservationId, Policy, RandomIds, ReviewItem, RunId, SeededIds, Seq, Snapshot,
-    StepClock, SystemClock, Verdict, reconcile, validate,
+    Actor, Changeset, ChangesetId, Clock, Committed, ConstraintKind, ConstraintRecord, Draft,
+    EntityType, EvidenceSummary, IdGenerator, IdentityId, IdentityLink, IdentityState,
+    IdentityStatus, IdentityStore, LogEntry, MemoryState, NewObservation, NewPair, ObservationId,
+    Op, Policy, RandomIds, ReviewItem, RunId, SeededIds, Seq, Snapshot, StepClock, SystemClock,
+    Verdict, inverse, reconcile, validate,
 };
 
 use crate::drafts::{self, DraftFilter, DraftRecord, DraftStatus, DraftSummary};
@@ -25,7 +26,7 @@ use crate::lookup::{
     self, HistoryEntry, IdentityFilter, IdentitySummary, IdentityView, ObservationFilter,
     ObservationRecord, StoreInfo,
 };
-use crate::metrics::{self, IdStability, Metrics};
+use crate::metrics::{self, Churn, IdStability, Metrics};
 use crate::project::{EntityTypeManifest, Manifest, hash_json};
 use crate::review::{self, ReviewFilter, ReviewRecord};
 use crate::rows::Rows;
@@ -173,6 +174,41 @@ pub struct JudgementCounts {
     pub match_: u64,
     pub no_match: u64,
     pub unsure: u64,
+}
+
+/// A changeset the engine wrote for a caller, and its receipt.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct Authored {
+    pub changeset: Changeset,
+    /// `None` when the caller asked only to see the changeset. It was
+    /// validated all the same.
+    pub committed: Option<Committed>,
+}
+
+/// What a split did.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct SplitReport {
+    /// The identity that was split. It keeps its ID and the larger side.
+    pub kept: IdentityId,
+    /// The new identity.
+    pub identity: IdentityId,
+    /// The observations that moved to the new identity, in order.
+    pub moved: Vec<ObservationId>,
+    pub changeset: Changeset,
+    pub committed: Committed,
+}
+
+/// Which constraints to list. The default lists those in force.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ConstraintFilter {
+    /// Only those that name this observation.
+    pub observation: Option<ObservationId>,
+    /// Only those that name a current member of this identity.
+    pub identity: Option<IdentityId>,
+    /// Also those that were removed.
+    pub include_removed: bool,
 }
 
 /// IDs minted for a caller that writes its own changesets.
@@ -494,6 +530,69 @@ impl Engine {
         self.lock().commit(changeset)
     }
 
+    /// Writes a changeset from operations and commits it. The engine mints
+    /// the changeset's ID and bases it on the head of the log, so this is for
+    /// a caller that has just read the state it is changing. A caller that
+    /// wants its own base checked, as a merge written from an older read
+    /// should be, writes the changeset itself and calls
+    /// [`commit`](Self::commit).
+    pub fn author(&self, actor: Actor, reason: Option<String>, ops: Vec<Op>) -> Result<Authored> {
+        self.lock().author(actor, reason, ops, true)
+    }
+
+    /// Takes back the changeset at a log position with a new changeset, which
+    /// is validated like any other: an undo that no longer fits the state is
+    /// rejected, and the rejection names the operation that does not fit.
+    /// See [`inverse`] for what undoing each kind of operation means.
+    ///
+    /// With `commit` unset the changeset is validated and returned without
+    /// being committed.
+    pub fn undo(
+        &self,
+        seq: Seq,
+        actor: Actor,
+        reason: Option<String>,
+        commit: bool,
+    ) -> Result<Authored> {
+        self.lock().undo(seq, actor, reason, commit)
+    }
+
+    /// Splits an identity in two: the named observations on one side, the
+    /// rest of its members on the other. The larger side keeps the ID, the
+    /// side that was not named on a tie, and the other side gets a new
+    /// identity. With `keep_apart`, a `cannot_link` constraint between the
+    /// two sides is recorded in the same changeset, so that nothing puts
+    /// them back together unnoticed.
+    pub fn split(
+        &self,
+        identity: IdentityId,
+        observations: &[ObservationId],
+        keep_apart: bool,
+        actor: Actor,
+        reason: Option<String>,
+    ) -> Result<SplitReport> {
+        self.lock()
+            .split(identity, observations, keep_apart, actor, reason)
+    }
+
+    /// Constraints, ordered by their observations.
+    pub fn constraints(&self, filter: &ConstraintFilter) -> Result<Vec<ConstraintRecord>> {
+        self.read(|conn| constraints(conn, filter))
+    }
+
+    /// Closes an open review item without giving its observations an
+    /// identity. Later runs no longer examine them on its account.
+    pub fn dismiss_review(
+        &self,
+        id: u64,
+        actor: &Actor,
+        reason: Option<&str>,
+    ) -> Result<ReviewRecord> {
+        let mut inner = self.lock();
+        let now = inner.store.clock.now_micros();
+        review::dismiss(&inner.store.conn, id, actor, now, reason)
+    }
+
     /// Commits a stored draft. It is validated like any changeset: if state
     /// has moved under it, the rejections name the operations that no longer
     /// hold, and the draft stays open.
@@ -699,7 +798,45 @@ impl Engine {
     pub fn id_stability(&self, before: Seq, after: Seq) -> Result<IdStability> {
         self.read(|conn| metrics::id_stability(conn, before, after))
     }
+
+    /// What changed between two log positions, against the number of
+    /// observations that arrived in between.
+    pub fn churn(&self, before: Seq, after: Seq, new_observations: u64) -> Result<Churn> {
+        self.read(|conn| metrics::churn(conn, before, after, new_observations))
+    }
 }
+
+fn constraints(conn: &Connection, filter: &ConstraintFilter) -> Result<Vec<ConstraintRecord>> {
+    let mut statement = conn.prepare(
+        "SELECT c.observation_a::VARCHAR, c.observation_b::VARCHAR, c.kind, c.from_seq, c.to_seq
+         FROM spool.constraint_link c
+         WHERE ($1::BOOLEAN OR c.to_seq IS NULL)
+           AND ($2::VARCHAR IS NULL OR $2::UUID IN (c.observation_a, c.observation_b))
+           AND ($3::VARCHAR IS NULL OR EXISTS (
+                 SELECT 1 FROM spool.membership m
+                 WHERE m.to_seq IS NULL AND m.identity_id = $3::UUID
+                   AND m.observation_id IN (c.observation_a, c.observation_b)))",
+    )?;
+    let mut rows = statement.query(params![
+        filter.include_removed,
+        filter.observation.map(|id| id.to_string()),
+        filter.identity.map(|id| id.to_string()),
+    ])?;
+    let mut found = Vec::new();
+    while let Some(row) = rows.next()? {
+        found.push(ConstraintRecord {
+            constraint: store::constraint(row, 0)?,
+            from: Seq(row.get::<_, i64>(3)? as u64),
+            to: row.get::<_, Option<i64>>(4)?.map(|seq| Seq(seq as u64)),
+        });
+    }
+    found.sort();
+    Ok(found)
+}
+
+/// The name of the temporary table that holds the judgements a reconcile run
+/// goes by.
+const JUDGED: &str = "spool_judged";
 
 /// The candidate pairs of a run with both sides' features.
 fn candidates(conn: &Connection, run: RunId) -> Result<Rows> {
@@ -1000,14 +1137,33 @@ impl Inner {
                     )));
                 }
 
+                // A new row under a key the source has used before is the
+                // next version of that row. It supersedes the latest version
+                // the store holds, or the one before it in this call.
                 inserted += tx.execute(
                     "INSERT INTO spool.observation
-                     SELECT s.observation_id::UUID, ?, ?, s.source_key, NULL,
-                            s.payload::JSON, s.evidence::JSON, NULL, make_timestamptz(?), ?
-                     FROM arrow(?) s
-                     WHERE NOT EXISTS (
-                       SELECT 1 FROM spool.observation o
-                       WHERE o.observation_id = s.observation_id::UUID)",
+                     SELECT n.observation_id, $1, $2, n.source_key,
+                            CASE WHEN n.source_key IS NOT NULL THEN coalesce(
+                              lag(n.observation_id) OVER (PARTITION BY n.source_key ORDER BY n.ord),
+                              latest.observation_id) END,
+                            n.payload::JSON, n.evidence::JSON, NULL, make_timestamptz($3), $4
+                     FROM (
+                       SELECT s.observation_id::UUID AS observation_id, s.source_key,
+                              s.payload, s.evidence, s.ord
+                       FROM arrow($5) s
+                       WHERE NOT EXISTS (
+                         SELECT 1 FROM spool.observation o
+                         WHERE o.observation_id = s.observation_id::UUID)
+                     ) n
+                     LEFT JOIN (
+                       SELECT o.source_key, o.observation_id
+                       FROM spool.observation o
+                       WHERE o.entity_type = $1 AND o.source_id = $2
+                         AND o.source_key IS NOT NULL
+                         AND NOT EXISTS (
+                           SELECT 1 FROM spool.observation later
+                           WHERE later.supersedes = o.observation_id)
+                     ) latest ON latest.source_key = n.source_key",
                     params![
                         name.as_str(),
                         source,
@@ -1028,11 +1184,18 @@ impl Inner {
             if let Some(problem) = problem {
                 return Err(Error::Ingest(problem));
             }
+            let superseded: i64 = tx.query_row(
+                "SELECT count(*) FROM spool.observation
+                 WHERE ingest_run = ? AND supersedes IS NOT NULL",
+                [run.0 as i64],
+                |row| row.get(0),
+            )?;
             let report = IngestReport {
                 run,
                 received,
                 inserted,
                 duplicates: received - inserted,
+                superseded: superseded as u64,
             };
             let finished = inner.store.clock.now_micros();
             tx.execute(
@@ -1385,6 +1548,44 @@ impl Inner {
             "DELETE FROM {scope} WHERE observation_id IN (
                SELECT observation_id FROM spool.membership WHERE to_seq IS NULL)"
         ))?;
+        // What the reconciler goes by is the run's judgements, except where
+        // something stronger has spoken for a pair. A constraint is a
+        // decision someone committed: `must_link` counts as a match and
+        // `cannot_link` as a no-match, whatever the strategy said and whether
+        // or not it looked at the pair. Next comes the source: a row sent
+        // again under its key with other content is the same thing as the
+        // version before it.
+        conn.execute_batch(&format!(
+            "CREATE OR REPLACE TEMP TABLE {JUDGED} AS
+             WITH spoken AS (
+               SELECT least(c.observation_a, c.observation_b) AS left_id,
+                      greatest(c.observation_a, c.observation_b) AS right_id,
+                      CASE c.kind WHEN 'must_link' THEN 'match' ELSE 'no_match' END AS verdict,
+                      1 AS rank
+               FROM spool.constraint_link c
+               WHERE c.to_seq IS NULL
+                 AND (c.observation_a IN (SELECT observation_id FROM {scope})
+                   OR c.observation_b IN (SELECT observation_id FROM {scope}))
+               UNION ALL
+               SELECT least(o.observation_id, o.supersedes),
+                      greatest(o.observation_id, o.supersedes), 'match', 2
+               FROM spool.observation o
+               WHERE o.supersedes IS NOT NULL AND o.entity_type = '{entity_type}'
+                 AND (o.observation_id IN (SELECT observation_id FROM {scope})
+                   OR o.supersedes IN (SELECT observation_id FROM {scope}))
+             ), decided AS (
+               SELECT left_id, right_id, arg_min(verdict, rank) AS verdict
+               FROM spoken GROUP BY left_id, right_id
+             )
+             SELECT left_id, right_id, verdict, NULL::DOUBLE AS score FROM decided
+             UNION ALL
+             SELECT j.left_id, j.right_id, j.verdict, j.score
+             FROM spool.judgement j
+             WHERE j.run_id = {run} AND NOT EXISTS (
+               SELECT 1 FROM decided d
+               WHERE d.left_id = j.left_id AND d.right_id = j.right_id)",
+            entity_type = config.entity_type,
+        ))?;
         let mut evidence = EvidenceSummary::default();
 
         let mut statement = conn.prepare(&format!(
@@ -1400,13 +1601,12 @@ impl Inner {
 
         let mut statement = conn.prepare(&format!(
             "SELECT left_id::VARCHAR, right_id::VARCHAR, verdict
-             FROM spool.judgement
-             WHERE run_id = ?
-               AND left_id IN (SELECT observation_id FROM {scope})
+             FROM {JUDGED}
+             WHERE left_id IN (SELECT observation_id FROM {scope})
                AND right_id IN (SELECT observation_id FROM {scope})
              ORDER BY left_id, right_id, verdict"
         ))?;
-        let mut rows = statement.query([run.0 as i64])?;
+        let mut rows = statement.query([])?;
         while let Some(row) = rows.next()? {
             evidence.pairs.push(NewPair {
                 a: row.get::<_, String>(0)?.parse().map_err(id_error)?,
@@ -1425,18 +1625,18 @@ impl Inner {
                     max(j.score) FILTER (WHERE j.verdict = 'match')
              FROM (
                SELECT left_id AS new_id, right_id AS other_id, verdict, score
-               FROM spool.judgement
-               WHERE run_id = $1 AND left_id IN (SELECT observation_id FROM {scope})
+               FROM {JUDGED}
+               WHERE left_id IN (SELECT observation_id FROM {scope})
                UNION ALL
                SELECT right_id, left_id, verdict, score
-               FROM spool.judgement
-               WHERE run_id = $1 AND right_id IN (SELECT observation_id FROM {scope})
+               FROM {JUDGED}
+               WHERE right_id IN (SELECT observation_id FROM {scope})
              ) j
              JOIN spool.membership m ON m.observation_id = j.other_id AND m.to_seq IS NULL
              GROUP BY j.new_id, m.identity_id
              ORDER BY j.new_id, m.identity_id"
         ))?;
-        let mut rows = statement.query([run.0 as i64])?;
+        let mut rows = statement.query([])?;
         while let Some(row) = rows.next()? {
             evidence.links.push(IdentityLink {
                 observation: row.get::<_, String>(0)?.parse().map_err(id_error)?,
@@ -1475,6 +1675,138 @@ impl Inner {
         }
         let validated = validate(&self.store, changeset)?;
         Ok(self.store.apply(validated)?)
+    }
+
+    fn author(
+        &mut self,
+        actor: Actor,
+        reason: Option<String>,
+        ops: Vec<Op>,
+        commit: bool,
+    ) -> Result<Authored> {
+        let changeset = Changeset {
+            id: lock(&self.ids).changeset_id(),
+            base: self.store.head()?,
+            actor,
+            reason,
+            run: None,
+            ops,
+        };
+        let validated = validate(&self.store, changeset.clone())?;
+        let committed = match commit {
+            true => Some(self.store.apply(validated)?),
+            false => None,
+        };
+        Ok(Authored {
+            changeset,
+            committed,
+        })
+    }
+
+    fn undo(
+        &mut self,
+        seq: Seq,
+        actor: Actor,
+        reason: Option<String>,
+        commit: bool,
+    ) -> Result<Authored> {
+        let entry = match seq.0.checked_sub(1) {
+            Some(before) => store::read_log_after(&self.store.conn, Seq(before), 1)?.pop(),
+            None => None,
+        }
+        .ok_or(Error::UnknownChangeset(seq))?;
+        let ops = inverse(&self.store, &entry)?;
+        if ops.is_empty() {
+            return Err(Error::NothingToUndo(seq));
+        }
+        let reason = reason.unwrap_or_else(|| format!("undo of the changeset at position {seq}"));
+        self.author(actor, Some(reason), ops, commit)
+    }
+
+    fn split(
+        &mut self,
+        identity: IdentityId,
+        observations: &[ObservationId],
+        keep_apart: bool,
+        actor: Actor,
+        reason: Option<String>,
+    ) -> Result<SplitReport> {
+        let refuse = |message: String| Error::Split { identity, message };
+        let record = self
+            .store
+            .identities(&[identity])?
+            .remove(0)
+            .ok_or(Error::UnknownIdentity(identity))?;
+        if let IdentityStatus::MergedInto(survivor) = record.status {
+            return Err(refuse(format!(
+                "it was merged into {survivor}, which has its members now"
+            )));
+        }
+        let members: BTreeSet<ObservationId> = self
+            .store
+            .members(&[identity])?
+            .into_iter()
+            .map(|(_, observation)| observation)
+            .collect();
+        let named: BTreeSet<ObservationId> = observations.iter().copied().collect();
+        if named.is_empty() {
+            return Err(refuse("no observations were named".to_owned()));
+        }
+        if let Some(stranger) = named.difference(&members).next() {
+            return Err(refuse(format!(
+                "observation {stranger} does not belong to it"
+            )));
+        }
+        let rest: BTreeSet<ObservationId> = members.difference(&named).copied().collect();
+        if rest.is_empty() {
+            return Err(refuse(
+                "every member was named, and a split leaves observations on both sides".to_owned(),
+            ));
+        }
+        // The larger side keeps the ID: more of what refers to the identity
+        // is likely to mean that side.
+        let (moved, kept) = if named.len() > rest.len() {
+            (rest, named)
+        } else {
+            (named, rest)
+        };
+
+        let new = lock(&self.ids).identity_id();
+        let mut ops = vec![Op::CreateIdentity {
+            identity: new,
+            entity_type: record.entity_type,
+        }];
+        ops.extend(moved.iter().map(|observation| Op::Assign {
+            observation: *observation,
+            from: Some(identity),
+            to: Some(new),
+        }));
+        if keep_apart {
+            // One constraint between the sides is enough to stop a merge. If
+            // one is there already, nothing is added.
+            let moved_list: Vec<ObservationId> = moved.iter().copied().collect();
+            let apart = self.store.constraints_on(&moved_list)?.iter().any(|link| {
+                link.kind == ConstraintKind::CannotLink
+                    && (kept.contains(&link.a) || kept.contains(&link.b))
+            });
+            if !apart && let (Some(a), Some(b)) = (moved.first(), kept.first()) {
+                ops.push(Op::Constrain {
+                    kind: ConstraintKind::CannotLink,
+                    a: *a,
+                    b: *b,
+                });
+            }
+        }
+        let authored = self.author(actor, reason, ops, true)?;
+        Ok(SplitReport {
+            kept: identity,
+            identity: new,
+            moved: moved.into_iter().collect(),
+            committed: authored
+                .committed
+                .expect("the changeset was committed above"),
+            changeset: authored.changeset,
+        })
     }
 
     fn open_draft(&self, draft: ChangesetId, verb: &str) -> Result<DraftRecord> {
@@ -1524,7 +1856,9 @@ impl Inner {
             let after_run = self.last_match_run(&entity_type)?;
             let ingested = self.count(&format!(
                 "SELECT count(*) FROM spool.observation
-                 WHERE entity_type = '{entity_type}' AND ingest_run > {after_run}"
+                 WHERE entity_type = '{entity_type}' AND ingest_run > {after_run}
+                   AND {}",
+                rules::NOT_DISMISSED
             ))?;
             if ingested == 0 && review::open_ids(&self.store.conn, &entity_type)?.is_empty() {
                 continue;
@@ -1605,6 +1939,38 @@ impl Inner {
             ),
         ];
         checks.extend([
+            (
+                "merged identities that stand for an identity that is missing or merged".to_owned(),
+                "SELECT count(*) FROM spool.identity i
+                 LEFT JOIN spool.identity t ON t.identity_id = i.merged_into
+                 WHERE i.merged_into IS NOT NULL
+                   AND (t.identity_id IS NULL OR t.merged_into IS NOT NULL
+                        OR t.entity_type <> i.entity_type)"
+                    .to_owned(),
+            ),
+            (
+                "constraints in force that current membership breaks".to_owned(),
+                "SELECT count(*) FROM spool.constraint_link c
+                 JOIN spool.membership a ON a.observation_id = c.observation_a AND a.to_seq IS NULL
+                 JOIN spool.membership b ON b.observation_id = c.observation_b AND b.to_seq IS NULL
+                 WHERE c.to_seq IS NULL
+                   AND (a.identity_id = b.identity_id) = (c.kind = 'cannot_link')"
+                    .to_owned(),
+            ),
+            (
+                "pairs of observations with more than one constraint in force".to_owned(),
+                "SELECT count(*) FROM (
+                   SELECT observation_a, observation_b FROM spool.constraint_link
+                   WHERE to_seq IS NULL GROUP BY 1, 2 HAVING count(*) > 1)"
+                    .to_owned(),
+            ),
+            (
+                "observations superseded by more than one observation".to_owned(),
+                "SELECT count(*) FROM (
+                   SELECT supersedes FROM spool.observation WHERE supersedes IS NOT NULL
+                   GROUP BY 1 HAVING count(*) > 1)"
+                    .to_owned(),
+            ),
             (
                 "entity types with more than one open draft".to_owned(),
                 "SELECT count(*) FROM (

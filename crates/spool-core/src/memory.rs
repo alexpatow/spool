@@ -6,17 +6,23 @@ use std::collections::BTreeMap;
 use crate::changeset::{ContentHash, Op};
 use crate::ids::{ChangesetId, EntityType, IdentityId, ObservationId, Seq};
 use crate::state::{
-    Committed, IdentityRecord, IdentityState, IdentityStatus, IdentityStore, LogEntry, Membership,
-    Result, Snapshot, StateError,
+    Committed, Constraint, ConstraintRecord, IdentityRecord, IdentityState, IdentityStatus,
+    IdentityStore, LogEntry, Membership, Merged, Result, Snapshot, StateError,
 };
 use crate::validate::Validated;
 
 #[derive(Clone, Debug, Default)]
 pub struct MemoryState {
     observations: BTreeMap<ObservationId, EntityType>,
+    /// `status` here names the identity a merge named. What is handed out
+    /// names the active identity at the end of the chain: see `resolved`.
     identities: BTreeMap<IdentityId, IdentityRecord>,
     current: BTreeMap<ObservationId, IdentityId>,
     history: Vec<Membership>,
+    membership_changed: BTreeMap<IdentityId, Seq>,
+    /// Constraints in force, and the log position each has held since.
+    constraints: BTreeMap<Constraint, Seq>,
+    constraint_history: Vec<ConstraintRecord>,
     log: Vec<LogEntry>,
 }
 
@@ -77,6 +83,66 @@ impl MemoryState {
         self.log.last().map_or(Seq::ZERO, |entry| entry.seq)
     }
 
+    /// The active identity that stands for `id`.
+    fn survivor(&self, id: IdentityId) -> IdentityId {
+        let mut current = id;
+        while let Some(Merged { into, .. }) = self
+            .identities
+            .get(&current)
+            .and_then(|record| record.merged)
+        {
+            current = into;
+        }
+        current
+    }
+
+    fn resolved(&self, record: &IdentityRecord) -> IdentityRecord {
+        let mut record = record.clone();
+        if record.merged.is_some() {
+            record.status = IdentityStatus::MergedInto(self.survivor(record.id));
+        }
+        record
+    }
+
+    fn active(&self, identity: &IdentityId) -> Result<(), String> {
+        match self.identities.get(identity) {
+            Some(record) if record.merged.is_none() => Ok(()),
+            Some(_) => Err(format!("identity {identity} is not active")),
+            None => Err(format!("identity {identity} does not exist")),
+        }
+    }
+
+    fn move_observation(
+        &mut self,
+        seq: Seq,
+        observation: ObservationId,
+        from: Option<IdentityId>,
+        to: Option<IdentityId>,
+    ) -> Result<(), String> {
+        if let Some(from) = from {
+            let open = self
+                .history
+                .iter_mut()
+                .rev()
+                .find(|row| row.observation == observation && row.to.is_none())
+                .ok_or_else(|| format!("observation {observation} has no open membership"))?;
+            open.to = Some(seq);
+            self.current.remove(&observation);
+            self.membership_changed.insert(from, seq);
+        }
+        if let Some(to) = to {
+            self.current.insert(observation, to);
+            self.history.push(Membership {
+                observation,
+                identity: to,
+                from: seq,
+                to: None,
+            });
+            self.membership_changed.insert(to, seq);
+        }
+        Ok(())
+    }
+
     fn apply_ops(&mut self, seq: Seq, ops: &[Op]) -> Result<(), (usize, String)> {
         for (index, op) in ops.iter().enumerate() {
             self.apply_op(seq, op).map_err(|message| (index, message))?;
@@ -100,6 +166,7 @@ impl MemoryState {
                         entity_type: entity_type.clone(),
                         created: seq,
                         status: IdentityStatus::Active,
+                        merged: None,
                     },
                 );
             }
@@ -114,43 +181,63 @@ impl MemoryState {
                     ));
                 }
                 if let Some(target) = to {
-                    match self.identities.get(target).map(|record| record.status) {
-                        Some(IdentityStatus::Active) => {}
-                        Some(IdentityStatus::MergedInto(_)) => {
-                            return Err(format!("identity {target} is not active"));
-                        }
-                        None => return Err(format!("identity {target} does not exist")),
-                    }
+                    self.active(target)?;
                 }
-                if from.is_some() {
-                    let open = self
-                        .history
-                        .iter_mut()
-                        .find(|row| row.observation == *observation && row.to.is_none())
-                        .ok_or_else(|| {
-                            format!("observation {observation} has no open membership")
-                        })?;
-                    open.to = Some(seq);
-                    self.current.remove(observation);
-                }
-                if let Some(target) = to {
-                    self.current.insert(*observation, *target);
-                    self.history.push(Membership {
-                        observation: *observation,
-                        identity: *target,
-                        from: seq,
-                        to: None,
-                    });
-                }
+                self.move_observation(seq, *observation, *from, *to)?;
             }
-            Op::Merge { .. }
-            | Op::Constrain { .. }
-            | Op::Unconstrain { .. }
-            | Op::Reinstate { .. } => {
-                return Err(format!(
-                    "`{}` operations are not implemented yet",
-                    op.kind()
-                ));
+            Op::Merge { from, into } => {
+                if from == into {
+                    return Err(format!("identity {from} cannot be merged into itself"));
+                }
+                self.active(from)?;
+                self.active(into)?;
+                let members: Vec<ObservationId> = self
+                    .current
+                    .iter()
+                    .filter(|(_, identity)| *identity == from)
+                    .map(|(observation, _)| *observation)
+                    .collect();
+                for observation in members {
+                    self.move_observation(seq, observation, Some(*from), Some(*into))?;
+                }
+                let record = self.identities.get_mut(from).expect("checked above");
+                record.status = IdentityStatus::MergedInto(*into);
+                record.merged = Some(Merged { into: *into, seq });
+            }
+            Op::Reinstate { identity } => {
+                let record = self
+                    .identities
+                    .get_mut(identity)
+                    .ok_or_else(|| format!("identity {identity} does not exist"))?;
+                if record.merged.is_none() {
+                    return Err(format!("identity {identity} is active"));
+                }
+                record.status = IdentityStatus::Active;
+                record.merged = None;
+            }
+            Op::Constrain { kind, a, b } => {
+                let constraint = Constraint::new(*kind, *a, *b);
+                if self.constraints.contains_key(&constraint) {
+                    return Err(format!(
+                        "observations {a} and {b} already have a {} constraint",
+                        kind.as_str()
+                    ));
+                }
+                self.constraints.insert(constraint, seq);
+            }
+            Op::Unconstrain { kind, a, b } => {
+                let constraint = Constraint::new(*kind, *a, *b);
+                let from = self.constraints.remove(&constraint).ok_or_else(|| {
+                    format!(
+                        "observations {a} and {b} have no {} constraint",
+                        kind.as_str()
+                    )
+                })?;
+                self.constraint_history.push(ConstraintRecord {
+                    constraint,
+                    from,
+                    to: Some(seq),
+                });
             }
         }
         Ok(())
@@ -180,7 +267,7 @@ impl IdentityState for MemoryState {
     fn identities(&self, ids: &[IdentityId]) -> Result<Vec<Option<IdentityRecord>>> {
         Ok(ids
             .iter()
-            .map(|id| self.identities.get(id).cloned())
+            .map(|id| self.identities.get(id).map(|record| self.resolved(record)))
             .collect())
     }
 
@@ -200,6 +287,67 @@ impl IdentityState for MemoryState {
             .collect();
         members.sort_unstable();
         Ok(members)
+    }
+
+    fn membership_changed(&self, ids: &[IdentityId]) -> Result<Vec<Seq>> {
+        Ok(ids
+            .iter()
+            .map(|id| {
+                self.membership_changed
+                    .get(id)
+                    .copied()
+                    .unwrap_or(Seq::ZERO)
+            })
+            .collect())
+    }
+
+    fn constraints_on(&self, observations: &[ObservationId]) -> Result<Vec<Constraint>> {
+        Ok(self
+            .constraints
+            .keys()
+            .filter(|constraint| {
+                observations.contains(&constraint.a) || observations.contains(&constraint.b)
+            })
+            .copied()
+            .collect())
+    }
+
+    fn constraints_of_members(&self, ids: &[IdentityId]) -> Result<Vec<Constraint>> {
+        let member = |observation: &ObservationId| {
+            self.current
+                .get(observation)
+                .is_some_and(|identity| ids.contains(identity))
+        };
+        Ok(self
+            .constraints
+            .keys()
+            .filter(|constraint| member(&constraint.a) || member(&constraint.b))
+            .copied()
+            .collect())
+    }
+
+    fn left_at(&self, identity: IdentityId, seq: Seq) -> Result<Vec<ObservationId>> {
+        let mut left: Vec<_> = self
+            .history
+            .iter()
+            .filter(|row| row.identity == identity && row.to == Some(seq))
+            .map(|row| row.observation)
+            .collect();
+        left.sort_unstable();
+        Ok(left)
+    }
+
+    fn merged_before(&self, identity: IdentityId, seq: Seq) -> Result<Option<IdentityId>> {
+        Ok(self
+            .log
+            .iter()
+            .take_while(|entry| entry.seq < seq)
+            .flat_map(|entry| &entry.changeset.ops)
+            .filter_map(|op| match op {
+                Op::Merge { from, into } if *from == identity => Some(*into),
+                _ => None,
+            })
+            .last())
     }
 }
 
@@ -236,10 +384,26 @@ impl IdentityStore for MemoryState {
     fn snapshot(&self) -> Result<Snapshot> {
         let mut memberships = self.history.clone();
         memberships.sort();
+        let mut constraints = self.constraint_history.clone();
+        constraints.extend(
+            self.constraints
+                .iter()
+                .map(|(constraint, from)| ConstraintRecord {
+                    constraint: *constraint,
+                    from: *from,
+                    to: None,
+                }),
+        );
+        constraints.sort();
         Ok(Snapshot {
             head: self.head_seq(),
-            identities: self.identities.values().cloned().collect(),
+            identities: self
+                .identities
+                .values()
+                .map(|record| self.resolved(record))
+                .collect(),
             memberships,
+            constraints,
         })
     }
 }

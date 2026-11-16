@@ -768,33 +768,6 @@ fn a_stale_draft_is_rejected_and_names_the_operation() {
     );
 }
 
-#[test]
-fn operations_of_later_milestones_are_rejected() {
-    let engine = engine();
-    ingest(
-        &engine,
-        "shop",
-        &[("1", Some("anvil"), None), ("2", Some("bellows"), None)],
-    );
-    resolve(&engine);
-    let merge = Changeset {
-        id: SeededIds::new(5).changeset_id(),
-        base: engine.head().unwrap(),
-        actor: Actor::User("reviewer".to_owned()),
-        reason: None,
-        run: None,
-        ops: vec![Op::Merge {
-            from: identity(&engine, "shop", "1").unwrap(),
-            into: identity(&engine, "shop", "2").unwrap(),
-        }],
-    };
-    let error = engine.commit(merge).unwrap_err();
-    assert!(
-        matches!(&error, Error::Rejected(r) if matches!(&r[0].reason, Reason::NotImplemented { kind } if kind == "merge")),
-        "{error}"
-    );
-}
-
 // The store
 
 fn two_batches(engine: &Engine) {

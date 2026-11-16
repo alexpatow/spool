@@ -128,7 +128,7 @@ CREATE TABLE spool.observation (
   entity_type    VARCHAR     NOT NULL, -- a declared type, for example 'company'
   source_id      VARCHAR     NOT NULL, -- 'crm', 'registry', 'report:acme-annual-2025.pdf'
   source_key     VARCHAR,              -- key within the source: a row key, or an extracted mention's locator
-  supersedes     UUID,                 -- previous version of the same (source_id, source_key)
+  supersedes     UUID,                 -- previous version of the same (entity_type, source_id, source_key)
   payload        JSON        NOT NULL, -- attributes exactly as received
   evidence       JSON,                 -- locator: uri, page, character span, extractor and version
   observed_at    TIMESTAMPTZ,          -- when the source says it held, if known
@@ -185,9 +185,10 @@ CREATE TABLE spool.review_item (          -- what a reconcile run would not deci
   kind            VARCHAR NOT NULL,       -- 'possible_merge' | 'conflict'
   observation_ids UUID[]  NOT NULL,       -- the observations left without an identity
   identity_ids    UUID[]  NOT NULL,       -- the identities they matched; empty when the conflict is among the observations
-  status          VARCHAR NOT NULL,       -- 'open' | 'resolved' | 'superseded'
+  status          VARCHAR NOT NULL,       -- 'open' | 'resolved' | 'superseded' | 'dismissed'
   closed_seq      BIGINT,                 -- resolved: the changeset after which every observation had an identity
-  closed_run      BIGINT                  -- superseded: the reconcile run that raised it again in another form
+  closed_run      BIGINT,                 -- superseded: the reconcile run that raised it again in another form
+  closed_by VARCHAR, closed_at TIMESTAMPTZ, closed_reason VARCHAR   -- dismissed: who closed it, when, and why if they said
 );
 
 CREATE TABLE spool.draft (                -- a changeset a reconcile run drafted and left for review; kept
@@ -246,7 +247,8 @@ CREATE TABLE spool.changeset_op (         -- one row per operation, columnar so 
 CREATE TABLE spool.identity (             -- projection
   identity_id UUID NOT NULL, entity_type VARCHAR NOT NULL,
   created_seq BIGINT NOT NULL,
-  merged_into UUID, merged_seq BIGINT     -- always points at an active identity (chains are flattened)
+  merged_into UUID, merged_seq BIGINT,    -- always points at an active identity (chains are flattened)
+  merge_target UUID                       -- the identity the merge named, which may itself have been merged since
 );
 
 CREATE TABLE spool.membership (           -- projection with history; current rows have to_seq IS NULL
@@ -271,6 +273,8 @@ Design points:
 - **Typed columns, not one generic table.** A single features table holding JSON for every type would need no generation. It would also move normalisation into every matching query and give up the typed columns that blocking joins and similarity functions work on.
 - **Operations are rows, not a JSON blob.** A first load is one changeset with as many `assign` rows as observations, applied with `INSERT ... SELECT`. When measured, a one-million-operation changeset wrote its log rows and its projection rows in one transaction in 0.4 s.
 - **Membership keeps intervals.** "What was this identity at log position N" is a filter, and undoing a merge can read which observations it moved.
+- **A merged identity keeps both pointers.** `merged_into` is the active identity that stands for it now, so a lookup follows any chain of merges in one step. `merge_target` is the identity its own merge named. Undoing a merge in the middle of a chain needs the second: the identities that were merged into the reinstated one point at it again, and no further.
+- **A changed row supersedes the one before.** At ingest, a keyed row whose content is new names the latest version of the same entity type, source and key in `supersedes`. Versions sent in one call follow each other in row order. The earlier version is kept, stays a member of its identity and can still be matched. A run treats a version and the one it supersedes as a match whatever the rules say, so a row that changed joins the identity of its earlier version, or is left for review if it now also matches another. One limit: a source that sends content it has sent before under the same key sends a duplicate, which is ignored, so a row that changes from A to B and back to A ends at B.
 - **No primary keys or foreign keys on the large tables at first.** Uniqueness is guaranteed by the Rust validator and by anti-join inserts, and checked by a `verify` routine in tests. DuckDB constraints did behave correctly when tested (including update and delete-then-insert of a keyed row in one transaction), but index maintenance on bulk loads is a cost that has not been measured, and the identity rules must not depend on the database.
 - **Review items are rows, and they are evidence.** `spool.review_item` holds what a reconcile run would not decide, so the question outlives the call that raised it. The table is not identity state: it is not in the log, no changeset mentions it, and replaying the log does not need it. The engine keeps `status` in step with membership inside the transaction that commits a changeset. Section 4 says when an item opens and closes.
 - **A draft left for review is a row too.** `spool.draft` holds a changeset that a reconcile run drafted and nobody has committed yet, with its operations in `spool.draft_op`. Like a review item it is not identity state: the log does not mention it until it is committed, and then under the same changeset ID. A match run whose draft waits has the status `drafted`, not `succeeded`. What is new to a run is counted from the last run of the type that succeeded, so the observations of a draft that is rejected, replaced or never decided are examined again by the next run. A type has at most one open draft: drafting it again closes the earlier one as superseded.
@@ -325,6 +329,13 @@ pub trait IdentityState {
     fn assignments(&self, obs: &[ObservationId]) -> Result<Vec<Option<IdentityId>>>;
     fn members(&self, ids: &[IdentityId]) -> Result<Vec<(IdentityId, ObservationId)>>;
     fn constraints_on(&self, obs: &[ObservationId]) -> Result<Vec<Constraint>>;
+    fn constraints_of_members(&self, ids: &[IdentityId]) -> Result<Vec<Constraint>>;
+    /// The log positions at which each identity's membership last changed: what a merge is checked against.
+    fn membership_changed(&self, ids: &[IdentityId]) -> Result<Vec<Seq>>;
+    /// What undo reads: the observations that left an identity at a log position,
+    /// and the identity a reinstated identity had been merged into.
+    fn left_at(&self, identity: IdentityId, seq: Seq) -> Result<Vec<ObservationId>>;
+    fn merged_before(&self, identity: IdentityId, seq: Seq) -> Result<Option<IdentityId>>;
 }
 
 /// The only way to obtain a `Validated`, and a store accepts nothing else.
@@ -338,11 +349,18 @@ The seam between the two halves is **SQL prepares, Rust decides**. DuckDB does t
 
 The DuckDB store in the `spool` crate implements `IdentityState` and one write: apply a `Validated` changeset by inserting log rows and updating projections in a single transaction. One conformance suite runs against both the in-memory state and the DuckDB store, and property tests compare random operation sequences between the two. A second persistent store for identity state, such as Postgres, would be a third implementation that must pass the same suite.
 
-Split is deliberately not an operation. It is `CreateIdentity` plus `Assign` moves, usually with a `cannot_link` constraint so the matcher does not undo it, in one changeset. The original ID stays with whichever side the author leaves in place; the default policy keeps it with the larger side, as OpenSanctions does.
+Split is deliberately not an operation. It is `CreateIdentity` plus `Assign` moves, usually with a `cannot_link` constraint so the matcher does not undo it, in one changeset. The original ID stays with whichever side the author leaves in place; the default policy keeps it with the larger side, as OpenSanctions does. The engine writes that changeset for a caller who names one side: the larger side keeps the ID, the side that was not named on a tie, and one `cannot_link` between the smallest observation of each side is recorded unless the caller declines it.
+
+What the validator holds a changeset to, beyond each operation's precondition:
+
+- **A merge** needs two different active identities of one entity type whose membership has not changed since the changeset's `base`.
+- **An observation moves once per changeset**, whether an `Assign` or a `Merge` moves it, and an identity is merged or reinstated once. Operations are checked in the order written, so an `Assign` out of an identity comes before the `Merge` of that identity. The rule keeps a changeset's meaning independent of how a store applies it, which is set-based.
+- **A constraint** names two different observations of one type. A pair has at most one constraint in force, of either kind, and a constraint is recorded or removed once per changeset.
+- **The state a changeset leaves breaks no constraint in force.** The two observations of a `must_link` share an identity, and those of a `cannot_link` do not. An observation without an identity breaks nothing. The rejection names the constraint, the two identities, and the last operation that had a part in it. A changeset can therefore move one observation of a `must_link` only by moving the other with it or by removing the constraint first.
 
 Tradeoff: validating in Rust means a changeset must fit in memory, which caps one changeset at roughly millions of operations. Larger loads are chunked into several changesets. That is preferable to moving validation into SQL, which would put identity rules in the database.
 
-**Decide now:** the dependency-free core crate, validated-changeset type, injected ID generator and clock (required for reproducible tests), operation set. **Defer:** implementing `Merge`, `Constrain` and `Reinstate` (Milestone 3), a Postgres store, any trait over evidence storage.
+**Decide now:** the dependency-free core crate, validated-changeset type, injected ID generator and clock (required for reproducible tests), operation set. **Defer:** a Postgres store, any trait over evidence storage.
 
 ## 3. Event log, versioned state, or hybrid
 
@@ -361,6 +379,8 @@ Each operation is its own precondition. `Assign.from` must equal the observation
 One server and one writer do not remove the need for this. A draft can wait for review while other runs commit, and two clients can author changesets at the same time. Drafts that touch different identities all commit cleanly, in whatever order they are approved. A stale one is rejected with the exact operation that conflicted.
 
 Undo is a new changeset computed by the framework from the log and the membership intervals: the inverse of a merge reinstates the merged ID and moves its former members back, so anyone who stored the old ID gets the right entity again. History is never rewritten.
+
+The inverse reverses the operations last first. An `Assign` is reversed. `Constrain` and `Unconstrain` undo each other. A `Merge` becomes a `Reinstate` and the `Assign`s that move back the observations the merge moved, leaving out any that are no longer in the surviving identity. A `Reinstate` becomes the `Merge` it had undone, so an undo can itself be undone. `CreateIdentity` is not undone: an identity ID is never taken back, and an identity left without members stays. The undo is validated like any other changeset, against current state. If state has moved on so that an operation no longer holds, it is rejected and names that operation, and nothing is undone by halves.
 
 DuckDB as the log store has one measured cost: small transactions took about 5 ms each (five statements, durable file), so roughly 200 commits a second. That is fine for batch reconciliation and interactive corrections, and not suited to per-record streaming. Batching operations into fewer changesets is the answer for now.
 
@@ -397,12 +417,15 @@ The reconciler's default policy for Milestone 1 is conservative:
 
 Rule 4 is what protects IDs from model upgrades: rerunning a better matcher over old data yields a list of suggested changes, not changes. The cost is that this greedy, incremental policy depends on arrival order, which is why order sensitivity is a benchmark metric in section 9.
 
+Constraints and superseding versions enter here as evidence that outranks the strategy's. Before the summary is built, the judgement on a pair is replaced, or added where the strategy gave none: a `must_link` in force reads as `match`, a `cannot_link` as `no_match`, and a version and the one it supersedes read as `match`, with a constraint ahead of supersession. The policy is unchanged and needs no rule about constraints. A `cannot_link` against the only identity an observation matches leaves it to form its own. A `cannot_link` against one member of an identity it otherwise matches is a conflict, and is left for review. A `must_link` to a member of an identity places the observation there when nothing else matches. What a run reports as the strategy's judgements are still the strategy's.
+
 Whenever the policy leaves observations unassigned, the reconcile run records a review item in `spool.review_item` (section 1). Its kind is `possible_merge` when the observations match members of two or more identities, and `conflict` when a `no_match` contradicts their matches. The item names the observations, the identities they matched and the run that raised it. It is evidence, like a judgement: it changes no identity, and nothing is committed on its account.
 
-A review item is open while any of its observations has no identity. It closes in one of two ways:
+A review item is open while any of its observations has no identity. It closes in one of three ways:
 
 - **Resolved.** A changeset gives the last of its observations an identity, and the item records that log position. Any changeset does this, whether a reviewer wrote it or a later run drafted it.
 - **Superseded.** A later run examines the observations and raises an item that differs, for example because they now match a third identity. The old item records that run.
+- **Dismissed.** A reviewer closes the item without placing its observations, and the item records who, when and why. The observations stay without an identity and leave the scope of later runs, so the question is not raised again. A changeset can still place them.
 
 The observations of open review items stay in scope. Every later match run of their entity type examines them again, alongside what was newly ingested. An item is therefore reconsidered whenever state or rules may have changed: once a reviewer has moved the members of one identity into the other, or a rule has been corrected, the observation matches one identity and is assigned. A run that reaches the same conclusion leaves the item as it is. Assigning an observation that had no identity changes no existing ID, so this does not weaken rule 4.
 
@@ -461,12 +484,16 @@ Every path is under `/v1` and needs the bearer token, except `GET /healthz`. Sma
 | `POST /v1/runs/{run}/cancel` | Gives up an open run | The run |
 | `GET /v1/drafts`, `GET /v1/drafts/{draft}` | Lists drafts; reads one with its changeset | JSON |
 | `POST /v1/drafts/{draft}/approve`, `.../reject` | Commits a draft, or closes it | The commit, or the operations that were rejected; the draft |
-| `GET /v1/changesets`, `POST /v1/changesets` | Reads the log in pages; commits a changeset the caller wrote | The log; the commit, or the operations that were rejected |
+| `GET /v1/changesets`, `POST /v1/changesets` | Reads the log in pages; commits a changeset the caller wrote. A merge, a move and a constraint are each a changeset of one operation. The server mints the changeset's ID if the caller sends none, and takes the head of the log as its base | The log; the commit, or the operations that were rejected |
+| `POST /v1/changesets/{seq}/undo` | Takes back the changeset at a log position with a new one, or with `commit: false` only returns it | The undo and its commit, or the operations that were rejected |
+| `POST /v1/identities/{id}/split` | Divides an identity in two, given the observations of one side | The two identities, what moved, and the commit |
+| `GET /v1/constraints` | The constraints in force, or with `removed=true` their history, for one observation or one identity's members | JSON |
 | `POST /v1/ids` | Mints identity and changeset IDs for a caller that writes its own changeset | JSON |
 | `GET /v1/identities`, `GET /v1/identities/{id}`, `.../history` | Lists identities in pages; reads one with its members, following redirects; the changesets that touched it | JSON |
 | `GET /v1/observations`, `GET /v1/observations/{id}` | Finds observations by source and key, or those with no identity; reads one | JSON |
 | `POST /v1/observations/identities` | The identities of many observations in one call | JSON |
-| `GET /v1/review` | Review items, typed | JSON |
+| `GET /v1/review`, `GET /v1/review/{id}` | Review items, typed; one of them | JSON |
+| `POST /v1/review/{id}/dismiss` | Closes a review item without placing its observations | The item |
 
 - **A call that starts work says how long it will wait.** `POST /v1/ingest` and `POST /v1/runs` take `wait_ms`, 30 seconds if left out. If the run finishes within that time, the response is `200` with the finished run. Otherwise it is `202` with the run as far as it has got, and the client reads `GET /v1/runs/{run}?wait_ms=...` until its status is no longer `running`. The work goes on whether or not anyone waits. The run ID is `spool.run.run_id`, so tasks add no new concept. One limit: a call that finds the writer busy has no run to report until its own work starts, so it can wait longer than it asked to.
 - **A run has one of five statuses.** `running` while the engine works on it, `open` while it waits for a caller's judgements, `drafted` while its draft waits for review, and then `succeeded` or `failed`.
@@ -616,6 +643,8 @@ The benchmark runs the ordinary path (ingest, match, reconcile, commit) and scor
 
 A benchmark is a **scenario**: an ordered list of steps (ingest this batch, apply this correction, switch to this strategy) with truth at each step. A single-batch dataset is a one-step scenario. The specification is a data file, not code.
 
+A step ingests files, applies corrections, and resolves, in that order. A correction is what a reviewer would do, written against observations named by source and key: merge the identities of two observations, put one observation in the identity of another, split observations out of their identity, record a `must_link` or a `cannot_link`, or undo an earlier correction by name. Each is made through the call any caller would use. A step of corrections alone shows what the next run makes of them. Switching strategy within a scenario comes with the second strategy, in Milestone 4.
+
 Resolution metrics, per step:
 
 - Blocking: pair completeness and reduction ratio.
@@ -627,17 +656,19 @@ Identity metrics, across steps. These are the ones no public benchmark has:
 | Metric | Definition |
 | --- | --- |
 | ID stability | Of the observations present before and after a step, the share whose identity ID is unchanged. Reported strictly and after following redirects. |
-| Churn | Identities created, merged and observations reassigned per thousand new observations |
-| Order sensitivity | Agreement between final partitions when the same batches arrive in different orders |
-| Upgrade stability | After switching strategy on the same data: IDs retained, and suggested changes versus applied changes |
-| Split recovery | After a scripted wrong merge and a manual split, whether later batches keep the two sides apart |
-| Override persistence | Share of constraints still honoured after further batches and a strategy change |
+| Churn | Identities created, merged and observations reassigned per thousand new observations. The counts compare the state before the step with the state after it. |
+| Order sensitivity | Agreement between final partitions when the same batches arrive in different orders: the steps as written against the same steps reversed, both without corrections. Reported as the share of observations grouped with the same observations either way, and as the pairs together in both orders over the pairs together in either. |
+| Upgrade stability | After switching strategy on the same data: IDs retained, and suggested changes versus applied changes. Not measured until there is a second strategy. |
+| Split recovery | After a scripted wrong merge and a manual split, whether later batches keep the two sides apart: of the splits the scenario made, the share with no identity holding observations of both sides. |
+| Override persistence | Share of constraints still honoured after further batches and a strategy change: of the constraints the scenario recorded, those still in force with state that agrees with them. |
+
+The company fixture has a second scenario, `corrections.toml`, for these. Between the two batches a reviewer makes two wrong merges, undoes one, splits the other, merges a pair the rules missed, and at the end places the record that was left for review. With the default policy, split recovery and override persistence can only be complete: the policy never merges identities, and the validator rejects a changeset that breaks a constraint. They become gates when a strategy's suggestions are applied. Order sensitivity is already less than complete on this fixture. Reversing its two batches leaves 32 of 39 observations in the same group, because a record that arrives before the one that would have connected two identities gets an identity of its own, and the policy does not merge afterwards.
 
 Datasets for day one: Splink's `fake_1000` as a smoke test, `historical_50k` and FEBRL as mid-sized checks, and a small hand-built company fixture committed to the repository that contains the hard cases of company resolution (aliases, legal versus trading names, domain changes, subsidiaries, records with few attributes), split into two batches. Each fixture is a project directory with its own entity type and rules. The three public datasets are person records and the fixture is company records, so the benchmark runs two unrelated entity types through one engine from the start. The public datasets are downloaded and checksummed at benchmark time, because their redistribution terms have not been confirmed.
 
 Results are written as JSON. CI compares them with a committed baseline and fails on a regression, with false merges and ID stability treated as the strictest gates.
 
-For a real company benchmark, the [GLEIF register](landscape-survey.md#5-benchmark-datasets-and-evaluation-practice) is the best public source the survey found: CC0, LEI as ground truth, real former and trading names, parent links for hard negatives, and 6,521 records flagged as duplicates of another LEI. Building a scenario generator on it is Milestone 3 work.
+For a real company benchmark, the [GLEIF register](landscape-survey.md#5-benchmark-datasets-and-evaluation-practice) is the best public source the survey found: CC0, LEI as ground truth, real former and trading names, parent links for hard negatives, and 6,521 records flagged as duplicates of another LEI. A scenario generator on it has not been built.
 
 Metrics are implemented in Spool. The existing `er-evaluation` package is AGPL.
 
@@ -701,7 +732,21 @@ Milestone 2's exit criteria, each a test in `crates/spool-cli/tests` unless it s
 - The binary starts with no library path set.
 - The committed JSON Schema is the one the server speaks, and the client's generated types are those of the schema (`packages/client`).
 
-In scope for the types but not implemented: `Merge`, `Constrain`, `Unconstrain`, `Reinstate`. Out of scope after Milestone 2: user code, superseding observations, probabilistic or LLM matching, extraction, relationships, canonical attribute views, the studio.
+Milestone 3 implements the operations that Milestones 1 and 2 only declared: `Merge`, `Constrain`, `Unconstrain` and `Reinstate`. Its exit criteria, each a test:
+
+- The in-memory state and the DuckDB store pass one conformance suite for all six operations, and agree on random changesets of all six and on the undo of each (`spool-core` and `crates/spool/src`).
+- A merged identity's ID answers with the identity that stands for it, through any chain of merges.
+- A merge written before its identities changed is rejected and names the operation.
+- No committed state breaks a constraint. A changeset that would is rejected and names the constraint, and a run leaves for review what a constraint forbids.
+- Undoing a merge brings the identity back under its own ID with the members it had, and undoing the undo merges it again.
+- A split gives the smaller side a new identity and keeps the sides apart: a later batch puts nothing in both.
+- A row that changed at its source supersedes its earlier version and joins its identity.
+- A dismissed review item stays closed, and its observations are not examined again.
+- Rebuilding the projection from the log reproduces the state after every kind of operation.
+- The corrections scenario reports ID stability, churn, split recovery, override persistence and order sensitivity, and gives the same report for the same seed (`crates/spool-cli/tests`).
+- Each of these is reached through the API and through the TypeScript client (`crates/spool-cli/tests`, `packages/client/test`).
+
+Out of scope after Milestone 3: user code, probabilistic or LLM matching, extraction, relationships, canonical attribute views, the studio.
 
 Proposed roadmap:
 
@@ -724,10 +769,10 @@ Milestones 2 and 3 do not depend on each other. Sandbox synchronisation, initial
 | Entity types declared by the project; feature tables generated from a query; rules as files; no built-in types | Feature columns from user code; client types generated from a manifest |
 | User code as child processes over Parquet files; evidence only; workers inside the service | Separate worker containers; a streaming protocol; per-task resource limits |
 | Judgements and draft changesets in place of proposals | Entity-centric judgements; calibrated probabilities |
-| Review items kept in the store and examined again by later runs | Closing a review item without giving its observations an identity |
+| Review items kept in the store and examined again by later runs, until a changeset places their observations or a reviewer dismisses them | Reopening a dismissed review item |
 | Minted UUIDv7 identity IDs, permanent redirects, content-derived observation IDs | Public ID formatting; binary IDs in Arrow |
 | Changeset log as truth, projection in the same transaction, per-operation preconditions | Compaction, hash chaining |
-| Operation set: create, assign, merge, constrain, unconstrain, reinstate | Implementing all but create and assign until Milestone 3 |
+| Operation set: create, assign, merge, constrain, unconstrain, reinstate; split and undo as changesets the engine writes | Constraints that choose between identities during a run; operations on more than two observations |
 | Default policy never merges or splits existing identities automatically | Policy plug-ins; automatic merges above a threshold |
 | JSON and Arrow as the only wire forms; the run ID as the task handle; drafts stored on the server | Streaming run progress; an ad hoc SQL endpoint |
 | Scenario-based benchmark with identity metrics and a CI baseline | GLEIF scenario generator; extraction and end-to-end suites |

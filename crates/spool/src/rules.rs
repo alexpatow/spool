@@ -21,9 +21,17 @@ use crate::review;
 /// The name of the temporary table that holds a run's new observations.
 pub(crate) const SCOPE: &str = "spool_scope";
 
+/// A condition on `observation_id` that leaves out the observations of
+/// dismissed review items: a reviewer decided they stay as they are, so no
+/// run looks at them again, whether or not an earlier run got as far as
+/// counting them as examined.
+pub(crate) const NOT_DISMISSED: &str = "observation_id NOT IN (
+    SELECT unnest(observation_ids) FROM spool.review_item WHERE status = 'dismissed')";
+
 /// Lists the observations that are new to a run: those of the entity type
 /// that were ingested after `after_run` and before the run itself, and those
-/// of the given review items that still have no identity.
+/// of the given review items that still have no identity. The observations
+/// of dismissed review items are never among them.
 pub(crate) fn create_scope(
     conn: &Connection,
     entity_type: &EntityType,
@@ -37,9 +45,11 @@ pub(crate) fn create_scope(
     };
     conn.execute_batch(&format!(
         "CREATE OR REPLACE TEMP TABLE {SCOPE} AS
-         SELECT observation_id FROM spool.observation
-         WHERE entity_type = '{entity_type}' AND ingest_run > {after_run} AND ingest_run < {run}
-         {under_review}"
+         SELECT observation_id FROM (
+           SELECT observation_id FROM spool.observation
+           WHERE entity_type = '{entity_type}' AND ingest_run > {after_run} AND ingest_run < {run}
+           {under_review}
+         ) WHERE {NOT_DISMISSED}"
     ))?;
     Ok(())
 }

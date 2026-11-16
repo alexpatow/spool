@@ -10,6 +10,18 @@
 export type Actor = string;
 
 /**
+ * A changeset the engine wrote for a caller, and its receipt.
+ */
+export interface Authored {
+  changeset: Changeset;
+  /**
+   * `None` when the caller asked only to see the changeset. It was
+   * validated all the same.
+   */
+  committed?: Committed | null;
+}
+
+/**
  * `GET /v1/runs/{run}/candidates` when JSON is asked for. Each candidate has
  * `left_id`, `right_id`, and every feature column prefixed with `left_` and
  * with `right_`.
@@ -53,6 +65,30 @@ export interface ChangesetList {
 }
 
 /**
+ * `POST /v1/changesets`: a changeset to validate and commit.
+ *
+ * A caller that has read the state it is changing says so with `base`: a
+ * merge is rejected if the members of either identity changed after it. A
+ * caller that leaves `base` out is taken to have read the head of the log.
+ */
+export interface CommitRequest {
+  actor: Actor;
+  /**
+   * The log position the author had read. Left out, the head of the log.
+   */
+  base?: Seq | null;
+  /**
+   * The changeset's ID. Left out, the server mints one. A caller that may
+   * send the same changeset twice mints the ID itself, so that the second
+   * one is refused.
+   */
+  id?: ChangesetId | null;
+  ops: Op[];
+  reason?: string | null;
+  run?: RunId | null;
+}
+
+/**
  * The receipt for a committed changeset.
  */
 export interface Committed {
@@ -63,10 +99,44 @@ export interface Committed {
 
 export type ConstraintKind = "must_link" | "cannot_link";
 
+export interface ConstraintList {
+  constraints: ConstraintRecord[];
+}
+
+/**
+ * One interval of a constraint. `to` is `None` while it is in force.
+ */
+export interface ConstraintRecord {
+  a: ObservationId;
+  b: ObservationId;
+  from: Seq;
+  kind: ConstraintKind;
+  to?: Seq | null;
+}
+
 /**
  * SHA-256 of the canonical encoding of a list of operations, as lowercase hex.
  */
 export type ContentHash = string;
+
+/**
+ * `POST /v1/review/{id}/dismiss`: close a review item without placing its
+ * observations.
+ */
+export interface DismissRequest {
+  actor: Actor;
+  reason?: string | null;
+}
+
+/**
+ * A reviewer's decision to close a review item without placing its
+ * observations.
+ */
+export interface Dismissal {
+  at: string;
+  by: Actor;
+  reason?: string | null;
+}
 
 export interface DraftList {
   drafts: DraftSummary[];
@@ -264,6 +334,11 @@ export interface IngestReport {
    */
   received: number;
   run: RunId;
+  /**
+   * Observations created as a new version of a row the source had sent
+   * before under the same key with other content.
+   */
+  superseded?: number;
 }
 
 /**
@@ -396,14 +471,25 @@ export interface ObservationRecord {
    */
   payload: unknown;
   source: string;
+  /**
+   * The version that replaced this one, if the source has sent the row
+   * again with other content.
+   */
+  superseded_by?: ObservationId | null;
+  /**
+   * The version of the row this one replaced: what the source held under
+   * the same key before.
+   */
+  supersedes?: ObservationId | null;
 }
 
 /**
  * One change to identity state. Each operation carries its own precondition,
  * which is checked against the state the changeset is committed to.
  *
- * `Merge`, `Constrain`, `Unconstrain` and `Reinstate` are part of the format
- * and are not implemented yet: a changeset that contains one is rejected.
+ * There is no operation that splits an identity. A split is a
+ * `CreateIdentity` and the `Assign` operations that move observations to it,
+ * usually with a `cannot_link` constraint, in one changeset.
  */
 export type Op =
   | {
@@ -492,8 +578,73 @@ export type Reason =
       reason: "observation_assigned_twice";
     }
   | {
-      kind: string;
-      reason: "not_implemented";
+      identity: IdentityId;
+      reason: "merge_into_itself";
+    }
+  | {
+      from: IdentityId;
+      from_type: EntityType;
+      into: IdentityId;
+      into_type: EntityType;
+      reason: "identity_type_mismatch";
+    }
+  | {
+      base: Seq;
+      changed: Seq;
+      identity: IdentityId;
+      reason: "stale_merge";
+    }
+  | {
+      first_op: number;
+      identity: IdentityId;
+      reason: "members_moved_twice";
+    }
+  | {
+      identity: IdentityId;
+      reason: "identity_is_active";
+    }
+  | {
+      first_op: number;
+      identity: IdentityId;
+      reason: "identity_changed_twice";
+    }
+  | {
+      observation: ObservationId;
+      reason: "same_observation";
+    }
+  | {
+      a: ObservationId;
+      a_type: EntityType;
+      b: ObservationId;
+      b_type: EntityType;
+      reason: "constraint_across_types";
+    }
+  | {
+      a: ObservationId;
+      b: ObservationId;
+      kind: ConstraintKind;
+      reason: "constraint_exists";
+    }
+  | {
+      a: ObservationId;
+      b: ObservationId;
+      kind: ConstraintKind;
+      reason: "unknown_constraint";
+    }
+  | {
+      a: ObservationId;
+      b: ObservationId;
+      first_op: number;
+      kind: ConstraintKind;
+      reason: "constraint_changed_twice";
+    }
+  | {
+      a: ObservationId;
+      b: ObservationId;
+      identity_a?: IdentityId | null;
+      identity_b?: IdentityId | null;
+      kind: ConstraintKind;
+      reason: "constraint_violated";
     };
 
 /**
@@ -549,6 +700,10 @@ export interface ReviewList {
  * A review item as the store keeps it.
  */
 export interface ReviewRecord {
+  /**
+   * Dismissed: who closed it, when and why.
+   */
+  dismissed?: Dismissal | null;
   entity_type: EntityType;
   id: number;
   /**
@@ -576,7 +731,7 @@ export interface ReviewRecord {
   superseded_by?: RunId | null;
 }
 
-export type ReviewStatus = "open" | "resolved" | "superseded";
+export type ReviewStatus = "open" | "resolved" | "superseded" | "dismissed";
 
 /**
  * Identifies a run of the engine: an ingest, a match or a reconcile.
@@ -644,6 +799,45 @@ export type RunStatus = "running" | "open" | "drafted" | "succeeded" | "failed";
  * is the empty log.
  */
 export type Seq = number;
+
+/**
+ * What a split did.
+ */
+export interface SplitReport {
+  changeset: Changeset;
+  committed: Committed;
+  /**
+   * The new identity.
+   */
+  identity: IdentityId;
+  /**
+   * The identity that was split. It keeps its ID and the larger side.
+   */
+  kept: IdentityId;
+  /**
+   * The observations that moved to the new identity, in order.
+   */
+  moved: ObservationId[];
+}
+
+/**
+ * `POST /v1/identities/{identity}/split`: divide an identity in two.
+ */
+export interface SplitRequest {
+  actor: Actor;
+  /**
+   * Record a `cannot_link` constraint between the two sides (the
+   * default), so that nothing puts them back together unnoticed.
+   */
+  keep_apart?: boolean | null;
+  /**
+   * The observations on one side. The rest of the identity's members are
+   * the other side. The larger side keeps the ID, the side not named here
+   * on a tie.
+   */
+  observations: ObservationId[];
+  reason?: string | null;
+}
 
 /**
  * `POST /v1/runs`: match the new observations of one entity type.
@@ -758,6 +952,19 @@ export interface TypeResolution {
    * What the run would not decide. The store keeps these as review items.
    */
   review: ReviewItem[];
+}
+
+/**
+ * `POST /v1/changesets/{seq}/undo`: take back the changeset at a log
+ * position with a new changeset.
+ */
+export interface UndoRequest {
+  actor: Actor;
+  /**
+   * Commit the undo (the default), or only validate it and return it.
+   */
+  commit?: boolean | null;
+  reason?: string | null;
 }
 
 export type Verdict = "match" | "no_match" | "unsure";

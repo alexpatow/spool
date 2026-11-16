@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use spool_core::{
-    ChangesetId, IdentityId, Rejection, ReplayError, RunId, StateError, ValidationError,
+    ChangesetId, IdentityId, Rejection, ReplayError, RunId, Seq, StateError, ValidationError,
 };
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -79,6 +79,30 @@ pub enum Error {
 
     #[error("identity {0} does not exist")]
     UnknownIdentity(IdentityId),
+
+    #[error("the log has no changeset at position {0}")]
+    UnknownChangeset(Seq),
+
+    /// The changeset exists and there is nothing in it to take back.
+    #[error(
+        "the changeset at position {0} only created identities, and an identity ID is never taken back"
+    )]
+    NothingToUndo(Seq),
+
+    /// The identity exists and cannot be split the way that was asked.
+    #[error("identity {identity} cannot be split: {message}")]
+    Split {
+        identity: IdentityId,
+        message: String,
+    },
+
+    #[error("there is no review item {0}")]
+    UnknownReviewItem(u64),
+
+    /// The review item exists and cannot do what was asked in the state it
+    /// is in.
+    #[error("review item {id}: {message}")]
+    Review { id: u64, message: String },
 
     #[error(transparent)]
     State(#[from] StateError),

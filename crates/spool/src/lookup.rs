@@ -33,6 +33,14 @@ pub struct ObservationRecord {
     pub ingest_run: RunId,
     /// `None` while no changeset has placed it.
     pub identity: Option<IdentityId>,
+    /// The version of the row this one replaced: what the source held under
+    /// the same key before.
+    #[serde(default)]
+    pub supersedes: Option<ObservationId>,
+    /// The version that replaced this one, if the source has sent the row
+    /// again with other content.
+    #[serde(default)]
+    pub superseded_by: Option<ObservationId>,
 }
 
 /// Which observations to list. Results are ordered by ID.
@@ -185,11 +193,22 @@ fn json(text: String) -> Result<serde_json::Value> {
 const OBSERVATION: &str = "
     SELECT o.observation_id::VARCHAR, o.entity_type, o.source_id, o.source_key,
            o.payload::VARCHAR, o.evidence::VARCHAR, epoch_us(o.ingested_at), o.ingest_run,
-           m.identity_id::VARCHAR
+           m.identity_id::VARCHAR, o.supersedes::VARCHAR, later.observation_id::VARCHAR
     FROM spool.observation o
-    LEFT JOIN spool.membership m ON m.observation_id = o.observation_id AND m.to_seq IS NULL";
+    LEFT JOIN spool.membership m ON m.observation_id = o.observation_id AND m.to_seq IS NULL
+    LEFT JOIN spool.observation later ON later.supersedes = o.observation_id";
 
 fn observation_record(row: &duckdb::Row<'_>) -> Result<ObservationRecord> {
+    fn id<T>(row: &duckdb::Row<'_>, at: usize) -> Result<Option<T>>
+    where
+        T: std::str::FromStr,
+        T::Err: std::error::Error + Send + Sync + 'static,
+    {
+        row.get::<_, Option<String>>(at)?
+            .as_deref()
+            .map(parse)
+            .transpose()
+    }
     Ok(ObservationRecord {
         id: parse(&row.get::<_, String>(0)?)?,
         entity_type: entity_type(row.get(1)?)?,
@@ -199,11 +218,9 @@ fn observation_record(row: &duckdb::Row<'_>) -> Result<ObservationRecord> {
         evidence: row.get::<_, Option<String>>(5)?.map(json).transpose()?,
         ingested_at: rfc3339(row.get(6)?),
         ingest_run: RunId(row.get::<_, i64>(7)? as u64),
-        identity: row
-            .get::<_, Option<String>>(8)?
-            .as_deref()
-            .map(parse)
-            .transpose()?,
+        identity: id(row, 8)?,
+        supersedes: id(row, 9)?,
+        superseded_by: id(row, 10)?,
     })
 }
 
