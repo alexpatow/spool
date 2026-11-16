@@ -37,6 +37,36 @@
 //! rematch = true                # and it judges every observation again
 //! ```
 //!
+//! A step can also store documents and run extractors over them, before it
+//! resolves:
+//!
+//! ```toml
+//! [truth]
+//! mentions = "mentions.csv"     # columns: source, document, start, end, entity_type, true_entity
+//!
+//! [[step]]
+//! name = "the news"
+//!
+//! [[step.documents]]
+//! dir = "documents"             # every file is a document, and its name is its key
+//! source = "news"
+//!
+//! [[step.extract]]
+//! extractor = "names"           # one of the project's extractors
+//! ```
+//!
+//! A labelled mention says that a document mentions an entity at a place:
+//! `start` and `end` count Unicode code points, and `end` is the position
+//! after the last one. A `text` column, if the file has one, must hold the
+//! document's text at that place, which catches a label that is off by
+//! one. The labels are the truth twice over. Extraction is scored against
+//! them on its own: a mention the extractor found is right when a label has
+//! the same document, entity type, start and end. Resolution is scored as it
+//! is for rows, over the observations that have a true entity, which for an
+//! extracted mention is the label at the same place. A mention the
+//! extractor made up has no true entity and is not scored there, so the two
+//! scores do not leak into each other.
+//!
 //! A step resolves with its own `strategy`, or else with the scenario's
 //! top-level `strategy`, or else with the built-in `rules`. A step with
 //! `rematch = true` matches everything again, which is what switching
@@ -67,6 +97,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use spool_core::{Actor, Changeset, Constraint, ConstraintKind, IdentityId, Op, Seq};
 
+use spool_core::DocumentId;
+
+use crate::documents::{ExtractOptions, NewDocument, locator};
 use crate::engine::{
     ConstraintFilter, Engine, Options, ResolveOptions, ResolveReport, StrategyRef, Suggestions,
 };
@@ -74,8 +107,8 @@ use crate::error::{Error, Result};
 use crate::ingest::IngestOptions;
 use crate::lookup::{ObservationFilter, ObservationRecord};
 use crate::metrics::{
-    Churn, IdStability, Metrics, OrderSensitivity, OverridePersistence, SplitRecovery,
-    UpgradeStability,
+    Churn, ExtractionMetrics, IdStability, Metrics, OrderSensitivity, OverridePersistence,
+    SplitRecovery, UpgradeStability,
 };
 use crate::project::Manifest;
 use crate::rows::Rows;
@@ -111,6 +144,8 @@ fn here() -> PathBuf {
 struct TruthSpec {
     file: Option<PathBuf>,
     column: Option<String>,
+    /// Labelled mentions: the truth about what the documents mention.
+    mentions: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -122,8 +157,36 @@ struct StepSpec {
     rematch: bool,
     #[serde(default)]
     ingest: Vec<IngestSpec>,
+    #[serde(default)]
+    documents: Vec<DocumentsSpec>,
+    #[serde(default)]
+    extract: Vec<ExtractSpec>,
     #[serde(default, rename = "correct")]
     corrections: Vec<CorrectionSpec>,
+}
+
+impl StepSpec {
+    /// Whether the step brings anything new into the store.
+    fn feeds(&self) -> bool {
+        !self.ingest.is_empty() || !self.documents.is_empty() || !self.extract.is_empty()
+    }
+}
+
+/// A directory of documents: every file in it is one, keyed by its name.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DocumentsSpec {
+    dir: PathBuf,
+    source: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExtractSpec {
+    extractor: String,
+    source: Option<String>,
+    #[serde(default)]
+    again: bool,
 }
 
 /// One thing a reviewer does. Exactly one of the fields after `reason` is
@@ -250,6 +313,12 @@ pub struct StepReport {
     /// The strategy the step resolved with.
     pub strategy: String,
     pub ingest: Vec<IngestSummary>,
+    /// The documents the step stored.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub documents: Vec<DocumentsSummary>,
+    /// The extractions the step ran, after its documents were stored.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extract: Vec<ExtractSummary>,
     /// The corrections the step applied, in order, before it resolved.
     pub corrections: Vec<CorrectionSummary>,
     pub resolve: ResolveReport,
@@ -257,6 +326,10 @@ pub struct StepReport {
     pub head: Seq,
     /// Committed state against the truth for everything ingested so far.
     pub metrics: Metrics,
+    /// The mentions extracted so far against the labelled ones. Only a
+    /// scenario with labelled mentions has it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extraction: Option<ExtractionMetrics>,
     /// Of the observations that had an identity before the step, how many
     /// kept it.
     pub id_stability: IdStability,
@@ -280,6 +353,111 @@ pub struct IngestSummary {
     pub duplicates: u64,
     /// Rows that replaced an earlier version of the same key.
     pub superseded: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocumentsSummary {
+    pub source: String,
+    pub received: u64,
+    pub inserted: u64,
+    pub duplicates: u64,
+    /// Documents that replaced an earlier version of the same key.
+    pub superseded: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtractSummary {
+    pub extractor: String,
+    /// Documents the extractor read.
+    pub documents: u64,
+    pub mentions: u64,
+    /// Observations created.
+    pub inserted: u64,
+    pub duplicates: u64,
+    pub superseded: u64,
+}
+
+/// What a scenario knows to be true about what it has fed the engine.
+#[derive(Default)]
+struct Truth {
+    /// `(source, key)` to true entity, for the observations there may be so
+    /// far.
+    entities: HashMap<(String, String), String>,
+    /// The labelled mentions of each document, by `(source, document key)`.
+    labels: HashMap<(String, String), Vec<Label>>,
+    /// Whether the scenario has labelled mentions at all.
+    labelled: bool,
+    /// `(source, locator)` of the labelled mentions in the documents stored
+    /// so far.
+    gold: HashSet<(String, String)>,
+}
+
+/// One labelled mention.
+struct Label {
+    entity_type: String,
+    start: u64,
+    end: u64,
+    /// The document's text at that place, if the label says.
+    text: Option<String>,
+    entity: String,
+}
+
+impl Truth {
+    /// Takes note of a document that was stored: its labelled mentions are
+    /// now mentions an extractor should find, each at a known key.
+    fn add_document(&mut self, source: &str, key: &str, text: &str) -> Result<()> {
+        let Some(labels) = self.labels.get(&(source.to_owned(), key.to_owned())) else {
+            return Ok(());
+        };
+        let id = DocumentId::derive(source, key, text);
+        let characters: Vec<char> = text.chars().collect();
+        for label in labels {
+            let invalid = |message: String| {
+                Error::Scenario(format!(
+                    "the labelled mention of `{}` at {}-{} in document `{key}` of `{source}`: {message}",
+                    label.entity, label.start, label.end
+                ))
+            };
+            let (start, end) = (label.start as usize, label.end as usize);
+            if start >= end || end > characters.len() {
+                return Err(invalid(format!(
+                    "the document is {} long",
+                    characters.len()
+                )));
+            }
+            let there: String = characters[start..end].iter().collect();
+            if let Some(expected) = &label.text
+                && *expected != there
+            {
+                return Err(invalid(format!(
+                    "the label says the text there is `{expected}`, and it is `{there}`"
+                )));
+            }
+            let key = locator(id, &label.entity_type, label.start, label.end);
+            self.gold.insert((source.to_owned(), key.clone()));
+            self.entities
+                .insert((source.to_owned(), key), label.entity.clone());
+        }
+        Ok(())
+    }
+}
+
+/// What feeding the engine one step's files, documents and extractions
+/// reported.
+struct Fed {
+    ingest: Vec<IngestSummary>,
+    documents: Vec<DocumentsSummary>,
+    extract: Vec<ExtractSummary>,
+}
+
+impl Fed {
+    fn new_observations(&self) -> u64 {
+        self.ingest
+            .iter()
+            .map(|ingest| ingest.inserted)
+            .chain(self.extract.iter().map(|extract| extract.inserted))
+            .sum()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -333,11 +511,18 @@ impl Scenario {
         let invalid = |message: String| Error::Scenario(format!("{}: {message}", file.display()));
         let spec: Spec = toml::from_str(&text).map_err(|error| invalid(error.to_string()))?;
 
-        if spec.truth.file.is_some() == spec.truth.column.is_some() {
+        let truth = &spec.truth;
+        if truth.file.is_some() && truth.column.is_some() {
             return Err(invalid(
-                "[truth] needs exactly one of `file` and `column`".to_owned(),
+                "[truth] has `file` or `column`, not both".to_owned(),
             ));
         }
+        if truth.file.is_none() && truth.column.is_none() && truth.mentions.is_none() {
+            return Err(invalid(
+                "[truth] needs `file`, `column` or `mentions`".to_owned(),
+            ));
+        }
+        let rows_have_truth = truth.file.is_some() || truth.column.is_some();
         let mut named = HashSet::new();
         for step in &spec.steps {
             for (index, correction) in step.corrections.iter().enumerate() {
@@ -380,6 +565,12 @@ impl Scenario {
                 if ingest.key.is_none() {
                     return Err(invalid(format!(
                         "step `{}`: an ingest needs a `key` column, which is how truth is joined to observations",
+                        step.name
+                    )));
+                }
+                if !rows_have_truth {
+                    return Err(invalid(format!(
+                        "step `{}` ingests rows, and [truth] has no `file` or `column` to say what they are",
                         step.name
                     )));
                 }
@@ -437,6 +628,68 @@ impl Scenario {
         })
     }
 
+    /// The truth the scenario's files hold before anything is ingested.
+    fn truth(&self) -> Result<Truth> {
+        let mut truth = Truth::default();
+        if let Some(file) = &self.spec.truth.file {
+            let path = self.dir.join(file);
+            for (source, key, entity) in read_truth_file(&path)? {
+                truth.entities.insert((source, key), entity);
+            }
+        }
+        if let Some(file) = &self.spec.truth.mentions {
+            truth.labelled = true;
+            for (document, label) in read_labels(&self.dir.join(file))? {
+                truth.labels.entry(document).or_default().push(label);
+            }
+        }
+        Ok(truth)
+    }
+
+    /// Feeds the engine what a step brings: its files, then its documents,
+    /// then its extractions.
+    fn feed(&self, engine: &Engine, step: &StepSpec, truth: &mut Truth) -> Result<Fed> {
+        let mut fed = Fed {
+            ingest: Vec::new(),
+            documents: Vec::new(),
+            extract: Vec::new(),
+        };
+        for ingest in &step.ingest {
+            fed.ingest.push(self.ingest(engine, ingest, truth)?);
+        }
+        for documents in &step.documents {
+            let read = read_documents(&self.dir.join(&documents.dir))?;
+            for document in &read {
+                truth.add_document(&documents.source, &document.key, &document.text)?;
+            }
+            let report = engine.add_documents(&documents.source, &read)?;
+            fed.documents.push(DocumentsSummary {
+                source: documents.source.clone(),
+                received: report.received,
+                inserted: report.inserted,
+                duplicates: report.duplicates,
+                superseded: report.superseded,
+            });
+        }
+        for extract in &step.extract {
+            let report = engine.extract(&ExtractOptions {
+                extractor: extract.extractor.clone(),
+                source: extract.source.clone(),
+                again: extract.again,
+                limit: None,
+            })?;
+            fed.extract.push(ExtractSummary {
+                extractor: extract.extractor.clone(),
+                documents: report.documents,
+                mentions: report.mentions,
+                inserted: report.inserted,
+                duplicates: report.duplicates,
+                superseded: report.superseded,
+            });
+        }
+        Ok(fed)
+    }
+
     /// Runs every step against an engine with an empty store. `after_step`
     /// is called once a step is committed and scored, while the engine still
     /// holds the state the step left.
@@ -447,28 +700,18 @@ impl Scenario {
     ) -> Result<BenchReport> {
         let manifest = Manifest::load(self.project_dir())?;
         engine.apply(&manifest)?;
-        // The project's strategy files are beside the manifest's sources.
+        // The project's strategies and extractors are beside the manifest's
+        // sources.
         if engine.user_code().is_none() {
             engine.set_user_code(UserCode::new(self.project_dir()));
         }
 
-        // (source, key) to true entity, for everything ingested so far.
-        let mut truth: HashMap<(String, String), String> = HashMap::new();
-        if let Some(file) = &self.spec.truth.file {
-            let path = self.dir.join(file);
-            for (source, key, entity) in read_truth_file(&path)? {
-                truth.insert((source, key), entity);
-            }
-        }
-
+        let mut truth = self.truth()?;
         let mut tracked = Tracked::default();
         let mut steps = Vec::new();
         for step in &self.spec.steps {
             let before = engine.head()?;
-            let mut ingested = Vec::new();
-            for ingest in &step.ingest {
-                ingested.push(self.ingest(engine, ingest, &mut truth)?);
-            }
+            let fed = self.feed(engine, step, &mut truth)?;
             let mut corrections = Vec::new();
             for (index, correction) in step.corrections.iter().enumerate() {
                 let summary =
@@ -484,7 +727,7 @@ impl Scenario {
 
             let resolve = self.resolve(engine, step)?;
             let head = engine.head()?;
-            let new_observations = ingested.iter().map(|ingest| ingest.inserted).sum();
+            let new_observations = fed.new_observations();
             let (split_recovery, override_persistence) = held(engine, &tracked)?;
             let id_stability = engine.id_stability(before, head)?;
             let churn = engine.churn(before, head, new_observations)?;
@@ -508,11 +751,14 @@ impl Scenario {
             let report = StepReport {
                 name: step.name.clone(),
                 strategy: self.strategy(step).to_owned(),
-                ingest: ingested,
+                ingest: fed.ingest,
+                documents: fed.documents,
+                extract: fed.extract,
                 corrections,
                 resolve,
                 head,
-                metrics: engine.score(truth_relation(engine, &truth)?)?,
+                metrics: engine.score(truth_relation(engine, &truth.entities)?)?,
+                extraction: extraction(engine, &truth)?,
                 id_stability,
                 churn,
                 split_recovery,
@@ -538,7 +784,7 @@ impl Scenario {
         &self,
         engine: &Engine,
         ingest: &IngestSpec,
-        truth: &mut HashMap<(String, String), String>,
+        truth: &mut Truth,
     ) -> Result<IngestSummary> {
         let path = match (&ingest.file, &ingest.dataset) {
             (Some(file), _) => self.dir.join(file),
@@ -551,7 +797,7 @@ impl Scenario {
             let (rest, pairs) = rows.take_column(column, key)?;
             rows = rest;
             for (key, entity) in pairs {
-                truth.insert((ingest.source.clone(), key), entity);
+                truth.entities.insert((ingest.source.clone(), key), entity);
             }
         }
         let report = engine.ingest(
@@ -578,12 +824,7 @@ impl Scenario {
         engine: &Engine,
         manifest: &Manifest,
     ) -> Result<Option<OrderSensitivity>> {
-        let batches: Vec<&StepSpec> = self
-            .spec
-            .steps
-            .iter()
-            .filter(|step| !step.ingest.is_empty())
-            .collect();
+        let batches: Vec<&StepSpec> = self.spec.steps.iter().filter(|step| step.feeds()).collect();
         if batches.len() < 2 {
             return Ok(None);
         }
@@ -593,11 +834,9 @@ impl Scenario {
             if let Some(user_code) = engine.user_code() {
                 replayed.set_user_code(user_code.as_ref().clone());
             }
-            let mut truth = HashMap::new();
+            let mut truth = self.truth()?;
             for step in steps {
-                for ingest in &step.ingest {
-                    self.ingest(&replayed, ingest, &mut truth)?;
-                }
+                self.feed(&replayed, step, &mut truth)?;
                 // The batch with the strategy it was written with, and no
                 // rematch: this measures the order of arrival alone.
                 replayed.resolve(&ResolveOptions::with_strategy(self.strategy(step)))?;
@@ -821,6 +1060,129 @@ fn truth_relation(engine: &Engine, truth: &HashMap<(String, String), String>) ->
         .map(|(id, entity)| vec![Some(id.as_str()), Some(*entity)])
         .collect();
     Rows::from_text(&["observation_id", "true_entity"], &rows)
+}
+
+/// How the mentions extracted so far compare with the labelled mentions of
+/// the documents stored so far. A mention is one place in one document,
+/// however many versions of the observation there are.
+fn extraction(engine: &Engine, truth: &Truth) -> Result<Option<ExtractionMetrics>> {
+    if !truth.labelled {
+        return Ok(None);
+    }
+    let found = engine.query(
+        "SELECT DISTINCT source_id, source_key FROM spool.observation
+         WHERE json_extract_string(evidence, '$.document') IS NOT NULL",
+    )?;
+    let (mut extracted, mut correct) = (0, 0);
+    for batch in &found {
+        let column = |index: usize| batch.column(index).as_string::<i32>();
+        let (sources, keys) = (column(0), column(1));
+        for row in 0..batch.num_rows() {
+            extracted += 1;
+            let key = (sources.value(row).to_owned(), keys.value(row).to_owned());
+            if truth.gold.contains(&key) {
+                correct += 1;
+            }
+        }
+    }
+    Ok(Some(ExtractionMetrics::new(
+        truth.gold.len() as u64,
+        extracted,
+        correct,
+    )))
+}
+
+/// Every file of a directory as a document keyed by its name, in the order
+/// of the names.
+fn read_documents(dir: &Path) -> Result<Vec<NewDocument>> {
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(dir).map_err(Error::io(dir))? {
+        let path = entry.map_err(Error::io(dir))?.path();
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if path.is_file() && !name.starts_with('.') {
+            files.push((name, path));
+        }
+    }
+    files.sort();
+    files
+        .into_iter()
+        .map(|(key, path)| {
+            let text = std::fs::read_to_string(&path).map_err(Error::io(&path))?;
+            Ok(NewDocument {
+                key,
+                uri: None,
+                text,
+            })
+        })
+        .collect()
+}
+
+/// Reads labelled mentions: each with the `(source, document key)` it is in.
+fn read_labels(path: &Path) -> Result<Vec<((String, String), Label)>> {
+    const COLUMNS: [&str; 6] = [
+        "source",
+        "document",
+        "start",
+        "end",
+        "entity_type",
+        "true_entity",
+    ];
+    let invalid = |message: String| Error::Scenario(format!("{}: {message}", path.display()));
+    let rows = Rows::from_csv(path)?;
+    let schema = duckdb::arrow::record_batch::RecordBatchReader::schema(&rows);
+    let mut at = Vec::new();
+    for name in COLUMNS {
+        at.push(schema.index_of(name).map_err(|_| {
+            invalid(
+                "a file of labelled mentions needs the columns `source`, `document`, `start`, \
+                 `end`, `entity_type` and `true_entity`"
+                    .to_owned(),
+            )
+        })?);
+    }
+    let text_at = schema.index_of("text").ok();
+    let mut labels = Vec::new();
+    let mut line = 1;
+    for batch in rows {
+        let batch = batch?;
+        let column = |index: usize| batch.column(index).as_string::<i32>();
+        for row in 0..batch.num_rows() {
+            line += 1;
+            let field = |index: usize| -> Result<String> {
+                let values = column(at[index]);
+                if values.is_null(row) || values.value(row).is_empty() {
+                    return Err(invalid(format!("line {line} has no `{}`", COLUMNS[index])));
+                }
+                Ok(values.value(row).to_owned())
+            };
+            let position = |index: usize| -> Result<u64> {
+                field(index)?.parse().map_err(|_| {
+                    invalid(format!(
+                        "line {line}: `{}` is not a position",
+                        COLUMNS[index]
+                    ))
+                })
+            };
+            let text = text_at
+                .map(column)
+                .filter(|values| !values.is_null(row))
+                .map(|values| values.value(row).to_owned());
+            labels.push((
+                (field(0)?, field(1)?),
+                Label {
+                    start: position(2)?,
+                    end: position(3)?,
+                    entity_type: field(4)?,
+                    entity: field(5)?,
+                    text,
+                },
+            ));
+        }
+    }
+    Ok(labels)
 }
 
 fn read_truth_file(path: &Path) -> Result<Vec<(String, String, String)>> {

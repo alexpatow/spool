@@ -1,0 +1,26 @@
+source,document,start,end,entity_type,true_entity,text
+news,01-northwind-expands.txt,0,21,company,northwind,Northwind Traders Ltd
+news,01-northwind-expands.txt,145,162,company,northwind,Northwind Traders
+news,02-brightwave-funding.txt,12,26,company,brightwave,Brightwave Inc
+news,02-brightwave-funding.txt,85,99,company,brightwave,Brightwave Inc
+news,02-brightwave-funding.txt,125,145,company,kestrel,Kestrel Analytics AG
+news,02-brightwave-funding.txt,173,183,company,brightwave,Brightwave
+news,03-cables-rachat.txt,10,39,company,cables,Société Générale de Câbles SA
+news,03-cables-rachat.txt,63,82,company,muller,Müller & Söhne GmbH
+news,03-cables-rachat.txt,105,124,company,muller,Müller & Söhne GmbH
+news,04-muller-wire.txt,9,28,company,muller,Muller & Sohne GmbH
+news,04-muller-wire.txt,75,104,company,cables,Societe Generale de Cables SA
+news,04-muller-wire.txt,130,144,company,muller,Muller & Sohne
+news,05-halden-results.txt,0,19,company,halden-freight,Halden Freight Corp
+news,05-halden-results.txt,86,106,company,halden-logistics,Halden Logistics Ltd
+news,05-halden-results.txt,169,183,company,halden-freight,Halden Freight
+news,06-pioneer-bristol.txt,0,20,company,pioneer-bristol,Pioneer Supplies Ltd
+news,07-pioneer-dunedin.txt,55,75,company,pioneer-dunedin,Pioneer Supplies Ltd
+news,07-pioneer-dunedin.txt,116,136,company,pioneer-dunedin,Pioneer Supplies Ltd
+news,08-kestrel-bericht.txt,0,20,company,kestrel,Kestrel Analytics AG
+news,08-kestrel-bericht.txt,48,62,company,brightwave,Brightwave Inc
+news,08-kestrel-bericht.txt,79,99,company,kestrel,Kestrel Analytics AG
+news,09-falcon-watch.txt,70,81,company,orchard,Orchard Ltd
+news,09-falcon-watch.txt,122,143,company,northwind,NORTHWIND TRADERS LTD
+news,10-northwind-name.txt,27,36,company,northwind,Northwind
+news,10-northwind-name.txt,60,81,company,northwind,Northwind Traders Ltd

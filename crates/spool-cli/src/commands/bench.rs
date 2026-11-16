@@ -12,8 +12,10 @@ use crate::args::Spec;
 pub const USAGE: &str = "\
 Usage: spool bench <scenario> [options]
 
-Runs a benchmark scenario: ingests each step's files, applies its corrections,
-resolves, and scores committed state against the scenario's truth.
+Runs a benchmark scenario: ingests each step's files, stores its documents and
+runs its extractors over them, applies its corrections, resolves, and scores
+committed state against the scenario's truth. A scenario with labelled
+mentions is also scored on what its extractors found.
 
   <scenario>      a scenario.toml, or the directory that holds one
 
@@ -26,12 +28,13 @@ Options:
   --strategy <name>   the strategy of every step that does not name its own:
                       `rules`, or one of the project's user-code strategies
                       (default: the scenario's, or `rules`)
-  --task-timeout <s>  how long a user-code strategy may run, in seconds
-                      (default: 600)
-  --tasks <dir>       where the task directories of user-code strategies are
-                      made (default: spool-tasks in the temporary directory)
+  --task-timeout <s>  how long a user-code strategy or an extractor may run,
+                      in seconds (default: 600)
+  --tasks <dir>       where the task directories of user code are made
+                      (default: spool-tasks in the temporary directory)
 
-Strategies that are `.py` files run with `uv`, and `.ts` files with `bun`.
+Strategies and extractors that are `.py` files run with `uv`, and `.ts` files
+with `bun`.
 SPOOL_UV and SPOOL_BUN name the commands if they are not on the search path.
 ";
 
@@ -153,6 +156,22 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
         println!(
             "ingested  {} rows of `{}` from `{}`: {} new, {} already known",
             ingest.received, ingest.entity_type, ingest.source, ingest.inserted, ingest.duplicates
+        );
+    }
+    for documents in &step.documents {
+        println!(
+            "stored    {} documents from `{}`: {} new, {} already known",
+            documents.received, documents.source, documents.inserted, documents.duplicates
+        );
+    }
+    for extract in &step.extract {
+        println!(
+            "extracted `{}` read {} documents and found {} mentions: {} new, {} already known",
+            extract.extractor,
+            extract.documents,
+            extract.mentions,
+            extract.inserted,
+            extract.duplicates
         );
     }
     for correction in &step.corrections {
@@ -287,6 +306,20 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
         }
     }
 
+    if let Some(extraction) = &step.extraction {
+        println!("\nextraction ({} labelled mentions):", extraction.labelled);
+        println!(
+            "  mentions      {} extracted, {} of them labelled",
+            extraction.extracted, extraction.correct
+        );
+        println!(
+            "  spans         precision {}  recall {}  (F1 {})",
+            share(extraction.precision),
+            share(extraction.recall),
+            share(extraction.f1)
+        );
+    }
+
     let metrics = &step.metrics;
     println!(
         "\nagainst the truth ({} observations):",
@@ -386,12 +419,21 @@ fn text(batch: &spool::arrow::record_batch::RecordBatch, column: usize, row: usi
     }
 }
 
-/// Observation ID to `source:key`, for messages a person reads.
+/// What to call the observation `o` in messages a person reads: `source:key`,
+/// and for a mention `source:document[start-end]`, since its own key names
+/// the document by ID.
+const OBSERVATION_NAME: &str = "o.source_id || ':' || CASE
+        WHEN json_extract_string(o.evidence, '$.document') IS NULL THEN coalesce(o.source_key, '?')
+        ELSE json_extract_string(o.evidence, '$.key')
+             || '[' || json_extract_string(o.evidence, '$.start')
+             || '-' || json_extract_string(o.evidence, '$.end') || ']'
+    END";
+
+/// Observation ID to its name, for messages a person reads.
 fn observation_keys(engine: &Engine) -> spool::Result<std::collections::HashMap<String, String>> {
-    let batches = engine.query(
-        "SELECT observation_id::VARCHAR, source_id || ':' || coalesce(source_key, '?')
-         FROM spool.observation",
-    )?;
+    let batches = engine.query(&format!(
+        "SELECT o.observation_id::VARCHAR, {OBSERVATION_NAME} FROM spool.observation o"
+    ))?;
     let mut keys = std::collections::HashMap::new();
     for batch in &batches {
         for row in 0..batch.num_rows() {
@@ -411,8 +453,7 @@ fn print_identities(engine: &Engine, list: usize) -> spool::Result<()> {
 
     let batches = engine.query(&format!(
         "SELECT m.identity_id::VARCHAR, i.entity_type, count(*)::VARCHAR,
-                string_agg(o.source_id || ':' || coalesce(o.source_key, '?'), ', '
-                           ORDER BY o.source_id, o.source_key)
+                string_agg({OBSERVATION_NAME}, ', ' ORDER BY o.source_id, {OBSERVATION_NAME})
          FROM spool.membership_current m
          JOIN spool.identity_current i ON i.identity_id = m.identity_id
          JOIN spool.observation o ON o.observation_id = m.observation_id

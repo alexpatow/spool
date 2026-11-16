@@ -50,7 +50,10 @@ mod usercode;
 pub use duckdb::arrow;
 pub use spool_core as core;
 
-pub use bench::{BenchReport, CorrectionSummary, IngestSummary, Scenario, StepReport};
+pub use bench::{
+    BenchReport, CorrectionSummary, DocumentsSummary, ExtractSummary, IngestSummary, Scenario,
+    StepReport,
+};
 pub use documents::{
     DocumentExtraction, DocumentFilter, DocumentRecord, ExtractOptions, ExtractReport,
     ExtractorRef, NewDocument, locator,
@@ -68,8 +71,8 @@ pub use lookup::{
     ObservationRecord, StoreInfo, TypeInfo,
 };
 pub use metrics::{
-    BCubed, Churn, IdStability, Metrics, OrderSensitivity, OverridePersistence, PairMetrics,
-    SplitRecovery, UpgradeStability,
+    BCubed, Churn, ExtractionMetrics, IdStability, Metrics, OrderSensitivity, OverridePersistence,
+    PairMetrics, SplitRecovery, UpgradeStability,
 };
 pub use project::{
     Declaration, EntityTypeManifest, EntityTypeSource, Extractor, FeatureColumn, Manifest, Project,
