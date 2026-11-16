@@ -479,7 +479,7 @@ Every path is under `/v1` and needs the bearer token, except `GET /healthz`. Sma
 
 A client is a small package that speaks this API. The first is TypeScript, and a Python client is the same amount of work. No client contains engine code, so there are no native packages to build per platform. An agent built with a framework such as eve reaches Spool the same way: a tool in the agent calls the client.
 
-Scope of the server: one store, one writer and one tenant. Access is a bearer token. It scales up, not out. Tenancy, user management and provisioning compute are out of scope, which keeps Spool short of a hosted control plane. Inside the server, reads run concurrently and commits are serialised, so the log's order is the order of commit. Reads use their own connections to the same DuckDB instance, and each read is one transaction, so it sees one committed state however many queries it takes. So reading a run or looking up an identity does not wait for an ingest or a resolve in progress.
+Scope of the server: one store, one writer and one tenant. Access is a bearer token. It scales up, not out. Tenancy, user management and provisioning compute are out of scope, which keeps Spool short of a hosted control plane. Inside the server, reads run concurrently and commits are serialised, so the log's order is the order of commit. Reads use their own connections to the same DuckDB instance, so reading a run or looking up an identity does not wait for an ingest or a resolve in progress. Each read is one transaction, so it sees one committed state however many queries it takes.
 
 Two packaging facts to plan around:
 
