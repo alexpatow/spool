@@ -385,11 +385,17 @@ pub fn build(arguments: &[String]) -> Result<(), Failure> {
         .iter()
         .flat_map(|entity_type| &entity_type.strategies)
         .collect();
-    let uses = |runtime: Runtime| {
-        strategies
-            .iter()
-            .any(|strategy| strategy.runtime == runtime)
-    };
+    let runtimes: Vec<Runtime> = strategies
+        .iter()
+        .map(|strategy| strategy.runtime)
+        .chain(
+            manifest
+                .extractors
+                .iter()
+                .map(|extractor| extractor.runtime),
+        )
+        .collect();
+    let uses = |runtime: Runtime| runtimes.contains(&runtime);
 
     let dockerfile_path = dir.join("Dockerfile");
     if dockerfile_path.exists() {
@@ -403,7 +409,7 @@ pub fn build(arguments: &[String]) -> Result<(), Failure> {
         let image = arguments
             .value("--base-image")
             .map_or_else(base_image, str::to_owned);
-        let contents = if strategies.is_empty() {
+        let contents = if runtimes.is_empty() {
             dockerfile(&image)
         } else {
             dockerfile_with_user_code(&image, uses(Runtime::Python), uses(Runtime::Typescript))
@@ -419,9 +425,13 @@ pub fn build(arguments: &[String]) -> Result<(), Failure> {
 
     if arguments.flag("--install") {
         let user_code = super::user_code(&arguments, &dir)?;
-        for strategy in &strategies {
+        for strategy in strategies {
             user_code.install(strategy)?;
             println!("starts    {}", strategy.file);
+        }
+        for extractor in &manifest.extractors {
+            user_code.install(extractor)?;
+            println!("starts    {}", extractor.file);
         }
     }
     Ok(())

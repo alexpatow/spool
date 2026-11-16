@@ -27,8 +27,8 @@ mod validate;
 pub use changeset::{Changeset, ConstraintKind, ContentHash, Op};
 pub use generate::{Clock, IdGenerator, RandomIds, SeededIds, StepClock, SystemClock};
 pub use ids::{
-    Actor, ChangesetId, EntityType, IdentityId, InvalidActor, InvalidEntityType, ObservationId,
-    RunId, Seq,
+    Actor, ChangesetId, DocumentId, EntityType, IdentityId, InvalidActor, InvalidEntityType,
+    ObservationId, RunId, Seq,
 };
 pub use memory::{MemoryState, ReplayError};
 pub use reconcile::{

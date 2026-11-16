@@ -130,6 +130,30 @@ uuid_id!(
     ChangesetId
 );
 
+uuid_id!(
+    /// Identifies one version of a document. Derived from the document's
+    /// source, its key within that source and its text, so storing the same
+    /// text twice yields the same ID, and a changed text yields another.
+    DocumentId
+);
+
+impl DocumentId {
+    /// The first 128 bits of a SHA-256 over the three parts, each
+    /// length-prefixed. The input begins with eight bytes that no
+    /// observation's does, so a document never shares an observation's ID.
+    pub fn derive(source_id: &str, source_key: &str, text: &str) -> Self {
+        let mut hasher = Sha256::new();
+        hasher.update([0xff; 8]);
+        put_str(&mut hasher, source_id);
+        put_str(&mut hasher, source_key);
+        put_str(&mut hasher, text);
+        let digest = hasher.finalize();
+        let mut first = [0u8; 16];
+        first.copy_from_slice(&digest[..16]);
+        Self(Uuid::from_bytes(first))
+    }
+}
+
 /// A position in the changeset log. The first committed changeset is 1, and 0
 /// is the empty log.
 #[derive(
@@ -277,7 +301,7 @@ mod schema {
 
     use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 
-    use super::{Actor, ChangesetId, EntityType, IdentityId, ObservationId};
+    use super::{Actor, ChangesetId, DocumentId, EntityType, IdentityId, ObservationId};
 
     macro_rules! text_schema {
         ($type:ty, $name:literal, $schema:tt) => {
@@ -308,6 +332,11 @@ mod schema {
         "type": "string",
         "format": "uuid"
     });
+    text_schema!(DocumentId, "DocumentId", {
+        "description": "Identifies one version of a document. Derived by the engine from the document's source, key and text.",
+        "type": "string",
+        "format": "uuid"
+    });
     text_schema!(EntityType, "EntityType", {
         "description": "The name of an entity type the project declares.",
         "type": "string",
@@ -323,6 +352,30 @@ mod schema {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn document_id_depends_on_every_part_and_is_no_observations() {
+        let base = DocumentId::derive("news", "a", "Acme opened an office.");
+        assert_eq!(
+            base,
+            DocumentId::derive("news", "a", "Acme opened an office.")
+        );
+        assert_ne!(
+            base,
+            DocumentId::derive("wire", "a", "Acme opened an office.")
+        );
+        assert_ne!(
+            base,
+            DocumentId::derive("news", "b", "Acme opened an office.")
+        );
+        assert_ne!(
+            base,
+            DocumentId::derive("news", "a", "Acme closed an office.")
+        );
+        // The same three texts as an observation's parts are another ID.
+        let observation = ObservationId::derive("news", Some("a"), "Acme opened an office.");
+        assert_ne!(base.to_string(), observation.to_string());
+    }
 
     #[test]
     fn observation_id_depends_on_every_part() {

@@ -1,8 +1,13 @@
-"""What a Spool strategy written in Python imports.
+"""What a Spool strategy or extractor written in Python imports.
 
-A strategy is a file under a project's `strategies/` directory. Spool runs
-it as a process of its own, hands it a directory of Parquet files, and reads
-the judgements it leaves there. This module hides the files:
+A strategy is a file under an entity type's `strategies/` directory, and an
+extractor is a file under the project's `extractors/` directory. Spool runs
+each as a process of its own, hands it a directory of Parquet files, and
+reads what it leaves there. This module hides the files.
+
+# Strategies
+
+A strategy says which pairs of observations are the same thing:
 
     from spool import strategy
 
@@ -35,7 +40,41 @@ or a pandas, polars or DuckDB result. Returning nothing means no judgements.
 A strategy says whether pairs are the same thing. It cannot change an
 identity: Spool reconciles the judgements and commits the result itself.
 
-Without `SPOOL_TASK_DIR` in the environment the decorator does nothing, so
+# Extractors
+
+An extractor finds the things a document mentions:
+
+    import re
+    from spool import extractor
+
+    @extractor
+    def find(document):
+        for found in re.finditer("[A-Z][a-z]+ (Inc|Ltd)", document.text):
+            yield document.mention("company", found.start(), found.end(), name=found.group())
+
+It is given what its parameters ask for by name:
+
+    document    one `Document`. The function is called once for each
+                document of the task.
+    documents   every `Document` of the task, as a list. The function is
+                called once.
+    task        the `ExtractTask`: the entity types the project declares,
+                and what each type's `extract.md` says to look for
+
+It returns mentions, or yields them. A mention says which entity type was
+found where, and what is known about it there: `document.mention(entity_type,
+start, end, **attributes)`. `start` and `end` are positions in
+`document.text` as Python counts them, and `end` is the position after the
+last character, so `document.text[start:end]` is the text of the mention.
+`document.find(quote)` gives the positions of a quote, for an extractor that
+knows what it found and not where. An attribute is text, a boolean or a
+number.
+
+Each mention becomes an observation of its entity type, whose source is the
+document's. An extractor says what a document mentions. It cannot say that
+two mentions are the same thing: the type's rules and strategies decide that.
+
+Without `SPOOL_TASK_DIR` in the environment the decorators do nothing, so
 the file can be imported, and its function called, in a test.
 """
 
@@ -46,7 +85,7 @@ import json
 import os
 from pathlib import Path
 
-__all__ = ["PROTOCOL", "Task", "strategy"]
+__all__ = ["PROTOCOL", "Document", "ExtractTask", "Task", "extractor", "strategy"]
 
 #: The version of the task directory's layout this module reads and writes.
 PROTOCOL = 1
@@ -67,18 +106,39 @@ def _pyarrow():
     return pyarrow
 
 
+def _info(directory, kind, decorator):
+    """Reads `task.json` and checks that the task is one for `decorator`."""
+    info = json.loads((Path(directory) / "task.json").read_text(encoding="utf-8"))
+    protocol = info.get("protocol")
+    if protocol != PROTOCOL:
+        raise RuntimeError(
+            f"this task was written with protocol {protocol}, "
+            f"and this helper speaks protocol {PROTOCOL}"
+        )
+    found = info.get("kind", "match")
+    if found != kind:
+        raise RuntimeError(
+            f"`@{decorator}` was given a task of kind `{found}`: a strategy belongs under an "
+            "entity type's `strategies/` directory and an extractor under the project's "
+            "`extractors/` directory"
+        )
+    return info
+
+
+def _write(pyarrow, table, path):
+    # Written under another name and then renamed, so that Spool never
+    # reads half a file.
+    partial = path.with_name(path.name + ".part")
+    pyarrow.parquet.write_table(table, partial)
+    os.replace(partial, path)
+
+
 class Task:
-    """One run's task: what Spool wrote, and where the judgements go."""
+    """One match run's task: what Spool wrote, and where the judgements go."""
 
     def __init__(self, directory):
         self.dir = Path(directory)
-        self.info = json.loads((self.dir / "task.json").read_text(encoding="utf-8"))
-        protocol = self.info.get("protocol")
-        if protocol != PROTOCOL:
-            raise RuntimeError(
-                f"this task was written with protocol {protocol}, "
-                f"and this helper speaks protocol {PROTOCOL}"
-            )
+        self.info = _info(directory, "match", "strategy")
         #: The match run the judgements belong to.
         self.run = self.info["run"]
         self.entity_type = self.info["entity_type"]
@@ -108,11 +168,7 @@ class Task:
     def write(self, judgements):
         """Writes the run's judgements. Whatever was written before is replaced."""
         pyarrow = _pyarrow()
-        table = _judgements(pyarrow, judgements)
-        path = self.dir / self.info["output"]
-        partial = path.with_name(path.name + ".part")
-        pyarrow.parquet.write_table(table, partial)
-        os.replace(partial, path)
+        _write(pyarrow, _judgements(pyarrow, judgements), self.dir / self.info["output"])
 
 
 def strategy(function):
@@ -219,3 +275,184 @@ def _table(pyarrow, result):
     if not rows:
         return pyarrow.table({name: pyarrow.array([], pyarrow.string()) for name in _REQUIRED})
     return pyarrow.table(columns)
+
+
+class Document:
+    """A document an extractor reads."""
+
+    __slots__ = ("id", "source", "key", "uri", "text")
+
+    def __init__(self, id, source, key, uri, text):
+        #: The ID of this version of the document.
+        self.id = id
+        #: The source the document came from.
+        self.source = source
+        #: The document's key within its source.
+        self.key = key
+        #: Where the source keeps the document, if it said.
+        self.uri = uri
+        self.text = text
+
+    def __repr__(self):
+        return f"Document(source={self.source!r}, key={self.key!r}, {len(self.text)} characters)"
+
+    def mention(self, entity_type, start, end, **attributes):
+        """A mention of an `entity_type` at `text[start:end]`."""
+        return {
+            "document_id": self.id,
+            "entity_type": entity_type,
+            "start": start,
+            "end": end,
+            "attributes": attributes,
+        }
+
+    def find(self, quote):
+        """Where `quote` is in the text: a `(start, end)` for each place, in order.
+
+        For an extractor that is told what a document mentions and not
+        where, as a language model tells it. A quote that is not in the
+        text, letter for letter, is found nowhere.
+        """
+        places = []
+        if not quote:
+            return places
+        at = self.text.find(quote)
+        while at != -1:
+            places.append((at, at + len(quote)))
+            at = self.text.find(quote, at + len(quote))
+        return places
+
+
+class ExtractTask:
+    """One extract run's task: the documents, and where the mentions go."""
+
+    def __init__(self, directory):
+        self.dir = Path(directory)
+        self.info = _info(directory, "extract", "extractor")
+        #: The extract run the mentions belong to.
+        self.run = self.info["run"]
+        #: The extractor's name: this file's name without `.py`.
+        self.extractor = self.info["extractor"]["name"]
+        #: The names of the entity types the project declares. A mention
+        #: names one of them.
+        self.entity_types = [entry["name"] for entry in self.info["entity_types"]]
+        self._documents = None
+
+    def instructions(self, entity_type):
+        """What the type's `extract.md` says to look for, or `None`."""
+        for entry in self.info["entity_types"]:
+            if entry["name"] == entity_type:
+                return entry.get("instructions")
+        raise KeyError(f"the project declares no entity type `{entity_type}`")
+
+    def features(self, entity_type):
+        """The type's feature columns, as `{"name", "data_type"}` dicts."""
+        for entry in self.info["entity_types"]:
+            if entry["name"] == entity_type:
+                return entry.get("features", [])
+        raise KeyError(f"the project declares no entity type `{entity_type}`")
+
+    @property
+    def documents(self):
+        """The documents to read, as a list of `Document`."""
+        if self._documents is None:
+            pyarrow = _pyarrow()
+            table = pyarrow.parquet.read_table(self.dir / self.info["inputs"]["documents"])
+            self._documents = [
+                Document(row["document_id"], row["source"], row["key"], row["uri"], row["text"])
+                for row in table.to_pylist()
+            ]
+        return self._documents
+
+    def write(self, mentions):
+        """Writes the run's mentions. Whatever was written before is replaced."""
+        pyarrow = _pyarrow()
+        _write(pyarrow, _mentions(pyarrow, mentions), self.dir / self.info["output"])
+
+
+def extractor(function):
+    """Runs `function` as this file's extractor. See the module's description."""
+    directory = os.environ.get("SPOOL_TASK_DIR")
+    if not directory:
+        return function
+    task = ExtractTask(directory)
+    names = list(inspect.signature(function).parameters)
+    for name in names:
+        if name not in ("document", "documents", "task"):
+            raise TypeError(
+                f"`{function.__name__}` asks for `{name}`, and an extractor is given "
+                "`document` or `documents`, and `task`"
+            )
+    if "document" in names and "documents" in names:
+        raise TypeError(
+            f"`{function.__name__}` asks for `document` and for `documents`: it is called "
+            "once for each document, or once with all of them"
+        )
+    given = {"task": task} if "task" in names else {}
+    found = []
+    if "document" in names:
+        for document in task.documents:
+            for mention in function(document=document, **given) or ():
+                # A mention made by hand need not say which document it is in.
+                if isinstance(mention, dict) and mention.get("document_id") is None:
+                    mention = {**mention, "document_id": document.id}
+                found.append(mention)
+    else:
+        if "documents" in names:
+            given["documents"] = task.documents
+        found = list(function(**given) or ())
+    task.write(found)
+    return function
+
+
+_MENTION = ("document_id", "entity_type", "start", "end", "attributes")
+
+
+def _mentions(pyarrow, rows):
+    """What an extractor returned, as a table of the mention columns."""
+    columns = {name: [] for name in _MENTION}
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise TypeError(
+                "an extractor returns mentions, as `document.mention(...)` makes them, "
+                f"and mention {index} is a {type(row).__name__}"
+            )
+        unknown = sorted(set(row) - set(_MENTION))
+        missing = [name for name in _MENTION[:4] if row.get(name) is None]
+        if unknown or missing:
+            problems = []
+            if missing:
+                problems.append("no " + ", ".join(f"`{name}`" for name in missing))
+            if unknown:
+                problems.append("also " + ", ".join(f"`{name}`" for name in unknown))
+            raise ValueError(
+                "a mention has `document_id`, `entity_type`, `start` and `end`, and "
+                f"optionally `attributes`; mention {index} has {' and '.join(problems)}"
+            )
+        for name in ("start", "end"):
+            if isinstance(row[name], bool) or not isinstance(row[name], int):
+                raise TypeError(
+                    f"`{name}` is a position in the document's text, and mention {index} "
+                    f"has {row[name]!r}"
+                )
+        attributes = row.get("attributes")
+        if attributes is not None and not isinstance(attributes, (dict, str)):
+            raise TypeError(
+                f"`attributes` is a dict, and mention {index} has a {type(attributes).__name__}"
+            )
+        columns["document_id"].append(str(row["document_id"]))
+        columns["entity_type"].append(str(row["entity_type"]))
+        columns["start"].append(row["start"])
+        columns["end"].append(row["end"])
+        columns["attributes"].append(
+            attributes if attributes is None or isinstance(attributes, str) else _json(attributes)
+        )
+    return pyarrow.table(
+        {
+            "document_id": pyarrow.array(columns["document_id"], pyarrow.string()),
+            "entity_type": pyarrow.array(columns["entity_type"], pyarrow.string()),
+            "start": pyarrow.array(columns["start"], pyarrow.int64()),
+            "end": pyarrow.array(columns["end"], pyarrow.int64()),
+            "attributes": pyarrow.array(columns["attributes"], pyarrow.string()),
+        }
+    )

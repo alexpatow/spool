@@ -8,6 +8,7 @@ use duckdb::{Connection, params};
 use serde::{Deserialize, Serialize};
 use spool_core::{Committed, ContentHash, EntityType, RunId, Seq, StateError};
 
+use crate::documents::{ExtractReport, ExtractorRef};
 use crate::engine::{StrategyRef, TypeResolution};
 use crate::error::{Error, Result};
 use crate::ingest::IngestReport;
@@ -19,6 +20,7 @@ use crate::time::rfc3339;
 #[serde(rename_all = "snake_case")]
 pub enum RunKind {
     Ingest,
+    Extract,
     Match,
     Reconcile,
 }
@@ -27,6 +29,7 @@ impl RunKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             RunKind::Ingest => "ingest",
+            RunKind::Extract => "extract",
             RunKind::Match => "match",
             RunKind::Reconcile => "reconcile",
         }
@@ -98,12 +101,20 @@ pub struct RunRecord {
     pub entity_type: Option<EntityType>,
     /// The strategy of a match run.
     pub strategy: Option<StrategyRef>,
+    /// The extractor of an extract run, and of the ingest run that stored
+    /// what it found.
+    #[serde(default)]
+    pub extractor: Option<ExtractorRef>,
     pub started_at: String,
     pub finished_at: Option<String>,
     /// Why a failed run failed.
     pub error: Option<String>,
-    /// What an ingest run reported when it finished.
+    /// What an ingest run reported when it finished. The run stored rows,
+    /// documents, or the mentions an extract run found.
     pub ingest: Option<IngestReport>,
+    /// What an extract run reported when it finished.
+    #[serde(default)]
+    pub extraction: Option<ExtractReport>,
     /// What a match run reported when it was reconciled. `committed` is
     /// filled in once its draft is committed.
     pub resolution: Option<TypeResolution>,
@@ -134,7 +145,9 @@ const RECORD: &str = "
     SELECT r.run_id, r.kind, r.status, r.strategy, r.strategy_version,
            json_extract_string(r.config, '$.entity_type'),
            epoch_us(r.started_at), epoch_us(r.finished_at), r.error, r.result::VARCHAR,
-           c.seq, c.changeset_id::VARCHAR, c.content_hash
+           c.seq, c.changeset_id::VARCHAR, c.content_hash,
+           json_extract_string(r.config, '$.extractor.name'),
+           json_extract_string(r.config, '$.extractor.version')
     FROM spool.run r
     LEFT JOIN spool.draft d ON d.match_run = r.run_id AND d.status = 'committed'
     LEFT JOIN spool.changeset c ON c.seq = d.closed_seq";
@@ -147,16 +160,20 @@ fn record(row: &duckdb::Row<'_>) -> Result<RunRecord> {
     };
     let kind = match row.get::<_, String>(1)?.as_str() {
         "ingest" => RunKind::Ingest,
+        "extract" => RunKind::Extract,
         "match" => RunKind::Match,
         "reconcile" => RunKind::Reconcile,
         _ => return Err(unreadable("kind")),
     };
     let result: Option<String> = row.get(9)?;
-    let (mut ingest, mut resolution) = (None, None);
+    let (mut ingest, mut extraction, mut resolution) = (None, None, None);
     if let Some(result) = &result {
         match kind {
             RunKind::Ingest => {
                 ingest = Some(serde_json::from_str(result).map_err(|_| unreadable("result"))?);
+            }
+            RunKind::Extract => {
+                extraction = Some(serde_json::from_str(result).map_err(|_| unreadable("result"))?);
             }
             RunKind::Match => {
                 let mut report: TypeResolution =
@@ -189,10 +206,18 @@ fn record(row: &duckdb::Row<'_>) -> Result<RunRecord> {
             Some(name) => Some(EntityType::new(name).map_err(StateError::new)?),
             None => None,
         },
+        extractor: match row.get::<_, Option<String>>(13)? {
+            Some(name) => Some(ExtractorRef {
+                name,
+                version: row.get::<_, Option<String>>(14)?.unwrap_or_default(),
+            }),
+            None => None,
+        },
         started_at: rfc3339(row.get(6)?),
         finished_at: row.get::<_, Option<i64>>(7)?.map(rfc3339),
         error: row.get(8)?,
         ingest,
+        extraction,
         resolution,
     })
 }

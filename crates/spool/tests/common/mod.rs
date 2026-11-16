@@ -37,12 +37,14 @@ pub fn thing() -> EntityTypeSource {
             SqlFile::new("same_code", "l.code = r.code"),
         ],
         strategies: Vec::new(),
+        extract: None,
     }
 }
 
 pub fn manifest_of(entity_types: Vec<EntityTypeSource>) -> Manifest {
     Project {
         entity_types,
+        extractors: Vec::new(),
         ignored: Vec::new(),
     }
     .compile()

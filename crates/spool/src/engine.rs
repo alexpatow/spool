@@ -36,6 +36,8 @@ use crate::schema;
 use crate::store::{self, DuckStore};
 use crate::usercode::{self, Task, TaskInfo, UserCode};
 
+mod extract;
+
 /// Where an engine gets new IDs and the time from. The default mints UUIDv7
 /// values and reads the system clock.
 pub struct Options {
@@ -319,9 +321,12 @@ pub struct Engine {
     ids: Ids,
     manifest: RwLock<Option<Arc<Manifest>>>,
     user_code: RwLock<Option<Arc<UserCode>>>,
-    /// Held by a call to [`resolve`](Engine::resolve) from start to finish.
-    /// The writer is let go while user code runs, and a second resolve that
-    /// began in that gap would match the same observations again.
+    /// Held by a call to [`resolve`](Engine::resolve) or to
+    /// [`extract`](Engine::extract) from start to finish, so that one piece
+    /// of user code runs at a time. The writer is let go while user code
+    /// runs, and a second resolve that began in that gap would match the
+    /// same observations again, as a second extraction would read the same
+    /// documents again.
     resolving: Mutex<()>,
 }
 
@@ -472,8 +477,8 @@ impl Engine {
     }
 
     /// Tells the engine where the project's files are, so that it can run
-    /// the user-code strategies the manifest names. Without this it runs
-    /// the SQL rules only.
+    /// the user-code strategies and the extractors the manifest names.
+    /// Without this it runs the SQL rules only.
     pub fn set_user_code(&self, user_code: UserCode) {
         *self
             .user_code
@@ -765,7 +770,7 @@ impl Engine {
                 user_code
                     .as_deref()
                     .ok_or_else(|| Error::NoUserCode(strategy.name.clone()))?
-                    .check(strategy)?;
+                    .check(&strategy.into())?;
             }
         }
         let then = if options.leave_for_review {
@@ -1374,41 +1379,7 @@ impl Inner {
                     )));
                 }
 
-                // A new row under a key the source has used before is the
-                // next version of that row. It supersedes the latest version
-                // the store holds, or the one before it in this call.
-                inserted += tx.execute(
-                    "INSERT INTO spool.observation
-                     SELECT n.observation_id, $1, $2, n.source_key,
-                            CASE WHEN n.source_key IS NOT NULL THEN coalesce(
-                              lag(n.observation_id) OVER (PARTITION BY n.source_key ORDER BY n.ord),
-                              latest.observation_id) END,
-                            n.payload::JSON, n.evidence::JSON, NULL, make_timestamptz($3), $4
-                     FROM (
-                       SELECT s.observation_id::UUID AS observation_id, s.source_key,
-                              s.payload, s.evidence, s.ord
-                       FROM arrow($5) s
-                       WHERE NOT EXISTS (
-                         SELECT 1 FROM spool.observation o
-                         WHERE o.observation_id = s.observation_id::UUID)
-                     ) n
-                     LEFT JOIN (
-                       SELECT o.source_key, o.observation_id
-                       FROM spool.observation o
-                       WHERE o.entity_type = $1 AND o.source_id = $2
-                         AND o.source_key IS NOT NULL
-                         AND NOT EXISTS (
-                           SELECT 1 FROM spool.observation later
-                           WHERE later.supersedes = o.observation_id)
-                     ) latest ON latest.source_key = n.source_key",
-                    params![
-                        name.as_str(),
-                        source,
-                        now,
-                        run.0 as i64,
-                        &ArrowBatchRegistration::new(staged)
-                    ],
-                )? as u64;
+                inserted += ingest::insert(&tx, name.as_str(), source, now, run, staged)?;
             }
 
             let problem = features::fill(

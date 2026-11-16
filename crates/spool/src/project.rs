@@ -7,17 +7,21 @@
 //!
 //! ```text
 //! my-project/
-//! └── entities/
-//!     └── company/
-//!         ├── features.sql        one query; its columns are the feature table
-//!         └── rules/
-//!             ├── block/*.sql     predicates over rows `l` and `r` that generate candidate pairs
-//!             ├── no_match/*.sql  predicates that judge a candidate `no_match`
-//!             └── match/*.sql     predicates that judge a candidate `match`
-//!         └── strategies/
-//!             ├── splink.py       user code: the strategy `splink`, run with `uv`
-//!             ├── splink/         files that belong to `splink`, such as its model
-//!             └── nearest.ts      the strategy `nearest`, run with `bun`
+//! ├── entities/
+//! │   └── company/
+//! │       ├── features.sql        one query; its columns are the feature table
+//! │       ├── extract.md          what an extractor is told about the type
+//! │       ├── rules/
+//! │       │   ├── block/*.sql     predicates over rows `l` and `r` that generate candidate pairs
+//! │       │   ├── no_match/*.sql  predicates that judge a candidate `no_match`
+//! │       │   └── match/*.sql     predicates that judge a candidate `match`
+//! │       └── strategies/
+//! │           ├── splink.py       user code: the strategy `splink`, run with `uv`
+//! │           ├── splink/         files that belong to `splink`, such as its model
+//! │           └── nearest.ts      the strategy `nearest`, run with `bun`
+//! └── extractors/
+//!     ├── names.py                user code: the extractor `names`, which finds mentions in documents
+//!     └── names/                  files that belong to `names`
 //! ```
 
 use std::collections::BTreeSet;
@@ -35,7 +39,10 @@ use crate::store::DuckStore;
 #[derive(Clone, Debug, Default)]
 pub struct Project {
     pub entity_types: Vec<EntityTypeSource>,
-    /// Files under `entities/` that this version does not use.
+    /// The files under `extractors/`.
+    pub extractors: Vec<StrategySource>,
+    /// Files under `entities/` and `extractors/` that this version does not
+    /// use.
     pub ignored: Vec<PathBuf>,
 }
 
@@ -47,9 +54,11 @@ pub struct EntityTypeSource {
     pub no_match: Vec<SqlFile>,
     pub match_: Vec<SqlFile>,
     pub strategies: Vec<StrategySource>,
+    /// The text of `extract.md`, if the type has one.
+    pub extract: Option<String>,
 }
 
-/// A user-code strategy as found on disk.
+/// A user-code file as found on disk: a strategy, or an extractor.
 #[derive(Clone, Debug)]
 pub struct StrategySource {
     /// The file's name without its extension.
@@ -86,6 +95,9 @@ impl SqlFile {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Manifest {
     pub entity_types: Vec<EntityTypeManifest>,
+    /// User-code extractors. Left out of the JSON when there are none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extractors: Vec<Extractor>,
     pub hash: String,
 }
 
@@ -101,6 +113,26 @@ pub struct EntityTypeManifest {
     /// project of SQL files has the manifest hash it always had.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub strategies: Vec<Strategy>,
+    /// The text of the type's `extract.md`: what an extractor is told about
+    /// the type, in the project's own words. The engine does not read it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extract: Option<String>,
+}
+
+/// An extractor: a file the engine runs as a child process, which reads
+/// documents and says where they mention entities. The engine runs the file
+/// only while it still has this hash.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct Extractor {
+    pub name: String,
+    pub runtime: Runtime,
+    /// The file, as a path from the project directory with `/` between its
+    /// parts.
+    pub file: String,
+    /// SHA-256 of the file and of every file in the directory that shares
+    /// its name. It is recorded as the extractor's version with each run.
+    pub hash: String,
 }
 
 /// A strategy that is user code: a file the engine runs as a child process.
@@ -216,7 +248,7 @@ impl Manifest {
                 )));
             }
         }
-        if hash_json(&manifest.entity_types) != manifest.hash {
+        if manifest_hash(&manifest.entity_types, &manifest.extractors) != manifest.hash {
             return Err(invalid(
                 "the manifest does not have the hash recorded in it; build it again".to_owned(),
             ));
@@ -239,6 +271,22 @@ impl Manifest {
         self.entity_types
             .iter()
             .find(|entity_type| entity_type.name.as_str() == name)
+    }
+
+    pub fn extractor(&self, name: &str) -> Option<&Extractor> {
+        self.extractors
+            .iter()
+            .find(|extractor| extractor.name == name)
+    }
+}
+
+/// The hash of a manifest's content. A project without extractors has the
+/// hash it had before there were any.
+fn manifest_hash(entity_types: &[EntityTypeManifest], extractors: &[Extractor]) -> String {
+    if extractors.is_empty() {
+        hash_json(&entity_types)
+    } else {
+        hash_json(&(entity_types, extractors))
     }
 }
 
@@ -281,10 +329,15 @@ impl Project {
                 no_match: Vec::new(),
                 match_: Vec::new(),
                 strategies: Vec::new(),
+                extract: None,
             };
             for child in list(&entry)? {
                 match file_name(&child).as_str() {
                     "features.sql" => {}
+                    "extract.md" if child.is_file() => {
+                        source.extract =
+                            Some(std::fs::read_to_string(&child).map_err(Error::io(&child))?);
+                    }
                     "rules" if child.is_dir() => {
                         for group in list(&child)? {
                             let rules = match file_name(&group).as_str() {
@@ -308,40 +361,16 @@ impl Project {
                         }
                     }
                     "strategies" if child.is_dir() => {
-                        let files = list(&child)?;
-                        for file in &files {
-                            let runtime = Runtime::of(file).filter(|_| file.is_file());
-                            let Some(runtime) = runtime else {
-                                // A directory belongs to the strategy of the
-                                // same name. Anything else is not used.
-                                let owned = file.is_dir()
-                                    && files.iter().any(|other| {
-                                        other.is_file()
-                                            && Runtime::of(other).is_some()
-                                            && other.file_stem() == file.file_name()
-                                    });
-                                if !owned {
-                                    project.ignored.push(file.clone());
-                                }
-                                continue;
-                            };
-                            let name = file
-                                .file_stem()
-                                .map(|stem| stem.to_string_lossy().into_owned())
-                                .unwrap_or_default();
-                            source.strategies.push(StrategySource {
-                                hash: strategy_hash(file)?,
-                                file: relative(root, file),
-                                name,
-                                runtime,
-                                path: file.clone(),
-                            });
-                        }
+                        source.strategies = user_code(root, &child, &mut project.ignored)?;
                     }
                     _ => project.ignored.push(child),
                 }
             }
             project.entity_types.push(source);
+        }
+        let extractors = root.join("extractors");
+        if extractors.is_dir() {
+            project.extractors = user_code(root, &extractors, &mut project.ignored)?;
         }
         Ok(project)
     }
@@ -463,15 +492,84 @@ impl Project {
                 declaration,
                 rules,
                 strategies,
+                extract: source
+                    .extract
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|text| !text.is_empty())
+                    .map(str::to_owned),
             });
         }
 
+        let mut extractors: Vec<Extractor> = Vec::new();
+        for extractor in &self.extractors {
+            let invalid = |message: String| Error::Project {
+                file: extractor.path.clone(),
+                message,
+            };
+            if !valid_name(&extractor.name) {
+                return Err(invalid(
+                    "an extractor's file name may contain only letters, digits, `_` and `-`"
+                        .to_owned(),
+                ));
+            }
+            if extractors.iter().any(|other| other.name == extractor.name) {
+                return Err(invalid(format!(
+                    "extractor `{}` is defined twice",
+                    extractor.name
+                )));
+            }
+            extractors.push(Extractor {
+                name: extractor.name.clone(),
+                runtime: extractor.runtime,
+                file: extractor.file.clone(),
+                hash: extractor.hash.clone(),
+            });
+        }
+        extractors.sort_by(|a, b| a.name.cmp(&b.name));
+
         entity_types.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(Manifest {
-            hash: hash_json(&entity_types),
+            hash: manifest_hash(&entity_types, &extractors),
             entity_types,
+            extractors,
         })
     }
+}
+
+/// The user-code files of a directory: every `.py` and `.ts` file, each
+/// with the directory of the same name if there is one. Anything else in the
+/// directory is not used.
+fn user_code(root: &Path, dir: &Path, ignored: &mut Vec<PathBuf>) -> Result<Vec<StrategySource>> {
+    let files = list(dir)?;
+    let mut found = Vec::new();
+    for file in &files {
+        let runtime = Runtime::of(file).filter(|_| file.is_file());
+        let Some(runtime) = runtime else {
+            let owned = file.is_dir()
+                && files.iter().any(|other| {
+                    other.is_file()
+                        && Runtime::of(other).is_some()
+                        && other.file_stem() == file.file_name()
+                });
+            if !owned {
+                ignored.push(file.clone());
+            }
+            continue;
+        };
+        let name = file
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        found.push(StrategySource {
+            hash: strategy_hash(file)?,
+            file: relative(root, file),
+            name,
+            runtime,
+            path: file.clone(),
+        });
+    }
+    Ok(found)
 }
 
 /// The name of the built-in strategy, which no file may take.

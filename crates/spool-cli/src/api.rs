@@ -8,13 +8,13 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use spool::core::{
-    Actor, Changeset, ChangesetId, Committed, ConstraintRecord, EntityType, IdentityId, LogEntry,
-    ObservationId, Op, Rejection, RunId, Seq, Verdict,
+    Actor, Changeset, ChangesetId, Committed, ConstraintRecord, DocumentId, EntityType, IdentityId,
+    LogEntry, ObservationId, Op, Rejection, RunId, Seq, Verdict,
 };
 use spool::{
-    Authored, DraftRecord, DraftSummary, HistoryEntry, IdentitySummary, IdentityView, MintedIds,
-    ObservationRecord, ReviewRecord, RunRecord, SplitReport, StoreInfo, StrategyRef,
-    TypeResolution,
+    Authored, DocumentRecord, DraftRecord, DraftSummary, HistoryEntry, IdentitySummary,
+    IdentityView, MintedIds, NewDocument, ObservationRecord, ReviewRecord, RunRecord, SplitReport,
+    StoreInfo, StrategyRef, TypeResolution,
 };
 
 /// The version of the API, which is the first segment of every path.
@@ -53,6 +53,52 @@ pub struct IngestParams {
     pub key: Option<String>,
     #[serde(default)]
     pub evidence: Option<String>,
+    #[serde(default)]
+    pub wait_ms: Option<u64>,
+}
+
+/// `POST /v1/documents`: store documents from one source, to be read by an
+/// extractor. The response is the ingest run that stored them.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DocumentsRequest {
+    /// The name of the source the documents come from. The observations
+    /// extracted from them have the same source.
+    pub source: String,
+    pub documents: Vec<NewDocument>,
+    #[serde(default)]
+    pub wait_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct DocumentList {
+    /// Documents without their text.
+    pub documents: Vec<DocumentRecord>,
+    /// Pass as `after` for the next page. `null` on the last page.
+    pub next: Option<DocumentId>,
+}
+
+/// `POST /v1/extractions`: run one of the project's extractors over the
+/// documents it has not read. The response is the extract run. What it
+/// found is observations, which `POST /v1/runs` then matches.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractRequest {
+    /// The name of one of the project's extractors; `GET /v1/info` lists
+    /// them. The server runs no code it was not built with.
+    pub extractor: String,
+    /// Read only the documents of this source.
+    #[serde(default)]
+    pub source: Option<String>,
+    /// Read the documents this extractor has read before as well.
+    #[serde(default)]
+    pub again: Option<bool>,
+    /// Read at most this many documents, oldest first.
+    #[serde(default)]
+    pub limit: Option<u64>,
+    /// How long the call waits for the run, in milliseconds. If the run is
+    /// still in progress then, the response has status 202 and the run as
+    /// far as it has got.
     #[serde(default)]
     pub wait_ms: Option<u64>,
 }
@@ -318,7 +364,7 @@ pub enum ErrorCode {
     /// declared.
     Invalid,
     /// 404: there is no such run, draft, changeset, identity, observation,
-    /// review item or path.
+    /// document, review item or path.
     NotFound,
     /// 409: the thing exists and is not in a state that allows this.
     Conflict,
@@ -330,6 +376,10 @@ pub enum ErrorCode {
     /// wrote judgements that were refused. The run is recorded as failed
     /// and nothing changed.
     StrategyFailed,
+    /// 500: the project's extractor failed, did not finish in time, or
+    /// wrote mentions that were refused. The run is recorded as failed and
+    /// nothing it found was stored.
+    ExtractorFailed,
     /// 500: the server failed.
     Internal,
 }
@@ -339,6 +389,10 @@ pub enum ErrorCode {
 #[allow(dead_code)]
 struct Wire {
     ingest_request: IngestRequest,
+    documents_request: DocumentsRequest,
+    document_list: DocumentList,
+    document_record: DocumentRecord,
+    extract_request: ExtractRequest,
     start_run_request: StartRunRequest,
     run_response: RunResponse,
     run_list: RunList,
