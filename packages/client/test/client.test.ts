@@ -6,7 +6,18 @@ import { join } from "node:path";
 
 import { SpoolClient, SpoolError } from "../src/index.ts";
 import type { Changeset, RunRecord } from "../src/index.ts";
-import { TOKEN, companies, copyProject, readCsv, serve, spool, temporaryDirectory, writeThings } from "./server.ts";
+import {
+  TOKEN,
+  companies,
+  copyProject,
+  hasUv,
+  readCsv,
+  serve,
+  spool,
+  temporaryDirectory,
+  writeStrategy,
+  writeThings,
+} from "./server.ts";
 import type { Server } from "./server.ts";
 
 const cleanup: string[] = [];
@@ -391,6 +402,97 @@ describe("a run judged by the caller", () => {
     const cancelled = await client.cancelRun(run!.run);
     expect(cancelled).toMatchObject({ status: "failed", error: "cancelled" });
     expect((await client.runs({ kind: "match" })).map((record) => record.status)).toEqual(["failed"]);
+  });
+});
+
+// These start `uv`, as the server does for a strategy written in Python.
+describe.skipIf(!hasUv)("a strategy of the project", () => {
+  const everyPair = `
+from spool import strategy
+
+
+@strategy
+def judge(features):
+    ids = sorted(features.column("observation_id").to_pylist())
+    new = {
+        row["observation_id"]
+        for row in features.select(["observation_id", "is_new"]).to_pylist()
+        if row["is_new"]
+    }
+    return [
+        {"left_id": left, "right_id": right, "verdict": "match", "score": 0.9, "detail": {"why": "all one"}}
+        for index, left in enumerate(ids)
+        for right in ids[index + 1 :]
+        if left in new or right in new
+    ]
+`;
+  const failing = `
+from spool import strategy
+
+
+@strategy
+def judge(candidates):
+    raise RuntimeError("no model")
+`;
+  let server: Server;
+
+  beforeAll(async () => {
+    const project = temporaryDirectory();
+    cleanup.push(project);
+    writeThings(project);
+    writeStrategy(project, "all_one.py", everyPair);
+    writeStrategy(project, "failing.py", failing);
+    server = await serve(project, 5);
+    servers.push(server);
+  });
+
+  test("is listed, runs on the server, and a rematch only suggests", async () => {
+    const { client } = server;
+    const [thing] = (await client.info()).store.entity_types;
+    expect(thing?.strategies?.map((strategy) => [strategy.name, strategy.runtime])).toEqual([
+      ["all_one", "python"],
+      ["failing", "python"],
+    ]);
+    const allOne = thing!.strategies![0]!;
+
+    await ingestThings(client, twoAnvilsAndAHammer);
+    const rules = await client.startRun({ entity_type: "thing" });
+    expect(rules?.status).toBe("succeeded");
+    expect(rules?.resolution?.suggestions ?? null).toBeNull();
+    const before = await client.identities({ entity_type: "thing" });
+    expect(before.identities).toHaveLength(2);
+
+    // The strategy would make one thing of everything. A rematch says so
+    // and leaves the two identities as they are.
+    const head = (await client.info()).store.head;
+    const rematch = await client.startRun({ entity_type: "thing", strategy: { name: "all_one" }, rematch: true });
+    expect(rematch?.status).toBe("succeeded");
+    expect(rematch?.strategy).toEqual({ name: "all_one", version: allOne.hash });
+    const suggestions = rematch?.resolution?.suggestions;
+    expect(suggestions?.splits).toEqual([]);
+    expect(suggestions?.merges).toHaveLength(1);
+    const [merge] = suggestions!.merges;
+    expect([...merge!.identities].sort()).toEqual(before.identities.map((identity) => identity.id).sort());
+    expect(merge!.matches).toBe(2);
+    expect((await client.info()).store.head).toBe(head);
+
+    // Without `rematch` it places what is new.
+    await ingestThings(client, [{ id: "4", code: "saw" }]);
+    const run = await client.startRun({ entity_type: "thing", strategy: { name: "all_one" } });
+    expect(run?.status).toBe("succeeded");
+    expect(run?.resolution?.identities_created).toBe(0);
+  });
+
+  test("that fails is a failed run with what it said", async () => {
+    const { client } = server;
+    await ingestThings(client, [{ id: "5", code: "file" }]);
+    const failure = await failureOf(client.startRun({ entity_type: "thing", strategy: { name: "failing" } }));
+    expect(failure.status).toBe(500);
+    expect(failure.code).toBe("strategy_failed");
+    expect(failure.message).toContain("no model");
+    const [failed] = await client.runs({ status: "failed" });
+    expect(failed?.strategy?.name).toBe("failing");
+    expect(failed?.error).toContain("no model");
   });
 });
 

@@ -48,6 +48,16 @@ export function writeThings(dir: string): void {
   }
 }
 
+/** Writes a strategy file of the `thing` entity type. */
+export function writeStrategy(dir: string, file: string, source: string): void {
+  const path = join(dir, "entities/thing/strategies", file);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, source);
+}
+
+/** Whether `uv`, which runs Python strategies, is here. */
+export const hasUv = Bun.which(process.env.SPOOL_UV ?? "uv") !== null;
+
 export interface Server {
   url: string;
   client: SpoolClient;
@@ -67,6 +77,10 @@ export async function serve(project: string, seed: number): Promise<Server> {
       "serve",
       "--manifest",
       join(project, ".spool/manifest.json"),
+      "--project",
+      project,
+      "--tasks",
+      join(dir, "tasks"),
       "--store",
       join(dir, "store.duckdb"),
       "--listen",
