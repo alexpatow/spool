@@ -1052,6 +1052,38 @@ mod tests {
         }
     }
 
+    /// The smaller ID of a pair is picked in SQL when a changeset is applied
+    /// and in Rust when the log is replayed. The two have to agree.
+    #[test]
+    fn duckdb_orders_ids_as_the_core_does() {
+        let store = store(&[]);
+        let ids: Vec<u128> = vec![
+            0,
+            1,
+            0x7fff_ffff_ffff_ffff_ffff_ffff_ffff_ffff,
+            0x8000_0000_0000_0000_0000_0000_0000_0000,
+            0x8000_0000_0000_0000_0000_0000_0000_0001,
+            0x0123_4567_89ab_cdef_0123_4567_89ab_cdef,
+            0xfedc_ba98_7654_3210_fedc_ba98_7654_3210,
+            u128::MAX,
+        ];
+        for a in &ids {
+            for b in &ids {
+                let (a, b) = (ObservationId::from_u128(*a), ObservationId::from_u128(*b));
+                let smaller: String = store
+                    .conn
+                    .query_row(
+                        "SELECT least(?::UUID, ?::UUID)::VARCHAR",
+                        params![a.to_string(), b.to_string()],
+                        |row| row.get(0),
+                    )
+                    .unwrap();
+                assert_eq!(smaller, a.min(b).to_string(), "{a} and {b}");
+                assert_eq!(Constraint::new(ConstraintKind::MustLink, a, b).a, a.min(b));
+            }
+        }
+    }
+
     #[test]
     fn a_store_reopens_with_its_state() {
         let dir = tempfile::tempdir().unwrap();
