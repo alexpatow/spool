@@ -124,6 +124,94 @@ fn metrics_match_a_hand_scored_partition() {
     close(metrics.pairs.recall, 1.0);
 }
 
+/// Puts each listed group of `shop` records in an identity of its own and
+/// scores the result against `truth`, a true entity per record.
+fn scored(groups: &[&[&str]], truth: &[(&str, &str)]) -> spool::Metrics {
+    let engine = engine();
+    let things: Vec<_> = truth
+        .iter()
+        .map(|(name, _)| (*name, Some(*name), None))
+        .collect();
+    ingest(&engine, "shop", &things);
+
+    let mut ids = SeededIds::new(42);
+    let mut ops = Vec::new();
+    for group in groups {
+        let identity = ids.identity_id();
+        ops.push(Op::CreateIdentity {
+            identity,
+            entity_type: EntityType::new("thing").unwrap(),
+        });
+        ops.extend(group.iter().map(|name| Op::Assign {
+            observation: observation(&engine, "shop", name),
+            from: None,
+            to: Some(identity),
+        }));
+    }
+    if !ops.is_empty() {
+        commit(&engine, &mut ids, ops);
+    }
+
+    let observation_ids: Vec<String> = truth
+        .iter()
+        .map(|(name, _)| observation(&engine, "shop", name).to_string())
+        .collect();
+    let rows: Vec<Vec<Option<&str>>> = observation_ids
+        .iter()
+        .zip(truth)
+        .map(|(id, (_, entity))| vec![Some(id.as_str()), Some(*entity)])
+        .collect();
+    engine
+        .score(Rows::from_text(&["observation_id", "true_entity"], &rows).unwrap())
+        .unwrap()
+}
+
+#[test]
+fn f1_is_zero_when_no_predicted_pair_is_right() {
+    // Identities:    {a c} {b d}
+    // True entities: {a b} {c d}
+    let metrics = scored(
+        &[&["a", "c"], &["b", "d"]],
+        &[("a", "A"), ("b", "A"), ("c", "B"), ("d", "B")],
+    );
+    assert_eq!(metrics.pairs.true_positives, 0);
+    assert_eq!((metrics.pairs.predicted, metrics.pairs.actual), (2, 2));
+    assert_eq!(metrics.pairs.precision, Some(0.0));
+    assert_eq!(metrics.pairs.recall, Some(0.0));
+    assert_eq!(metrics.pairs.f1, Some(0.0));
+}
+
+#[test]
+fn f1_is_zero_when_only_one_side_has_pairs() {
+    // Nothing is paired, and the truth has a pair: every true pair is missed.
+    let metrics = scored(&[&["a"], &["b"]], &[("a", "A"), ("b", "A")]);
+    assert_eq!((metrics.pairs.predicted, metrics.pairs.actual), (0, 1));
+    assert_eq!(metrics.pairs.precision, None);
+    assert_eq!(metrics.pairs.recall, Some(0.0));
+    assert_eq!(metrics.pairs.f1, Some(0.0));
+
+    // A pair is predicted, and the truth has none: every predicted pair is wrong.
+    let metrics = scored(&[&["a", "b"]], &[("a", "A"), ("b", "B")]);
+    assert_eq!((metrics.pairs.predicted, metrics.pairs.actual), (1, 0));
+    assert_eq!(metrics.pairs.precision, Some(0.0));
+    assert_eq!(metrics.pairs.recall, None);
+    assert_eq!(metrics.pairs.f1, Some(0.0));
+}
+
+#[test]
+fn f1_is_undefined_only_when_neither_side_has_pairs() {
+    // Every record is alone, in the result and in the truth.
+    let metrics = scored(&[&["a"], &["b"]], &[("a", "A"), ("b", "B")]);
+    assert_eq!((metrics.pairs.predicted, metrics.pairs.actual), (0, 0));
+    assert_eq!(metrics.pairs.precision, None);
+    assert_eq!(metrics.pairs.recall, None);
+    assert_eq!(metrics.pairs.f1, None);
+    // The other ratios have denominators and are right.
+    assert_eq!(metrics.b_cubed.precision, Some(1.0));
+    assert_eq!(metrics.b_cubed.recall, Some(1.0));
+    assert_eq!(metrics.unassigned_share, Some(0.0));
+}
+
 #[test]
 fn an_empty_truth_has_no_ratios() {
     let engine = engine();

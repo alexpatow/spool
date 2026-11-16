@@ -33,7 +33,10 @@ pub struct Metrics {
 }
 
 /// Pairs of observations placed in the same identity, against pairs that
-/// share a true entity. A ratio is `None` when its denominator is zero.
+/// share a true entity. A ratio is `None` when its denominator is zero:
+/// precision when no pair was predicted, recall when the truth has no pair,
+/// and F1, which is `2 * true_positives / (predicted + actual)`, only when
+/// both hold.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PairMetrics {
     pub true_positives: u64,
@@ -139,10 +142,9 @@ pub(crate) fn score(conn: &Connection) -> Result<Metrics> {
         let total = observations as f64;
         let precision = ratio(true_positives as f64, predicted as f64);
         let recall = ratio(true_positives as f64, actual as f64);
-        let f1 = match (precision, recall) {
-            (Some(p), Some(r)) => ratio(2.0 * p * r, p + r),
-            _ => None,
-        };
+        // From the counts, not from precision and recall: when no predicted
+        // pair is right both of those are zero, and F1 is zero, not undefined.
+        let f1 = ratio(2.0 * true_positives as f64, (predicted + actual) as f64);
         Ok(Metrics {
             observations,
             true_entities: count(1)?,
