@@ -756,6 +756,18 @@ impl Engine {
     pub fn resolve(&self, options: &ResolveOptions) -> Result<ResolveReport> {
         let _turn = lock(&self.resolving);
         let plan = self.lock().plan(options)?;
+        // Before anything is started: user code needs the project's files,
+        // and a file that is not the one the manifest was compiled from is
+        // never run.
+        let user_code = self.user_code();
+        for (_, chosen) in &plan {
+            if let Chosen::UserCode(strategy) = chosen {
+                user_code
+                    .as_deref()
+                    .ok_or_else(|| Error::NoUserCode(strategy.name.clone()))?
+                    .check(strategy)?;
+            }
+        }
         let then = if options.leave_for_review {
             Disposition::LeaveForReview
         } else {
@@ -782,12 +794,9 @@ impl Engine {
                     })?
                 }
                 Chosen::UserCode(strategy) => {
-                    let user_code = self
-                        .user_code()
+                    let user_code = user_code
+                        .clone()
                         .ok_or_else(|| Error::NoUserCode(strategy.name.clone()))?;
-                    // Before there is a run: a file that is not the one the
-                    // manifest was compiled from is never started.
-                    user_code.check(&strategy)?;
                     let reference = StrategyRef {
                         name: strategy.name.clone(),
                         version: Some(strategy.hash.clone()),

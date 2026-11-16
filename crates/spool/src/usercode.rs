@@ -125,6 +125,34 @@ impl UserCode {
         Ok(command)
     }
 
+    /// Runs a strategy file once with nothing to do, so that `uv` or `bun`
+    /// fetches what it depends on, and a file that cannot start fails now
+    /// and not during a run.
+    pub fn install(&self, strategy: &Strategy) -> Result<()> {
+        self.check(strategy)?;
+        let mut command = self.command(strategy, None)?;
+        let program = command.get_program().to_string_lossy().into_owned();
+        let fail = |message: String| Error::Strategy {
+            strategy: strategy.name.clone(),
+            message,
+        };
+        let output = command.stdin(Stdio::null()).output().map_err(|error| {
+            fail(format!(
+                "`{program}`, which runs {} strategies, could not be started: {error}",
+                strategy.runtime
+            ))
+        })?;
+        if !output.status.success() {
+            let said = String::from_utf8_lossy(&output.stderr);
+            return Err(fail(format!(
+                "it does not start: {}:\n{}",
+                output.status,
+                said.trim_end()
+            )));
+        }
+        Ok(())
+    }
+
     fn file(&self, strategy: &Strategy) -> PathBuf {
         let mut path = self.project_dir.clone();
         path.extend(strategy.file.split('/'));
@@ -435,6 +463,94 @@ mod tests {
 
         std::thread::sleep(Duration::from_millis(2500));
         assert!(!marker.exists(), "the process it started outlived it");
+    }
+
+    #[test]
+    fn a_strategy_is_started_with_its_task_and_without_the_servers_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let user_code = UserCode {
+            work_dir: dir.path().join("work"),
+            ..UserCode::new(dir.path().join("project"))
+        };
+        let strategy = |runtime, file: &str| Strategy {
+            name: "model".to_owned(),
+            runtime,
+            file: file.to_owned(),
+            hash: String::new(),
+        };
+        let environment = |command: &Command| -> Vec<(String, Option<String>)> {
+            command
+                .get_envs()
+                .map(|(name, value)| {
+                    (
+                        name.to_string_lossy().into_owned(),
+                        value.map(|value| value.to_string_lossy().into_owned()),
+                    )
+                })
+                .collect()
+        };
+        let arguments = |command: &Command| -> Vec<String> {
+            command
+                .get_args()
+                .map(|argument| argument.to_string_lossy().into_owned())
+                .collect()
+        };
+        let task = dir.path().join("work/run-1");
+
+        let python = strategy(Runtime::Python, "entities/thing/strategies/model.py");
+        let command = user_code.command(&python, Some(&task)).unwrap();
+        assert_eq!(command.get_program(), "uv");
+        let file = dir
+            .path()
+            .join("project/entities/thing/strategies/model.py");
+        assert_eq!(
+            arguments(&command),
+            [
+                "run",
+                "--quiet",
+                "--with",
+                "pyarrow",
+                "--script",
+                file.to_str().unwrap()
+            ]
+        );
+        assert_eq!(
+            command.get_current_dir(),
+            Some(dir.path().join("project").as_path())
+        );
+        let set = environment(&command);
+        assert!(set.contains(&("SPOOL_TOKEN".to_owned(), None)), "{set:?}");
+        assert!(set.contains(&(
+            "SPOOL_TASK_DIR".to_owned(),
+            Some(task.to_string_lossy().into_owned())
+        )));
+        // The helper module is where Python looks first.
+        let (_, path) = set.iter().find(|(name, _)| name == "PYTHONPATH").unwrap();
+        let first = std::env::split_paths(path.as_deref().unwrap())
+            .next()
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(first.join("spool/__init__.py")).unwrap(),
+            PYTHON_HELPER
+        );
+
+        let typescript = strategy(Runtime::Typescript, "entities/thing/strategies/model.ts");
+        let command = user_code.command(&typescript, None).unwrap();
+        assert_eq!(command.get_program(), "bun");
+        assert_eq!(arguments(&command)[0], "run");
+        let set = environment(&command);
+        // With nothing to do, it is told of no task.
+        assert!(
+            set.contains(&("SPOOL_TASK_DIR".to_owned(), None)),
+            "{set:?}"
+        );
+        assert!(set.contains(&("SPOOL_TOKEN".to_owned(), None)));
+        let (_, path) = set.iter().find(|(name, _)| name == "NODE_PATH").unwrap();
+        let first = std::env::split_paths(path.as_deref().unwrap())
+            .next()
+            .unwrap();
+        assert!(first.join("spool/index.js").is_file());
+        assert!(first.join("spool/package.json").is_file());
     }
 
     #[test]

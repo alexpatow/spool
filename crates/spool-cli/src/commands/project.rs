@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use spool::{Engine, Manifest, Options, Project};
+use spool::{Engine, Manifest, Options, Project, Runtime};
 
 use super::manifest_path;
 use crate::Failure;
@@ -25,7 +25,8 @@ pub const INFO_USAGE: &str = "\
 Usage: spool info [<dir>] [options]
 
 Lists what the project directory declares: its entity types, their feature
-columns and their rules. Every SQL file is checked on the way.
+columns, their rules and their user-code strategies. Every SQL file is
+checked on the way.
 
   <dir>     the project directory (default: the current directory)
 
@@ -36,13 +37,19 @@ Options:
 pub const BUILD_USAGE: &str = "\
 Usage: spool build [<dir>] [options]
 
-Checks the project and compiles it into .spool/manifest.json, which is all
-the server reads. Writes a Dockerfile if the project has none.
+Checks the project and compiles it into .spool/manifest.json. The server
+reads the manifest, and the strategy files it names. Writes a Dockerfile if
+the project has none.
 
   <dir>                  the project directory (default: the current directory)
 
 Options:
   --base-image <image>   the image the written Dockerfile starts from
+  --install              start each user-code strategy once with nothing to
+                         do, so that `uv` and `bun` fetch what it depends on
+                         and a file that cannot start is found now
+
+SPOOL_UV and SPOOL_BUN name `uv` and `bun` if they are not on the search path.
 ";
 
 pub const APPLY_USAGE: &str = "\
@@ -115,6 +122,70 @@ VOLUME /data
 USER spool
 EXPOSE 7765
 CMD [\"serve\", \"--manifest\", \"/spool/manifest.json\", \"--listen\", \"0.0.0.0:7765\"]
+"
+    )
+}
+
+/// The `uv` and `bun` a written Dockerfile takes: the versions user code was
+/// tested with.
+const UV_IMAGE: &str = "ghcr.io/astral-sh/uv:0.13.8";
+const BUN_IMAGE: &str = "oven/bun:1.4.4";
+
+/// The Dockerfile of a project with user code. The image also holds the
+/// project's files, what runs them, and what they depend on.
+fn dockerfile_with_user_code(base_image: &str, python: bool, typescript: bool) -> String {
+    let mut runtimes = String::new();
+    let mut environment = String::new();
+    if python {
+        runtimes.push_str(&format!("COPY --from={UV_IMAGE} /uv /usr/local/bin/uv\n"));
+        environment.push_str(
+            "ENV UV_CACHE_DIR=/spool/cache/uv UV_PYTHON_INSTALL_DIR=/spool/cache/python\n",
+        );
+    }
+    if typescript {
+        runtimes.push_str(&format!(
+            "COPY --from={BUN_IMAGE} /usr/local/bin/bun /usr/local/bin/bun\n"
+        ));
+        environment.push_str("ENV BUN_INSTALL_CACHE_DIR=/spool/cache/bun\n");
+    }
+    let offline = if python {
+        "\n# Everything was fetched above: a run does not wait for the network.\nENV UV_OFFLINE=1\n"
+    } else {
+        ""
+    };
+    format!(
+        "\
+# Written by `spool build`. It belongs to this project: edit it as you need.
+#
+# The image holds the spool binary, this project's manifest, and the strategy
+# files the manifest names with what runs them. The store is not in the
+# image: it is a file on the volume at /data.
+#
+#   docker build -t my-spool .
+#   docker run -p 7765:7765 -v spool-data:/data -e SPOOL_TOKEN=... my-spool
+#
+# A changed project is applied to an existing store as a step of its own,
+# with the server stopped:
+#
+#   docker run --rm -v spool-data:/data my-spool apply
+
+FROM {base_image} AS build
+WORKDIR /project
+COPY . .
+RUN spool build
+
+FROM {base_image}
+{runtimes}RUN mkdir -p /spool/cache && chown spool:spool /spool/cache
+COPY --from=build --chown=spool:spool /project /spool/project
+WORKDIR /spool/project
+ENV SPOOL_STORE=/data/spool.duckdb
+{environment}VOLUME /data
+USER spool
+# Starts each strategy once with nothing to do, which fetches what it depends
+# on into the image.
+RUN spool build --install
+{offline}EXPOSE 7765
+CMD [\"serve\", \"--listen\", \"0.0.0.0:7765\"]
 "
     )
 }
@@ -197,10 +268,17 @@ pub fn info(arguments: &[String]) -> Result<(), Failure> {
     let mut warnings = Vec::new();
     for entity_type in &manifest.entity_types {
         if entity_type.rules.block.is_empty() {
-            warnings.push(format!(
-                "`{}` has no block rules, so no two observations are ever compared",
-                entity_type.name
-            ));
+            warnings.push(if entity_type.strategies.is_empty() {
+                format!(
+                    "`{}` has no block rules, so no two observations are ever compared",
+                    entity_type.name
+                )
+            } else {
+                format!(
+                    "`{}` has no block rules, so its strategies are given no candidate pairs",
+                    entity_type.name
+                )
+            });
         } else if entity_type.rules.match_.is_empty() {
             warnings.push(format!(
                 "`{}` has no match rules, so the built-in strategy never matches anything",
@@ -225,6 +303,7 @@ pub fn info(arguments: &[String]) -> Result<(), Failure> {
                     "no_match": names(&entity_type.rules.no_match),
                     "match": names(&entity_type.rules.match_),
                 },
+                "strategies": entity_type.strategies,
             })).collect::<Vec<_>>(),
             "ignored": ignored,
             "warnings": warnings,
@@ -261,6 +340,12 @@ pub fn info(arguments: &[String]) -> Result<(), Failure> {
             };
             println!("  {label:<9} {listed}");
         }
+        for strategy in &entity_type.strategies {
+            println!(
+                "  strategy  {} ({}, {})",
+                strategy.name, strategy.runtime, strategy.file
+            );
+        }
     }
     if !ignored.is_empty() {
         println!("\nnot used by this version:");
@@ -279,7 +364,7 @@ pub fn build(arguments: &[String]) -> Result<(), Failure> {
         arguments,
         &Spec {
             values: &["--base-image"],
-            flags: &[],
+            flags: &["--install"],
             positional: 1,
         },
     )?;
@@ -295,6 +380,16 @@ pub fn build(arguments: &[String]) -> Result<(), Failure> {
         .map(|entity_type| entity_type.name.as_str())
         .collect();
     println!("types     {}", names.join(", "));
+    let strategies: Vec<&spool::Strategy> = manifest
+        .entity_types
+        .iter()
+        .flat_map(|entity_type| &entity_type.strategies)
+        .collect();
+    let uses = |runtime: Runtime| {
+        strategies
+            .iter()
+            .any(|strategy| strategy.runtime == runtime)
+    };
 
     let dockerfile_path = dir.join("Dockerfile");
     if dockerfile_path.exists() {
@@ -308,12 +403,25 @@ pub fn build(arguments: &[String]) -> Result<(), Failure> {
         let image = arguments
             .value("--base-image")
             .map_or_else(base_image, str::to_owned);
-        write(&dockerfile_path, &dockerfile(&image))?;
+        let contents = if strategies.is_empty() {
+            dockerfile(&image)
+        } else {
+            dockerfile_with_user_code(&image, uses(Runtime::Python), uses(Runtime::Typescript))
+        };
+        write(&dockerfile_path, &contents)?;
         println!("wrote     {}", dockerfile_path.display());
         let dockerignore = dir.join(".dockerignore");
         if !dockerignore.exists() {
             write(&dockerignore, DOCKERIGNORE)?;
             println!("wrote     {}", dockerignore.display());
+        }
+    }
+
+    if arguments.flag("--install") {
+        let user_code = super::user_code(&arguments, &dir)?;
+        for strategy in &strategies {
+            user_code.install(strategy)?;
+            println!("starts    {}", strategy.file);
         }
     }
     Ok(())
