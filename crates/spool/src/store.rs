@@ -24,14 +24,22 @@ pub(crate) struct DuckStore {
     pub(crate) clock: Box<dyn Clock + Send>,
 }
 
+/// The name the database file is attached under.
+const CATALOG: &str = "spool_store";
+
 impl DuckStore {
     /// Opens the database file at `path`, or a database in memory, and
     /// creates the schema if the database is empty.
     pub(crate) fn open(path: Option<&Path>, clock: Box<dyn Clock + Send>) -> Result<Self> {
-        let mut conn = match path {
-            Some(path) => Connection::open(path)?,
-            None => Connection::open_in_memory()?,
-        };
+        let mut conn = Connection::open_in_memory()?;
+        if let Some(path) = path {
+            // DuckDB names a database after its file, and a file called
+            // `spool.duckdb` would make every `spool.<table>` ambiguous
+            // between the database and the schema. Attaching under a fixed
+            // name avoids that whatever the file is called.
+            let file = path.to_string_lossy().replace('\'', "''");
+            conn.execute_batch(&format!("ATTACH '{file}' AS {CATALOG}; USE {CATALOG};"))?;
+        }
         // Timestamps are stored as instants. A fixed session zone keeps their
         // text form the same on every machine.
         conn.execute_batch("SET TimeZone = 'UTC'")?;
