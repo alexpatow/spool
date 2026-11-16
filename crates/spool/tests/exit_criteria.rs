@@ -162,13 +162,25 @@ fn resent_rows_create_no_observations_and_no_operations() {
         assert_eq!(again.inserted, 0, "{file}");
         assert_eq!(again.duplicates, again.received, "{file}");
     }
+    // The one observation that was left for review is looked at again, with
+    // the same outcome. Nothing else is examined, and nothing is committed.
     let report = engine.resolve(&ResolveOptions::default()).unwrap();
-    assert!(report.resolved.is_empty());
+    let [again] = &report.resolved[..] else {
+        panic!("one entity type had something under review: {report:?}");
+    };
+    assert_eq!((again.new_observations, again.reexamined), (1, 1));
+    assert_eq!(
+        (again.identities_created, again.observations_assigned),
+        (0, 0)
+    );
+    assert_eq!(again.committed, None);
+    assert_eq!(count(&engine, "SELECT count(*) FROM spool.review_item"), 1);
     assert_eq!(
         count(&engine, "SELECT count(*) FROM spool.observation"),
         observations
     );
     assert_eq!(engine.head().unwrap(), head);
+    assert_eq!(engine.log().unwrap().len(), 2);
     assert_eq!(head, Seq(2));
 }
 
@@ -276,6 +288,19 @@ fn an_observation_matching_two_identities_is_left_unassigned_with_a_review_item(
     let ambiguous = observation(&engine, "crm", "c-117");
 
     assert_eq!(engine.identity_of(ambiguous).unwrap(), None);
+    // The item is in the store, open, for whoever reviews it.
+    assert_eq!(
+        select(
+            &engine,
+            "SELECT kind, array_to_string(observation_ids::VARCHAR[], ','), len(identity_ids)::VARCHAR
+             FROM spool.review_open"
+        ),
+        [[
+            Some("possible_merge".to_owned()),
+            Some(ambiguous.to_string()),
+            Some("2".to_owned())
+        ]]
+    );
     let resolved = &report.steps[1].resolve.resolved[0];
     assert_eq!(resolved.observations_unassigned, 1);
     let [

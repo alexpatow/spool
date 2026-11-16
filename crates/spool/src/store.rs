@@ -17,6 +17,7 @@ use spool_core::{
 
 use crate::batch::{Column, batch, id_list};
 use crate::error::Result;
+use crate::review;
 use crate::schema;
 
 pub(crate) struct DuckStore {
@@ -177,6 +178,9 @@ impl DuckStore {
              WHERE seq = ? AND kind = 'assign' AND identity_id IS NOT NULL",
             [seq],
         )?;
+        // Not identity state, but it has to agree with membership at every
+        // log position, so it is updated in the same transaction.
+        review::resolve_assigned(&tx, Seq(seq as u64))?;
         tx.commit()?;
         Ok(Seq(seq as u64))
     }

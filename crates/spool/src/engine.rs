@@ -21,6 +21,7 @@ use crate::features;
 use crate::ingest::{self, IngestOptions, IngestReport};
 use crate::metrics::{self, IdStability, Metrics};
 use crate::project::{EntityTypeManifest, Manifest, hash_json};
+use crate::review;
 use crate::rules;
 use crate::schema;
 use crate::store::DuckStore;
@@ -113,14 +114,20 @@ pub struct TypeResolution {
     pub entity_type: EntityType,
     pub match_run: RunId,
     pub reconcile_run: RunId,
+    /// Observations the run examined: those ingested since the last run, and
+    /// those an earlier run left for review.
     pub new_observations: u64,
+    /// How many of them an earlier run had left for review.
+    pub reexamined: u64,
     /// Distinct candidate pairs.
     pub candidates: u64,
     pub judgements: JudgementCounts,
     pub identities_created: u64,
     pub observations_assigned: u64,
-    /// New observations left without an identity. Each is named in `review`.
+    /// Examined observations left without an identity. Each is named in
+    /// `review`.
     pub observations_unassigned: u64,
+    /// What the run would not decide. The store keeps these as review items.
     pub review: Vec<ReviewItem>,
     /// `None` when there was nothing to commit.
     pub committed: Option<Committed>,
@@ -156,6 +163,10 @@ struct MatchConfig {
     manifest_hash: String,
     /// New observations are those ingested after this run.
     after_run: RunId,
+    /// The review items that were open when the run began. Their observations
+    /// are examined again.
+    #[serde(default)]
+    review_items: Vec<u64>,
     rules: crate::project::RuleSet,
 }
 
@@ -219,7 +230,9 @@ impl Engine {
     }
 
     /// Starts a match run and generates its candidate pairs with the
-    /// project's block rules.
+    /// project's block rules. The run examines the observations ingested
+    /// since the last match run of the type that succeeded, and again those
+    /// of open review items.
     pub fn begin_run(&self, strategy: &StrategyRef, scope: &Scope) -> Result<RunId> {
         self.lock().begin_run(strategy, scope)
     }
@@ -243,7 +256,8 @@ impl Engine {
     }
 
     /// Closes a match run and turns its judgements into a draft changeset.
-    /// Nothing is committed.
+    /// Nothing is committed. What the draft leaves out is stored as review
+    /// items, which stay open until their observations have an identity.
     pub fn reconcile(&self, run: RunId, policy: &Policy) -> Result<Draft> {
         self.lock().reconcile(run, policy)
     }
@@ -255,7 +269,8 @@ impl Engine {
     }
 
     /// Matches new observations with the built-in rule runner, reconciles
-    /// with the default policy, and commits.
+    /// with the default policy, and commits. A type is resolved when it has
+    /// newly ingested observations or open review items.
     pub fn resolve(&self, options: &ResolveOptions) -> Result<ResolveReport> {
         self.lock().resolve(options)
     }
@@ -599,18 +614,26 @@ impl Inner {
         let (manifest, entry, version) = self.declared(scope.entity_type.as_str())?;
         let entity_type = entry.name.clone();
         let after_run = self.last_match_run(&entity_type)?;
+        let review_items = review::open_ids(&self.store.conn, &entity_type)?;
         let config = MatchConfig {
             entity_type: entity_type.clone(),
             declaration_version: version,
             manifest_hash: manifest.hash.clone(),
             after_run,
+            review_items,
             rules: entry.rules.clone(),
         };
 
         let run = self.start_run("match", Some(strategy), &json!(config))?;
         self.in_run(run, |inner| {
             let tx = inner.store.conn.transaction()?;
-            rules::create_scope(&tx, &entity_type, config.after_run, run)?;
+            rules::create_scope(
+                &tx,
+                &entity_type,
+                config.after_run,
+                run,
+                &config.review_items,
+            )?;
             rules::generate_candidates(&tx, &entity_type, run, &config.rules.block)?;
             tx.commit()?;
             Ok(run)
@@ -639,7 +662,13 @@ impl Inner {
                 message: format!("it is {} and takes no more judgements", row.status),
             });
         }
-        rules::create_scope(&self.store.conn, &config.entity_type, config.after_run, run)?;
+        rules::create_scope(
+            &self.store.conn,
+            &config.entity_type,
+            config.after_run,
+            run,
+            &config.review_items,
+        )?;
         Ok(config)
     }
 
@@ -785,7 +814,16 @@ impl Inner {
             let evidence = inner.evidence(run, &config)?;
             let mut draft = reconcile(&evidence, &inner.store, policy, inner.ids.as_mut())?;
             draft.changeset.run = Some(reconcile_run);
-            inner.finish_run(reconcile_run, "succeeded")?;
+
+            let finished = inner.store.clock.now_micros();
+            let tx = inner.store.conn.transaction()?;
+            review::record(&tx, &config.entity_type, reconcile_run, &draft.review)?;
+            tx.execute(
+                "UPDATE spool.run SET status = 'succeeded', finished_at = make_timestamptz(?)
+                 WHERE run_id = ?",
+                params![finished, reconcile_run.0 as i64],
+            )?;
+            tx.commit()?;
             Ok(draft)
         })
     }
@@ -795,7 +833,13 @@ impl Inner {
     fn evidence(&self, run: RunId, config: &MatchConfig) -> Result<EvidenceSummary> {
         let conn = &self.store.conn;
         let scope = rules::SCOPE;
-        rules::create_scope(conn, &config.entity_type, config.after_run, run)?;
+        rules::create_scope(
+            conn,
+            &config.entity_type,
+            config.after_run,
+            run,
+            &config.review_items,
+        )?;
         // An observation that got an identity since the run began is no longer new.
         conn.execute_batch(&format!(
             "DELETE FROM {scope} WHERE observation_id IN (
@@ -883,12 +927,12 @@ impl Inner {
 
         let mut report = ResolveReport::default();
         for entity_type in entity_types {
-            let pending = self.count(&format!(
+            let after_run = self.last_match_run(&entity_type)?;
+            let ingested = self.count(&format!(
                 "SELECT count(*) FROM spool.observation
-                 WHERE entity_type = '{entity_type}' AND ingest_run > {}",
-                self.last_match_run(&entity_type)?
+                 WHERE entity_type = '{entity_type}' AND ingest_run > {after_run}"
             ))?;
-            if pending == 0 {
+            if ingested == 0 && review::open_ids(&self.store.conn, &entity_type)?.is_empty() {
                 continue;
             }
             let scope = Scope {
@@ -896,6 +940,12 @@ impl Inner {
             };
             let run = self.begin_run(&StrategyRef::rules(), &scope)?;
             let new_observations = self.count(&format!("SELECT count(*) FROM {}", rules::SCOPE))?;
+            let reexamined = self.count(&format!(
+                "SELECT count(*) FROM {} s
+                 JOIN spool.observation o ON o.observation_id = s.observation_id
+                 WHERE o.ingest_run <= {after_run}",
+                rules::SCOPE
+            ))?;
 
             let (draft, committed) = self.in_run(run, |inner| {
                 inner.judge_with_rules(run)?;
@@ -927,6 +977,7 @@ impl Inner {
                 match_run: run,
                 reconcile_run: draft.changeset.run.unwrap_or(run),
                 new_observations,
+                reexamined,
                 candidates: self.count(&format!(
                     "SELECT count(*) FROM (SELECT DISTINCT left_id, right_id FROM spool.candidate {run_filter})"
                 ))?,
@@ -994,6 +1045,16 @@ impl Inner {
                  WHERE m.to_seq IS NULL
                    AND (i.identity_id IS NULL OR i.merged_into IS NOT NULL
                         OR i.entity_type <> o.entity_type)"
+                    .to_owned(),
+            ),
+            (
+                "open review items whose observations all have an identity".to_owned(),
+                "SELECT count(*) FROM spool.review_item i
+                 WHERE i.status = 'open' AND NOT EXISTS (
+                   SELECT 1 FROM (SELECT unnest(i.observation_ids) AS observation_id) o
+                   WHERE NOT EXISTS (
+                     SELECT 1 FROM spool.membership m
+                     WHERE m.observation_id = o.observation_id AND m.to_seq IS NULL))"
                     .to_owned(),
             ),
         ];

@@ -7,7 +7,7 @@ use crate::error::{Error, Result};
 
 /// Written to `spool.meta` when a store is created and checked when one is
 /// opened.
-pub(crate) const FORMAT_VERSION: &str = "1";
+pub(crate) const FORMAT_VERSION: &str = "2";
 
 const TABLES: &str = "
 CREATE SCHEMA spool;
@@ -64,6 +64,18 @@ CREATE TABLE spool.judgement (         -- kept
   verdict  VARCHAR NOT NULL,           -- 'match' | 'no_match' | 'unsure'
   score    DOUBLE,                     -- strategy-local scale, never compared across strategies
   detail   JSON
+);
+
+CREATE TABLE spool.review_item (       -- what a reconcile run would not decide; kept
+  review_id       BIGINT  NOT NULL,    -- dense, assigned by the engine
+  run_id          BIGINT  NOT NULL,    -- reconcile run that raised it
+  entity_type     VARCHAR NOT NULL,
+  kind            VARCHAR NOT NULL,    -- 'possible_merge' | 'conflict'
+  observation_ids UUID[]  NOT NULL,    -- the observations left without an identity
+  identity_ids    UUID[]  NOT NULL,    -- the identities they matched; empty when the conflict is among the observations
+  status          VARCHAR NOT NULL,    -- 'open' | 'resolved' | 'superseded'
+  closed_seq      BIGINT,              -- resolved: the changeset after which every observation had an identity
+  closed_run      BIGINT               -- superseded: the reconcile run that raised it again in another form
 );
 
 -- Identity state
@@ -125,6 +137,11 @@ CREATE VIEW spool.membership_current AS
   SELECT observation_id, identity_id, from_seq
   FROM spool.membership
   WHERE to_seq IS NULL;
+
+CREATE VIEW spool.review_open AS
+  SELECT review_id, run_id, entity_type, kind, observation_ids, identity_ids
+  FROM spool.review_item
+  WHERE status = 'open';
 ";
 
 /// Creates the schema in an empty database, or checks the format version of

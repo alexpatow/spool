@@ -32,6 +32,7 @@ mod features;
 mod ingest;
 mod metrics;
 mod project;
+mod review;
 mod rows;
 mod rules;
 mod schema;

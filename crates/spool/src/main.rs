@@ -154,8 +154,12 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
         println!("resolved  nothing new");
     }
     for resolved in &step.resolve.resolved {
+        let again = match resolved.reexamined {
+            0 => String::new(),
+            count => format!(" ({count} left for review earlier)"),
+        };
         println!(
-            "resolved  `{}`: {} new observations, {} candidate pairs, {} match and {} no-match judgements",
+            "resolved  `{}`: {} observations{again}, {} candidate pairs, {} match and {} no-match judgements",
             resolved.entity_type,
             resolved.new_observations,
             resolved.candidates,

@@ -16,22 +16,30 @@ use spool_core::{EntityType, RunId};
 use crate::error::Result;
 use crate::features;
 use crate::project::Rule;
+use crate::review;
 
 /// The name of the temporary table that holds a run's new observations.
 pub(crate) const SCOPE: &str = "spool_scope";
 
 /// Lists the observations that are new to a run: those of the entity type
-/// that were ingested after `after_run` and before the run itself.
+/// that were ingested after `after_run` and before the run itself, and those
+/// of the given review items that still have no identity.
 pub(crate) fn create_scope(
     conn: &Connection,
     entity_type: &EntityType,
     after_run: RunId,
     run: RunId,
+    review_items: &[u64],
 ) -> Result<()> {
+    let under_review = match review::unassigned_observations(review_items) {
+        Some(query) => format!("UNION {query}"),
+        None => String::new(),
+    };
     conn.execute_batch(&format!(
         "CREATE OR REPLACE TEMP TABLE {SCOPE} AS
          SELECT observation_id FROM spool.observation
-         WHERE entity_type = '{entity_type}' AND ingest_run > {after_run} AND ingest_run < {run}"
+         WHERE entity_type = '{entity_type}' AND ingest_run > {after_run} AND ingest_run < {run}
+         {under_review}"
     ))?;
     Ok(())
 }
