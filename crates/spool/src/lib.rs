@@ -30,6 +30,7 @@ mod documents;
 mod drafts;
 mod engine;
 mod error;
+mod explain;
 mod features;
 mod ingest;
 mod lookup;
@@ -65,6 +66,10 @@ pub use engine::{
     SuggestedSplit, Suggestions, TypeResolution, watch_runs,
 };
 pub use error::{Error, Result};
+pub use explain::{
+    Comparison, Explained, Explanation, Link, LinkKind, Outcome, Placement, RecordedJudgement,
+    RuleReading, RuleResult,
+};
 pub use ingest::{IngestOptions, IngestReport};
 pub use lookup::{
     HistoryEntry, IdentityFilter, IdentitySummary, IdentityView, Member, ObservationFilter,

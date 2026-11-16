@@ -102,6 +102,8 @@ pub struct ReviewFilter {
     pub entity_type: Option<EntityType>,
     /// Only the item with this ID.
     pub id: Option<u64>,
+    /// Only the items that name this observation.
+    pub observation: Option<ObservationId>,
 }
 
 impl ReviewFilter {
@@ -125,12 +127,14 @@ pub(crate) fn list(conn: &Connection, filter: &ReviewFilter) -> Result<Vec<Revie
          WHERE ($1::VARCHAR IS NULL OR status = $1::VARCHAR)
            AND ($2::VARCHAR IS NULL OR entity_type = $2::VARCHAR)
            AND ($3::BIGINT IS NULL OR review_id = $3::BIGINT)
+           AND ($4::VARCHAR IS NULL OR list_contains(observation_ids, $4::UUID))
          ORDER BY review_id",
     )?;
     let mut rows = statement.query(params![
         filter.status.map(ReviewStatus::as_str),
         filter.entity_type.as_ref().map(EntityType::as_str),
         filter.id.map(|id| id as i64),
+        filter.observation.map(|id| id.to_string()),
     ])?;
     let mut items = Vec::new();
     while let Some(row) = rows.next()? {

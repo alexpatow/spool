@@ -20,6 +20,7 @@ use spool_core::{
 
 use crate::drafts::{self, DraftFilter, DraftRecord, DraftStatus, DraftSummary};
 use crate::error::{Error, Result};
+use crate::explain::{self, Explanation};
 use crate::features;
 use crate::ingest::{self, IngestOptions, IngestReport};
 use crate::lookup::{
@@ -904,6 +905,14 @@ impl Engine {
     /// and key finds its observation IDs here: only the engine computes them.
     pub fn observations(&self, filter: &ObservationFilter) -> Result<Vec<ObservationRecord>> {
         self.read(|conn| lookup::observations(conn, filter))
+    }
+
+    /// Why two observations share an identity, or do not: where each is,
+    /// what every run that looked at the pair concluded, and what the
+    /// project's rules say about it now.
+    pub fn explain(&self, a: ObservationId, b: ObservationId) -> Result<Explanation> {
+        let manifest = self.manifest();
+        self.read(|conn| explain::explain(conn, manifest.as_deref(), a, b))
     }
 
     /// Mints IDs for a caller that writes its own changesets.

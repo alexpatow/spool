@@ -1059,6 +1059,7 @@ async fn list_review(
         status: params.status,
         entity_type: params.entity_type,
         id: None,
+        observation: None,
     };
     let items = engine(&app, move |engine| engine.review_items(&filter)).await?;
     ok(ReviewList { items })
