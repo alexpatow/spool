@@ -28,17 +28,18 @@ Options:
   --manifest <path>   the manifest to run on (default: .spool/manifest.json)
   --store <path>      the store's database file (default: $SPOOL_STORE)
   --listen <addr>     the address to listen on (default: 0.0.0.0:7765)
-  --project <dir>     the project directory, where the strategy files the
-                      manifest names are found (default: the current directory)
-  --task-timeout <s>  how long a user-code strategy may run, in seconds
-                      (default: 600)
-  --tasks <dir>       where the task directories of user-code strategies are
-                      made (default: spool-tasks in the temporary directory)
+  --project <dir>     the project directory, where the strategy and extractor
+                      files the manifest names are found (default: the
+                      current directory)
+  --task-timeout <s>  how long a user-code strategy or an extractor may run,
+                      in seconds (default: 600)
+  --tasks <dir>       where the task directories of user code are made
+                      (default: spool-tasks in the temporary directory)
 
-Strategies that are `.py` files run with `uv`, and `.ts` files with `bun`.
-SPOOL_UV and SPOOL_BUN name the commands if they are not on the search path.
-The server runs a strategy file only while it is the one the manifest was
-compiled from.
+Strategies and extractors that are `.py` files run with `uv`, and `.ts` files
+with `bun`. SPOOL_UV and SPOOL_BUN name the commands if they are not on the
+search path. The server runs such a file only while it is the one the
+manifest was compiled from.
 ";
 
 pub const DEV_USAGE: &str = "\
@@ -55,13 +56,14 @@ Options:
   --listen <addr>     the address to listen on (default: 127.0.0.1:7765)
   --store <path>      the store's database file (default: <dir>/.spool/dev.duckdb)
   --token <token>     the bearer token (default: $SPOOL_TOKEN, or `dev`)
-  --task-timeout <s>  how long a user-code strategy may run, in seconds
-                      (default: 600)
-  --tasks <dir>       where the task directories of user-code strategies are
-                      made (default: spool-tasks in the temporary directory)
+  --task-timeout <s>  how long a user-code strategy or an extractor may run,
+                      in seconds (default: 600)
+  --tasks <dir>       where the task directories of user code are made
+                      (default: spool-tasks in the temporary directory)
 
-Strategies that are `.py` files run with `uv`, and `.ts` files with `bun`.
-SPOOL_UV and SPOOL_BUN name the commands if they are not on the search path.
+Strategies and extractors that are `.py` files run with `uv`, and `.ts` files
+with `bun`. SPOOL_UV and SPOOL_BUN name the commands if they are not on the
+search path.
 ";
 
 /// Prints a line, and carries on if nobody is reading: a server must not
@@ -264,8 +266,8 @@ fn watch(dir: &Path, engine: &Engine, mut seen: u64) {
     }
 }
 
-/// A number that changes when a file under `entities/` is added, removed or
-/// edited. Contents are read, not timestamps: projects are small, and two
+/// A number that changes when a file under `entities/` or `extractors/` is
+/// added, removed or edited. Contents are read, not timestamps: projects are small, and two
 /// saves within a timestamp's resolution must both be seen.
 fn fingerprint(dir: &Path) -> u64 {
     fn visit(path: &Path, hasher: &mut impl Hasher) {
@@ -286,7 +288,9 @@ fn fingerprint(dir: &Path) -> u64 {
         }
     }
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    visit(&dir.join("entities"), &mut hasher);
+    for part in ["entities", "extractors"] {
+        visit(&dir.join(part), &mut hasher);
+    }
     hasher.finish()
 }
 

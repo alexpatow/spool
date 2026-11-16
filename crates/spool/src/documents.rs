@@ -161,8 +161,8 @@ pub struct ExtractReport {
     /// Observations created as a new version of a mention that was known
     /// with other attributes.
     pub superseded: u64,
-    /// The ingest run the observations were stored under. `None` when
-    /// nothing was found.
+    /// The ingest run the observations were stored under. There is none
+    /// when nothing was found.
     pub ingest_run: Option<RunId>,
 }
 

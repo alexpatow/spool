@@ -12,11 +12,15 @@ import type {
   Committed,
   ConstraintRecord,
   DismissRequest,
+  DocumentId,
+  DocumentList,
+  DocumentRecord,
   DraftRecord,
   DraftStatus,
   DraftSummary,
   EntityType,
   ErrorCode,
+  ExtractRequest,
   HistoryEntry,
   IdentityId,
   IdentityList,
@@ -25,6 +29,7 @@ import type {
   IngestRequest,
   Judgement,
   MintedIds,
+  NewDocument,
   ObservationId,
   ObservationList,
   ObservationRecord,
@@ -123,10 +128,22 @@ export interface IdentityFilter {
   limit?: number;
 }
 
+export interface DocumentFilter {
+  source?: string;
+  key?: string;
+  /** Only the latest version of each document. Default: every version. */
+  latest?: boolean;
+  /** The `next` of the page before. */
+  after?: DocumentId;
+  limit?: number;
+}
+
 export interface ObservationFilter {
   entity_type?: EntityType;
   source?: string;
   key?: string;
+  /** Only the mentions an extractor found in this version of a document. */
+  document?: DocumentId;
   /** Only observations that have no identity. */
   unassigned?: boolean;
   /** The `next` of the page before. */
@@ -200,6 +217,48 @@ export class SpoolClient {
     const { run } = await this.json<{ run: RunRecord }>("POST", "/v1/ingest", {
       query: { ...options },
       arrow: rows,
+    });
+    return run;
+  }
+
+  // Documents and extraction
+
+  /**
+   * Stores documents from one source, for an extractor to read. A document
+   * that was stored before, with the same source, key and text, is not
+   * stored again, and a changed text under the same key is the document's
+   * next version. The run that comes back is an ingest run.
+   */
+  async addDocuments(source: string, documents: NewDocument[], options: { wait_ms?: number } = {}): Promise<RunRecord> {
+    const { run } = await this.json<{ run: RunRecord }>("POST", "/v1/documents", {
+      json: { source, documents, ...options },
+    });
+    return run;
+  }
+
+  /** A page of documents, without their text. Pass `next` as `after` for the page after. */
+  documents(filter: DocumentFilter = {}): Promise<DocumentList> {
+    return this.json("GET", "/v1/documents", { query: { ...filter } });
+  }
+
+  /** One version of a document, with its text and each time an extractor read it. */
+  document(document: DocumentId): Promise<DocumentRecord> {
+    return this.json("GET", `/v1/documents/${document}`);
+  }
+
+  /**
+   * Runs one of the project's extractors, which `info` lists, over the
+   * latest version of every document it has not read. What it finds is
+   * stored as observations, which `startRun` then matches like any other;
+   * `extraction` on the run that comes back counts them.
+   *
+   * The run may still be `running` if the server's wait ran out first: pass
+   * it to `waitForRun`. If the extractor fails, the call throws a
+   * `SpoolError` with the code `extractor_failed`, and nothing is stored.
+   */
+  async extract(extractor: string, options: Omit<ExtractRequest, "extractor"> = {}): Promise<RunRecord> {
+    const { run } = await this.json<{ run: RunRecord }>("POST", "/v1/extractions", {
+      json: { extractor, ...options },
     });
     return run;
   }

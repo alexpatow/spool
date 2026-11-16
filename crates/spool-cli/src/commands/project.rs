@@ -25,8 +25,8 @@ pub const INFO_USAGE: &str = "\
 Usage: spool info [<dir>] [options]
 
 Lists what the project directory declares: its entity types, their feature
-columns, their rules and their user-code strategies. Every SQL file is
-checked on the way.
+columns, their rules and their user-code strategies, and its extractors.
+Every SQL file is checked on the way.
 
   <dir>     the project directory (default: the current directory)
 
@@ -304,7 +304,9 @@ pub fn info(arguments: &[String]) -> Result<(), Failure> {
                     "match": names(&entity_type.rules.match_),
                 },
                 "strategies": entity_type.strategies,
+                "extract": entity_type.extract,
             })).collect::<Vec<_>>(),
+            "extractors": manifest.extractors,
             "ignored": ignored,
             "warnings": warnings,
         });
@@ -346,6 +348,18 @@ pub fn info(arguments: &[String]) -> Result<(), Failure> {
                 strategy.name, strategy.runtime, strategy.file
             );
         }
+        if entity_type.extract.is_some() {
+            println!("  extract   extract.md says what an extractor looks for");
+        }
+    }
+    if !manifest.extractors.is_empty() {
+        println!();
+    }
+    for extractor in &manifest.extractors {
+        println!(
+            "extractor `{}` ({}, {})",
+            extractor.name, extractor.runtime, extractor.file
+        );
     }
     if !ignored.is_empty() {
         println!("\nnot used by this version:");

@@ -297,6 +297,174 @@
       ],
       "type": "object"
     },
+    "DocumentExtraction": {
+      "description": "One reading of a document by an extractor.",
+      "properties": {
+        "extractor": {
+          "type": "string"
+        },
+        "mentions": {
+          "description": "How many mentions it found in the document.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "run": {
+          "$ref": "#/$defs/RunId",
+          "description": "The extract run."
+        },
+        "version": {
+          "description": "The hash of the extractor's files when it ran.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "extractor",
+        "version",
+        "run",
+        "mentions"
+      ],
+      "type": "object"
+    },
+    "DocumentId": {
+      "description": "Identifies one version of a document. Derived by the engine from the document's source, key and text.",
+      "format": "uuid",
+      "type": "string"
+    },
+    "DocumentList": {
+      "properties": {
+        "documents": {
+          "description": "Documents without their text.",
+          "items": {
+            "$ref": "#/$defs/DocumentRecord"
+          },
+          "type": "array"
+        },
+        "next": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DocumentId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Pass as `after` for the next page. `null` on the last page."
+        }
+      },
+      "required": [
+        "documents"
+      ],
+      "type": "object"
+    },
+    "DocumentRecord": {
+      "description": "One version of a document as the store holds it.",
+      "properties": {
+        "extractions": {
+          "description": "Each time an extractor read this version, oldest first.",
+          "items": {
+            "$ref": "#/$defs/DocumentExtraction"
+          },
+          "type": "array"
+        },
+        "id": {
+          "$ref": "#/$defs/DocumentId"
+        },
+        "ingest_run": {
+          "$ref": "#/$defs/RunId"
+        },
+        "ingested_at": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "length": {
+          "description": "How long the text is, in Unicode code points.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source": {
+          "type": "string"
+        },
+        "superseded_by": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DocumentId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The version that replaced this one."
+        },
+        "supersedes": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DocumentId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The version of the document this one replaced: what the source held\nunder the same key before."
+        },
+        "text": {
+          "description": "The text. Left out of a list of documents.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "uri": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "source",
+        "key",
+        "length",
+        "ingested_at",
+        "ingest_run",
+        "extractions"
+      ],
+      "type": "object"
+    },
+    "DocumentsRequest": {
+      "additionalProperties": false,
+      "description": "`POST /v1/documents`: store documents from one source, to be read by an\nextractor. The response is the ingest run that stored them.",
+      "properties": {
+        "documents": {
+          "items": {
+            "$ref": "#/$defs/NewDocument"
+          },
+          "type": "array"
+        },
+        "source": {
+          "description": "The name of the source the documents come from. The observations\nextracted from them have the same source.",
+          "type": "string"
+        },
+        "wait_ms": {
+          "default": null,
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "source",
+        "documents"
+      ],
+      "type": "object"
+    },
     "DraftList": {
       "properties": {
         "drafts": {
@@ -470,7 +638,7 @@
         },
         {
           "const": "not_found",
-          "description": "404: there is no such run, draft, changeset, identity, observation,\nreview item or path.",
+          "description": "404: there is no such run, draft, changeset, identity, observation,\ndocument, review item or path.",
           "type": "string"
         },
         {
@@ -494,6 +662,11 @@
           "type": "string"
         },
         {
+          "const": "extractor_failed",
+          "description": "500: the project's extractor failed, did not finish in time, or\nwrote mentions that were refused. The run is recorded as failed and\nnothing it found was stored.",
+          "type": "string"
+        },
+        {
           "const": "internal",
           "description": "500: the server failed.",
           "type": "string"
@@ -509,6 +682,156 @@
       },
       "required": [
         "error"
+      ],
+      "type": "object"
+    },
+    "ExtractReport": {
+      "properties": {
+        "documents": {
+          "description": "Documents the extractor was given.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "duplicates": {
+          "description": "Mentions that were already known: the same place in the same\ndocument, with the same attributes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "ingest_run": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The ingest run the observations were stored under. There is none\nwhen nothing was found."
+        },
+        "inserted": {
+          "description": "Observations created.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mentions": {
+          "description": "Mentions it found.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "run": {
+          "$ref": "#/$defs/RunId"
+        },
+        "superseded": {
+          "description": "Observations created as a new version of a mention that was known\nwith other attributes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "run",
+        "documents",
+        "mentions",
+        "inserted",
+        "duplicates",
+        "superseded"
+      ],
+      "type": "object"
+    },
+    "ExtractRequest": {
+      "additionalProperties": false,
+      "description": "`POST /v1/extractions`: run one of the project's extractors over the\ndocuments it has not read. The response is the extract run. What it\nfound is observations, which `POST /v1/runs` then matches.",
+      "properties": {
+        "again": {
+          "default": null,
+          "description": "Read the documents this extractor has read before as well.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "extractor": {
+          "description": "The name of one of the project's extractors; `GET /v1/info` lists\nthem. The server runs no code it was not built with.",
+          "type": "string"
+        },
+        "limit": {
+          "default": null,
+          "description": "Read at most this many documents, oldest first.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "source": {
+          "default": null,
+          "description": "Read only the documents of this source.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "wait_ms": {
+          "default": null,
+          "description": "How long the call waits for the run, in milliseconds. If the run is\nstill in progress then, the response has status 202 and the run as\nfar as it has got.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "extractor"
+      ],
+      "type": "object"
+    },
+    "Extractor": {
+      "description": "An extractor: a file the engine runs as a child process, which reads\ndocuments and says where they mention entities. The engine runs the file\nonly while it still has this hash.",
+      "properties": {
+        "file": {
+          "description": "The file, as a path from the project directory with `/` between its\nparts.",
+          "type": "string"
+        },
+        "hash": {
+          "description": "SHA-256 of the file and of every file in the directory that shares\nits name. It is recorded as the extractor's version with each run.",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "runtime": {
+          "$ref": "#/$defs/Runtime"
+        }
+      },
+      "required": [
+        "name",
+        "runtime",
+        "file",
+        "hash"
+      ],
+      "type": "object"
+    },
+    "ExtractorRef": {
+      "description": "Names the extractor of an extract run.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "description": "The hash of the extractor's files.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version"
       ],
       "type": "object"
     },
@@ -998,6 +1321,31 @@
       "required": [
         "identities",
         "changesets"
+      ],
+      "type": "object"
+    },
+    "NewDocument": {
+      "description": "A document as a source hands it over.",
+      "properties": {
+        "key": {
+          "description": "The document's key within its source: a path, a URL, a message ID.",
+          "type": "string"
+        },
+        "text": {
+          "description": "The document as text. Turning a PDF or a web page into text is the\ncaller's work.",
+          "type": "string"
+        },
+        "uri": {
+          "description": "Where the source keeps the document, if that is worth showing to\nsomeone who reads a mention.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "key",
+        "text"
       ],
       "type": "object"
     },
@@ -2023,6 +2371,7 @@
     "RunKind": {
       "enum": [
         "ingest",
+        "extract",
         "match",
         "reconcile"
       ],
@@ -2063,6 +2412,30 @@
             "null"
           ]
         },
+        "extraction": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExtractReport"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "What an extract run reported when it finished."
+        },
+        "extractor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExtractorRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The extractor of an extract run, and of the ingest run that stored\nwhat it found."
+        },
         "finished_at": {
           "type": [
             "string",
@@ -2078,7 +2451,7 @@
               "type": "null"
             }
           ],
-          "description": "What an ingest run reported when it finished."
+          "description": "What an ingest run reported when it finished. The run stored rows,\ndocuments, or the mentions an extract run found."
         },
         "kind": {
           "$ref": "#/$defs/RunKind"
@@ -2314,12 +2687,27 @@
     "StoreInfo": {
       "description": "What a store holds.",
       "properties": {
+        "documents": {
+          "default": 0,
+          "description": "Documents held, counting each version.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "engine_version": {
           "type": "string"
         },
         "entity_types": {
           "items": {
             "$ref": "#/$defs/TypeInfo"
+          },
+          "type": "array"
+        },
+        "extractors": {
+          "default": [],
+          "description": "The project's extractors. Empty when the engine runs without a\nmanifest.",
+          "items": {
+            "$ref": "#/$defs/Extractor"
           },
           "type": "array"
         },

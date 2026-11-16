@@ -55,7 +55,14 @@ export function writeStrategy(dir: string, file: string, source: string): void {
   writeFileSync(path, source);
 }
 
-/** Whether `uv`, which runs Python strategies, is here. */
+/** Writes one of the project's extractors. */
+export function writeExtractor(dir: string, file: string, source: string): void {
+  const path = join(dir, "extractors", file);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, source);
+}
+
+/** Whether `uv`, which runs Python strategies and extractors, is here. */
 export const hasUv = Bun.which(process.env.SPOOL_UV ?? "uv") !== null;
 
 export interface Server {

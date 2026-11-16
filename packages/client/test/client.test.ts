@@ -5,7 +5,7 @@ import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 import { SpoolClient, SpoolError } from "../src/index.ts";
-import type { Changeset, RunRecord } from "../src/index.ts";
+import type { Changeset, ObservationRecord, RunRecord } from "../src/index.ts";
 import {
   TOKEN,
   companies,
@@ -15,6 +15,7 @@ import {
   serve,
   spool,
   temporaryDirectory,
+  writeExtractor,
   writeStrategy,
   writeThings,
 } from "./server.ts";
@@ -492,6 +493,138 @@ def judge(candidates):
     expect(failure.message).toContain("no model");
     const [failed] = await client.runs({ status: "failed" });
     expect(failed?.strategy?.name).toBe("failing");
+    expect(failed?.error).toContain("no model");
+  });
+});
+
+describe("documents", () => {
+  test("are stored once, listed without their text, and read with it", async () => {
+    const { client } = await thingsServer(21);
+    const run = await client.addDocuments("notes", [
+      { key: "a", text: "🔨 Anvil and Hammer.", uri: "https://notes.test/a" },
+      { key: "b", text: "Hammer again." },
+      { key: "a", text: "🔨 Anvil and Hammer.", uri: "https://notes.test/a" },
+    ]);
+    expect(run.kind).toBe("ingest");
+    expect(run.status).toBe("succeeded");
+    expect(run.ingest).toMatchObject({ received: 3, inserted: 2, duplicates: 1 });
+    expect((await client.info()).store.documents).toBe(2);
+
+    const { documents, next } = await client.documents({ source: "notes" });
+    expect(next ?? null).toBeNull();
+    expect(documents.map((document) => document.key).sort()).toEqual(["a", "b"]);
+    const a = documents.find((document) => document.key === "a")!;
+    // Lengths count code points: the hammer is one.
+    expect(a.length).toBe(19);
+    expect(a.text ?? null).toBeNull();
+    expect(a.uri).toBe("https://notes.test/a");
+    expect((await client.document(a.id)).text).toBe("🔨 Anvil and Hammer.");
+
+    // A changed text is the next version of the document.
+    const changed = await client.addDocuments("notes", [{ key: "a", text: "Only an Anvil." }]);
+    expect(changed.ingest?.superseded).toBe(1);
+    const [latest] = (await client.documents({ key: "a", latest: true })).documents;
+    expect(latest?.supersedes).toBe(a.id);
+    expect((await client.document(a.id)).superseded_by).toBe(latest!.id);
+
+    const first = await client.documents({ limit: 2 });
+    expect(first.documents).toHaveLength(2);
+    const second = await client.documents({ limit: 2, after: first.next! });
+    expect(second.documents).toHaveLength(1);
+
+    const missing = await failureOf(client.document("00000000-0000-0000-0000-000000000000"));
+    expect(missing.code).toBe("not_found");
+    const unknown = await failureOf(client.extract("words"));
+    expect(unknown.status).toBe(400);
+    expect(unknown.message).toContain("the project has no extractor `words`");
+  });
+});
+
+// These start `uv`, as the server does for an extractor written in Python.
+describe.skipIf(!hasUv)("an extractor of the project", () => {
+  const words = `
+import re
+
+from spool import extractor
+
+
+@extractor
+def find(document):
+    for found in re.finditer(r"[A-Z][a-z]+", document.text):
+        yield document.mention("thing", found.start(), found.end(), code=found.group().lower())
+`;
+  const failing = `
+from spool import extractor
+
+
+@extractor
+def find(document):
+    raise RuntimeError("no model")
+`;
+  let server: Server;
+
+  beforeAll(async () => {
+    const project = temporaryDirectory();
+    cleanup.push(project);
+    writeThings(project);
+    writeExtractor(project, "words.py", words);
+    writeExtractor(project, "failing.py", failing);
+    server = await serve(project, 6);
+    servers.push(server);
+  });
+
+  test("is listed, reads documents, and what it finds is resolved", async () => {
+    const { client } = server;
+    const extractors = (await client.info()).store.extractors ?? [];
+    expect(extractors.map((extractor) => [extractor.name, extractor.runtime])).toEqual([
+      ["failing", "python"],
+      ["words", "python"],
+    ]);
+
+    await client.addDocuments("notes", [
+      { key: "a", text: "🔨 Anvil and Hammer." },
+      { key: "b", text: "Hammer again." },
+    ]);
+    const run = await client.extract("words");
+    expect(run.kind).toBe("extract");
+    expect(run.status).toBe("succeeded");
+    expect(run.extractor).toEqual({ name: "words", version: extractors[1]!.hash });
+    expect(run.extraction).toMatchObject({ documents: 2, mentions: 3, inserted: 3 });
+
+    // A mention is an observation that says where it was found.
+    const a = (await client.documents({ key: "a" })).documents[0]!;
+    expect(a.extractions).toEqual([{ extractor: "words", version: extractors[1]!.hash, run: run.run, mentions: 2 }]);
+    const { observations } = await client.observations({ document: a.id });
+    const code = (observation: ObservationRecord) => (observation.payload as { code: string }).code;
+    expect(observations.map(code).sort()).toEqual(["anvil", "hammer"]);
+    const anvil = observations.find((observation) => code(observation) === "anvil")!;
+    expect(anvil.key).toBe(`${a.id}#thing:2-7`);
+    expect(anvil.evidence).toMatchObject({ document: a.id, key: "a", start: 2, end: 7, text: "Anvil" });
+
+    // Matching treats mentions as it treats rows: the two hammers are one thing.
+    const resolved = await client.startRun({ entity_type: "thing" });
+    expect(resolved?.resolution?.identities_created).toBe(2);
+    const hammers = (await client.observations({ entity_type: "thing" })).observations.filter(
+      (observation) => code(observation) === "hammer",
+    );
+    expect(hammers).toHaveLength(2);
+    expect(hammers[0]!.identity).toBe(hammers[1]!.identity!);
+
+    // What was read is not read again unless asked.
+    expect((await client.extract("words")).extraction?.documents).toBe(0);
+    const again = await client.extract("words", { again: true, source: "notes", limit: 1 });
+    expect(again.extraction).toMatchObject({ documents: 1, inserted: 0 });
+  });
+
+  test("that fails is a failed run with what it said", async () => {
+    const { client } = server;
+    await client.addDocuments("notes", [{ key: "c", text: "Saw." }]);
+    const failure = await failureOf(client.extract("failing"));
+    expect(failure.status).toBe(500);
+    expect(failure.code).toBe("extractor_failed");
+    expect(failure.message).toContain("no model");
+    const [failed] = await client.runs({ kind: "extract", status: "failed" });
+    expect(failed?.extractor?.name).toBe("failing");
     expect(failed?.error).toContain("no model");
   });
 });
