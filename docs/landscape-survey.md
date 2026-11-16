@@ -8,12 +8,12 @@ Survey of open-source entity resolution as of 2026-11-13, written to ground the 
 2. **Persistent identity is not an unoccupied space.** Spool started from the assumption that persistent identity is what separates it from existing open-source tools. Three projects already do part of it: nomenklatura (in production behind OpenSanctions), GoldenMatch (open source, created in 2026) and Zingg Enterprise (closed source). Each has a recognisable design, and none separates identity semantics into a small engine that other matchers can plug into.
 3. **Four identity designs exist in the wild.** (a) IDs derived from cluster contents, (b) IDs carried over by cluster overlap after each batch run, (c) a persisted graph of pairwise judgements from which canonical IDs are computed, (d) a stateful engine that resolves each record against existing entities. Only (c) and (d) keep manual decisions safe, and only (c) is simple enough to copy. Spool should take (c)'s evidence model and add explicit, validated state transitions on top.
 4. **The data shape at the matcher boundary has converged.** Every tool can be described as: records in, candidate pairs, scored pairs out. Nearly all of them then cluster with connected components. That makes "scored pairs" the natural interchange contract and makes clustering the place where Spool must differ.
-5. **Evaluation practice is pairwise and static.** FEBRL, the Leipzig and Magellan sets and WDC Products measure pair or cluster quality on a frozen snapshot. I found no public benchmark for ID stability, churn, order sensitivity or split recovery. Spool will have to define those, and doing so is a contribution in itself.
-6. **The real gap** is a small, embeddable identity engine with: stable IDs that survive merges, splits and model upgrades; changes expressed as auditable changesets; one implementation behind Rust, TypeScript and Python; a matcher-neutral contract; and benchmarks that measure identity behaviour over time.
+5. **Evaluation practice is pairwise and static.** FEBRL, the Leipzig and Magellan sets and WDC Products measure pair or cluster quality on a frozen snapshot. This survey found no public benchmark for ID stability, churn, order sensitivity or split recovery. Spool will have to define those, and doing so is a contribution in itself.
+6. **The real gap** is a small identity engine with: stable IDs that survive merges, splits and model upgrades; changes expressed as auditable changesets; one implementation behind Rust, TypeScript and Python; a matcher-neutral contract; and benchmarks that measure identity behaviour over time.
 
 ## How this was verified
 
-I cloned each repository at the commit listed below and read the code and docs directly, read the Zingg documentation export, fetched vendor pages for Senzing and OpenSanctions, and checked paper titles against arXiv and Crossref. Package versions come from PyPI and crates.io on 2026-11-13. Performance and accuracy numbers quoted below are the projects' own claims; I reproduced none of them. Section 8 lists what I could not verify.
+Each repository was cloned at the commit listed below, and its code and docs were read directly. The Zingg documentation export was read, vendor pages for Senzing and OpenSanctions were fetched, and paper titles were checked against arXiv and Crossref. Package versions come from PyPI and crates.io on 2026-11-13. Performance and accuracy numbers quoted below are the projects' own claims; none of them were reproduced. Section 8 lists what could not be verified.
 
 | Project | Commit read | Latest release | Licence |
 | --- | --- | --- | --- |
@@ -69,9 +69,9 @@ Zingg is most relevant here for the difference between its two editions: persist
 
 **Algorithm.** Two models learned from the same labelled pairs. The blocking model is a tree of hash functions chosen to eliminate as few labelled matches as possible ([block package](https://github.com/zinggAI/zingg/tree/main/common/core/src/main/java/zingg/common/core/block)). The similarity model is Spark ML logistic regression over a degree-3 polynomial expansion of per-field similarity features ([SparkModel.java](https://github.com/zinggAI/zingg/blob/main/spark/core/src/main/java/zingg/spark/core/model/SparkModel.java)). Labels come from an active-learning loop; the docs suggest 30 to 50 labelled matches as a starting point. Clustering is GraphFrames connected components ([GraphUtil.java](https://github.com/zinggAI/zingg/blob/main/common/core/src/main/java/zingg/common/core/util/GraphUtil.java)).
 
-**Execution.** Java on Spark 3.5 or 4.2, run as phases (`findTrainingData`, `label`, `train`, `match`, `link`). Enterprise adds a native Snowflake path. The licence is AGPL-3.0, so Spool can call Zingg as an external process and must never link it.
+**Execution.** Java on Spark 3.5 or 4.2, run as phases (`findTrainingData`, `label`, `train`, `match`, `link`). Enterprise adds a native Snowflake path. The licence is AGPL-3.0, so Spool would use Zingg only as an external process.
 
-**Benchmarks.** CI runs performance tests on FEBRL 120k and North Carolina voters 5M. The repository ships examples for FEBRL, Amazon-Google, iTunes-Amazon and BeerAdvo-RateBeer. The "Hardware Sizing and Benchmarks" section of the [docs export](https://docs.zingg.ai/zingg/llms-full.txt) reports 120k records in 5 minutes and 5M in about 4 hours on 4 cores with 10 GB of memory. I found runtime figures and no published accuracy table.
+**Benchmarks.** CI runs performance tests on FEBRL 120k and North Carolina voters 5M. The repository ships examples for FEBRL, Amazon-Google, iTunes-Amazon and BeerAdvo-RateBeer. The "Hardware Sizing and Benchmarks" section of the [docs export](https://docs.zingg.ai/zingg/llms-full.txt) reports 120k records in 5 minutes and 5M in about 4 hours on 4 cores with 10 GB of memory. It gives runtime figures; no published accuracy table was found.
 
 **Identity.** Community writes `Z_CLUSTER`, which the docs describe as non-persistent: "Each time you run the match job, Zingg rebuilds the identity graph from scratch" ([Z Cluster and Zingg ID](https://docs.zingg.ai/zingg/zingg-concepts/z-cluster-and-zingg-id)). Enterprise writes `ZINGG_ID`, a GUID, and adds:
 
@@ -79,7 +79,7 @@ Zingg is most relevant here for the difference between its two editions: persist
 - `reassignZinggId`: after a model change, new clusters are mapped back to old ones through primary-key overlap and inherit the old ID where they overlap ([reassign](https://docs.zingg.ai/zingg/running-zingg/reassign-zingg-id)).
 - A stated limit: if a cluster splits, "the `Zingg ID` may be reassigned", and downstream systems should treat it "as stable within a deployment lifecycle, not as an indefinitely immutable identifier".
 
-So the Enterprise edition, as documented, carries IDs over by overlap; identity is not modelled as state with defined transitions. I found no description in the docs of a change log, a redirect from a retired ID or a rule for which side of a split keeps the ID.
+So the Enterprise edition, as documented, carries IDs over by overlap; identity is not modelled as state with defined transitions. No description was found in the docs of a change log, a redirect from a retired ID or a rule for which side of a split keeps the ID.
 
 **For Spool.** Borrow the list of lifecycle scenarios in Zingg's ID table as test cases, and the idea that a model upgrade must not disturb IDs. Spool does not take a Spark dependency, does not link AGPL-licensed code, and does not use overlap-based ID carry-over as its primary mechanism.
 
@@ -125,19 +125,19 @@ The closest working precedent for Spool's identity model, and it is small enough
 - **Identity.** Connected components over positive edges give clusters. The canonical ID is the highest-ranked identifier in the cluster, where minted `NK-` IDs outrank source IDs and Wikidata QIDs outrank both ([identifier.py](https://github.com/opensanctions/nomenklatura/blob/main/nomenklatura/resolver/identifier.py)).
 - **Published contract.** OpenSanctions documents what consumers can rely on: retired IDs remain in a `referents` array for six months, merges appear in deltas as deletes plus an add, splits "are always manual" and the existing ID "stays with the larger portion of the cluster" ([identifiers](https://www.opensanctions.org/docs/identifiers/)).
 
-Where it differs from what Spool needs: it is Python and tied to the FollowTheMoney schema; identity is recomputed from the graph, so there is no explicit state transition to validate; canonical IDs can change when a higher-ranked identifier joins; and I found no changeset or sync concept.
+Where it differs from what Spool needs: it is Python and tied to the FollowTheMoney schema; identity is recomputed from the graph, so there is no explicit state transition to validate; canonical IDs can change when a higher-ranked identifier joins; and no changeset or sync concept was found.
 
 ### matchbox and matchlab
 
 The UK Department for Business and Trade built matchbox as a server that orchestrates dedupers and linkers over warehouse data. It was archived in 2026 in favour of [matchlab](https://github.com/uktrade/matchlab), "a local-first library for building, running and evaluating entity resolution pipelines". Matchlab is a lazy plan of steps with content-addressed caching, DuckDB underneath, Splink 5 as a dependency, a materialised `(root, leaf, key, source)` resolver table, and evaluation by sampling clusters for human judgement. Record identity is a content hash ("leaf"), which anchors judgements to data and not to keys.
 
-This is a data point for two of Spool's initial design goals, local-first execution and evaluation as a first-class capability: a team with a governed server product chose to go local-first, and they treat measurement as a first-class job. The architecture proposal keeps the second goal and departs from the first: Spool runs as one server, because persistent identity needs one owner of the evidence, and it stays a single process on one machine with DuckDB underneath. I did not find durable entity IDs across changing data in matchlab's docs; it is marked alpha.
+This is a data point for two of Spool's initial design goals, local-first execution and evaluation as a first-class capability: a team with a governed server product chose to go local-first, and they treat measurement as a first-class job. The architecture proposal keeps the second goal and departs from the first: Spool runs as one server, because persistent identity needs one owner of the evidence, and it stays a single process on one machine with DuckDB underneath. Durable entity IDs across changing data were not found in matchlab's docs; it is marked alpha.
 
 ### GoldenMatch
 
 The surveyed project closest in scope to Spool's goals, created in March 2026. Its README describes zero-configuration matching, a "durable identity layer" with stable `entity_id`s, per-field provenance, merge and split, a hash-chained audit log, Python and TypeScript packages, Rust kernels and DuckDB and Postgres surfaces.
 
-What I confirmed in the code ([identity/store.py](https://github.com/benseverndev-oss/goldenmatch/blob/main/packages/python/goldenmatch/goldenmatch/identity/store.py), [identity/resolve.py](https://github.com/benseverndev-oss/goldenmatch/blob/main/packages/python/goldenmatch/goldenmatch/identity/resolve.py), [identity/model.py](https://github.com/benseverndev-oss/goldenmatch/blob/main/packages/python/goldenmatch/goldenmatch/identity/model.py)):
+Confirmed in the code ([identity/store.py](https://github.com/benseverndev-oss/goldenmatch/blob/main/packages/python/goldenmatch/goldenmatch/identity/store.py), [identity/resolve.py](https://github.com/benseverndev-oss/goldenmatch/blob/main/packages/python/goldenmatch/goldenmatch/identity/resolve.py), [identity/model.py](https://github.com/benseverndev-oss/goldenmatch/blob/main/packages/python/goldenmatch/goldenmatch/identity/model.py)):
 
 - The identity store is a Python module over SQLite or Postgres with tables for identity nodes (status `active`, `merged_into`, `split`, `retired`), source records keyed `{source}:{source_pk}` with a content hash, evidence edges between records (`same_as`, `possible_same_as`, `conflicts_with`), an append-only events table, aliases, a persisted block-key index and a runs table holding the config fingerprint.
 - IDs are UUIDv7-shaped and minted, not derived.
@@ -145,7 +145,7 @@ What I confirmed in the code ([identity/store.py](https://github.com/bensevernde
 - A separate stabilisation pass merges entities that keep being linked across several runs.
 - The compute-to-identity handoff is being turned into a versioned `ResolutionBatch` contract, and the README draws a line between a stateless "compute engine" and a transactional "control plane".
 
-Where it differs from Spool's design: the identity logic is in Python, the TypeScript package is a second implementation held at parity by conformance tests, and the Postgres extension embeds CPython through pyo3 ([extensions README](https://github.com/benseverndev-oss/goldenmatch/blob/main/packages/rust/extensions/README.md)). Its accuracy and scale figures, including a comparison with a hand-tuned Splink on `historical_50k`, are the project's own; I did not run them.
+Where it differs from Spool's design: the identity logic is in Python, the TypeScript package is a second implementation held at parity by conformance tests, and the Postgres extension embeds CPython through pyo3 ([extensions README](https://github.com/benseverndev-oss/goldenmatch/blob/main/packages/rust/extensions/README.md)). Its accuracy and scale figures, including a comparison with a hand-tuned Splink on `historical_50k`, are the project's own and were not run for this survey.
 
 **For Spool.** Treat it as independent confirmation of the table design (records, evidence edges, events, runs, redirect status on the identity) and of the compute versus control split. Spool chooses a narrower scope: one small identity engine behind a server and thin clients, with matching left to interchangeable strategies.
 
@@ -161,7 +161,7 @@ A Rust workspace (Apache-2.0, created May 2026) implementing Fellegi-Sunter with
 
 | Dataset | What it is | Truth | Used by | Fit for Spool |
 | --- | --- | --- | --- | --- |
-| FEBRL 1 to 4 | Synthetic person records with injected errors ([Christen, 2008](https://doi.org/10.1145/1401890.1402020)) | Encoded in record IDs | Splink, Zingg, recordlinkage, GoldenMatch | Harness sanity check; low difficulty and not companies |
+| FEBRL 1 to 4 | Synthetic person records with injected errors ([Christen, 2008](https://doi.org/10.1145/1401890.1402020)) | Encoded in record IDs | Splink, Zingg, recordlinkage, GoldenMatch | Harness sanity check; low difficulty, person records only |
 | `fake_1000`, `historical_50k` | Splink's small synthetic and Wikidata-derived person sets | Cluster column, plus clerical pair labels for `fake_1000` | Splink, GoldenMatch | Day-one fixtures |
 | North Carolina voters | Real person records with voter IDs | Voter ID | Zingg CI | Scale test later |
 | Magellan and DeepMatcher sets | Product, citation and restaurant pairs such as Amazon-Google, DBLP-ACM, iTunes-Amazon ([list](https://github.com/anhaidgroup/deepmatcher/blob/master/Datasets.md)) | Labelled pairs | Ditto, LLM papers, Zingg examples | Pairwise only, already blocked |
@@ -173,16 +173,16 @@ A Rust workspace (Apache-2.0, created May 2026) implementing Fellegi-Sunter with
 
 **Known problems.** [Hand and Christen (2017)](https://doi.org/10.1007/s11222-017-9746-6) show the F-measure's implicit weighting of precision against recall depends on the classifier being evaluated, so precision and recall should be reported separately. [Binette et al. (2024)](https://arxiv.org/abs/2404.05622) show that pair metrics computed on benchmark samples misestimate real performance and propose entity-centric estimation from sampled clusters, implemented in [er-evaluation](https://github.com/OlivierBinette/er-evaluation) (AGPL-3.0). Most pair benchmarks are also pre-blocked, so they say nothing about candidate recall.
 
-**What is missing.** None of the datasets above has a time dimension: batches arriving in order, entities that rename, merge or split, or scripted corrections. Research on incremental resolution exists ([Gruenheid, Dong and Srivastava, 2014](https://doi.org/10.14778/2732939.2732943); [Whang and Garcia-Molina, 2013](https://doi.org/10.1007/s00778-013-0315-0); [Saeedi, Peukert and Rahm, 2020](https://doi.org/10.1007/978-3-030-49461-2_23)) and compares incremental against batch quality, but I found no shared benchmark with ID stability as a metric. I also found no open company dataset with ground-truth clusters of the kind Spool's first use case, resolving companies across venture capital data sources, needs.
+**What is missing.** None of the datasets above has a time dimension: batches arriving in order, entities that rename, merge or split, or scripted corrections. Research on incremental resolution exists ([Gruenheid, Dong and Srivastava, 2014](https://doi.org/10.14778/2732939.2732943); [Whang and Garcia-Molina, 2013](https://doi.org/10.1007/s00778-013-0315-0); [Saeedi, Peukert and Rahm, 2020](https://doi.org/10.1007/978-3-030-49461-2_23)) and compares incremental against batch quality, but no shared benchmark with ID stability as a metric was found. No open company dataset with ground-truth clusters was found either. Companies are the example entity type in the architecture proposal, so its first company fixture is hand-built.
 
-**A candidate source for a company benchmark.** GLEIF publishes the global LEI register under CC0 ([terms](https://www.gleif.org/en/meta/lei-data-terms-of-use), [download](https://www.gleif.org/en/lei-data/gleif-golden-copy/download-the-golden-copy)). Checked against the live API on 2026-11-13, the register holds 3,493,341 records. Each has a legal name, `otherNames` typed as previous legal or trading names, transliterations, addresses, registry numbers, `successorEntity` fields, event groups with types such as `MERGERS_AND_ACQUISITIONS` and `CHANGE_LEGAL_NAME`, and direct and ultimate parent relationships. 6,521 records have registration status `DUPLICATE` and 259,541 have `RETIRED`; the duplicate record I sampled pointed to its surviving LEI. The LEI is ground truth; previous and trading names supply realistic variation; parents and subsidiaries supply hard negatives; duplicates and successors supply labelled merge events. It has no domains, only 1 of 30 sampled records carried other names, and it is skewed toward regulated entities, so it would need synthetic CRM-style noise on top.
+**A candidate source for a company benchmark.** GLEIF publishes the global LEI register under CC0 ([terms](https://www.gleif.org/en/meta/lei-data-terms-of-use), [download](https://www.gleif.org/en/lei-data/gleif-golden-copy/download-the-golden-copy)). Checked against the live API on 2026-11-13, the register holds 3,493,341 records. Each has a legal name, `otherNames` typed as previous legal or trading names, transliterations, addresses, registry numbers, `successorEntity` fields, event groups with types such as `MERGERS_AND_ACQUISITIONS` and `CHANGE_LEGAL_NAME`, and direct and ultimate parent relationships. 6,521 records have registration status `DUPLICATE` and 259,541 have `RETIRED`; the one duplicate record sampled pointed to its surviving LEI. The LEI is ground truth; previous and trading names supply realistic variation; parents and subsidiaries supply hard negatives; duplicates and successors supply labelled merge events. It has no domains, only 1 of 30 sampled records carried other names, and it is skewed toward regulated entities, so it would need synthetic CRM-style noise on top.
 
 ## 6. How persistent identity is done today
 
 | Design | Examples | How the ID is chosen | Limitation |
 | --- | --- | --- | --- |
 | Derived from members | Splink, Zingg Community, dedupe | Minimum member ID or a run-local counter | Any membership change can change the ID |
-| Overlap carry-over after a batch run | Zingg Enterprise, GoldenMatch, most in-house pipelines | New cluster inherits the ID of the old cluster it overlaps | Splits and many-to-many overlaps need tie-break rules; history is implicit |
+| Overlap carry-over after a batch run | Zingg Enterprise, GoldenMatch | New cluster inherits the ID of the old cluster it overlaps | Splits and many-to-many overlaps need tie-break rules; history is implicit |
 | Canonical ID computed from a judgement graph | nomenklatura | Highest-ranked identifier in the connected component | Stable under added evidence, but the ID can change when a higher-ranked one joins; no validated transitions |
 | Stateful per-record engine | Senzing | Internal counter, reassigned as entities re-form | Entity ID is explicitly not durable |
 | Minted ID with redirects | [MusicBrainz](https://musicbrainz.org/doc/MusicBrainz_Identifier), [Wikidata](https://www.wikidata.org/wiki/Help:Redirects), OpenSanctions | Assigned once; a merged ID redirects to the survivor | Splits need a human or a policy to say who keeps the ID |
@@ -210,7 +210,7 @@ These are choices about Spool's own design, given its goals. Where a project is 
 
 - Cluster IDs derived from membership, and overlap carry-over as the main identity mechanism.
 - Plain connected components as the commit rule. One wrong edge merges two entities, and several surveyed tools add or substitute something to limit that: Splink's `cluster_using_single_best_links`, nomenklatura's negative judgements, dedupe's centroid-linkage clustering.
-- A plugin trait per pipeline stage before a second implementation exists (zer and pyJedAI structure their pipelines per stage).
+- A plugin trait per pipeline stage before a second implementation exists (zer defines a trait per stage, and pyJedAI has a [module per stage](https://github.com/AI-team-UoA/pyJedAI/tree/main/src/pyjedai)).
 - A multi-backend SQL abstraction (Splink uses `sqlglot` and per-dialect code to do it).
 - A second implementation per language held at parity by tests (as GoldenMatch does for TypeScript). Spool's goal is one engine behind every language.
 - Embedding a Python interpreter in the engine.
@@ -224,7 +224,7 @@ Matching quality is contested ground with strong incumbents. The open space is n
 
 1. Identity as explicit state with a small set of validated transitions, where history is the log of those transitions and any matcher can feed it.
 2. One engine with thin Rust, TypeScript and Python surfaces, so a changeset means the same thing everywhere.
-3. A local sandbox that produces changesets a shared store can accept or reject, which I did not find in any surveyed project.
+3. A local sandbox that produces changesets a shared store can accept or reject, which was not found in any surveyed project.
 4. Benchmarks for identity behaviour over time, which do not exist publicly.
 5. A company-centred dataset with hard negatives such as subsidiaries and renames.
 
@@ -233,10 +233,10 @@ The [architecture proposal](architecture-proposal.md) is built around items 1, 2
 ## 8. Not verified
 
 - Zingg Enterprise behaviour comes from its documentation only; the code is closed. That includes how `runIncremental` decides merges and unmerges.
-- Senzing internals come from vendor documentation. I did not confirm the current free-evaluation record limit; a third-party page says 500 records and a 2019 article says 10,000.
-- GoldenMatch's accuracy and scale numbers, its automatic split behaviour, and whether the Rust kernels or the Python code are authoritative for matching. I read the identity module and the READMEs only.
+- Senzing internals come from vendor documentation. The current free-evaluation record limit was not confirmed; a third-party page says 500 records and a 2019 article says 10,000.
+- GoldenMatch's accuracy and scale numbers, its automatic split behaviour, and whether the Rust kernels or the Python code are authoritative for matching. Only the identity module and the READMEs were read.
 - Splink's and Zingg's performance figures are quoted from their own posts and docs.
-- The Leipzig, DeepMatcher and WDC dataset descriptions rest on the linked pages being reachable and on prior knowledge; I did not download the data.
-- matchlab: I read the README, glossary and query guide, not the resolver code, so the absence of durable entity IDs is a "did not find".
-- GitHub star counts are omitted because I could confirm them for only two of the projects.
-- For the LLM papers I read abstracts, not full experiments.
+- The Leipzig, DeepMatcher and WDC dataset descriptions rest on the linked pages being reachable and on prior knowledge; the data was not downloaded.
+- matchlab: the README, glossary and query guide were read, not the resolver code, so the absence of durable entity IDs is a "did not find".
+- GitHub star counts are omitted because they could be confirmed for only two of the projects.
+- For the LLM papers, the abstracts were read, not the full experiments.

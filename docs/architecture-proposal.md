@@ -1,6 +1,6 @@
 # Spool architecture proposal: initial prototype
 
-A minimal Rust-first design for the first Spool prototype, grounded in the [landscape survey](landscape-survey.md). Dated 2026-11-13, revised 2026-11-14. Nothing here is built. Where the text says something was tested or measured, that was a throwaway local experiment with DuckDB 2.0.0, through its Rust bindings or its Python package, not a benchmark.
+A minimal Rust-first design for the first Spool prototype, grounded in the [landscape survey](landscape-survey.md). Dated 2026-11-13, revised 2026-11-16. Nothing here is built. Where the text says something was tested or measured, that was a throwaway local experiment with DuckDB 2.0.0, through its Rust bindings or its Python package, not a benchmark.
 
 Spool's initial roadmap had seven milestones: (1) a Rust engine on DuckDB, (2) TypeScript and Python bindings, (3) the identity lifecycle across successive batches, (4) interchangeable resolution strategies, (5) extraction from unstructured documents, (6) sandbox synchronisation with a shared store, and (7) developer tooling. This proposal changes that roadmap. Unless the text says "initial", "Milestone N" refers to the proposed roadmap at the end of section 10.
 
@@ -40,7 +40,7 @@ Spool's initial design goals and roadmap are the starting point for this proposa
 
 Five concepts. The first two are evidence, the last three are identity state.
 
-- **Observation.** One immutable record of something a source said about one entity: a CRM row, or a company mention extracted from a deck. Its ID is derived from its content, so ingesting the same thing twice is a no-op. A changed source row is a new observation that names the one it supersedes.
+- **Observation.** One immutable record of something a source said about one entity: a CRM row, or a company mention extracted from a PDF report. Its ID is derived from its source, its key within that source and its content, so ingesting the same thing twice is a no-op. The key is a row key, or the locator of an extracted mention, so two mentions at different places in one document are two observations. A changed source row is a new observation that names the one it supersedes.
 - **Judgement.** A strategy's statement about two observations: `match`, `no_match` or `unsure`, with an optional score and explanation. Judgements are kept, are attributed to a run, and never change state by themselves.
 - **Identity.** A minted ID with an entity type and a status: active, or merged into another identity. It has no attributes of its own.
 - **Constraint.** A human or agent decision that two observations must or must not share an identity. Constraints are state: they are changed by changesets and enforced on every later changeset.
@@ -123,8 +123,8 @@ Evidence:
 CREATE TABLE spool.observation (
   observation_id UUID        NOT NULL, -- first 128 bits of sha256(source_id, source_key, canonical payload)
   entity_type    VARCHAR     NOT NULL, -- a declared type, for example 'company'
-  source_id      VARCHAR     NOT NULL, -- 'crm', 'pitchbook', 'deck:acme-seed.pdf'
-  source_key     VARCHAR,              -- row key in the source; NULL for extracted mentions
+  source_id      VARCHAR     NOT NULL, -- 'crm', 'registry', 'report:acme-annual-2025.pdf'
+  source_key     VARCHAR,              -- key within the source: a row key, or an extracted mention's locator
   supersedes     UUID,                 -- previous version of the same (source_id, source_key)
   payload        JSON        NOT NULL, -- attributes exactly as received
   evidence       JSON,                 -- locator: uri, page, character span, extractor and version
@@ -234,12 +234,13 @@ CREATE TABLE spool.meta (key VARCHAR NOT NULL, value VARCHAR NOT NULL);  -- form
 Design points:
 
 - **Raw payload and typed features are separate.** The payload is never rewritten, so a better normaliser can be rerun over history. Matchers read only the feature table.
+- **An extracted mention's key is its locator.** `source_key` holds the mention's position in its document, such as the page and character span. Two identical mentions at different positions are then two observations, and each keeps its own `evidence`. Repeating the same extraction produces the same IDs and is a no-op. `ingest` rejects an observation whose `evidence` has a locator and whose `source_key` is empty. The cost is that a document which names one entity many times yields that many observations, which all match each other.
 - **Feature tables are generated from a declaration, never hand-written.** A declaration is one SQL query over the type's observations. The engine creates `spool.features_<entity_type>` from its result and fills it with one `INSERT ... SELECT` per ingest. No engine code names a feature column, and `ingest` rejects a type that has not been declared.
 - **Changing a declaration changes no identity.** Applying a changed query for an existing type increases its version and rebuilds the feature table from the stored payloads. Identity state refers to observations and to the type's name, never to feature columns, so every identity ID stays in place. A match run records the declaration version it read, so its judgements stay traceable.
 - **Typed columns, not one generic table.** A single features table holding JSON for every type would need no generation. It would also move normalisation into every matching query and give up the typed columns that blocking joins and similarity functions work on.
 - **Operations are rows, not a JSON blob.** A first load is one changeset with as many `assign` rows as observations, applied with `INSERT ... SELECT`. When measured, a one-million-operation changeset wrote its log rows and its projection rows in one transaction in 0.4 s.
 - **Membership keeps intervals.** "What was this identity at log position N" is a filter, and undoing a merge can read which observations it moved.
-- **No primary keys or foreign keys on the large tables at first.** Uniqueness is guaranteed by the Rust validator and by anti-join inserts, and checked by a `verify` routine in tests. DuckDB constraints did behave correctly when tested (including update and delete-then-insert of a keyed row in one transaction), but index maintenance on bulk loads is a cost I have not measured, and the identity rules must not depend on the database.
+- **No primary keys or foreign keys on the large tables at first.** Uniqueness is guaranteed by the Rust validator and by anti-join inserts, and checked by a `verify` routine in tests. DuckDB constraints did behave correctly when tested (including update and delete-then-insert of a keyed row in one transaction), but index maintenance on bulk loads is a cost that has not been measured, and the identity rules must not depend on the database.
 - **Public read surface is views.** `spool.identity_current`, `spool.membership_current` and a generated per-type entity view are documented and stable; base tables are not.
 
 Tradeoffs of declared types:
@@ -251,7 +252,7 @@ Tradeoffs of declared types:
 
 Tradeoff: two write targets per commit (log and projection) and no database-level safety net. Mitigation is a standing test that the projection equals a replay of the log. A simpler log-versus-projection comparison over a million rows took 0.05 s when measured.
 
-**Decide now:** the evidence versus identity-state split, content-derived observation IDs, entity types declared by the project with versioned declarations and generated feature tables, operation rows, interval membership, a format version from the first commit. **Defer:** indexes and keys, feature columns computed by user code, rebuilding a feature table after its declaration changes (Milestone 2), retention of old candidates and judgements, how a retracted or deleted source record is represented.
+**Decide now:** the evidence versus identity-state split, content-derived observation IDs, extracted mentions keyed by their locator, entity types declared by the project with versioned declarations and generated feature tables, operation rows, interval membership, a format version from the first commit. **Defer:** indexes and keys, feature columns computed by user code, rebuilding a feature table after its declaration changes (Milestone 2), retention of old candidates and judgements, how a retracted or deleted source record is represented, the locator format for extracted mentions (Milestone 5), a separate table of locators so that repeated mentions share one observation.
 
 ## 2. Separating Rust identity semantics from DuckDB persistence
 
@@ -305,7 +306,7 @@ The DuckDB store in the `spool` crate implements `IdentityState` and one write: 
 
 Split is deliberately not an operation. It is `CreateIdentity` plus `Assign` moves, usually with a `cannot_link` constraint so the matcher does not undo it, in one changeset. The original ID stays with whichever side the author leaves in place; the default policy keeps it with the larger side, as OpenSanctions does.
 
-Tradeoff: validating in Rust means a changeset must fit in memory, which caps one changeset at roughly millions of operations. Larger loads are chunked into several changesets. I prefer that to moving validation into SQL, which would put identity rules in the database.
+Tradeoff: validating in Rust means a changeset must fit in memory, which caps one changeset at roughly millions of operations. Larger loads are chunked into several changesets. That is preferable to moving validation into SQL, which would put identity rules in the database.
 
 **Decide now:** the dependency-free core crate, validated-changeset type, injected ID generator and clock (required for reproducible tests), operation set. **Defer:** implementing `Merge`, `Constrain` and `Reinstate` (Milestone 3), a Postgres store, any trait over evidence storage.
 
@@ -421,7 +422,7 @@ Scope of the server: one store, one writer and one tenant. Access is a bearer to
 Two packaging facts to plan around:
 
 - `duckdb` 1.20000.2 and `arrow` 60 require Rust 1.88, and `uuid` 1.29 requires 1.89. Pin them at the workspace root and upgrade `duckdb` and `arrow` together.
-- The `duckdb` crate links a prebuilt shared library by default (12 s clean build when measured, but a 96 MB library that must ship beside the binary) or compiles DuckDB from source with `bundled` (about 6 min 40 s on 4 cores when measured; I did not get as far as linking or running that build). Use the prebuilt library for development. A container image and a one-file install both favour the statically linked build for releases, at the cost of build time in CI. Decide in Milestone 2.
+- The `duckdb` crate links a prebuilt shared library by default (12 s clean build when measured, but a 96 MB library that must ship beside the binary) or compiles DuckDB from source with `bundled` (about 6 min 40 s on 4 cores when measured; that build was not linked or run). Use the prebuilt library for development. A container image and a one-file install both favour the statically linked build for releases, at the cost of build time in CI. Decide in Milestone 2.
 
 Tradeoff: a server has to be run, backed up and secured, where a library needed none of that. Every call crosses the network, which is small next to matching work and costly for per-record lookups, so lookups need batch forms. The library remains for Rust callers and for tests.
 
@@ -444,7 +445,7 @@ $SPOOL_TASK_DIR/
 
 The server writes the inputs, starts the process with `SPOOL_TASK_DIR` set, waits, and reads the output. The exit code is the status and standard error is the log. IDs are strings in these files. Rust starts a command and never knows which language it is.
 
-I tested the exchange with DuckDB: the server process wrote the candidates file, a second process read it and wrote judgements, and the server read them back and found the row that named an unknown observation. The second process could not open the database file while the server held it.
+The exchange was tested with DuckDB: the server process wrote the candidates file, a second process read it and wrote judgements, and the server read them back and found the row that named an unknown observation. The second process could not open the database file while the server held it.
 
 A small helper per language hides the files:
 
@@ -499,7 +500,7 @@ The rule of thumb for client authors: accept plain objects for convenience up to
 
 Testing confirmed the internal half of this: an Arrow batch appended into a table, a blocking join with `jaro_winkler_similarity` read back as Arrow, and an in-memory Arrow batch joined against a stored table without first loading it into a table. That last one is how submitted judgements get validated against known observations.
 
-Ad hoc SQL through the API is deferred. `Engine.query` is read-only, but a read-only DuckDB connection can still read files on the server's disk through functions such as `read_csv` (tested). An endpoint that takes SQL from callers needs DuckDB's external-access controls first, and I have not tested those alongside the Parquet task files.
+Ad hoc SQL through the API is deferred. `Engine.query` is read-only, but a read-only DuckDB connection can still read files on the server's disk through functions such as `read_csv` (tested). An endpoint that takes SQL from callers needs DuckDB's external-access controls first, and those have not been tested alongside the Parquet task files.
 
 **Decide now:** relations never cross the API. **Defer:** binary UUID columns in Arrow, an ad hoc SQL endpoint.
 
@@ -570,11 +571,11 @@ Identity metrics, across steps. These are the ones no public benchmark has:
 | Split recovery | After a scripted wrong merge and a manual split, whether later batches keep the two sides apart |
 | Override persistence | Share of constraints still honoured after further batches and a strategy change |
 
-Datasets for day one: Splink's `fake_1000` as a smoke test, `historical_50k` and FEBRL as mid-sized checks, and a small hand-built company fixture committed to the repository that contains the hard cases of company resolution (aliases, legal versus trading names, domain changes, subsidiaries, stealth companies), split into two batches. Each fixture is a project directory with its own entity type and rules. The three public datasets are person records and the fixture is company records, so the benchmark runs two unrelated entity types through one engine from the start. The public datasets are downloaded and checksummed at benchmark time, because I have not confirmed their redistribution terms.
+Datasets for day one: Splink's `fake_1000` as a smoke test, `historical_50k` and FEBRL as mid-sized checks, and a small hand-built company fixture committed to the repository that contains the hard cases of company resolution (aliases, legal versus trading names, domain changes, subsidiaries, records with few attributes), split into two batches. Each fixture is a project directory with its own entity type and rules. The three public datasets are person records and the fixture is company records, so the benchmark runs two unrelated entity types through one engine from the start. The public datasets are downloaded and checksummed at benchmark time, because their redistribution terms have not been confirmed.
 
 Results are written as JSON. CI compares them with a committed baseline and fails on a regression, with false merges and ID stability treated as the strictest gates.
 
-For a real company benchmark, the [GLEIF register](landscape-survey.md#5-benchmark-datasets-and-evaluation-practice) is the best public source I found: CC0, LEI as ground truth, real former and trading names, parent links for hard negatives, and 6,521 records flagged as duplicates of another LEI. Building a scenario generator on it is Milestone 3 work.
+For a real company benchmark, the [GLEIF register](landscape-survey.md#5-benchmark-datasets-and-evaluation-practice) is the best public source the survey found: CC0, LEI as ground truth, real former and trading names, parent links for hard negatives, and 6,521 records flagged as duplicates of another LEI. Building a scenario generator on it is Milestone 3 work.
 
 Metrics are implemented in Spool. The existing `er-evaluation` package is AGPL.
 
