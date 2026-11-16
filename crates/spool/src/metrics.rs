@@ -73,7 +73,7 @@ fn ratio(numerator: f64, denominator: f64) -> Option<f64> {
 
 /// Scores current state against the truth in the [`TRUTH`] table.
 pub(crate) fn score(conn: &Connection) -> Result<Metrics> {
-    let sql = format!(
+    let tables = format!(
         "WITH labelled AS (
            SELECT t.true_entity,
                   m.identity_id IS NULL AS unassigned,
@@ -92,19 +92,41 @@ pub(crate) fn score(conn: &Connection) -> Result<Metrics> {
          by_entity AS (
            SELECT true_entity, sum(n) AS size, count(*) FILTER (WHERE NOT unassigned) AS identities
            FROM cell GROUP BY true_entity
-         )
+         )"
+    );
+
+    // B-cubed sums n²/size over cells. Adding fractions in whatever order the
+    // database visits them gives results that differ in the last digit from
+    // run to run, so the database adds whole numbers per size and the
+    // fractions are added here, in size order.
+    let b_cubed = |group: &str, key: &str| -> Result<f64> {
+        let mut statement = conn.prepare(&format!(
+            "{tables}
+             SELECT g.size::BIGINT, sum(c.n * c.n)::BIGINT
+             FROM cell c JOIN {group} g ON g.{key} = c.{key}
+             GROUP BY g.size ORDER BY g.size"
+        ))?;
+        let mut rows = statement.query([])?;
+        let mut total = 0.0;
+        while let Some(row) = rows.next()? {
+            let (size, squares): (i64, i64) = (row.get(0)?, row.get(1)?);
+            total += squares as f64 / size as f64;
+        }
+        Ok(total)
+    };
+    let b_cubed_precision = b_cubed("by_cluster", "cluster")?;
+    let b_cubed_recall = b_cubed("by_entity", "true_entity")?;
+
+    let sql = format!(
+        "{tables}
          SELECT
            (SELECT coalesce(sum(n), 0) FROM cell)::BIGINT,
            (SELECT count(*) FROM by_entity)::BIGINT,
            (SELECT count(*) FROM by_cluster WHERE NOT unassigned)::BIGINT,
            (SELECT coalesce(sum(size), 0) FROM by_cluster WHERE unassigned)::BIGINT,
-           (SELECT coalesce(sum(n * (n - 1) / 2), 0) FROM cell)::BIGINT,
-           (SELECT coalesce(sum(size * (size - 1) / 2), 0) FROM by_cluster)::BIGINT,
-           (SELECT coalesce(sum(size * (size - 1) / 2), 0) FROM by_entity)::BIGINT,
-           (SELECT coalesce(sum(c.n * c.n / k.size), 0)
-            FROM cell c JOIN by_cluster k ON k.cluster = c.cluster)::DOUBLE,
-           (SELECT coalesce(sum(c.n * c.n / e.size), 0)
-            FROM cell c JOIN by_entity e ON e.true_entity = c.true_entity)::DOUBLE,
+           (SELECT coalesce(sum(n * (n - 1) // 2), 0) FROM cell)::BIGINT,
+           (SELECT coalesce(sum(size * (size - 1) // 2), 0) FROM by_cluster)::BIGINT,
+           (SELECT coalesce(sum(size * (size - 1) // 2), 0) FROM by_entity)::BIGINT,
            (SELECT count(*) FROM by_cluster WHERE NOT unassigned AND entities > 1)::BIGINT,
            (SELECT count(*) FROM by_entity WHERE identities > 1)::BIGINT"
     );
@@ -113,8 +135,6 @@ pub(crate) fn score(conn: &Connection) -> Result<Metrics> {
         let observations = count(0)?;
         let unassigned = count(3)?;
         let (true_positives, predicted, actual) = (count(4)?, count(5)?, count(6)?);
-        let b_cubed_precision: f64 = row.get(7)?;
-        let b_cubed_recall: f64 = row.get(8)?;
 
         let total = observations as f64;
         let precision = ratio(true_positives as f64, predicted as f64);
@@ -141,8 +161,8 @@ pub(crate) fn score(conn: &Connection) -> Result<Metrics> {
                 precision: ratio(b_cubed_precision, total),
                 recall: ratio(b_cubed_recall, total),
             },
-            false_merges: count(9)?,
-            false_splits: count(10)?,
+            false_merges: count(7)?,
+            false_splits: count(8)?,
         })
     })
     .map_err(Into::into)
