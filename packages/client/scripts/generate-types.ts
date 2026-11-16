@@ -85,8 +85,16 @@ function typeOf(schema: Schema, where: string, indent: string): string {
   }
   if (schema.type === "null") return "null";
   if (schema.type === "array") {
-    only("type", "items");
+    only("type", "items", "minItems", "maxItems");
     const items = typeOf((schema.items ?? true) as Schema, `${where}[]`, indent);
+    if (schema.minItems !== undefined || schema.maxItems !== undefined) {
+      // An array of a fixed length is a tuple; no other bound is handled.
+      const length = schema.minItems;
+      if (typeof length !== "number" || length !== schema.maxItems) {
+        fail(where, "an array with a bound on its length that is not one fixed length");
+      }
+      return `[${Array.from({ length }, () => items).join(", ")}]`;
+    }
     return /[ |]/.test(items) ? `Array<${items}>` : `${items}[]`;
   }
   if (schema.type === "object") {

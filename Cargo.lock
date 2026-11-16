@@ -1475,6 +1475,7 @@ name = "spool"
 version = "0.1.0"
 dependencies = [
  "duckdb",
+ "libc",
  "proptest",
  "schemars",
  "serde",

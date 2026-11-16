@@ -27,13 +27,14 @@ use crate::lookup::{
     ObservationRecord, StoreInfo,
 };
 use crate::metrics::{self, Churn, IdStability, Metrics};
-use crate::project::{EntityTypeManifest, Manifest, hash_json};
+use crate::project::{EntityTypeManifest, Manifest, Strategy, hash_json};
 use crate::review::{self, ReviewFilter, ReviewRecord};
 use crate::rows::Rows;
 use crate::rules;
 use crate::runs::{self, RunFilter, RunRecord, RunStatus};
 use crate::schema;
 use crate::store::{self, DuckStore};
+use crate::usercode::{self, Task, TaskInfo, UserCode};
 
 /// Where an engine gets new IDs and the time from. The default mints UUIDv7
 /// values and reads the system clock.
@@ -97,6 +98,27 @@ impl StrategyRef {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Scope {
     pub entity_type: EntityType,
+    /// Examine every observation of the type again, not only the new ones.
+    /// See [`ResolveOptions::rematch`].
+    pub rematch: bool,
+}
+
+impl Scope {
+    /// The observations of a type that are new.
+    pub fn new(entity_type: EntityType) -> Self {
+        Self {
+            entity_type,
+            rematch: false,
+        }
+    }
+
+    /// Every observation of a type.
+    pub fn rematch(entity_type: EntityType) -> Self {
+        Self {
+            entity_type,
+            rematch: true,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -105,6 +127,29 @@ pub struct ResolveOptions {
     pub entity_type: Option<EntityType>,
     /// Store each type's draft for review instead of committing it.
     pub leave_for_review: bool,
+    /// The strategy that judges: `rules`, or the name of one of the
+    /// project's user-code strategies. `None` is `rules`. Every type that is
+    /// resolved must have it.
+    pub strategy: Option<String>,
+    /// Match every observation again, not only the new ones, which is what
+    /// a new strategy or a changed rule calls for.
+    ///
+    /// A rematch changes nothing about an observation that has an identity:
+    /// judgements never merge or split existing identities. Where the
+    /// strategy disagrees with the identities as they are, the run reports
+    /// it as [`Suggestions`]. Observations without an identity are placed
+    /// as in any run.
+    pub rematch: bool,
+}
+
+impl ResolveOptions {
+    /// Resolves with the named strategy.
+    pub fn with_strategy(strategy: impl Into<String>) -> Self {
+        Self {
+            strategy: Some(strategy.into()),
+            ..Self::default()
+        }
+    }
 }
 
 /// What becomes of the draft a reconcile run writes.
@@ -165,6 +210,47 @@ pub struct TypeResolution {
     /// one. It is named by its changeset ID.
     #[serde(default)]
     pub draft: Option<ChangesetId>,
+    /// Where the strategy disagrees with the identities as they are. Only a
+    /// rematch has these: no other run judges pairs of observations that
+    /// both have an identity.
+    #[serde(default)]
+    pub suggestions: Option<Suggestions>,
+}
+
+/// What a rematch would change about existing identities if judgements were
+/// allowed to. Nothing here was applied: a reviewer who agrees merges or
+/// splits with a changeset.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct Suggestions {
+    /// Pairs of identities with a `match` between their members, ordered by
+    /// their IDs.
+    pub merges: Vec<SuggestedMerge>,
+    /// Identities with a `no_match` between two of their members, ordered
+    /// by ID.
+    pub splits: Vec<SuggestedSplit>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct SuggestedMerge {
+    /// The two identities, the smaller ID first.
+    pub identities: [IdentityId; 2],
+    /// Pairs of their members the strategy judged `match`.
+    pub matches: u64,
+    /// Pairs of their members the strategy judged `no_match`. More than
+    /// none means the strategy contradicts itself about these two.
+    pub no_matches: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct SuggestedSplit {
+    pub identity: IdentityId,
+    /// Pairs of its members the strategy judged `no_match`.
+    pub no_matches: u64,
+    /// Pairs of its members the strategy judged `match`.
+    pub matches: u64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -232,6 +318,11 @@ pub struct Engine {
     readers: Readers,
     ids: Ids,
     manifest: RwLock<Option<Arc<Manifest>>>,
+    user_code: RwLock<Option<Arc<UserCode>>>,
+    /// Held by a call to [`resolve`](Engine::resolve) from start to finish.
+    /// The writer is let go while user code runs, and a second resolve that
+    /// began in that gap would match the same observations again.
+    resolving: Mutex<()>,
 }
 
 struct Inner {
@@ -306,7 +397,16 @@ struct MatchConfig {
     /// are examined again.
     #[serde(default)]
     review_items: Vec<u64>,
+    /// Every observation of the type is examined, not only the new ones.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    rematch: bool,
     rules: crate::project::RuleSet,
+}
+
+/// The strategy a resolve runs for an entity type.
+enum Chosen {
+    Rules,
+    UserCode(Strategy),
 }
 
 struct RunRow {
@@ -366,7 +466,27 @@ impl Engine {
             readers,
             ids,
             manifest: RwLock::new(None),
+            user_code: RwLock::new(None),
+            resolving: Mutex::new(()),
         })
+    }
+
+    /// Tells the engine where the project's files are, so that it can run
+    /// the user-code strategies the manifest names. Without this it runs
+    /// the SQL rules only.
+    pub fn set_user_code(&self, user_code: UserCode) {
+        *self
+            .user_code
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(user_code));
+    }
+
+    /// Where the engine runs user code from, if it was told.
+    pub fn user_code(&self) -> Option<Arc<UserCode>> {
+        self.user_code
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     fn lock(&self) -> MutexGuard<'_, Inner> {
@@ -617,16 +737,93 @@ impl Engine {
         self.read(|conn| drafts::list(conn, filter))
     }
 
-    /// Matches new observations with the built-in rule runner, reconciles
-    /// with the default policy, and commits or leaves a draft for review. A
-    /// type is resolved when it has newly ingested observations or open
-    /// review items.
+    /// Matches new observations with a strategy, reconciles with the default
+    /// policy, and commits or leaves a draft for review. A type is resolved
+    /// when it has newly ingested observations or open review items, and
+    /// always by a [rematch](ResolveOptions::rematch).
+    ///
+    /// The strategy is the built-in runner of the project's SQL rules, or
+    /// user code the project holds, which runs as a process of its own.
+    /// While it runs the engine is free: changesets are committed, rows are
+    /// ingested and reads are answered. What the user code hands back is
+    /// evidence, reconciled against the state there is when it finishes. A
+    /// strategy that fails, or does not finish in time, fails its run and
+    /// changes nothing.
     ///
     /// The match run is recorded as succeeded only after the commit. A
     /// resolve that is cut short leaves the run unfinished, and the next
     /// resolve examines the same observations again.
     pub fn resolve(&self, options: &ResolveOptions) -> Result<ResolveReport> {
-        self.lock().resolve(options)
+        let _turn = lock(&self.resolving);
+        let plan = self.lock().plan(options)?;
+        // Before anything is started: user code needs the project's files,
+        // and a file that is not the one the manifest was compiled from is
+        // never run.
+        let user_code = self.user_code();
+        for (_, chosen) in &plan {
+            if let Chosen::UserCode(strategy) = chosen {
+                user_code
+                    .as_deref()
+                    .ok_or_else(|| Error::NoUserCode(strategy.name.clone()))?
+                    .check(strategy)?;
+            }
+        }
+        let then = if options.leave_for_review {
+            Disposition::LeaveForReview
+        } else {
+            Disposition::Commit
+        };
+
+        let mut report = ResolveReport::default();
+        for (entity_type, chosen) in plan {
+            let mut inner = self.lock();
+            if !options.rematch && !inner.has_work(&entity_type)? {
+                continue;
+            }
+            let scope = Scope {
+                entity_type,
+                rematch: options.rematch,
+            };
+            let resolution = match chosen {
+                Chosen::Rules => {
+                    let run =
+                        inner.begin_match(&StrategyRef::rules(), &scope, RunStatus::Running)?;
+                    inner.in_run(run, |inner| {
+                        inner.judge_with_rules(run)?;
+                        inner.conclude(run, &Policy::default(), then)
+                    })?
+                }
+                Chosen::UserCode(strategy) => {
+                    let user_code = user_code
+                        .clone()
+                        .ok_or_else(|| Error::NoUserCode(strategy.name.clone()))?;
+                    let reference = StrategyRef {
+                        name: strategy.name.clone(),
+                        version: Some(strategy.hash.clone()),
+                    };
+                    let run = inner.begin_match(&reference, &scope, RunStatus::Running)?;
+                    let mut task =
+                        inner.in_run(run, |inner| inner.write_task(run, &strategy, &user_code))?;
+                    // The user code runs with the writer let go. The run
+                    // stays `running`, and what it was given stays as it
+                    // was written, whatever is committed meanwhile.
+                    drop(inner);
+                    let executed = task.execute();
+                    let mut inner = self.lock();
+                    let resolution = inner.in_run(run, |inner| {
+                        executed?;
+                        inner
+                            .take_judgements(run, &task)
+                            .map_err(|error| task.rejected(error))?;
+                        inner.conclude(run, &Policy::default(), then)
+                    })?;
+                    task.remove();
+                    resolution
+                }
+            };
+            report.resolved.push(resolution.1);
+        }
+        Ok(report)
     }
 
     /// A run as the store records it: the task record of whatever started
@@ -842,27 +1039,64 @@ const JUDGED: &str = "spool_judged";
 fn candidates(conn: &Connection, run: RunId) -> Result<Rows> {
     let (_, config) = match_run(conn, run)?;
     let table = features::table(&config.entity_type);
-    let exclude = "EXCLUDE (observation_id, declaration_version)";
-    let has_features: bool = conn.query_row(
-        &format!("SELECT count(*) > 2 FROM (DESCRIBE {table})"),
-        [],
-        |row| row.get(0),
-    )?;
-    let features = if has_features {
-        format!(", COLUMNS(l.* {exclude}) AS \"left_\\0\", COLUMNS(r.* {exclude}) AS \"right_\\0\"")
-    } else {
-        String::new()
-    };
-    let mut statement = conn.prepare(&format!(
-        "SELECT c.left_id, c.right_id{features}
-         FROM (SELECT DISTINCT left_id, right_id FROM spool.candidate WHERE run_id = ?) c
-         JOIN {table} l ON l.observation_id = c.left_id
-         JOIN {table} r ON r.observation_id = c.right_id
-         ORDER BY c.left_id, c.right_id"
-    ))?;
-    let arrow = statement.query_arrow([run.0 as i64])?;
+    let columns = feature_columns(conn, &table)?;
+    let mut statement = conn.prepare(&candidates_query(&table, &columns, run, false))?;
+    let arrow = statement.query_arrow([])?;
     let schema = arrow.get_schema();
     Ok(Rows::new(schema, arrow.collect()))
+}
+
+/// The feature columns of a feature table with their types, without the two
+/// columns the engine keeps for itself.
+fn feature_columns(conn: &Connection, table: &str) -> Result<Vec<(String, String)>> {
+    let mut statement = conn.prepare(&format!("DESCRIBE {table}"))?;
+    let mut rows = statement.query([])?;
+    let mut columns = Vec::new();
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(0)?;
+        if name != "observation_id" && name != "declaration_version" {
+            columns.push((name, row.get(1)?));
+        }
+    }
+    Ok(columns)
+}
+
+/// The feature columns of the table aliased `alias`, as the end of a select
+/// list, each named with `prefix` before its own name. In a file, where IDs
+/// are text, a UUID is written as text.
+fn select_features(columns: &[(String, String)], alias: &str, prefix: &str, file: bool) -> String {
+    let quote = |name: &str| format!("\"{}\"", name.replace('"', "\"\""));
+    columns
+        .iter()
+        .map(|(name, data_type)| {
+            let cast = if file && data_type == "UUID" {
+                "::VARCHAR"
+            } else {
+                ""
+            };
+            format!(
+                ", {alias}.{}{cast} AS {}",
+                quote(name),
+                quote(&format!("{prefix}{name}"))
+            )
+        })
+        .collect()
+}
+
+/// A query for a run's candidate pairs with both sides' features: `left_id`,
+/// `right_id`, then each feature column as `left_<name>` and as
+/// `right_<name>`.
+fn candidates_query(table: &str, columns: &[(String, String)], run: RunId, file: bool) -> String {
+    let id = if file { "::VARCHAR" } else { "" };
+    format!(
+        "SELECT c.left_id{id} AS left_id, c.right_id{id} AS right_id{left}{right}
+         FROM (SELECT DISTINCT left_id, right_id FROM spool.candidate WHERE run_id = {run}) c
+         JOIN {table} l ON l.observation_id = c.left_id
+         JOIN {table} r ON r.observation_id = c.right_id
+         ORDER BY c.left_id, c.right_id",
+        left = select_features(columns, "l", "left_", file),
+        right = select_features(columns, "r", "right_", file),
+    )
 }
 
 fn run_row(conn: &Connection, run: RunId) -> Result<RunRow> {
@@ -964,10 +1198,13 @@ impl Inner {
             }
             // Candidates of a run that waits for judgements were generated
             // from the old features, and its judgements would be about them.
+            // That is a run a caller holds open, and a run whose user code
+            // is at work: nothing else is unfinished while this call has the
+            // writer.
             tx.execute(
                 "UPDATE spool.run
                  SET status = 'failed', finished_at = make_timestamptz(?), error = ?
-                 WHERE kind = 'match' AND status = 'open'
+                 WHERE kind = 'match' AND status IN ('open', 'running')
                    AND json_extract_string(config, '$.entity_type') = ?",
                 params![
                     now,
@@ -1063,7 +1300,7 @@ impl Inner {
         let now = self.store.clock.now_micros();
         self.store.conn.execute(
             "UPDATE spool.run SET status = 'failed', finished_at = make_timestamptz(?), error = ?
-             WHERE run_id = ?",
+             WHERE run_id = ? AND status <> 'failed'",
             params![now, error, run.0 as i64],
         )?;
         Ok(())
@@ -1230,6 +1467,7 @@ impl Inner {
             manifest_hash,
             after_run,
             review_items,
+            rematch: scope.rematch,
             rules,
         };
 
@@ -1242,6 +1480,7 @@ impl Inner {
                 config.after_run,
                 run,
                 &config.review_items,
+                config.rematch,
             )?;
             rules::generate_candidates(&tx, &entity_type, run, &config.rules.block)?;
             if then != RunStatus::Running {
@@ -1285,12 +1524,25 @@ impl Inner {
             config.after_run,
             run,
             &config.review_items,
+            config.rematch,
         )?;
         Ok(config)
     }
 
     fn submit_judgements(&mut self, run: RunId, rows: impl RecordBatchReader) -> Result<u64> {
-        let config = self.judged_run(run, RunStatus::Open)?;
+        self.store_judgements(run, rows, RunStatus::Open)
+    }
+
+    /// Checks judgements and adds them to a match run that is in the state
+    /// `expected`: `open` for a caller's, `running` for those of the
+    /// engine's own user code.
+    fn store_judgements(
+        &mut self,
+        run: RunId,
+        rows: impl RecordBatchReader,
+        expected: RunStatus,
+    ) -> Result<u64> {
+        let config = self.judged_run(run, expected)?;
         let entity_type = &config.entity_type;
         let schema = rows.schema();
         for required in ["left_id", "right_id", "verdict"] {
@@ -1473,6 +1725,10 @@ impl Inner {
                 review: draft.review.clone(),
                 committed: None,
                 draft: held.then_some(draft.changeset.id),
+                suggestions: match config.rematch {
+                    true => Some(inner.suggestions(run)?),
+                    false => None,
+                },
             };
 
             let finished = inner.store.clock.now_micros();
@@ -1542,8 +1798,10 @@ impl Inner {
             config.after_run,
             run,
             &config.review_items,
+            config.rematch,
         )?;
-        // An observation that got an identity since the run began is no longer new.
+        // An observation that has an identity is not new: one that got it
+        // since the run began, and in a rematch every one that had it.
         conn.execute_batch(&format!(
             "DELETE FROM {scope} WHERE observation_id IN (
                SELECT observation_id FROM spool.membership WHERE to_seq IS NULL)"
@@ -1835,45 +2093,203 @@ impl Inner {
             .draft)
     }
 
-    fn resolve(&mut self, options: &ResolveOptions) -> Result<ResolveReport> {
+    /// The entity types a resolve covers, each with the strategy it runs.
+    /// Nothing is started if a type lacks the strategy that was named.
+    fn plan(&self, options: &ResolveOptions) -> Result<Vec<(EntityType, Chosen)>> {
         let manifest = self.manifest.as_deref().ok_or(Error::NoManifest)?;
-        let entity_types: Vec<EntityType> = match &options.entity_type {
-            Some(entity_type) => vec![self.declared(entity_type.as_str())?.1.name.clone()],
-            None => manifest
-                .entity_types
-                .iter()
-                .map(|entry| entry.name.clone())
-                .collect(),
+        let entries: Vec<&EntityTypeManifest> = match &options.entity_type {
+            Some(entity_type) => vec![self.declared(entity_type.as_str())?.1],
+            None => manifest.entity_types.iter().collect(),
         };
-        let then = if options.leave_for_review {
-            Disposition::LeaveForReview
-        } else {
-            Disposition::Commit
-        };
+        entries
+            .into_iter()
+            .map(|entry| {
+                let chosen = match options.strategy.as_deref() {
+                    None | Some(StrategyRef::RULES) => Chosen::Rules,
+                    Some(name) => match entry.strategy(name) {
+                        Some(strategy) => Chosen::UserCode(strategy.clone()),
+                        None => {
+                            return Err(Error::UnknownStrategy {
+                                entity_type: entry.name.to_string(),
+                                strategy: name.to_owned(),
+                                known: entry
+                                    .strategies
+                                    .iter()
+                                    .map(|strategy| strategy.name.clone())
+                                    .collect(),
+                            });
+                        }
+                    },
+                };
+                Ok((entry.name.clone(), chosen))
+            })
+            .collect()
+    }
 
-        let mut report = ResolveReport::default();
-        for entity_type in entity_types {
-            let after_run = self.last_match_run(&entity_type)?;
-            let ingested = self.count(&format!(
-                "SELECT count(*) FROM spool.observation
-                 WHERE entity_type = '{entity_type}' AND ingest_run > {after_run}
-                   AND {}",
-                rules::NOT_DISMISSED
+    /// Whether a type has anything a run would examine: observations
+    /// ingested since its last match run that succeeded, or open review
+    /// items.
+    fn has_work(&self, entity_type: &EntityType) -> Result<bool> {
+        let after_run = self.last_match_run(entity_type)?;
+        let ingested = self.count(&format!(
+            "SELECT count(*) FROM spool.observation
+             WHERE entity_type = '{entity_type}' AND ingest_run > {after_run}
+               AND {}",
+            rules::NOT_DISMISSED
+        ))?;
+        Ok(ingested > 0 || !review::open_ids(&self.store.conn, entity_type)?.is_empty())
+    }
+
+    /// Writes what a user-code strategy is given: the run's candidate pairs
+    /// with both sides' features, and the feature row of every observation
+    /// of the type, with whether it is new to the run and the identity it
+    /// has.
+    fn write_task(
+        &mut self,
+        run: RunId,
+        strategy: &Strategy,
+        user_code: &UserCode,
+    ) -> Result<Task> {
+        let config = self.judged_run(run, RunStatus::Running)?;
+        let columns = self
+            .manifest
+            .as_deref()
+            .and_then(|manifest| manifest.entity_type(config.entity_type.as_str()))
+            .map(|entry| entry.declaration.columns.clone())
+            .unwrap_or_default();
+        let task = Task::create(
+            user_code,
+            strategy,
+            &TaskInfo {
+                run,
+                entity_type: &config.entity_type,
+                declaration_version: config.declaration_version,
+                rematch: config.rematch,
+                features: &columns,
+            },
+        )?;
+        let conn = &self.store.conn;
+        let table = features::table(&config.entity_type);
+        let columns = feature_columns(conn, &table)?;
+        let copy = |query: &str, file: &str| {
+            conn.execute_batch(&format!(
+                "COPY (\n{query}\n) TO {} (FORMAT parquet)",
+                usercode::sql_path(&task.path(file))
+            ))
+        };
+        copy(
+            &candidates_query(&table, &columns, run, true),
+            usercode::CANDIDATES,
+        )?;
+        copy(
+            &format!(
+                "SELECT f.observation_id::VARCHAR AS observation_id,
+                        f.observation_id IN (SELECT observation_id FROM {scope}) AS is_new,
+                        m.identity_id::VARCHAR AS identity_id{features}
+                 FROM {table} f
+                 LEFT JOIN spool.membership m
+                   ON m.observation_id = f.observation_id AND m.to_seq IS NULL
+                 ORDER BY f.observation_id",
+                scope = rules::SCOPE,
+                features = select_features(&columns, "f", "", true),
+            ),
+            usercode::FEATURES,
+        )?;
+        Ok(task)
+    }
+
+    /// Reads the judgements a user-code strategy wrote and stores them,
+    /// under the same checks as judgements a caller submits.
+    fn take_judgements(&mut self, run: RunId, task: &Task) -> Result<u64> {
+        let rows = {
+            let mut statement = self.store.conn.prepare(&format!(
+                "SELECT * FROM read_parquet({})",
+                usercode::sql_path(&task.path(usercode::JUDGEMENTS))
             ))?;
-            if ingested == 0 && review::open_ids(&self.store.conn, &entity_type)?.is_empty() {
-                continue;
-            }
-            let scope = Scope {
-                entity_type: entity_type.clone(),
-            };
-            let run = self.begin_match(&StrategyRef::rules(), &scope, RunStatus::Running)?;
-            let (_, resolution) = self.in_run(run, |inner| {
-                inner.judge_with_rules(run)?;
-                inner.conclude(run, &Policy::default(), then)
-            })?;
-            report.resolved.push(resolution);
+            let arrow = statement.query_arrow([])?;
+            let schema = arrow.get_schema();
+            Rows::new(schema, arrow.collect())
+        };
+        self.store_judgements(run, rows, RunStatus::Running)
+    }
+
+    /// Where a rematch's judgements disagree with the identities as they
+    /// are. A pair a constraint has spoken for is left out: a reviewer
+    /// decided it, and the strategy's view of it is no suggestion.
+    fn suggestions(&self, run: RunId) -> Result<Suggestions> {
+        let conn = &self.store.conn;
+        conn.execute_batch(&format!(
+            "CREATE OR REPLACE TEMP TABLE spool_rejudged AS
+             SELECT j.verdict, a.identity_id AS left_identity, b.identity_id AS right_identity
+             FROM (
+               SELECT DISTINCT left_id, right_id, verdict FROM spool.judgement
+               WHERE run_id = {run} AND verdict <> 'unsure'
+             ) j
+             JOIN spool.membership a ON a.observation_id = j.left_id AND a.to_seq IS NULL
+             JOIN spool.membership b ON b.observation_id = j.right_id AND b.to_seq IS NULL
+             WHERE NOT EXISTS (
+               SELECT 1 FROM spool.constraint_link c
+               WHERE c.to_seq IS NULL
+                 AND least(c.observation_a, c.observation_b) = j.left_id
+                 AND greatest(c.observation_a, c.observation_b) = j.right_id)"
+        ))?;
+        let mut suggestions = Suggestions::default();
+
+        // Two identities a `cannot_link` keeps apart cannot be merged, so
+        // merging them is not suggested.
+        let mut statement = conn.prepare(
+            "WITH apart AS (
+               SELECT a.identity_id AS one, b.identity_id AS other
+               FROM spool.constraint_link c
+               JOIN spool.membership a ON a.observation_id = c.observation_a AND a.to_seq IS NULL
+               JOIN spool.membership b ON b.observation_id = c.observation_b AND b.to_seq IS NULL
+               WHERE c.to_seq IS NULL AND c.kind = 'cannot_link'
+             )
+             SELECT least(left_identity, right_identity)::VARCHAR,
+                    greatest(left_identity, right_identity)::VARCHAR,
+                    count(*) FILTER (WHERE verdict = 'match'),
+                    count(*) FILTER (WHERE verdict = 'no_match')
+             FROM spool_rejudged r
+             WHERE left_identity <> right_identity
+               AND NOT EXISTS (
+                 SELECT 1 FROM apart
+                 WHERE (one = left_identity AND other = right_identity)
+                    OR (one = right_identity AND other = left_identity))
+             GROUP BY 1, 2
+             HAVING count(*) FILTER (WHERE verdict = 'match') > 0
+             ORDER BY 1, 2",
+        )?;
+        let mut rows = statement.query([])?;
+        while let Some(row) = rows.next()? {
+            suggestions.merges.push(SuggestedMerge {
+                identities: [
+                    row.get::<_, String>(0)?.parse().map_err(id_error)?,
+                    row.get::<_, String>(1)?.parse().map_err(id_error)?,
+                ],
+                matches: row.get::<_, i64>(2)? as u64,
+                no_matches: row.get::<_, i64>(3)? as u64,
+            });
         }
-        Ok(report)
+
+        let mut statement = conn.prepare(
+            "SELECT left_identity::VARCHAR,
+                    count(*) FILTER (WHERE verdict = 'no_match'),
+                    count(*) FILTER (WHERE verdict = 'match')
+             FROM spool_rejudged
+             WHERE left_identity = right_identity
+             GROUP BY 1
+             HAVING count(*) FILTER (WHERE verdict = 'no_match') > 0
+             ORDER BY 1",
+        )?;
+        let mut rows = statement.query([])?;
+        while let Some(row) = rows.next()? {
+            suggestions.splits.push(SuggestedSplit {
+                identity: row.get::<_, String>(0)?.parse().map_err(id_error)?,
+                no_matches: row.get::<_, i64>(1)? as u64,
+                matches: row.get::<_, i64>(2)? as u64,
+            });
+        }
+        Ok(suggestions)
     }
 
     fn count(&self, sql: &str) -> Result<u64> {

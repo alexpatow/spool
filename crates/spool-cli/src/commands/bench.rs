@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use spool::arrow::array::{Array, AsArray};
 use spool::core::ReviewItem;
-use spool::{BenchReport, Engine, Options, Scenario, StepReport};
+use spool::{BenchReport, Engine, Options, Scenario, StepReport, StrategyRef, UserCode};
 
 use crate::Failure;
 use crate::args::Spec;
@@ -18,15 +18,33 @@ resolves, and scores committed state against the scenario's truth.
   <scenario>      a scenario.toml, or the directory that holds one
 
 Options:
-  --db <path>     the database file to build; replaced if it exists
-                  (default: .spool/bench.duckdb in the project directory)
-  --seed <n>      the seed for identity and changeset IDs (default: 0)
-  --out <path>    write the results as JSON to this file
-  --list <n>      print at most this many identities per step (default: 50)
+  --db <path>         the database file to build; replaced if it exists
+                      (default: .spool/bench.duckdb in the project directory)
+  --seed <n>          the seed for identity and changeset IDs (default: 0)
+  --out <path>        write the results as JSON to this file
+  --list <n>          print at most this many identities per step (default: 50)
+  --strategy <name>   the strategy of every step that does not name its own:
+                      `rules`, or one of the project's user-code strategies
+                      (default: the scenario's, or `rules`)
+  --task-timeout <s>  how long a user-code strategy may run, in seconds
+                      (default: 600)
+  --tasks <dir>       where the task directories of user-code strategies are
+                      made (default: spool-tasks in the temporary directory)
+
+Strategies that are `.py` files run with `uv`, and `.ts` files with `bun`.
+SPOOL_UV and SPOOL_BUN name the commands if they are not on the search path.
 ";
 
 const SPEC: Spec = Spec {
-    values: &["--db", "--seed", "--out", "--list"],
+    values: &[
+        "--db",
+        "--seed",
+        "--out",
+        "--list",
+        "--strategy",
+        "--task-timeout",
+        "--tasks",
+    ],
     flags: &[],
     positional: 1,
 };
@@ -37,6 +55,7 @@ struct Arguments {
     seed: u64,
     out: Option<PathBuf>,
     list: usize,
+    strategy: Option<String>,
 }
 
 pub fn bench(arguments: &[String]) -> Result<(), Failure> {
@@ -52,12 +71,17 @@ pub fn bench(arguments: &[String]) -> Result<(), Failure> {
         seed: parsed.number("--seed").map_err(usage)?.unwrap_or(0),
         out: parsed.path("--out"),
         list: parsed.number("--list").map_err(usage)?.unwrap_or(50) as usize,
+        strategy: parsed.value("--strategy").map(str::to_owned),
     };
-    Ok(run(&arguments)?)
+    let mut scenario = Scenario::load(&arguments.scenario)?;
+    if let Some(strategy) = &arguments.strategy {
+        scenario = scenario.with_strategy(strategy);
+    }
+    let user_code = super::user_code(&parsed, &scenario.project_dir())?;
+    Ok(run(&arguments, scenario, user_code)?)
 }
 
-fn run(arguments: &Arguments) -> spool::Result<()> {
-    let scenario = Scenario::load(&arguments.scenario)?;
+fn run(arguments: &Arguments, scenario: Scenario, user_code: UserCode) -> spool::Result<()> {
     let db = match &arguments.db {
         Some(db) => db.clone(),
         None => scenario.project_dir().join(".spool").join("bench.duckdb"),
@@ -65,6 +89,7 @@ fn run(arguments: &Arguments) -> spool::Result<()> {
     start_afresh(&db)?;
 
     let engine = Engine::open(&db, Options::seeded(arguments.seed))?;
+    engine.set_user_code(user_code);
     println!("scenario  {}", scenario.name);
     println!("database  {}", db.display());
     let report = scenario.run(&engine, |step| print_step(&engine, step, arguments.list))?;
@@ -148,10 +173,18 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
             0 => String::new(),
             count => format!(" ({count} left for review earlier)"),
         };
+        let with = match step.strategy.as_str() {
+            StrategyRef::RULES => String::new(),
+            strategy => format!(" with `{strategy}`"),
+        };
+        // A rematch examines every observation, whether it is new or not.
+        let examined = match &resolved.suggestions {
+            Some(_) => "every observation again".to_owned(),
+            None => format!("{} observations", resolved.new_observations),
+        };
         println!(
-            "resolved  `{}`: {} observations{again}, {} candidate pairs, {} match and {} no-match judgements",
+            "resolved  `{}`{with}: {examined}{again}, {} candidate pairs, {} match and {} no-match judgements",
             resolved.entity_type,
-            resolved.new_observations,
             resolved.candidates,
             resolved.judgements.match_,
             resolved.judgements.no_match,
@@ -169,6 +202,38 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
                 "committed nothing: {} observations left unassigned",
                 resolved.observations_unassigned
             ),
+        }
+        if let Some(suggestions) = &resolved.suggestions {
+            println!(
+                "suggested {} merges and {} splits of existing identities; none was applied",
+                suggestions.merges.len(),
+                suggestions.splits.len()
+            );
+            let lines = suggestions
+                .merges
+                .iter()
+                .map(|merge| {
+                    format!(
+                        "  merge {} and {}: {} pairs matched, {} did not",
+                        merge.identities[0], merge.identities[1], merge.matches, merge.no_matches
+                    )
+                })
+                .chain(suggestions.splits.iter().map(|split| {
+                    format!(
+                        "  split {}: {} pairs did not match, {} did",
+                        split.identity, split.no_matches, split.matches
+                    )
+                }));
+            let count = suggestions.merges.len() + suggestions.splits.len();
+            for line in lines.take(list) {
+                println!("{line}");
+            }
+            if count > list {
+                println!(
+                    "  ... and {} more; raise --list to print them",
+                    count - list
+                );
+            }
         }
     }
 
@@ -287,6 +352,19 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
             overrides.honoured,
             overrides.constraints,
             share(overrides.share)
+        );
+    }
+    if let Some(upgrade) = &step.upgrade_stability {
+        println!(
+            "  upgrade       `{}` matched everything again: {} of {} observations kept their identity ({}); \
+             {} merges and {} splits suggested, {} changes applied",
+            upgrade.strategy,
+            upgrade.retained,
+            upgrade.observations,
+            share(upgrade.share),
+            upgrade.suggested_merges,
+            upgrade.suggested_splits,
+            upgrade.applied_changes
         );
     }
     Ok(())

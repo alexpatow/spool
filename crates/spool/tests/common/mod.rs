@@ -36,6 +36,7 @@ pub fn thing() -> EntityTypeSource {
             SqlFile::new("same_name", "l.name = r.name"),
             SqlFile::new("same_code", "l.code = r.code"),
         ],
+        strategies: Vec::new(),
     }
 }
 

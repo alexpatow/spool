@@ -3,6 +3,9 @@ pub mod project;
 pub mod serve;
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use spool::UserCode;
 
 use crate::Failure;
 use crate::args::{self, Arguments, Spec};
@@ -29,6 +32,31 @@ fn store_path(arguments: &Arguments) -> Result<PathBuf, Failure> {
         .ok_or_else(|| {
             Failure::Usage("say where the store is with `--store` or `SPOOL_STORE`".to_owned())
         })
+}
+
+/// How user code of the project at `project` is run: `--task-timeout` and
+/// `--tasks`, and the `uv` and `bun` that `SPOOL_UV` and `SPOOL_BUN` name.
+fn user_code(arguments: &Arguments, project: &Path) -> Result<UserCode, Failure> {
+    let mut user_code = UserCode::new(project);
+    if let Some(seconds) = arguments.number("--task-timeout").map_err(Failure::Usage)? {
+        if seconds == 0 {
+            return Err(Failure::Usage(
+                "`--task-timeout` needs at least one second".to_owned(),
+            ));
+        }
+        user_code.timeout = Duration::from_secs(seconds);
+    }
+    if let Some(dir) = arguments.path("--tasks") {
+        user_code.work_dir = dir;
+    }
+    let named = |variable: &str| std::env::var_os(variable).filter(|value| !value.is_empty());
+    if let Some(uv) = named("SPOOL_UV") {
+        user_code.uv = uv;
+    }
+    if let Some(bun) = named("SPOOL_BUN") {
+        user_code.bun = bun;
+    }
+    Ok(user_code)
 }
 
 pub const SCHEMA_USAGE: &str = "\

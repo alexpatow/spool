@@ -212,10 +212,17 @@ export class SpoolClient {
    * With no strategy, the server runs the project's rules and reconciles:
    * the run comes back `succeeded`, or `drafted` if `commit` is `false`, or
    * `running` if the server's wait ran out first. `null` means there was
-   * nothing new to match.
+   * nothing new to match. Naming one of the project's user-code strategies,
+   * which `info` lists for each entity type, runs that instead; if it fails,
+   * the call throws a `SpoolError` with the code `strategy_failed`.
    *
-   * With a strategy of the caller's own, the run comes back `open`: read its
-   * candidates, submit judgements, and reconcile it.
+   * With `rematch`, every observation is matched again. Identities are left
+   * as they are, and `resolution.suggestions` lists the merges and splits
+   * the strategy would make of them.
+   *
+   * With any other strategy name, the run comes back `open`: read its
+   * candidates, submit judgements, and reconcile it. The server runs no
+   * code a caller sends.
    */
   async startRun(request: StartRunRequest): Promise<RunRecord | null> {
     const { run } = await this.json<{ run: RunRecord | null }>("POST", "/v1/runs", { json: request });

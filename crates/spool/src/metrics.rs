@@ -130,6 +130,48 @@ pub struct OrderSensitivity {
     pub pair_agreement: Option<f64>,
 }
 
+/// What matching everything again with a strategy did to the identities
+/// that existed. This is the cost of changing strategy: how many
+/// observations kept their identity ID, and how much of what the strategy
+/// would change was only suggested.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct UpgradeStability {
+    /// The strategy that judged every observation again.
+    pub strategy: String,
+    /// Observations that had an identity before the rematch.
+    pub observations: u64,
+    /// Those whose identity ID is the same after it.
+    pub retained: u64,
+    pub share: Option<f64>,
+    /// Pairs of identities the strategy's judgements would merge, and
+    /// identities they would split. None of it is applied by the rematch.
+    pub suggested_merges: u64,
+    pub suggested_splits: u64,
+    /// Changes to existing identities that were committed during the step:
+    /// identities merged and observations moved.
+    pub applied_changes: u64,
+}
+
+impl UpgradeStability {
+    pub(crate) fn new(
+        strategy: &str,
+        stability: &IdStability,
+        churn: &Churn,
+        suggested_merges: u64,
+        suggested_splits: u64,
+    ) -> Self {
+        Self {
+            strategy: strategy.to_owned(),
+            observations: stability.observations,
+            retained: stability.unchanged,
+            share: stability.strict,
+            suggested_merges,
+            suggested_splits,
+            applied_changes: churn.identities_merged + churn.observations_reassigned,
+        }
+    }
+}
+
 impl SplitRecovery {
     pub(crate) fn new(splits: u64, kept_apart: u64) -> Self {
         Self {

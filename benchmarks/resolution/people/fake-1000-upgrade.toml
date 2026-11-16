@@ -1,0 +1,22 @@
+# What changing strategy costs on Splink's `fake_1000`: the records are
+# resolved with the rules, and then Splink judges every one of them again.
+# The file is downloaded and checked on first use; see ../../datasets.toml.
+
+project = "."
+
+[truth]
+column = "cluster"
+
+[[step]]
+name = "all records, with the rules"
+
+[[step.ingest]]
+dataset = "fake_1000"
+source = "fake_1000"
+entity_type = "person"
+key = "unique_id"
+
+[[step]]
+name = "splink judges everything again"
+strategy = "splink"
+rematch = true

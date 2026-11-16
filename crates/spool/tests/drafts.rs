@@ -295,9 +295,7 @@ fn a_stale_draft_stays_open_and_names_the_operation() {
 fn the_step_by_step_api_stores_its_draft_and_commit_approves_it() {
     let engine = engine();
     two_anvils_and_a_hammer(&engine);
-    let scope = Scope {
-        entity_type: EntityType::new("thing").unwrap(),
-    };
+    let scope = Scope::new(EntityType::new("thing").unwrap());
     let run = engine
         .begin_run(&StrategyRef::external("by-hand", None), &scope)
         .unwrap();
@@ -364,9 +362,7 @@ fn a_run_can_be_reconciled_and_committed_in_one_call() {
     let run = engine
         .begin_run(
             &StrategyRef::external("by-hand", None),
-            &Scope {
-                entity_type: EntityType::new("thing").unwrap(),
-            },
+            &Scope::new(EntityType::new("thing").unwrap()),
         )
         .unwrap();
     let report = engine

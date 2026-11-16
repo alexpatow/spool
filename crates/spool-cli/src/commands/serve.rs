@@ -28,6 +28,17 @@ Options:
   --manifest <path>   the manifest to run on (default: .spool/manifest.json)
   --store <path>      the store's database file (default: $SPOOL_STORE)
   --listen <addr>     the address to listen on (default: 0.0.0.0:7765)
+  --project <dir>     the project directory, where the strategy files the
+                      manifest names are found (default: the current directory)
+  --task-timeout <s>  how long a user-code strategy may run, in seconds
+                      (default: 600)
+  --tasks <dir>       where the task directories of user-code strategies are
+                      made (default: spool-tasks in the temporary directory)
+
+Strategies that are `.py` files run with `uv`, and `.ts` files with `bun`.
+SPOOL_UV and SPOOL_BUN name the commands if they are not on the search path.
+The server runs a strategy file only while it is the one the manifest was
+compiled from.
 ";
 
 pub const DEV_USAGE: &str = "\
@@ -44,6 +55,13 @@ Options:
   --listen <addr>     the address to listen on (default: 127.0.0.1:7765)
   --store <path>      the store's database file (default: <dir>/.spool/dev.duckdb)
   --token <token>     the bearer token (default: $SPOOL_TOKEN, or `dev`)
+  --task-timeout <s>  how long a user-code strategy may run, in seconds
+                      (default: 600)
+  --tasks <dir>       where the task directories of user-code strategies are
+                      made (default: spool-tasks in the temporary directory)
+
+Strategies that are `.py` files run with `uv`, and `.ts` files with `bun`.
+SPOOL_UV and SPOOL_BUN name the commands if they are not on the search path.
 ";
 
 /// Prints a line, and carries on if nobody is reading: a server must not
@@ -84,7 +102,15 @@ pub fn serve(arguments: &[String]) -> Result<(), Failure> {
         arguments,
         &Spec {
             // `--seed` is for tests: it makes IDs and timestamps reproducible.
-            values: &["--manifest", "--store", "--listen", "--seed"],
+            values: &[
+                "--manifest",
+                "--store",
+                "--listen",
+                "--seed",
+                "--project",
+                "--task-timeout",
+                "--tasks",
+            ],
             flags: &[],
             positional: 0,
         },
@@ -104,8 +130,13 @@ pub fn serve(arguments: &[String]) -> Result<(), Failure> {
         .path("--manifest")
         .unwrap_or_else(|| manifest_path(Path::new(".")));
     let manifest = Manifest::read_file(&manifest_file)?;
+    let project = arguments
+        .path("--project")
+        .unwrap_or_else(|| PathBuf::from("."));
+    let user_code = super::user_code(&arguments, &project)?;
 
     let engine = Engine::open(&store, options(&arguments)?)?;
+    engine.set_user_code(user_code);
     match engine.applied_manifest_hash()? {
         None => {
             engine.apply(&manifest)?;
@@ -131,7 +162,14 @@ pub fn dev(arguments: &[String]) -> Result<(), Failure> {
     let arguments = super::arguments(
         arguments,
         &Spec {
-            values: &["--listen", "--store", "--token", "--seed"],
+            values: &[
+                "--listen",
+                "--store",
+                "--token",
+                "--seed",
+                "--task-timeout",
+                "--tasks",
+            ],
             flags: &[],
             positional: 1,
         },
@@ -158,7 +196,9 @@ pub fn dev(arguments: &[String]) -> Result<(), Failure> {
         std::fs::create_dir_all(parent)
             .map_err(|error| failed(format!("{}: {error}", parent.display())))?;
     }
+    let user_code = super::user_code(&arguments, &dir)?;
     let engine = Arc::new(Engine::open(&store, options(&arguments)?)?);
+    engine.set_user_code(user_code);
     let report = engine.apply(&manifest)?;
     say!("project   {}", dir.display());
     say!("store     {}", store.display());

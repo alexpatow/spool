@@ -489,6 +489,11 @@
           "type": "string"
         },
         {
+          "const": "strategy_failed",
+          "description": "500: the project's user code failed, did not finish in time, or\nwrote judgements that were refused. The run is recorded as failed\nand nothing changed.",
+          "type": "string"
+        },
+        {
           "const": "internal",
           "description": "500: the server failed.",
           "type": "string"
@@ -2164,6 +2169,21 @@
         }
       ]
     },
+    "Runtime": {
+      "description": "What runs a strategy file. The file's extension decides.",
+      "oneOf": [
+        {
+          "const": "python",
+          "description": "A `.py` file, run with `uv run`.",
+          "type": "string"
+        },
+        {
+          "const": "typescript",
+          "description": "A `.ts` file, run with `bun run`.",
+          "type": "string"
+        }
+      ]
+    },
     "Seq": {
       "description": "A position in the changeset log. The first committed changeset is 1, and 0\nis the empty log.",
       "format": "uint64",
@@ -2246,7 +2266,7 @@
       "properties": {
         "commit": {
           "default": null,
-          "description": "With the built-in strategy: commit the draft (the default), or store\nit for review. A run that waits for judgements is told this when it\nis reconciled.",
+          "description": "With a strategy the server runs: commit the draft (the default), or\nstore it for review. A run that waits for judgements is told this\nwhen it is reconciled.",
           "type": [
             "boolean",
             "null"
@@ -2254,6 +2274,14 @@
         },
         "entity_type": {
           "$ref": "#/$defs/EntityType"
+        },
+        "rematch": {
+          "default": null,
+          "description": "Match every observation of the type again, not only the new ones.\nObservations that have an identity keep it: where the strategy\ndisagrees with the identities as they are, the run's `resolution`\nlists `suggestions`.",
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "strategy": {
           "anyOf": [
@@ -2265,7 +2293,7 @@
             }
           ],
           "default": null,
-          "description": "Who judges the candidates. Left out, or named `rules`, the server\nruns the project's SQL rules and reconciles. Any other name starts a\nrun that waits for the caller's judgements."
+          "description": "Who judges. Left out, or named `rules`, the server runs the\nproject's SQL rules and reconciles. The name of one of the project's\nuser-code strategies runs that code on the server and reconciles;\n`GET /v1/info` lists them. Any other name starts a run that waits\nfor the caller's judgements: the server runs no code it was not\nbuilt with, whatever is named here.\n\nA `version` given with a project strategy must be the hash the\nproject was built with."
         },
         "wait_ms": {
           "default": null,
@@ -2318,6 +2346,32 @@
       ],
       "type": "object"
     },
+    "Strategy": {
+      "description": "A strategy that is user code: a file the engine runs as a child process.\nThe engine runs the file only while it still has this hash.",
+      "properties": {
+        "file": {
+          "description": "The file, as a path from the project directory with `/` between its\nparts.",
+          "type": "string"
+        },
+        "hash": {
+          "description": "SHA-256 of the file and of every file in the directory that shares\nits name. It is recorded as the strategy's version with each run.",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "runtime": {
+          "$ref": "#/$defs/Runtime"
+        }
+      },
+      "required": [
+        "name",
+        "runtime",
+        "file",
+        "hash"
+      ],
+      "type": "object"
+    },
     "StrategyRef": {
       "description": "Names the strategy that produces a match run's judgements.",
       "properties": {
@@ -2333,6 +2387,86 @@
       },
       "required": [
         "name"
+      ],
+      "type": "object"
+    },
+    "SuggestedMerge": {
+      "properties": {
+        "identities": {
+          "description": "The two identities, the smaller ID first.",
+          "items": {
+            "$ref": "#/$defs/IdentityId"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "matches": {
+          "description": "Pairs of their members the strategy judged `match`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "no_matches": {
+          "description": "Pairs of their members the strategy judged `no_match`. More than\nnone means the strategy contradicts itself about these two.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "identities",
+        "matches",
+        "no_matches"
+      ],
+      "type": "object"
+    },
+    "SuggestedSplit": {
+      "properties": {
+        "identity": {
+          "$ref": "#/$defs/IdentityId"
+        },
+        "matches": {
+          "description": "Pairs of its members the strategy judged `match`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "no_matches": {
+          "description": "Pairs of its members the strategy judged `no_match`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "identity",
+        "no_matches",
+        "matches"
+      ],
+      "type": "object"
+    },
+    "Suggestions": {
+      "description": "What a rematch would change about existing identities if judgements were\nallowed to. Nothing here was applied: a reviewer who agrees merges or\nsplits with a changeset.",
+      "properties": {
+        "merges": {
+          "description": "Pairs of identities with a `match` between their members, ordered by\ntheir IDs.",
+          "items": {
+            "$ref": "#/$defs/SuggestedMerge"
+          },
+          "type": "array"
+        },
+        "splits": {
+          "description": "Identities with a `no_match` between two of their members, ordered\nby ID.",
+          "items": {
+            "$ref": "#/$defs/SuggestedSplit"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "merges",
+        "splits"
       ],
       "type": "object"
     },
@@ -2379,6 +2513,14 @@
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "strategies": {
+          "default": [],
+          "description": "The project's user-code strategies for the type. The built-in\n`rules` is always there and is not listed.",
+          "items": {
+            "$ref": "#/$defs/Strategy"
+          },
+          "type": "array"
         },
         "unassigned": {
           "description": "Observations no changeset has placed.",
@@ -2475,6 +2617,18 @@
             "$ref": "#/$defs/ReviewItem"
           },
           "type": "array"
+        },
+        "suggestions": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Suggestions"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Where the strategy disagrees with the identities as they are. Only a\nrematch has these: no other run judges pairs of observations that\nboth have an identity."
         }
       },
       "required": [

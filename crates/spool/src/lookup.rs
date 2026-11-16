@@ -11,7 +11,7 @@ use spool_core::{
 };
 
 use crate::error::Result;
-use crate::project::{FeatureColumn, Manifest};
+use crate::project::{FeatureColumn, Manifest, Strategy};
 use crate::schema;
 use crate::store::{OpRow, op_from_row, parse};
 use crate::time::rfc3339;
@@ -173,6 +173,10 @@ pub struct TypeInfo {
     /// The columns of the feature table, as the manifest declares them.
     /// Empty when the engine runs without a manifest.
     pub features: Vec<FeatureColumn>,
+    /// The project's user-code strategies for the type. The built-in
+    /// `rules` is always there and is not listed.
+    #[serde(default)]
+    pub strategies: Vec<Strategy>,
     pub observations: u64,
     /// Observations no changeset has placed.
     pub unassigned: u64,
@@ -417,6 +421,10 @@ pub(crate) fn info(conn: &Connection, manifest: Option<&Manifest>) -> Result<Sto
             features: manifest
                 .and_then(|manifest| manifest.entity_type(name.as_str()))
                 .map(|entry| entry.declaration.columns.clone())
+                .unwrap_or_default(),
+            strategies: manifest
+                .and_then(|manifest| manifest.entity_type(name.as_str()))
+                .map(|entry| entry.strategies.clone())
                 .unwrap_or_default(),
             observations: row.get::<_, i64>(2)? as u64,
             unassigned: row.get::<_, i64>(3)? as u64,

@@ -18,9 +18,7 @@ fn resolve(engine: &Engine) -> spool::ResolveReport {
 }
 
 fn thing_scope() -> Scope {
-    Scope {
-        entity_type: EntityType::new("thing").unwrap(),
-    }
+    Scope::new(EntityType::new("thing").unwrap())
 }
 
 fn by_hand() -> StrategyRef {

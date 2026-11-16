@@ -38,8 +38,10 @@ pub(crate) fn describe(conn: &Connection, query: &str) -> Result<Vec<FeatureColu
     Ok(columns)
 }
 
-/// A features query must return `observation_id`, and must leave
-/// `declaration_version` to the engine.
+/// A features query must return `observation_id`, and must leave to the
+/// engine the columns it adds: `declaration_version` in the feature table,
+/// `identity_id` in the entity view, and `identity_id` and `is_new` in the
+/// feature rows a user-code strategy is given.
 pub(crate) fn check_columns(columns: &[FeatureColumn]) -> Result<(), String> {
     let find = |name: &str| {
         columns
@@ -56,8 +58,12 @@ pub(crate) fn check_columns(columns: &[FeatureColumn]) -> Result<(), String> {
         }
         Some(_) => {}
     }
-    if find("declaration_version").is_some() {
-        return Err("`declaration_version` is added by the engine; rename that column".to_owned());
+    for reserved in ["declaration_version", "identity_id", "is_new"] {
+        if find(reserved).is_some() {
+            return Err(format!(
+                "`{reserved}` is added by the engine; rename that column"
+            ));
+        }
     }
     Ok(())
 }

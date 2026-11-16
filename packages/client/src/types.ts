@@ -209,7 +209,7 @@ export interface ErrorBody {
   rejections?: Rejection[] | null;
 }
 
-export type ErrorCode = "unauthorized" | "invalid" | "not_found" | "conflict" | "rejected" | "too_large" | "internal";
+export type ErrorCode = "unauthorized" | "invalid" | "not_found" | "conflict" | "rejected" | "too_large" | "strategy_failed" | "internal";
 
 /**
  * The body of every response that is not a success.
@@ -795,6 +795,11 @@ export interface RunResponse {
 export type RunStatus = "running" | "open" | "drafted" | "succeeded" | "failed";
 
 /**
+ * What runs a strategy file. The file's extension decides.
+ */
+export type Runtime = "python" | "typescript";
+
+/**
  * A position in the changeset log. The first committed changeset is 1, and 0
  * is the empty log.
  */
@@ -844,16 +849,29 @@ export interface SplitRequest {
  */
 export interface StartRunRequest {
   /**
-   * With the built-in strategy: commit the draft (the default), or store
-   * it for review. A run that waits for judgements is told this when it
-   * is reconciled.
+   * With a strategy the server runs: commit the draft (the default), or
+   * store it for review. A run that waits for judgements is told this
+   * when it is reconciled.
    */
   commit?: boolean | null;
   entity_type: EntityType;
   /**
-   * Who judges the candidates. Left out, or named `rules`, the server
-   * runs the project's SQL rules and reconciles. Any other name starts a
-   * run that waits for the caller's judgements.
+   * Match every observation of the type again, not only the new ones.
+   * Observations that have an identity keep it: where the strategy
+   * disagrees with the identities as they are, the run's `resolution`
+   * lists `suggestions`.
+   */
+  rematch?: boolean | null;
+  /**
+   * Who judges. Left out, or named `rules`, the server runs the
+   * project's SQL rules and reconciles. The name of one of the project's
+   * user-code strategies runs that code on the server and reconciles;
+   * `GET /v1/info` lists them. Any other name starts a run that waits
+   * for the caller's judgements: the server runs no code it was not
+   * built with, whatever is named here.
+   *
+   * A `version` given with a project strategy must be the hash the
+   * project was built with.
    */
   strategy?: StrategyRef | null;
   /**
@@ -882,11 +900,76 @@ export interface StoreInfo {
 }
 
 /**
+ * A strategy that is user code: a file the engine runs as a child process.
+ * The engine runs the file only while it still has this hash.
+ */
+export interface Strategy {
+  /**
+   * The file, as a path from the project directory with `/` between its
+   * parts.
+   */
+  file: string;
+  /**
+   * SHA-256 of the file and of every file in the directory that shares
+   * its name. It is recorded as the strategy's version with each run.
+   */
+  hash: string;
+  name: string;
+  runtime: Runtime;
+}
+
+/**
  * Names the strategy that produces a match run's judgements.
  */
 export interface StrategyRef {
   name: string;
   version?: string | null;
+}
+
+export interface SuggestedMerge {
+  /**
+   * The two identities, the smaller ID first.
+   */
+  identities: [IdentityId, IdentityId];
+  /**
+   * Pairs of their members the strategy judged `match`.
+   */
+  matches: number;
+  /**
+   * Pairs of their members the strategy judged `no_match`. More than
+   * none means the strategy contradicts itself about these two.
+   */
+  no_matches: number;
+}
+
+export interface SuggestedSplit {
+  identity: IdentityId;
+  /**
+   * Pairs of its members the strategy judged `match`.
+   */
+  matches: number;
+  /**
+   * Pairs of its members the strategy judged `no_match`.
+   */
+  no_matches: number;
+}
+
+/**
+ * What a rematch would change about existing identities if judgements were
+ * allowed to. Nothing here was applied: a reviewer who agrees merges or
+ * splits with a changeset.
+ */
+export interface Suggestions {
+  /**
+   * Pairs of identities with a `match` between their members, ordered by
+   * their IDs.
+   */
+  merges: SuggestedMerge[];
+  /**
+   * Identities with a `no_match` between two of their members, ordered
+   * by ID.
+   */
+  splits: SuggestedSplit[];
 }
 
 export interface TypeInfo {
@@ -907,6 +990,11 @@ export interface TypeInfo {
    */
   open_draft?: ChangesetId | null;
   open_review_items: number;
+  /**
+   * The project's user-code strategies for the type. The built-in
+   * `rules` is always there and is not listed.
+   */
+  strategies?: Strategy[];
   /**
    * Observations no changeset has placed.
    */
@@ -952,6 +1040,12 @@ export interface TypeResolution {
    * What the run would not decide. The store keeps these as review items.
    */
   review: ReviewItem[];
+  /**
+   * Where the strategy disagrees with the identities as they are. Only a
+   * rematch has these: no other run judges pairs of observations that
+   * both have an identity.
+   */
+  suggestions?: Suggestions | null;
 }
 
 /**
