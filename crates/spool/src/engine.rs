@@ -219,8 +219,15 @@ impl Readers {
             Some(conn) => conn,
             None => store::reader(&lock(&self.source), self.attached)?,
         };
+        // One transaction, so a read made of several queries sees one
+        // committed state however many changesets commit while it runs.
+        conn.execute_batch("BEGIN TRANSACTION")?;
         let result = read(&conn);
-        lock(&self.idle).push(conn);
+        // A read has nothing to commit. A connection whose transaction did
+        // not end is not kept for the next read.
+        if conn.execute_batch("ROLLBACK").is_ok() {
+            lock(&self.idle).push(conn);
+        }
         result
     }
 }

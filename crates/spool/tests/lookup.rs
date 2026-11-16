@@ -324,6 +324,196 @@ fn rows_given_as_json_keep_their_types() {
 }
 
 #[test]
+fn a_snapshot_read_while_changesets_commit_is_of_one_log_position() {
+    const THINGS: usize = 120;
+    let engine = engine();
+    let keys: Vec<String> = (0..THINGS).map(|index| index.to_string()).collect();
+    let things: Vec<(&str, Option<&str>, Option<&str>)> = keys
+        .iter()
+        .map(|key| (key.as_str(), Some(key.as_str()), None))
+        .collect();
+    ingest(&engine, "shop", &things);
+    let unassigned: Vec<_> = keys
+        .iter()
+        .map(|key| observation(&engine, "shop", key))
+        .collect();
+
+    // Every changeset creates one identity and gives it one member, so at
+    // log position N there are N of each.
+    let done = std::sync::atomic::AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            for observation in &unassigned {
+                let minted = engine.mint_ids(1, 1);
+                engine
+                    .commit(spool::core::Changeset {
+                        id: minted.changesets[0],
+                        base: engine.head().unwrap(),
+                        actor: Actor::Agent("sorter".to_owned()),
+                        reason: None,
+                        run: None,
+                        ops: vec![
+                            Op::CreateIdentity {
+                                identity: minted.identities[0],
+                                entity_type: thing_type(),
+                            },
+                            Op::Assign {
+                                observation: *observation,
+                                from: None,
+                                to: Some(minted.identities[0]),
+                            },
+                        ],
+                    })
+                    .unwrap();
+            }
+            done.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+
+        while !done.load(std::sync::atomic::Ordering::SeqCst) {
+            let snapshot = engine.snapshot().unwrap();
+            let head = snapshot.head.0 as usize;
+            assert_eq!(
+                (snapshot.identities.len(), snapshot.memberships.len()),
+                (head, head),
+                "the identities and memberships of log position {head}"
+            );
+        }
+    });
+    assert_eq!(engine.head().unwrap(), Seq(THINGS as u64));
+    engine.verify().unwrap();
+}
+
+#[test]
+fn json_rows_without_a_value_are_rows_all_the_same() {
+    let engine = engine();
+    let report = engine
+        .ingest(
+            "till",
+            "thing",
+            json_rows(json!([{}, { "name": null }])),
+            &IngestOptions::default(),
+        )
+        .unwrap();
+    assert_eq!(
+        (report.received, report.inserted, report.duplicates),
+        (2, 1, 1),
+        "two rows that say nothing are one observation, seen twice"
+    );
+
+    // A column is every key that occurs, with a value or without.
+    let report = engine
+        .ingest(
+            "till",
+            "thing",
+            json_rows(json!([{ "id": null, "name": null }])),
+            &IngestOptions::keyed_by("id"),
+        )
+        .unwrap();
+    assert_eq!((report.received, report.duplicates), (1, 1));
+
+    // As with any rows, the key column has to be one of the columns.
+    let error = engine
+        .ingest(
+            "till",
+            "thing",
+            json_rows(json!([{}])),
+            &IngestOptions::keyed_by("id"),
+        )
+        .unwrap_err();
+    assert!(
+        matches!(&error, Error::Ingest(message) if message.contains("no column `id`")),
+        "{error}"
+    );
+}
+
+#[test]
+fn json_integers_are_kept_exactly_or_refused() {
+    let rows = |rows: serde_json::Value| -> Vec<serde_json::Map<String, serde_json::Value>> {
+        serde_json::from_value(rows).unwrap()
+    };
+
+    // 2^53 + 1 is not a number a float can hold, so it cannot share a column
+    // with a fraction: it would be stored as its neighbour.
+    let error = Rows::from_json(&rows(json!([
+        { "id": "1", "weight": 0.5 },
+        { "id": "2", "weight": 9007199254740993u64 },
+    ])))
+    .err()
+    .unwrap();
+    assert!(
+        matches!(&error, Error::Rows(message) if message.contains("row 2") && message.contains("`weight`")),
+        "{error}"
+    );
+    let error = Rows::from_json(&rows(json!([
+        { "id": "1", "weight": -9007199254740993i64 },
+        { "id": "2", "weight": 0.5 },
+    ])))
+    .err()
+    .unwrap();
+    assert!(
+        matches!(&error, Error::Rows(message) if message.contains("row 1") && message.contains("`weight`")),
+        "{error}"
+    );
+
+    // Below that, an integer beside a fraction is the integer it was.
+    let engine = engine();
+    let ingest = |rows: serde_json::Value| {
+        engine
+            .ingest(
+                "scale",
+                "thing",
+                json_rows(rows),
+                &IngestOptions::keyed_by("id"),
+            )
+            .unwrap()
+    };
+    ingest(json!([
+        { "id": "1", "weight": 0.5 },
+        { "id": "2", "weight": 9007199254740991u64 },
+    ]));
+    let report = ingest(json!([{ "id": "2", "weight": 9007199254740991u64 }]));
+    assert_eq!((report.inserted, report.duplicates), (0, 1));
+
+    // On their own, integers are exact as far as 64 bits go, signed or not.
+    ingest(json!([
+        { "id": "3", "weight": 9007199254740993u64 },
+        { "id": "4", "weight": i64::MIN },
+    ]));
+    ingest(json!([
+        { "id": "5", "weight": u64::MAX },
+        { "id": "6", "weight": 7 },
+    ]));
+    let weight = |key: &str| {
+        engine
+            .observations(&ObservationFilter::keyed("scale", key))
+            .unwrap()
+            .remove(0)
+            .payload["weight"]
+            .to_string()
+    };
+    assert_eq!(weight("2"), "9007199254740991");
+    assert_eq!(weight("3"), "9007199254740993");
+    assert_eq!(weight("4"), "-9223372036854775808");
+    assert_eq!(weight("5"), "18446744073709551615");
+    assert_eq!(weight("6"), "7");
+    let report = ingest(json!([{ "id": "6", "weight": 7 }]));
+    assert_eq!((report.inserted, report.duplicates), (0, 1));
+
+    // A column cannot hold both a negative integer and one past the signed
+    // range: no one type keeps both.
+    let error = Rows::from_json(&rows(json!([
+        { "id": "7", "weight": -1 },
+        { "id": "8", "weight": u64::MAX },
+    ])))
+    .err()
+    .unwrap();
+    assert!(
+        matches!(&error, Error::Rows(message) if message.contains("row 2") && message.contains("`weight`")),
+        "{error}"
+    );
+}
+
+#[test]
 fn json_rows_that_have_no_one_type_per_column_are_refused() {
     let nested: Vec<serde_json::Map<String, serde_json::Value>> =
         serde_json::from_value(json!([{ "id": "1" }, { "id": "2", "tags": ["a"] }])).unwrap();

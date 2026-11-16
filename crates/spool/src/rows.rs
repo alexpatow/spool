@@ -5,10 +5,12 @@ use std::path::Path;
 use std::sync::Arc;
 
 use duckdb::Connection;
-use duckdb::arrow::array::{ArrayRef, BooleanArray, Float64Array, Int64Array, StringArray};
+use duckdb::arrow::array::{
+    ArrayRef, BooleanArray, Float64Array, Int64Array, NullArray, StringArray, UInt64Array,
+};
 use duckdb::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use duckdb::arrow::error::ArrowError;
-use duckdb::arrow::record_batch::{RecordBatch, RecordBatchReader};
+use duckdb::arrow::record_batch::{RecordBatch, RecordBatchOptions, RecordBatchReader};
 
 use crate::error::{Error, Result};
 
@@ -56,26 +58,60 @@ impl Rows {
     ///
     /// A column holds text, booleans or numbers, and one kind only. Numbers
     /// are integers unless one of them has a fraction. A nested value is
-    /// refused: send it as text, or flatten it.
+    /// refused: send it as text, or flatten it. So is an integer that its
+    /// column cannot hold exactly.
     pub fn from_json(rows: &[serde_json::Map<String, serde_json::Value>]) -> Result<Self> {
         use serde_json::Value;
+
+        /// Whole numbers from here on are not all floats, and the ones that
+        /// are, are not written as integers when they are stored.
+        const FLOATS_SKIP_INTEGERS_FROM: u64 = 1 << 53;
 
         #[derive(Clone, Copy, PartialEq)]
         enum Kind {
             Text,
             Boolean,
-            Integer,
-            Float,
+            Number,
         }
-        let mut kinds: std::collections::BTreeMap<&str, Kind> = std::collections::BTreeMap::new();
+        /// What is known of a column, with the first row that showed it.
+        struct Seen {
+            kind: Option<Kind>,
+            fraction: Option<usize>,
+            negative: Option<usize>,
+            past_signed: Option<usize>,
+            past_floats: Option<usize>,
+        }
+
+        let mut columns: std::collections::BTreeMap<&str, Seen> = std::collections::BTreeMap::new();
         for (index, row) in rows.iter().enumerate() {
             for (name, value) in row {
+                let seen = columns.entry(name.as_str()).or_insert(Seen {
+                    kind: None,
+                    fraction: None,
+                    negative: None,
+                    past_signed: None,
+                    past_floats: None,
+                });
                 let kind = match value {
                     Value::Null => continue,
                     Value::String(_) => Kind::Text,
                     Value::Bool(_) => Kind::Boolean,
-                    Value::Number(number) if number.is_i64() => Kind::Integer,
-                    Value::Number(_) => Kind::Float,
+                    Value::Number(number) => {
+                        if let Some(integer) = number.as_i64() {
+                            if integer < 0 {
+                                seen.negative.get_or_insert(index);
+                            }
+                            if integer.unsigned_abs() >= FLOATS_SKIP_INTEGERS_FROM {
+                                seen.past_floats.get_or_insert(index);
+                            }
+                        } else if number.is_u64() {
+                            seen.past_signed.get_or_insert(index);
+                            seen.past_floats.get_or_insert(index);
+                        } else {
+                            seen.fraction.get_or_insert(index);
+                        }
+                        Kind::Number
+                    }
                     Value::Array(_) | Value::Object(_) => {
                         return Err(Error::Rows(format!(
                             "row {}: column `{name}` holds a nested value; send it as text",
@@ -83,59 +119,84 @@ impl Rows {
                         )));
                     }
                 };
-                let known = kinds.entry(name.as_str()).or_insert(kind);
-                *known = match (*known, kind) {
-                    (a, b) if a == b => a,
-                    (Kind::Integer, Kind::Float) | (Kind::Float, Kind::Integer) => Kind::Float,
-                    _ => {
-                        return Err(Error::Rows(format!(
-                            "row {}: column `{name}` holds values of more than one type",
-                            index + 1
-                        )));
-                    }
-                };
+                if *seen.kind.get_or_insert(kind) != kind {
+                    return Err(Error::Rows(format!(
+                        "row {}: column `{name}` holds values of more than one type",
+                        index + 1
+                    )));
+                }
             }
         }
 
-        let mut fields = Vec::with_capacity(kinds.len());
-        let mut arrays: Vec<ArrayRef> = Vec::with_capacity(kinds.len());
-        for (name, kind) in &kinds {
+        let mut fields = Vec::with_capacity(columns.len());
+        let mut arrays: Vec<ArrayRef> = Vec::with_capacity(columns.len());
+        for (name, seen) in &columns {
             let values = rows.iter().map(|row| row.get(*name));
-            let (data_type, array): (DataType, ArrayRef) = match kind {
-                Kind::Text => (
+            let (data_type, array): (DataType, ArrayRef) = match seen.kind {
+                None => (DataType::Null, Arc::new(NullArray::new(rows.len()))),
+                Some(Kind::Text) => (
                     DataType::Utf8,
                     Arc::new(StringArray::from_iter(
                         values.map(|value| value.and_then(Value::as_str)),
                     )),
                 ),
-                Kind::Boolean => (
+                Some(Kind::Boolean) => (
                     DataType::Boolean,
                     Arc::new(BooleanArray::from_iter(
                         values.map(|value| value.and_then(Value::as_bool)),
                     )),
                 ),
-                Kind::Integer => (
-                    DataType::Int64,
-                    Arc::new(Int64Array::from_iter(
-                        values.map(|value| value.and_then(Value::as_i64)),
-                    )),
-                ),
-                Kind::Float => (
-                    DataType::Float64,
-                    Arc::new(Float64Array::from_iter(
-                        values.map(|value| value.and_then(Value::as_f64)),
-                    )),
-                ),
+                Some(Kind::Number) => match (seen.fraction, seen.past_signed) {
+                    (Some(_), _) => {
+                        if let Some(index) = seen.past_floats {
+                            return Err(Error::Rows(format!(
+                                "row {}: column `{name}` holds an integer too large to keep exactly beside numbers with a fraction; send the column as text",
+                                index + 1
+                            )));
+                        }
+                        (
+                            DataType::Float64,
+                            Arc::new(Float64Array::from_iter(
+                                values.map(|value| value.and_then(Value::as_f64)),
+                            )),
+                        )
+                    }
+                    (None, Some(index)) => {
+                        if let Some(negative) = seen.negative {
+                            return Err(Error::Rows(format!(
+                                "row {}: column `{name}` holds integers too far apart to keep exactly; send the column as text",
+                                index.max(negative) + 1
+                            )));
+                        }
+                        (
+                            DataType::UInt64,
+                            Arc::new(UInt64Array::from_iter(
+                                values.map(|value| value.and_then(Value::as_u64)),
+                            )),
+                        )
+                    }
+                    (None, None) => (
+                        DataType::Int64,
+                        Arc::new(Int64Array::from_iter(
+                            values.map(|value| value.and_then(Value::as_i64)),
+                        )),
+                    ),
+                },
             };
             fields.push(Field::new(*name, data_type, true));
             arrays.push(array);
         }
         let schema = Arc::new(Schema::new(fields));
-        if arrays.is_empty() {
-            // Arrow needs to be told how many rows a batch without columns has.
+        if rows.is_empty() {
             return Ok(Self::new(schema, Vec::new()));
         }
-        let batch = RecordBatch::try_new(schema.clone(), arrays)?;
+        // Rows that name no column are rows all the same, and Arrow has to be
+        // told how many there are.
+        let batch = RecordBatch::try_new_with_options(
+            schema.clone(),
+            arrays,
+            &RecordBatchOptions::new().with_row_count(Some(rows.len())),
+        )?;
         Ok(Self::new(schema, vec![batch]))
     }
 

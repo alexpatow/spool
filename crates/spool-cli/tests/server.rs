@@ -242,6 +242,30 @@ fn failures_are_described_the_same_way_whatever_went_wrong() {
         )
         .error(400, "invalid");
     assert!(message.contains("code"), "{message}");
+    // An integer that would be stored as another number is refused.
+    let message = server
+        .post(
+            "/v1/ingest",
+            json!({
+                "source": "s",
+                "entity_type": "thing",
+                "rows": [{ "weight": 0.5 }, { "weight": 9007199254740993u64 }],
+            }),
+        )
+        .error(400, "invalid");
+    assert!(message.contains("row 2"), "{message}");
+    // A row that says nothing is still a row, and is counted.
+    let report = server.call(
+        "/v1/ingest",
+        json!({ "source": "s", "entity_type": "thing", "rows": [{}, { "name": null }] }),
+    );
+    assert_eq!(
+        (
+            &report["run"]["ingest"]["received"],
+            &report["run"]["ingest"]["inserted"]
+        ),
+        (&json!(2), &json!(1))
+    );
     server
         .request("POST", "/v1/ingest?source=s&entity_type=thing")
         .header("Content-Type", ARROW)
