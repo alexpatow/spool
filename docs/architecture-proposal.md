@@ -13,7 +13,7 @@ Spool's initial roadmap had seven milestones: (1) a Rust engine on DuckDB, (2) T
 5. **The matcher contract is a table shape, not a trait.** Observations in, `(left, right, verdict, score, detail)` out. Blocking, scoring, Splink, an LLM and a human reviewer all fit it. Clustering happens only in the reconciler.
 6. **Spool runs as one server, and clients are thin.** The engine is a Rust library, and `spool serve` wraps it in an HTTP API. The server owns the only store, so nothing is synchronised between copies. A client sends JSON for small things and Arrow for bulk, and contains no engine code, so there are no native bindings to build.
 7. **A Spool project is a directory.** Entity types, features and rules are files, and names come from paths. `spool build` compiles the directory into a manifest and writes a Dockerfile. The result is one container and one volume.
-8. **User code runs as child processes, never inside the engine.** Python and TypeScript files in the project run through `uv` and `bun`, and exchange Parquet files with the server. They produce evidence only. The workers are a bounded pool inside the one service.
+8. **User code runs as child processes, never inside the engine.** Python and TypeScript files in the project run through `uv` and `bun`, and exchange Parquet files with the server. They produce evidence only. They run inside the one service, one at a time, each with a timeout.
 9. **Entity types are declared, never built in.** Spool defines no company, person or any other type, and no two users have to agree on what a company looks like. Companies appear in this document as the worked example and as the first benchmark fixture, nowhere in the engine.
 10. **Start with two crates.** `spool-core` (no DuckDB, no Arrow) and `spool` (engine, DuckDB store, project discovery, built-in strategy, metrics). Add the server in Milestone 2 and split further only when a second implementation of something exists.
 11. **Milestone 1 must ingest two batches.** A single batch cannot show that IDs persist, which is the only thing that separates Spool from Splink. Changesets also have to exist in Milestone 1 because they are the write path.
@@ -78,7 +78,7 @@ my-project/
 │       │   ├── match/*.sql
 │       │   └── no_match/*.sql
 │       ├── policy.toml           # replaces the default reconciliation policy
-│       ├── strategies/           # user code: splink.py, llm.ts (Milestone 4, section 6)
+│       ├── strategies/           # user code: splink.py, llm.ts, and a directory per strategy for its files (section 6)
 │       ├── extract.md            # instructions for LLM extraction (Milestone 5)
 │       └── review.md             # guidance for whoever reviews this type's drafts (later)
 ├── benchmarks/
@@ -94,7 +94,7 @@ A project with no `entities/company/` has no company type. A project that resolv
 | `spool init` | Scaffolds the directory. |
 | `spool dev` | Runs the server on localhost against a development database under `.spool/`, and applies file changes as they are saved. |
 | `spool info` | Lists the discovered entity types, rules and strategies, with diagnostics. |
-| `spool build` | Validates the project and compiles it into a manifest. Every SQL file is prepared against DuckDB, so a mistake fails the build, not a run. Writes a `Dockerfile` if the project has none. |
+| `spool build` | Validates the project and compiles it into a manifest. Every SQL file is prepared against DuckDB, so a mistake fails the build, not a run. Writes a `Dockerfile` if the project has none. With `--install` it also starts each user-code strategy once with nothing to do, which fetches what the strategy depends on. |
 | `spool apply` | Applies a manifest to a store: declares entity types and rebuilds the feature tables whose declaration changed. |
 | `spool serve` | Runs the server from a manifest and a store location. An empty store is set up from the manifest. |
 | `spool bench` | Runs benchmark scenarios in-process (section 9). |
@@ -102,11 +102,11 @@ A project with no `entities/company/` has no company type. A project that resolv
 
 Three rules keep deployment simple:
 
-1. **The directory is build-time input.** The engine reads only the manifest. The manifest has a content hash that is recorded with every run, so any judgement can be traced to the project version that produced it.
+1. **The directory is build-time input.** The engine reads only the manifest, and the strategy files the manifest names. The manifest has a content hash that is recorded with every run, so any judgement can be traced to the project version that produced it. It records the hash of each strategy file, and the engine runs a file only while it still has that hash.
 2. **A project of data files needs only the `spool` binary.** Discovery and the build are in Rust, so no Node or Python is involved. Only a project with user code adds `uv` or `bun` to its image.
 3. **State is never in the image.** The image holds the binary, the manifest, and any user code with its dependencies. The store is a file on a volume, and its location is configuration.
 
-The generated Dockerfile starts from the Spool base image, copies the project, compiles the manifest, declares a volume for the store at `/data` and runs `spool serve` as a user that is not root. When user code exists (Milestone 4) it will also install that code's dependencies from their lockfiles. It belongs to the project and can be edited: `spool build` writes it once and never again. The result is one container and one volume, run wherever containers run.
+The generated Dockerfile starts from the Spool base image, copies the project, compiles the manifest, declares a volume for the store at `/data` and runs `spool serve` as a user that is not root. For a project of data files the image holds the binary and the manifest. For a project with user code it also holds the project's files, `uv` or `bun` (whichever the project's strategies need, copied from their published images at a fixed version), and what the strategies depend on, which `spool build --install` fetches while the image is built. `uv` is then told to stay offline, so a run does not wait for the network. This was tested with images built on a local machine: a container with no network ran Splink for the person project, and the Python and TypeScript strategies of the company fixture, as the user `spool`, and committed the changesets the same scenarios commit outside a container. The Dockerfile belongs to the project and can be edited: `spool build` writes it once and never again. The result is one container and one volume, run wherever containers run.
 
 The base image is built from the `Dockerfile` at the root of this repository. It holds the `spool` binary in `/usr/local/bin` and the DuckDB shared library in `/usr/local/lib`, where the binary looks for it. The generated Dockerfile names `ghcr.io/alexpatow/spool:<version>`, and `spool build --base-image` names another. No image is published yet, so for now the base image is built locally under that name.
 
@@ -417,6 +417,8 @@ The reconciler's default policy for Milestone 1 is conservative:
 
 Rule 4 is what protects IDs from model upgrades: rerunning a better matcher over old data yields a list of suggested changes, not changes. The cost is that this greedy, incremental policy depends on arrival order, which is why order sensitivity is a benchmark metric in section 9.
 
+Rerunning a matcher over old data is a **rematch**: a run whose scope is every observation of the type, not only the new ones. It is the one kind of run that may judge two observations that both have an identity. The policy is the same, so those judgements move nothing. The run reports them as suggestions: each pair of identities with a `match` between their members is a suggested merge, and each identity with a `no_match` between two of its members is a suggested split, both with the counts of pairs for and against. A reviewer who agrees commits a merge or a split, which is a changeset like any other. Observations that have no identity are placed by a rematch as by any run.
+
 Constraints and superseding versions enter here as evidence that outranks the strategy's. Before the summary is built, the judgement on a pair is replaced, or added where the strategy gave none: a `must_link` in force reads as `match`, a `cannot_link` as `no_match`, and a version and the one it supersedes read as `match`, with a constraint ahead of supersession. The policy is unchanged and needs no rule about constraints. A `cannot_link` against the only identity an observation matches leaves it to form its own. A `cannot_link` against one member of an identity it otherwise matches is a conflict, and is left for review. A `must_link` to a member of an identity places the observation there when nothing else matches. What a run reports as the strategy's judgements are still the strategy's.
 
 Whenever the policy leaves observations unassigned, the reconcile run records a review item in `spool.review_item` (section 1). Its kind is `possible_merge` when the observations match members of two or more identities, and `conflict` when a `no_match` contradicts their matches. The item names the observations, the identities they matched and the run that raised it. It is evidence, like a judgement: it changes no identity, and nothing is committed on its account.
@@ -451,7 +453,7 @@ impl Engine {
     pub fn commit(&self, changeset: Changeset) -> Result<Committed, Rejected>;
     pub fn approve_draft(&self, draft: ChangesetId) -> Result<Committed, Rejected>;
     pub fn reject_draft(&self, draft: ChangesetId, reason: Option<&str>) -> Result<DraftSummary>;
-    pub fn resolve(&self, options: ResolveOptions) -> Result<ResolveReport>; // built-in strategy, default policy
+    pub fn resolve(&self, options: ResolveOptions) -> Result<ResolveReport>; // the rules or a strategy of the project, default policy
     pub fn run(&self, run: RunId) -> Result<RunRecord>;                       // the task record
     pub fn identity_of(&self, observation: ObservationId) -> Result<Option<IdentityId>>;
     pub fn current_id(&self, id: IdentityId) -> Result<IdentityId>;          // follows redirects
@@ -476,7 +478,7 @@ Every path is under `/v1` and needs the bearer token, except `GET /healthz`. Sma
 | --- | --- | --- |
 | `GET /v1/info` | What the store holds: the manifest hash, the head of the log, and counts per entity type | JSON |
 | `POST /v1/ingest` | Adds rows as observations. The body is JSON with the rows as objects, or an Arrow stream with the other fields in the query string | The ingest run |
-| `POST /v1/runs` | Matches the new observations of one entity type. With no strategy, the server runs the rules and reconciles, and `commit` says whether the draft is committed (the default) or left for review. With a strategy of the caller's own, the run opens and waits for judgements | The match run, or `null` when nothing was new |
+| `POST /v1/runs` | Matches the new observations of one entity type, or with `rematch` all of them. With no strategy, the server runs the rules and reconciles, and `commit` says whether the draft is committed (the default) or left for review. The name of one of the project's user-code strategies, which `GET /v1/info` lists, runs that instead. With any other name the run opens and waits for the caller's judgements | The match run, or `null` when nothing was new. A rematch lists its suggestions |
 | `GET /v1/runs`, `GET /v1/runs/{run}` | Lists runs; reads one, optionally waiting for it to end | Runs |
 | `GET /v1/runs/{run}/candidates` | The candidate pairs of an open run with both sides' features | Arrow, or JSON when the `Accept` header asks for it |
 | `POST /v1/runs/{run}/judgements` | Stores judgements, as Arrow or JSON | A count |
@@ -521,38 +523,59 @@ Tradeoff: a server has to be run, backed up and secured, where a library needed 
 
 The engine embeds no Python or JavaScript runtime and never calls into one. When a project contains user code, the server runs it as a child process and exchanges files with it.
 
-A user-code strategy is a file under `strategies/`. `entities/company/strategies/splink.py` is the strategy `splink` for companies. A `.py` file runs with `uv run` and a `.ts` file with `bun run`. Each tool is a single binary that runs the file and resolves its dependencies ([uv](https://docs.astral.sh/uv/guides/scripts/), [bun](https://bun.com/docs/runtime/typescript); from their documentation, not tested). `spool build` installs the dependencies into the image, so nothing is downloaded at run time.
+A user-code strategy is a file under `strategies/`. `entities/company/strategies/splink.py` is the strategy `splink` for companies. A `.py` file runs with `uv run --script` and a `.ts` file with `bun run`. Each tool is a single binary that runs the file and resolves its dependencies: a Python file names its own in a comment at its top ([uv](https://docs.astral.sh/uv/guides/scripts/)), and `bun` fetches what a TypeScript file imports ([bun](https://bun.com/docs/runtime/typescript)). Files that belong to a strategy, such as a model, go in a directory beside it with the same name: `strategies/splink/model.json`. Anything else under `strategies/` is reported by `spool info` and not used.
+
+The manifest records each strategy with its runtime, its path and a SHA-256 of the file and of the files in its directory. That hash is the strategy's version in `spool.run`. Before a run the engine checks that the file on disk still has it, and refuses to run one that changed: the project is built and applied again first. `spool dev` does that as files are saved.
 
 The protocol is a directory of files per task:
 
 ```text
 $SPOOL_TASK_DIR/
-├── task.json             # run ID, entity type, strategy name, declaration version
-├── candidates.parquet    # written by the server: left_id, right_id, both sides' features
-└── judgements.parquet    # written by the user code: left_id, right_id, verdict, score, detail
+├── task.json             # protocol version, run ID, entity type, strategy, whether it is a rematch, feature columns
+├── candidates.parquet    # written by the engine: left_id, right_id, both sides' features as left_* and right_*
+├── features.parquet      # written by the engine: observation_id, is_new, identity_id, the feature columns
+├── judgements.parquet    # written by the user code: left_id, right_id, verdict, score, detail
+├── stdout.log
+└── stderr.log
 ```
 
-The server writes the inputs, starts the process with `SPOOL_TASK_DIR` set, waits, and reads the output. The exit code is the status and standard error is the log. IDs are strings in these files. Rust starts a command and never knows which language it is.
+The engine writes the inputs, starts the process in the project directory with `SPOOL_TASK_DIR` set, waits, and reads the output. The exit code is the status and standard error is the log. IDs are strings in these files. Rust starts a command and never knows which language it is. The judgements are stored under the checks a caller's judgements get through the API (section 4), so user code cannot name an unknown observation or, outside a rematch, judge two observations that both have an identity.
 
-The exchange was tested with DuckDB: the server process wrote the candidates file, a second process read it and wrote judgements, and the server read them back and found the row that named an unknown observation. The second process could not open the database file while the server held it.
+`candidates.parquet` holds the pairs the project's block rules found. `features.parquet` holds every observation of the type, which is what a strategy that finds its own pairs needs: Splink blocks for itself, and a nearest-neighbour search has no rules at all. `is_new` marks the observations the run is to place, and `identity_id` says where the others are. Both files are written for every task. A task that fails is kept, with its inputs and what the process printed, and the error names its directory. A task that succeeds is removed.
 
-A small helper per language hides the files:
+A small helper per language hides the files. The engine carries both and puts them where the process finds them, so a strategy imports its helper with nothing installed:
 
 ```python
-# entities/company/strategies/splink.py
+# entities/company/strategies/in_python.py
 from spool import strategy
 
 @strategy
-def judge(candidates):      # Arrow table: left_id, right_id, left_*, right_*
+def judge(candidates):      # pyarrow table: left_id, right_id, left_*, right_*
     ...                     # any Python: Splink, a classifier, an LLM call
     return judgements       # left_id, right_id, verdict, optional score and detail
 ```
 
+```ts
+// entities/company/strategies/in_typescript.ts
+import { strategy } from "spool-strategy";
+
+await strategy(async (task) => {
+  const pairs = await task.candidates();   // or task.features()
+  return pairs.map((pair) => ({ left_id: pair.left_id, right_id: pair.right_id, verdict: "match" }));
+});
+```
+
+The Python function is given what its parameters are named: `candidates`, `features` or `task`. It may return a list of dicts, a pyarrow table, or a pandas, polars or DuckDB result. The Python helper needs `pyarrow`, which the engine asks `uv` for. The TypeScript helper is built from `packages/strategy` into one file that includes a Parquet reader and writer ([hyparquet](https://github.com/hyparam/hyparquet) and hyparquet-writer, both MIT), and a test fails if the file the engine carries is not the one the package builds. Without `SPOOL_TASK_DIR` both helpers do nothing, so a strategy file can be imported in a test, and can be started ahead of time to fetch its dependencies.
+
+Tested with `uv` 0.13.8 and `bun` 1.4.4: the company fixture's rules written as a Python strategy and as a TypeScript strategy each commit the changesets the SQL rules commit, hash for hash.
+
+While the process runs the engine holds no lock on the store, so reads and other writes are served. One strategy runs at a time. A process has ten minutes by default (`--task-timeout`), after which it is stopped with everything it started, and its run fails. A run that fails for any reason changes nothing: the next run examines the same observations.
+
 Four rules keep this contained:
 
-1. **Workers stay inside the service.** They are a bounded pool of child processes, each with a timeout. Spool provisions no compute, holds no cloud credentials and starts no containers.
+1. **Workers stay inside the service.** They are child processes, one at a time, each with a timeout. Spool provisions no compute, holds no cloud credentials and starts no containers.
 2. **Tasks produce evidence only.** A task returns judgements, and later observations or feature columns. It never returns identity changes. The server alone reconciles and commits, in one transaction, so user code that crashes or hangs can fail a run and cannot corrupt an identity.
-3. **Only code built into the image runs.** The API takes data and the name of a strategy. It never takes code, so a caller cannot make the server run something new.
+3. **Only code built into the image runs.** The API takes data and the name of a strategy. It never takes code, so a caller cannot make the server run something new. A name the project does not have opens a run that waits for the caller's judgements, and the server runs nothing for it.
 4. **No workflow engine.** The pipeline is short and fixed: ingest, features, candidates, judgements, reconcile, commit. Each stage's output is stored per run, so after a restart a run resumes from its last finished stage. `spool.run` is the task record.
 
 There are four places an extension plugs in:
@@ -567,12 +590,13 @@ Reconciliation policy is configuration in the first versions. Someone who needs 
 Consequences to accept:
 
 - An image with user code carries `uv` or `bun` and the code's dependencies. A project of data files stays one binary.
-- User code is the operator's own code. It runs with the service's permissions, and Spool does not sandbox it.
+- User code is the operator's own code. It runs with the service's permissions, and Spool does not sandbox it. The one thing withheld is the API's bearer token, which is taken out of the process's environment.
 - Files cost a write and a read per task. That suits batches and is wrong for per-record calls, which stay with SQL rules.
-- A strategy that does its own blocking, as Splink does, needs feature rows and not candidate pairs. Whether the server writes those per task is settled in Milestone 4.
+- Every task gets both the candidate pairs and the feature rows, though most strategies read one of them. Writing only what a strategy asks for needs the strategy to say so before it runs, and is deferred.
+- A Python file named after a library it imports would be found in place of the library, because Python looks first in the directory of the file it runs. The engine turns that off (`PYTHONSAFEPATH`), which needs Python 3.11 or later, so `splink.py` can `import splink`.
 - Only the server opens the store. A studio or any other tool goes through the API.
 
-**Decide now:** child processes and no embedded runtime, Parquet files as the task protocol, tasks that produce evidence only, no code accepted through the API, workers inside the one service. **Defer:** separate worker containers that pull tasks over the same protocol, a streaming protocol, per-task resource limits beyond a timeout, policy plug-ins.
+**Decide now:** child processes and no embedded runtime, Parquet files as the task protocol, tasks that produce evidence only, no code accepted through the API, workers inside the one service. **Defer:** more than one strategy process at a time, separate worker containers that pull tasks over the same protocol, a streaming protocol, per-task resource limits beyond a timeout, a published package of the TypeScript helper's types, policy plug-ins.
 
 ## 7. JSON, Arrow, Parquet or DuckDB relations
 
@@ -605,7 +629,7 @@ Every external algorithm sits behind an adapter that ends at the judgements rela
 
 How specific tools would attach:
 
-- **Splink.** A Python strategy file reads features from Parquet, calls `predict` (or `predict_between` for new-versus-existing, which is marked experimental), and maps match weights to verdicts with the per-comparison levels in `detail`. Its model file is an opaque artefact in the project. It is the best candidate for the second strategy in Milestone 4 because it exercises the user-code path and gives a credible baseline.
+- **Splink.** Built in Milestone 4 as the second strategy, for the person project (`benchmarks/resolution/people/entities/person/strategies/splink.py`, with Splink 5.0). It reads the feature rows, scores the new records among themselves with `predict_within` and against the records that have an identity with `predict_between`, and never calls Splink's clustering. A match probability of 0.95 or more is a `match`, one from 0.5 up to that is an `unsure`, which is kept and changes nothing, and below 0.5 it says nothing: a low score is not evidence of a difference, and a `no_match` would be. The probability is the score, and `detail` has the match weight and the level each comparison fell into. The model is a file beside the strategy, written by a training script that is committed with it and reads no truth labels. No comparison in it adjusts for how common a value is, because Splink would count that in the records of each run, and the same pair would then score differently depending on what else had arrived.
 - **LLM matchers.** Verdict plus rationale, with `unsure` used freely. Selection-style prompts become one `match` and several `no_match` judgements.
 - **dedupe.** Use its pair scores; ignore its clustering.
 - **Zingg.** AGPL and Spark, so out of process only: read a Parquet export, write pairs. Low priority.
@@ -641,7 +665,7 @@ A person type has its own columns and its own rules, and runs through the same c
 
 The benchmark runs the ordinary path (ingest, match, reconcile, commit) and scores the committed state against a truth relation `(observation_id, true_entity)`. Nothing is special-cased, so a Rust, Python or TypeScript strategy is scored identically. `spool bench` uses the engine in-process, with no server, and starts user-code strategies the same way the server does.
 
-A benchmark is a **scenario**: an ordered list of steps (ingest this batch, apply this correction, switch to this strategy) with truth at each step. A single-batch dataset is a one-step scenario. The specification is a data file, not code.
+A benchmark is a **scenario**: an ordered list of steps (ingest this batch, apply this correction, switch to this strategy) with truth at each step. A single-batch dataset is a one-step scenario. The specification is a data file, not code. A scenario names the strategy its steps resolve with, a step may name its own, and `spool bench --strategy` names one for a scenario that names none. A step with `rematch = true` matches everything again, which is how a scenario switches strategy on data it has already resolved.
 
 A step ingests files, applies corrections, and resolves, in that order. A correction is what a reviewer would do, written against observations named by source and key: merge the identities of two observations, put one observation in the identity of another, split observations out of their identity, record a `must_link` or a `cannot_link`, or undo an earlier correction by name. Each is made through the call any caller would use. A step of corrections alone shows what the next run makes of them. Switching strategy within a scenario comes with the second strategy, in Milestone 4.
 
@@ -658,11 +682,15 @@ Identity metrics, across steps. These are the ones no public benchmark has:
 | ID stability | Of the observations present before and after a step, the share whose identity ID is unchanged. Reported strictly and after following redirects. |
 | Churn | Identities created, merged and observations reassigned per thousand new observations. The counts compare the state before the step with the state after it. |
 | Order sensitivity | Agreement between final partitions when the same batches arrive in different orders: the steps as written against the same steps reversed, both without corrections. Reported as the share of observations grouped with the same observations either way, and as the pairs together in both orders over the pairs together in either. |
-| Upgrade stability | After switching strategy on the same data: IDs retained, and suggested changes versus applied changes. Not measured until there is a second strategy. |
+| Upgrade stability | After a step that matches everything again with a strategy: of the observations that had an identity, the share whose identity ID is unchanged; the merges and splits the strategy suggested; and the changes to existing identities that were committed during the step. |
 | Split recovery | After a scripted wrong merge and a manual split, whether later batches keep the two sides apart: of the splits the scenario made, the share with no identity holding observations of both sides. |
 | Override persistence | Share of constraints still honoured after further batches and a strategy change: of the constraints the scenario recorded, those still in force with state that agrees with them. |
 
 The company fixture has a second scenario, `corrections.toml`, for these. Between the two batches a reviewer makes two wrong merges, undoes one, splits the other, merges a pair the rules missed, and at the end places the record that was left for review. With the default policy, split recovery and override persistence can only be complete: the policy never merges identities, and the validator rejects a changeset that breaks a constraint. They become gates when a strategy's suggestions are applied. Order sensitivity is already less than complete on this fixture. Reversing its two batches leaves 32 of 39 observations in the same group, because a record that arrives before the one that would have connected two identities gets an identity of its own, and the policy does not merge afterwards.
+
+Upgrade stability is complete with the default policy, as split recovery is: a rematch commits nothing about an identity that exists. What the metric shows is the other half, how much the new strategy would change. The person project has two scenarios for it. `upgrade.toml` resolves two batches of the committed sample with the rules and then has Splink judge every record again: all 16 records keep their identity, and Splink suggests two merges. One is right, a record the rules left on its own. The other would join two different people who share a surname, a city and most of an e-mail address. `fake-1000-upgrade.toml` does the same on `fake_1000`: 1,000 of 1,000 records keep their identity and 66 merges are suggested.
+
+Resolved from the start with Splink, `fake_1000` has pair recall 0.76 where the rules have 0.72, both with no false merge. On the sample's second batch Splink matches one new record to two identities, which is the wrong merge above arriving as evidence: the record is left for review, and no identity is merged.
 
 Datasets for day one: Splink's `fake_1000` as a smoke test, `historical_50k` and FEBRL as mid-sized checks, and a small hand-built company fixture committed to the repository that contains the hard cases of company resolution (aliases, legal versus trading names, domain changes, subsidiaries, records with few attributes), split into two batches. Each fixture is a project directory with its own entity type and rules. The three public datasets are person records and the fixture is company records, so the benchmark runs two unrelated entity types through one engine from the start. The public datasets are downloaded and checksummed at benchmark time, because their redistribution terms have not been confirmed.
 
@@ -746,7 +774,24 @@ Milestone 3 implements the operations that Milestones 1 and 2 only declared: `Me
 - The corrections scenario reports ID stability, churn, split recovery, override persistence and order sensitivity, and gives the same report for the same seed (`crates/spool-cli/tests`).
 - Each of these is reached through the API and through the TypeScript client (`crates/spool-cli/tests`, `packages/client/test`).
 
-Out of scope after Milestone 3: user code, probabilistic or LLM matching, extraction, relationships, canonical attribute views, the studio.
+Milestone 4 adds user code: `crates/spool/src/usercode.rs`, which runs a project's strategy files, the two helpers, `packages/strategy`, which the TypeScript helper is built from, and Splink as a strategy of the person project. Its exit criteria, each a test (those that start `uv` or `bun` run with `--include-ignored`):
+
+- The company fixture's rules written as a Python strategy and as a TypeScript strategy commit the changesets the SQL rules commit, with the same content hashes.
+- A strategy that fails, writes nothing, or does not finish in time fails its run, changes nothing, and leaves its task directory to be looked at. The next run examines the same observations.
+- Judgements from user code are checked as a caller's are: an unknown observation, or a pair of observations that both have an identity, is refused.
+- Only the file the manifest was compiled from runs. A file that changed is refused until the project is built again, and a name the project does not have runs nothing.
+- A strategy is started without the server's token, and with paths that do not depend on where the engine was started.
+- The engine answers reads and commits writes while a strategy runs.
+- A strategy that finds its own pairs is given every observation with its identity.
+- A rematch moves no observation that has an identity, and lists the merges and splits the strategy would make.
+- Splink resolves the person sample in two batches with no false merge, and leaves for review the record it matches to two identities. The same records give the same changesets.
+- Switching from the rules to Splink keeps every identity ID and reports upgrade stability, on the sample and on `fake_1000`.
+- On `fake_1000` Splink has higher pair recall than the rules and no false merge.
+- A project's strategies are listed by `info` and by the API, run through the server and through the TypeScript client, and a strategy that fails is reported as `strategy_failed` (`crates/spool-cli/tests`, `packages/client/test`).
+- `build` writes a Dockerfile that carries the runtimes the project's strategies need, and `build --install` starts each strategy once.
+- The TypeScript helper the engine carries is the one `packages/strategy` builds.
+
+Out of scope after Milestone 4: LLM matching, extraction, relationships, canonical attribute views, the studio, applying a rematch's suggestions automatically.
 
 Proposed roadmap:
 
@@ -767,13 +812,13 @@ Milestones 2 and 3 do not depend on each other. Sandbox synchronisation, initial
 | One server that owns the store; thin clients; one tenant, one writer; no native bindings | Richer authentication; a Python client; a published base image |
 | A project directory with path-derived names, compiled to a manifest; state outside the image | Mountable packages of entity types; Markdown instruction files |
 | Entity types declared by the project; feature tables generated from a query; rules as files; no built-in types | Feature columns from user code; client types generated from a manifest |
-| User code as child processes over Parquet files; evidence only; workers inside the service | Separate worker containers; a streaming protocol; per-task resource limits |
+| User code as child processes over Parquet files; evidence only; workers inside the service; only files the manifest was compiled from run | More than one strategy process at a time; separate worker containers; a streaming protocol; per-task resource limits |
 | Judgements and draft changesets in place of proposals | Entity-centric judgements; calibrated probabilities |
 | Review items kept in the store and examined again by later runs, until a changeset places their observations or a reviewer dismisses them | Reopening a dismissed review item |
 | Minted UUIDv7 identity IDs, permanent redirects, content-derived observation IDs | Public ID formatting; binary IDs in Arrow |
 | Changeset log as truth, projection in the same transaction, per-operation preconditions | Compaction, hash chaining |
 | Operation set: create, assign, merge, constrain, unconstrain, reinstate; split and undo as changesets the engine writes | Constraints that choose between identities during a run; operations on more than two observations |
-| Default policy never merges or splits existing identities automatically | Policy plug-ins; automatic merges above a threshold |
+| Default policy never merges or splits existing identities automatically; a rematch suggests and does not change | Policy plug-ins; automatic merges above a threshold; applying suggestions in bulk |
 | JSON and Arrow as the only wire forms; the run ID as the task handle; drafts stored on the server | Streaming run progress; an ad hoc SQL endpoint |
 | Scenario-based benchmark with identity metrics and a CI baseline | GLEIF scenario generator; extraction and end-to-end suites |
 | Two library crates and one for the command and server; injected ID generator and clock; format version in the file; the prebuilt DuckDB library found by run path | Further crate splits; a statically linked DuckDB; indexes and keys |

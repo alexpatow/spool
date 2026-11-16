@@ -593,8 +593,8 @@ mod tests {
         let first = std::env::split_paths(path.as_deref().unwrap())
             .next()
             .unwrap();
-        assert!(first.join("spool/index.js").is_file());
-        assert!(first.join("spool/package.json").is_file());
+        assert!(first.join("spool-strategy/index.js").is_file());
+        assert!(first.join("spool-strategy/package.json").is_file());
     }
 
     #[test]
