@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 
 use spool_core::{
-    ChangesetId, IdentityId, Rejection, ReplayError, RunId, Seq, StateError, ValidationError,
+    ChangesetId, DocumentId, IdentityId, Rejection, ReplayError, RunId, Seq, StateError,
+    ValidationError,
 };
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -86,12 +87,38 @@ pub enum Error {
     #[error("strategy `{strategy}`: {message}")]
     Strategy { strategy: String, message: String },
 
+    /// The project has no extractor of that name.
+    #[error(
+        "the project has no extractor `{extractor}`; it has {}",
+        match known.as_slice() {
+            [] => "none".to_owned(),
+            names => names.iter().map(|name| format!("`{name}`")).collect::<Vec<_>>().join(", "),
+        }
+    )]
+    UnknownExtractor {
+        extractor: String,
+        known: Vec<String>,
+    },
+
+    /// An extractor could not be run, or what it wrote was refused.
+    #[error("extractor `{extractor}`: {message}")]
+    Extractor { extractor: String, message: String },
+
     /// The manifest names user code and the engine was not told where the
     /// project's files are.
     #[error(
         "strategy `{0}` is user code, and this engine was not told where the project directory is"
     )]
     NoUserCode(String),
+
+    #[error("there is no document {0}")]
+    UnknownDocument(DocumentId),
+
+    #[error("documents rejected: {0}")]
+    Documents(String),
+
+    #[error("mentions rejected: {0}")]
+    Mentions(String),
 
     #[error("rows rejected: {0}")]
     Rows(String),

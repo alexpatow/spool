@@ -9,6 +9,8 @@ use duckdb::arrow::array::{
 use duckdb::arrow::compute::cast;
 use duckdb::arrow::datatypes::{DataType, Float64Type, Int64Type, UInt64Type};
 use duckdb::arrow::record_batch::RecordBatch;
+use duckdb::vtab::arrow::ArrowBatchRegistration;
+use duckdb::{Connection, params};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use spool_core::{ObservationId, RunId};
@@ -155,6 +157,55 @@ pub(crate) fn stage(
         ("payload", Column::Text(payloads)),
         ("evidence", Column::Text(evidences)),
     ])?))
+}
+
+/// Stores staged observations of one entity type from one source, and
+/// returns how many were new.
+///
+/// A new observation under a key the source has used before is the next
+/// version of that row or mention. It supersedes the latest version the
+/// store holds, or the one before it in the batch.
+pub(crate) fn insert(
+    conn: &Connection,
+    entity_type: &str,
+    source: &str,
+    now: i64,
+    run: RunId,
+    staged: RecordBatch,
+) -> Result<u64> {
+    let inserted = conn.execute(
+        "INSERT INTO spool.observation
+         SELECT n.observation_id, $1, $2, n.source_key,
+                CASE WHEN n.source_key IS NOT NULL THEN coalesce(
+                  lag(n.observation_id) OVER (PARTITION BY n.source_key ORDER BY n.ord),
+                  latest.observation_id) END,
+                n.payload::JSON, n.evidence::JSON, NULL, make_timestamptz($3), $4
+         FROM (
+           SELECT s.observation_id::UUID AS observation_id, s.source_key,
+                  s.payload, s.evidence, s.ord
+           FROM arrow($5) s
+           WHERE NOT EXISTS (
+             SELECT 1 FROM spool.observation o
+             WHERE o.observation_id = s.observation_id::UUID)
+         ) n
+         LEFT JOIN (
+           SELECT o.source_key, o.observation_id
+           FROM spool.observation o
+           WHERE o.entity_type = $1 AND o.source_id = $2
+             AND o.source_key IS NOT NULL
+             AND NOT EXISTS (
+               SELECT 1 FROM spool.observation later
+               WHERE later.supersedes = o.observation_id)
+         ) latest ON latest.source_key = n.source_key",
+        params![
+            entity_type,
+            source,
+            now,
+            run.0 as i64,
+            &ArrowBatchRegistration::new(staged)
+        ],
+    )?;
+    Ok(inserted as u64)
 }
 
 /// Reads one Arrow column as JSON values. Text, booleans and numbers keep

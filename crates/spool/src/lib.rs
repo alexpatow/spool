@@ -26,6 +26,7 @@
 
 mod batch;
 mod bench;
+mod documents;
 mod drafts;
 mod engine;
 mod error;
@@ -49,7 +50,14 @@ mod usercode;
 pub use duckdb::arrow;
 pub use spool_core as core;
 
-pub use bench::{BenchReport, CorrectionSummary, IngestSummary, Scenario, StepReport};
+pub use bench::{
+    BenchReport, CorrectionSummary, DocumentsSummary, ExtractSummary, IngestSummary, Scenario,
+    StepReport,
+};
+pub use documents::{
+    DocumentExtraction, DocumentFilter, DocumentRecord, ExtractOptions, ExtractReport,
+    ExtractorRef, NewDocument, locator,
+};
 pub use drafts::{DraftFilter, DraftRecord, DraftStatus, DraftSummary};
 pub use engine::{
     ApplyReport, Authored, ConstraintFilter, Disposition, Engine, JudgementCounts, MintedIds,
@@ -63,14 +71,14 @@ pub use lookup::{
     ObservationRecord, StoreInfo, TypeInfo,
 };
 pub use metrics::{
-    BCubed, Churn, IdStability, Metrics, OrderSensitivity, OverridePersistence, PairMetrics,
-    SplitRecovery, UpgradeStability,
+    BCubed, Churn, ExtractionMetrics, IdStability, Metrics, OrderSensitivity, OverridePersistence,
+    PairMetrics, SplitRecovery, UpgradeStability,
 };
 pub use project::{
-    Declaration, EntityTypeManifest, EntityTypeSource, FeatureColumn, Manifest, Project, Rule,
-    RuleSet, Runtime, SqlFile, Strategy, StrategySource,
+    Declaration, EntityTypeManifest, EntityTypeSource, Extractor, FeatureColumn, Manifest, Project,
+    Rule, RuleSet, Runtime, SqlFile, Strategy, StrategySource,
 };
 pub use review::{Dismissal, ReviewFilter, ReviewKind, ReviewRecord, ReviewStatus};
 pub use rows::Rows;
 pub use runs::{RunFilter, RunKind, RunRecord, RunStatus};
-pub use usercode::UserCode;
+pub use usercode::{Code, UserCode};

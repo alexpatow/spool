@@ -1,9 +1,10 @@
-//! User code: strategies that are files in the project, run as child
-//! processes.
+//! User code: strategies and extractors that are files in the project, run
+//! as child processes.
 //!
 //! The engine embeds no Python or JavaScript runtime. It writes a directory
 //! of files, starts a command with `SPOOL_TASK_DIR` set to it, waits, and
-//! reads the judgements the command left there:
+//! reads what the command left there. A strategy is given candidate pairs
+//! and writes judgements:
 //!
 //! ```text
 //! $SPOOL_TASK_DIR/
@@ -15,14 +16,25 @@
 //! └── stderr.log
 //! ```
 //!
+//! An extractor is given documents and writes the mentions it found in them:
+//!
+//! ```text
+//! $SPOOL_TASK_DIR/
+//! ├── task.json             the run, the extractor, the entity types and what to look for
+//! ├── documents.parquet     document_id, source, key, uri, text
+//! ├── mentions.parquet      written by the user code: document_id, entity_type, start, end, attributes
+//! ├── stdout.log
+//! └── stderr.log
+//! ```
+//!
 //! The exit status is the result and standard error is the log. A task that
 //! fails leaves its directory behind to be looked at; one that succeeds is
 //! removed.
 //!
 //! A `.py` file runs with `uv run` and a `.ts` file with `bun run`. Each
-//! finds a module that hides the files from the strategy's author: `spool`
-//! in Python and `spool-strategy` in TypeScript. This crate carries both
-//! and writes them out beside the tasks. The TypeScript one is built from
+//! finds a module that hides the files from the code's author: `spool` in
+//! Python and `spool-strategy` in TypeScript. This crate carries both and
+//! writes them out beside the tasks. The TypeScript one is built from
 //! `packages/strategy`.
 
 use std::ffi::OsString;
@@ -36,7 +48,7 @@ use serde_json::json;
 use spool_core::{EntityType, RunId};
 
 use crate::error::{Error, Result};
-use crate::project::{FeatureColumn, Runtime, Strategy, strategy_hash};
+use crate::project::{Extractor, FeatureColumn, Runtime, Strategy, strategy_hash};
 
 /// The version of the task directory's layout. A helper refuses a task of
 /// another version.
@@ -48,25 +60,93 @@ const TYPESCRIPT_HELPER: &str = include_str!("usercode/spool.js");
 pub(crate) const CANDIDATES: &str = "candidates.parquet";
 pub(crate) const FEATURES: &str = "features.parquet";
 pub(crate) const JUDGEMENTS: &str = "judgements.parquet";
+pub(crate) const DOCUMENTS: &str = "documents.parquet";
+pub(crate) const MENTIONS: &str = "mentions.parquet";
+
+/// One file of user code as the manifest names it: a strategy or an
+/// extractor. Both are found, checked and started the same way.
+#[derive(Clone, Debug)]
+pub struct Code {
+    kind: Kind,
+    name: String,
+    runtime: Runtime,
+    file: String,
+    hash: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kind {
+    Strategy,
+    Extractor,
+}
+
+impl Kind {
+    fn plural(self) -> &'static str {
+        match self {
+            Kind::Strategy => "strategies",
+            Kind::Extractor => "extractors",
+        }
+    }
+}
+
+impl From<&Strategy> for Code {
+    fn from(strategy: &Strategy) -> Self {
+        Self {
+            kind: Kind::Strategy,
+            name: strategy.name.clone(),
+            runtime: strategy.runtime,
+            file: strategy.file.clone(),
+            hash: strategy.hash.clone(),
+        }
+    }
+}
+
+impl From<&Extractor> for Code {
+    fn from(extractor: &Extractor) -> Self {
+        Self {
+            kind: Kind::Extractor,
+            name: extractor.name.clone(),
+            runtime: extractor.runtime,
+            file: extractor.file.clone(),
+            hash: extractor.hash.clone(),
+        }
+    }
+}
+
+impl Code {
+    fn fail(&self, message: String) -> Error {
+        match self.kind {
+            Kind::Strategy => Error::Strategy {
+                strategy: self.name.clone(),
+                message,
+            },
+            Kind::Extractor => Error::Extractor {
+                extractor: self.name.clone(),
+                message,
+            },
+        }
+    }
+}
 
 /// Where the engine finds a project's user code, and how it runs it.
 ///
 /// An engine that was not given this runs no user code: a manifest names
-/// strategy files by their path from the project directory, and the engine
-/// reads nothing but the manifest unless it is told where that directory is.
+/// the files of strategies and extractors by their path from the project
+/// directory, and the engine reads nothing but the manifest unless it is
+/// told where that directory is.
 #[derive(Clone, Debug)]
 pub struct UserCode {
-    /// The project directory. Strategy files are found under it, and it is
-    /// the working directory of the processes that run them.
+    /// The project directory. The files of user code are found under it,
+    /// and it is the working directory of the processes that run them.
     pub project_dir: PathBuf,
     /// Task directories are made here.
     pub work_dir: PathBuf,
-    /// How long a strategy may run. One that takes longer is stopped, with
-    /// everything it started, and its run fails.
+    /// How long a strategy or an extractor may run. One that takes longer
+    /// is stopped, with everything it started, and its run fails.
     pub timeout: Duration,
-    /// The `uv` command, which runs `.py` strategies.
+    /// The `uv` command, which runs `.py` files.
     pub uv: OsString,
-    /// The `bun` command, which runs `.ts` strategies.
+    /// The `bun` command, which runs `.ts` files.
     pub bun: OsString,
 }
 
@@ -75,7 +155,7 @@ impl UserCode {
 
     /// User code of the project at `project_dir`, with tasks under the
     /// system's temporary directory, `uv` and `bun` as the search path finds
-    /// them, and ten minutes for a strategy to finish.
+    /// them, and ten minutes for a strategy or an extractor to finish.
     pub fn new(project_dir: impl Into<PathBuf>) -> Self {
         Self {
             project_dir: project_dir.into(),
@@ -86,20 +166,21 @@ impl UserCode {
         }
     }
 
-    /// The command that runs a strategy file. With `task` unset the file is
-    /// run with nothing to do, which is how its dependencies are installed
-    /// ahead of time.
-    pub fn command(&self, strategy: &Strategy, task: Option<&Path>) -> Result<Command> {
+    /// The command that runs a strategy's or an extractor's file. With
+    /// `task` unset the file is run with nothing to do, which is how its
+    /// dependencies are installed ahead of time.
+    pub fn command(&self, code: impl Into<Code>, task: Option<&Path>) -> Result<Command> {
+        let code = code.into();
         // The command runs in the project directory, so a path it is given
         // must not depend on where the engine was started.
         let absolute = |path: &Path| std::path::absolute(path).map_err(Error::io(path));
         let helpers = absolute(&self.helpers()?)?;
-        let file = absolute(&self.file(strategy))?;
-        let mut command = match strategy.runtime {
+        let file = absolute(&self.file(&code))?;
+        let mut command = match code.runtime {
             Runtime::Python => {
                 let mut command = Command::new(&self.uv);
                 // The helper reads and writes Parquet with pyarrow, so it is
-                // the launcher that asks for it, not every strategy file.
+                // the launcher that asks for it, not every file of user code.
                 command.args(["run", "--quiet", "--with", "pyarrow", "--script"]);
                 command.arg(&file);
                 command.env(
@@ -107,7 +188,7 @@ impl UserCode {
                     search_path(&helpers.join("python"), "PYTHONPATH"),
                 );
                 // The project directory may be read-only, and compiled files
-                // beside a strategy are not part of it.
+                // beside the code are not part of it.
                 command.env("PYTHONDONTWRITEBYTECODE", "1");
                 // Python puts the directory of the file it runs first among
                 // the places it imports from, so `splink.py` would be what
@@ -135,26 +216,24 @@ impl UserCode {
         Ok(command)
     }
 
-    /// Runs a strategy file once with nothing to do, so that `uv` or `bun`
-    /// fetches what it depends on, and a file that cannot start fails now
-    /// and not during a run.
-    pub fn install(&self, strategy: &Strategy) -> Result<()> {
-        self.check(strategy)?;
-        let mut command = self.command(strategy, None)?;
+    /// Runs a strategy's or an extractor's file once with nothing to do, so
+    /// that `uv` or `bun` fetches what it depends on, and a file that cannot
+    /// start fails now and not during a run.
+    pub fn install(&self, code: impl Into<Code>) -> Result<()> {
+        let code = code.into();
+        self.check(&code)?;
+        let mut command = self.command(code.clone(), None)?;
         let program = command.get_program().to_string_lossy().into_owned();
-        let fail = |message: String| Error::Strategy {
-            strategy: strategy.name.clone(),
-            message,
-        };
         let output = command.stdin(Stdio::null()).output().map_err(|error| {
-            fail(format!(
-                "`{program}`, which runs {} strategies, could not be started: {error}",
-                strategy.runtime
+            code.fail(format!(
+                "`{program}`, which runs {} {}, could not be started: {error}",
+                code.runtime,
+                code.kind.plural()
             ))
         })?;
         if !output.status.success() {
             let said = String::from_utf8_lossy(&output.stderr);
-            return Err(fail(format!(
+            return Err(code.fail(format!(
                 "it does not start: {}:\n{}",
                 output.status,
                 said.trim_end()
@@ -163,33 +242,29 @@ impl UserCode {
         Ok(())
     }
 
-    fn file(&self, strategy: &Strategy) -> PathBuf {
+    fn file(&self, code: &Code) -> PathBuf {
         let mut path = self.project_dir.clone();
-        path.extend(strategy.file.split('/'));
+        path.extend(code.file.split('/'));
         path
     }
 
-    /// Checks that a strategy's file is the one the manifest was compiled
-    /// from. Only code that was built into the manifest runs: a file that
-    /// changed since is refused until the project is built again.
-    pub(crate) fn check(&self, strategy: &Strategy) -> Result<()> {
-        let file = self.file(strategy);
-        let fail = |message: String| Error::Strategy {
-            strategy: strategy.name.clone(),
-            message,
-        };
+    /// Checks that the file is the one the manifest was compiled from. Only
+    /// code that was built into the manifest runs: a file that changed since
+    /// is refused until the project is built again.
+    pub(crate) fn check(&self, code: &Code) -> Result<()> {
+        let file = self.file(code);
         if !file.is_file() {
-            return Err(fail(format!(
+            return Err(code.fail(format!(
                 "its file {} is not in the project directory {}",
-                strategy.file,
+                code.file,
                 self.project_dir.display()
             )));
         }
-        if strategy_hash(&file)? != strategy.hash {
-            return Err(fail(format!(
+        if strategy_hash(&file)? != code.hash {
+            return Err(code.fail(format!(
                 "{} or a file that belongs to it has changed since the manifest was compiled; \
                  build the project again and apply it",
-                strategy.file
+                code.file
             )));
         }
         Ok(())
@@ -230,7 +305,7 @@ impl UserCode {
             let _ = std::fs::remove_dir_all(&partial);
             if !dir.is_dir() {
                 return Err(Error::io(&dir)(std::io::Error::other(
-                    "the strategy helpers could not be written",
+                    "the user-code helpers could not be written",
                 )));
             }
         }
@@ -258,34 +333,37 @@ pub(crate) struct TaskInfo<'a> {
     pub features: &'a [FeatureColumn],
 }
 
-/// One run of a strategy: its directory and the command that works in it.
+/// One entity type as an extraction task describes it.
+pub(crate) struct ExtractType<'a> {
+    pub name: &'a str,
+    /// The text of the type's `extract.md`, if it has one.
+    pub instructions: Option<&'a str>,
+    pub features: &'a [FeatureColumn],
+}
+
+/// One run of a strategy or an extractor: its directory and the command
+/// that works in it.
 pub(crate) struct Task {
     pub dir: PathBuf,
-    strategy: Strategy,
+    code: Code,
     command: Command,
     user_code: UserCode,
+    /// The file the code is to leave in the directory.
+    output: &'static str,
 }
 
 impl Task {
-    /// Makes the task's directory and writes `task.json`. The Parquet files
-    /// are the engine's to write, since only it reads the store.
+    /// Makes the directory of a strategy's task and writes `task.json`. The
+    /// Parquet files are the engine's to write, since only it reads the
+    /// store.
     pub(crate) fn create(
         user_code: &UserCode,
         strategy: &Strategy,
         info: &TaskInfo,
     ) -> Result<Self> {
-        let dir = user_code.work_dir.join(format!(
-            "run-{}-{}-{}",
-            info.run,
-            std::process::id(),
-            COUNTER.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(&dir).map_err(Error::io(&dir))?;
-        // The directory is named in an environment variable and in SQL, so
-        // it is made absolute once, here.
-        let dir = std::fs::canonicalize(&dir).map_err(Error::io(&dir))?;
         let description = json!({
             "protocol": PROTOCOL,
+            "kind": "match",
             "run": info.run,
             "entity_type": info.entity_type,
             "strategy": { "name": strategy.name, "version": strategy.hash },
@@ -295,16 +373,72 @@ impl Task {
             "inputs": { "candidates": CANDIDATES, "features": FEATURES },
             "output": JUDGEMENTS,
         });
+        Self::write(
+            user_code,
+            strategy.into(),
+            info.run,
+            description,
+            JUDGEMENTS,
+        )
+    }
+
+    /// Makes the directory of an extractor's task and writes `task.json`.
+    pub(crate) fn extract(
+        user_code: &UserCode,
+        extractor: &Extractor,
+        run: RunId,
+        entity_types: &[ExtractType],
+    ) -> Result<Self> {
+        let entity_types: Vec<_> = entity_types
+            .iter()
+            .map(|entity_type| {
+                json!({
+                    "name": entity_type.name,
+                    "instructions": entity_type.instructions,
+                    "features": entity_type.features,
+                })
+            })
+            .collect();
+        let description = json!({
+            "protocol": PROTOCOL,
+            "kind": "extract",
+            "run": run,
+            "extractor": { "name": extractor.name, "version": extractor.hash },
+            "entity_types": entity_types,
+            "inputs": { "documents": DOCUMENTS },
+            "output": MENTIONS,
+        });
+        Self::write(user_code, extractor.into(), run, description, MENTIONS)
+    }
+
+    fn write(
+        user_code: &UserCode,
+        code: Code,
+        run: RunId,
+        description: serde_json::Value,
+        output: &'static str,
+    ) -> Result<Self> {
+        let dir = user_code.work_dir.join(format!(
+            "run-{}-{}-{}",
+            run,
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).map_err(Error::io(&dir))?;
+        // The directory is named in an environment variable and in SQL, so
+        // it is made absolute once, here.
+        let dir = std::fs::canonicalize(&dir).map_err(Error::io(&dir))?;
         let path = dir.join("task.json");
         let mut text =
             serde_json::to_string_pretty(&description).expect("a task serialises to JSON");
         text.push('\n');
         std::fs::write(&path, text).map_err(Error::io(&path))?;
         Ok(Self {
-            command: user_code.command(strategy, Some(&dir))?,
+            command: user_code.command(code.clone(), Some(&dir))?,
             dir,
-            strategy: strategy.clone(),
+            code,
             user_code: user_code.clone(),
+            output,
         })
     }
 
@@ -313,13 +447,13 @@ impl Task {
     }
 
     fn fail(&self, message: String) -> Error {
-        Error::Strategy {
-            strategy: self.strategy.name.clone(),
-            message: format!("{message}. Its task is kept in {}", self.dir.display()),
-        }
+        self.code.fail(format!(
+            "{message}. Its task is kept in {}",
+            self.dir.display()
+        ))
     }
 
-    /// Runs the strategy and waits for it. On success `judgements.parquet`
+    /// Runs the code and waits for it. On success the file it was to write
     /// is there to be read.
     ///
     /// The file is checked against the manifest once more, here, where it
@@ -327,7 +461,7 @@ impl Task {
     /// first, and the last may start long after: the run records the hash
     /// in the manifest, so that must be the file that runs.
     pub(crate) fn execute(&mut self) -> Result<()> {
-        if let Err(error) = self.user_code.check(&self.strategy) {
+        if let Err(error) = self.user_code.check(&self.code) {
             // Nothing ran, so there is nothing in the task to look at.
             let _ = std::fs::remove_dir_all(&self.dir);
             return Err(error);
@@ -346,8 +480,9 @@ impl Task {
         let program = self.command.get_program().to_string_lossy().into_owned();
         let finished = run(&mut self.command, timeout).map_err(|error| {
             self.fail(format!(
-                "`{program}`, which runs {} strategies, could not be started: {error}",
-                self.strategy.runtime
+                "`{program}`, which runs {} {}, could not be started: {error}",
+                self.code.runtime,
+                self.code.kind.plural()
             ))
         })?;
         match finished {
@@ -363,26 +498,29 @@ impl Task {
                 };
                 Err(self.fail(format!("it failed with {status}{said}")))
             }
-            Finished::Exited(_) if !self.path(JUDGEMENTS).is_file() => {
-                Err(self.fail(format!("it finished without writing {JUDGEMENTS}")))
+            Finished::Exited(_) if !self.path(self.output).is_file() => {
+                Err(self.fail(format!("it finished without writing {}", self.output)))
             }
             Finished::Exited(_) => Ok(()),
         }
     }
 
-    /// What went wrong with the judgements the strategy wrote, as an error
-    /// that says where the task is.
+    /// What went wrong with what the code wrote, as an error that says
+    /// where the task is.
     pub(crate) fn rejected(&self, error: Error) -> Error {
         match error {
             Error::Judgements(message) => {
                 self.fail(format!("its judgements were refused: {message}"))
             }
-            Error::Duckdb(error) => self.fail(format!("{JUDGEMENTS} could not be read: {error}")),
+            Error::Mentions(message) => self.fail(format!("its mentions were refused: {message}")),
+            Error::Duckdb(error) => {
+                self.fail(format!("{} could not be read: {error}", self.output))
+            }
             other => other,
         }
     }
 
-    /// Removes the task's directory, once its judgements are in the store.
+    /// Removes the task's directory, once what it wrote is in the store.
     pub(crate) fn remove(self) {
         let _ = std::fs::remove_dir_all(&self.dir);
     }
@@ -396,7 +534,7 @@ fn seconds(duration: Duration) -> String {
 }
 
 /// The last lines of a log, for an error message. Only the end of the file
-/// is read: a strategy can write as much as the disk holds before it fails.
+/// is read: user code can write as much as the disk holds before it fails.
 fn tail(path: &Path) -> String {
     const BYTES: u64 = 4096;
     const LINES: usize = 20;

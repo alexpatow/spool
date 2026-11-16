@@ -1,0 +1,27 @@
+# The news items of `scenario.toml`, with the `suffix` extractor written in
+# TypeScript. It finds the same mentions, so the report is the same.
+
+project = "."
+
+[truth]
+mentions = "mentions.csv"
+
+[[step]]
+name = "batch one"
+
+[[step.documents]]
+dir = "documents/batch-1"
+source = "news"
+
+[[step.extract]]
+extractor = "suffix_ts"
+
+[[step]]
+name = "batch two"
+
+[[step.documents]]
+dir = "documents/batch-2"
+source = "news"
+
+[[step.extract]]
+extractor = "suffix_ts"

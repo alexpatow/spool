@@ -126,11 +126,26 @@ fn a_scenario_file_is_checked_when_it_is_loaded() {
     let cases = [
         (
             "[truth]\nfile = \"t.csv\"\ncolumn = \"work\"\n[[step]]\nname = \"all\"\ningest = []\n",
-            "exactly one of `file` and `column`",
+            "[truth] has `file` or `column`, not both",
         ),
         (
             "[truth]\n[[step]]\nname = \"all\"\ningest = []\n",
-            "exactly one of `file` and `column`",
+            "[truth] needs `file`, `column` or `mentions`",
+        ),
+        (
+            "[truth]\nmentions = \"mentions.csv\"\n[[step]]\nname = \"all\"\n[[step.ingest]]\n\
+             file = \"papers.csv\"\nsource = \"library\"\nentity_type = \"paper\"\nkey = \"id\"\n",
+            "step `all` ingests rows, and [truth] has no `file` or `column`",
+        ),
+        (
+            "[truth]\nmentions = \"mentions.csv\"\n[[step]]\nname = \"all\"\n[[step.documents]]\n\
+             dir = \"documents\"\n",
+            "missing field `source`",
+        ),
+        (
+            "[truth]\nmentions = \"mentions.csv\"\n[[step]]\nname = \"all\"\n[[step.extract]]\n\
+             source = \"shelf\"\n",
+            "missing field `extractor`",
         ),
         (
             "[truth]\ncolumn = \"work\"\n[[step]]\nname = \"all\"\n[[step.ingest]]\n\
@@ -465,6 +480,117 @@ fn corrections_are_checked_when_the_scenario_is_loaded() {
             ),
         );
         let message = scenario_error(Scenario::load(dir.path().join("bench")));
+        assert!(
+            message.contains(expected),
+            "expected `{expected}` in: {message}"
+        );
+    }
+}
+
+/// A scenario under `<root>/bench` that stores two documents and labels the
+/// papers they mention.
+fn shelf(root: &Path, labels: &str) {
+    project(root);
+    write(root, "bench/documents/a.txt", "📚 On Spools was reprinted.");
+    write(root, "bench/documents/b.txt", "See On Spools, and Threads.");
+    write(root, "bench/documents/.hidden", "not a document");
+    write(root, "bench/mentions.csv", labels);
+    write(
+        root,
+        "bench/scenario.toml",
+        "[truth]\nmentions = \"mentions.csv\"\n\n[[step]]\nname = \"all\"\n\n\
+         [[step.documents]]\ndir = \"documents\"\nsource = \"shelf\"\n",
+    );
+}
+
+const LABELS: &str = "\
+source,document,start,end,entity_type,true_entity,text
+shelf,a.txt,2,11,paper,w1,On Spools
+shelf,b.txt,4,13,paper,w1,On Spools
+shelf,b.txt,19,26,paper,w2,Threads
+";
+
+#[test]
+fn documents_are_stored_and_their_labelled_mentions_are_what_an_extractor_should_find() {
+    let dir = tempfile::tempdir().unwrap();
+    shelf(dir.path(), LABELS);
+    let report = run(dir.path()).unwrap();
+    let step = &report.steps[0];
+
+    // Every file but a hidden one is a document, and its name is its key.
+    assert_eq!(step.documents.len(), 1);
+    let stored = &step.documents[0];
+    assert_eq!(
+        (stored.source.as_str(), stored.received, stored.inserted),
+        ("shelf", 2, 2)
+    );
+    assert!(step.ingest.is_empty() && step.extract.is_empty());
+
+    // Nothing read the documents, so every labelled mention is missed, and
+    // precision has nothing to be a share of.
+    let extraction = step.extraction.as_ref().unwrap();
+    assert_eq!(
+        (
+            extraction.labelled,
+            extraction.extracted,
+            extraction.correct
+        ),
+        (3, 0, 0)
+    );
+    assert_eq!(extraction.precision, None);
+    assert_eq!(extraction.recall, Some(0.0));
+    assert_eq!(extraction.f1, Some(0.0));
+    // And there is no observation for resolution to be scored on.
+    assert_eq!(step.metrics.observations, 0);
+
+    // A scenario without labelled mentions does not report extraction.
+    let rows = tempfile::tempdir().unwrap();
+    project(rows.path());
+    write(rows.path(), "bench/papers.csv", PAPERS);
+    write(
+        rows.path(),
+        "bench/scenario.toml",
+        &scenario("file = \"papers.csv\""),
+    );
+    assert_eq!(run(rows.path()).unwrap().steps[0].extraction, None);
+}
+
+#[test]
+fn labelled_mentions_are_checked_against_the_documents() {
+    let cases = [
+        (
+            "source,document,start,end,true_entity\nshelf,a.txt,2,11,w1\n",
+            "needs the columns `source`, `document`, `start`, `end`, `entity_type` and `true_entity`",
+        ),
+        (
+            "source,document,start,end,entity_type,true_entity\nshelf,a.txt,two,11,paper,w1\n",
+            "line 2: `start` is not a position",
+        ),
+        (
+            "source,document,start,end,entity_type,true_entity\nshelf,a.txt,2,11,paper,\n",
+            "line 2 has no `true_entity`",
+        ),
+        // Positions count code points: the emoji is one, and the label that
+        // counts it as two is off by one.
+        (
+            "source,document,start,end,entity_type,true_entity,text\n\
+             shelf,a.txt,3,12,paper,w1,On Spools\n",
+            "the labelled mention of `w1` at 3-12 in document `a.txt` of `shelf`: \
+             the label says the text there is `On Spools`, and it is `n Spools `",
+        ),
+        (
+            "source,document,start,end,entity_type,true_entity\nshelf,a.txt,20,40,paper,w1\n",
+            "the document is 26 long",
+        ),
+        (
+            "source,document,start,end,entity_type,true_entity\nshelf,a.txt,11,11,paper,w1\n",
+            "the document is 26 long",
+        ),
+    ];
+    for (labels, expected) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        shelf(dir.path(), labels);
+        let message = scenario_error(run(dir.path()));
         assert!(
             message.contains(expected),
             "expected `{expected}` in: {message}"

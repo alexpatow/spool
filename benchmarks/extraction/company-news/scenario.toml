@@ -1,0 +1,44 @@
+# Companies named in news items, found by an extractor and then resolved.
+#
+# Every company and every news item here is invented. The items arrive in two
+# batches and hold the cases that make extraction and resolution hard:
+#
+#   a name without its legal form   "Northwind Traders", "Brightwave", "Halden Freight"
+#   a word before the name          "Yesterday Brightwave Inc", "Die Kestrel Analytics AG"
+#   something that is no company    "the Falcon Ltd edition smartwatch"
+#   other alphabets and an emoji    "Société Générale de Câbles SA", "Müller & Söhne GmbH", "🚀"
+#   accents dropped by a wire       "Muller & Sohne GmbH" is "Müller & Söhne GmbH"
+#   a short name                    "Northwind" is "Northwind Traders Ltd"
+#   a similar name                  "Halden Logistics Ltd" is not "Halden Freight Corp"
+#   a shared name                   two unrelated companies are both "Pioneer Supplies Ltd"
+#
+# `mentions.csv` labels every place an item names a company, and which company
+# it is. This scenario runs the `suffix` extractor, so it measures extraction,
+# and resolution over what extraction got right. `gold.toml` runs the same
+# items through an extractor that reads the labels, which measures resolution
+# alone.
+
+project = "."
+
+[truth]
+mentions = "mentions.csv"
+
+[[step]]
+name = "batch one"
+
+[[step.documents]]
+dir = "documents/batch-1"
+source = "news"
+
+[[step.extract]]
+extractor = "suffix"
+
+[[step]]
+name = "batch two"
+
+[[step.documents]]
+dir = "documents/batch-2"
+source = "news"
+
+[[step.extract]]
+extractor = "suffix"

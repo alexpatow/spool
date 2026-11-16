@@ -47,6 +47,42 @@ pub struct PairMetrics {
     pub f1: Option<f64>,
 }
 
+/// The mentions an extractor found, against the labelled mentions of the
+/// same documents. A mention is right when a label has the same document,
+/// entity type, start and end: half a name is a wrong mention and a missed
+/// one. This says nothing about which entity a mention is, which is what
+/// resolution is scored on.
+///
+/// A ratio is `None` when its denominator is zero, as for [`PairMetrics`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ExtractionMetrics {
+    /// Labelled mentions.
+    pub labelled: u64,
+    /// Mentions the extractor found.
+    pub extracted: u64,
+    /// Those of them that are labelled.
+    pub correct: u64,
+    pub precision: Option<f64>,
+    pub recall: Option<f64>,
+    pub f1: Option<f64>,
+}
+
+impl ExtractionMetrics {
+    pub(crate) fn new(labelled: u64, extracted: u64, correct: u64) -> Self {
+        let ratio = |numerator: u64, denominator: u64| {
+            (denominator > 0).then(|| numerator as f64 / denominator as f64)
+        };
+        Self {
+            labelled,
+            extracted,
+            correct,
+            precision: ratio(correct, extracted),
+            recall: ratio(correct, labelled),
+            f1: ratio(2 * correct, extracted + labelled),
+        }
+    }
+}
+
 /// B-cubed precision and recall: for each observation, the share of its
 /// identity that shares its true entity, and the share of its true entity
 /// that shares its identity, averaged over observations.

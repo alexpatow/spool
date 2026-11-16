@@ -7,11 +7,12 @@
 use duckdb::{Connection, params};
 use serde::{Deserialize, Serialize};
 use spool_core::{
-    Actor, ChangesetId, EntityType, IdentityId, ObservationId, Op, RunId, Seq, StateError,
+    Actor, ChangesetId, DocumentId, EntityType, IdentityId, ObservationId, Op, RunId, Seq,
+    StateError,
 };
 
 use crate::error::Result;
-use crate::project::{FeatureColumn, Manifest, Strategy};
+use crate::project::{Extractor, FeatureColumn, Manifest, Strategy};
 use crate::schema;
 use crate::store::{OpRow, op_from_row, parse};
 use crate::time::rfc3339;
@@ -49,6 +50,8 @@ pub struct ObservationFilter {
     pub entity_type: Option<EntityType>,
     pub source: Option<String>,
     pub key: Option<String>,
+    /// Only the mentions an extractor found in this document.
+    pub document: Option<DocumentId>,
     /// Only those without an identity.
     pub unassigned: bool,
     /// Only those after this ID: the last one of the page before.
@@ -62,6 +65,7 @@ impl Default for ObservationFilter {
             entity_type: None,
             source: None,
             key: None,
+            document: None,
             unassigned: false,
             after: None,
             limit: 100,
@@ -162,6 +166,13 @@ pub struct StoreInfo {
     /// The position of the last committed changeset.
     pub head: Seq,
     pub entity_types: Vec<TypeInfo>,
+    /// The project's extractors. Empty when the engine runs without a
+    /// manifest.
+    #[serde(default)]
+    pub extractors: Vec<Extractor>,
+    /// Documents held, counting each version.
+    #[serde(default)]
+    pub documents: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -251,6 +262,8 @@ pub(crate) fn observations(
            AND ($3::VARCHAR IS NULL OR o.source_key = $3::VARCHAR)
            AND ($4::VARCHAR IS NULL OR o.observation_id > $4::UUID)
            AND (NOT $5::BOOLEAN OR m.identity_id IS NULL)
+           AND ($7::VARCHAR IS NULL
+                OR json_extract_string(o.evidence, '$.document') = $7::VARCHAR)
          ORDER BY o.observation_id
          LIMIT $6"
     ))?;
@@ -261,6 +274,7 @@ pub(crate) fn observations(
         filter.after.map(|id| id.to_string()),
         filter.unassigned,
         limit(filter.limit),
+        filter.document.map(|id| id.to_string()),
     ])?;
     let mut found = Vec::new();
     while let Some(row) = rows.next()? {
@@ -444,5 +458,9 @@ pub(crate) fn info(conn: &Connection, manifest: Option<&Manifest>) -> Result<Sto
         manifest_hash: schema::meta(conn, "manifest_hash")?,
         head: crate::store::read_head(conn)?,
         entity_types,
+        extractors: manifest
+            .map(|manifest| manifest.extractors.clone())
+            .unwrap_or_default(),
+        documents: crate::documents::count(conn)?,
     })
 }

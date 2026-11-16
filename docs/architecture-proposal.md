@@ -79,8 +79,9 @@ my-project/
 │       │   └── no_match/*.sql
 │       ├── policy.toml           # replaces the default reconciliation policy
 │       ├── strategies/           # user code: splink.py, llm.ts, and a directory per strategy for its files (section 6)
-│       ├── extract.md            # instructions for LLM extraction (Milestone 5)
+│       ├── extract.md            # what an extractor looks for when it looks for this type (section 6)
 │       └── review.md             # guidance for whoever reviews this type's drafts (later)
+├── extractors/                   # user code that reads documents: names.py, llm.ts, and a directory per extractor for its files (section 6)
 ├── benchmarks/
 │   └── companies-small/          # a scenario; the path is its name (section 9)
 ├── Dockerfile                    # written by `spool build`, then owned by the project
@@ -93,8 +94,8 @@ A project with no `entities/company/` has no company type. A project that resolv
 | --- | --- |
 | `spool init` | Scaffolds the directory. |
 | `spool dev` | Runs the server on localhost against a development database under `.spool/`, and applies file changes as they are saved. |
-| `spool info` | Lists the discovered entity types, rules and strategies, with diagnostics. |
-| `spool build` | Validates the project and compiles it into a manifest. Every SQL file is prepared against DuckDB, so a mistake fails the build, not a run. Writes a `Dockerfile` if the project has none. With `--install` it also starts each user-code strategy once with nothing to do, which fetches what the strategy depends on. |
+| `spool info` | Lists the discovered entity types, rules, strategies and extractors, with diagnostics. |
+| `spool build` | Validates the project and compiles it into a manifest. Every SQL file is prepared against DuckDB, so a mistake fails the build, not a run. Writes a `Dockerfile` if the project has none. With `--install` it also starts each user-code strategy and extractor once with nothing to do, which fetches what it depends on. |
 | `spool apply` | Applies a manifest to a store: declares entity types and rebuilds the feature tables whose declaration changed. |
 | `spool serve` | Runs the server from a manifest and a store location. An empty store is set up from the manifest. |
 | `spool bench` | Runs benchmark scenarios in-process (section 9). |
@@ -102,7 +103,7 @@ A project with no `entities/company/` has no company type. A project that resolv
 
 Three rules keep deployment simple:
 
-1. **The directory is build-time input.** The engine reads only the manifest, and the strategy files the manifest names. The manifest has a content hash that is recorded with every run, so any judgement can be traced to the project version that produced it. It records the hash of each strategy file, and the engine runs a file only while it still has that hash.
+1. **The directory is build-time input.** The engine reads only the manifest, and the strategy and extractor files the manifest names. The manifest has a content hash that is recorded with every run, so any judgement can be traced to the project version that produced it. It records the hash of each strategy and extractor file, and the engine runs a file only while it still has that hash.
 2. **A project of data files needs only the `spool` binary.** Discovery and the build are in Rust, so no Node or Python is involved. Only a project with user code adds `uv` or `bun` to its image.
 3. **State is never in the image.** The image holds the binary, the manifest, and any user code with its dependencies. The store is a file on a volume, and its location is configuration.
 
@@ -114,7 +115,7 @@ Applying a changed definition to an existing store is an explicit step, never a 
 
 Tradeoff: the file layout becomes an interface that has to be documented and kept stable, and the model cannot be changed through the API. Changing an entity type means a build and a deploy. `spool dev` covers fast iteration, and `spool info` shows what the conventions resolved to.
 
-**Decide now:** a project directory with path-derived names, a manifest as the engine's only input, discovery and build in the Rust binary, state outside the image, an explicit apply step. **Defer:** packages of entity types that a project can mount, the Markdown instruction files, settings in `spool.toml` beyond the minimum.
+**Decide now:** a project directory with path-derived names, a manifest as the engine's only input, discovery and build in the Rust binary, state outside the image, an explicit apply step. **Defer:** packages of entity types that a project can mount, `review.md`, settings in `spool.toml` beyond the minimum.
 
 ## 1. DuckDB representation of observations, candidates and identity state
 
@@ -261,13 +262,34 @@ CREATE TABLE spool.constraint_link (      -- projection with history
   from_seq BIGINT NOT NULL, to_seq BIGINT
 );
 
+CREATE TABLE spool.document (
+  document_id    UUID        NOT NULL, -- first 128 bits of a sha256 over (source_id, source_key, text)
+  source_id      VARCHAR     NOT NULL,
+  source_key     VARCHAR     NOT NULL, -- the document's key within its source: a path, a URL, a message ID
+  supersedes     UUID,                 -- the version of the same (source_id, source_key) before this one
+  uri            VARCHAR,              -- where the source keeps it, if it said
+  text           VARCHAR     NOT NULL,
+  ingested_at    TIMESTAMPTZ NOT NULL,
+  ingest_run     BIGINT      NOT NULL,
+);
+
+CREATE TABLE spool.extraction (     -- one row each time an extractor read a document
+  document_id       UUID    NOT NULL,
+  extractor         VARCHAR NOT NULL,
+  extractor_version VARCHAR NOT NULL, -- the hash of the extractor's files
+  run_id            BIGINT  NOT NULL, -- the extract run
+  mentions          BIGINT  NOT NULL, -- how many mentions it found there
+);
+
 CREATE TABLE spool.meta (key VARCHAR NOT NULL, value VARCHAR NOT NULL);  -- format_version
 ```
 
 Design points:
 
 - **Raw payload and typed features are separate.** The payload is never rewritten, so a better normaliser can be rerun over history. Matchers read only the feature table.
-- **An extracted mention's key is its locator.** `source_key` holds the mention's position in its document, such as the page and character span. Two identical mentions at different positions are then two observations, and each keeps its own `evidence`. Repeating the same extraction produces the same IDs and is a no-op. `ingest` rejects an observation whose `evidence` has a locator and whose `source_key` is empty. The cost is that a document which names one entity many times yields that many observations, which all match each other.
+- **An extracted mention's key is its locator.** `source_key` holds the mention's place in its document: `<document_id>#<entity_type>:<start>-<end>`, where `start` and `end` count Unicode code points and `end` is the position after the last one. Two identical mentions at different places are then two observations, and each keeps its own `evidence`. Repeating the same extraction produces the same IDs and is a no-op. The cost is that a document which names one entity many times yields that many observations, which all match each other.
+- **The locator names a version of the document, not its key.** A document is text under a source and a key, and its ID is derived from all three, so a changed text is another document that names the one it supersedes. Had the locator named the key, a mention at characters 10 to 20 of the new text would supersede whatever was at 10 to 20 of the old one, and a run treats a version and the one before it as a match (below). With the document's ID in it, a locator never spans two versions. What follows is a limit: the mentions found in an earlier version stay as observations, and members of their identities, after the document has changed.
+- **Documents are text.** Turning a PDF or a web page into text is the caller's work, and a place in a document is a place in that text. Pages and bounding boxes are not recorded.
 - **Feature tables are generated from a declaration, never hand-written.** A declaration is one SQL query over the type's observations. The engine creates `spool.features_<entity_type>` from its result and fills it with one `INSERT ... SELECT` per ingest. No engine code names a feature column, and `ingest` rejects a type that has not been declared.
 - **Changing a declaration changes no identity.** Applying a changed query for an existing type increases its version and rebuilds the feature table from the stored payloads. Identity state refers to observations and to the type's name, never to feature columns, so every identity ID stays in place. A match run records the declaration version it read, so its judgements stay traceable.
 - **Typed columns, not one generic table.** A single features table holding JSON for every type would need no generation. It would also move normalisation into every matching query and give up the typed columns that blocking joins and similarity functions work on.
@@ -290,7 +312,7 @@ Tradeoffs of declared types:
 
 Tradeoff: two write targets per commit (log and projection) and no database-level safety net. Mitigation is a standing test that the projection equals a replay of the log. A simpler log-versus-projection comparison over a million rows took 0.05 s when measured.
 
-**Decide now:** the evidence versus identity-state split, content-derived observation IDs, extracted mentions keyed by their locator, entity types declared by the project with versioned declarations and generated feature tables, operation rows, interval membership, review items kept in the store, a format version from the first commit. **Defer:** indexes and keys, feature columns computed by user code, rebuilding a feature table after its declaration changes (Milestone 2), retention of old candidates and judgements, how a retracted or deleted source record is represented, the locator format for extracted mentions (Milestone 5), a separate table of locators so that repeated mentions share one observation.
+**Decide now:** the evidence versus identity-state split, content-derived observation IDs, extracted mentions keyed by their locator, entity types declared by the project with versioned declarations and generated feature tables, operation rows, interval membership, review items kept in the store, a format version from the first commit. **Defer:** indexes and keys, feature columns computed by user code, rebuilding a feature table after its declaration changes (Milestone 2), retention of old candidates and judgements, how a retracted or deleted source record is represented, a separate table of locators so that repeated mentions share one observation, retiring the mentions of a document version that was superseded, documents that are not text.
 
 ## 2. Separating Rust identity semantics from DuckDB persistence
 
@@ -446,6 +468,8 @@ impl Engine {
     pub fn open(path: &Path, options: Options) -> Result<Engine>;
     pub fn apply(&self, manifest: &Manifest) -> Result<ApplyReport>;         // declares entity types, generates feature tables
     pub fn ingest(&self, source: &str, entity_type: &str, rows: impl RecordBatchReader) -> Result<IngestReport>;
+    pub fn add_documents(&self, source: &str, documents: &[NewDocument]) -> Result<IngestReport>;
+    pub fn extract(&self, options: &ExtractOptions) -> Result<ExtractReport>; // runs an extractor of the project over unread documents
     pub fn begin_run(&self, strategy: StrategyRef, scope: Scope) -> Result<RunId>;
     pub fn candidates(&self, run: RunId) -> Result<impl RecordBatchReader>;   // pairs with both sides' features
     pub fn submit_judgements(&self, run: RunId, rows: impl RecordBatchReader) -> Result<u64>;
@@ -478,6 +502,9 @@ Every path is under `/v1` and needs the bearer token, except `GET /healthz`. Sma
 | --- | --- | --- |
 | `GET /v1/info` | What the store holds: the manifest hash, the head of the log, and counts per entity type | JSON |
 | `POST /v1/ingest` | Adds rows as observations. The body is JSON with the rows as objects, or an Arrow stream with the other fields in the query string | The ingest run |
+| `POST /v1/documents` | Stores documents of one source as text, for an extractor to read. A changed text under a key is the document's next version | The ingest run |
+| `GET /v1/documents`, `GET /v1/documents/{id}` | Lists documents in pages, without their text; reads one version with its text and each time an extractor read it | JSON |
+| `POST /v1/extractions` | Runs one of the project's extractors, which `GET /v1/info` lists, over the latest version of each document it has not read, or with `again` over those it has. What it finds is stored as observations | The extract run |
 | `POST /v1/runs` | Matches the new observations of one entity type, or with `rematch` all of them. With no strategy, the server runs the rules and reconciles, and `commit` says whether the draft is committed (the default) or left for review. The name of one of the project's user-code strategies, which `GET /v1/info` lists, runs that instead. With any other name the run opens and waits for the caller's judgements | The match run, or `null` when nothing was new. A rematch lists its suggestions |
 | `GET /v1/runs`, `GET /v1/runs/{run}` | Lists runs; reads one, optionally waiting for it to end | Runs |
 | `GET /v1/runs/{run}/candidates` | The candidate pairs of an open run with both sides' features | Arrow, or JSON when the `Accept` header asks for it |
@@ -492,18 +519,18 @@ Every path is under `/v1` and needs the bearer token, except `GET /healthz`. Sma
 | `GET /v1/constraints` | The constraints in force, or with `removed=true` their history, for one observation or one identity's members | JSON |
 | `POST /v1/ids` | Mints identity and changeset IDs for a caller that writes its own changeset | JSON |
 | `GET /v1/identities`, `GET /v1/identities/{id}`, `.../history` | Lists identities in pages; reads one with its members, following redirects; the changesets that touched it | JSON |
-| `GET /v1/observations`, `GET /v1/observations/{id}` | Finds observations by source and key, or those with no identity; reads one | JSON |
+| `GET /v1/observations`, `GET /v1/observations/{id}` | Finds observations by source and key, those found in one document, or those with no identity; reads one | JSON |
 | `POST /v1/observations/identities` | The identities of many observations in one call | JSON |
 | `GET /v1/review`, `GET /v1/review/{id}` | Review items, typed; one of them | JSON |
 | `POST /v1/review/{id}/dismiss` | Closes a review item without placing its observations | The item |
 
-- **A call that starts work says how long it will wait.** `POST /v1/ingest` and `POST /v1/runs` take `wait_ms`, 30 seconds if left out. If the run finishes within that time, the response is `200` with the finished run. Otherwise it is `202` with the run as far as it has got, and the client reads `GET /v1/runs/{run}?wait_ms=...` until its status is no longer `running`. The work goes on whether or not anyone waits. The run ID is `spool.run.run_id`, so tasks add no new concept. One limit: a call that finds the writer busy has no run to report until its own work starts, so it can wait longer than it asked to.
+- **A call that starts work says how long it will wait.** `POST /v1/ingest`, `POST /v1/documents`, `POST /v1/extractions` and `POST /v1/runs` take `wait_ms`, 30 seconds if left out. If the run finishes within that time, the response is `200` with the finished run. Otherwise it is `202` with the run as far as it has got, and the client reads `GET /v1/runs/{run}?wait_ms=...` until its status is no longer `running`. The work goes on whether or not anyone waits. The run ID is `spool.run.run_id`, so tasks add no new concept. One limit: a call that finds the writer busy has no run to report until its own work starts, so it can wait longer than it asked to.
 - **A run has one of five statuses.** `running` while the engine works on it, `open` while it waits for a caller's judgements, `drafted` while its draft waits for review, and then `succeeded` or `failed`.
 - **A run either commits its draft or leaves it for review**, as the caller asks. A draft left for review is how an agent experiments without changing shared identities. The draft is stored on the server and named by its changeset ID, so whoever reviews it need not be whoever started the run. Approving it validates it like any changeset: if state moved under it, the response names the operations that no longer hold and the draft stays open. Section 1 says why a draft nobody commits does not strand its observations.
 - **Small values are JSON**, defined once with `serde` and described by one versioned JSON Schema. Client types are generated from it. The same serialised form is the log's exchange format. A request with a field the server does not know is refused, so a misspelt `commit` cannot commit by mistake.
 - **Bulk data is Arrow**, as IPC streams in request and response bodies. Clients also accept plain objects for convenience, up to some thousands of rows. Rows sent as JSON become the same observations as the same rows sent as Arrow: a number with no fractional part is stored as an integer whichever way it arrived, so an observation's ID does not depend on the encoding or on the other rows in its batch. A JSON integer that its column cannot hold exactly is refused, not rounded: one of 2^53 or more beside numbers with a fraction, or one past the signed 64-bit range beside a negative one. A JSON row with no values is still a row.
 - **IDs cross as strings** in the first version. DuckDB exports `UUID` columns to Arrow as strings by default (tested), which is also what JavaScript and pandas users expect.
-- **Errors have one shape.** Every response that is not a success is `{"error": {"code", "message"}}`, with `rejections` when a changeset broke a rule. The codes are `unauthorized`, `invalid`, `not_found`, `conflict`, `rejected`, `too_large` and `internal`.
+- **Errors have one shape.** Every response that is not a success is `{"error": {"code", "message"}}`, with `rejections` when a changeset broke a rule. The codes are `unauthorized`, `invalid`, `not_found`, `conflict`, `rejected`, `too_large`, `strategy_failed`, `extractor_failed` and `internal`.
 - **The API is tested by hash.** With a seeded ID generator, the same fixture must produce the same changeset `content_hash` through the library, through the server with Arrow and with JSON bodies, and through the TypeScript client. Only Rust computes observation IDs and content hashes.
 
 A client is a small package that speaks this API. The first is TypeScript, and a Python client is the same amount of work. No client contains engine code, so there are no native packages to build per platform. An agent built with a framework such as eve reaches Spool the same way: a tool in the agent calls the client.
@@ -569,19 +596,71 @@ The Python function is given what its parameters are named: `candidates`, `featu
 
 Tested with `uv` 0.13.8 and `bun` 1.4.4: the company fixture's rules written as a Python strategy and as a TypeScript strategy each commit the changesets the SQL rules commit, hash for hash.
 
-While the process runs the engine holds no lock on the store, so reads and other writes are served. One strategy runs at a time. A process has ten minutes by default (`--task-timeout`), after which it is stopped with everything it started, and its run fails. A run that fails for any reason changes nothing: the next run examines the same observations.
+While the process runs the engine holds no lock on the store, so reads and other writes are served. One strategy or extractor runs at a time. A process has ten minutes by default (`--task-timeout`), after which it is stopped with everything it started, and its run fails. A run that fails for any reason changes nothing: the next run examines the same observations.
 
 Four rules keep this contained:
 
 1. **Workers stay inside the service.** They are child processes, one at a time, each with a timeout. Spool provisions no compute, holds no cloud credentials and starts no containers.
-2. **Tasks produce evidence only.** A task returns judgements, and later observations or feature columns. It never returns identity changes. The server alone reconciles and commits, in one transaction, so user code that crashes or hangs can fail a run and cannot corrupt an identity.
-3. **Only code built into the image runs.** The API takes data and the name of a strategy. It never takes code, so a caller cannot make the server run something new. A name the project does not have opens a run that waits for the caller's judgements, and the server runs nothing for it.
+2. **Tasks produce evidence only.** A task returns judgements or mentions, and later feature columns. It never returns identity changes. The server alone reconciles and commits, in one transaction, so user code that crashes or hangs can fail a run and cannot corrupt an identity.
+3. **Only code built into the image runs.** The API takes data and the name of a strategy or an extractor. It never takes code, so a caller cannot make the server run something new. A name the project does not have opens a run that waits for the caller's judgements, and the server runs nothing for it.
 4. **No workflow engine.** The pipeline is short and fixed: ingest, features, candidates, judgements, reconcile, commit. Each stage's output is stored per run, so after a restart a run resumes from its last finished stage. `spool.run` is the task record.
+
+### Extractors
+
+An extractor is user code that reads documents and says where they mention entities. It is a file under `extractors/` at the top of the project: `extractors/names.py` is the extractor `names`. It belongs to the project and not to an entity type, because one reading of a document finds the companies and the people in it. It runs as a strategy runs: the same two runtimes, the same directory beside it for its files, the same hash in the manifest, checked before it starts. A name is one extractor, whichever language it is written in.
+
+What an entity type has to say to an extractor is in `entities/<type>/extract.md`: prose that says what counts as a mention and which attributes to give. The engine does not read it. It hands the text to every extractor, and a language model's prompt is the obvious use. Editing it changes the manifest's hash and no feature table.
+
+Documents reach the store through `POST /v1/documents`, and `POST /v1/extractions` names an extractor to run over them. The task is a directory, as for a strategy:
+
+```text
+$SPOOL_TASK_DIR/
+├── task.json             # protocol version, kind "extract", run ID, extractor, and each entity type's name, instructions and feature columns
+├── documents.parquet     # written by the engine: document_id, source, key, uri, text
+├── mentions.parquet      # written by the user code: document_id, entity_type, start, end, attributes
+├── stdout.log
+└── stderr.log
+```
+
+```python
+# extractors/names.py
+import re
+from spool import extractor
+
+@extractor
+def find(document):          # called once for each document; `documents` asks for all of them at once
+    for found in re.finditer(r"[A-Z][a-z]+ (Inc|Ltd)", document.text):
+        yield document.mention("company", found.start(), found.end(), name=found.group())
+```
+
+```ts
+// extractors/names.ts
+import { extractor } from "spool-strategy";
+
+await extractor(async (task) =>
+  (await task.documents()).flatMap((document) =>
+    [...document.text.matchAll(/[A-Z][a-z]+ (Inc|Ltd)/g)].map((found) =>
+      document.mention("company", found.index, found.index + found[0].length, { name: found[0] }),
+    ),
+  ),
+);
+```
+
+A mention is a place in a document, an entity type and attributes. The engine makes each one an observation of that type: its source is the document's, its key is the locator of section 1, its payload is the attributes, and its evidence is the document's ID, key and URI, the place, the text there, and the extractor with its version. From there it is an observation like any other. The type's `features.sql` reads its payload, and the next match run places it.
+
+- **Places count Unicode code points.** That is what Python's string indices are. JavaScript's count UTF-16 units, so the TypeScript helper's `document.mention` converts, and the same mention written in either language is the same observation, with the same ID. `document.find(quote)` gives the places of a quote, for an extractor that is told what a document mentions and not where.
+- **The engine cuts the quoted text itself**, from the document and the place. An extractor cannot attribute to a document words that are not in it.
+- **Attributes are flat**: text, numbers, and true or false. A number with no fractional part is stored as an integer, as for rows (section 5).
+- **One bad mention refuses them all.** A mention of a type the project does not declare, a place outside the document, a document the task did not hand out, or the same place and type twice fails the run, and nothing is stored. So does a `start` or `end` column that does not hold whole numbers: a position is never rounded to a place the extractor did not name.
+- **An extractor reads a document once.** A run reads the latest version of each document that this extractor has not read, whatever version the extractor had then. Reading again after the extractor changed is asked for with `again`: mentions it finds at the same place with the same attributes are duplicates, and with other attributes they supersede. A mention it no longer finds stays.
+- **What an extractor found is stored under an ingest run of its own**, started when the mentions are stored, not under the extract run. A match run examines the observations ingested after the last run and before itself. An extractor can work for minutes, and a match run that began meanwhile would otherwise pass over what it found, for good.
+
+The engine has no extractor built in, and calls no model. `benchmarks/extraction/company-news/extractors/llm.py` is an example of one that asks a language model, through the chat-completions API that many services accept and with nothing beyond Python's standard library. It asks for quotes and finds their places itself, and drops a quote the text does not have. It is tested against a stand-in for the API, and has not been measured against a model.
 
 There are four places an extension plugs in:
 
 1. **Entity types.** Files in the project directory.
-2. **Observations.** Clients post them through the API. An LLM extraction pipeline that runs in the caller is an upstream producer; the server does not know it exists. From Milestone 5, an extractor can also be user code in the project.
+2. **Observations.** Clients post them through the API. An extraction pipeline that runs in the caller is an upstream producer, and the server does not know it exists: it posts rows whose key is a locator of its own. Or the caller posts documents, and an extractor in the project reads them.
 3. **Candidates.** The SQL files under `rules/block/`, or pairs a user-code strategy computes itself, such as nearest neighbours from an embedding index.
 4. **Judgements.** SQL rules, a user-code strategy, or a client that pulls a run's candidates and submits judgements through the API. The last is how a review interface or an external system takes part.
 
@@ -596,7 +675,7 @@ Consequences to accept:
 - A Python file named after a library it imports would be found in place of the library, because Python looks first in the directory of the file it runs. The engine turns that off (`PYTHONSAFEPATH`), which needs Python 3.11 or later, so `splink.py` can `import splink`.
 - Only the server opens the store. A studio or any other tool goes through the API.
 
-**Decide now:** child processes and no embedded runtime, Parquet files as the task protocol, tasks that produce evidence only, no code accepted through the API, workers inside the one service. **Defer:** more than one strategy process at a time, separate worker containers that pull tasks over the same protocol, a streaming protocol, per-task resource limits beyond a timeout, a published package of the TypeScript helper's types, policy plug-ins.
+**Decide now:** child processes and no embedded runtime, Parquet files as the task protocol, tasks that produce evidence only, no code accepted through the API, workers inside the one service. **Defer:** more than one user-code process at a time, extraction in batches of documents so that a long run stores what it has found so far, separate worker containers that pull tasks over the same protocol, a streaming protocol, per-task resource limits beyond a timeout, a published package of the TypeScript helper's types, policy plug-ins.
 
 ## 7. JSON, Arrow, Parquet or DuckDB relations
 
@@ -692,6 +771,13 @@ Upgrade stability is complete with the default policy, as split recovery is: a r
 
 Resolved from the start with Splink, `fake_1000` has pair recall 0.76 where the rules have 0.72, both with no false merge. On the sample's second batch Splink matches one new record to two identities, which is the wrong merge above arriving as evidence: the record is left for review, and no identity is merged.
 
+Extraction is scored on its own. A step can store a directory of documents and run extractors over them before it resolves, and the scenario's truth can be labelled mentions: a file that says which document mentions which true entity at which place. Two things are then reported:
+
+- **Extraction**: the mentions found against the labelled ones, as precision, recall and F1. A mention is right when a label has the same document, entity type, start and end. Half a name is a wrong mention and a missed one.
+- **Resolution**, with the metrics above, over the observations that have a true entity. For a mention that is the label at the same place. A mention the extractor made up has no true entity and is left out, so a bad extractor lowers the first score and not the second.
+
+Running the same documents through an extractor that reads the labels gives resolution with perfect extraction, which is the other half of telling the two apart. `benchmarks/extraction/company-news` does both. It is ten invented news items in two batches, with 25 labelled mentions of ten companies, and the cases that make each half hard: names without their legal form, a capitalised word before a name, a product called "Falcon Ltd edition", accents a wire service dropped, an emoji before a name, a short name, a similar name, and two unrelated companies with one name. Its rule-based extractor finds 21 mentions, 18 of them labelled (precision 0.86, recall 0.72). Resolution over those 18 has pair recall 1.0 and one false merge, the two companies with one name. With the labels as the extractor, resolution over all 25 has pair recall 0.86, one false merge and one false split: "Northwind" on its own does not match "Northwind Traders Ltd", a miss the rule-based extractor hides by not finding the short name at all. The rule-based extractor is written in Python and again in TypeScript, and the two produce the same observations, ID for ID.
+
 Datasets for day one: Splink's `fake_1000` as a smoke test, `historical_50k` and FEBRL as mid-sized checks, and a small hand-built company fixture committed to the repository that contains the hard cases of company resolution (aliases, legal versus trading names, domain changes, subsidiaries, records with few attributes), split into two batches. Each fixture is a project directory with its own entity type and rules. The three public datasets are person records and the fixture is company records, so the benchmark runs two unrelated entity types through one engine from the start. The public datasets are downloaded and checksummed at benchmark time, because their redistribution terms have not been confirmed.
 
 Results are written as JSON. CI compares them with a committed baseline and fails on a regression, with false merges and ID stability treated as the strictest gates.
@@ -700,7 +786,7 @@ For a real company benchmark, the [GLEIF register](landscape-survey.md#5-benchma
 
 Metrics are implemented in Spool. The existing `er-evaluation` package is AGPL.
 
-**Decide now:** truth relation, scenario format, false merges and ID stability as first-class metrics, baseline comparison in CI. **Defer:** the GLEIF scenario generator, sampling-based estimation for unlabeled data, extraction and end-to-end suites, cost and latency reporting.
+**Decide now:** truth relation, scenario format, false merges and ID stability as first-class metrics, baseline comparison in CI. **Defer:** the GLEIF scenario generator, sampling-based estimation for unlabeled data, a public extraction dataset, partial credit for a mention that overlaps a label, one end-to-end score from documents to entities, cost and latency reporting.
 
 ## 10. The smallest useful end-to-end implementation
 
@@ -791,7 +877,21 @@ Milestone 4 adds user code: `crates/spool/src/usercode.rs`, which runs a project
 - `build` writes a Dockerfile that carries the runtimes the project's strategies need, and `build --install` starts each strategy once.
 - The TypeScript helper the engine carries is the one `packages/strategy` builds.
 
-Out of scope after Milestone 4: LLM matching, extraction, relationships, canonical attribute views, the studio, applying a rematch's suggestions automatically.
+Milestone 5 adds documents and extractors: `crates/spool/src/documents.rs` and `crates/spool/src/engine/extract.rs`, the extractor half of the two helpers, and the news benchmark. The store's format version is 5. Its exit criteria, each a test (those that start `uv` or `bun` run with `--include-ignored`):
+
+- A document is stored once, a changed text is its next version, and an extractor reads only the latest version, once.
+- Mentions become observations that say where they were found, and the next match run resolves them with the type's rules. Repeating an extraction creates nothing.
+- The same extractor written in Python and in TypeScript produces the same observation IDs, with text that holds accents and an emoji.
+- An extractor that fails, or returns a mention the engine refuses, fails its run, stores nothing, and leaves its task directory to be looked at.
+- A match run that begins while an extractor works does not hide what the extractor finds from the run after it.
+- Each entity type's `extract.md` reaches the extractor, and editing it rebuilds no feature table.
+- A scenario with labelled mentions reports extraction apart from resolution. The news benchmark gives the numbers of section 9 with its rule-based extractor, and with the labels as the extractor.
+- A label that does not fit its document is refused and named.
+- The example extractor that asks a language model places what the model quotes, and drops what the text does not have (against a stand-in for the model's API).
+- Documents and extractions are reached through the API and the TypeScript client, a project's extractors are listed by `info` and by the API, and one that fails is reported as `extractor_failed` (`crates/spool-cli/tests`, `packages/client/test`).
+- `dev` runs an extractor as it was last saved, and `build` writes a Dockerfile that carries what the project's extractors need.
+
+Out of scope after Milestone 5: LLM matching, an extractor built into the engine, documents that are not text, relationships between entities, canonical attribute views, the studio, applying a rematch's suggestions automatically.
 
 Proposed roadmap:
 
@@ -810,9 +910,10 @@ Milestones 2 and 3 do not depend on each other. Sandbox synchronisation, initial
 | --- | --- |
 | Evidence versus identity-state split; `spool-core` without DuckDB or Arrow | A Postgres store; any abstraction over evidence storage |
 | One server that owns the store; thin clients; one tenant, one writer; no native bindings | Richer authentication; a Python client; a published base image |
-| A project directory with path-derived names, compiled to a manifest; state outside the image | Mountable packages of entity types; Markdown instruction files |
+| A project directory with path-derived names, compiled to a manifest; state outside the image | Mountable packages of entity types; `review.md` |
 | Entity types declared by the project; feature tables generated from a query; rules as files; no built-in types | Feature columns from user code; client types generated from a manifest |
-| User code as child processes over Parquet files; evidence only; workers inside the service; only files the manifest was compiled from run | More than one strategy process at a time; separate worker containers; a streaming protocol; per-task resource limits |
+| User code as child processes over Parquet files; evidence only; workers inside the service; only files the manifest was compiled from run | More than one user-code process at a time; separate worker containers; a streaming protocol; per-task resource limits |
+| Extractors as project-level user code; documents as text; a mention keyed by its document version, entity type and code-point span; mentions stored under their own ingest run; reading again only when asked | An extractor built into the engine; documents that are not text; retiring the mentions of a superseded document; extraction in batches |
 | Judgements and draft changesets in place of proposals | Entity-centric judgements; calibrated probabilities |
 | Review items kept in the store and examined again by later runs, until a changeset places their observations or a reviewer dismisses them | Reopening a dismissed review item |
 | Minted UUIDv7 identity IDs, permanent redirects, content-derived observation IDs | Public ID formatting; binary IDs in Arrow |
@@ -820,5 +921,5 @@ Milestones 2 and 3 do not depend on each other. Sandbox synchronisation, initial
 | Operation set: create, assign, merge, constrain, unconstrain, reinstate; split and undo as changesets the engine writes | Constraints that choose between identities during a run; operations on more than two observations |
 | Default policy never merges or splits existing identities automatically; a rematch suggests and does not change | Policy plug-ins; automatic merges above a threshold; applying suggestions in bulk |
 | JSON and Arrow as the only wire forms; the run ID as the task handle; drafts stored on the server | Streaming run progress; an ad hoc SQL endpoint |
-| Scenario-based benchmark with identity metrics and a CI baseline | GLEIF scenario generator; extraction and end-to-end suites |
+| Scenario-based benchmark with identity metrics and a CI baseline; extraction scored by exact span, apart from resolution | GLEIF scenario generator; a public extraction dataset; partial credit for overlapping spans; one end-to-end score |
 | Two library crates and one for the command and server; injected ID generator and clock; format version in the file; the prebuilt DuckDB library found by run path | Further crate splits; a statically linked DuckDB; indexes and keys |

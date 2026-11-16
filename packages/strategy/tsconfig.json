@@ -16,5 +16,5 @@
       "spool-strategy": ["./src/index.ts"]
     }
   },
-  "include": ["src", "scripts", "test", "../../benchmarks/**/strategies/*.ts"]
+  "include": ["src", "scripts", "test", "../../benchmarks/**/strategies/*.ts", "../../benchmarks/**/extractors/*.ts"]
 }

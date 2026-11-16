@@ -10,8 +10,8 @@
 //!
 //! # Calls that start work
 //!
-//! `POST /v1/ingest` and `POST /v1/runs` say how long they wait with
-//! `wait_ms`. If the work is done by then, the response is `200` with the
+//! `POST /v1/ingest`, `POST /v1/documents`, `POST /v1/extractions` and
+//! `POST /v1/runs` say how long they wait with `wait_ms`. If the work is done by then, the response is `200` with the
 //! finished run. Otherwise it is `202` with the run as far as it has got, and
 //! the caller reads `GET /v1/runs/{run}` until its status is no longer
 //! `running`. The work goes on whether or not anyone is waiting.
@@ -38,21 +38,22 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use spool::core::{Changeset, EntityType, Policy, RunId, Seq};
+use spool::core::{Changeset, DocumentId, EntityType, Policy, RunId, Seq};
 use spool::{
-    ConstraintFilter, Disposition, DraftFilter, DraftStatus, Engine, IdentityFilter, IngestOptions,
-    ObservationFilter, ResolveOptions, ReviewFilter, ReviewStatus, Rows, RunFilter, RunKind,
-    RunStatus, Scope, StrategyRef, watch_runs,
+    ConstraintFilter, Disposition, DocumentFilter, DraftFilter, DraftStatus, Engine,
+    ExtractOptions, IdentityFilter, IngestOptions, ObservationFilter, ResolveOptions, ReviewFilter,
+    ReviewStatus, Rows, RunFilter, RunKind, RunStatus, Scope, StrategyRef, watch_runs,
 };
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 
 use crate::api::{
     self, ARROW_STREAM, CandidateList, ChangesetList, CommitRequest, ConstraintList,
-    DismissRequest, DraftList, ErrorBody, ErrorCode, ErrorResponse, History, IdentitiesOfRequest,
-    IdentitiesOfResponse, IdentityList, Info, IngestParams, IngestRequest, JudgementsRequest,
-    JudgementsResponse, MintRequest, ObservationList, ReconcileRequest, RejectDraftRequest,
-    ReviewList, RunList, RunResponse, SplitRequest, StartRunRequest, UndoRequest,
+    DismissRequest, DocumentList, DocumentsRequest, DraftList, ErrorBody, ErrorCode, ErrorResponse,
+    ExtractRequest, History, IdentitiesOfRequest, IdentitiesOfResponse, IdentityList, Info,
+    IngestParams, IngestRequest, JudgementsRequest, JudgementsResponse, MintRequest,
+    ObservationList, ReconcileRequest, RejectDraftRequest, ReviewList, RunList, RunResponse,
+    SplitRequest, StartRunRequest, UndoRequest,
 };
 
 /// How long a call that starts work waits when it does not say.
@@ -99,6 +100,9 @@ pub fn router(engine: Arc<Engine>, options: &ServerOptions) -> Router {
     let v1 = Router::new()
         .route("/info", get(info))
         .route("/ingest", post(ingest))
+        .route("/documents", get(list_documents).post(add_documents))
+        .route("/documents/{document}", get(read_document))
+        .route("/extractions", post(extract))
         .route("/runs", get(list_runs).post(start_run))
         .route("/runs/{run}", get(read_run))
         .route("/runs/{run}/candidates", get(candidates))
@@ -212,6 +216,7 @@ impl From<spool::Error> for ApiError {
             Error::UnknownRun(_)
             | Error::UnknownDraft(_)
             | Error::UnknownIdentity(_)
+            | Error::UnknownDocument(_)
             | Error::UnknownChangeset(_)
             | Error::UnknownReviewItem(_) => Self::not_found(message),
             Error::Run { .. }
@@ -222,6 +227,8 @@ impl From<spool::Error> for ApiError {
                 Self::new(StatusCode::CONFLICT, ErrorCode::Conflict, message)
             }
             Error::Ingest(_)
+            | Error::Documents(_)
+            | Error::UnknownExtractor { .. }
             | Error::Judgements(_)
             | Error::Rows(_)
             | Error::Arrow(_)
@@ -231,6 +238,11 @@ impl From<spool::Error> for ApiError {
             Error::Strategy { .. } => Self::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 ErrorCode::StrategyFailed,
+                message,
+            ),
+            Error::Extractor { .. } | Error::Mentions(_) => Self::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ErrorCode::ExtractorFailed,
                 message,
             ),
             _ => Self::internal(message),
@@ -480,6 +492,68 @@ async fn ingest(
     job(&app, request.wait_ms, move |engine| {
         let report = engine.ingest(&request.source, &request.entity_type, rows, &options)?;
         Ok(Some(report.run))
+    })
+    .await
+}
+
+async fn add_documents(State(app): State<App>, body: Bytes) -> ApiResult {
+    let request: DocumentsRequest = json_body(&body)?;
+    job(&app, request.wait_ms, move |engine| {
+        let report = engine.add_documents(&request.source, &request.documents)?;
+        Ok(Some(report.run))
+    })
+    .await
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DocumentsQuery {
+    source: Option<String>,
+    key: Option<String>,
+    latest: Option<bool>,
+    after: Option<String>,
+    limit: Option<u64>,
+}
+
+async fn list_documents(
+    State(app): State<App>,
+    params: Result<Query<DocumentsQuery>, QueryRejection>,
+) -> ApiResult {
+    let params = query(params)?;
+    let limit = page(params.limit);
+    let filter = DocumentFilter {
+        source: params.source,
+        key: params.key,
+        latest: params.latest.unwrap_or(false),
+        after: params
+            .after
+            .as_deref()
+            .map(|after| id(after, "a document ID"))
+            .transpose()?,
+        limit,
+    };
+    let documents = engine(&app, move |engine| engine.documents(&filter)).await?;
+    let next = (documents.len() as u64 == limit)
+        .then(|| documents.last().map(|document| document.id))
+        .flatten();
+    ok(DocumentList { documents, next })
+}
+
+async fn read_document(State(app): State<App>, Path(document): Path<String>) -> ApiResult {
+    let document: DocumentId = id(&document, "a document ID")?;
+    ok(engine(&app, move |engine| engine.document(document)).await?)
+}
+
+async fn extract(State(app): State<App>, body: Bytes) -> ApiResult {
+    let request: ExtractRequest = json_body(&body)?;
+    let options = ExtractOptions {
+        extractor: request.extractor,
+        source: request.source,
+        again: request.again.unwrap_or(false),
+        limit: request.limit,
+    };
+    job(&app, request.wait_ms, move |engine| {
+        Ok(Some(engine.extract(&options)?.run))
     })
     .await
 }
@@ -914,6 +988,7 @@ struct ObservationsQuery {
     entity_type: Option<EntityType>,
     source: Option<String>,
     key: Option<String>,
+    document: Option<String>,
     unassigned: Option<bool>,
     after: Option<String>,
     limit: Option<u64>,
@@ -929,6 +1004,11 @@ async fn list_observations(
         entity_type: params.entity_type,
         source: params.source,
         key: params.key,
+        document: params
+            .document
+            .as_deref()
+            .map(|document| id(document, "a document ID"))
+            .transpose()?,
         unassigned: params.unassigned.unwrap_or(false),
         after: params
             .after

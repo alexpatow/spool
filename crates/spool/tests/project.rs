@@ -359,6 +359,117 @@ fn a_strategy_has_the_hash_of_its_file_and_of_what_belongs_to_it() {
 }
 
 #[test]
+fn an_extractor_belongs_to_the_project_and_instructions_to_a_type() {
+    let dir = papers();
+    let root = dir.path();
+    let plain = Manifest::load(root).unwrap();
+    // A project without extractors has the manifest it always had.
+    let text = serde_json::to_string(&plain).unwrap();
+    assert!(!text.contains("extract"), "{text}");
+
+    write(root, "extractors/citations.py", "# citations\n");
+    write(root, "extractors/citations/prompt.md", "Find the papers.\n");
+    write(root, "extractors/titles.ts", "// titles\n");
+    write(root, "extractors/notes.md", "");
+    write(
+        root,
+        "entities/paper/extract.md",
+        "\nA paper is cited by its title.\n\n",
+    );
+    let project = Project::read(root).unwrap();
+    let ignored: Vec<String> = project
+        .ignored
+        .iter()
+        .map(|path| {
+            path.strip_prefix(root)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    assert_eq!(ignored, ["extractors/notes.md"]);
+    let manifest = project.compile().unwrap();
+    assert_ne!(manifest.hash, plain.hash);
+
+    let listed: Vec<(&str, spool::Runtime, &str)> = manifest
+        .extractors
+        .iter()
+        .map(|extractor| {
+            (
+                extractor.name.as_str(),
+                extractor.runtime,
+                extractor.file.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            (
+                "citations",
+                spool::Runtime::Python,
+                "extractors/citations.py"
+            ),
+            ("titles", spool::Runtime::Typescript, "extractors/titles.ts"),
+        ]
+    );
+    assert!(manifest.extractor("missing").is_none());
+    let paper = manifest.entity_type("paper").unwrap();
+    assert_eq!(
+        paper.extract.as_deref(),
+        Some("A paper is cited by its title.")
+    );
+    // What to look for is no part of the declaration: features are not
+    // computed again when the instructions change.
+    assert_eq!(
+        paper.declaration_hash,
+        plain.entity_types[0].declaration_hash
+    );
+
+    let file = root.join(".spool/manifest.json");
+    manifest.write_file(&file).unwrap();
+    assert_eq!(Manifest::read_file(&file).unwrap(), manifest);
+
+    // The manifest's hash covers the extractor, what belongs to it, and
+    // the instructions.
+    let hash = |root: &Path| Manifest::load(root).unwrap().hash;
+    let before = hash(root);
+    write(
+        root,
+        "extractors/citations/prompt.md",
+        "Find every paper.\n",
+    );
+    let prompt = hash(root);
+    assert_ne!(prompt, before);
+    assert_ne!(
+        Manifest::load(root)
+            .unwrap()
+            .extractor("citations")
+            .unwrap()
+            .hash,
+        manifest.extractor("citations").unwrap().hash
+    );
+    write(root, "entities/paper/extract.md", "A paper has a title.\n");
+    assert_ne!(hash(root), prompt);
+}
+
+#[test]
+fn two_files_cannot_be_one_extractor() {
+    let dir = papers();
+    write(dir.path(), "extractors/titles.py", "");
+    write(dir.path(), "extractors/titles.ts", "");
+    let (file, message) = project_error(dir.path());
+    assert_eq!(file, "extractors/titles.ts");
+    assert!(message.contains("defined twice"), "{message}");
+
+    let dir = papers();
+    write(dir.path(), "extractors/Find All.py", "");
+    let (file, message) = project_error(dir.path());
+    assert_eq!(file, "extractors/Find All.py");
+    assert!(message.contains("name"), "{message}");
+}
+
+#[test]
 fn two_files_cannot_be_one_strategy() {
     let dir = papers();
     write(dir.path(), "entities/paper/strategies/model.py", "");

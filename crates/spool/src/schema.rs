@@ -7,7 +7,7 @@ use crate::error::{Error, Result};
 
 /// Written to `spool.meta` when a store is created and checked when one is
 /// opened.
-pub(crate) const FORMAT_VERSION: &str = "4";
+pub(crate) const FORMAT_VERSION: &str = "5";
 
 const TABLES: &str = "
 CREATE SCHEMA spool;
@@ -29,6 +29,25 @@ CREATE TABLE spool.observation (
   ingest_run     BIGINT      NOT NULL
 );
 
+CREATE TABLE spool.document (          -- text a source holds, kept so that what a mention was found in can be read
+  document_id UUID        NOT NULL,    -- first 128 bits of sha256(source_id, source_key, text)
+  source_id   VARCHAR     NOT NULL,
+  source_key  VARCHAR     NOT NULL,    -- the document's key within the source
+  supersedes  UUID,                    -- previous version of the same (source_id, source_key)
+  uri         VARCHAR,                 -- where the source keeps it, if it said
+  text        VARCHAR     NOT NULL,
+  ingested_at TIMESTAMPTZ NOT NULL,
+  ingest_run  BIGINT      NOT NULL
+);
+
+CREATE TABLE spool.extraction (        -- one row each time an extractor read a document
+  document_id       UUID    NOT NULL,
+  extractor         VARCHAR NOT NULL,
+  extractor_version VARCHAR NOT NULL,
+  run_id            BIGINT  NOT NULL,  -- the extract run
+  mentions          BIGINT  NOT NULL   -- how many it found in the document
+);
+
 CREATE TABLE spool.entity_type (       -- declared by the project; the engine ships none
   entity_type      VARCHAR     NOT NULL,
   version          INTEGER     NOT NULL,
@@ -39,7 +58,7 @@ CREATE TABLE spool.entity_type (       -- declared by the project; the engine sh
 
 CREATE TABLE spool.run (               -- also the task record a client reads
   run_id           BIGINT      NOT NULL,
-  kind             VARCHAR     NOT NULL, -- 'ingest' | 'match' | 'reconcile'
+  kind             VARCHAR     NOT NULL, -- 'ingest' | 'extract' | 'match' | 'reconcile'
   status           VARCHAR     NOT NULL, -- 'running' | 'open' | 'drafted' | 'succeeded' | 'failed'
   strategy         VARCHAR,
   strategy_version VARCHAR,
@@ -49,7 +68,7 @@ CREATE TABLE spool.run (               -- also the task record a client reads
   started_at       TIMESTAMPTZ NOT NULL,
   finished_at      TIMESTAMPTZ,
   error            VARCHAR,              -- failed: why
-  result           JSON                  -- what the run reported: an ingest's counts, a match run's resolution
+  result           JSON                  -- what the run reported: an ingest's or an extraction's counts, a match run's resolution
 );
 
 CREATE TABLE spool.candidate (         -- per run, disposable

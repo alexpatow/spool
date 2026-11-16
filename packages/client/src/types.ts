@@ -138,6 +138,88 @@ export interface Dismissal {
   reason?: string | null;
 }
 
+/**
+ * One reading of a document by an extractor.
+ */
+export interface DocumentExtraction {
+  extractor: string;
+  /**
+   * How many mentions it found in the document.
+   */
+  mentions: number;
+  /**
+   * The extract run.
+   */
+  run: RunId;
+  /**
+   * The hash of the extractor's files when it ran.
+   */
+  version: string;
+}
+
+/**
+ * Identifies one version of a document. Derived by the engine from the document's source, key and text.
+ */
+export type DocumentId = string;
+
+export interface DocumentList {
+  /**
+   * Documents without their text.
+   */
+  documents: DocumentRecord[];
+  /**
+   * Pass as `after` for the next page. `null` on the last page.
+   */
+  next?: DocumentId | null;
+}
+
+/**
+ * One version of a document as the store holds it.
+ */
+export interface DocumentRecord {
+  /**
+   * Each time an extractor read this version, oldest first.
+   */
+  extractions: DocumentExtraction[];
+  id: DocumentId;
+  ingest_run: RunId;
+  ingested_at: string;
+  key: string;
+  /**
+   * How long the text is, in Unicode code points.
+   */
+  length: number;
+  source: string;
+  /**
+   * The version that replaced this one.
+   */
+  superseded_by?: DocumentId | null;
+  /**
+   * The version of the document this one replaced: what the source held
+   * under the same key before.
+   */
+  supersedes?: DocumentId | null;
+  /**
+   * The text. Left out of a list of documents.
+   */
+  text?: string | null;
+  uri?: string | null;
+}
+
+/**
+ * `POST /v1/documents`: store documents from one source, to be read by an
+ * extractor. The response is the ingest run that stored them.
+ */
+export interface DocumentsRequest {
+  documents: NewDocument[];
+  /**
+   * The name of the source the documents come from. The observations
+   * extracted from them have the same source.
+   */
+  source: string;
+  wait_ms?: number | null;
+}
+
 export interface DraftList {
   drafts: DraftSummary[];
 }
@@ -209,13 +291,106 @@ export interface ErrorBody {
   rejections?: Rejection[] | null;
 }
 
-export type ErrorCode = "unauthorized" | "invalid" | "not_found" | "conflict" | "rejected" | "too_large" | "strategy_failed" | "internal";
+export type ErrorCode = "unauthorized" | "invalid" | "not_found" | "conflict" | "rejected" | "too_large" | "strategy_failed" | "extractor_failed" | "internal";
 
 /**
  * The body of every response that is not a success.
  */
 export interface ErrorResponse {
   error: ErrorBody;
+}
+
+export interface ExtractReport {
+  /**
+   * Documents the extractor was given.
+   */
+  documents: number;
+  /**
+   * Mentions that were already known: the same place in the same
+   * document, with the same attributes.
+   */
+  duplicates: number;
+  /**
+   * The ingest run the observations were stored under. There is none
+   * when nothing was found.
+   */
+  ingest_run?: RunId | null;
+  /**
+   * Observations created.
+   */
+  inserted: number;
+  /**
+   * Mentions it found.
+   */
+  mentions: number;
+  run: RunId;
+  /**
+   * Observations created as a new version of a mention that was known
+   * with other attributes.
+   */
+  superseded: number;
+}
+
+/**
+ * `POST /v1/extractions`: run one of the project's extractors over the
+ * documents it has not read. The response is the extract run. What it
+ * found is observations, which `POST /v1/runs` then matches.
+ */
+export interface ExtractRequest {
+  /**
+   * Read the documents this extractor has read before as well.
+   */
+  again?: boolean | null;
+  /**
+   * The name of one of the project's extractors; `GET /v1/info` lists
+   * them. The server runs no code it was not built with.
+   */
+  extractor: string;
+  /**
+   * Read at most this many documents, oldest first.
+   */
+  limit?: number | null;
+  /**
+   * Read only the documents of this source.
+   */
+  source?: string | null;
+  /**
+   * How long the call waits for the run, in milliseconds. If the run is
+   * still in progress then, the response has status 202 and the run as
+   * far as it has got.
+   */
+  wait_ms?: number | null;
+}
+
+/**
+ * An extractor: a file the engine runs as a child process, which reads
+ * documents and says where they mention entities. The engine runs the file
+ * only while it still has this hash.
+ */
+export interface Extractor {
+  /**
+   * The file, as a path from the project directory with `/` between its
+   * parts.
+   */
+  file: string;
+  /**
+   * SHA-256 of the file and of every file in the directory that shares
+   * its name. It is recorded as the extractor's version with each run.
+   */
+  hash: string;
+  name: string;
+  runtime: Runtime;
+}
+
+/**
+ * Names the extractor of an extract run.
+ */
+export interface ExtractorRef {
+  name: string;
+  /**
+   * The hash of the extractor's files.
+   */
+  version: string;
 }
 
 export interface FeatureColumn {
@@ -431,6 +606,26 @@ export interface MintRequest {
 export interface MintedIds {
   changesets: ChangesetId[];
   identities: IdentityId[];
+}
+
+/**
+ * A document as a source hands it over.
+ */
+export interface NewDocument {
+  /**
+   * The document's key within its source: a path, a URL, a message ID.
+   */
+  key: string;
+  /**
+   * The document as text. Turning a PDF or a web page into text is the
+   * caller's work.
+   */
+  text: string;
+  /**
+   * Where the source keeps the document, if that is worth showing to
+   * someone who reads a mention.
+   */
+  uri?: string | null;
 }
 
 /**
@@ -738,7 +933,7 @@ export type ReviewStatus = "open" | "resolved" | "superseded" | "dismissed";
  */
 export type RunId = number;
 
-export type RunKind = "ingest" | "match" | "reconcile";
+export type RunKind = "ingest" | "extract" | "match" | "reconcile";
 
 export interface RunList {
   runs: RunRecord[];
@@ -756,9 +951,19 @@ export interface RunRecord {
    * Why a failed run failed.
    */
   error?: string | null;
+  /**
+   * What an extract run reported when it finished.
+   */
+  extraction?: ExtractReport | null;
+  /**
+   * The extractor of an extract run, and of the ingest run that stored
+   * what it found.
+   */
+  extractor?: ExtractorRef | null;
   finished_at?: string | null;
   /**
-   * What an ingest run reported when it finished.
+   * What an ingest run reported when it finished. The run stored rows,
+   * documents, or the mentions an extract run found.
    */
   ingest?: IngestReport | null;
   kind: RunKind;
@@ -886,8 +1091,17 @@ export interface StartRunRequest {
  * What a store holds.
  */
 export interface StoreInfo {
+  /**
+   * Documents held, counting each version.
+   */
+  documents?: number;
   engine_version: string;
   entity_types: TypeInfo[];
+  /**
+   * The project's extractors. Empty when the engine runs without a
+   * manifest.
+   */
+  extractors?: Extractor[];
   format_version: string;
   /**
    * The position of the last committed changeset.
