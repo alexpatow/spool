@@ -87,8 +87,11 @@ impl UserCode {
     /// run with nothing to do, which is how its dependencies are installed
     /// ahead of time.
     pub fn command(&self, strategy: &Strategy, task: Option<&Path>) -> Result<Command> {
-        let helpers = self.helpers()?;
-        let file = self.file(strategy);
+        // The command runs in the project directory, so a path it is given
+        // must not depend on where the engine was started.
+        let absolute = |path: &Path| std::path::absolute(path).map_err(Error::io(path));
+        let helpers = absolute(&self.helpers()?)?;
+        let file = absolute(&self.file(strategy))?;
         let mut command = match strategy.runtime {
             Runtime::Python => {
                 let mut command = Command::new(&self.uv);
@@ -103,6 +106,10 @@ impl UserCode {
                 // The project directory may be read-only, and compiled files
                 // beside a strategy are not part of it.
                 command.env("PYTHONDONTWRITEBYTECODE", "1");
+                // Python puts the directory of the file it runs first among
+                // the places it imports from, so `splink.py` would be what
+                // `import splink` finds. This leaves that directory out.
+                command.env("PYTHONSAFEPATH", "1");
                 command.env("PYTHONUNBUFFERED", "1");
                 command
             }
@@ -119,7 +126,7 @@ impl UserCode {
         // reason to hand it the token that callers of the API present.
         command.env_remove("SPOOL_TOKEN");
         match task {
-            Some(task) => command.env("SPOOL_TASK_DIR", task),
+            Some(task) => command.env("SPOOL_TASK_DIR", absolute(task)?),
             None => command.env_remove("SPOOL_TASK_DIR"),
         };
         Ok(command)
@@ -533,6 +540,38 @@ mod tests {
             std::fs::read_to_string(first.join("spool/__init__.py")).unwrap(),
             PYTHON_HELPER
         );
+
+        // Paths that are relative to where the engine runs still name the
+        // same files from the project directory, where the command runs.
+        let here = tempfile::tempdir_in(".").unwrap();
+        let here = here
+            .path()
+            .strip_prefix(std::env::current_dir().unwrap())
+            .unwrap();
+        assert!(here.is_relative());
+        let relative = UserCode {
+            work_dir: here.join("work"),
+            ..UserCode::new(here.join("project"))
+        };
+        let command = relative
+            .command(&python, Some(&here.join("work/run-1")))
+            .unwrap();
+        let given = arguments(&command);
+        assert_eq!(
+            Path::new(given.last().unwrap()),
+            std::path::absolute(here.join("project/entities/thing/strategies/model.py")).unwrap()
+        );
+        let set = environment(&command);
+        for name in ["SPOOL_TASK_DIR", "PYTHONPATH"] {
+            let (_, value) = set.iter().find(|(set, _)| set == name).unwrap();
+            let first = std::env::split_paths(value.as_deref().unwrap())
+                .next()
+                .unwrap();
+            assert!(first.is_absolute(), "{name}: {first:?}");
+        }
+        // A strategy may be named after the library it wraps: the directory
+        // of the file is not where Python looks for modules.
+        assert!(set.contains(&("PYTHONSAFEPATH".to_owned(), Some("1".to_owned()))));
 
         let typescript = strategy(Runtime::Typescript, "entities/thing/strategies/model.ts");
         let command = user_code.command(&typescript, None).unwrap();

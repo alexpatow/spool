@@ -1,0 +1,36 @@
+# What changing strategy costs. Both batches are resolved with the rules, and
+# then Splink judges every record again.
+#
+#   spool bench benchmarks/resolution/people/upgrade.toml
+#
+# The rematch moves nothing. Where Splink disagrees with the identities the
+# rules made, the last step lists what it would merge, and reports how many
+# records kept their identity ID.
+
+project = "."
+
+[truth]
+column = "cluster"
+
+[[step]]
+name = "first batch"
+
+[[step.ingest]]
+file = "sample.csv"
+source = "sample"
+entity_type = "person"
+key = "unique_id"
+
+[[step]]
+name = "second batch"
+
+[[step.ingest]]
+file = "later.csv"
+source = "sample"
+entity_type = "person"
+key = "unique_id"
+
+[[step]]
+name = "splink judges everything again"
+strategy = "splink"
+rematch = true

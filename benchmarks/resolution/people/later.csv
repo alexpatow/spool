@@ -1,0 +1,7 @@
+unique_id,first_name,surname,dob,city,email,cluster
+p-11,Thomas,Lindqvist,1990-11-12,,tomas@lindqvist.exmple,lindqvist
+p-12,Priya,Nair,1975-07-30,Bath,priya.nair@mail.example,nair
+p-13,Wen,Zhao,1969-05-05,Derby,wen.zhao@mail.example,zhao-wen
+p-14,Amara,Abara,2001-01-15,Hull,,abara
+p-15,Ines,Duarte,1988-02-09,Poole,ines.duarte@mail.example,duarte
+p-16,Inez,Duarte,1988-02-09,Poole,,duarte

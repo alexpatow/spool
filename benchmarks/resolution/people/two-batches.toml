@@ -1,0 +1,31 @@
+# The sample, and then a second batch of invented records: more records of
+# people already known, and one person who is new. It runs without a download.
+#
+#   spool bench benchmarks/resolution/people/two-batches.toml
+#   spool bench benchmarks/resolution/people/two-batches.toml --strategy splink
+#
+# With Splink, the second batch is where records that just arrived are scored
+# against records that already have an identity.
+
+project = "."
+
+[truth]
+column = "cluster"
+
+[[step]]
+name = "first batch"
+
+[[step.ingest]]
+file = "sample.csv"
+source = "sample"
+entity_type = "person"
+key = "unique_id"
+
+[[step]]
+name = "second batch"
+
+[[step.ingest]]
+file = "later.csv"
+source = "sample"
+entity_type = "person"
+key = "unique_id"

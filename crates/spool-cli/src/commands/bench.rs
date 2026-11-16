@@ -177,10 +177,14 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
             StrategyRef::RULES => String::new(),
             strategy => format!(" with `{strategy}`"),
         };
+        // A rematch examines every observation, whether it is new or not.
+        let examined = match &resolved.suggestions {
+            Some(_) => "every observation again".to_owned(),
+            None => format!("{} observations", resolved.new_observations),
+        };
         println!(
-            "resolved  `{}`{with}: {} observations{again}, {} candidate pairs, {} match and {} no-match judgements",
+            "resolved  `{}`{with}: {examined}{again}, {} candidate pairs, {} match and {} no-match judgements",
             resolved.entity_type,
-            resolved.new_observations,
             resolved.candidates,
             resolved.judgements.match_,
             resolved.judgements.no_match,
@@ -205,16 +209,29 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
                 suggestions.merges.len(),
                 suggestions.splits.len()
             );
-            for merge in &suggestions.merges {
-                println!(
-                    "  merge {} and {}: {} pairs matched, {} did not",
-                    merge.identities[0], merge.identities[1], merge.matches, merge.no_matches
-                );
+            let lines = suggestions
+                .merges
+                .iter()
+                .map(|merge| {
+                    format!(
+                        "  merge {} and {}: {} pairs matched, {} did not",
+                        merge.identities[0], merge.identities[1], merge.matches, merge.no_matches
+                    )
+                })
+                .chain(suggestions.splits.iter().map(|split| {
+                    format!(
+                        "  split {}: {} pairs did not match, {} did",
+                        split.identity, split.no_matches, split.matches
+                    )
+                }));
+            let count = suggestions.merges.len() + suggestions.splits.len();
+            for line in lines.take(list) {
+                println!("{line}");
             }
-            for split in &suggestions.splits {
+            if count > list {
                 println!(
-                    "  split {}: {} pairs did not match, {} did",
-                    split.identity, split.no_matches, split.matches
+                    "  ... and {} more; raise --list to print them",
+                    count - list
                 );
             }
         }
