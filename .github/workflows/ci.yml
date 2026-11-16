@@ -39,6 +39,12 @@ jobs:
         with:
           bun-version: "1.4.4"
 
+      # Python strategies are run with uv, which fetches what each one
+      # depends on. Their tests run from `cargo test` too.
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: "0.13.8"
+
       # Public datasets are downloaded on first use and checked against the
       # checksums in datasets.toml.
       - uses: actions/cache@v6
