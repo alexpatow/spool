@@ -25,12 +25,14 @@
 //! [`core`](crate::core).
 
 mod batch;
+mod bench;
 mod engine;
 mod error;
 mod features;
 mod ingest;
 mod metrics;
 mod project;
+mod rows;
 mod rules;
 mod schema;
 mod store;
@@ -41,6 +43,7 @@ mod store_property;
 pub use duckdb::arrow;
 pub use spool_core as core;
 
+pub use bench::{BenchReport, IngestSummary, Scenario, StepReport};
 pub use engine::{
     ApplyReport, Engine, JudgementCounts, Options, ResolveOptions, ResolveReport, Scope,
     StrategyRef, TypeResolution,
@@ -52,3 +55,4 @@ pub use project::{
     Declaration, EntityTypeManifest, EntityTypeSource, FeatureColumn, Manifest, Project, Rule,
     RuleSet, SqlFile,
 };
+pub use rows::Rows;
