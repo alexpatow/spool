@@ -5,6 +5,7 @@ mod error;
 mod features;
 mod ingest;
 mod project;
+mod rules;
 mod schema;
 mod store;
 #[cfg(test)]
