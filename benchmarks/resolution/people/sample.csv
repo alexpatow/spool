@@ -1,0 +1,11 @@
+unique_id,first_name,surname,dob,city,email,cluster
+p-01,Maria,Okafor,1984-03-12,Leeds,maria.okafor@mail.example,okafor
+p-02,Maria,Okafor,1984-03-12,,m.okafor@mail.example,okafor
+p-03,Mariah,Okafor,1984-03-12,Leeds,,okafor
+p-04,Tomas,Lindqvist,1990-11-02,York,tomas@lindqvist.example,lindqvist
+p-05,Thomas,Lindqvist,1990-11-20,York,tomas@lindqvist.example,lindqvist
+p-06,Priya,Nair,1975-07-30,Bath,priya.nair@mail.example,nair
+p-07,Priya,Nair,,Bath,,nair
+p-08,Wen,Zhao,1969-05-05,Derby,,zhao-wen
+p-09,Lin,Zhao,1971-09-18,Derby,lin.zhao@mail.example,zhao-lin
+p-10,,Abara,2001-01-15,,,abara

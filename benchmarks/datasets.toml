@@ -1,0 +1,11 @@
+# Public datasets that scenarios name with `dataset = "<name>"`.
+#
+# They are not committed. `spool bench` downloads a dataset the first time a
+# scenario needs it, checks it against `sha256`, and keeps it in `.cache/`
+# beside this file.
+
+[[dataset]]
+name = "fake_1000"
+url = "https://raw.githubusercontent.com/moj-analytical-services/splink_datasets/master/data/fake_1000.csv"
+sha256 = "66f9b8f92b9b082ef982fe18c77030fbed8780f06ce1d40d7106be5a72392e2a"
+licence = "The repository that publishes it is MIT-licensed. Whether that covers the data files is not confirmed, so the file is downloaded and never committed."
