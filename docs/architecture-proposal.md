@@ -172,6 +172,18 @@ CREATE TABLE spool.judgement (            -- kept; cited by changesets through r
   score    DOUBLE,                       -- strategy-local scale, never compared across strategies
   detail   JSON                          -- per-field comparison levels, rule name, LLM rationale
 );
+
+CREATE TABLE spool.review_item (          -- what a reconcile run would not decide; kept
+  review_id       BIGINT  NOT NULL,       -- dense, assigned by the engine
+  run_id          BIGINT  NOT NULL,       -- reconcile run that raised it
+  entity_type     VARCHAR NOT NULL,
+  kind            VARCHAR NOT NULL,       -- 'possible_merge' | 'conflict'
+  observation_ids UUID[]  NOT NULL,       -- the observations left without an identity
+  identity_ids    UUID[]  NOT NULL,       -- the identities they matched; empty when the conflict is among the observations
+  status          VARCHAR NOT NULL,       -- 'open' | 'resolved' | 'superseded'
+  closed_seq      BIGINT,                 -- resolved: the changeset after which every observation had an identity
+  closed_run      BIGINT                  -- superseded: the reconcile run that raised it again in another form
+);
 ```
 
 `spool.features_company` above is not part of Spool. It is what the engine generates from this file, which is one project's idea of a company:
@@ -241,7 +253,8 @@ Design points:
 - **Operations are rows, not a JSON blob.** A first load is one changeset with as many `assign` rows as observations, applied with `INSERT ... SELECT`. When measured, a one-million-operation changeset wrote its log rows and its projection rows in one transaction in 0.4 s.
 - **Membership keeps intervals.** "What was this identity at log position N" is a filter, and undoing a merge can read which observations it moved.
 - **No primary keys or foreign keys on the large tables at first.** Uniqueness is guaranteed by the Rust validator and by anti-join inserts, and checked by a `verify` routine in tests. DuckDB constraints did behave correctly when tested (including update and delete-then-insert of a keyed row in one transaction), but index maintenance on bulk loads is a cost that has not been measured, and the identity rules must not depend on the database.
-- **Public read surface is views.** `spool.identity_current`, `spool.membership_current` and a generated per-type entity view are documented and stable; base tables are not.
+- **Review items are rows, and they are evidence.** `spool.review_item` holds what a reconcile run would not decide, so the question outlives the call that raised it. The table is not identity state: it is not in the log, no changeset mentions it, and replaying the log does not need it. The engine keeps `status` in step with membership inside the transaction that commits a changeset. Section 4 says when an item opens and closes.
+- **Public read surface is views.** `spool.identity_current`, `spool.membership_current`, `spool.review_open` and a generated per-type entity view are documented and stable; base tables are not.
 
 Tradeoffs of declared types:
 
@@ -252,7 +265,7 @@ Tradeoffs of declared types:
 
 Tradeoff: two write targets per commit (log and projection) and no database-level safety net. Mitigation is a standing test that the projection equals a replay of the log. A simpler log-versus-projection comparison over a million rows took 0.05 s when measured.
 
-**Decide now:** the evidence versus identity-state split, content-derived observation IDs, extracted mentions keyed by their locator, entity types declared by the project with versioned declarations and generated feature tables, operation rows, interval membership, a format version from the first commit. **Defer:** indexes and keys, feature columns computed by user code, rebuilding a feature table after its declaration changes (Milestone 2), retention of old candidates and judgements, how a retracted or deleted source record is represented, the locator format for extracted mentions (Milestone 5), a separate table of locators so that repeated mentions share one observation.
+**Decide now:** the evidence versus identity-state split, content-derived observation IDs, extracted mentions keyed by their locator, entity types declared by the project with versioned declarations and generated feature tables, operation rows, interval membership, review items kept in the store, a format version from the first commit. **Defer:** indexes and keys, feature columns computed by user code, rebuilding a feature table after its declaration changes (Milestone 2), retention of old candidates and judgements, how a retracted or deleted source record is represented, the locator format for extracted mentions (Milestone 5), a separate table of locators so that repeated mentions share one observation.
 
 ## 2. Separating Rust identity semantics from DuckDB persistence
 
@@ -342,7 +355,7 @@ Three relation shapes, each an Arrow schema:
 | Candidates | `left_id`, `right_id`, optional `rule` | Strategy, or the built-in blocker |
 | Judgements | `left_id`, `right_id`, `verdict`, optional `score`, optional `detail` | Strategy |
 
-Plus one rule about scope: a run is told which observations are new, and it must judge new-versus-existing and new-versus-new pairs only. The engine rejects judgements that name unknown observations.
+Plus one rule about scope: a run is told which observations are new, and it must judge new-versus-existing and new-versus-new pairs only. New means ingested since the last match run of the type that succeeded, plus the observations of open review items that still have no identity (below). The engine rejects judgements that name unknown observations.
 
 Candidates and judgements have the same shape for every entity type. Features do not: their columns come from the type's declaration. A strategy is therefore written against a declaration's columns, and nothing in the engine or the contract fixes what those are.
 
@@ -363,9 +376,20 @@ The reconciler's default policy for Milestone 1 is conservative:
 
 Rule 4 is what protects IDs from model upgrades: rerunning a better matcher over old data yields a list of suggested changes, not changes. The cost is that this greedy, incremental policy depends on arrival order, which is why order sensitivity is a benchmark metric in section 9.
 
+Whenever the policy leaves observations unassigned, the reconcile run records a review item in `spool.review_item` (section 1). Its kind is `possible_merge` when the observations match members of two or more identities, and `conflict` when a `no_match` contradicts their matches. The item names the observations, the identities they matched and the run that raised it. It is evidence, like a judgement: it changes no identity, and nothing is committed on its account.
+
+A review item is open while any of its observations has no identity. It closes in one of two ways:
+
+- **Resolved.** A changeset gives the last of its observations an identity, and the item records that log position. Any changeset does this, whether a reviewer wrote it or a later run drafted it.
+- **Superseded.** A later run examines the observations and raises an item that differs, for example because they now match a third identity. The old item records that run.
+
+The observations of open review items stay in scope. Every later match run of their entity type examines them again, alongside what was newly ingested. An item is therefore reconsidered whenever state or rules may have changed: once a reviewer has moved the members of one identity into the other, or a rule has been corrected, the observation matches one identity and is assigned. A run that reaches the same conclusion leaves the item as it is. Assigning an observation that had no identity changes no existing ID, so this does not weaken rule 4.
+
+This has two costs. A type with open review items gets a run even when nothing was ingested. And an observation under review that matches a later arrival holds that arrival back with it, exactly as it would have if the two had arrived together.
+
 Tradeoff: pairwise judgements fit entity-centric strategies awkwardly. An LLM asked "which of these five existing companies is this?" answers about an identity. For now its adapter emits a judgement against a member observation and records the reasoning in `detail`. Whether to add observation-to-identity judgements is an open question.
 
-**Decide now:** the three relations, verdict as the contract, clustering only in the reconciler, no automatic merges of existing identities by default. **Defer:** a strategy trait, policy plug-ins, entity-centric judgements, calibrated probabilities.
+**Decide now:** the three relations, verdict as the contract, clustering only in the reconciler, no automatic merges of existing identities by default, review items that persist and are examined again by later runs. **Defer:** a strategy trait, policy plug-ins, entity-centric judgements, calibrated probabilities, closing a review item without giving its observations an identity.
 
 ## 5. Exposing the engine: one server and thin clients
 
@@ -407,6 +431,7 @@ The routes are not designed yet. These are the operations the API has to carry:
 | Pull a run's candidates; submit judgements to a run | Arrow; a count |
 | List drafts; approve or reject one; commit a changeset the caller authored | The committed changeset, or the operations that were rejected |
 | Look up identities: by observation, by ID following redirects, members, history | JSON |
+| List review items | JSON |
 
 - **A call that starts work says how long it will wait.** If the run finishes within that time, the response is the result. Otherwise it is the run ID, which the client reads until the run finishes. The run ID is `spool.run.run_id`, so tasks add no new concept.
 - **A run either commits its draft or leaves it for review**, as the caller asks. A draft left for review is how an agent experiments without changing shared identities.
@@ -615,6 +640,7 @@ Exit criteria, each a test:
 - Every identity ID from batch one still exists after batch two, with the same members plus any additions.
 - A subsidiary with a different registry identifier is not attached to its parent.
 - An observation matching two identities is left unassigned with a review item.
+- A review item is still in the store after the store is reopened, and its observation is examined again by the next run.
 - Rebuilding the projection from the log reproduces the state exactly.
 - The in-memory state and the DuckDB store pass the same conformance suite.
 - Two runs with the same seed produce the same changeset content hashes.
@@ -643,6 +669,7 @@ Milestones 2 and 3 do not depend on each other. Sandbox synchronisation, initial
 | Entity types declared by the project; feature tables generated from a query; rules as files; no built-in types | Feature columns from user code; client types generated from a manifest |
 | User code as child processes over Parquet files; evidence only; workers inside the service | Separate worker containers; a streaming protocol; per-task resource limits |
 | Judgements and draft changesets in place of proposals | Entity-centric judgements; calibrated probabilities |
+| Review items kept in the store and examined again by later runs | Closing a review item without giving its observations an identity |
 | Minted UUIDv7 identity IDs, permanent redirects, content-derived observation IDs | Public ID formatting; binary IDs in Arrow |
 | Changeset log as truth, projection in the same transaction, per-operation preconditions | Compaction, hash chaining |
 | Operation set: create, assign, merge, constrain, unconstrain, reinstate | Implementing all but create and assign until Milestone 3 |

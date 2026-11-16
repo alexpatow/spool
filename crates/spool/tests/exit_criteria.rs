@@ -17,7 +17,9 @@ use std::process::Command;
 
 use common::*;
 use spool::core::{IdentityStore, MemoryState, ReviewItem, Seq, Snapshot};
-use spool::{BenchReport, Engine, IngestOptions, Options, ResolveOptions, Rows, Scenario};
+use spool::{
+    BenchReport, Engine, IngestOptions, Manifest, Options, ResolveOptions, Rows, Scenario,
+};
 
 fn companies() -> PathBuf {
     benchmarks().join("identity/companies-small")
@@ -326,6 +328,47 @@ fn an_observation_matching_two_identities_is_left_unassigned_with_a_review_item(
     // The one split is crm:c-111, which is only the name "Orchard".
     assert_eq!(metrics.false_splits, 1);
     assert_eq!(metrics.pairs.precision, Some(1.0));
+}
+
+// A review item is still in the store after the store is reopened, and its
+// observation is examined again by the next run.
+
+#[test]
+fn a_review_item_survives_a_reopen_and_its_observation_is_examined_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("spool.duckdb");
+    let read = |engine: &Engine| {
+        select(
+            engine,
+            "SELECT review_id::VARCHAR, run_id::VARCHAR, kind, status,
+                    array_to_string(observation_ids::VARCHAR[], ','),
+                    array_to_string(identity_ids::VARCHAR[], ',')
+             FROM spool.review_item",
+        )
+    };
+    let (before, ambiguous) = {
+        let engine = Engine::open(&path, Options::seeded(0)).unwrap();
+        run_companies(&engine);
+        (read(&engine), observation(&engine, "crm", "c-117"))
+    };
+    assert_eq!(before.len(), 1);
+    assert_eq!(before[0][3].as_deref(), Some("open"));
+    assert_eq!(before[0][4], Some(ambiguous.to_string()));
+
+    let engine = Engine::open(&path, Options::seeded(1)).unwrap();
+    assert_eq!(read(&engine), before);
+
+    engine.apply(&Manifest::load(companies()).unwrap()).unwrap();
+    let report = engine.resolve(&ResolveOptions::default()).unwrap();
+    let again = &report.resolved[0];
+    assert_eq!((again.new_observations, again.reexamined), (1, 1));
+    assert!(matches!(
+        &again.review[..],
+        [ReviewItem::PossibleMerge { observations, .. }] if observations == &[ambiguous]
+    ));
+    // The same conclusion, so the same item: nothing was added or closed.
+    assert_eq!(read(&engine), before);
+    engine.verify().unwrap();
 }
 
 // Rebuilding the projection from the log reproduces the state exactly.
