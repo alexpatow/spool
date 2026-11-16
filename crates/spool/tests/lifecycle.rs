@@ -705,6 +705,51 @@ fn a_dismissed_review_item_is_closed_and_not_examined_again() {
     engine.verify().unwrap();
 }
 
+#[test]
+fn a_dismissed_review_item_stays_closed_when_its_run_never_committed() {
+    let engine = engine();
+    ingest(
+        &engine,
+        "shop",
+        &[("1", Some("anvil"), None), ("2", None, Some("K7"))],
+    );
+    resolve(&engine);
+    // One record fits both identities, and one is new. The run's draft is
+    // left for review, so the run has not succeeded and both records are
+    // still new to the next one.
+    ingest(
+        &engine,
+        "depot",
+        &[
+            ("9", Some("anvil"), Some("K7")),
+            ("10", Some("tongs"), None),
+        ],
+    );
+    let drafted = engine
+        .resolve(&ResolveOptions {
+            leave_for_review: true,
+            ..ResolveOptions::default()
+        })
+        .unwrap();
+    let draft = drafted.resolved[0].draft.unwrap();
+    let item = engine
+        .review_items(&ReviewFilter::open())
+        .unwrap()
+        .remove(0);
+    engine.dismiss_review(item.id, &reviewer(), None).unwrap();
+    engine.reject_draft(draft, None).unwrap();
+
+    // The next run places the new record and does not ask again about the
+    // one the reviewer dismissed.
+    let report = resolve(&engine);
+    assert_eq!(report.resolved[0].new_observations, 1);
+    assert_eq!(report.resolved[0].review, []);
+    assert!(identity(&engine, "depot", "10").is_some());
+    assert_eq!(identity(&engine, "depot", "9"), None);
+    assert_eq!(engine.review_items(&ReviewFilter::open()).unwrap(), []);
+    engine.verify().unwrap();
+}
+
 // The store
 
 #[test]

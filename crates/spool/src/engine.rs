@@ -1856,7 +1856,9 @@ impl Inner {
             let after_run = self.last_match_run(&entity_type)?;
             let ingested = self.count(&format!(
                 "SELECT count(*) FROM spool.observation
-                 WHERE entity_type = '{entity_type}' AND ingest_run > {after_run}"
+                 WHERE entity_type = '{entity_type}' AND ingest_run > {after_run}
+                   AND {}",
+                rules::NOT_DISMISSED
             ))?;
             if ingested == 0 && review::open_ids(&self.store.conn, &entity_type)?.is_empty() {
                 continue;
