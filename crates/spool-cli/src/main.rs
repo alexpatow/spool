@@ -43,6 +43,9 @@ fn main() -> ExitCode {
         print!("{USAGE}");
         return ExitCode::SUCCESS;
     };
+    if !matches!(command.as_str(), "serve" | "dev") {
+        end_quietly_when_the_output_closes();
+    }
     let (usage, run): (&str, Command) = match command.as_str() {
         "--help" | "-h" | "help" => {
             print!("{USAGE}");
@@ -82,5 +85,18 @@ fn main() -> ExitCode {
             eprintln!("spool: {message}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// Rust ignores SIGPIPE, so printing to a pipe whose reader has gone, as in
+/// `spool info | head`, panics. A command that prints and exits takes the
+/// signal's default instead and ends there. The server does not: it must not
+/// die because whatever was reading its output went away.
+fn end_quietly_when_the_output_closes() {
+    #[cfg(unix)]
+    // SAFETY: this sets a signal's disposition to its default, before any
+    // other thread exists.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }
 }

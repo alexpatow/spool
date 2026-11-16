@@ -107,3 +107,25 @@ fn the_database_defaults_to_the_project_directory_and_is_replaced_each_run() {
     }
     assert!(dir.path().join(".spool/bench.duckdb").is_file());
 }
+
+#[test]
+fn output_piped_to_a_reader_that_has_gone_ends_quietly() {
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::Stdio;
+
+    // As in `spool schema | head -n 1`, where `head` has already left.
+    let mut child = support::spool()
+        .arg("schema")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stdout.take());
+    let output = child.wait_with_output().unwrap();
+    assert_eq!(
+        text(&output.stderr),
+        "",
+        "nothing is said about the closed pipe"
+    );
+    assert_eq!(output.status.signal(), Some(13), "ended by SIGPIPE");
+}

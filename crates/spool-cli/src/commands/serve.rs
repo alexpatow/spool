@@ -46,6 +46,16 @@ Options:
   --token <token>     the bearer token (default: $SPOOL_TOKEN, or `dev`)
 ";
 
+/// Prints a line, and carries on if nobody is reading: a server must not
+/// stop because its output was closed.
+macro_rules! say {
+    ($($argument:tt)*) => {{
+        let mut out = std::io::stdout().lock();
+        let _ = writeln!(out, $($argument)*);
+        let _ = out.flush();
+    }};
+}
+
 const DEFAULT_PORT: u16 = 7765;
 
 fn failed(message: impl Into<String>) -> Failure {
@@ -99,7 +109,7 @@ pub fn serve(arguments: &[String]) -> Result<(), Failure> {
     match engine.applied_manifest_hash()? {
         None => {
             engine.apply(&manifest)?;
-            println!("set up an empty store at {}", store.display());
+            say!("set up an empty store at {}", store.display());
         }
         Some(applied) if applied == manifest.hash => engine.adopt(&manifest)?,
         Some(applied) => {
@@ -113,7 +123,7 @@ pub fn serve(arguments: &[String]) -> Result<(), Failure> {
             )));
         }
     }
-    println!("manifest  {}", manifest.hash);
+    say!("manifest  {}", manifest.hash);
     run(Arc::new(engine), listen, ServerOptions::new(token))
 }
 
@@ -150,9 +160,9 @@ pub fn dev(arguments: &[String]) -> Result<(), Failure> {
     }
     let engine = Arc::new(Engine::open(&store, options(&arguments)?)?);
     let report = engine.apply(&manifest)?;
-    println!("project   {}", dir.display());
-    println!("store     {}", store.display());
-    println!("token     {token}");
+    say!("project   {}", dir.display());
+    say!("store     {}", store.display());
+    say!("token     {token}");
     print_applied(&manifest, &report);
 
     let watched = Arc::clone(&engine);
@@ -178,8 +188,7 @@ fn print_applied(manifest: &Manifest, report: &ApplyReport) {
     if parts.is_empty() {
         parts.push("rules only".to_owned());
     }
-    println!("applied   {} ({})", manifest.hash, parts.join("; "));
-    let _ = std::io::stdout().flush();
+    say!("applied   {} ({})", manifest.hash, parts.join("; "));
 }
 
 /// Applies the project again whenever its files change. A project that does
@@ -206,7 +215,10 @@ fn watch(dir: &Path, engine: &Engine, mut seen: u64) {
             Ok(Some((manifest, report))) => print_applied(&manifest, &report),
             Ok(None) => {}
             Err(error) => {
-                eprintln!("spool: {error}\nspool: still running the last version that compiled");
+                let _ = writeln!(
+                    std::io::stderr(),
+                    "spool: {error}\nspool: still running the last version that compiled"
+                );
             }
         }
     }
@@ -251,13 +263,12 @@ fn run(engine: Arc<Engine>, listen: SocketAddr, options: ServerOptions) -> Resul
             .local_addr()
             .map_err(|error| failed(error.to_string()))?;
         // Tests listen on port 0 and read the port from this line.
-        println!("listening on http://{address}");
-        let _ = std::io::stdout().flush();
+        say!("listening on http://{address}");
         server::serve(listener, engine, &options, shutdown())
             .await
             .map_err(|error| failed(format!("the server stopped: {error}")))
     })?;
-    println!("stopped");
+    say!("stopped");
     Ok(())
 }
 

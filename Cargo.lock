@@ -1492,6 +1492,7 @@ version = "0.1.0"
 dependencies = [
  "arrow",
  "axum",
+ "libc",
  "libduckdb-sys",
  "schemars",
  "serde",
