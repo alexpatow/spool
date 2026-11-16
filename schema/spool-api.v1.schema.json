@@ -1,0 +1,1939 @@
+{
+  "$defs": {
+    "Actor": {
+      "description": "Who authored a changeset: `engine`, `user:<id>` or `agent:<id>`.",
+      "pattern": "^(engine|user:.+|agent:.+)$",
+      "type": "string"
+    },
+    "CandidateList": {
+      "description": "`GET /v1/runs/{run}/candidates` when JSON is asked for. Each candidate has\n`left_id`, `right_id`, and every feature column prefixed with `left_` and\nwith `right_`.",
+      "properties": {
+        "candidates": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "candidates"
+      ],
+      "type": "object"
+    },
+    "Changeset": {
+      "description": "An ordered list of operations that is applied atomically or not at all.",
+      "properties": {
+        "actor": {
+          "$ref": "#/$defs/Actor"
+        },
+        "base": {
+          "$ref": "#/$defs/Seq",
+          "description": "The log position the author had seen."
+        },
+        "id": {
+          "$ref": "#/$defs/ChangesetId"
+        },
+        "ops": {
+          "items": {
+            "$ref": "#/$defs/Op"
+          },
+          "type": "array"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "run": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The reconcile run that drafted it, if any."
+        }
+      },
+      "required": [
+        "id",
+        "base",
+        "actor",
+        "ops"
+      ],
+      "type": "object"
+    },
+    "ChangesetId": {
+      "description": "Identifies a changeset, and the draft it was while it waited.",
+      "format": "uuid",
+      "type": "string"
+    },
+    "ChangesetList": {
+      "description": "`GET /v1/changesets`: a page of the log.",
+      "properties": {
+        "changesets": {
+          "items": {
+            "$ref": "#/$defs/LogEntry"
+          },
+          "type": "array"
+        },
+        "head": {
+          "$ref": "#/$defs/Seq",
+          "description": "The position of the last committed changeset."
+        }
+      },
+      "required": [
+        "changesets",
+        "head"
+      ],
+      "type": "object"
+    },
+    "Committed": {
+      "description": "The receipt for a committed changeset.",
+      "properties": {
+        "changeset": {
+          "$ref": "#/$defs/ChangesetId"
+        },
+        "content_hash": {
+          "$ref": "#/$defs/ContentHash"
+        },
+        "seq": {
+          "$ref": "#/$defs/Seq"
+        }
+      },
+      "required": [
+        "seq",
+        "changeset",
+        "content_hash"
+      ],
+      "type": "object"
+    },
+    "ConstraintKind": {
+      "enum": [
+        "must_link",
+        "cannot_link"
+      ],
+      "type": "string"
+    },
+    "ContentHash": {
+      "description": "SHA-256 of the canonical encoding of a list of operations, as lowercase hex.",
+      "type": "string"
+    },
+    "DraftList": {
+      "properties": {
+        "drafts": {
+          "items": {
+            "$ref": "#/$defs/DraftSummary"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "drafts"
+      ],
+      "type": "object"
+    },
+    "DraftRecord": {
+      "description": "A draft with the changeset it would commit.",
+      "properties": {
+        "changeset": {
+          "$ref": "#/$defs/Changeset"
+        },
+        "draft": {
+          "$ref": "#/$defs/DraftSummary"
+        }
+      },
+      "required": [
+        "draft",
+        "changeset"
+      ],
+      "type": "object"
+    },
+    "DraftStatus": {
+      "enum": [
+        "open",
+        "committed",
+        "rejected",
+        "superseded"
+      ],
+      "type": "string"
+    },
+    "DraftSummary": {
+      "description": "A draft without its operations.",
+      "properties": {
+        "base": {
+          "$ref": "#/$defs/Seq",
+          "description": "The log position it was drafted against."
+        },
+        "committed_seq": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Seq"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Committed: its position in the log."
+        },
+        "entity_type": {
+          "$ref": "#/$defs/EntityType"
+        },
+        "id": {
+          "$ref": "#/$defs/ChangesetId",
+          "description": "The ID of the changeset, which is how a draft is named."
+        },
+        "identities_created": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "match_run": {
+          "$ref": "#/$defs/RunId",
+          "description": "The match run whose judgements the draft rests on."
+        },
+        "observations_assigned": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "operations": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reconcile_run": {
+          "$ref": "#/$defs/RunId",
+          "description": "The reconcile run that drafted it."
+        },
+        "rejected_at": {
+          "description": "Rejected: when.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rejected_reason": {
+          "description": "Rejected: why, if the reviewer said.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/DraftStatus"
+        },
+        "superseded_by": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Superseded: the reconcile run that drafted the entity type again."
+        }
+      },
+      "required": [
+        "id",
+        "entity_type",
+        "match_run",
+        "reconcile_run",
+        "base",
+        "status",
+        "operations",
+        "identities_created",
+        "observations_assigned"
+      ],
+      "type": "object"
+    },
+    "EntityType": {
+      "description": "The name of an entity type the project declares.",
+      "pattern": "^[a-z][a-z0-9_]{0,47}$",
+      "type": "string"
+    },
+    "ErrorBody": {
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "message": {
+          "type": "string"
+        },
+        "rejections": {
+          "description": "With `rejected`: the operations of the changeset that broke a rule.",
+          "items": {
+            "$ref": "#/$defs/Rejection"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "type": "object"
+    },
+    "ErrorCode": {
+      "oneOf": [
+        {
+          "const": "unauthorized",
+          "description": "401: the bearer token is missing or wrong.",
+          "type": "string"
+        },
+        {
+          "const": "invalid",
+          "description": "400: the request cannot be read, or names something that is not\ndeclared.",
+          "type": "string"
+        },
+        {
+          "const": "not_found",
+          "description": "404: there is no such run, draft, identity, observation or path.",
+          "type": "string"
+        },
+        {
+          "const": "conflict",
+          "description": "409: the thing exists and is not in a state that allows this.",
+          "type": "string"
+        },
+        {
+          "const": "rejected",
+          "description": "409: the changeset broke a rule. `rejections` names the operations.",
+          "type": "string"
+        },
+        {
+          "const": "too_large",
+          "description": "413: the body is larger than the server reads.",
+          "type": "string"
+        },
+        {
+          "const": "internal",
+          "description": "500: the server failed.",
+          "type": "string"
+        }
+      ]
+    },
+    "ErrorResponse": {
+      "description": "The body of every response that is not a success.",
+      "properties": {
+        "error": {
+          "$ref": "#/$defs/ErrorBody"
+        }
+      },
+      "required": [
+        "error"
+      ],
+      "type": "object"
+    },
+    "FeatureColumn": {
+      "properties": {
+        "data_type": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "data_type"
+      ],
+      "type": "object"
+    },
+    "History": {
+      "properties": {
+        "history": {
+          "items": {
+            "$ref": "#/$defs/HistoryEntry"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "history"
+      ],
+      "type": "object"
+    },
+    "HistoryEntry": {
+      "description": "A committed changeset as far as it concerns one identity.",
+      "properties": {
+        "actor": {
+          "$ref": "#/$defs/Actor"
+        },
+        "changeset": {
+          "$ref": "#/$defs/ChangesetId"
+        },
+        "committed_at": {
+          "type": "string"
+        },
+        "ops": {
+          "description": "The operations that name the identity, in the order they were applied.",
+          "items": {
+            "$ref": "#/$defs/Op"
+          },
+          "type": "array"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "run": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The reconcile run that drafted it, if one did."
+        },
+        "seq": {
+          "$ref": "#/$defs/Seq"
+        }
+      },
+      "required": [
+        "seq",
+        "changeset",
+        "actor",
+        "committed_at",
+        "ops"
+      ],
+      "type": "object"
+    },
+    "IdentitiesOfRequest": {
+      "additionalProperties": false,
+      "description": "`POST /v1/observations/identities`: the identities of many observations\nin one call.",
+      "properties": {
+        "observations": {
+          "items": {
+            "$ref": "#/$defs/ObservationId"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "observations"
+      ],
+      "type": "object"
+    },
+    "IdentitiesOfResponse": {
+      "properties": {
+        "identities": {
+          "description": "One entry per observation asked about, in the same order. `null` for\nan observation that has no identity or is not known.",
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/IdentityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "identities"
+      ],
+      "type": "object"
+    },
+    "IdentityId": {
+      "description": "Identifies an identity. Minted once, never derived from content and never reused.",
+      "format": "uuid",
+      "type": "string"
+    },
+    "IdentityList": {
+      "properties": {
+        "identities": {
+          "items": {
+            "$ref": "#/$defs/IdentitySummary"
+          },
+          "type": "array"
+        },
+        "next": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IdentityId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Pass as `after` for the next page. `null` on the last page."
+        }
+      },
+      "required": [
+        "identities"
+      ],
+      "type": "object"
+    },
+    "IdentitySummary": {
+      "description": "An active identity in a list.",
+      "properties": {
+        "created": {
+          "$ref": "#/$defs/Seq"
+        },
+        "entity_type": {
+          "$ref": "#/$defs/EntityType"
+        },
+        "id": {
+          "$ref": "#/$defs/IdentityId"
+        },
+        "members": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "entity_type",
+        "created",
+        "members"
+      ],
+      "type": "object"
+    },
+    "IdentityView": {
+      "description": "An identity and the observations that belong to it now.",
+      "properties": {
+        "created": {
+          "$ref": "#/$defs/Seq",
+          "description": "The log position that created the identity that was asked for."
+        },
+        "current": {
+          "$ref": "#/$defs/IdentityId",
+          "description": "The active identity it stands for: itself, or the one it was merged\ninto."
+        },
+        "entity_type": {
+          "$ref": "#/$defs/EntityType"
+        },
+        "id": {
+          "$ref": "#/$defs/IdentityId",
+          "description": "The ID that was asked for."
+        },
+        "members": {
+          "description": "The members of the current identity, ordered by observation ID.",
+          "items": {
+            "$ref": "#/$defs/Member"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "current",
+        "entity_type",
+        "created",
+        "members"
+      ],
+      "type": "object"
+    },
+    "Info": {
+      "description": "`GET /v1/info`.",
+      "properties": {
+        "api": {
+          "description": "The version of the API this server speaks.",
+          "type": "string"
+        },
+        "store": {
+          "$ref": "#/$defs/StoreInfo"
+        }
+      },
+      "required": [
+        "api",
+        "store"
+      ],
+      "type": "object"
+    },
+    "IngestReport": {
+      "properties": {
+        "duplicates": {
+          "description": "Rows that were already known, or repeated within this call.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "inserted": {
+          "description": "Observations created.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "received": {
+          "description": "Rows received.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "run": {
+          "$ref": "#/$defs/RunId"
+        }
+      },
+      "required": [
+        "run",
+        "received",
+        "inserted",
+        "duplicates"
+      ],
+      "type": "object"
+    },
+    "IngestRequest": {
+      "additionalProperties": false,
+      "description": "`POST /v1/ingest` with a JSON body. With an Arrow body, the same fields\nother than `rows` are query parameters.",
+      "properties": {
+        "entity_type": {
+          "type": "string"
+        },
+        "evidence": {
+          "default": null,
+          "description": "A column of JSON text that says where each row was found.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "key": {
+          "default": null,
+          "description": "The column that holds each row's key within the source.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rows": {
+          "description": "One object per row. A column holds text, booleans or numbers.",
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "source": {
+          "description": "The name of the source the rows come from.",
+          "type": "string"
+        },
+        "wait_ms": {
+          "default": null,
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "source",
+        "entity_type",
+        "rows"
+      ],
+      "type": "object"
+    },
+    "Judgement": {
+      "additionalProperties": false,
+      "properties": {
+        "detail": {
+          "default": null,
+          "description": "Anything the strategy wants kept with the judgement."
+        },
+        "left_id": {
+          "$ref": "#/$defs/ObservationId"
+        },
+        "right_id": {
+          "$ref": "#/$defs/ObservationId"
+        },
+        "score": {
+          "default": null,
+          "description": "On the strategy's own scale. Scores are never compared across\nstrategies.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "verdict": {
+          "$ref": "#/$defs/Verdict"
+        }
+      },
+      "required": [
+        "left_id",
+        "right_id",
+        "verdict"
+      ],
+      "type": "object"
+    },
+    "JudgementCounts": {
+      "properties": {
+        "match": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "no_match": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "unsure": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "match",
+        "no_match",
+        "unsure"
+      ],
+      "type": "object"
+    },
+    "JudgementsRequest": {
+      "additionalProperties": false,
+      "description": "`POST /v1/runs/{run}/judgements` with a JSON body.",
+      "properties": {
+        "judgements": {
+          "items": {
+            "$ref": "#/$defs/Judgement"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "judgements"
+      ],
+      "type": "object"
+    },
+    "JudgementsResponse": {
+      "properties": {
+        "stored": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "stored"
+      ],
+      "type": "object"
+    },
+    "LogEntry": {
+      "description": "A committed changeset as the log holds it.",
+      "properties": {
+        "changeset": {
+          "$ref": "#/$defs/Changeset"
+        },
+        "content_hash": {
+          "$ref": "#/$defs/ContentHash"
+        },
+        "seq": {
+          "$ref": "#/$defs/Seq"
+        }
+      },
+      "required": [
+        "seq",
+        "changeset",
+        "content_hash"
+      ],
+      "type": "object"
+    },
+    "Member": {
+      "properties": {
+        "key": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "observation": {
+          "$ref": "#/$defs/ObservationId"
+        },
+        "since": {
+          "$ref": "#/$defs/Seq",
+          "description": "The log position that placed it here."
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "observation",
+        "source",
+        "since"
+      ],
+      "type": "object"
+    },
+    "MintRequest": {
+      "additionalProperties": false,
+      "description": "`POST /v1/ids`: IDs for a caller that writes its own changeset.",
+      "properties": {
+        "changesets": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "identities": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "MintedIds": {
+      "description": "IDs minted for a caller that writes its own changesets.",
+      "properties": {
+        "changesets": {
+          "items": {
+            "$ref": "#/$defs/ChangesetId"
+          },
+          "type": "array"
+        },
+        "identities": {
+          "items": {
+            "$ref": "#/$defs/IdentityId"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "identities",
+        "changesets"
+      ],
+      "type": "object"
+    },
+    "ObservationId": {
+      "description": "Identifies an observation. Derived by the engine from the observation's source, key and content.",
+      "format": "uuid",
+      "type": "string"
+    },
+    "ObservationList": {
+      "properties": {
+        "next": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ObservationId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Pass as `after` for the next page. `null` on the last page."
+        },
+        "observations": {
+          "items": {
+            "$ref": "#/$defs/ObservationRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "observations"
+      ],
+      "type": "object"
+    },
+    "ObservationRecord": {
+      "description": "An observation as it was ingested, and the identity it belongs to now.",
+      "properties": {
+        "entity_type": {
+          "$ref": "#/$defs/EntityType"
+        },
+        "evidence": {
+          "description": "Where in the source the observation was found, if the source said."
+        },
+        "id": {
+          "$ref": "#/$defs/ObservationId"
+        },
+        "identity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IdentityId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "`None` while no changeset has placed it."
+        },
+        "ingest_run": {
+          "$ref": "#/$defs/RunId"
+        },
+        "ingested_at": {
+          "type": "string"
+        },
+        "key": {
+          "description": "The row's key within its source, if it had one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "payload": {
+          "description": "The attributes exactly as received."
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "entity_type",
+        "source",
+        "payload",
+        "ingested_at",
+        "ingest_run"
+      ],
+      "type": "object"
+    },
+    "Op": {
+      "description": "One change to identity state. Each operation carries its own precondition,\nwhich is checked against the state the changeset is committed to.\n\n`Merge`, `Constrain`, `Unconstrain` and `Reinstate` are part of the format\nand are not implemented yet: a changeset that contains one is rejected.",
+      "oneOf": [
+        {
+          "description": "Precondition: the ID has never been used.",
+          "properties": {
+            "entity_type": {
+              "$ref": "#/$defs/EntityType"
+            },
+            "identity": {
+              "$ref": "#/$defs/IdentityId"
+            },
+            "op": {
+              "const": "create_identity",
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "identity",
+            "entity_type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Attach (`from` is `None`), move, or detach (`to` is `None`).\nPrecondition: `from` is the observation's current identity.",
+          "properties": {
+            "from": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/IdentityId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "observation": {
+              "$ref": "#/$defs/ObservationId"
+            },
+            "op": {
+              "const": "assign",
+              "type": "string"
+            },
+            "to": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/IdentityId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "op",
+            "observation"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Moves every current member of `from` to `into` and redirects `from`.",
+          "properties": {
+            "from": {
+              "$ref": "#/$defs/IdentityId"
+            },
+            "into": {
+              "$ref": "#/$defs/IdentityId"
+            },
+            "op": {
+              "const": "merge",
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "from",
+            "into"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "a": {
+              "$ref": "#/$defs/ObservationId"
+            },
+            "b": {
+              "$ref": "#/$defs/ObservationId"
+            },
+            "kind": {
+              "$ref": "#/$defs/ConstraintKind"
+            },
+            "op": {
+              "const": "constrain",
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "kind",
+            "a",
+            "b"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "a": {
+              "$ref": "#/$defs/ObservationId"
+            },
+            "b": {
+              "$ref": "#/$defs/ObservationId"
+            },
+            "kind": {
+              "$ref": "#/$defs/ConstraintKind"
+            },
+            "op": {
+              "const": "unconstrain",
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "kind",
+            "a",
+            "b"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Makes a merged identity active again; used only to undo a merge.",
+          "properties": {
+            "identity": {
+              "$ref": "#/$defs/IdentityId"
+            },
+            "op": {
+              "const": "reinstate",
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "identity"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Reason": {
+      "oneOf": [
+        {
+          "properties": {
+            "reason": {
+              "const": "empty_changeset",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "base": {
+              "$ref": "#/$defs/Seq"
+            },
+            "head": {
+              "$ref": "#/$defs/Seq"
+            },
+            "reason": {
+              "const": "base_ahead",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "base",
+            "head"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "reason": {
+              "const": "already_committed",
+              "type": "string"
+            },
+            "seq": {
+              "$ref": "#/$defs/Seq"
+            }
+          },
+          "required": [
+            "reason",
+            "seq"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "identity": {
+              "$ref": "#/$defs/IdentityId"
+            },
+            "reason": {
+              "const": "identity_exists",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "identity"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "observation": {
+              "$ref": "#/$defs/ObservationId"
+            },
+            "reason": {
+              "const": "unknown_observation",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "observation"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "identity": {
+              "$ref": "#/$defs/IdentityId"
+            },
+            "reason": {
+              "const": "unknown_identity",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "identity"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "identity": {
+              "$ref": "#/$defs/IdentityId"
+            },
+            "merged_into": {
+              "$ref": "#/$defs/IdentityId"
+            },
+            "reason": {
+              "const": "identity_not_active",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "identity",
+            "merged_into"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "actual": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/IdentityId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "expected": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/IdentityId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "observation": {
+              "$ref": "#/$defs/ObservationId"
+            },
+            "reason": {
+              "const": "stale_assignment",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "observation"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "observation": {
+              "$ref": "#/$defs/ObservationId"
+            },
+            "reason": {
+              "const": "no_change",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "observation"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "identity": {
+              "$ref": "#/$defs/IdentityId"
+            },
+            "identity_type": {
+              "$ref": "#/$defs/EntityType"
+            },
+            "observation": {
+              "$ref": "#/$defs/ObservationId"
+            },
+            "observation_type": {
+              "$ref": "#/$defs/EntityType"
+            },
+            "reason": {
+              "const": "entity_type_mismatch",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "observation",
+            "observation_type",
+            "identity",
+            "identity_type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "first_op": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "observation": {
+              "$ref": "#/$defs/ObservationId"
+            },
+            "reason": {
+              "const": "observation_assigned_twice",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "observation",
+            "first_op"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "type": "string"
+            },
+            "reason": {
+              "const": "not_implemented",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ReconcileRequest": {
+      "additionalProperties": false,
+      "description": "`POST /v1/runs/{run}/reconcile`. The body may be left out.",
+      "properties": {
+        "commit": {
+          "default": null,
+          "description": "Commit the draft (the default), or store it for review.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "RejectDraftRequest": {
+      "additionalProperties": false,
+      "description": "`POST /v1/drafts/{draft}/reject`. The body may be left out.",
+      "properties": {
+        "reason": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Rejection": {
+      "description": "Why a changeset was not accepted. `op_index` and `op` name the operation\nthat conflicted, and are `None` when the changeset as a whole is at fault.",
+      "properties": {
+        "op": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Op"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "op_index": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "reason": {
+          "$ref": "#/$defs/Reason"
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "type": "object"
+    },
+    "ReviewItem": {
+      "description": "Something the reconciler would not decide. The observations named are left\nwithout an identity.",
+      "oneOf": [
+        {
+          "description": "The observations match members of more than one identity. Those\nidentities may be the same real thing, which only a reviewer can say.",
+          "properties": {
+            "identities": {
+              "items": {
+                "$ref": "#/$defs/IdentityId"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "const": "possible_merge",
+              "type": "string"
+            },
+            "observations": {
+              "items": {
+                "$ref": "#/$defs/ObservationId"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "observations",
+            "identities"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The evidence contradicts itself: the observations match each other or\n`identity`, and a `no_match` judgement says some of them do not belong\ntogether, or do not belong with a member of `identity`.",
+          "properties": {
+            "identity": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/IdentityId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "kind": {
+              "const": "conflict",
+              "type": "string"
+            },
+            "observations": {
+              "items": {
+                "$ref": "#/$defs/ObservationId"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "observations"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ReviewKind": {
+      "oneOf": [
+        {
+          "const": "possible_merge",
+          "description": "The observations match more than one identity, so placing them would\nmerge identities.",
+          "type": "string"
+        },
+        {
+          "const": "conflict",
+          "description": "The evidence about the observations contradicts itself.",
+          "type": "string"
+        }
+      ]
+    },
+    "ReviewList": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/ReviewRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "ReviewRecord": {
+      "description": "A review item as the store keeps it.",
+      "properties": {
+        "entity_type": {
+          "$ref": "#/$defs/EntityType"
+        },
+        "id": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "identities": {
+          "description": "The identities they matched. Empty when the conflict is among the\nobservations themselves.",
+          "items": {
+            "$ref": "#/$defs/IdentityId"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "$ref": "#/$defs/ReviewKind"
+        },
+        "observations": {
+          "description": "The observations left without an identity.",
+          "items": {
+            "$ref": "#/$defs/ObservationId"
+          },
+          "type": "array"
+        },
+        "resolved_seq": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Seq"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Resolved: the changeset after which every observation had an identity."
+        },
+        "run": {
+          "$ref": "#/$defs/RunId",
+          "description": "The reconcile run that raised it."
+        },
+        "status": {
+          "$ref": "#/$defs/ReviewStatus"
+        },
+        "superseded_by": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Superseded: the reconcile run that raised it again in another form."
+        }
+      },
+      "required": [
+        "id",
+        "run",
+        "entity_type",
+        "kind",
+        "observations",
+        "identities",
+        "status"
+      ],
+      "type": "object"
+    },
+    "ReviewStatus": {
+      "enum": [
+        "open",
+        "resolved",
+        "superseded"
+      ],
+      "type": "string"
+    },
+    "RunId": {
+      "description": "Identifies a run of the engine: an ingest, a match or a reconcile.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "RunKind": {
+      "enum": [
+        "ingest",
+        "match",
+        "reconcile"
+      ],
+      "type": "string"
+    },
+    "RunList": {
+      "properties": {
+        "runs": {
+          "items": {
+            "$ref": "#/$defs/RunRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "runs"
+      ],
+      "type": "object"
+    },
+    "RunRecord": {
+      "description": "A run as a caller sees it.",
+      "properties": {
+        "entity_type": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EntityType"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The entity type an ingest or a match run is about."
+        },
+        "error": {
+          "description": "Why a failed run failed.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "finished_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ingest": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IngestReport"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What an ingest run reported when it finished."
+        },
+        "kind": {
+          "$ref": "#/$defs/RunKind"
+        },
+        "resolution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TypeResolution"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What a match run reported when it was reconciled. `committed` is\nfilled in once its draft is committed."
+        },
+        "run": {
+          "$ref": "#/$defs/RunId"
+        },
+        "started_at": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/RunStatus"
+        },
+        "strategy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StrategyRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The strategy of a match run."
+        }
+      },
+      "required": [
+        "run",
+        "kind",
+        "status",
+        "started_at"
+      ],
+      "type": "object"
+    },
+    "RunResponse": {
+      "description": "A run, as the response of a call that started one or read one. `run` is\n`null` when there was nothing to do, so no run was started.",
+      "properties": {
+        "run": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "RunStatus": {
+      "description": "How far a run has got.\n\nOnly `running` means the engine is at work. An `open` or `drafted` match\nrun waits for someone else, and stays as it is across a restart. A run\nfound `running` when a store is opened was interrupted, and is recorded as\n`failed`.",
+      "oneOf": [
+        {
+          "const": "running",
+          "description": "The engine is working on it.",
+          "type": "string"
+        },
+        {
+          "const": "open",
+          "description": "A match run whose candidates are ready. It takes judgements until it\nis reconciled.",
+          "type": "string"
+        },
+        {
+          "const": "drafted",
+          "description": "A match run that was reconciled into a draft that has not been\ncommitted. The draft's own status says what became of it.",
+          "type": "string"
+        },
+        {
+          "const": "succeeded",
+          "description": "Finished. For a match run: its draft was committed, or there was\nnothing to commit.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "It stopped with an error, was interrupted, or was cancelled.",
+          "type": "string"
+        }
+      ]
+    },
+    "Seq": {
+      "description": "A position in the changeset log. The first committed changeset is 1, and 0\nis the empty log.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "StartRunRequest": {
+      "additionalProperties": false,
+      "description": "`POST /v1/runs`: match the new observations of one entity type.",
+      "properties": {
+        "commit": {
+          "default": null,
+          "description": "With the built-in strategy: commit the draft (the default), or store\nit for review. A run that waits for judgements is told this when it\nis reconciled.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "entity_type": {
+          "$ref": "#/$defs/EntityType"
+        },
+        "strategy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StrategyRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Who judges the candidates. Left out, or named `rules`, the server\nruns the project's SQL rules and reconciles. Any other name starts a\nrun that waits for the caller's judgements."
+        },
+        "wait_ms": {
+          "default": null,
+          "description": "How long the call waits for the run, in milliseconds. If the run is\nstill in progress then, the response has status 202 and the run as\nfar as it has got.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "entity_type"
+      ],
+      "type": "object"
+    },
+    "StoreInfo": {
+      "description": "What a store holds.",
+      "properties": {
+        "engine_version": {
+          "type": "string"
+        },
+        "entity_types": {
+          "items": {
+            "$ref": "#/$defs/TypeInfo"
+          },
+          "type": "array"
+        },
+        "format_version": {
+          "type": "string"
+        },
+        "head": {
+          "$ref": "#/$defs/Seq",
+          "description": "The position of the last committed changeset."
+        },
+        "manifest_hash": {
+          "description": "The hash of the manifest the store was last applied with.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "engine_version",
+        "format_version",
+        "head",
+        "entity_types"
+      ],
+      "type": "object"
+    },
+    "StrategyRef": {
+      "description": "Names the strategy that produces a match run's judgements.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "TypeInfo": {
+      "properties": {
+        "declaration_version": {
+          "description": "How many times the declaration has been applied in a new form.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "features": {
+          "description": "The columns of the feature table, as the manifest declares them.\nEmpty when the engine runs without a manifest.",
+          "items": {
+            "$ref": "#/$defs/FeatureColumn"
+          },
+          "type": "array"
+        },
+        "identities": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "$ref": "#/$defs/EntityType"
+        },
+        "observations": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "open_draft": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ChangesetId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The draft that waits for a decision, if there is one."
+        },
+        "open_review_items": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "unassigned": {
+          "description": "Observations no changeset has placed.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "declaration_version",
+        "features",
+        "observations",
+        "unassigned",
+        "identities",
+        "open_review_items"
+      ],
+      "type": "object"
+    },
+    "TypeResolution": {
+      "properties": {
+        "candidates": {
+          "description": "Distinct candidate pairs.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "committed": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Committed"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The changeset, once it is committed. `None` when there was nothing to\ncommit, and while a draft waits."
+        },
+        "draft": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ChangesetId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The draft that was stored for review, if the run was asked to leave\none. It is named by its changeset ID."
+        },
+        "entity_type": {
+          "$ref": "#/$defs/EntityType"
+        },
+        "identities_created": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "judgements": {
+          "$ref": "#/$defs/JudgementCounts"
+        },
+        "match_run": {
+          "$ref": "#/$defs/RunId"
+        },
+        "new_observations": {
+          "description": "Observations the run examined: those ingested since the last run, and\nthose an earlier run left for review.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "observations_assigned": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "observations_unassigned": {
+          "description": "Examined observations left without an identity. Each is named in\n`review`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reconcile_run": {
+          "$ref": "#/$defs/RunId"
+        },
+        "reexamined": {
+          "description": "How many of them an earlier run had left for review.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "review": {
+          "description": "What the run would not decide. The store keeps these as review items.",
+          "items": {
+            "$ref": "#/$defs/ReviewItem"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "entity_type",
+        "match_run",
+        "reconcile_run",
+        "new_observations",
+        "reexamined",
+        "candidates",
+        "judgements",
+        "identities_created",
+        "observations_assigned",
+        "observations_unassigned",
+        "review"
+      ],
+      "type": "object"
+    },
+    "Verdict": {
+      "enum": [
+        "match",
+        "no_match",
+        "unsure"
+      ],
+      "type": "string"
+    }
+  },
+  "$id": "https://github.com/alexpatow/spool/schema/spool-api.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The JSON values of the Spool HTTP API. Generated from the server's types; do not edit.",
+  "title": "Spool API v1"
+}

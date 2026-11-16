@@ -627,12 +627,13 @@ async fn submit_judgements(
                 row
             })
             .collect();
-        if rows.is_empty() {
-            0
+        // No judgements is still a call on the run, which has to be open.
+        let rows = if rows.is_empty() {
+            Rows::from_text(&["left_id", "right_id", "verdict"], &[])?
         } else {
-            let rows = Rows::from_json(&rows)?;
-            engine(&app, move |engine| engine.submit_judgements(run, rows)).await?
-        }
+            Rows::from_json(&rows)?
+        };
+        engine(&app, move |engine| engine.submit_judgements(run, rows)).await?
     };
     ok(JudgementsResponse { stored })
 }

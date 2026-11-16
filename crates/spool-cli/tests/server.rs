@@ -704,6 +704,11 @@ fn a_caller_judges_the_candidates_of_a_run_step_by_step() {
         }] }),
     );
     assert_eq!(stored, json!({ "stored": 1 }));
+    let none = server.call(
+        &format!("/v1/runs/{run}/judgements"),
+        json!({ "judgements": [] }),
+    );
+    assert_eq!(none, json!({ "stored": 0 }));
     let stored = server
         .post_arrow(
             &format!("/v1/runs/{run}/judgements"),
@@ -777,6 +782,15 @@ fn a_caller_judges_the_candidates_of_a_run_step_by_step() {
             json!({ "judgements": [{ "left_id": anvils.0, "right_id": anvils.1, "verdict": "match" }] }),
         )
         .error(409, "conflict");
+    server
+        .post(
+            &format!("/v1/runs/{run}/judgements"),
+            json!({ "judgements": [] }),
+        )
+        .error(409, "conflict");
+    server
+        .post("/v1/runs/999/judgements", json!({ "judgements": [] }))
+        .error(404, "not_found");
     server
         .post(&format!("/v1/runs/{run}/cancel"), json!({}))
         .error(409, "conflict");

@@ -28,11 +28,15 @@ fn usage_is_printed_on_request_and_on_a_mistake() {
         assert!(output.status.success());
         let stdout = text(&output.stdout);
         assert!(stdout.starts_with("Usage: spool <command>"), "{stdout}");
-        for command in ["init", "info", "build", "apply", "serve", "dev", "bench"] {
+        for command in [
+            "init", "info", "build", "apply", "serve", "dev", "bench", "schema",
+        ] {
             assert!(stdout.contains(&format!("\n  {command} ")), "{command}");
         }
     }
-    for command in ["init", "info", "build", "apply", "serve", "dev", "bench"] {
+    for command in [
+        "init", "info", "build", "apply", "serve", "dev", "bench", "schema",
+    ] {
         for arguments in [&[command, "--help"][..], &[command, "x", "-h"]] {
             let output = spool(arguments);
             assert!(output.status.success());

@@ -30,3 +30,27 @@ fn store_path(arguments: &Arguments) -> Result<PathBuf, Failure> {
             Failure::Usage("say where the store is with `--store` or `SPOOL_STORE`".to_owned())
         })
 }
+
+pub const SCHEMA_USAGE: &str = "\
+Usage: spool schema
+
+Prints the JSON Schema of every value the server's API takes and returns.
+Client types are generated from it.
+";
+
+pub fn schema(arguments: &[String]) -> Result<(), Failure> {
+    self::arguments(
+        arguments,
+        &Spec {
+            values: &[],
+            flags: &[],
+            positional: 0,
+        },
+    )?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&spool_cli::api::schema())
+            .expect("a schema serialises to JSON")
+    );
+    Ok(())
+}

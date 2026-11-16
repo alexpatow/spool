@@ -1,0 +1,24 @@
+{
+  "name": "spool-client",
+  "version": "0.1.0",
+  "description": "A typed client for the Spool HTTP API.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "generate": "bun scripts/generate-types.ts",
+    "check-types": "bun scripts/generate-types.ts --check",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "typescript": "^5.6.0"
+  }
+}

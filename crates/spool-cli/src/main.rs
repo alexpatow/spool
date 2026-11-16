@@ -16,6 +16,7 @@ Commands:
   serve    run the server from a manifest and a store
   dev      run the server on localhost and apply file changes as they are saved
   bench    run a benchmark scenario
+  schema   print the JSON Schema of the server's API
 
 `spool <command> --help` describes a command.
 ";
@@ -58,6 +59,7 @@ fn main() -> ExitCode {
         "serve" => (commands::serve::SERVE_USAGE, commands::serve::serve),
         "dev" => (commands::serve::DEV_USAGE, commands::serve::dev),
         "bench" => (commands::bench::USAGE, commands::bench::bench),
+        "schema" => (commands::SCHEMA_USAGE, commands::schema),
         other => {
             eprintln!("spool: unknown command `{other}`\n\n{USAGE}");
             return ExitCode::from(2);
