@@ -239,8 +239,14 @@ fn serve_sets_up_an_empty_store_and_refuses_one_applied_with_another_manifest() 
     assert_eq!(stopped.code, Some(1));
     assert!(!store.exists(), "nothing was opened");
 
-    // An empty store is set up from the manifest.
-    let server = Server::start(&serve_arguments(&manifest, &store, "1"));
+    // An empty store is set up from the manifest. A token read from a file
+    // often ends with a newline, which is not part of it.
+    let mut server = Server::start_with(
+        &serve_arguments(&manifest, &store, "1"),
+        Some("test-token\n"),
+    )
+    .unwrap();
+    server.token = TOKEN.to_owned();
     let hash = server.read("/v1/info")["store"]["manifest_hash"].clone();
     ingest(
         &server,
@@ -385,6 +391,20 @@ fn dev_serves_a_project_directory_and_applies_changes_as_they_are_saved() {
     assert!(complaint.starts_with("spool: "), "{complaint}");
     server.complained("still running the last version that compiled");
     assert_eq!(server.read("/v1/info")["store"]["manifest_hash"], second);
+
+    // So is a change that compiles and that the stored observations do not
+    // fit: here, two feature rows for each observation.
+    std::fs::write(
+        &features,
+        "SELECT observation_id, payload->>'code' AS code, payload->>'colour' AS colour\nFROM observation, range(2)\n",
+    )
+    .unwrap();
+    server.complained("still running the last version that compiled");
+    assert_eq!(server.read("/v1/info")["store"]["manifest_hash"], second);
+    ingest(&server, &[&["id", "code"], &["3", "Anvil"]]);
+    let resolution = resolve(&server)["run"]["resolution"].clone();
+    assert_eq!(resolution["observations_assigned"], 1, "{resolution}");
+    assert_eq!(resolution["identities_created"], 0, "{resolution}");
 
     // A rule is only a rule: adding one rebuilds nothing.
     std::fs::write(

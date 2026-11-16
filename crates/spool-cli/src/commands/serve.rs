@@ -81,9 +81,12 @@ pub fn serve(arguments: &[String]) -> Result<(), Failure> {
     )?;
     let listen = listen_address(&arguments, &format!("0.0.0.0:{DEFAULT_PORT}"))?;
     let store = super::store_path(&arguments)?;
+    // Trimmed, as the token a caller presents is: a secret read from a file
+    // often ends with a newline.
     let token = std::env::var("SPOOL_TOKEN")
         .ok()
-        .filter(|token| !token.trim().is_empty())
+        .map(|token| token.trim().to_owned())
+        .filter(|token| !token.is_empty())
         .ok_or_else(|| {
             failed("set SPOOL_TOKEN to the bearer token callers must present; the server does not run without one")
         })?;
@@ -132,7 +135,8 @@ pub fn dev(arguments: &[String]) -> Result<(), Failure> {
         .value("--token")
         .map(str::to_owned)
         .or_else(|| std::env::var("SPOOL_TOKEN").ok())
-        .filter(|token| !token.trim().is_empty())
+        .map(|token| token.trim().to_owned())
+        .filter(|token| !token.is_empty())
         .unwrap_or_else(|| "dev".to_owned());
 
     let seen = fingerprint(&dir);

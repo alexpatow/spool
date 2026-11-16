@@ -962,3 +962,67 @@ fn identities_observations_and_review_items_are_looked_up() {
         open["items"]
     );
 }
+
+#[test]
+fn calls_made_at_once_are_all_served_and_writes_take_turns() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = things_server(dir.path());
+
+    std::thread::scope(|scope| {
+        let server = &server;
+        let writers: Vec<_> = (0..8)
+            .map(|writer| {
+                scope.spawn(move || {
+                    let rows: Vec<Value> = (0..50)
+                        .map(|row| json!({ "id": format!("{writer}-{row}"), "code": format!("{row}") }))
+                        .collect();
+                    let response = server.post(
+                        "/v1/ingest",
+                        json!({
+                            "source": format!("source-{writer}"),
+                            "entity_type": "thing",
+                            "key": "id",
+                            "rows": rows,
+                        }),
+                    );
+                    assert_eq!(response.ok()["run"]["ingest"]["inserted"], 50);
+                    let run = server.call("/v1/runs", json!({ "entity_type": "thing" }));
+                    assert_ne!(run["run"]["status"], "failed", "{run}");
+                })
+            })
+            .collect();
+        let readers: Vec<_> = (0..4)
+            .map(|_| {
+                scope.spawn(move || {
+                    for _ in 0..20 {
+                        assert_eq!(server.read("/v1/info")["api"], "v1");
+                        server.read("/v1/identities?limit=5");
+                        server.read("/v1/runs?limit=5");
+                    }
+                })
+            })
+            .collect();
+        for thread in writers.into_iter().chain(readers) {
+            thread.join().unwrap();
+        }
+    });
+
+    // Whatever order the writers came in, every observation ends up in one
+    // of fifty identities: one per code.
+    server.call("/v1/runs", json!({ "entity_type": "thing" }));
+    let info = server.read("/v1/info");
+    let thing = &info["store"]["entity_types"][0];
+    assert_eq!(thing["observations"], 400);
+    assert_eq!(thing["unassigned"], 0, "{info}");
+    assert_eq!(thing["identities"], 50, "{info}");
+    assert_eq!(thing["open_review_items"], 0, "{info}");
+    let log = server.read("/v1/changesets?limit=1000");
+    let seqs: Vec<u64> = log["changesets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["seq"].as_u64().unwrap())
+        .collect();
+    assert_eq!(seqs, (1..=seqs.len() as u64).collect::<Vec<_>>());
+    assert_eq!(log["head"], seqs.len() as u64);
+}

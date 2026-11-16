@@ -6,6 +6,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
+use std::sync::Mutex;
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
@@ -118,8 +119,8 @@ pub struct Server {
     child: Child,
     pub address: String,
     pub token: String,
-    stdout: Receiver<String>,
-    stderr: Receiver<String>,
+    stdout: Mutex<Receiver<String>>,
+    stderr: Mutex<Receiver<String>>,
 }
 
 fn lines(stream: impl Read + Send + 'static) -> Receiver<String> {
@@ -180,8 +181,8 @@ impl Server {
                 child,
                 address: line.rsplit_once("http://").unwrap().1.trim().to_owned(),
                 token: token.unwrap_or("dev").to_owned(),
-                stdout,
-                stderr,
+                stdout: Mutex::new(stdout),
+                stderr: Mutex::new(stderr),
             }),
             None => {
                 let _ = child.kill();
@@ -221,14 +222,14 @@ impl Server {
     /// Waits for a line on the server's standard output that contains `what`.
     pub fn printed(&self, what: &str) -> String {
         let mut seen = Vec::new();
-        wait_for(&self.stdout, what, &mut seen)
+        wait_for(&self.stdout.lock().unwrap(), what, &mut seen)
             .unwrap_or_else(|| panic!("the server never printed `{what}`; it printed {seen:?}"))
     }
 
     /// Waits for a line on the server's standard error that contains `what`.
     pub fn complained(&self, what: &str) -> String {
         let mut seen = Vec::new();
-        wait_for(&self.stderr, what, &mut seen)
+        wait_for(&self.stderr.lock().unwrap(), what, &mut seen)
             .unwrap_or_else(|| panic!("the server never complained `{what}`; it said {seen:?}"))
     }
 
