@@ -1,0 +1,16 @@
+# A few invented person records in the columns of `fake_1000`, so the person
+# project can be run without a download.
+
+project = "."
+
+[truth]
+column = "cluster"
+
+[[step]]
+name = "all records"
+
+[[step.ingest]]
+file = "sample.csv"
+source = "sample"
+entity_type = "person"
+key = "unique_id"

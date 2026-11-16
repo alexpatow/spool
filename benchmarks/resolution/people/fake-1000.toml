@@ -1,0 +1,17 @@
+# Splink's `fake_1000`: 1,000 synthetic person records with typos and missing
+# values, in one batch. The file is downloaded and checked on first use; see
+# ../../datasets.toml.
+
+project = "."
+
+[truth]
+column = "cluster"
+
+[[step]]
+name = "all records"
+
+[[step.ingest]]
+dataset = "fake_1000"
+source = "fake_1000"
+entity_type = "person"
+key = "unique_id"
