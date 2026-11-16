@@ -1,6 +1,8 @@
 //! Milestone 1's exit criteria, one test each, in the order the architecture
-//! proposal lists them. Two of them are tested where the code lives:
+//! proposal lists them. Three of them are tested where the code lives:
 //!
+//! - "A resolve that is cut short at any step is completed by the next one":
+//!   `interrupted.rs`.
 //! - "The in-memory state and the DuckDB store pass the same conformance
 //!   suite": `spool_core::conformance` runs in `spool-core/tests/conformance.rs`
 //!   and in `src/store.rs`, and `src/store_property.rs` compares the two

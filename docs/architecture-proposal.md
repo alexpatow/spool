@@ -355,7 +355,7 @@ Three relation shapes, each an Arrow schema:
 | Candidates | `left_id`, `right_id`, optional `rule` | Strategy, or the built-in blocker |
 | Judgements | `left_id`, `right_id`, `verdict`, optional `score`, optional `detail` | Strategy |
 
-Plus one rule about scope: a run is told which observations are new, and it must judge new-versus-existing and new-versus-new pairs only. New means ingested since the last match run of the type that succeeded, plus the observations of open review items that still have no identity (below). The engine rejects judgements that name unknown observations.
+Plus one rule about scope: a run is told which observations are new, and it must judge new-versus-existing and new-versus-new pairs only. New means ingested since the last match run of the type that succeeded, plus the observations of open review items that still have no identity (below). When the engine matches, reconciles and commits in one call, it records the match run as succeeded only after the commit, so a call that is cut short leaves nothing behind: the next one examines the same observations again. The engine rejects judgements that name unknown observations.
 
 Candidates and judgements have the same shape for every entity type. Features do not: their columns come from the type's declaration. A strategy is therefore written against a declaration's columns, and nothing in the engine or the contract fixes what those are.
 
@@ -642,6 +642,7 @@ Exit criteria, each a test:
 - Two records that a rule says are different are not attached to the same identity, even when each of them matches it.
 - An observation matching two identities is left unassigned with a review item.
 - A review item is still in the store after the store is reopened, and its observation is examined again by the next run.
+- A resolve that is cut short at any step is completed by the next one.
 - Rebuilding the projection from the log reproduces the state exactly.
 - The in-memory state and the DuckDB store pass the same conformance suite.
 - Two runs with the same seed produce the same changeset content hashes.

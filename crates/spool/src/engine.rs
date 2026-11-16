@@ -271,6 +271,10 @@ impl Engine {
     /// Matches new observations with the built-in rule runner, reconciles
     /// with the default policy, and commits. A type is resolved when it has
     /// newly ingested observations or open review items.
+    ///
+    /// The match run is recorded as succeeded only after the commit. A
+    /// resolve that is cut short leaves the run unfinished, and the next
+    /// resolve examines the same observations again.
     pub fn resolve(&self, options: &ResolveOptions) -> Result<ResolveReport> {
         self.lock().resolve(options)
     }
@@ -793,16 +797,23 @@ impl Inner {
     }
 
     fn reconcile(&mut self, run: RunId, policy: &Policy) -> Result<Draft> {
+        let (row, _) = self.match_run(run)?;
+        if row.status == "running" {
+            self.finish_run(run, "succeeded")?;
+        }
+        self.draft(run, policy)
+    }
+
+    /// Turns a match run's judgements into a draft and stores its review
+    /// items. The match run is left as it is: whether it has succeeded is
+    /// for the caller to say.
+    fn draft(&mut self, run: RunId, policy: &Policy) -> Result<Draft> {
         let (row, config) = self.match_run(run)?;
-        match row.status.as_str() {
-            "running" => self.finish_run(run, "succeeded")?,
-            "succeeded" => {}
-            other => {
-                return Err(Error::Run {
-                    run,
-                    message: format!("it {other} and cannot be reconciled"),
-                });
-            }
+        if !matches!(row.status.as_str(), "running" | "succeeded") {
+            return Err(Error::Run {
+                run,
+                message: format!("it {} and cannot be reconciled", row.status),
+            });
         }
 
         let reconcile_run = self.start_run(
@@ -939,22 +950,36 @@ impl Inner {
                 entity_type: entity_type.clone(),
             };
             let run = self.begin_run(&StrategyRef::rules(), &scope)?;
-            let new_observations = self.count(&format!("SELECT count(*) FROM {}", rules::SCOPE))?;
-            let reexamined = self.count(&format!(
-                "SELECT count(*) FROM {} s
+            // Observations in scope that already have an identity are not
+            // examined. There are some when an earlier resolve committed and
+            // was cut short before it recorded that.
+            let unplaced = format!(
+                "FROM {} s
                  JOIN spool.observation o ON o.observation_id = s.observation_id
-                 WHERE o.ingest_run <= {after_run}",
+                 WHERE NOT EXISTS (
+                   SELECT 1 FROM spool.membership m
+                   WHERE m.observation_id = s.observation_id AND m.to_seq IS NULL)",
                 rules::SCOPE
+            );
+            let new_observations = self.count(&format!("SELECT count(*) {unplaced}"))?;
+            let reexamined = self.count(&format!(
+                "SELECT count(*) {unplaced} AND o.ingest_run <= {after_run}"
             ))?;
 
             let (draft, committed) = self.in_run(run, |inner| {
                 inner.judge_with_rules(run)?;
-                let draft = inner.reconcile(run, &Policy::default())?;
+                let draft = inner.draft(run, &Policy::default())?;
                 let committed = if draft.changeset.ops.is_empty() {
                     None
                 } else {
                     Some(inner.commit(draft.changeset.clone())?)
                 };
+                // The run has succeeded once its draft is committed, and not
+                // before: what is new to the next run is counted from the
+                // last run that succeeded. If the process stops before this
+                // line, the next resolve examines the same observations
+                // again, and those the commit placed are no longer new.
+                inner.finish_run(run, "succeeded")?;
                 Ok((draft, committed))
             })?;
 
