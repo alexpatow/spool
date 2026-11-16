@@ -7,6 +7,8 @@
 //! - [`Changeset`] and [`Op`]: the only way identity state changes.
 //! - [`validate`]: the rules every changeset must pass. It returns a
 //!   [`Validated`], which is the only thing an [`IdentityStore`] applies.
+//! - [`reconcile`]: turns a strategy's judgements about new observations into
+//!   a draft changeset.
 //! - [`MemoryState`]: an in-memory store, used as the reference model and as
 //!   the target of log replay.
 //! - [`conformance`]: the suite every store must pass.
@@ -16,6 +18,7 @@ pub mod conformance;
 mod generate;
 mod ids;
 mod memory;
+mod reconcile;
 mod state;
 mod validate;
 
@@ -26,6 +29,10 @@ pub use ids::{
     RunId, Seq,
 };
 pub use memory::{MemoryState, ReplayError};
+pub use reconcile::{
+    Draft, EvidenceSummary, IdentityLink, NewObservation, NewPair, Policy, ReviewItem, Verdict,
+    reconcile,
+};
 pub use state::{
     Committed, IdentityRecord, IdentityState, IdentityStatus, IdentityStore, LogEntry, Membership,
     Snapshot, StateError,
