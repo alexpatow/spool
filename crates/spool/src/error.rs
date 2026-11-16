@@ -67,6 +67,32 @@ pub enum Error {
     #[error("draft {draft}: {message}")]
     Draft { draft: ChangesetId, message: String },
 
+    /// The entity type has no strategy of that name.
+    #[error(
+        "entity type `{entity_type}` has no strategy `{strategy}`; it has {}",
+        match known.as_slice() {
+            [] => "only the built-in `rules`".to_owned(),
+            names => format!("`rules` and {}", names.iter().map(|name| format!("`{name}`")).collect::<Vec<_>>().join(", ")),
+        }
+    )]
+    UnknownStrategy {
+        entity_type: String,
+        strategy: String,
+        /// The user-code strategies the type does have.
+        known: Vec<String>,
+    },
+
+    /// A user-code strategy could not be run, or what it wrote was refused.
+    #[error("strategy `{strategy}`: {message}")]
+    Strategy { strategy: String, message: String },
+
+    /// The manifest names user code and the engine was not told where the
+    /// project's files are.
+    #[error(
+        "strategy `{0}` is user code, and this engine was not told where the project directory is"
+    )]
+    NoUserCode(String),
+
     #[error("rows rejected: {0}")]
     Rows(String),
 

@@ -14,6 +14,10 @@
 //!             ├── block/*.sql     predicates over rows `l` and `r` that generate candidate pairs
 //!             ├── no_match/*.sql  predicates that judge a candidate `no_match`
 //!             └── match/*.sql     predicates that judge a candidate `match`
+//!         └── strategies/
+//!             ├── splink.py       user code: the strategy `splink`, run with `uv`
+//!             ├── splink/         files that belong to `splink`, such as its model
+//!             └── nearest.ts      the strategy `nearest`, run with `bun`
 //! ```
 
 use std::collections::BTreeSet;
@@ -42,6 +46,20 @@ pub struct EntityTypeSource {
     pub block: Vec<SqlFile>,
     pub no_match: Vec<SqlFile>,
     pub match_: Vec<SqlFile>,
+    pub strategies: Vec<StrategySource>,
+}
+
+/// A user-code strategy as found on disk.
+#[derive(Clone, Debug)]
+pub struct StrategySource {
+    /// The file's name without its extension.
+    pub name: String,
+    pub runtime: Runtime,
+    pub path: PathBuf,
+    /// The file's path from the project directory, with `/` between its
+    /// parts on every platform.
+    pub file: String,
+    pub hash: String,
 }
 
 /// A SQL file. The name is the file's name without `.sql`.
@@ -79,6 +97,67 @@ pub struct EntityTypeManifest {
     /// runs, a declaration cannot change under existing feature rows.
     pub declaration_hash: String,
     pub rules: RuleSet,
+    /// User-code strategies. Left out of the JSON when there are none, so a
+    /// project of SQL files has the manifest hash it always had.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub strategies: Vec<Strategy>,
+}
+
+/// A strategy that is user code: a file the engine runs as a child process.
+/// The engine runs the file only while it still has this hash.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct Strategy {
+    pub name: String,
+    pub runtime: Runtime,
+    /// The file, as a path from the project directory with `/` between its
+    /// parts.
+    pub file: String,
+    /// SHA-256 of the file and of every file in the directory that shares
+    /// its name. It is recorded as the strategy's version with each run.
+    pub hash: String,
+}
+
+/// What runs a strategy file. The file's extension decides.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum Runtime {
+    /// A `.py` file, run with `uv run`.
+    Python,
+    /// A `.ts` file, run with `bun run`.
+    Typescript,
+}
+
+impl Runtime {
+    fn of(path: &Path) -> Option<Self> {
+        match path.extension()?.to_str()? {
+            "py" => Some(Runtime::Python),
+            "ts" => Some(Runtime::Typescript),
+            _ => None,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Runtime::Python => "python",
+            Runtime::Typescript => "typescript",
+        }
+    }
+}
+
+impl std::fmt::Display for Runtime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl EntityTypeManifest {
+    pub fn strategy(&self, name: &str) -> Option<&Strategy> {
+        self.strategies
+            .iter()
+            .find(|strategy| strategy.name == name)
+    }
 }
 
 /// The features query and the columns DuckDB infers from it.
@@ -167,7 +246,8 @@ impl Project {
     /// Discovers the entity types under `dir/entities`. Nothing is validated
     /// beyond names; [`compile`](Self::compile) checks the SQL.
     pub fn read(dir: impl AsRef<Path>) -> Result<Self> {
-        let entities = dir.as_ref().join("entities");
+        let root = dir.as_ref();
+        let entities = root.join("entities");
         if !entities.is_dir() {
             return Err(Error::Project {
                 file: entities,
@@ -200,6 +280,7 @@ impl Project {
                 block: Vec::new(),
                 no_match: Vec::new(),
                 match_: Vec::new(),
+                strategies: Vec::new(),
             };
             for child in list(&entry)? {
                 match file_name(&child).as_str() {
@@ -224,6 +305,37 @@ impl Project {
                                     project.ignored.push(file);
                                 }
                             }
+                        }
+                    }
+                    "strategies" if child.is_dir() => {
+                        let files = list(&child)?;
+                        for file in &files {
+                            let runtime = Runtime::of(file).filter(|_| file.is_file());
+                            let Some(runtime) = runtime else {
+                                // A directory belongs to the strategy of the
+                                // same name. Anything else is not used.
+                                let owned = file.is_dir()
+                                    && files.iter().any(|other| {
+                                        other.is_file()
+                                            && Runtime::of(other).is_some()
+                                            && other.file_stem() == file.file_name()
+                                    });
+                                if !owned {
+                                    project.ignored.push(file.clone());
+                                }
+                                continue;
+                            };
+                            let name = file
+                                .file_stem()
+                                .map(|stem| stem.to_string_lossy().into_owned())
+                                .unwrap_or_default();
+                            source.strategies.push(StrategySource {
+                                hash: strategy_hash(file)?,
+                                file: relative(root, file),
+                                name,
+                                runtime,
+                                path: file.clone(),
+                            });
                         }
                     }
                     _ => project.ignored.push(child),
@@ -274,12 +386,7 @@ impl Project {
                 let mut rules = Vec::new();
                 let mut seen = BTreeSet::new();
                 for file in files {
-                    let valid_name = !file.name.is_empty()
-                        && file
-                            .name
-                            .chars()
-                            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
-                    if !valid_name {
+                    if !valid_name(&file.name) {
                         return Err(in_file(file)(
                             "a rule's file name may contain only letters, digits, `_` and `-`"
                                 .to_owned(),
@@ -315,11 +422,47 @@ impl Project {
                 match_: compile_rules(&source.match_)?,
             };
 
+            let mut strategies = Vec::new();
+            for strategy in &source.strategies {
+                let invalid = |message: String| Error::Project {
+                    file: strategy.path.clone(),
+                    message,
+                };
+                if !valid_name(&strategy.name) {
+                    return Err(invalid(
+                        "a strategy's file name may contain only letters, digits, `_` and `-`"
+                            .to_owned(),
+                    ));
+                }
+                if strategy.name == BUILT_IN {
+                    return Err(invalid(format!(
+                        "`{BUILT_IN}` is the built-in strategy that runs the SQL rules; give this file another name"
+                    )));
+                }
+                if strategies
+                    .iter()
+                    .any(|other: &Strategy| other.name == strategy.name)
+                {
+                    return Err(invalid(format!(
+                        "strategy `{}` is defined twice",
+                        strategy.name
+                    )));
+                }
+                strategies.push(Strategy {
+                    name: strategy.name.clone(),
+                    runtime: strategy.runtime,
+                    file: strategy.file.clone(),
+                    hash: strategy.hash.clone(),
+                });
+            }
+            strategies.sort_by(|a, b| a.name.cmp(&b.name));
+
             entity_types.push(EntityTypeManifest {
                 declaration_hash: hash_json(&declaration),
                 name,
                 declaration,
                 rules,
+                strategies,
             });
         }
 
@@ -329,6 +472,79 @@ impl Project {
             entity_types,
         })
     }
+}
+
+/// The name of the built-in strategy, which no file may take.
+const BUILT_IN: &str = "rules";
+
+fn valid_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+/// A path below the project directory, with `/` between its parts.
+fn relative(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .components()
+        .map(|part| part.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// SHA-256 of a strategy: its file, and every file in the directory beside
+/// it that shares its name, which is where a strategy keeps what belongs to
+/// it. What tools leave behind (`__pycache__`, `node_modules`, hidden files)
+/// is not part of it.
+pub(crate) fn strategy_hash(file: &Path) -> Result<String> {
+    fn add(hasher: &mut Sha256, name: &str, path: &Path) -> Result<()> {
+        let contents = std::fs::read(path).map_err(Error::io(path))?;
+        hasher.update((name.len() as u64).to_le_bytes());
+        hasher.update(name.as_bytes());
+        hasher.update((contents.len() as u64).to_le_bytes());
+        hasher.update(&contents);
+        Ok(())
+    }
+    fn walk(hasher: &mut Sha256, root: &Path, dir: &Path) -> Result<()> {
+        for entry in list(dir)? {
+            let name = file_name(&entry);
+            if entry.is_dir() {
+                if name != "__pycache__" && name != "node_modules" {
+                    walk(hasher, root, &entry)?;
+                }
+            } else {
+                add(hasher, &relative(root, &entry), &entry)?;
+            }
+        }
+        Ok(())
+    }
+    let mut hasher = Sha256::new();
+    add(&mut hasher, &file_name(file), file)?;
+    let owned = file.with_extension("");
+    if owned.is_dir() {
+        walk(&mut hasher, &owned, &owned)?;
+    }
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
+/// SHA-256 of several texts, each with its length, as lowercase hex.
+pub(crate) fn hash_text(texts: &[&str]) -> String {
+    let mut hasher = Sha256::new();
+    for text in texts {
+        hasher.update((text.len() as u64).to_le_bytes());
+        hasher.update(text.as_bytes());
+    }
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 /// SHA-256 of a value's JSON form, as lowercase hex.

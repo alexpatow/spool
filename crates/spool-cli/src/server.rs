@@ -226,7 +226,13 @@ impl From<spool::Error> for ApiError {
             | Error::Rows(_)
             | Error::Arrow(_)
             | Error::InvalidEntityType(_)
-            | Error::UndeclaredType(_) => Self::invalid(message),
+            | Error::UndeclaredType(_)
+            | Error::UnknownStrategy { .. } => Self::invalid(message),
+            Error::Strategy { .. } => Self::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ErrorCode::StrategyFailed,
+                message,
+            ),
             _ => Self::internal(message),
         }
     }
@@ -481,24 +487,54 @@ async fn ingest(
 async fn start_run(State(app): State<App>, body: Bytes) -> ApiResult {
     let request: StartRunRequest = json_body(&body)?;
     let entity_type = request.entity_type;
+    let rematch = request.rematch.unwrap_or(false);
+    // A name is the project's strategy if the manifest the server was built
+    // with has one by that name. Nothing a caller sends is ever run.
+    let built_in = |strategy: &StrategyRef| -> ApiResult<bool> {
+        if strategy.name == StrategyRef::RULES {
+            return Ok(true);
+        }
+        let manifest = app.engine.manifest();
+        let found = manifest
+            .as_deref()
+            .and_then(|manifest| manifest.entity_type(entity_type.as_str()))
+            .and_then(|entry| entry.strategy(&strategy.name));
+        match (found, &strategy.version) {
+            (Some(found), Some(version)) if *version != found.hash => {
+                Err(ApiError::invalid(format!(
+                    "the project's strategy `{}` is version {}, not {version}",
+                    found.name, found.hash
+                )))
+            }
+            (found, _) => Ok(found.is_some()),
+        }
+    };
     match request.strategy {
-        Some(strategy) if strategy.name != StrategyRef::RULES => {
+        Some(strategy) if !built_in(&strategy)? => {
             if request.commit.is_some() {
                 return Err(ApiError::invalid(
-                    "`commit` goes with the built-in strategy; a run that waits for judgements is told when it is reconciled",
+                    "`commit` goes with a strategy the server runs; a run that waits for judgements is told when it is reconciled",
                 ));
             }
             job(&app, request.wait_ms, move |engine| {
                 engine
-                    .begin_run(&strategy, &Scope { entity_type })
+                    .begin_run(
+                        &strategy,
+                        &Scope {
+                            entity_type,
+                            rematch,
+                        },
+                    )
                     .map(Some)
             })
             .await
         }
-        _ => {
+        strategy => {
             let options = ResolveOptions {
                 entity_type: Some(entity_type),
                 leave_for_review: !request.commit.unwrap_or(true),
+                strategy: strategy.map(|strategy| strategy.name),
+                rematch,
             };
             job(&app, request.wait_ms, move |engine| {
                 let report = engine.resolve(&options)?;

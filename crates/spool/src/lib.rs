@@ -43,6 +43,7 @@ mod store;
 #[cfg(test)]
 mod store_property;
 mod time;
+mod usercode;
 
 /// The Arrow version the engine is built against.
 pub use duckdb::arrow;
@@ -52,8 +53,8 @@ pub use bench::{BenchReport, CorrectionSummary, IngestSummary, Scenario, StepRep
 pub use drafts::{DraftFilter, DraftRecord, DraftStatus, DraftSummary};
 pub use engine::{
     ApplyReport, Authored, ConstraintFilter, Disposition, Engine, JudgementCounts, MintedIds,
-    Options, ResolveOptions, ResolveReport, Scope, SplitReport, StrategyRef, TypeResolution,
-    watch_runs,
+    Options, ResolveOptions, ResolveReport, Scope, SplitReport, StrategyRef, SuggestedMerge,
+    SuggestedSplit, Suggestions, TypeResolution, watch_runs,
 };
 pub use error::{Error, Result};
 pub use ingest::{IngestOptions, IngestReport};
@@ -63,12 +64,13 @@ pub use lookup::{
 };
 pub use metrics::{
     BCubed, Churn, IdStability, Metrics, OrderSensitivity, OverridePersistence, PairMetrics,
-    SplitRecovery,
+    SplitRecovery, UpgradeStability,
 };
 pub use project::{
     Declaration, EntityTypeManifest, EntityTypeSource, FeatureColumn, Manifest, Project, Rule,
-    RuleSet, SqlFile,
+    RuleSet, Runtime, SqlFile, Strategy, StrategySource,
 };
 pub use review::{Dismissal, ReviewFilter, ReviewKind, ReviewRecord, ReviewStatus};
 pub use rows::Rows;
 pub use runs::{RunFilter, RunKind, RunRecord, RunStatus};
+pub use usercode::UserCode;

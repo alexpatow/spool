@@ -397,9 +397,7 @@ fn a_draft_that_is_not_committed_still_records_what_it_left_out() {
     resolve(&engine);
     ingest(&engine, "depot", &[("9", Some("anvil"), Some("K7"))]);
 
-    let scope = spool::Scope {
-        entity_type: spool::core::EntityType::new("thing").unwrap(),
-    };
+    let scope = spool::Scope::new(spool::core::EntityType::new("thing").unwrap());
     let run = engine
         .begin_run(&spool::StrategyRef::rules(), &scope)
         .unwrap();

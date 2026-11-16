@@ -89,7 +89,8 @@ fn files_this_version_does_not_use_are_listed_and_ignored() {
     write(root, "spool.toml", "");
     write(root, "entities/README.md", "");
     write(root, "entities/paper/policy.toml", "");
-    write(root, "entities/paper/strategies/model.py", "");
+    write(root, "entities/paper/strategies/notes.md", "");
+    write(root, "entities/paper/strategies/weights/model.json", "{}");
     write(root, "entities/paper/rules/match/notes.txt", "");
     write(root, "entities/paper/rules/unsure/maybe.sql", "true");
 
@@ -112,7 +113,8 @@ fn files_this_version_does_not_use_are_listed_and_ignored() {
             "entities/paper/policy.toml",
             "entities/paper/rules/match/notes.txt",
             "entities/paper/rules/unsure",
-            "entities/paper/strategies",
+            "entities/paper/strategies/notes.md",
+            "entities/paper/strategies/weights",
         ]
     );
     assert_eq!(
@@ -157,7 +159,27 @@ fn a_mistake_fails_the_build_and_names_the_file() {
     assert_eq!(file, "entities");
     assert!(message.contains("`entities` directory"), "{message}");
 
-    let cases: [(&str, &str, &str); 8] = [
+    let cases: [(&str, &str, &str); 12] = [
+        (
+            "entities/paper/features.sql",
+            "SELECT observation_id, true AS is_new FROM observation",
+            "entities/paper/features.sql",
+        ),
+        (
+            "entities/paper/features.sql",
+            "SELECT observation_id, observation_id AS identity_id FROM observation",
+            "entities/paper/features.sql",
+        ),
+        (
+            "entities/paper/strategies/rules.py",
+            "",
+            "entities/paper/strategies/rules.py",
+        ),
+        (
+            "entities/paper/strategies/it's.ts",
+            "",
+            "entities/paper/strategies/it's.ts",
+        ),
         (
             "entities/Paper-2/features.sql",
             FEATURES,
@@ -215,6 +237,135 @@ fn a_rule_name_must_be_plain() {
     let (file, message) = project_error(dir.path());
     assert_eq!(file, "entities/paper/rules/match/it's.sql");
     assert!(message.contains("file name"), "{message}");
+}
+
+#[test]
+fn a_strategy_file_is_named_by_its_path() {
+    let dir = papers();
+    let root = dir.path();
+    let plain = Manifest::load(root).unwrap();
+    // A project of SQL files has the manifest it always had.
+    assert!(
+        !serde_json::to_string(&plain)
+            .unwrap()
+            .contains("strategies")
+    );
+
+    write(root, "entities/paper/strategies/model.py", "# a model\n");
+    write(root, "entities/paper/strategies/model/weights.json", "{}");
+    write(root, "entities/paper/strategies/nearest.ts", "// nearest\n");
+    let project = Project::read(root).unwrap();
+    assert!(project.ignored.is_empty(), "{:?}", project.ignored);
+    let manifest = project.compile().unwrap();
+    assert_ne!(manifest.hash, plain.hash);
+
+    let paper = manifest.entity_type("paper").unwrap();
+    let listed: Vec<(&str, spool::Runtime, &str)> = paper
+        .strategies
+        .iter()
+        .map(|strategy| {
+            (
+                strategy.name.as_str(),
+                strategy.runtime,
+                strategy.file.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            (
+                "model",
+                spool::Runtime::Python,
+                "entities/paper/strategies/model.py"
+            ),
+            (
+                "nearest",
+                spool::Runtime::Typescript,
+                "entities/paper/strategies/nearest.ts"
+            ),
+        ]
+    );
+    assert_eq!(paper.strategy("model").unwrap().hash.len(), 64);
+    assert!(paper.strategy("rules").is_none());
+    // The declaration is the features query alone.
+    assert_eq!(
+        paper.declaration_hash,
+        plain.entity_types[0].declaration_hash
+    );
+
+    // A manifest with strategies reads back as it was written.
+    let file = root.join(".spool/manifest.json");
+    manifest.write_file(&file).unwrap();
+    assert_eq!(Manifest::read_file(&file).unwrap(), manifest);
+}
+
+#[test]
+fn a_strategy_has_the_hash_of_its_file_and_of_what_belongs_to_it() {
+    let dir = papers();
+    let root = dir.path();
+    write(root, "entities/paper/strategies/model.py", "# a model\n");
+    write(root, "entities/paper/strategies/model/weights.json", "{}");
+    write(root, "entities/paper/strategies/nearest.ts", "// nearest\n");
+    let hashes = || {
+        let manifest = Manifest::load(root).unwrap();
+        let paper = manifest.entity_type("paper").unwrap();
+        (
+            paper.strategy("model").unwrap().hash.clone(),
+            paper.strategy("nearest").unwrap().hash.clone(),
+            manifest.hash,
+        )
+    };
+    let (model, nearest, manifest) = hashes();
+    assert_ne!(model, nearest);
+
+    // The file itself.
+    write(
+        root,
+        "entities/paper/strategies/model.py",
+        "# a better model\n",
+    );
+    let edited = hashes();
+    assert_ne!(edited.0, model);
+    assert_eq!(edited.1, nearest);
+    assert_ne!(edited.2, manifest);
+
+    // A file in the directory that shares its name, at any depth.
+    write(
+        root,
+        "entities/paper/strategies/model/weights.json",
+        "{\"w\": 1}",
+    );
+    let retrained = hashes();
+    assert_ne!(retrained.0, edited.0);
+    write(root, "entities/paper/strategies/model/lib/helper.py", "");
+    let with_helper = hashes();
+    assert_ne!(with_helper.0, retrained.0);
+    assert_eq!(with_helper.1, nearest);
+
+    // What tools leave behind is not part of a strategy.
+    write(
+        root,
+        "entities/paper/strategies/model/__pycache__/helper.pyc",
+        "compiled",
+    );
+    write(
+        root,
+        "entities/paper/strategies/model/node_modules/dep/index.js",
+        "",
+    );
+    write(root, "entities/paper/strategies/model/.cache", "");
+    assert_eq!(hashes(), with_helper);
+}
+
+#[test]
+fn two_files_cannot_be_one_strategy() {
+    let dir = papers();
+    write(dir.path(), "entities/paper/strategies/model.py", "");
+    write(dir.path(), "entities/paper/strategies/model.ts", "");
+    let (file, message) = project_error(dir.path());
+    assert_eq!(file, "entities/paper/strategies/model.ts");
+    assert!(message.contains("defined twice"), "{message}");
 }
 
 #[test]

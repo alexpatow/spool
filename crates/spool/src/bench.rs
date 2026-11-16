@@ -30,7 +30,17 @@
 //! [[step.correct]]
 //! name = "wrong merge"          # optional: lets a later `undo` name it
 //! merge = ["crm:7", "crm:9"]    # the identity of the first into that of the second
+//!
+//! [[step]]
+//! name = "a better model"
+//! strategy = "splink"           # the strategy this step resolves with
+//! rematch = true                # and it judges every observation again
 //! ```
+//!
+//! A step resolves with its own `strategy`, or else with the scenario's
+//! top-level `strategy`, or else with the built-in `rules`. A step with
+//! `rematch = true` matches everything again, which is what switching
+//! strategy on the same data means, and reports upgrade stability.
 //!
 //! A correction names observations as `source:key`, and is one of:
 //!
@@ -57,15 +67,19 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use spool_core::{Actor, Changeset, Constraint, ConstraintKind, IdentityId, Op, Seq};
 
-use crate::engine::{ConstraintFilter, Engine, Options, ResolveOptions, ResolveReport};
+use crate::engine::{
+    ConstraintFilter, Engine, Options, ResolveOptions, ResolveReport, StrategyRef, Suggestions,
+};
 use crate::error::{Error, Result};
 use crate::ingest::IngestOptions;
 use crate::lookup::{ObservationFilter, ObservationRecord};
 use crate::metrics::{
     Churn, IdStability, Metrics, OrderSensitivity, OverridePersistence, SplitRecovery,
+    UpgradeStability,
 };
 use crate::project::Manifest;
 use crate::rows::Rows;
+use crate::usercode::UserCode;
 
 #[derive(Clone, Debug)]
 pub struct Scenario {
@@ -81,6 +95,8 @@ pub struct Scenario {
 struct Spec {
     #[serde(default = "here")]
     project: PathBuf,
+    /// The strategy of every step that does not name its own.
+    strategy: Option<String>,
     truth: TruthSpec,
     #[serde(rename = "step")]
     steps: Vec<StepSpec>,
@@ -101,6 +117,9 @@ struct TruthSpec {
 #[serde(deny_unknown_fields)]
 struct StepSpec {
     name: String,
+    strategy: Option<String>,
+    #[serde(default)]
+    rematch: bool,
     #[serde(default)]
     ingest: Vec<IngestSpec>,
     #[serde(default, rename = "correct")]
@@ -228,6 +247,8 @@ pub struct BenchReport {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct StepReport {
     pub name: String,
+    /// The strategy the step resolved with.
+    pub strategy: String,
     pub ingest: Vec<IngestSummary>,
     /// The corrections the step applied, in order, before it resolved.
     pub corrections: Vec<CorrectionSummary>,
@@ -245,6 +266,9 @@ pub struct StepReport {
     /// Of the constraints the scenario has recorded so far, how many are
     /// still honoured.
     pub override_persistence: OverridePersistence,
+    /// What matching everything again did to existing identities. Only a
+    /// step with `rematch = true` has it.
+    pub upgrade_stability: Option<UpgradeStability>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -390,6 +414,29 @@ impl Scenario {
         self.dir.join(&self.spec.project).components().collect()
     }
 
+    /// The same scenario with another strategy for every step that does not
+    /// name its own.
+    pub fn with_strategy(mut self, strategy: impl Into<String>) -> Self {
+        self.spec.strategy = Some(strategy.into());
+        self
+    }
+
+    /// The strategy a step resolves with.
+    fn strategy<'a>(&'a self, step: &'a StepSpec) -> &'a str {
+        step.strategy
+            .as_deref()
+            .or(self.spec.strategy.as_deref())
+            .unwrap_or(StrategyRef::RULES)
+    }
+
+    fn resolve(&self, engine: &Engine, step: &StepSpec) -> Result<ResolveReport> {
+        engine.resolve(&ResolveOptions {
+            strategy: Some(self.strategy(step).to_owned()),
+            rematch: step.rematch,
+            ..ResolveOptions::default()
+        })
+    }
+
     /// Runs every step against an engine with an empty store. `after_step`
     /// is called once a step is committed and scored, while the engine still
     /// holds the state the step left.
@@ -400,6 +447,10 @@ impl Scenario {
     ) -> Result<BenchReport> {
         let manifest = Manifest::load(self.project_dir())?;
         engine.apply(&manifest)?;
+        // The project's strategy files are beside the manifest's sources.
+        if engine.user_code().is_none() {
+            engine.set_user_code(UserCode::new(self.project_dir()));
+        }
 
         // (source, key) to true entity, for everything ingested so far.
         let mut truth: HashMap<(String, String), String> = HashMap::new();
@@ -431,21 +482,42 @@ impl Scenario {
                 corrections.push(summary);
             }
 
-            let resolve = engine.resolve(&ResolveOptions::default())?;
+            let resolve = self.resolve(engine, step)?;
             let head = engine.head()?;
             let new_observations = ingested.iter().map(|ingest| ingest.inserted).sum();
             let (split_recovery, override_persistence) = held(engine, &tracked)?;
+            let id_stability = engine.id_stability(before, head)?;
+            let churn = engine.churn(before, head, new_observations)?;
+            let upgrade_stability = step.rematch.then(|| {
+                let suggested = |count: fn(&Suggestions) -> usize| {
+                    resolve
+                        .resolved
+                        .iter()
+                        .filter_map(|resolved| resolved.suggestions.as_ref())
+                        .map(count)
+                        .sum::<usize>() as u64
+                };
+                UpgradeStability::new(
+                    self.strategy(step),
+                    &id_stability,
+                    &churn,
+                    suggested(|suggestions| suggestions.merges.len()),
+                    suggested(|suggestions| suggestions.splits.len()),
+                )
+            });
             let report = StepReport {
                 name: step.name.clone(),
+                strategy: self.strategy(step).to_owned(),
                 ingest: ingested,
                 corrections,
                 resolve,
                 head,
                 metrics: engine.score(truth_relation(engine, &truth)?)?,
-                id_stability: engine.id_stability(before, head)?,
-                churn: engine.churn(before, head, new_observations)?,
+                id_stability,
+                churn,
                 split_recovery,
                 override_persistence,
+                upgrade_stability,
             };
             after_step(&report)?;
             steps.push(report);
@@ -516,22 +588,29 @@ impl Scenario {
             return Ok(None);
         }
         let replay = |steps: &mut dyn Iterator<Item = &&StepSpec>| -> Result<_> {
-            let engine = Engine::open_in_memory(Options::seeded(0))?;
-            engine.apply(manifest)?;
+            let replayed = Engine::open_in_memory(Options::seeded(0))?;
+            replayed.apply(manifest)?;
+            if let Some(user_code) = engine.user_code() {
+                replayed.set_user_code(user_code.as_ref().clone());
+            }
             let mut truth = HashMap::new();
             for step in steps {
                 for ingest in &step.ingest {
-                    self.ingest(&engine, ingest, &mut truth)?;
+                    self.ingest(&replayed, ingest, &mut truth)?;
                 }
-                engine.resolve(&ResolveOptions::default())?;
+                // The batch with the strategy it was written with, and no
+                // rematch: this measures the order of arrival alone.
+                replayed.resolve(&ResolveOptions::with_strategy(self.strategy(step)))?;
             }
-            grouping(&engine)
+            grouping(&replayed)
         };
+        // The engine holds the written order as it is unless the scenario
+        // did more than ingest and resolve.
         let corrected = self
             .spec
             .steps
             .iter()
-            .any(|step| !step.corrections.is_empty());
+            .any(|step| !step.corrections.is_empty() || step.rematch);
         let written = if corrected {
             replay(&mut batches.iter())?
         } else {

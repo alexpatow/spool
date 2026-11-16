@@ -24,8 +24,9 @@ duckdb = { version = "~1.20000.2", features = ["appender-arrow", "vtab-arrow"] }
 # Named by spool-cli only so that its build script runs after the one that
 # downloads the DuckDB library.
 libduckdb-sys = "~1.20000.2"
-# For one call in spool-cli: a command whose output is piped to `head` ends
-# quietly when the pipe closes.
+# For two calls. spool-cli: a command whose output is piped to `head` ends
+# quietly when the pipe closes. spool: a strategy that runs out of time is
+# stopped with the processes it started.
 libc = "0.2"
 # Feature `schema` of the crates below: the JSON Schema of the API's types.
 schemars = "1"

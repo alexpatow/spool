@@ -30,15 +30,18 @@ pub(crate) const NOT_DISMISSED: &str = "observation_id NOT IN (
 
 /// Lists the observations that are new to a run: those of the entity type
 /// that were ingested after `after_run` and before the run itself, and those
-/// of the given review items that still have no identity. The observations
-/// of dismissed review items are never among them.
+/// of the given review items that still have no identity. A rematch lists
+/// every observation that was ingested before the run. The observations of
+/// dismissed review items are never among them.
 pub(crate) fn create_scope(
     conn: &Connection,
     entity_type: &EntityType,
     after_run: RunId,
     run: RunId,
     review_items: &[u64],
+    rematch: bool,
 ) -> Result<()> {
+    let after_run = if rematch { RunId(0) } else { after_run };
     let under_review = match review::unassigned_observations(review_items) {
         Some(query) => format!("UNION {query}"),
         None => String::new(),

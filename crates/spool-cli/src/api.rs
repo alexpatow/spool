@@ -62,16 +62,28 @@ pub struct IngestParams {
 #[serde(deny_unknown_fields)]
 pub struct StartRunRequest {
     pub entity_type: EntityType,
-    /// Who judges the candidates. Left out, or named `rules`, the server
-    /// runs the project's SQL rules and reconciles. Any other name starts a
-    /// run that waits for the caller's judgements.
+    /// Who judges. Left out, or named `rules`, the server runs the
+    /// project's SQL rules and reconciles. The name of one of the project's
+    /// user-code strategies runs that code on the server and reconciles;
+    /// `GET /v1/info` lists them. Any other name starts a run that waits
+    /// for the caller's judgements: the server runs no code it was not
+    /// built with, whatever is named here.
+    ///
+    /// A `version` given with a project strategy must be the hash the
+    /// project was built with.
     #[serde(default)]
     pub strategy: Option<StrategyRef>,
-    /// With the built-in strategy: commit the draft (the default), or store
-    /// it for review. A run that waits for judgements is told this when it
-    /// is reconciled.
+    /// With a strategy the server runs: commit the draft (the default), or
+    /// store it for review. A run that waits for judgements is told this
+    /// when it is reconciled.
     #[serde(default)]
     pub commit: Option<bool>,
+    /// Match every observation of the type again, not only the new ones.
+    /// Observations that have an identity keep it: where the strategy
+    /// disagrees with the identities as they are, the run's `resolution`
+    /// lists `suggestions`.
+    #[serde(default)]
+    pub rematch: Option<bool>,
     /// How long the call waits for the run, in milliseconds. If the run is
     /// still in progress then, the response has status 202 and the run as
     /// far as it has got.
@@ -314,6 +326,10 @@ pub enum ErrorCode {
     Rejected,
     /// 413: the body is larger than the server reads.
     TooLarge,
+    /// 500: the project's user code failed, did not finish in time, or
+    /// wrote judgements that were refused. The run is recorded as failed
+    /// and nothing changed.
+    StrategyFailed,
     /// 500: the server failed.
     Internal,
 }
