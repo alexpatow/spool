@@ -5,7 +5,7 @@
 use duckdb::Connection;
 use spool_core::{EntityType, RunId};
 
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::project::{Declaration, FeatureColumn};
 
 /// The feature table of an entity type. The name is safe to splice into SQL
@@ -84,22 +84,43 @@ pub(crate) fn create_table(
     Ok(())
 }
 
-/// Computes feature rows for the observations of one ingest run and appends
-/// them. Fails if the query returns a row that does not belong to one of
-/// those observations, or more than one row for an observation.
+/// Drops the feature table and the entity view, to rebuild them under a
+/// changed declaration.
+pub(crate) fn drop_table(conn: &Connection, entity_type: &EntityType) -> Result<()> {
+    conn.execute_batch(&format!(
+        "DROP VIEW IF EXISTS spool.entity_{entity_type};
+         DROP TABLE IF EXISTS {};",
+        table(entity_type)
+    ))?;
+    Ok(())
+}
+
+/// The observations of one ingest run, as a filter on `spool.observation`.
+pub(crate) fn of_run(entity_type: &EntityType, ingest_run: RunId) -> String {
+    format!("entity_type = '{entity_type}' AND ingest_run = {ingest_run}")
+}
+
+/// Every observation of an entity type, as a filter on `spool.observation`.
+pub(crate) fn of_type(entity_type: &EntityType) -> String {
+    format!("entity_type = '{entity_type}'")
+}
+
+/// Computes feature rows for the observations that `scope` selects and
+/// appends them. Returns what is wrong if the query returns a row that does
+/// not belong to one of those observations, or more than one row for an
+/// observation; nothing is appended then.
 pub(crate) fn fill(
     conn: &Connection,
     entity_type: &EntityType,
     declaration: &Declaration,
     version: u32,
-    ingest_run: RunId,
-) -> Result<()> {
-    let scope = format!("entity_type = '{entity_type}' AND ingest_run = {ingest_run}");
+    scope: &str,
+) -> Result<Option<String>> {
     conn.execute_batch(&format!(
         "CREATE OR REPLACE TEMP TABLE spool_new_features AS
          SELECT features.*, {version}::INTEGER AS declaration_version
          FROM ({}) AS features",
-        select(&declaration.features, &scope)
+        select(&declaration.features, scope)
     ))?;
 
     let (stray, repeated): (i64, i64) = conn.query_row(
@@ -129,7 +150,7 @@ pub(crate) fn fill(
     };
     if let Some(problem) = problem {
         conn.execute_batch("DROP TABLE spool_new_features")?;
-        return Err(Error::Ingest(format!(
+        return Ok(Some(format!(
             "the features query of `{entity_type}` must return at most one row per observation, and {problem}"
         )));
     }
@@ -139,5 +160,5 @@ pub(crate) fn fill(
          DROP TABLE spool_new_features;",
         table(entity_type)
     ))?;
-    Ok(())
+    Ok(None)
 }

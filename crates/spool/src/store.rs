@@ -16,6 +16,7 @@ use spool_core::{
 };
 
 use crate::batch::{Column, batch, id_list};
+use crate::drafts;
 use crate::error::Result;
 use crate::review;
 use crate::schema;
@@ -23,6 +24,8 @@ use crate::schema;
 pub(crate) struct DuckStore {
     pub(crate) conn: Connection,
     pub(crate) clock: Box<dyn Clock + Send>,
+    /// Whether the database is a file attached under [`CATALOG`].
+    attached: bool,
 }
 
 /// The name the database file is attached under.
@@ -46,7 +49,22 @@ impl DuckStore {
         conn.execute_batch("SET TimeZone = 'UTC'")?;
         conn.register_table_function::<ArrowVTab>("arrow")?;
         schema::ensure(&mut conn)?;
-        Ok(Self { conn, clock })
+        Ok(Self {
+            conn,
+            clock,
+            attached: path.is_some(),
+        })
+    }
+
+    /// Whether the database is a file.
+    pub(crate) fn attached(&self) -> bool {
+        self.attached
+    }
+
+    /// Another connection to the same database, for reading while this one
+    /// writes. It sees what has been committed.
+    pub(crate) fn reader(&self) -> Result<Connection> {
+        reader(&self.conn, self.attached)
     }
 
     /// Replaces the projection tables with the given state. Every identity is
@@ -181,211 +199,241 @@ impl DuckStore {
         // Not identity state, but it has to agree with membership at every
         // log position, so it is updated in the same transaction.
         review::resolve_assigned(&tx, Seq(seq as u64))?;
+        // Nor is a draft, and committing one is what ends its match run.
+        drafts::committed(&tx, changeset.id, Seq(seq as u64), committed_at)?;
         tx.commit()?;
         Ok(Seq(seq as u64))
     }
+}
 
-    fn read_log(&self) -> Result<Vec<LogEntry>> {
-        let mut entries = Vec::new();
-        let mut statement = self.conn.prepare(
-            "SELECT seq, changeset_id::VARCHAR, base_seq, actor, reason, run_id, content_hash
-             FROM spool.changeset ORDER BY seq",
-        )?;
-        let mut rows = statement.query([])?;
-        while let Some(row) = rows.next()? {
-            entries.push(LogEntry {
-                seq: Seq(row.get::<_, i64>(0)? as u64),
-                changeset: Changeset {
-                    id: parse(&row.get::<_, String>(1)?)?,
-                    base: Seq(row.get::<_, i64>(2)? as u64),
-                    actor: parse(&row.get::<_, String>(3)?)?,
-                    reason: row.get(4)?,
-                    run: row.get::<_, Option<i64>>(5)?.map(|run| RunId(run as u64)),
-                    ops: Vec::new(),
-                },
-                content_hash: ContentHash::from_stored(row.get(6)?),
-            });
-        }
+/// A new connection to the database of `conn`, set up like the one a store
+/// opens.
+pub(crate) fn reader(conn: &Connection, attached: bool) -> Result<Connection> {
+    let reader = conn.try_clone()?;
+    if attached {
+        reader.execute_batch(&format!("USE {CATALOG}"))?;
+    }
+    reader.execute_batch("SET TimeZone = 'UTC'")?;
+    Ok(reader)
+}
 
-        let mut statement = self.conn.prepare(
-            "SELECT seq, kind, identity_id::VARCHAR, from_identity_id::VARCHAR,
-                    observation_id::VARCHAR, other_observation_id::VARCHAR,
-                    entity_type, constraint_kind
-             FROM spool.changeset_op ORDER BY seq, op_index",
-        )?;
-        let mut rows = statement.query([])?;
-        while let Some(row) = rows.next()? {
-            let seq = Seq(row.get::<_, i64>(0)? as u64);
-            let op = op_from_row(OpRow {
-                kind: row.get(1)?,
-                identity: row.get(2)?,
-                from_identity: row.get(3)?,
-                observation: row.get(4)?,
-                other_observation: row.get(5)?,
-                entity_type: row.get(6)?,
-                constraint_kind: row.get(7)?,
+pub(crate) fn read_log(conn: &Connection) -> Result<Vec<LogEntry>> {
+    read_log_after(conn, Seq::ZERO, u64::MAX)
+}
+
+/// At most `limit` committed changesets after a log position, in log order.
+pub(crate) fn read_log_after(conn: &Connection, after: Seq, limit: u64) -> Result<Vec<LogEntry>> {
+    let mut entries = Vec::new();
+    let mut statement = conn.prepare(
+        "SELECT seq, changeset_id::VARCHAR, base_seq, actor, reason, run_id, content_hash
+         FROM spool.changeset WHERE seq > ? ORDER BY seq LIMIT ?",
+    )?;
+    let mut rows = statement.query(params![after.0 as i64, limit.min(i64::MAX as u64) as i64])?;
+    while let Some(row) = rows.next()? {
+        entries.push(LogEntry {
+            seq: Seq(row.get::<_, i64>(0)? as u64),
+            changeset: Changeset {
+                id: parse(&row.get::<_, String>(1)?)?,
+                base: Seq(row.get::<_, i64>(2)? as u64),
+                actor: parse(&row.get::<_, String>(3)?)?,
+                reason: row.get(4)?,
+                run: row.get::<_, Option<i64>>(5)?.map(|run| RunId(run as u64)),
+                ops: Vec::new(),
+            },
+            content_hash: ContentHash::from_stored(row.get(6)?),
+        });
+    }
+    let Some(last) = entries.last().map(|entry| entry.seq) else {
+        return Ok(entries);
+    };
+
+    let mut statement = conn.prepare(
+        "SELECT seq, kind, identity_id::VARCHAR, from_identity_id::VARCHAR,
+                observation_id::VARCHAR, other_observation_id::VARCHAR,
+                entity_type, constraint_kind
+         FROM spool.changeset_op WHERE seq > ? AND seq <= ? ORDER BY seq, op_index",
+    )?;
+    let mut rows = statement.query([after.0 as i64, last.0 as i64])?;
+    while let Some(row) = rows.next()? {
+        let seq = Seq(row.get::<_, i64>(0)? as u64);
+        let op = op_from_row(OpRow {
+            kind: row.get(1)?,
+            identity: row.get(2)?,
+            from_identity: row.get(3)?,
+            observation: row.get(4)?,
+            other_observation: row.get(5)?,
+            entity_type: row.get(6)?,
+            constraint_kind: row.get(7)?,
+        })?;
+        // Positions are dense, so an entry's index is its distance from the
+        // first position read.
+        let entry = (seq.0 as usize)
+            .checked_sub(after.0 as usize + 1)
+            .and_then(|index| entries.get_mut(index))
+            .filter(|entry| entry.seq == seq)
+            .ok_or_else(|| {
+                StateError::new(format!(
+                    "operation rows at log position {seq} have no changeset"
+                ))
             })?;
-            // Positions are dense and start at 1, so an entry's index is its position less one.
-            let entry = (seq.0 as usize)
-                .checked_sub(1)
-                .and_then(|index| entries.get_mut(index))
-                .filter(|entry| entry.seq == seq)
-                .ok_or_else(|| {
-                    StateError::new(format!(
-                        "operation rows at log position {seq} have no changeset"
-                    ))
-                })?;
-            entry.changeset.ops.push(op);
-        }
-        Ok(entries)
+        entry.changeset.ops.push(op);
     }
+    Ok(entries)
+}
 
-    fn read_snapshot(&self) -> Result<Snapshot> {
-        let head = self.read_head()?;
+pub(crate) fn read_snapshot(conn: &Connection) -> Result<Snapshot> {
+    let head = read_head(conn)?;
 
-        let mut identities = Vec::new();
-        let mut statement = self.conn.prepare(
-            "SELECT identity_id::VARCHAR, entity_type, created_seq, merged_into::VARCHAR
-             FROM spool.identity",
-        )?;
-        let mut rows = statement.query([])?;
-        while let Some(row) = rows.next()? {
-            identities.push(identity_record(
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-            )?);
-        }
-        identities.sort_by_key(|record| record.id);
-
-        let mut memberships = Vec::new();
-        let mut statement = self.conn.prepare(
-            "SELECT observation_id::VARCHAR, identity_id::VARCHAR, from_seq, to_seq
-             FROM spool.membership",
-        )?;
-        let mut rows = statement.query([])?;
-        while let Some(row) = rows.next()? {
-            memberships.push(Membership {
-                observation: parse(&row.get::<_, String>(0)?)?,
-                identity: parse(&row.get::<_, String>(1)?)?,
-                from: Seq(row.get::<_, i64>(2)? as u64),
-                to: row.get::<_, Option<i64>>(3)?.map(|seq| Seq(seq as u64)),
-            });
-        }
-        memberships.sort();
-
-        Ok(Snapshot {
-            head,
-            identities,
-            memberships,
-        })
+    let mut identities = Vec::new();
+    let mut statement = conn.prepare(
+        "SELECT identity_id::VARCHAR, entity_type, created_seq, merged_into::VARCHAR
+         FROM spool.identity",
+    )?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        identities.push(identity_record(
+            row.get(0)?,
+            row.get(1)?,
+            row.get(2)?,
+            row.get(3)?,
+        )?);
     }
+    identities.sort_by_key(|record| record.id);
 
-    fn read_head(&self) -> Result<Seq> {
-        let head: i64 = self.conn.query_row(
-            "SELECT coalesce(max(seq), 0) FROM spool.changeset",
-            [],
-            |row| row.get(0),
-        )?;
-        Ok(Seq(head as u64))
+    let mut memberships = Vec::new();
+    let mut statement = conn.prepare(
+        "SELECT observation_id::VARCHAR, identity_id::VARCHAR, from_seq, to_seq
+         FROM spool.membership",
+    )?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        memberships.push(Membership {
+            observation: parse(&row.get::<_, String>(0)?)?,
+            identity: parse(&row.get::<_, String>(1)?)?,
+            from: Seq(row.get::<_, i64>(2)? as u64),
+            to: row.get::<_, Option<i64>>(3)?.map(|seq| Seq(seq as u64)),
+        });
     }
+    memberships.sort();
 
-    fn read_changeset_seq(&self, id: ChangesetId) -> Result<Option<Seq>> {
-        let mut statement = self
-            .conn
-            .prepare("SELECT seq FROM spool.changeset WHERE changeset_id = ?::UUID")?;
-        let mut rows = statement.query([id.to_string()])?;
-        Ok(match rows.next()? {
-            Some(row) => Some(Seq(row.get::<_, i64>(0)? as u64)),
+    Ok(Snapshot {
+        head,
+        identities,
+        memberships,
+    })
+}
+
+pub(crate) fn read_head(conn: &Connection) -> Result<Seq> {
+    let head: i64 = conn.query_row(
+        "SELECT coalesce(max(seq), 0) FROM spool.changeset",
+        [],
+        |row| row.get(0),
+    )?;
+    Ok(Seq(head as u64))
+}
+
+pub(crate) fn read_changeset_seq(conn: &Connection, id: ChangesetId) -> Result<Option<Seq>> {
+    let mut statement =
+        conn.prepare("SELECT seq FROM spool.changeset WHERE changeset_id = ?::UUID")?;
+    let mut rows = statement.query([id.to_string()])?;
+    Ok(match rows.next()? {
+        Some(row) => Some(Seq(row.get::<_, i64>(0)? as u64)),
+        None => None,
+    })
+}
+
+pub(crate) fn read_observation_types(
+    conn: &Connection,
+    observations: &[ObservationId],
+) -> Result<Vec<Option<EntityType>>> {
+    if observations.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut statement = conn.prepare(
+        "SELECT o.entity_type
+         FROM arrow(?) a LEFT JOIN spool.observation o ON o.observation_id = a.id::UUID
+         ORDER BY a.ord",
+    )?;
+    let mut rows = statement.query([&id_list(observations)?])?;
+    let mut types = Vec::with_capacity(observations.len());
+    while let Some(row) = rows.next()? {
+        types.push(match row.get::<_, Option<String>>(0)? {
+            Some(name) => Some(EntityType::new(name).map_err(StateError::new)?),
             None => None,
-        })
+        });
     }
+    Ok(types)
+}
 
-    fn read_observation_types(
-        &self,
-        observations: &[ObservationId],
-    ) -> Result<Vec<Option<EntityType>>> {
-        if observations.is_empty() {
-            return Ok(Vec::new());
-        }
-        let mut statement = self.conn.prepare(
-            "SELECT o.entity_type
-             FROM arrow(?) a LEFT JOIN spool.observation o ON o.observation_id = a.id::UUID
-             ORDER BY a.ord",
-        )?;
-        let mut rows = statement.query([&id_list(observations)?])?;
-        let mut types = Vec::with_capacity(observations.len());
-        while let Some(row) = rows.next()? {
-            types.push(match row.get::<_, Option<String>>(0)? {
-                Some(name) => Some(EntityType::new(name).map_err(StateError::new)?),
-                None => None,
-            });
-        }
-        Ok(types)
+pub(crate) fn read_identities(
+    conn: &Connection,
+    ids: &[IdentityId],
+) -> Result<Vec<Option<IdentityRecord>>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
     }
+    let mut statement = conn.prepare(
+        "SELECT i.identity_id::VARCHAR, i.entity_type, i.created_seq, i.merged_into::VARCHAR
+         FROM arrow(?) a LEFT JOIN spool.identity i ON i.identity_id = a.id::UUID
+         ORDER BY a.ord",
+    )?;
+    let mut rows = statement.query([&id_list(ids)?])?;
+    let mut records = Vec::with_capacity(ids.len());
+    while let Some(row) = rows.next()? {
+        records.push(match row.get::<_, Option<String>>(0)? {
+            Some(id) => Some(identity_record(id, row.get(1)?, row.get(2)?, row.get(3)?)?),
+            None => None,
+        });
+    }
+    Ok(records)
+}
 
-    fn read_identities(&self, ids: &[IdentityId]) -> Result<Vec<Option<IdentityRecord>>> {
-        if ids.is_empty() {
-            return Ok(Vec::new());
-        }
-        let mut statement = self.conn.prepare(
-            "SELECT i.identity_id::VARCHAR, i.entity_type, i.created_seq, i.merged_into::VARCHAR
-             FROM arrow(?) a LEFT JOIN spool.identity i ON i.identity_id = a.id::UUID
-             ORDER BY a.ord",
-        )?;
-        let mut rows = statement.query([&id_list(ids)?])?;
-        let mut records = Vec::with_capacity(ids.len());
-        while let Some(row) = rows.next()? {
-            records.push(match row.get::<_, Option<String>>(0)? {
-                Some(id) => Some(identity_record(id, row.get(1)?, row.get(2)?, row.get(3)?)?),
-                None => None,
-            });
-        }
-        Ok(records)
+pub(crate) fn read_assignments(
+    conn: &Connection,
+    observations: &[ObservationId],
+) -> Result<Vec<Option<IdentityId>>> {
+    if observations.is_empty() {
+        return Ok(Vec::new());
     }
+    let mut statement = conn.prepare(
+        "SELECT m.identity_id::VARCHAR
+         FROM arrow(?) a
+         LEFT JOIN spool.membership m ON m.observation_id = a.id::UUID AND m.to_seq IS NULL
+         ORDER BY a.ord",
+    )?;
+    let mut rows = statement.query([&id_list(observations)?])?;
+    let mut assignments = Vec::with_capacity(observations.len());
+    while let Some(row) = rows.next()? {
+        assignments.push(match row.get::<_, Option<String>>(0)? {
+            Some(id) => Some(parse(&id)?),
+            None => None,
+        });
+    }
+    Ok(assignments)
+}
 
-    fn read_assignments(&self, observations: &[ObservationId]) -> Result<Vec<Option<IdentityId>>> {
-        if observations.is_empty() {
-            return Ok(Vec::new());
-        }
-        let mut statement = self.conn.prepare(
-            "SELECT m.identity_id::VARCHAR
-             FROM arrow(?) a
-             LEFT JOIN spool.membership m ON m.observation_id = a.id::UUID AND m.to_seq IS NULL
-             ORDER BY a.ord",
-        )?;
-        let mut rows = statement.query([&id_list(observations)?])?;
-        let mut assignments = Vec::with_capacity(observations.len());
-        while let Some(row) = rows.next()? {
-            assignments.push(match row.get::<_, Option<String>>(0)? {
-                Some(id) => Some(parse(&id)?),
-                None => None,
-            });
-        }
-        Ok(assignments)
+pub(crate) fn read_members(
+    conn: &Connection,
+    ids: &[IdentityId],
+) -> Result<Vec<(IdentityId, ObservationId)>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
     }
-
-    fn read_members(&self, ids: &[IdentityId]) -> Result<Vec<(IdentityId, ObservationId)>> {
-        if ids.is_empty() {
-            return Ok(Vec::new());
-        }
-        let mut statement = self.conn.prepare(
-            "SELECT m.identity_id::VARCHAR, m.observation_id::VARCHAR
-             FROM spool.membership m
-             WHERE m.to_seq IS NULL AND m.identity_id IN (SELECT id::UUID FROM arrow(?))",
-        )?;
-        let mut rows = statement.query([&id_list(ids)?])?;
-        let mut members = Vec::new();
-        while let Some(row) = rows.next()? {
-            members.push((
-                parse(&row.get::<_, String>(0)?)?,
-                parse(&row.get::<_, String>(1)?)?,
-            ));
-        }
-        members.sort_unstable();
-        Ok(members)
+    let mut statement = conn.prepare(
+        "SELECT m.identity_id::VARCHAR, m.observation_id::VARCHAR
+         FROM spool.membership m
+         WHERE m.to_seq IS NULL AND m.identity_id IN (SELECT id::UUID FROM arrow(?))",
+    )?;
+    let mut rows = statement.query([&id_list(ids)?])?;
+    let mut members = Vec::new();
+    while let Some(row) = rows.next()? {
+        members.push((
+            parse(&row.get::<_, String>(0)?)?,
+            parse(&row.get::<_, String>(1)?)?,
+        ));
     }
+    members.sort_unstable();
+    Ok(members)
 }
 
 fn text<T: ToString>(values: impl Iterator<Item = Option<T>>) -> Column {
@@ -396,7 +444,7 @@ fn text<T: ToString>(values: impl Iterator<Item = Option<T>>) -> Column {
     )
 }
 
-fn parse<T>(text: &str) -> Result<T>
+pub(crate) fn parse<T>(text: &str) -> Result<T>
 where
     T: FromStr,
     T::Err: std::error::Error + Send + Sync + 'static,
@@ -423,14 +471,14 @@ fn identity_record(
 
 /// One row of `spool.changeset_op`, IDs as text.
 #[derive(Default)]
-struct OpRow {
-    kind: String,
-    identity: Option<String>,
-    from_identity: Option<String>,
-    observation: Option<String>,
-    other_observation: Option<String>,
-    entity_type: Option<String>,
-    constraint_kind: Option<String>,
+pub(crate) struct OpRow {
+    pub(crate) kind: String,
+    pub(crate) identity: Option<String>,
+    pub(crate) from_identity: Option<String>,
+    pub(crate) observation: Option<String>,
+    pub(crate) other_observation: Option<String>,
+    pub(crate) entity_type: Option<String>,
+    pub(crate) constraint_kind: Option<String>,
 }
 
 fn op_to_row(op: &Op) -> OpRow {
@@ -476,7 +524,7 @@ fn op_to_row(op: &Op) -> OpRow {
     }
 }
 
-fn op_from_row(row: OpRow) -> Result<Op> {
+pub(crate) fn op_from_row(row: OpRow) -> Result<Op> {
     fn required<T>(value: Option<String>, column: &str) -> Result<T>
     where
         T: FromStr,
@@ -538,7 +586,7 @@ fn op_from_row(row: OpRow) -> Result<Op> {
     })
 }
 
-fn op_rows(ops: &[Op]) -> Result<duckdb::arrow::record_batch::RecordBatch> {
+pub(crate) fn op_rows(ops: &[Op]) -> Result<duckdb::arrow::record_batch::RecordBatch> {
     let rows: Vec<OpRow> = ops.iter().map(op_to_row).collect();
     let column = |pick: fn(&OpRow) -> Option<String>| Column::Text(rows.iter().map(pick).collect());
     batch(vec![
@@ -565,34 +613,33 @@ fn state_error(error: crate::error::Error) -> StateError {
 
 impl IdentityState for DuckStore {
     fn head(&self) -> Result<Seq, StateError> {
-        self.read_head().map_err(state_error)
+        read_head(&self.conn).map_err(state_error)
     }
 
     fn changeset_seq(&self, id: ChangesetId) -> Result<Option<Seq>, StateError> {
-        self.read_changeset_seq(id).map_err(state_error)
+        read_changeset_seq(&self.conn, id).map_err(state_error)
     }
 
     fn observation_types(
         &self,
         observations: &[ObservationId],
     ) -> Result<Vec<Option<EntityType>>, StateError> {
-        self.read_observation_types(observations)
-            .map_err(state_error)
+        read_observation_types(&self.conn, observations).map_err(state_error)
     }
 
     fn identities(&self, ids: &[IdentityId]) -> Result<Vec<Option<IdentityRecord>>, StateError> {
-        self.read_identities(ids).map_err(state_error)
+        read_identities(&self.conn, ids).map_err(state_error)
     }
 
     fn assignments(
         &self,
         observations: &[ObservationId],
     ) -> Result<Vec<Option<IdentityId>>, StateError> {
-        self.read_assignments(observations).map_err(state_error)
+        read_assignments(&self.conn, observations).map_err(state_error)
     }
 
     fn members(&self, ids: &[IdentityId]) -> Result<Vec<(IdentityId, ObservationId)>, StateError> {
-        self.read_members(ids).map_err(state_error)
+        read_members(&self.conn, ids).map_err(state_error)
     }
 }
 
@@ -609,11 +656,11 @@ impl IdentityStore for DuckStore {
     }
 
     fn log(&self) -> Result<Vec<LogEntry>, StateError> {
-        self.read_log().map_err(state_error)
+        read_log(&self.conn).map_err(state_error)
     }
 
     fn snapshot(&self) -> Result<Snapshot, StateError> {
-        self.read_snapshot().map_err(state_error)
+        read_snapshot(&self.conn).map_err(state_error)
     }
 }
 

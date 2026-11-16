@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use duckdb::Connection;
-use duckdb::arrow::array::{ArrayRef, StringArray};
+use duckdb::arrow::array::{ArrayRef, BooleanArray, Float64Array, Int64Array, StringArray};
 use duckdb::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use duckdb::arrow::error::ArrowError;
 use duckdb::arrow::record_batch::{RecordBatch, RecordBatchReader};
@@ -42,6 +42,94 @@ impl Rows {
                 Arc::new(StringArray::from(values)) as ArrayRef
             })
             .collect();
+        let batch = RecordBatch::try_new(schema.clone(), arrays)?;
+        Ok(Self::new(schema, vec![batch]))
+    }
+
+    /// Rows given as JSON objects, one per row. A column is every key that
+    /// occurs, and a row without the key, or with `null`, has no value there.
+    ///
+    /// A column holds text, booleans or numbers, and one kind only. Numbers
+    /// are integers unless one of them has a fraction. A nested value is
+    /// refused: send it as text, or flatten it.
+    pub fn from_json(rows: &[serde_json::Map<String, serde_json::Value>]) -> Result<Self> {
+        use serde_json::Value;
+
+        #[derive(Clone, Copy, PartialEq)]
+        enum Kind {
+            Text,
+            Boolean,
+            Integer,
+            Float,
+        }
+        let mut kinds: std::collections::BTreeMap<&str, Kind> = std::collections::BTreeMap::new();
+        for (index, row) in rows.iter().enumerate() {
+            for (name, value) in row {
+                let kind = match value {
+                    Value::Null => continue,
+                    Value::String(_) => Kind::Text,
+                    Value::Bool(_) => Kind::Boolean,
+                    Value::Number(number) if number.is_i64() => Kind::Integer,
+                    Value::Number(_) => Kind::Float,
+                    Value::Array(_) | Value::Object(_) => {
+                        return Err(Error::Rows(format!(
+                            "row {}: column `{name}` holds a nested value; send it as text",
+                            index + 1
+                        )));
+                    }
+                };
+                let known = kinds.entry(name.as_str()).or_insert(kind);
+                *known = match (*known, kind) {
+                    (a, b) if a == b => a,
+                    (Kind::Integer, Kind::Float) | (Kind::Float, Kind::Integer) => Kind::Float,
+                    _ => {
+                        return Err(Error::Rows(format!(
+                            "row {}: column `{name}` holds values of more than one type",
+                            index + 1
+                        )));
+                    }
+                };
+            }
+        }
+
+        let mut fields = Vec::with_capacity(kinds.len());
+        let mut arrays: Vec<ArrayRef> = Vec::with_capacity(kinds.len());
+        for (name, kind) in &kinds {
+            let values = rows.iter().map(|row| row.get(*name));
+            let (data_type, array): (DataType, ArrayRef) = match kind {
+                Kind::Text => (
+                    DataType::Utf8,
+                    Arc::new(StringArray::from_iter(
+                        values.map(|value| value.and_then(Value::as_str)),
+                    )),
+                ),
+                Kind::Boolean => (
+                    DataType::Boolean,
+                    Arc::new(BooleanArray::from_iter(
+                        values.map(|value| value.and_then(Value::as_bool)),
+                    )),
+                ),
+                Kind::Integer => (
+                    DataType::Int64,
+                    Arc::new(Int64Array::from_iter(
+                        values.map(|value| value.and_then(Value::as_i64)),
+                    )),
+                ),
+                Kind::Float => (
+                    DataType::Float64,
+                    Arc::new(Float64Array::from_iter(
+                        values.map(|value| value.and_then(Value::as_f64)),
+                    )),
+                ),
+            };
+            fields.push(Field::new(*name, data_type, true));
+            arrays.push(array);
+        }
+        let schema = Arc::new(Schema::new(fields));
+        if arrays.is_empty() {
+            // Arrow needs to be told how many rows a batch without columns has.
+            return Ok(Self::new(schema, Vec::new()));
+        }
         let batch = RecordBatch::try_new(schema.clone(), arrays)?;
         Ok(Self::new(schema, vec![batch]))
     }

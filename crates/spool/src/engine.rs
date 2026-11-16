@@ -1,30 +1,37 @@
 //! The engine: one type that owns the store and is the whole API.
 
+use std::cell::RefCell;
 use std::collections::HashSet;
 use std::path::Path;
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 
 use duckdb::arrow::record_batch::{RecordBatch, RecordBatchReader};
-use duckdb::params;
 use duckdb::vtab::arrow::ArrowBatchRegistration;
+use duckdb::{Connection, params};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use spool_core::{
-    Changeset, Clock, Committed, Draft, EntityType, EvidenceSummary, IdGenerator, IdentityId,
-    IdentityLink, IdentityState, IdentityStatus, IdentityStore, LogEntry, MemoryState,
-    NewObservation, NewPair, ObservationId, Policy, RandomIds, ReviewItem, RunId, SeededIds, Seq,
-    Snapshot, StepClock, SystemClock, Verdict, reconcile, validate,
+    Changeset, ChangesetId, Clock, Committed, Draft, EntityType, EvidenceSummary, IdGenerator,
+    IdentityId, IdentityLink, IdentityStatus, IdentityStore, LogEntry, MemoryState, NewObservation,
+    NewPair, ObservationId, Policy, RandomIds, ReviewItem, RunId, SeededIds, Seq, Snapshot,
+    StepClock, SystemClock, Verdict, reconcile, validate,
 };
 
+use crate::drafts::{self, DraftFilter, DraftRecord, DraftStatus, DraftSummary};
 use crate::error::{Error, Result};
 use crate::features;
 use crate::ingest::{self, IngestOptions, IngestReport};
+use crate::lookup::{
+    self, HistoryEntry, IdentityFilter, IdentitySummary, IdentityView, ObservationFilter,
+    ObservationRecord, StoreInfo,
+};
 use crate::metrics::{self, IdStability, Metrics};
 use crate::project::{EntityTypeManifest, Manifest, hash_json};
-use crate::review;
+use crate::review::{self, ReviewFilter, ReviewRecord};
 use crate::rules;
+use crate::runs::{self, RunFilter, RunRecord, RunStatus};
 use crate::schema;
-use crate::store::DuckStore;
+use crate::store::{self, DuckStore};
 
 /// Where an engine gets new IDs and the time from. The default mints UUIDv7
 /// values and reads the system clock.
@@ -56,6 +63,7 @@ impl Options {
 
 /// Names the strategy that produces a match run's judgements.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct StrategyRef {
     pub name: String,
     pub version: Option<String>,
@@ -93,23 +101,42 @@ pub struct Scope {
 pub struct ResolveOptions {
     /// Resolve only this entity type. `None` resolves every declared type.
     pub entity_type: Option<EntityType>,
+    /// Store each type's draft for review instead of committing it.
+    pub leave_for_review: bool,
+}
+
+/// What becomes of the draft a reconcile run writes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Disposition {
+    /// Commit it at once.
+    Commit,
+    /// Store it. It waits until it is approved or rejected, or until a later
+    /// run of the entity type drafts again.
+    LeaveForReview,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplyReport {
     /// Entity types declared by this call.
     pub declared: Vec<EntityType>,
     /// Entity types the store already held with the same declaration.
     pub unchanged: Vec<EntityType>,
+    /// Entity types whose declaration changed. Their feature tables were
+    /// computed again from the stored observations.
+    #[serde(default)]
+    pub rebuilt: Vec<EntityType>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ResolveReport {
     /// One entry per entity type that had new observations.
     pub resolved: Vec<TypeResolution>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct TypeResolution {
     pub entity_type: EntityType,
     pub match_run: RunId,
@@ -129,11 +156,17 @@ pub struct TypeResolution {
     pub observations_unassigned: u64,
     /// What the run would not decide. The store keeps these as review items.
     pub review: Vec<ReviewItem>,
-    /// `None` when there was nothing to commit.
+    /// The changeset, once it is committed. `None` when there was nothing to
+    /// commit, and while a draft waits.
     pub committed: Option<Committed>,
+    /// The draft that was stored for review, if the run was asked to leave
+    /// one. It is named by its changeset ID.
+    #[serde(default)]
+    pub draft: Option<ChangesetId>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct JudgementCounts {
     #[serde(rename = "match")]
     pub match_: u64,
@@ -141,18 +174,80 @@ pub struct JudgementCounts {
     pub unsure: u64,
 }
 
+/// IDs minted for a caller that writes its own changesets.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct MintedIds {
+    pub identities: Vec<IdentityId>,
+    pub changesets: Vec<ChangesetId>,
+}
+
+type Ids = Arc<Mutex<Box<dyn IdGenerator + Send>>>;
+
 /// The engine. It owns the database file, and every change to identity state
 /// goes through [`commit`](Engine::commit).
 ///
-/// Calls are serialised: the engine holds one connection behind a lock.
+/// Calls that write are serialised: one connection does all the writing,
+/// behind a lock. Calls that only read use connections of their own and see
+/// what has been committed, so they do not wait for a run in progress.
 pub struct Engine {
     inner: Mutex<Inner>,
+    readers: Readers,
+    ids: Ids,
+    manifest: RwLock<Option<Arc<Manifest>>>,
 }
 
 struct Inner {
     store: DuckStore,
-    ids: Box<dyn IdGenerator + Send>,
-    manifest: Option<Manifest>,
+    ids: Ids,
+    manifest: Option<Arc<Manifest>>,
+}
+
+/// Connections for reading, made as they are needed and kept for the next
+/// read.
+struct Readers {
+    attached: bool,
+    source: Mutex<Connection>,
+    idle: Mutex<Vec<Connection>>,
+}
+
+impl Readers {
+    fn with<T>(&self, read: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
+        let idle = lock(&self.idle).pop();
+        let conn = match idle {
+            Some(conn) => conn,
+            None => store::reader(&lock(&self.source), self.attached)?,
+        };
+        let result = read(&conn);
+        lock(&self.idle).push(conn);
+        result
+    }
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+type RunWatcher = Box<dyn FnMut(RunId)>;
+
+thread_local! {
+    static RUN_WATCHER: RefCell<Option<RunWatcher>> = const { RefCell::new(None) };
+}
+
+/// Calls `started` with the ID of each run the engine starts on this thread
+/// while `work` runs, as soon as the run is recorded and before its work is
+/// done. A server uses this to hand a caller the ID of a run that is still in
+/// progress.
+pub fn watch_runs<T>(started: impl FnMut(RunId) + 'static, work: impl FnOnce() -> T) -> T {
+    struct Restore(Option<RunWatcher>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            RUN_WATCHER.with(|watcher| *watcher.borrow_mut() = self.0.take());
+        }
+    }
+    let previous = RUN_WATCHER.with(|watcher| watcher.borrow_mut().replace(Box::new(started)));
+    let _restore = Restore(previous);
+    work()
 }
 
 /// What a match run recorded about itself when it began.
@@ -172,9 +267,13 @@ struct MatchConfig {
 
 struct RunRow {
     kind: String,
-    status: String,
+    status: RunStatus,
     config: Option<String>,
 }
+
+/// What is recorded as the error of a run that was `running` when the store
+/// was opened.
+const INTERRUPTED: &str = "interrupted: the engine stopped while the run was in progress";
 
 impl Engine {
     /// Opens the store at `path`, creating it if the file does not exist.
@@ -191,18 +290,54 @@ impl Engine {
         Self::with_store(DuckStore::open(None, options.clock)?, options.ids)
     }
 
-    fn with_store(store: DuckStore, ids: Box<dyn IdGenerator + Send>) -> Result<Self> {
+    fn with_store(mut store: DuckStore, ids: Box<dyn IdGenerator + Send>) -> Result<Self> {
+        // Nothing else has this store open, so a run that is still marked as
+        // running was cut short. The clock is read only if there is one.
+        let interrupted: i64 = store.conn.query_row(
+            "SELECT count(*) FROM spool.run WHERE status = 'running'",
+            [],
+            |row| row.get(0),
+        )?;
+        if interrupted > 0 {
+            let now = store.clock.now_micros();
+            store.conn.execute(
+                "UPDATE spool.run
+                 SET status = 'failed', finished_at = make_timestamptz(?), error = ?
+                 WHERE status = 'running'",
+                params![now, INTERRUPTED],
+            )?;
+        }
+        let readers = Readers {
+            attached: store.attached(),
+            source: Mutex::new(store.reader()?),
+            idle: Mutex::new(Vec::new()),
+        };
+        let ids: Ids = Arc::new(Mutex::new(ids));
         Ok(Self {
             inner: Mutex::new(Inner {
                 store,
-                ids,
+                ids: Arc::clone(&ids),
                 manifest: None,
             }),
+            readers,
+            ids,
+            manifest: RwLock::new(None),
         })
     }
 
     fn lock(&self) -> MutexGuard<'_, Inner> {
-        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+        lock(&self.inner)
+    }
+
+    fn read<T>(&self, read: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
+        self.readers.with(read)
+    }
+
+    fn set_manifest(&self, manifest: Option<Arc<Manifest>>) {
+        *self
+            .manifest
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = manifest;
     }
 
     /// Declares the manifest's entity types in the store, generating a
@@ -210,10 +345,47 @@ impl Engine {
     /// ones this engine runs. Applying the same manifest again changes
     /// nothing in the store.
     ///
-    /// A type whose declaration differs from the one in the store is refused:
-    /// changing a declaration after the fact is not supported yet.
+    /// A type whose declaration differs from the one in the store gets a new
+    /// declaration version, and its feature table is computed again from the
+    /// stored observations. Identities and the log are not touched. Match
+    /// runs of the type that were waiting for judgements are failed, because
+    /// their candidates were generated from the old features.
     pub fn apply(&self, manifest: &Manifest) -> Result<ApplyReport> {
-        self.lock().apply(manifest)
+        let mut inner = self.lock();
+        let report = inner.apply(manifest)?;
+        self.set_manifest(inner.manifest.clone());
+        Ok(report)
+    }
+
+    /// Makes `manifest` the one this engine runs on without changing the
+    /// store. Refused unless it is the manifest the store was last applied
+    /// with: a server must not run rules against feature tables built for
+    /// another declaration.
+    pub fn adopt(&self, manifest: &Manifest) -> Result<()> {
+        let mut inner = self.lock();
+        let applied = schema::meta(&inner.store.conn, "manifest_hash")?;
+        if applied.as_deref() != Some(manifest.hash.as_str()) {
+            return Err(Error::ManifestMismatch {
+                applied,
+                manifest: manifest.hash.clone(),
+            });
+        }
+        inner.manifest = Some(Arc::new(manifest.clone()));
+        self.set_manifest(inner.manifest.clone());
+        Ok(())
+    }
+
+    /// The manifest this engine runs on, if one was applied or adopted.
+    pub fn manifest(&self) -> Option<Arc<Manifest>> {
+        self.manifest
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// The hash of the manifest the store was last applied with.
+    pub fn applied_manifest_hash(&self) -> Result<Option<String>> {
+        self.read(|conn| schema::meta(conn, "manifest_hash"))
     }
 
     /// Stores rows from one source as observations of one entity type and
@@ -233,18 +405,21 @@ impl Engine {
     /// project's block rules. The run examines the observations ingested
     /// since the last match run of the type that succeeded, and again those
     /// of open review items.
+    ///
+    /// The run is `open`: it takes judgements until it is reconciled, and it
+    /// stays open across a restart.
     pub fn begin_run(&self, strategy: &StrategyRef, scope: &Scope) -> Result<RunId> {
-        self.lock().begin_run(strategy, scope)
+        self.lock().begin_match(strategy, scope, RunStatus::Open)
     }
 
     /// A run's candidate pairs with both sides' features: `left_id`,
     /// `right_id`, then every feature column prefixed with `left_` and with
     /// `right_`.
     pub fn candidates(&self, run: RunId) -> Result<Vec<RecordBatch>> {
-        self.lock().candidates(run)
+        self.read(|conn| candidates(conn, run))
     }
 
-    /// Adds judgements to a running match run and returns how many were
+    /// Adds judgements to an open match run and returns how many were
     /// stored. The rows need `left_id`, `right_id` and `verdict`, and may
     /// have `score` and `detail`.
     ///
@@ -255,22 +430,84 @@ impl Engine {
         self.lock().submit_judgements(run, rows)
     }
 
-    /// Closes a match run and turns its judgements into a draft changeset.
-    /// Nothing is committed. What the draft leaves out is stored as review
-    /// items, which stay open until their observations have an identity.
+    /// Turns a match run's judgements into a draft changeset and leaves it
+    /// for review. Nothing is committed. What the draft leaves out is stored
+    /// as review items, which stay open until their observations have an
+    /// identity.
+    ///
+    /// The same as [`reconcile_with`](Self::reconcile_with) and
+    /// [`Disposition::LeaveForReview`], returning the draft itself.
     pub fn reconcile(&self, run: RunId, policy: &Policy) -> Result<Draft> {
-        self.lock().reconcile(run, policy)
+        let (draft, _) = self
+            .lock()
+            .reconcile(run, policy, Disposition::LeaveForReview)?;
+        Ok(draft)
+    }
+
+    /// Turns a match run's judgements into a draft changeset, and commits the
+    /// draft or stores it for review.
+    ///
+    /// A stored draft is named by its changeset ID. The run is `drafted`
+    /// until the draft is committed, and only then has it succeeded: what is
+    /// new to the next run is counted from the last run that succeeded, so
+    /// the observations of a draft nobody commits are examined again. A run
+    /// whose draft is empty has succeeded at once.
+    ///
+    /// Drafting an entity type closes its earlier open drafts as superseded,
+    /// so a type has at most one draft waiting. A drafted run can be
+    /// reconciled again, for example under another policy.
+    pub fn reconcile_with(
+        &self,
+        run: RunId,
+        policy: &Policy,
+        then: Disposition,
+    ) -> Result<TypeResolution> {
+        let (_, report) = self.lock().reconcile(run, policy, then)?;
+        Ok(report)
+    }
+
+    /// Gives up an open match run. It is recorded as failed, and its
+    /// observations are still new to the next run.
+    pub fn cancel_run(&self, run: RunId) -> Result<()> {
+        self.lock().cancel_run(run)
     }
 
     /// Validates a changeset against current state and commits it. This is
     /// the only way identity state changes, whoever wrote the changeset.
+    ///
+    /// Committing the changeset of a stored draft approves the draft.
     pub fn commit(&self, changeset: Changeset) -> Result<Committed> {
         self.lock().commit(changeset)
     }
 
+    /// Commits a stored draft. It is validated like any changeset: if state
+    /// has moved under it, the rejections name the operations that no longer
+    /// hold, and the draft stays open.
+    pub fn approve_draft(&self, draft: ChangesetId) -> Result<Committed> {
+        self.lock().approve_draft(draft)
+    }
+
+    /// Closes a stored draft without committing it. Its match run has not
+    /// succeeded, so the next run examines the same observations again.
+    pub fn reject_draft(&self, draft: ChangesetId, reason: Option<&str>) -> Result<DraftSummary> {
+        self.lock().reject_draft(draft, reason)
+    }
+
+    /// A stored draft with its changeset.
+    pub fn draft(&self, draft: ChangesetId) -> Result<DraftRecord> {
+        self.read(|conn| drafts::get(conn, draft))?
+            .ok_or(Error::UnknownDraft(draft))
+    }
+
+    /// Stored drafts without their operations, newest first.
+    pub fn drafts(&self, filter: &DraftFilter) -> Result<Vec<DraftSummary>> {
+        self.read(|conn| drafts::list(conn, filter))
+    }
+
     /// Matches new observations with the built-in rule runner, reconciles
-    /// with the default policy, and commits. A type is resolved when it has
-    /// newly ingested observations or open review items.
+    /// with the default policy, and commits or leaves a draft for review. A
+    /// type is resolved when it has newly ingested observations or open
+    /// review items.
     ///
     /// The match run is recorded as succeeded only after the commit. A
     /// resolve that is cut short leaves the run unfinished, and the next
@@ -279,19 +516,87 @@ impl Engine {
         self.lock().resolve(options)
     }
 
+    /// A run as the store records it: the task record of whatever started
+    /// it.
+    pub fn run(&self, run: RunId) -> Result<RunRecord> {
+        self.read(|conn| runs::get(conn, run))?
+            .ok_or(Error::UnknownRun(run))
+    }
+
+    /// Runs, newest first.
+    pub fn runs(&self, filter: &RunFilter) -> Result<Vec<RunRecord>> {
+        self.read(|conn| runs::list(conn, filter))
+    }
+
+    /// Review items, oldest first.
+    pub fn review_items(&self, filter: &ReviewFilter) -> Result<Vec<ReviewRecord>> {
+        self.read(|conn| review::list(conn, filter))
+    }
+
     pub fn identity_of(&self, observation: ObservationId) -> Result<Option<IdentityId>> {
-        Ok(self.lock().store.assignments(&[observation])?[0])
+        Ok(self.identities_of(&[observation])?[0])
+    }
+
+    /// The identity of each observation, in the order asked. `None` for an
+    /// observation that has no identity or that the store does not hold.
+    pub fn identities_of(&self, observations: &[ObservationId]) -> Result<Vec<Option<IdentityId>>> {
+        self.read(|conn| store::read_assignments(conn, observations))
     }
 
     /// The active identity an ID stands for: itself, or the identity it was
     /// merged into.
     pub fn current_id(&self, id: IdentityId) -> Result<IdentityId> {
-        match self.lock().store.identities(&[id])?.remove(0) {
+        match self
+            .read(|conn| store::read_identities(conn, &[id]))?
+            .remove(0)
+        {
             None => Err(Error::UnknownIdentity(id)),
             Some(record) => Ok(match record.status {
                 IdentityStatus::Active => id,
                 IdentityStatus::MergedInto(survivor) => survivor,
             }),
+        }
+    }
+
+    /// An identity with the observations that belong to it now.
+    pub fn identity(&self, id: IdentityId) -> Result<IdentityView> {
+        self.read(|conn| lookup::identity(conn, id))?
+            .ok_or(Error::UnknownIdentity(id))
+    }
+
+    /// Active identities, ordered by ID.
+    pub fn identities(&self, filter: &IdentityFilter) -> Result<Vec<IdentitySummary>> {
+        self.read(|conn| lookup::identities(conn, filter))
+    }
+
+    /// The changesets that name an identity, oldest first.
+    pub fn history(&self, id: IdentityId) -> Result<Vec<HistoryEntry>> {
+        self.read(|conn| {
+            if store::read_identities(conn, &[id])?.remove(0).is_none() {
+                return Err(Error::UnknownIdentity(id));
+            }
+            lookup::history(conn, id)
+        })
+    }
+
+    /// An observation as it was ingested, or `None` if the store does not
+    /// hold it.
+    pub fn observation(&self, id: ObservationId) -> Result<Option<ObservationRecord>> {
+        self.read(|conn| lookup::observation(conn, id))
+    }
+
+    /// Observations, ordered by ID. A caller that knows a row by its source
+    /// and key finds its observation IDs here: only the engine computes them.
+    pub fn observations(&self, filter: &ObservationFilter) -> Result<Vec<ObservationRecord>> {
+        self.read(|conn| lookup::observations(conn, filter))
+    }
+
+    /// Mints IDs for a caller that writes its own changesets.
+    pub fn mint_ids(&self, identities: usize, changesets: usize) -> MintedIds {
+        let mut ids = lock(&self.ids);
+        MintedIds {
+            identities: (0..identities).map(|_| ids.identity_id()).collect(),
+            changesets: (0..changesets).map(|_| ids.changeset_id()).collect(),
         }
     }
 
@@ -307,28 +612,39 @@ impl Engine {
         if sql.is_empty() {
             return Err(Error::Query("the query is empty".to_owned()));
         }
-        let inner = self.lock();
-        let mut statement = inner
-            .store
-            .conn
-            .prepare(&format!("SELECT * FROM (\n{sql}\n)"))
-            .map_err(|error| Error::Query(error.to_string()))?;
-        Ok(statement.query_arrow([])?.collect())
+        self.read(|conn| {
+            let mut statement = conn
+                .prepare(&format!("SELECT * FROM (\n{sql}\n)"))
+                .map_err(|error| Error::Query(error.to_string()))?;
+            Ok(statement.query_arrow([])?.collect())
+        })
     }
 
     /// The position of the last committed changeset.
     pub fn head(&self) -> Result<Seq> {
-        Ok(self.lock().store.head()?)
+        self.read(store::read_head)
     }
 
     /// Every committed changeset, in log order.
     pub fn log(&self) -> Result<Vec<LogEntry>> {
-        Ok(self.lock().store.log()?)
+        self.read(store::read_log)
+    }
+
+    /// At most `limit` committed changesets after a log position, in log
+    /// order.
+    pub fn log_after(&self, after: Seq, limit: u64) -> Result<Vec<LogEntry>> {
+        self.read(|conn| store::read_log_after(conn, after, limit))
     }
 
     /// All of identity state, read from the projection tables.
     pub fn snapshot(&self) -> Result<Snapshot> {
-        Ok(self.lock().store.snapshot()?)
+        self.read(store::read_snapshot)
+    }
+
+    /// What the store holds, per entity type.
+    pub fn info(&self) -> Result<StoreInfo> {
+        let manifest = self.manifest();
+        self.read(|conn| lookup::info(conn, manifest.as_deref()))
     }
 
     /// Checks that the projection tables equal a replay of the log, and that
@@ -367,8 +683,64 @@ impl Engine {
 
     /// Compares each observation's identity at two log positions.
     pub fn id_stability(&self, before: Seq, after: Seq) -> Result<IdStability> {
-        metrics::id_stability(&self.lock().store.conn, before, after)
+        self.read(|conn| metrics::id_stability(conn, before, after))
     }
+}
+
+/// The candidate pairs of a run with both sides' features.
+fn candidates(conn: &Connection, run: RunId) -> Result<Vec<RecordBatch>> {
+    let (_, config) = match_run(conn, run)?;
+    let table = features::table(&config.entity_type);
+    let exclude = "EXCLUDE (observation_id, declaration_version)";
+    let has_features: bool = conn.query_row(
+        &format!("SELECT count(*) > 2 FROM (DESCRIBE {table})"),
+        [],
+        |row| row.get(0),
+    )?;
+    let features = if has_features {
+        format!(", COLUMNS(l.* {exclude}) AS \"left_\\0\", COLUMNS(r.* {exclude}) AS \"right_\\0\"")
+    } else {
+        String::new()
+    };
+    let mut statement = conn.prepare(&format!(
+        "SELECT c.left_id, c.right_id{features}
+         FROM (SELECT DISTINCT left_id, right_id FROM spool.candidate WHERE run_id = ?) c
+         JOIN {table} l ON l.observation_id = c.left_id
+         JOIN {table} r ON r.observation_id = c.right_id
+         ORDER BY c.left_id, c.right_id"
+    ))?;
+    Ok(statement.query_arrow([run.0 as i64])?.collect())
+}
+
+fn run_row(conn: &Connection, run: RunId) -> Result<RunRow> {
+    let mut statement =
+        conn.prepare("SELECT kind, status, config::VARCHAR FROM spool.run WHERE run_id = ?")?;
+    let mut rows = statement.query([run.0 as i64])?;
+    match rows.next()? {
+        Some(row) => Ok(RunRow {
+            kind: row.get(0)?,
+            status: RunStatus::from_stored(&row.get::<_, String>(1)?)?,
+            config: row.get(2)?,
+        }),
+        None => Err(Error::UnknownRun(run)),
+    }
+}
+
+fn match_run(conn: &Connection, run: RunId) -> Result<(RunRow, MatchConfig)> {
+    let row = run_row(conn, run)?;
+    let fail = |message: &str| Error::Run {
+        run,
+        message: message.to_owned(),
+    };
+    if row.kind != "match" {
+        return Err(fail("it is not a match run"));
+    }
+    let config = row
+        .config
+        .as_deref()
+        .and_then(|config| serde_json::from_str(config).ok())
+        .ok_or_else(|| fail("its recorded configuration cannot be read"))?;
+    Ok((row, config))
 }
 
 /// An ID read from the store could not be parsed, which means the store is
@@ -383,51 +755,85 @@ impl Inner {
         let mut report = ApplyReport {
             declared: Vec::new(),
             unchanged: Vec::new(),
+            rebuilt: Vec::new(),
         };
         let tx = self.store.conn.transaction()?;
         for entity_type in &manifest.entity_types {
             let name = &entity_type.name;
-            let stored: Option<String> = {
+            let stored: Option<(i32, String)> = {
                 let mut statement = tx.prepare(
-                    "SELECT declaration_hash FROM spool.entity_type
+                    "SELECT version, declaration_hash FROM spool.entity_type
                      WHERE entity_type = ? ORDER BY version DESC LIMIT 1",
                 )?;
                 let mut rows = statement.query([name.as_str()])?;
                 match rows.next()? {
-                    Some(row) => Some(row.get(0)?),
+                    Some(row) => Some((row.get(0)?, row.get(1)?)),
                     None => None,
                 }
             };
-            match stored {
-                Some(hash) if hash == entity_type.declaration_hash => {
+            let version = match stored {
+                Some((_, hash)) if hash == entity_type.declaration_hash => {
                     report.unchanged.push(name.clone());
+                    continue;
                 }
-                Some(_) => return Err(Error::DeclarationChanged(name.to_string())),
-                None => {
-                    tx.execute(
-                        "INSERT INTO spool.entity_type VALUES (?, 1, ?, ?, make_timestamptz(?))",
-                        params![
-                            name.as_str(),
-                            json!(entity_type.declaration).to_string(),
-                            entity_type.declaration_hash,
-                            now
-                        ],
-                    )?;
-                    features::create_table(&tx, name, &entity_type.declaration, 1)?;
-                    report.declared.push(name.clone());
-                }
+                Some((version, _)) => version as u32 + 1,
+                None => 1,
+            };
+            tx.execute(
+                "INSERT INTO spool.entity_type VALUES (?, ?, ?, ?, make_timestamptz(?))",
+                params![
+                    name.as_str(),
+                    version as i32,
+                    json!(entity_type.declaration).to_string(),
+                    entity_type.declaration_hash,
+                    now
+                ],
+            )?;
+            if version == 1 {
+                features::create_table(&tx, name, &entity_type.declaration, version)?;
+                report.declared.push(name.clone());
+                continue;
             }
+
+            // The declaration changed. The payloads are all still there, so
+            // the feature table is computed again from them.
+            features::drop_table(&tx, name)?;
+            features::create_table(&tx, name, &entity_type.declaration, version)?;
+            let problem = features::fill(
+                &tx,
+                name,
+                &entity_type.declaration,
+                version,
+                &features::of_type(name),
+            )?;
+            if let Some(problem) = problem {
+                return Err(Error::Apply(problem));
+            }
+            // Candidates of a run that waits for judgements were generated
+            // from the old features, and its judgements would be about them.
+            tx.execute(
+                "UPDATE spool.run
+                 SET status = 'failed', finished_at = make_timestamptz(?), error = ?
+                 WHERE kind = 'match' AND status = 'open'
+                   AND json_extract_string(config, '$.entity_type') = ?",
+                params![
+                    now,
+                    format!("the declaration of `{name}` changed while the run was open"),
+                    name.as_str()
+                ],
+            )?;
+            report.rebuilt.push(name.clone());
         }
         schema::set_meta(&tx, "manifest_hash", &manifest.hash)?;
         tx.commit()?;
-        self.manifest = Some(manifest.clone());
+        self.manifest = Some(Arc::new(manifest.clone()));
         Ok(report)
     }
 
     /// The applied manifest's entry for a type, with the version the store
     /// holds for it.
     fn declared(&self, entity_type: &str) -> Result<(&Manifest, &EntityTypeManifest, u32)> {
-        let manifest = self.manifest.as_ref().ok_or(Error::NoManifest)?;
+        let manifest = self.manifest.as_deref().ok_or(Error::NoManifest)?;
         let entry = manifest
             .entity_type(entity_type)
             .ok_or_else(|| Error::UndeclaredType(entity_type.to_owned()))?;
@@ -455,7 +861,7 @@ impl Inner {
         )?;
         conn.execute(
             "INSERT INTO spool.run
-             VALUES (?, ?, 'running', ?, ?, ?, ?, ?, make_timestamptz(?), NULL)",
+             VALUES (?, ?, 'running', ?, ?, ?, ?, ?, make_timestamptz(?), NULL, NULL, NULL)",
             params![
                 run,
                 kind,
@@ -467,14 +873,45 @@ impl Inner {
                 now
             ],
         )?;
-        Ok(RunId(run as u64))
+        let run = RunId(run as u64);
+        // The run is recorded, so whoever asked for it can be told its ID
+        // while the work goes on.
+        RUN_WATCHER.with(|watcher| {
+            if let Some(started) = watcher.borrow_mut().as_mut() {
+                started(run);
+            }
+        });
+        Ok(run)
     }
 
-    fn finish_run(&mut self, run: RunId, status: &str) -> Result<()> {
+    /// Records a run as finished, with what it reported.
+    fn finish_run(
+        &mut self,
+        run: RunId,
+        status: RunStatus,
+        result: Option<&serde_json::Value>,
+    ) -> Result<()> {
         let now = self.store.clock.now_micros();
         self.store.conn.execute(
-            "UPDATE spool.run SET status = ?, finished_at = make_timestamptz(?) WHERE run_id = ?",
-            params![status, now, run.0 as i64],
+            "UPDATE spool.run
+             SET status = ?, finished_at = make_timestamptz(?), result = ?::JSON
+             WHERE run_id = ?",
+            params![
+                status.as_str(),
+                now,
+                result.map(ToString::to_string),
+                run.0 as i64
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn fail_run(&mut self, run: RunId, error: &str) -> Result<()> {
+        let now = self.store.clock.now_micros();
+        self.store.conn.execute(
+            "UPDATE spool.run SET status = 'failed', finished_at = make_timestamptz(?), error = ?
+             WHERE run_id = ?",
+            params![now, error, run.0 as i64],
         )?;
         Ok(())
     }
@@ -482,47 +919,15 @@ impl Inner {
     /// Runs the work of a run, and records the run as failed if it fails.
     fn in_run<T>(&mut self, run: RunId, work: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
         let result = work(self);
-        if result.is_err() {
+        if let Err(error) = &result {
             // The first error is the one worth reporting.
-            let _ = self.finish_run(run, "failed");
+            let _ = self.fail_run(run, &error.to_string());
         }
         result
     }
 
-    fn run_row(&self, run: RunId) -> Result<RunRow> {
-        let mut statement = self
-            .store
-            .conn
-            .prepare("SELECT kind, status, config::VARCHAR FROM spool.run WHERE run_id = ?")?;
-        let mut rows = statement.query([run.0 as i64])?;
-        match rows.next()? {
-            Some(row) => Ok(RunRow {
-                kind: row.get(0)?,
-                status: row.get(1)?,
-                config: row.get(2)?,
-            }),
-            None => Err(Error::Run {
-                run,
-                message: "there is no such run".to_owned(),
-            }),
-        }
-    }
-
     fn match_run(&self, run: RunId) -> Result<(RunRow, MatchConfig)> {
-        let row = self.run_row(run)?;
-        let fail = |message: &str| Error::Run {
-            run,
-            message: message.to_owned(),
-        };
-        if row.kind != "match" {
-            return Err(fail("it is not a match run"));
-        }
-        let config = row
-            .config
-            .as_deref()
-            .and_then(|config| serde_json::from_str(config).ok())
-            .ok_or_else(|| fail("its recorded configuration cannot be read"))?;
-        Ok((row, config))
+        match_run(&self.store.conn, run)
     }
 
     fn ingest(
@@ -597,35 +1002,56 @@ impl Inner {
                 )? as u64;
             }
 
-            features::fill(&tx, &name, &declaration, version, run)?;
-            let finished = inner.store.clock.now_micros();
-            tx.execute(
-                "UPDATE spool.run SET status = 'succeeded', finished_at = make_timestamptz(?)
-                 WHERE run_id = ?",
-                params![finished, run.0 as i64],
+            let problem = features::fill(
+                &tx,
+                &name,
+                &declaration,
+                version,
+                &features::of_run(&name, run),
             )?;
-            tx.commit()?;
-            Ok(IngestReport {
+            if let Some(problem) = problem {
+                return Err(Error::Ingest(problem));
+            }
+            let report = IngestReport {
                 run,
                 received,
                 inserted,
                 duplicates: received - inserted,
-            })
+            };
+            let finished = inner.store.clock.now_micros();
+            tx.execute(
+                "UPDATE spool.run
+                 SET status = 'succeeded', finished_at = make_timestamptz(?), result = ?::JSON
+                 WHERE run_id = ?",
+                params![finished, json!(report).to_string(), run.0 as i64],
+            )?;
+            tx.commit()?;
+            Ok(report)
         })
     }
 
-    fn begin_run(&mut self, strategy: &StrategyRef, scope: &Scope) -> Result<RunId> {
+    /// Starts a match run and generates its candidates. A run that waits for
+    /// someone else's judgements becomes `open` together with its candidates;
+    /// a run the engine drives stays `running` until it is concluded.
+    fn begin_match(
+        &mut self,
+        strategy: &StrategyRef,
+        scope: &Scope,
+        then: RunStatus,
+    ) -> Result<RunId> {
         let (manifest, entry, version) = self.declared(scope.entity_type.as_str())?;
         let entity_type = entry.name.clone();
+        let manifest_hash = manifest.hash.clone();
+        let rules = entry.rules.clone();
         let after_run = self.last_match_run(&entity_type)?;
         let review_items = review::open_ids(&self.store.conn, &entity_type)?;
         let config = MatchConfig {
             entity_type: entity_type.clone(),
             declaration_version: version,
-            manifest_hash: manifest.hash.clone(),
+            manifest_hash,
             after_run,
             review_items,
-            rules: entry.rules.clone(),
+            rules,
         };
 
         let run = self.start_run("match", Some(strategy), &json!(config))?;
@@ -639,6 +1065,12 @@ impl Inner {
                 &config.review_items,
             )?;
             rules::generate_candidates(&tx, &entity_type, run, &config.rules.block)?;
+            if then != RunStatus::Running {
+                tx.execute(
+                    "UPDATE spool.run SET status = ? WHERE run_id = ?",
+                    params![then.as_str(), run.0 as i64],
+                )?;
+            }
             tx.commit()?;
             Ok(run)
         })
@@ -657,13 +1089,15 @@ impl Inner {
         Ok(RunId(run as u64))
     }
 
-    /// Recreates the scope table of a match run that is still open.
-    fn open_match_run(&self, run: RunId) -> Result<MatchConfig> {
+    /// Recreates the scope table of a match run that still takes judgements:
+    /// from callers while it is `open`, from the engine's own strategy while
+    /// it is `running`.
+    fn judged_run(&self, run: RunId, expected: RunStatus) -> Result<MatchConfig> {
         let (row, config) = self.match_run(run)?;
-        if row.status != "running" {
+        if row.status != expected {
             return Err(Error::Run {
                 run,
-                message: format!("it is {} and takes no more judgements", row.status),
+                message: format!("it is {} and takes no judgements", row.status),
             });
         }
         rules::create_scope(
@@ -676,34 +1110,8 @@ impl Inner {
         Ok(config)
     }
 
-    fn candidates(&mut self, run: RunId) -> Result<Vec<RecordBatch>> {
-        let (_, config) = self.match_run(run)?;
-        let table = features::table(&config.entity_type);
-        let exclude = "EXCLUDE (observation_id, declaration_version)";
-        let has_features: bool = self.store.conn.query_row(
-            &format!("SELECT count(*) > 2 FROM (DESCRIBE {table})"),
-            [],
-            |row| row.get(0),
-        )?;
-        let features = if has_features {
-            format!(
-                ", COLUMNS(l.* {exclude}) AS \"left_\\0\", COLUMNS(r.* {exclude}) AS \"right_\\0\""
-            )
-        } else {
-            String::new()
-        };
-        let mut statement = self.store.conn.prepare(&format!(
-            "SELECT c.left_id, c.right_id{features}
-             FROM (SELECT DISTINCT left_id, right_id FROM spool.candidate WHERE run_id = ?) c
-             JOIN {table} l ON l.observation_id = c.left_id
-             JOIN {table} r ON r.observation_id = c.right_id
-             ORDER BY c.left_id, c.right_id"
-        ))?;
-        Ok(statement.query_arrow([run.0 as i64])?.collect())
-    }
-
     fn submit_judgements(&mut self, run: RunId, rows: impl RecordBatchReader) -> Result<u64> {
-        let config = self.open_match_run(run)?;
+        let config = self.judged_run(run, RunStatus::Open)?;
         let entity_type = &config.entity_type;
         let schema = rows.schema();
         for required in ["left_id", "right_id", "verdict"] {
@@ -786,7 +1194,7 @@ impl Inner {
     /// The built-in strategy: fills a match run's judgements from the
     /// project's `no_match` and `match` rules.
     fn judge_with_rules(&mut self, run: RunId) -> Result<()> {
-        let config = self.open_match_run(run)?;
+        let config = self.judged_run(run, RunStatus::Running)?;
         rules::judge_candidates(
             &self.store.conn,
             &config.entity_type,
@@ -796,47 +1204,152 @@ impl Inner {
         )
     }
 
-    fn reconcile(&mut self, run: RunId, policy: &Policy) -> Result<Draft> {
+    fn reconcile(
+        &mut self,
+        run: RunId,
+        policy: &Policy,
+        then: Disposition,
+    ) -> Result<(Draft, TypeResolution)> {
         let (row, _) = self.match_run(run)?;
-        if row.status == "running" {
-            self.finish_run(run, "succeeded")?;
-        }
-        self.draft(run, policy)
-    }
-
-    /// Turns a match run's judgements into a draft and stores its review
-    /// items. The match run is left as it is: whether it has succeeded is
-    /// for the caller to say.
-    fn draft(&mut self, run: RunId, policy: &Policy) -> Result<Draft> {
-        let (row, config) = self.match_run(run)?;
-        if !matches!(row.status.as_str(), "running" | "succeeded") {
+        if !matches!(row.status, RunStatus::Open | RunStatus::Drafted) {
             return Err(Error::Run {
                 run,
-                message: format!("it {} and cannot be reconciled", row.status),
+                message: format!("it is {} and cannot be reconciled", row.status),
             });
         }
+        self.conclude(run, policy, then)
+    }
+
+    /// Turns a match run's judgements into a draft, stores its review items,
+    /// and commits the draft or stores it.
+    ///
+    /// The match run has succeeded once its draft is committed, or when there
+    /// is nothing to commit, and not before: what is new to the next run is
+    /// counted from the last run that succeeded. If the process stops between
+    /// the commit and the line that records it, the next run examines the
+    /// same observations again, and those the commit placed are no longer
+    /// new.
+    fn conclude(
+        &mut self,
+        run: RunId,
+        policy: &Policy,
+        then: Disposition,
+    ) -> Result<(Draft, TypeResolution)> {
+        let (_, config) = self.match_run(run)?;
+        let entity_type = config.entity_type.clone();
 
         let reconcile_run = self.start_run(
             "reconcile",
             None,
             &json!({ "match_run": run, "policy": policy }),
         )?;
-        self.in_run(reconcile_run, |inner| {
+        let (draft, mut report) = self.in_run(reconcile_run, |inner| {
             let evidence = inner.evidence(run, &config)?;
-            let mut draft = reconcile(&evidence, &inner.store, policy, inner.ids.as_mut())?;
+            let new_observations = evidence.observations.len() as u64;
+            let reexamined = inner.count(&format!(
+                "SELECT count(*) FROM {} s
+                 JOIN spool.observation o ON o.observation_id = s.observation_id
+                 WHERE o.ingest_run <= {}",
+                rules::SCOPE,
+                config.after_run
+            ))?;
+            let mut draft = {
+                let mut ids = lock(&inner.ids);
+                reconcile(&evidence, &inner.store, policy, ids.as_mut())?
+            };
             draft.changeset.run = Some(reconcile_run);
+
+            let run_filter = format!("WHERE run_id = {run}");
+            let judged = |inner: &Self, verdict: &str| {
+                inner.count(&format!(
+                    "SELECT count(*) FROM spool.judgement {run_filter} AND verdict = '{verdict}'"
+                ))
+            };
+            let (mut identities_created, mut observations_assigned) = (0, 0);
+            for op in &draft.changeset.ops {
+                match op {
+                    spool_core::Op::CreateIdentity { .. } => identities_created += 1,
+                    spool_core::Op::Assign { .. } => observations_assigned += 1,
+                    _ => {}
+                }
+            }
+            let held = then == Disposition::LeaveForReview && !draft.changeset.ops.is_empty();
+            let report = TypeResolution {
+                entity_type: entity_type.clone(),
+                match_run: run,
+                reconcile_run,
+                new_observations,
+                reexamined,
+                candidates: inner.count(&format!(
+                    "SELECT count(*) FROM (SELECT DISTINCT left_id, right_id FROM spool.candidate {run_filter})"
+                ))?,
+                judgements: JudgementCounts {
+                    match_: judged(inner, "match")?,
+                    no_match: judged(inner, "no_match")?,
+                    unsure: judged(inner, "unsure")?,
+                },
+                identities_created,
+                observations_assigned,
+                observations_unassigned: new_observations - observations_assigned,
+                review: draft.review.clone(),
+                committed: None,
+                draft: held.then_some(draft.changeset.id),
+            };
 
             let finished = inner.store.clock.now_micros();
             let tx = inner.store.conn.transaction()?;
-            review::record(&tx, &config.entity_type, reconcile_run, &draft.review)?;
+            review::record(&tx, &entity_type, reconcile_run, &draft.review)?;
+            // Whatever this run drafts, an earlier draft of the type was
+            // written against a state this one may change.
+            drafts::supersede(&tx, &entity_type, reconcile_run)?;
+            if then == Disposition::LeaveForReview {
+                let result = json!(report).to_string();
+                if held {
+                    drafts::store(&tx, &entity_type, run, &draft.changeset)?;
+                    tx.execute(
+                        "UPDATE spool.run
+                         SET status = 'drafted', finished_at = NULL, result = ?::JSON
+                         WHERE run_id = ?",
+                        params![result, run.0 as i64],
+                    )?;
+                } else {
+                    tx.execute(
+                        "UPDATE spool.run
+                         SET status = 'succeeded', finished_at = make_timestamptz(?),
+                             result = ?::JSON
+                         WHERE run_id = ?",
+                        params![finished, result, run.0 as i64],
+                    )?;
+                }
+            }
             tx.execute(
                 "UPDATE spool.run SET status = 'succeeded', finished_at = make_timestamptz(?)
                  WHERE run_id = ?",
                 params![finished, reconcile_run.0 as i64],
             )?;
             tx.commit()?;
-            Ok(draft)
-        })
+            Ok((draft, report))
+        })?;
+
+        if then == Disposition::Commit {
+            if !draft.changeset.ops.is_empty() {
+                let validated = validate(&self.store, draft.changeset.clone())?;
+                report.committed = Some(self.store.apply(validated)?);
+            }
+            self.finish_run(run, RunStatus::Succeeded, Some(&json!(report)))?;
+        }
+        Ok((draft, report))
+    }
+
+    fn cancel_run(&mut self, run: RunId) -> Result<()> {
+        let (row, _) = self.match_run(run)?;
+        if row.status != RunStatus::Open {
+            return Err(Error::Run {
+                run,
+                message: format!("it is {} and cannot be cancelled", row.status),
+            });
+        }
+        self.fail_run(run, "cancelled")
     }
 
     /// Joins a match run's judgements against current membership. This is
@@ -921,12 +1434,61 @@ impl Inner {
     }
 
     fn commit(&mut self, changeset: Changeset) -> Result<Committed> {
+        // A changeset that carries the ID of a stored draft is that draft or
+        // it is refused: the ID is what a reviewer approved.
+        if let Some(record) = drafts::get(&self.store.conn, changeset.id)? {
+            let refuse = |message: String| Error::Draft {
+                draft: changeset.id,
+                message,
+            };
+            match record.draft.status {
+                DraftStatus::Open if record.changeset != changeset => {
+                    return Err(refuse(
+                        "the changeset is not the one stored as this draft".to_owned(),
+                    ));
+                }
+                DraftStatus::Rejected | DraftStatus::Superseded => {
+                    return Err(refuse(format!(
+                        "it was {} and cannot be committed",
+                        record.draft.status
+                    )));
+                }
+                // A committed draft is in the log, and the validator says so.
+                DraftStatus::Open | DraftStatus::Committed => {}
+            }
+        }
         let validated = validate(&self.store, changeset)?;
         Ok(self.store.apply(validated)?)
     }
 
+    fn open_draft(&self, draft: ChangesetId, verb: &str) -> Result<DraftRecord> {
+        let record = drafts::get(&self.store.conn, draft)?.ok_or(Error::UnknownDraft(draft))?;
+        if record.draft.status != DraftStatus::Open {
+            return Err(Error::Draft {
+                draft,
+                message: format!("it is {} and cannot be {verb}", record.draft.status),
+            });
+        }
+        Ok(record)
+    }
+
+    fn approve_draft(&mut self, draft: ChangesetId) -> Result<Committed> {
+        let record = self.open_draft(draft, "approved")?;
+        let validated = validate(&self.store, record.changeset)?;
+        Ok(self.store.apply(validated)?)
+    }
+
+    fn reject_draft(&mut self, draft: ChangesetId, reason: Option<&str>) -> Result<DraftSummary> {
+        self.open_draft(draft, "rejected")?;
+        let now = self.store.clock.now_micros();
+        drafts::reject(&self.store.conn, draft, now, reason)?;
+        Ok(drafts::get(&self.store.conn, draft)?
+            .ok_or(Error::UnknownDraft(draft))?
+            .draft)
+    }
+
     fn resolve(&mut self, options: &ResolveOptions) -> Result<ResolveReport> {
-        let manifest = self.manifest.as_ref().ok_or(Error::NoManifest)?;
+        let manifest = self.manifest.as_deref().ok_or(Error::NoManifest)?;
         let entity_types: Vec<EntityType> = match &options.entity_type {
             Some(entity_type) => vec![self.declared(entity_type.as_str())?.1.name.clone()],
             None => manifest
@@ -934,6 +1496,11 @@ impl Inner {
                 .iter()
                 .map(|entry| entry.name.clone())
                 .collect(),
+        };
+        let then = if options.leave_for_review {
+            Disposition::LeaveForReview
+        } else {
+            Disposition::Commit
         };
 
         let mut report = ResolveReport::default();
@@ -949,74 +1516,12 @@ impl Inner {
             let scope = Scope {
                 entity_type: entity_type.clone(),
             };
-            let run = self.begin_run(&StrategyRef::rules(), &scope)?;
-            // Observations in scope that already have an identity are not
-            // examined. There are some when an earlier resolve committed and
-            // was cut short before it recorded that.
-            let unplaced = format!(
-                "FROM {} s
-                 JOIN spool.observation o ON o.observation_id = s.observation_id
-                 WHERE NOT EXISTS (
-                   SELECT 1 FROM spool.membership m
-                   WHERE m.observation_id = s.observation_id AND m.to_seq IS NULL)",
-                rules::SCOPE
-            );
-            let new_observations = self.count(&format!("SELECT count(*) {unplaced}"))?;
-            let reexamined = self.count(&format!(
-                "SELECT count(*) {unplaced} AND o.ingest_run <= {after_run}"
-            ))?;
-
-            let (draft, committed) = self.in_run(run, |inner| {
+            let run = self.begin_match(&StrategyRef::rules(), &scope, RunStatus::Running)?;
+            let (_, resolution) = self.in_run(run, |inner| {
                 inner.judge_with_rules(run)?;
-                let draft = inner.draft(run, &Policy::default())?;
-                let committed = if draft.changeset.ops.is_empty() {
-                    None
-                } else {
-                    Some(inner.commit(draft.changeset.clone())?)
-                };
-                // The run has succeeded once its draft is committed, and not
-                // before: what is new to the next run is counted from the
-                // last run that succeeded. If the process stops before this
-                // line, the next resolve examines the same observations
-                // again, and those the commit placed are no longer new.
-                inner.finish_run(run, "succeeded")?;
-                Ok((draft, committed))
+                inner.conclude(run, &Policy::default(), then)
             })?;
-
-            let run_filter = format!("WHERE run_id = {run}");
-            let judged = |inner: &Self, verdict: &str| {
-                inner.count(&format!(
-                    "SELECT count(*) FROM spool.judgement {run_filter} AND verdict = '{verdict}'"
-                ))
-            };
-            let (mut identities_created, mut observations_assigned) = (0, 0);
-            for op in &draft.changeset.ops {
-                match op {
-                    spool_core::Op::CreateIdentity { .. } => identities_created += 1,
-                    spool_core::Op::Assign { .. } => observations_assigned += 1,
-                    _ => {}
-                }
-            }
-            report.resolved.push(TypeResolution {
-                entity_type,
-                match_run: run,
-                reconcile_run: draft.changeset.run.unwrap_or(run),
-                new_observations,
-                reexamined,
-                candidates: self.count(&format!(
-                    "SELECT count(*) FROM (SELECT DISTINCT left_id, right_id FROM spool.candidate {run_filter})"
-                ))?,
-                judgements: JudgementCounts {
-                    match_: judged(self, "match")?,
-                    no_match: judged(self, "no_match")?,
-                    unsure: judged(self, "unsure")?,
-                },
-                identities_created,
-                observations_assigned,
-                observations_unassigned: new_observations - observations_assigned,
-                review: draft.review,
-                committed,
-            });
+            report.resolved.push(resolution);
         }
         Ok(report)
     }
@@ -1083,6 +1588,30 @@ impl Inner {
                     .to_owned(),
             ),
         ];
+        checks.extend([
+            (
+                "entity types with more than one open draft".to_owned(),
+                "SELECT count(*) FROM (
+                   SELECT entity_type FROM spool.draft WHERE status = 'open'
+                   GROUP BY 1 HAVING count(*) > 1)"
+                    .to_owned(),
+            ),
+            (
+                "open drafts whose match run is not waiting on them".to_owned(),
+                "SELECT count(*) FROM spool.draft d
+                 LEFT JOIN spool.run r ON r.run_id = d.match_run
+                 WHERE d.status = 'open' AND r.status IS DISTINCT FROM 'drafted'"
+                    .to_owned(),
+            ),
+            (
+                "committed drafts that are not in the log".to_owned(),
+                "SELECT count(*) FROM spool.draft d
+                 WHERE d.status = 'committed' AND NOT EXISTS (
+                   SELECT 1 FROM spool.changeset c
+                   WHERE c.seq = d.closed_seq AND c.changeset_id = d.changeset_id)"
+                    .to_owned(),
+            ),
+        ]);
         let mut statement = self
             .store
             .conn

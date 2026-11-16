@@ -18,9 +18,131 @@
 use std::collections::BTreeSet;
 
 use duckdb::{Connection, params};
-use spool_core::{EntityType, ReviewItem, RunId, Seq};
+use serde::{Deserialize, Serialize};
+use spool_core::{EntityType, IdentityId, ObservationId, ReviewItem, RunId, Seq, StateError};
 
 use crate::error::Result;
+use crate::store::parse;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewKind {
+    /// The observations match more than one identity, so placing them would
+    /// merge identities.
+    PossibleMerge,
+    /// The evidence about the observations contradicts itself.
+    Conflict,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewStatus {
+    Open,
+    Resolved,
+    Superseded,
+}
+
+impl ReviewStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            ReviewStatus::Open => "open",
+            ReviewStatus::Resolved => "resolved",
+            ReviewStatus::Superseded => "superseded",
+        }
+    }
+}
+
+/// A review item as the store keeps it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct ReviewRecord {
+    pub id: u64,
+    /// The reconcile run that raised it.
+    pub run: RunId,
+    pub entity_type: EntityType,
+    pub kind: ReviewKind,
+    /// The observations left without an identity.
+    pub observations: Vec<ObservationId>,
+    /// The identities they matched. Empty when the conflict is among the
+    /// observations themselves.
+    pub identities: Vec<IdentityId>,
+    pub status: ReviewStatus,
+    /// Resolved: the changeset after which every observation had an identity.
+    pub resolved_seq: Option<Seq>,
+    /// Superseded: the reconcile run that raised it again in another form.
+    pub superseded_by: Option<RunId>,
+}
+
+/// Which review items to list. The default lists every item.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReviewFilter {
+    pub status: Option<ReviewStatus>,
+    pub entity_type: Option<EntityType>,
+}
+
+impl ReviewFilter {
+    /// The items that wait for a decision.
+    pub fn open() -> Self {
+        Self {
+            status: Some(ReviewStatus::Open),
+            entity_type: None,
+        }
+    }
+}
+
+/// Review items, oldest first.
+pub(crate) fn list(conn: &Connection, filter: &ReviewFilter) -> Result<Vec<ReviewRecord>> {
+    let mut statement = conn.prepare(
+        "SELECT review_id, run_id, entity_type, kind,
+                array_to_string(observation_ids::VARCHAR[], ','),
+                array_to_string(identity_ids::VARCHAR[], ','),
+                status, closed_seq, closed_run
+         FROM spool.review_item
+         WHERE ($1::VARCHAR IS NULL OR status = $1::VARCHAR)
+           AND ($2::VARCHAR IS NULL OR entity_type = $2::VARCHAR)
+         ORDER BY review_id",
+    )?;
+    let mut rows = statement.query(params![
+        filter.status.map(ReviewStatus::as_str),
+        filter.entity_type.as_ref().map(EntityType::as_str),
+    ])?;
+    let mut items = Vec::new();
+    while let Some(row) = rows.next()? {
+        let unknown =
+            |what: &str, value: &str| StateError::new(format!("unknown review {what} {value:?}"));
+        let kind: String = row.get(3)?;
+        let status: String = row.get(6)?;
+        items.push(ReviewRecord {
+            id: row.get::<_, i64>(0)? as u64,
+            run: RunId(row.get::<_, i64>(1)? as u64),
+            entity_type: EntityType::new(row.get::<_, String>(2)?).map_err(StateError::new)?,
+            kind: match kind.as_str() {
+                "possible_merge" => ReviewKind::PossibleMerge,
+                "conflict" => ReviewKind::Conflict,
+                other => return Err(unknown("kind", other).into()),
+            },
+            observations: split(row.get(4)?)
+                .iter()
+                .map(|id| parse(id))
+                .collect::<Result<_>>()?,
+            identities: split(row.get(5)?)
+                .iter()
+                .map(|id| parse(id))
+                .collect::<Result<_>>()?,
+            status: match status.as_str() {
+                "open" => ReviewStatus::Open,
+                "resolved" => ReviewStatus::Resolved,
+                "superseded" => ReviewStatus::Superseded,
+                other => return Err(unknown("status", other).into()),
+            },
+            resolved_seq: row.get::<_, Option<i64>>(7)?.map(|seq| Seq(seq as u64)),
+            superseded_by: row.get::<_, Option<i64>>(8)?.map(|run| RunId(run as u64)),
+        });
+    }
+    Ok(items)
+}
 
 /// A review item reduced to what identifies it: its kind, its observations
 /// and its identities, each list in order.

@@ -7,6 +7,7 @@ use crate::ids::{Actor, ChangesetId, EntityType, IdentityId, ObservationId, RunI
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum ConstraintKind {
     MustLink,
     CannotLink,
@@ -28,6 +29,7 @@ impl ConstraintKind {
 /// and are not implemented yet: a changeset that contains one is rejected.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum Op {
     /// Precondition: the ID has never been used.
     CreateIdentity {
@@ -139,6 +141,7 @@ impl Op {
 
 /// An ordered list of operations that is applied atomically or not at all.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Changeset {
     pub id: ChangesetId,
     /// The log position the author had seen.
@@ -161,6 +164,7 @@ impl Changeset {
 /// SHA-256 of the canonical encoding of a list of operations, as lowercase hex.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ContentHash(String);
 
 impl ContentHash {

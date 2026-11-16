@@ -38,6 +38,7 @@ impl IngestOptions {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct IngestReport {
     pub run: RunId,
     /// Rows received.
@@ -187,9 +188,18 @@ impl Reader {
                 if array.is_null(row) {
                     None
                 } else {
-                    let number = serde_json::Number::from_f64(array.value(row))
-                        .ok_or("the number is not finite, so it has no JSON form")?;
-                    Some(Value::Number(number))
+                    let value = array.value(row);
+                    // A whole number is written as an integer whatever the
+                    // column's type, so that a row's ID does not depend on
+                    // the rows it arrived with: a column of 1 and 2.5 is a
+                    // float column, and a column of 1 alone is not.
+                    if value.fract() == 0.0 && value.abs() < 9_007_199_254_740_992.0 {
+                        Some(Value::from(value as i64))
+                    } else {
+                        let number = serde_json::Number::from_f64(value)
+                            .ok_or("the number is not finite, so it has no JSON form")?;
+                        Some(Value::Number(number))
+                    }
                 }
             }
         })
