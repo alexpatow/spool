@@ -1,7 +1,7 @@
 # Company records from two sources, arriving in two batches.
 #
-# Every company, name, address and domain here is invented. The fixture holds
-# the cases that make company resolution hard:
+# Every company, name, registry number and domain here is invented. The fixture
+# holds the cases that make company resolution hard:
 #
 #   aliases                 "Acorn Tools", "Acorn Tool Co." and "ACORN TOOL COMPANY LTD"
 #   legal and trading names "BRIGHTSIDE HOLDINGS LTD" trades as "Sunny Café"

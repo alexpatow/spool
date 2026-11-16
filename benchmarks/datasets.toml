@@ -8,4 +8,4 @@
 name = "fake_1000"
 url = "https://raw.githubusercontent.com/moj-analytical-services/splink_datasets/master/data/fake_1000.csv"
 sha256 = "66f9b8f92b9b082ef982fe18c77030fbed8780f06ce1d40d7106be5a72392e2a"
-licence = "Not stated for the data. Synthetic person records published in the Splink datasets repository; redistribution terms unconfirmed, so it is downloaded and never committed."
+licence = "The repository that publishes it is MIT-licensed. Whether that covers the data files is not confirmed, so the file is downloaded and never committed."

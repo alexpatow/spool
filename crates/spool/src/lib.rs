@@ -22,7 +22,7 @@
 //! ```
 //!
 //! Identity rules live in [`spool_core`], which is re-exported as
-//! [`core`](crate::core).
+//! [`core`].
 
 mod batch;
 mod bench;

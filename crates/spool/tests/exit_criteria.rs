@@ -220,10 +220,10 @@ fn every_identity_from_batch_one_keeps_its_id_and_members_after_batch_two() {
 
     // A record of a known company found its identity: the new domain of
     // crm:c-104 arrives as a second observation under the same key.
-    let kestrel = identity(&engine, "registry", "04100004").unwrap();
+    let kestrel = identity(&engine, "registry", "X0000004").unwrap();
     assert_eq!(
         members(&engine, kestrel),
-        BTreeSet::from(["registry:04100004", "crm:c-104", "crm:c-115"].map(str::to_owned))
+        BTreeSet::from(["registry:X0000004", "crm:c-104", "crm:c-115"].map(str::to_owned))
     );
     assert_eq!(observations(&engine, "crm", "c-104").len(), 2);
 }
@@ -243,9 +243,9 @@ fn a_subsidiary_with_a_different_registry_identifier_is_not_attached_to_its_pare
     assert_eq!(BTreeSet::from([group, services, energy]).len(), 3);
 
     // Each sits with its own registry record.
-    assert_eq!(identity(&engine, "registry", "04100005"), Some(group));
-    assert_eq!(identity(&engine, "registry", "04100006"), Some(services));
-    assert_eq!(identity(&engine, "registry", "04100015"), Some(energy));
+    assert_eq!(identity(&engine, "registry", "X0000005"), Some(group));
+    assert_eq!(identity(&engine, "registry", "X0000006"), Some(services));
+    assert_eq!(identity(&engine, "registry", "X0000015"), Some(energy));
 
     // They were compared, and the registry identifiers kept them apart.
     let kept_apart = count(
@@ -270,8 +270,8 @@ fn an_observation_matching_two_identities_is_left_unassigned_with_a_review_item(
 
     // Two unrelated companies share a name. crm:c-117 has that name and
     // nothing to say which of them it is.
-    let leeds = identity(&engine, "registry", "04100009").unwrap();
-    let bristol = identity(&engine, "registry", "04100010").unwrap();
+    let leeds = identity(&engine, "registry", "X0000009").unwrap();
+    let bristol = identity(&engine, "registry", "X0000010").unwrap();
     assert_ne!(leeds, bristol);
     let ambiguous = observation(&engine, "crm", "c-117");
 
