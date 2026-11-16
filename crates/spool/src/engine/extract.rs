@@ -27,6 +27,19 @@ use crate::usercode::{self, ExtractType, Task, UserCode};
 /// time, so one table is enough.
 const TASK: &str = "spool_extract_task";
 
+/// The column types a mention's `start` and `end` may have.
+const WHOLE_NUMBERS: [&str; 9] = [
+    "TINYINT",
+    "SMALLINT",
+    "INTEGER",
+    "BIGINT",
+    "HUGEINT",
+    "UTINYINT",
+    "USMALLINT",
+    "UINTEGER",
+    "UBIGINT",
+];
+
 impl Engine {
     /// Stores documents from one source. A document that is already known,
     /// by its source, key and text, creates nothing. A new text under a key
@@ -414,6 +427,29 @@ impl Inner {
                 usercode::MENTIONS
             ))
         };
+        // A position is read only from a column of whole numbers. A cast
+        // would round 1.6 to 2, and store a mention at a place the extractor
+        // did not name.
+        let mut described = self
+            .store
+            .conn
+            .prepare(&format!(
+                "SELECT column_name, column_type
+                 FROM (DESCRIBE SELECT \"start\", \"end\" FROM read_parquet({}))",
+                usercode::sql_path(path)
+            ))
+            .map_err(unreadable)?;
+        let mut columns = described.query([]).map_err(unreadable)?;
+        while let Some(column) = columns.next().map_err(unreadable)? {
+            let name: String = column.get(0).map_err(unreadable)?;
+            let data_type: String = column.get(1).map_err(unreadable)?;
+            if !WHOLE_NUMBERS.contains(&data_type.as_str()) {
+                return Err(Error::Mentions(format!(
+                    "`{name}` is a {data_type} column, and a position is a whole number"
+                )));
+            }
+        }
+
         let mut statement = self
             .store
             .conn

@@ -42,6 +42,34 @@ def find(document):
         yield document.mention("company", found.start(), found.end(), name=found.group())
 "#;
 
+/// Writes one mention of the first document without the helper, with
+/// `START` as the column of where it starts.
+const BY_HAND: &str = r#"
+import json
+import os
+from pathlib import Path
+
+import pyarrow
+import pyarrow.parquet
+
+directory = os.environ.get("SPOOL_TASK_DIR")
+if directory:
+    task = json.loads((Path(directory) / "task.json").read_text())
+    documents = pyarrow.parquet.read_table(Path(directory) / task["inputs"]["documents"])
+    pyarrow.parquet.write_table(
+        pyarrow.table(
+            {
+                "document_id": documents.column("document_id").to_pylist()[:1],
+                "entity_type": ["company"],
+                "start": START,
+                "end": pyarrow.array([10.4], pyarrow.float64()),
+                "attributes": ['{"name": "Acme Inc"}'],
+            }
+        ),
+        Path(directory) / task["output"],
+    )
+"#;
+
 const FIRST: &str = "🚀 Acme Inc opened an office. Globex Ltd did not.";
 const SECOND: &str = "Société Ltd bought Acme Inc.";
 
@@ -710,6 +738,23 @@ fn a_mention_the_engine_refuses_refuses_them_all() {
         "    return [{'document_id': 'elsewhere', 'entity_type': 'company', 'start': 0, 'end': 1}]",
     );
     refused("row 1: `elsewhere` is not a document the extractor was given");
+
+    // An extractor that writes its mentions without the helper can write
+    // positions that are not whole numbers. They are not rounded to a place
+    // the extractor did not name: 1.6 to 10.4 is not the 2 to 10 of "Acme Inc".
+    for (column, expected) in [
+        (
+            "pyarrow.array([1.6], pyarrow.float64())",
+            "`start` is a DOUBLE column, and a position is a whole number",
+        ),
+        (
+            "pyarrow.array(['2'], pyarrow.string())",
+            "`start` is a VARCHAR column, and a position is a whole number",
+        ),
+    ] {
+        news.extractor("names.py", &BY_HAND.replace("START", column));
+        refused(expected);
+    }
 
     // The helper stops what it can tell is no mention before it is written.
     extractor("    return [{'entity_type': 'company', 'start': 0, 'where': 1}]");
