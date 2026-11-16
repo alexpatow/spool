@@ -274,6 +274,90 @@ fn a_subsidiary_with_a_different_registry_identifier_is_not_attached_to_its_pare
     assert_eq!(kept_apart, 3);
 }
 
+// Two records that a rule says are different are not attached to the same
+// identity, even when each of them matches it.
+
+#[test]
+fn two_records_a_rule_keeps_apart_are_not_attached_to_the_same_identity() {
+    let engine = company_engine(0);
+    engine.apply(&Manifest::load(companies()).unwrap()).unwrap();
+    let resolve = || engine.resolve(&ResolveOptions::default()).unwrap();
+
+    // A CRM record with a name and a country, and no registry number.
+    let crm = Rows::from_text(
+        &["id", "name", "country"],
+        &[vec![Some("c-1"), Some("Pioneer Supplies"), Some("GB")]],
+    )
+    .unwrap();
+    engine
+        .ingest("crm", "company", crm, &IngestOptions::keyed_by("id"))
+        .unwrap();
+    resolve();
+    let known = identity(&engine, "crm", "c-1").unwrap();
+
+    // Two legal entities with that name arrive together. Each matches the CRM
+    // record by name and country, and their registry numbers differ.
+    let registry = Rows::from_text(
+        &["number", "country", "legal_name", "city"],
+        &[
+            vec![
+                Some("X0000009"),
+                Some("GB"),
+                Some("PIONEER SUPPLIES LTD"),
+                Some("Leeds"),
+            ],
+            vec![
+                Some("X0000010"),
+                Some("GB"),
+                Some("PIONEER SUPPLIES LTD"),
+                Some("Bristol"),
+            ],
+        ],
+    )
+    .unwrap();
+    engine
+        .ingest(
+            "registry",
+            "company",
+            registry,
+            &IngestOptions::keyed_by("number"),
+        )
+        .unwrap();
+    let report = resolve();
+
+    // No identity holds two registry numbers.
+    assert_eq!(
+        count(
+            &engine,
+            "SELECT count(*) FROM (
+               SELECT m.identity_id
+               FROM spool.membership_current m
+               JOIN spool.features_company f ON f.observation_id = m.observation_id
+               GROUP BY m.identity_id
+               HAVING count(DISTINCT f.registry_id) > 1)"
+        ),
+        0
+    );
+    assert_eq!(members(&engine, known), ["crm:c-1".to_owned()].into());
+
+    // Both wait for review, in one item that names the identity.
+    let (leeds, bristol) = (
+        observation(&engine, "registry", "X0000009"),
+        observation(&engine, "registry", "X0000010"),
+    );
+    let mut waiting = vec![leeds, bristol];
+    waiting.sort();
+    assert_eq!(
+        report.resolved[0].review,
+        [ReviewItem::Conflict {
+            observations: waiting,
+            identity: Some(known),
+        }]
+    );
+    assert_eq!(count(&engine, "SELECT count(*) FROM spool.review_open"), 1);
+    engine.verify().unwrap();
+}
+
 // An observation matching two identities is left unassigned with a review
 // item.
 

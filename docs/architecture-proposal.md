@@ -369,7 +369,7 @@ What the contract leaves out, on purpose:
 
 The reconciler's default policy for Milestone 1 is conservative:
 
-1. A new observation with `match` judgements to members of exactly one identity, and no `no_match` to that identity, is assigned to it.
+1. A new observation with `match` judgements to members of exactly one identity, and no `no_match` to that identity, is assigned to it. Two new observations that would join the same identity this way, with a `no_match` between them, are both left unassigned and flagged: joining would put two things that were judged different into one identity.
 2. New observations that match only each other form a new identity, unless the group contains a `no_match` pair or a `cannot_link` constraint, in which case it is left unassigned and flagged.
 3. A new observation that matches members of two or more identities is left unassigned, and a "possible merge" review item is recorded.
 4. Existing identities are never merged or split by judgements alone.
@@ -639,6 +639,7 @@ Exit criteria, each a test:
 - Re-sent rows create no observations and no operations.
 - Every identity ID from batch one still exists after batch two, with the same members plus any additions.
 - A subsidiary with a different registry identifier is not attached to its parent.
+- Two records that a rule says are different are not attached to the same identity, even when each of them matches it.
 - An observation matching two identities is left unassigned with a review item.
 - A review item is still in the store after the store is reopened, and its observation is examined again by the next run.
 - Rebuilding the projection from the log reproduces the state exactly.

@@ -281,6 +281,86 @@ fn an_item_raised_again_in_another_form_supersedes_the_old_one() {
 }
 
 #[test]
+fn two_new_observations_a_rule_keeps_apart_do_not_join_the_same_identity() {
+    let engine = engine();
+    ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
+    resolve(&engine);
+    let anvil = identity(&engine, "shop", "1").unwrap();
+
+    // Both match shop:1 by name, which has no code. Their codes differ, so
+    // the `different_code` rule says they are not the same thing.
+    ingest(
+        &engine,
+        "depot",
+        &[
+            ("1", Some("anvil"), Some("A")),
+            ("2", Some("anvil"), Some("B")),
+        ],
+    );
+    let report = resolve(&engine);
+    let (first, second) = (
+        observation(&engine, "depot", "1"),
+        observation(&engine, "depot", "2"),
+    );
+    assert_eq!(
+        count(
+            &engine,
+            &format!(
+                "SELECT count(*) FROM spool.judgement
+                 WHERE verdict = 'no_match'
+                   AND left_id = least('{first}'::UUID, '{second}'::UUID)
+                   AND right_id = greatest('{first}'::UUID, '{second}'::UUID)"
+            )
+        ),
+        1
+    );
+
+    // Neither is attached. One item names both and the identity they match.
+    assert_eq!(members(&engine, anvil), ["shop:1".to_owned()].into());
+    assert_eq!(engine.identity_of(first).unwrap(), None);
+    assert_eq!(engine.identity_of(second).unwrap(), None);
+    let resolved = &report.resolved[0];
+    assert_eq!(resolved.observations_assigned, 0);
+    assert_eq!(resolved.observations_unassigned, 2);
+    let items = stored(&engine);
+    let [item] = &items[..] else {
+        panic!("one review item is stored: {items:?}");
+    };
+    assert_eq!(item.kind, "conflict");
+    assert_eq!(
+        item.observations,
+        joined(vec![first.to_string(), second.to_string()])
+    );
+    assert_eq!(item.identities, anvil.to_string());
+    assert_eq!(item.status, "open");
+
+    // A reviewer places one of them. The other still cannot follow it.
+    commit(
+        &engine,
+        50,
+        vec![Op::Assign {
+            observation: first,
+            from: None,
+            to: Some(anvil),
+        }],
+    );
+    resolve(&engine);
+    assert_eq!(engine.identity_of(second).unwrap(), None);
+    let items = stored(&engine);
+    assert_eq!(
+        items
+            .iter()
+            .map(|item| item.status.as_str())
+            .collect::<Vec<_>>(),
+        ["superseded", "open"]
+    );
+    assert_eq!(items[1].kind, "conflict");
+    assert_eq!(items[1].observations, second.to_string());
+    assert_eq!(items[1].identities, anvil.to_string());
+    engine.verify().unwrap();
+}
+
+#[test]
 fn a_conflict_is_stored_with_the_identity_it_concerns() {
     let engine = engine();
     ingest(

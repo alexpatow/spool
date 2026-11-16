@@ -108,7 +108,7 @@ pub enum ReviewItem {
     },
     /// The evidence contradicts itself: the observations match each other or
     /// `identity`, and a `no_match` judgement says some of them do not belong
-    /// together.
+    /// together, or do not belong with a member of `identity`.
     Conflict {
         observations: Vec<ObservationId>,
         identity: Option<IdentityId>,
@@ -125,6 +125,10 @@ pub enum ReviewItem {
 ///    unassigned, with a [`ReviewItem::PossibleMerge`].
 /// 4. A group with a `no_match` judgement inside it, or between it and the
 ///    identity it matches, is left unassigned, with a [`ReviewItem::Conflict`].
+/// 5. Groups that would join the same identity, with a `no_match` judgement
+///    between them, are left unassigned together, with one
+///    [`ReviewItem::Conflict`]. Joining would put observations that were
+///    judged different into one identity.
 ///
 /// Existing identities are never merged or split, and an observation that
 /// already has an identity is never moved. `unsure` judgements change nothing.
@@ -198,40 +202,99 @@ pub fn reconcile<S: IdentityState + ?Sized>(
         .map(|pair| groups.root(pair.a))
         .collect();
 
-    let mut ops = Vec::new();
-    let mut review = Vec::new();
+    // What each group would do if it were the only one.
+    let members = groups.members();
     let none = BTreeSet::new();
-    for (root, members) in groups.into_members() {
-        let matched = matched.get(&root).unwrap_or(&none);
-        let refused = refused.get(&root).unwrap_or(&none);
+    let mut decisions: BTreeMap<ObservationId, Decision> = BTreeMap::new();
+    for (root, group) in &members {
+        let matched = matched.get(root).unwrap_or(&none);
+        let refused = refused.get(root).unwrap_or(&none);
         let mut matched_ids = matched.iter().copied();
-
-        let target = match (matched_ids.next(), matched_ids.next()) {
-            (Some(_), Some(_)) => {
-                review.push(ReviewItem::PossibleMerge {
-                    observations: members,
-                    identities: matched.iter().copied().collect(),
-                });
-                continue;
-            }
-            (only, _) => only,
-        };
-        if split_inside.contains(&root) || target.is_some_and(|id| refused.contains(&id)) {
-            review.push(ReviewItem::Conflict {
-                observations: members,
+        let target = matched_ids.next();
+        let decision = if matched_ids.next().is_some() {
+            Decision::Review(ReviewItem::PossibleMerge {
+                observations: group.clone(),
+                identities: matched.iter().copied().collect(),
+            })
+        } else if split_inside.contains(root) || target.is_some_and(|id| refused.contains(&id)) {
+            Decision::Review(ReviewItem::Conflict {
+                observations: group.clone(),
                 identity: target,
-            });
+            })
+        } else {
+            match target {
+                Some(identity) => Decision::Join(identity),
+                None => Decision::Create,
+            }
+        };
+        decisions.insert(*root, decision);
+    }
+
+    // Groups that would join the same identity become members of one thing,
+    // so a `no_match` between two of them is a contradiction, just as it
+    // would be inside a group. Groups it connects are left for review
+    // together. Groups that become new identities stay apart, so a
+    // `no_match` between those contradicts nothing.
+    let mut clashes = Groups::new(members.keys().copied());
+    let mut clashing = BTreeSet::new();
+    for pair in &evidence.pairs {
+        if pair.verdict != Verdict::NoMatch
+            || !new.contains_key(&pair.a)
+            || !new.contains_key(&pair.b)
+        {
             continue;
         }
-        let target = target.unwrap_or_else(|| {
-            let identity = ids.identity_id();
-            ops.push(Op::CreateIdentity {
-                identity,
-                entity_type: new[&members[0]].clone(),
-            });
-            identity
-        });
-        ops.extend(members.into_iter().map(|observation| Op::Assign {
+        let (a, b) = (groups.root(pair.a), groups.root(pair.b));
+        if a == b {
+            continue;
+        }
+        if let (Decision::Join(left), Decision::Join(right)) = (&decisions[&a], &decisions[&b])
+            && left == right
+        {
+            clashes.join(a, b);
+            clashing.extend([a, b]);
+        }
+    }
+    let mut clash_members = clashes.members();
+
+    let mut ops = Vec::new();
+    let mut review = Vec::new();
+    for (root, group) in members {
+        let Some(decision) = decisions.remove(&root) else {
+            continue;
+        };
+        let target = match decision {
+            Decision::Review(item) => {
+                review.push(item);
+                continue;
+            }
+            Decision::Join(identity) if clashing.contains(&root) => {
+                // One item for the groups a chain of `no_match` connects,
+                // raised when the first of them is visited.
+                if let Some(roots) = clash_members.remove(&root) {
+                    let mut observations: Vec<ObservationId> = roots
+                        .iter()
+                        .flat_map(|root| groups.members_of(*root))
+                        .collect();
+                    observations.sort_unstable();
+                    review.push(ReviewItem::Conflict {
+                        observations,
+                        identity: Some(identity),
+                    });
+                }
+                continue;
+            }
+            Decision::Join(identity) => identity,
+            Decision::Create => {
+                let identity = ids.identity_id();
+                ops.push(Op::CreateIdentity {
+                    identity,
+                    entity_type: new[&group[0]].clone(),
+                });
+                identity
+            }
+        };
+        ops.extend(group.into_iter().map(|observation| Op::Assign {
             observation,
             from: None,
             to: Some(target),
@@ -249,6 +312,13 @@ pub fn reconcile<S: IdentityState + ?Sized>(
         },
         review,
     })
+}
+
+/// What a group of new observations would do, judged alone.
+enum Decision {
+    Review(ReviewItem),
+    Join(IdentityId),
+    Create,
 }
 
 /// Connected components over the new observations.
@@ -278,12 +348,20 @@ impl Groups {
     }
 
     /// Each group's root with its members, both in ascending order.
-    fn into_members(self) -> BTreeMap<ObservationId, Vec<ObservationId>> {
+    fn members(&self) -> BTreeMap<ObservationId, Vec<ObservationId>> {
         let mut members: BTreeMap<ObservationId, Vec<ObservationId>> = BTreeMap::new();
         for id in self.parent.keys() {
             members.entry(self.root(*id)).or_default().push(*id);
         }
         members
+    }
+
+    /// The members of the group with this root.
+    fn members_of(&self, root: ObservationId) -> impl Iterator<Item = ObservationId> + '_ {
+        self.parent
+            .keys()
+            .copied()
+            .filter(move |id| self.root(*id) == root)
     }
 }
 
@@ -507,6 +585,93 @@ mod tests {
                 identity: Some(identities[0])
             }]
         );
+    }
+
+    #[test]
+    fn groups_kept_apart_by_a_no_match_do_not_join_the_same_identity() {
+        let (state, identities) = state_with(&[&[1]]);
+        let target = identities[0];
+        // 2, 3 and 4 each match the identity. 2 and 3 are judged different.
+        let evidence = EvidenceSummary {
+            observations: new(&[2, 3, 4]),
+            pairs: vec![pair(2, 3, Verdict::NoMatch)],
+            links: vec![
+                link(2, target, 1, 0),
+                link(3, target, 1, 0),
+                link(4, target, 1, 0),
+            ],
+        };
+        let draft = run(&evidence, &state);
+        assert_eq!(
+            draft.changeset.ops,
+            vec![Op::Assign {
+                observation: obs(4),
+                from: None,
+                to: Some(target)
+            }]
+        );
+        assert_eq!(
+            draft.review,
+            vec![ReviewItem::Conflict {
+                observations: vec![obs(2), obs(3)],
+                identity: Some(target),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_chain_of_no_matches_between_groups_is_one_review_item() {
+        let (state, identities) = state_with(&[&[1], &[5]]);
+        let (target, other) = (identities[0], identities[1]);
+        // 2 and 3 match each other. 2-4 and 4-6 are judged different, and
+        // all of them match the first identity. 7 matches the other one, so
+        // its no_match with 2 contradicts nothing.
+        let evidence = EvidenceSummary {
+            observations: new(&[2, 3, 4, 6, 7]),
+            pairs: vec![
+                pair(2, 3, Verdict::Match),
+                pair(2, 4, Verdict::NoMatch),
+                pair(4, 6, Verdict::NoMatch),
+                pair(2, 7, Verdict::NoMatch),
+            ],
+            links: vec![
+                link(2, target, 1, 0),
+                link(4, target, 1, 0),
+                link(6, target, 1, 0),
+                link(7, other, 1, 0),
+            ],
+        };
+        let draft = run(&evidence, &state);
+        assert_eq!(
+            draft.changeset.ops,
+            vec![Op::Assign {
+                observation: obs(7),
+                from: None,
+                to: Some(other)
+            }]
+        );
+        assert_eq!(
+            draft.review,
+            vec![ReviewItem::Conflict {
+                observations: vec![obs(2), obs(3), obs(4), obs(6)],
+                identity: Some(target),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_no_match_between_groups_that_become_new_identities_changes_nothing() {
+        let (state, _) = state_with(&[]);
+        let evidence = EvidenceSummary {
+            observations: new(&[1, 2, 3]),
+            pairs: vec![pair(1, 2, Verdict::Match), pair(2, 3, Verdict::NoMatch)],
+            links: vec![],
+        };
+        let draft = run(&evidence, &state);
+        assert_eq!(created(&draft).len(), 2);
+        assert_eq!(assigned_to(&draft, 1), assigned_to(&draft, 2));
+        assert_ne!(assigned_to(&draft, 1), assigned_to(&draft, 3));
+        assert!(draft.review.is_empty());
     }
 
     #[test]
