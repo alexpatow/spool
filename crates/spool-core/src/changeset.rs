@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 
 use crate::ids::{Actor, ChangesetId, EntityType, IdentityId, ObservationId, RunId, Seq};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum ConstraintKind {
@@ -25,8 +25,9 @@ impl ConstraintKind {
 /// One change to identity state. Each operation carries its own precondition,
 /// which is checked against the state the changeset is committed to.
 ///
-/// `Merge`, `Constrain`, `Unconstrain` and `Reinstate` are part of the format
-/// and are not implemented yet: a changeset that contains one is rejected.
+/// There is no operation that splits an identity. A split is a
+/// `CreateIdentity` and the `Assign` operations that move observations to it,
+/// usually with a `cannot_link` constraint, in one changeset.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -43,19 +44,29 @@ pub enum Op {
         from: Option<IdentityId>,
         to: Option<IdentityId>,
     },
-    /// Moves every current member of `from` to `into` and redirects `from`.
+    /// Moves every current member of `from` to `into`, and makes `from` stand
+    /// for `into` from then on. Precondition: both are active identities of
+    /// one entity type, and no changeset after the author's `base` changed
+    /// the members of either. A merge moves every member, and its author saw
+    /// only the members there were then.
     Merge { from: IdentityId, into: IdentityId },
+    /// Records that two observations must share an identity, or must not.
+    /// Precondition: the pair has no constraint yet, and the state the
+    /// changeset leaves behind satisfies this one.
     Constrain {
         kind: ConstraintKind,
         a: ObservationId,
         b: ObservationId,
     },
+    /// Precondition: the constraint is in force.
     Unconstrain {
         kind: ConstraintKind,
         a: ObservationId,
         b: ObservationId,
     },
-    /// Makes a merged identity active again; used only to undo a merge.
+    /// Makes a merged identity active again, with no members. It is how a
+    /// merge is undone: the changeset that reinstates an identity usually
+    /// moves its former members back.
     Reinstate { identity: IdentityId },
 }
 

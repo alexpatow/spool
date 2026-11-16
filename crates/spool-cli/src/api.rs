@@ -8,12 +8,13 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use spool::core::{
-    Changeset, ChangesetId, Committed, EntityType, IdentityId, LogEntry, ObservationId, Rejection,
-    Seq, Verdict,
+    Actor, Changeset, ChangesetId, Committed, ConstraintRecord, EntityType, IdentityId, LogEntry,
+    ObservationId, Op, Rejection, RunId, Seq, Verdict,
 };
 use spool::{
-    DraftRecord, DraftSummary, HistoryEntry, IdentitySummary, IdentityView, MintedIds,
-    ObservationRecord, ReviewRecord, RunRecord, StoreInfo, StrategyRef, TypeResolution,
+    Authored, DraftRecord, DraftSummary, HistoryEntry, IdentitySummary, IdentityView, MintedIds,
+    ObservationRecord, ReviewRecord, RunRecord, SplitReport, StoreInfo, StrategyRef,
+    TypeResolution,
 };
 
 /// The version of the API, which is the first segment of every path.
@@ -147,6 +148,75 @@ pub struct RejectDraftRequest {
     pub reason: Option<String>,
 }
 
+/// `POST /v1/changesets`: a changeset to validate and commit.
+///
+/// A caller that has read the state it is changing says so with `base`: a
+/// merge is rejected if the members of either identity changed after it. A
+/// caller that leaves `base` out is taken to have read the head of the log.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CommitRequest {
+    /// The changeset's ID. Left out, the server mints one. A caller that may
+    /// send the same changeset twice mints the ID itself, so that the second
+    /// one is refused.
+    #[serde(default)]
+    pub id: Option<ChangesetId>,
+    /// The log position the author had read. Left out, the head of the log.
+    #[serde(default)]
+    pub base: Option<Seq>,
+    pub actor: Actor,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub run: Option<RunId>,
+    pub ops: Vec<Op>,
+}
+
+/// `POST /v1/changesets/{seq}/undo`: take back the changeset at a log
+/// position with a new changeset.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UndoRequest {
+    pub actor: Actor,
+    #[serde(default)]
+    pub reason: Option<String>,
+    /// Commit the undo (the default), or only validate it and return it.
+    #[serde(default)]
+    pub commit: Option<bool>,
+}
+
+/// `POST /v1/identities/{identity}/split`: divide an identity in two.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SplitRequest {
+    /// The observations on one side. The rest of the identity's members are
+    /// the other side. The larger side keeps the ID, the side not named here
+    /// on a tie.
+    pub observations: Vec<ObservationId>,
+    /// Record a `cannot_link` constraint between the two sides (the
+    /// default), so that nothing puts them back together unnoticed.
+    #[serde(default)]
+    pub keep_apart: Option<bool>,
+    pub actor: Actor,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ConstraintList {
+    pub constraints: Vec<ConstraintRecord>,
+}
+
+/// `POST /v1/review/{id}/dismiss`: close a review item without placing its
+/// observations.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DismissRequest {
+    pub actor: Actor,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
 /// `GET /v1/changesets`: a page of the log.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ChangesetList {
@@ -235,7 +305,8 @@ pub enum ErrorCode {
     /// 400: the request cannot be read, or names something that is not
     /// declared.
     Invalid,
-    /// 404: there is no such run, draft, identity, observation or path.
+    /// 404: there is no such run, draft, changeset, identity, observation,
+    /// review item or path.
     NotFound,
     /// 409: the thing exists and is not in a state that allows this.
     Conflict,
@@ -264,7 +335,15 @@ struct Wire {
     draft_record: DraftRecord,
     reject_draft_request: RejectDraftRequest,
     changeset: Changeset,
+    commit_request: CommitRequest,
     committed: Committed,
+    undo_request: UndoRequest,
+    authored: Authored,
+    split_request: SplitRequest,
+    split_report: SplitReport,
+    constraint_list: ConstraintList,
+    dismiss_request: DismissRequest,
+    review_record: ReviewRecord,
     changeset_list: ChangesetList,
     mint_request: MintRequest,
     minted_ids: MintedIds,

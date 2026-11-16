@@ -5,6 +5,29 @@
       "pattern": "^(engine|user:.+|agent:.+)$",
       "type": "string"
     },
+    "Authored": {
+      "description": "A changeset the engine wrote for a caller, and its receipt.",
+      "properties": {
+        "changeset": {
+          "$ref": "#/$defs/Changeset"
+        },
+        "committed": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Committed"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "`None` when the caller asked only to see the changeset. It was\nvalidated all the same."
+        }
+      },
+      "required": [
+        "changeset"
+      ],
+      "type": "object"
+    },
     "CandidateList": {
       "description": "`GET /v1/runs/{run}/candidates` when JSON is asked for. Each candidate has\n`left_id`, `right_id`, and every feature column prefixed with `left_` and\nwith `right_`.",
       "properties": {
@@ -91,6 +114,68 @@
       ],
       "type": "object"
     },
+    "CommitRequest": {
+      "additionalProperties": false,
+      "description": "`POST /v1/changesets`: a changeset to validate and commit.\n\nA caller that has read the state it is changing says so with `base`: a\nmerge is rejected if the members of either identity changed after it. A\ncaller that leaves `base` out is taken to have read the head of the log.",
+      "properties": {
+        "actor": {
+          "$ref": "#/$defs/Actor"
+        },
+        "base": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Seq"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The log position the author had read. Left out, the head of the log."
+        },
+        "id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ChangesetId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The changeset's ID. Left out, the server mints one. A caller that may\nsend the same changeset twice mints the ID itself, so that the second\none is refused."
+        },
+        "ops": {
+          "items": {
+            "$ref": "#/$defs/Op"
+          },
+          "type": "array"
+        },
+        "reason": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "run": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "actor",
+        "ops"
+      ],
+      "type": "object"
+    },
     "Committed": {
       "description": "The receipt for a committed changeset.",
       "properties": {
@@ -118,9 +203,99 @@
       ],
       "type": "string"
     },
+    "ConstraintList": {
+      "properties": {
+        "constraints": {
+          "items": {
+            "$ref": "#/$defs/ConstraintRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "constraints"
+      ],
+      "type": "object"
+    },
+    "ConstraintRecord": {
+      "description": "One interval of a constraint. `to` is `None` while it is in force.",
+      "properties": {
+        "a": {
+          "$ref": "#/$defs/ObservationId"
+        },
+        "b": {
+          "$ref": "#/$defs/ObservationId"
+        },
+        "from": {
+          "$ref": "#/$defs/Seq"
+        },
+        "kind": {
+          "$ref": "#/$defs/ConstraintKind"
+        },
+        "to": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Seq"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "a",
+        "b",
+        "kind",
+        "from"
+      ],
+      "type": "object"
+    },
     "ContentHash": {
       "description": "SHA-256 of the canonical encoding of a list of operations, as lowercase hex.",
       "type": "string"
+    },
+    "DismissRequest": {
+      "additionalProperties": false,
+      "description": "`POST /v1/review/{id}/dismiss`: close a review item without placing its\nobservations.",
+      "properties": {
+        "actor": {
+          "$ref": "#/$defs/Actor"
+        },
+        "reason": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "actor"
+      ],
+      "type": "object"
+    },
+    "Dismissal": {
+      "description": "A reviewer's decision to close a review item without placing its\nobservations.",
+      "properties": {
+        "at": {
+          "type": "string"
+        },
+        "by": {
+          "$ref": "#/$defs/Actor"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "by",
+        "at"
+      ],
+      "type": "object"
     },
     "DraftList": {
       "properties": {
@@ -295,7 +470,7 @@
         },
         {
           "const": "not_found",
-          "description": "404: there is no such run, draft, identity, observation or path.",
+          "description": "404: there is no such run, draft, changeset, identity, observation,\nreview item or path.",
           "type": "string"
         },
         {
@@ -578,6 +753,13 @@
         },
         "run": {
           "$ref": "#/$defs/RunId"
+        },
+        "superseded": {
+          "default": 0,
+          "description": "Observations created as a new version of a row the source had sent\nbefore under the same key with other content.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "required": [
@@ -885,6 +1067,30 @@
         },
         "source": {
           "type": "string"
+        },
+        "superseded_by": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ObservationId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The version that replaced this one, if the source has sent the row\nagain with other content."
+        },
+        "supersedes": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ObservationId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The version of the row this one replaced: what the source held under\nthe same key before."
         }
       },
       "required": [
@@ -898,7 +1104,7 @@
       "type": "object"
     },
     "Op": {
-      "description": "One change to identity state. Each operation carries its own precondition,\nwhich is checked against the state the changeset is committed to.\n\n`Merge`, `Constrain`, `Unconstrain` and `Reinstate` are part of the format\nand are not implemented yet: a changeset that contains one is rejected.",
+      "description": "One change to identity state. Each operation carries its own precondition,\nwhich is checked against the state the changeset is committed to.\n\nThere is no operation that splits an identity. A split is a\n`CreateIdentity` and the `Assign` operations that move observations to it,\nusually with a `cannot_link` constraint, in one changeset.",
       "oneOf": [
         {
           "description": "Precondition: the ID has never been used.",
@@ -959,7 +1165,7 @@
           "type": "object"
         },
         {
-          "description": "Moves every current member of `from` to `into` and redirects `from`.",
+          "description": "Moves every current member of `from` to `into`, and makes `from` stand\nfor `into` from then on. Precondition: both are active identities of\none entity type, and no changeset after the author's `base` changed\nthe members of either. A merge moves every member, and its author saw\nonly the members there were then.",
           "properties": {
             "from": {
               "$ref": "#/$defs/IdentityId"
@@ -980,6 +1186,7 @@
           "type": "object"
         },
         {
+          "description": "Records that two observations must share an identity, or must not.\nPrecondition: the pair has no constraint yet, and the state the\nchangeset leaves behind satisfies this one.",
           "properties": {
             "a": {
               "$ref": "#/$defs/ObservationId"
@@ -1004,6 +1211,7 @@
           "type": "object"
         },
         {
+          "description": "Precondition: the constraint is in force.",
           "properties": {
             "a": {
               "$ref": "#/$defs/ObservationId"
@@ -1028,7 +1236,7 @@
           "type": "object"
         },
         {
-          "description": "Makes a merged identity active again; used only to undo a merge.",
+          "description": "Makes a merged identity active again, with no members. It is how a\nmerge is undone: the changeset that reinstates an identity usually\nmoves its former members back.",
           "properties": {
             "identity": {
               "$ref": "#/$defs/IdentityId"
@@ -1268,17 +1476,295 @@
         },
         {
           "properties": {
-            "kind": {
-              "type": "string"
+            "identity": {
+              "$ref": "#/$defs/IdentityId"
             },
             "reason": {
-              "const": "not_implemented",
+              "const": "merge_into_itself",
               "type": "string"
             }
           },
           "required": [
             "reason",
-            "kind"
+            "identity"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "from": {
+              "$ref": "#/$defs/IdentityId"
+            },
+            "from_type": {
+              "$ref": "#/$defs/EntityType"
+            },
+            "into": {
+              "$ref": "#/$defs/IdentityId"
+            },
+            "into_type": {
+              "$ref": "#/$defs/EntityType"
+            },
+            "reason": {
+              "const": "identity_type_mismatch",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "from",
+            "from_type",
+            "into",
+            "into_type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "base": {
+              "$ref": "#/$defs/Seq"
+            },
+            "changed": {
+              "$ref": "#/$defs/Seq"
+            },
+            "identity": {
+              "$ref": "#/$defs/IdentityId"
+            },
+            "reason": {
+              "const": "stale_merge",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "identity",
+            "changed",
+            "base"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "first_op": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "identity": {
+              "$ref": "#/$defs/IdentityId"
+            },
+            "reason": {
+              "const": "members_moved_twice",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "identity",
+            "first_op"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "identity": {
+              "$ref": "#/$defs/IdentityId"
+            },
+            "reason": {
+              "const": "identity_is_active",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "identity"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "first_op": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "identity": {
+              "$ref": "#/$defs/IdentityId"
+            },
+            "reason": {
+              "const": "identity_changed_twice",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "identity",
+            "first_op"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "observation": {
+              "$ref": "#/$defs/ObservationId"
+            },
+            "reason": {
+              "const": "same_observation",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "observation"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "a": {
+              "$ref": "#/$defs/ObservationId"
+            },
+            "a_type": {
+              "$ref": "#/$defs/EntityType"
+            },
+            "b": {
+              "$ref": "#/$defs/ObservationId"
+            },
+            "b_type": {
+              "$ref": "#/$defs/EntityType"
+            },
+            "reason": {
+              "const": "constraint_across_types",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "a",
+            "a_type",
+            "b",
+            "b_type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "a": {
+              "$ref": "#/$defs/ObservationId"
+            },
+            "b": {
+              "$ref": "#/$defs/ObservationId"
+            },
+            "kind": {
+              "$ref": "#/$defs/ConstraintKind"
+            },
+            "reason": {
+              "const": "constraint_exists",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "kind",
+            "a",
+            "b"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "a": {
+              "$ref": "#/$defs/ObservationId"
+            },
+            "b": {
+              "$ref": "#/$defs/ObservationId"
+            },
+            "kind": {
+              "$ref": "#/$defs/ConstraintKind"
+            },
+            "reason": {
+              "const": "unknown_constraint",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "kind",
+            "a",
+            "b"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "a": {
+              "$ref": "#/$defs/ObservationId"
+            },
+            "b": {
+              "$ref": "#/$defs/ObservationId"
+            },
+            "first_op": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "$ref": "#/$defs/ConstraintKind"
+            },
+            "reason": {
+              "const": "constraint_changed_twice",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "kind",
+            "a",
+            "b",
+            "first_op"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "a": {
+              "$ref": "#/$defs/ObservationId"
+            },
+            "b": {
+              "$ref": "#/$defs/ObservationId"
+            },
+            "identity_a": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/IdentityId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "identity_b": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/IdentityId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "kind": {
+              "$ref": "#/$defs/ConstraintKind"
+            },
+            "reason": {
+              "const": "constraint_violated",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "kind",
+            "a",
+            "b"
           ],
           "type": "object"
         }
@@ -1436,6 +1922,18 @@
     "ReviewRecord": {
       "description": "A review item as the store keeps it.",
       "properties": {
+        "dismissed": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Dismissal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Dismissed: who closed it, when and why."
+        },
         "entity_type": {
           "$ref": "#/$defs/EntityType"
         },
@@ -1506,7 +2004,8 @@
       "enum": [
         "open",
         "resolved",
-        "superseded"
+        "superseded",
+        "dismissed"
       ],
       "type": "string"
     },
@@ -1670,6 +2169,76 @@
       "format": "uint64",
       "minimum": 0,
       "type": "integer"
+    },
+    "SplitReport": {
+      "description": "What a split did.",
+      "properties": {
+        "changeset": {
+          "$ref": "#/$defs/Changeset"
+        },
+        "committed": {
+          "$ref": "#/$defs/Committed"
+        },
+        "identity": {
+          "$ref": "#/$defs/IdentityId",
+          "description": "The new identity."
+        },
+        "kept": {
+          "$ref": "#/$defs/IdentityId",
+          "description": "The identity that was split. It keeps its ID and the larger side."
+        },
+        "moved": {
+          "description": "The observations that moved to the new identity, in order.",
+          "items": {
+            "$ref": "#/$defs/ObservationId"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "kept",
+        "identity",
+        "moved",
+        "changeset",
+        "committed"
+      ],
+      "type": "object"
+    },
+    "SplitRequest": {
+      "additionalProperties": false,
+      "description": "`POST /v1/identities/{identity}/split`: divide an identity in two.",
+      "properties": {
+        "actor": {
+          "$ref": "#/$defs/Actor"
+        },
+        "keep_apart": {
+          "default": null,
+          "description": "Record a `cannot_link` constraint between the two sides (the\ndefault), so that nothing puts them back together unnoticed.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "observations": {
+          "description": "The observations on one side. The rest of the identity's members are\nthe other side. The larger side keeps the ID, the side not named here\non a tie.",
+          "items": {
+            "$ref": "#/$defs/ObservationId"
+          },
+          "type": "array"
+        },
+        "reason": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "observations",
+        "actor"
+      ],
+      "type": "object"
     },
     "StartRunRequest": {
       "additionalProperties": false,
@@ -1920,6 +2489,34 @@
         "observations_assigned",
         "observations_unassigned",
         "review"
+      ],
+      "type": "object"
+    },
+    "UndoRequest": {
+      "additionalProperties": false,
+      "description": "`POST /v1/changesets/{seq}/undo`: take back the changeset at a log\nposition with a new changeset.",
+      "properties": {
+        "actor": {
+          "$ref": "#/$defs/Actor"
+        },
+        "commit": {
+          "default": null,
+          "description": "Commit the undo (the default), or only validate it and return it.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "reason": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "actor"
       ],
       "type": "object"
     },

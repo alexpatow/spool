@@ -10,9 +10,10 @@ use std::str::FromStr;
 use duckdb::vtab::arrow::{ArrowBatchRegistration, ArrowVTab};
 use duckdb::{Connection, params};
 use spool_core::{
-    Changeset, ChangesetId, Clock, Committed, ConstraintKind, ContentHash, EntityType, IdentityId,
-    IdentityRecord, IdentityState, IdentityStatus, IdentityStore, LogEntry, Membership,
-    ObservationId, Op, RunId, Seq, Snapshot, StateError, Validated,
+    Changeset, ChangesetId, Clock, Committed, Constraint, ConstraintKind, ConstraintRecord,
+    ContentHash, EntityType, IdentityId, IdentityRecord, IdentityState, IdentityStatus,
+    IdentityStore, LogEntry, Membership, Merged, ObservationId, Op, RunId, Seq, Snapshot,
+    StateError, Validated,
 };
 
 use crate::batch::{Column, batch, id_list};
@@ -67,8 +68,7 @@ impl DuckStore {
         reader(&self.conn, self.attached)
     }
 
-    /// Replaces the projection tables with the given state. Every identity is
-    /// written as active: nothing can merge identities yet.
+    /// Replaces the projection tables with the given state.
     pub(crate) fn write_projection(&mut self, snapshot: &Snapshot) -> Result<()> {
         let identities = batch(vec![
             (
@@ -92,6 +92,36 @@ impl DuckStore {
                         .iter()
                         .map(|record| record.created.0 as i64)
                         .collect(),
+                ),
+            ),
+            (
+                "merged_into",
+                text(
+                    snapshot
+                        .identities
+                        .iter()
+                        .map(|record| match record.status {
+                            IdentityStatus::Active => None,
+                            IdentityStatus::MergedInto(survivor) => Some(survivor),
+                        }),
+                ),
+            ),
+            (
+                "merged_seq",
+                text(
+                    snapshot
+                        .identities
+                        .iter()
+                        .map(|record| record.merged.map(|merged| merged.seq.0)),
+                ),
+            ),
+            (
+                "merge_target",
+                text(
+                    snapshot
+                        .identities
+                        .iter()
+                        .map(|record| record.merged.map(|merged| merged.into)),
                 ),
             ),
         ])?;
@@ -124,6 +154,29 @@ impl DuckStore {
                 ),
             ),
         ])?;
+        let links = &snapshot.constraints;
+        let constraints = batch(vec![
+            (
+                "observation_a",
+                text(links.iter().map(|row| Some(row.constraint.a))),
+            ),
+            (
+                "observation_b",
+                text(links.iter().map(|row| Some(row.constraint.b))),
+            ),
+            (
+                "kind",
+                text(links.iter().map(|row| Some(row.constraint.kind.as_str()))),
+            ),
+            (
+                "from_seq",
+                Column::Integer(links.iter().map(|row| row.from.0 as i64).collect()),
+            ),
+            (
+                "to_seq",
+                text(links.iter().map(|row| row.to.map(|seq| seq.0))),
+            ),
+        ])?;
 
         let tx = self.conn.transaction()?;
         tx.execute_batch(
@@ -131,13 +184,21 @@ impl DuckStore {
         )?;
         tx.execute(
             "INSERT INTO spool.identity
-             SELECT identity_id::UUID, entity_type, created_seq, NULL, NULL FROM arrow(?)",
+             SELECT identity_id::UUID, entity_type, created_seq, merged_into::UUID,
+                    merged_seq::BIGINT, merge_target::UUID
+             FROM arrow(?)",
             [&ArrowBatchRegistration::new(identities)],
         )?;
         tx.execute(
             "INSERT INTO spool.membership
              SELECT observation_id::UUID, identity_id::UUID, from_seq, to_seq::BIGINT FROM arrow(?)",
             [&ArrowBatchRegistration::new(memberships)],
+        )?;
+        tx.execute(
+            "INSERT INTO spool.constraint_link
+             SELECT observation_a::UUID, observation_b::UUID, kind, from_seq, to_seq::BIGINT
+             FROM arrow(?)",
+            [&ArrowBatchRegistration::new(constraints)],
         )?;
         tx.commit()?;
         Ok(())
@@ -175,13 +236,27 @@ impl DuckStore {
             params![seq, &ArrowBatchRegistration::new(ops)],
         )?;
 
-        // The projection is derived from the log rows just written.
+        // The projection is derived from the log rows just written, one kind
+        // of operation at a time. The validator's rules are what make that
+        // equal to applying the operations in the order they were written: a
+        // changeset moves an observation once, changes an identity's status
+        // once, and merges away no identity that gained members in it.
+        let has = |kind: &str| changeset.ops.iter().any(|op| op.kind() == kind);
         tx.execute(
             "INSERT INTO spool.identity
-             SELECT identity_id, entity_type, seq, NULL, NULL
+             SELECT identity_id, entity_type, seq, NULL, NULL, NULL
              FROM spool.changeset_op WHERE seq = ? AND kind = 'create_identity'",
             [seq],
         )?;
+        if has("reinstate") {
+            tx.execute(
+                "UPDATE spool.identity
+                 SET merged_into = NULL, merged_seq = NULL, merge_target = NULL
+                 WHERE identity_id IN (
+                   SELECT identity_id FROM spool.changeset_op WHERE seq = ? AND kind = 'reinstate')",
+                [seq],
+            )?;
+        }
         tx.execute(
             "UPDATE spool.membership SET to_seq = ?
              WHERE to_seq IS NULL AND observation_id IN (
@@ -196,6 +271,84 @@ impl DuckStore {
              WHERE seq = ? AND kind = 'assign' AND identity_id IS NOT NULL",
             [seq],
         )?;
+        if has("merge") {
+            // What is left in a merged identity moves to the survivor, which
+            // is never itself merged away by the same changeset.
+            tx.execute(
+                "INSERT INTO spool.membership
+                 SELECT m.observation_id, op.identity_id, op.seq, NULL
+                 FROM spool.changeset_op op
+                 JOIN spool.membership m
+                   ON m.identity_id = op.from_identity_id AND m.to_seq IS NULL
+                 WHERE op.seq = ? AND op.kind = 'merge'",
+                [seq],
+            )?;
+            tx.execute(
+                "UPDATE spool.membership SET to_seq = ?
+                 WHERE to_seq IS NULL AND identity_id IN (
+                   SELECT from_identity_id FROM spool.changeset_op
+                   WHERE seq = ? AND kind = 'merge')",
+                [seq, seq],
+            )?;
+            // Identities that stood for the merged one stand for the survivor.
+            tx.execute(
+                "UPDATE spool.identity AS i SET merged_into = op.identity_id
+                 FROM spool.changeset_op op
+                 WHERE op.seq = ? AND op.kind = 'merge' AND i.merged_into = op.from_identity_id",
+                [seq],
+            )?;
+            tx.execute(
+                "UPDATE spool.identity AS i
+                 SET merged_into = op.identity_id, merged_seq = op.seq,
+                     merge_target = op.identity_id
+                 FROM spool.changeset_op op
+                 WHERE op.seq = ? AND op.kind = 'merge' AND i.identity_id = op.from_identity_id",
+                [seq],
+            )?;
+        }
+        if has("reinstate") {
+            // Identities merged into a reinstated one, directly or through
+            // others, stand for it again.
+            tx.execute(
+                "UPDATE spool.identity AS i SET merged_into = under.root
+                 FROM (
+                   WITH RECURSIVE under(root, identity_id) AS (
+                     SELECT op.identity_id, child.identity_id
+                     FROM spool.changeset_op op
+                     JOIN spool.identity child ON child.merge_target = op.identity_id
+                     WHERE op.seq = ? AND op.kind = 'reinstate'
+                     UNION ALL
+                     SELECT under.root, child.identity_id
+                     FROM under
+                     JOIN spool.identity child ON child.merge_target = under.identity_id
+                   )
+                   SELECT root, identity_id FROM under
+                 ) under
+                 WHERE i.identity_id = under.identity_id",
+                [seq],
+            )?;
+        }
+        if has("unconstrain") {
+            tx.execute(
+                "UPDATE spool.constraint_link AS c SET to_seq = op.seq
+                 FROM spool.changeset_op op
+                 WHERE op.seq = ? AND op.kind = 'unconstrain' AND c.to_seq IS NULL
+                   AND c.kind = op.constraint_kind
+                   AND c.observation_a = least(op.observation_id, op.other_observation_id)
+                   AND c.observation_b = greatest(op.observation_id, op.other_observation_id)",
+                [seq],
+            )?;
+        }
+        if has("constrain") {
+            tx.execute(
+                "INSERT INTO spool.constraint_link
+                 SELECT least(observation_id, other_observation_id),
+                        greatest(observation_id, other_observation_id),
+                        constraint_kind, seq, NULL
+                 FROM spool.changeset_op WHERE seq = ? AND kind = 'constrain'",
+                [seq],
+            )?;
+        }
         // Not identity state, but it has to agree with membership at every
         // log position, so it is updated in the same transaction.
         review::resolve_assigned(&tx, Seq(seq as u64))?;
@@ -286,17 +439,13 @@ pub(crate) fn read_snapshot(conn: &Connection) -> Result<Snapshot> {
 
     let mut identities = Vec::new();
     let mut statement = conn.prepare(
-        "SELECT identity_id::VARCHAR, entity_type, created_seq, merged_into::VARCHAR
+        "SELECT identity_id::VARCHAR, entity_type, created_seq, merged_into::VARCHAR,
+                merged_seq, merge_target::VARCHAR
          FROM spool.identity",
     )?;
     let mut rows = statement.query([])?;
     while let Some(row) = rows.next()? {
-        identities.push(identity_record(
-            row.get(0)?,
-            row.get(1)?,
-            row.get(2)?,
-            row.get(3)?,
-        )?);
+        identities.push(identity_record(row, 0)?);
     }
     identities.sort_by_key(|record| record.id);
 
@@ -316,10 +465,26 @@ pub(crate) fn read_snapshot(conn: &Connection) -> Result<Snapshot> {
     }
     memberships.sort();
 
+    let mut constraints = Vec::new();
+    let mut statement = conn.prepare(
+        "SELECT observation_a::VARCHAR, observation_b::VARCHAR, kind, from_seq, to_seq
+         FROM spool.constraint_link",
+    )?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        constraints.push(ConstraintRecord {
+            constraint: constraint(row, 0)?,
+            from: Seq(row.get::<_, i64>(3)? as u64),
+            to: row.get::<_, Option<i64>>(4)?.map(|seq| Seq(seq as u64)),
+        });
+    }
+    constraints.sort();
+
     Ok(Snapshot {
         head,
         identities,
         memberships,
+        constraints,
     })
 }
 
@@ -373,7 +538,8 @@ pub(crate) fn read_identities(
         return Ok(Vec::new());
     }
     let mut statement = conn.prepare(
-        "SELECT i.identity_id::VARCHAR, i.entity_type, i.created_seq, i.merged_into::VARCHAR
+        "SELECT i.identity_id::VARCHAR, i.entity_type, i.created_seq, i.merged_into::VARCHAR,
+                i.merged_seq, i.merge_target::VARCHAR
          FROM arrow(?) a LEFT JOIN spool.identity i ON i.identity_id = a.id::UUID
          ORDER BY a.ord",
     )?;
@@ -381,7 +547,7 @@ pub(crate) fn read_identities(
     let mut records = Vec::with_capacity(ids.len());
     while let Some(row) = rows.next()? {
         records.push(match row.get::<_, Option<String>>(0)? {
-            Some(id) => Some(identity_record(id, row.get(1)?, row.get(2)?, row.get(3)?)?),
+            Some(_) => Some(identity_record(row, 0)?),
             None => None,
         });
     }
@@ -436,6 +602,117 @@ pub(crate) fn read_members(
     Ok(members)
 }
 
+pub(crate) fn read_membership_changed(conn: &Connection, ids: &[IdentityId]) -> Result<Vec<Seq>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut statement = conn.prepare(
+        "SELECT coalesce(max(greatest(m.from_seq, coalesce(m.to_seq, 0))), 0)
+         FROM arrow(?) a LEFT JOIN spool.membership m ON m.identity_id = a.id::UUID
+         GROUP BY a.ord ORDER BY a.ord",
+    )?;
+    let mut rows = statement.query([&id_list(ids)?])?;
+    let mut changed = Vec::with_capacity(ids.len());
+    while let Some(row) = rows.next()? {
+        changed.push(Seq(row.get::<_, i64>(0)? as u64));
+    }
+    Ok(changed)
+}
+
+/// The constraints in force that name any of the observations, sorted.
+pub(crate) fn read_constraints_on(
+    conn: &Connection,
+    observations: &[ObservationId],
+) -> Result<Vec<Constraint>> {
+    if observations.is_empty() {
+        return Ok(Vec::new());
+    }
+    constraints(
+        conn,
+        "SELECT DISTINCT c.observation_a::VARCHAR, c.observation_b::VARCHAR, c.kind
+         FROM spool.constraint_link c
+         JOIN arrow(?) a ON a.id::UUID IN (c.observation_a, c.observation_b)
+         WHERE c.to_seq IS NULL",
+        observations,
+    )
+}
+
+/// The constraints in force that name a current member of any of the
+/// identities, sorted.
+pub(crate) fn read_constraints_of_members(
+    conn: &Connection,
+    ids: &[IdentityId],
+) -> Result<Vec<Constraint>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    constraints(
+        conn,
+        "SELECT DISTINCT c.observation_a::VARCHAR, c.observation_b::VARCHAR, c.kind
+         FROM spool.constraint_link c
+         JOIN spool.membership m
+           ON m.to_seq IS NULL AND m.observation_id IN (c.observation_a, c.observation_b)
+         JOIN arrow(?) a ON a.id::UUID = m.identity_id
+         WHERE c.to_seq IS NULL",
+        ids,
+    )
+}
+
+fn constraints<T: ToString>(conn: &Connection, sql: &str, ids: &[T]) -> Result<Vec<Constraint>> {
+    let mut statement = conn.prepare(sql)?;
+    let mut rows = statement.query([&id_list(ids)?])?;
+    let mut found = Vec::new();
+    while let Some(row) = rows.next()? {
+        found.push(constraint(row, 0)?);
+    }
+    found.sort_unstable();
+    Ok(found)
+}
+
+/// Reads a constraint from three columns: the two observations and the kind.
+pub(crate) fn constraint(row: &duckdb::Row<'_>, at: usize) -> Result<Constraint> {
+    Ok(Constraint::new(
+        constraint_kind(row.get::<_, Option<String>>(at + 2)?.as_deref())?,
+        parse(&row.get::<_, String>(at)?)?,
+        parse(&row.get::<_, String>(at + 1)?)?,
+    ))
+}
+
+pub(crate) fn read_left_at(
+    conn: &Connection,
+    identity: IdentityId,
+    seq: Seq,
+) -> Result<Vec<ObservationId>> {
+    let mut statement = conn.prepare(
+        "SELECT observation_id::VARCHAR FROM spool.membership
+         WHERE identity_id = ?::UUID AND to_seq = ?",
+    )?;
+    let mut rows = statement.query(params![identity.to_string(), seq.0 as i64])?;
+    let mut left = Vec::new();
+    while let Some(row) = rows.next()? {
+        left.push(parse(&row.get::<_, String>(0)?)?);
+    }
+    left.sort_unstable();
+    Ok(left)
+}
+
+pub(crate) fn read_merged_before(
+    conn: &Connection,
+    identity: IdentityId,
+    seq: Seq,
+) -> Result<Option<IdentityId>> {
+    let mut statement = conn.prepare(
+        "SELECT identity_id::VARCHAR FROM spool.changeset_op
+         WHERE kind = 'merge' AND from_identity_id = ?::UUID AND seq < ?
+         ORDER BY seq DESC LIMIT 1",
+    )?;
+    let mut rows = statement.query(params![identity.to_string(), seq.0 as i64])?;
+    Ok(match rows.next()? {
+        Some(row) => Some(parse(&row.get::<_, String>(0)?)?),
+        None => None,
+    })
+}
+
 fn text<T: ToString>(values: impl Iterator<Item = Option<T>>) -> Column {
     Column::Text(
         values
@@ -452,21 +729,36 @@ where
     Ok(text.parse().map_err(StateError::new)?)
 }
 
-fn identity_record(
-    id: String,
-    entity_type: String,
-    created_seq: i64,
-    merged_into: Option<String>,
-) -> Result<IdentityRecord> {
+/// Reads an identity from six columns: its ID, entity type and creation, the
+/// identity that stands for it, and the merge that made it inactive.
+fn identity_record(row: &duckdb::Row<'_>, at: usize) -> Result<IdentityRecord> {
+    let merged_into: Option<String> = row.get(at + 3)?;
+    let merged_seq: Option<i64> = row.get(at + 4)?;
+    let merge_target: Option<String> = row.get(at + 5)?;
     Ok(IdentityRecord {
-        id: parse(&id)?,
-        entity_type: EntityType::new(entity_type).map_err(StateError::new)?,
-        created: Seq(created_seq as u64),
+        id: parse(&row.get::<_, String>(at)?)?,
+        entity_type: EntityType::new(row.get::<_, String>(at + 1)?).map_err(StateError::new)?,
+        created: Seq(row.get::<_, i64>(at + 2)? as u64),
         status: match merged_into {
             Some(survivor) => IdentityStatus::MergedInto(parse(&survivor)?),
             None => IdentityStatus::Active,
         },
+        merged: match (merge_target, merged_seq) {
+            (Some(into), Some(seq)) => Some(Merged {
+                into: parse(&into)?,
+                seq: Seq(seq as u64),
+            }),
+            _ => None,
+        },
     })
+}
+
+fn constraint_kind(value: Option<&str>) -> Result<ConstraintKind> {
+    match value {
+        Some("must_link") => Ok(ConstraintKind::MustLink),
+        Some("cannot_link") => Ok(ConstraintKind::CannotLink),
+        other => Err(StateError::new(format!("unknown constraint kind {other:?}")).into()),
+    }
 }
 
 /// One row of `spool.changeset_op`, IDs as text.
@@ -542,13 +834,7 @@ pub(crate) fn op_from_row(row: OpRow) -> Result<Op> {
     {
         value.as_deref().map(parse).transpose()
     }
-    let constraint_kind = |value: Option<String>| match value.as_deref() {
-        Some("must_link") => Ok(ConstraintKind::MustLink),
-        Some("cannot_link") => Ok(ConstraintKind::CannotLink),
-        other => Err(StateError::new(format!(
-            "unknown constraint kind {other:?} in an operation row"
-        ))),
-    };
+    let constraint_kind = |value: Option<String>| constraint_kind(value.as_deref());
 
     Ok(match row.kind.as_str() {
         "create_identity" => Op::CreateIdentity {
@@ -640,6 +926,33 @@ impl IdentityState for DuckStore {
 
     fn members(&self, ids: &[IdentityId]) -> Result<Vec<(IdentityId, ObservationId)>, StateError> {
         read_members(&self.conn, ids).map_err(state_error)
+    }
+
+    fn membership_changed(&self, ids: &[IdentityId]) -> Result<Vec<Seq>, StateError> {
+        read_membership_changed(&self.conn, ids).map_err(state_error)
+    }
+
+    fn constraints_on(
+        &self,
+        observations: &[ObservationId],
+    ) -> Result<Vec<Constraint>, StateError> {
+        read_constraints_on(&self.conn, observations).map_err(state_error)
+    }
+
+    fn constraints_of_members(&self, ids: &[IdentityId]) -> Result<Vec<Constraint>, StateError> {
+        read_constraints_of_members(&self.conn, ids).map_err(state_error)
+    }
+
+    fn left_at(&self, identity: IdentityId, seq: Seq) -> Result<Vec<ObservationId>, StateError> {
+        read_left_at(&self.conn, identity, seq).map_err(state_error)
+    }
+
+    fn merged_before(
+        &self,
+        identity: IdentityId,
+        seq: Seq,
+    ) -> Result<Option<IdentityId>, StateError> {
+        read_merged_before(&self.conn, identity, seq).map_err(state_error)
     }
 }
 

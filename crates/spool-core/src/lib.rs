@@ -9,6 +9,7 @@
 //!   [`Validated`], which is the only thing an [`IdentityStore`] applies.
 //! - [`reconcile`]: turns a strategy's judgements about new observations into
 //!   a draft changeset.
+//! - [`inverse`]: the operations that undo a committed changeset.
 //! - [`MemoryState`]: an in-memory store, used as the reference model and as
 //!   the target of log replay.
 //! - [`conformance`]: the suite every store must pass.
@@ -20,6 +21,7 @@ mod ids;
 mod memory;
 mod reconcile;
 mod state;
+mod undo;
 mod validate;
 
 pub use changeset::{Changeset, ConstraintKind, ContentHash, Op};
@@ -34,7 +36,8 @@ pub use reconcile::{
     reconcile,
 };
 pub use state::{
-    Committed, IdentityRecord, IdentityState, IdentityStatus, IdentityStore, LogEntry, Membership,
-    Snapshot, StateError,
+    Committed, Constraint, ConstraintRecord, IdentityRecord, IdentityState, IdentityStatus,
+    IdentityStore, LogEntry, Membership, Merged, Snapshot, StateError,
 };
+pub use undo::inverse;
 pub use validate::{Reason, Rejection, Validated, ValidationError, validate};

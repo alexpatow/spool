@@ -51,8 +51,9 @@ pub use spool_core as core;
 pub use bench::{BenchReport, IngestSummary, Scenario, StepReport};
 pub use drafts::{DraftFilter, DraftRecord, DraftStatus, DraftSummary};
 pub use engine::{
-    ApplyReport, Disposition, Engine, JudgementCounts, MintedIds, Options, ResolveOptions,
-    ResolveReport, Scope, StrategyRef, TypeResolution, watch_runs,
+    ApplyReport, Authored, ConstraintFilter, Disposition, Engine, JudgementCounts, MintedIds,
+    Options, ResolveOptions, ResolveReport, Scope, SplitReport, StrategyRef, TypeResolution,
+    watch_runs,
 };
 pub use error::{Error, Result};
 pub use ingest::{IngestOptions, IngestReport};
@@ -65,6 +66,6 @@ pub use project::{
     Declaration, EntityTypeManifest, EntityTypeSource, FeatureColumn, Manifest, Project, Rule,
     RuleSet, SqlFile,
 };
-pub use review::{ReviewFilter, ReviewKind, ReviewRecord, ReviewStatus};
+pub use review::{Dismissal, ReviewFilter, ReviewKind, ReviewRecord, ReviewStatus};
 pub use rows::Rows;
 pub use runs::{RunFilter, RunKind, RunRecord, RunStatus};

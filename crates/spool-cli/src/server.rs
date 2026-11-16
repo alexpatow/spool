@@ -40,7 +40,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use spool::core::{Changeset, EntityType, Policy, RunId, Seq};
 use spool::{
-    Disposition, DraftFilter, DraftStatus, Engine, IdentityFilter, IngestOptions,
+    ConstraintFilter, Disposition, DraftFilter, DraftStatus, Engine, IdentityFilter, IngestOptions,
     ObservationFilter, ResolveOptions, ReviewFilter, ReviewStatus, Rows, RunFilter, RunKind,
     RunStatus, Scope, StrategyRef, watch_runs,
 };
@@ -48,11 +48,11 @@ use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 
 use crate::api::{
-    self, ARROW_STREAM, CandidateList, ChangesetList, DraftList, ErrorBody, ErrorCode,
-    ErrorResponse, History, IdentitiesOfRequest, IdentitiesOfResponse, IdentityList, Info,
-    IngestParams, IngestRequest, JudgementsRequest, JudgementsResponse, MintRequest,
-    ObservationList, ReconcileRequest, RejectDraftRequest, ReviewList, RunList, RunResponse,
-    StartRunRequest,
+    self, ARROW_STREAM, CandidateList, ChangesetList, CommitRequest, ConstraintList,
+    DismissRequest, DraftList, ErrorBody, ErrorCode, ErrorResponse, History, IdentitiesOfRequest,
+    IdentitiesOfResponse, IdentityList, Info, IngestParams, IngestRequest, JudgementsRequest,
+    JudgementsResponse, MintRequest, ObservationList, ReconcileRequest, RejectDraftRequest,
+    ReviewList, RunList, RunResponse, SplitRequest, StartRunRequest, UndoRequest,
 };
 
 /// How long a call that starts work waits when it does not say.
@@ -110,14 +110,19 @@ pub fn router(engine: Arc<Engine>, options: &ServerOptions) -> Router {
         .route("/drafts/{draft}/approve", post(approve_draft))
         .route("/drafts/{draft}/reject", post(reject_draft))
         .route("/changesets", get(list_changesets).post(commit))
+        .route("/changesets/{seq}/undo", post(undo))
         .route("/ids", post(mint_ids))
         .route("/identities", get(list_identities))
         .route("/identities/{identity}", get(read_identity))
         .route("/identities/{identity}/history", get(identity_history))
+        .route("/identities/{identity}/split", post(split))
+        .route("/constraints", get(list_constraints))
         .route("/observations", get(list_observations))
         .route("/observations/identities", post(identities_of))
         .route("/observations/{observation}", get(read_observation))
         .route("/review", get(list_review))
+        .route("/review/{item}", get(read_review))
+        .route("/review/{item}/dismiss", post(dismiss_review))
         .fallback(not_found)
         .layer(middleware::from_fn_with_state(app.clone(), authorize));
     Router::new()
@@ -204,10 +209,16 @@ impl From<spool::Error> for ApiError {
                     rejections: Some(rejections),
                 },
             },
-            Error::UnknownRun(_) | Error::UnknownDraft(_) | Error::UnknownIdentity(_) => {
-                Self::not_found(message)
-            }
-            Error::Run { .. } | Error::Draft { .. } => {
+            Error::UnknownRun(_)
+            | Error::UnknownDraft(_)
+            | Error::UnknownIdentity(_)
+            | Error::UnknownChangeset(_)
+            | Error::UnknownReviewItem(_) => Self::not_found(message),
+            Error::Run { .. }
+            | Error::Draft { .. }
+            | Error::Review { .. }
+            | Error::Split { .. }
+            | Error::NothingToUndo(_) => {
                 Self::new(StatusCode::CONFLICT, ErrorCode::Conflict, message)
             }
             Error::Ingest(_)
@@ -703,8 +714,85 @@ async fn reject_draft(State(app): State<App>, Path(draft): Path<String>, body: B
 }
 
 async fn commit(State(app): State<App>, body: Bytes) -> ApiResult {
-    let changeset: Changeset = json_body(&body)?;
-    ok(engine(&app, move |engine| engine.commit(changeset)).await?)
+    let request: CommitRequest = json_body(&body)?;
+    ok(engine(&app, move |engine| {
+        let id = match request.id {
+            Some(id) => id,
+            None => engine.mint_ids(0, 1).changesets[0],
+        };
+        let base = match request.base {
+            Some(base) => base,
+            None => engine.head()?,
+        };
+        engine.commit(Changeset {
+            id,
+            base,
+            actor: request.actor,
+            reason: request.reason,
+            run: request.run,
+            ops: request.ops,
+        })
+    })
+    .await?)
+}
+
+async fn undo(State(app): State<App>, Path(seq): Path<String>, body: Bytes) -> ApiResult {
+    let seq = Seq(id(&seq, "a log position")?);
+    let request: UndoRequest = json_body(&body)?;
+    ok(engine(&app, move |engine| {
+        engine.undo(
+            seq,
+            request.actor,
+            request.reason,
+            request.commit.unwrap_or(true),
+        )
+    })
+    .await?)
+}
+
+async fn split(State(app): State<App>, Path(identity): Path<String>, body: Bytes) -> ApiResult {
+    let identity = id(&identity, "an identity ID")?;
+    let request: SplitRequest = json_body(&body)?;
+    ok(engine(&app, move |engine| {
+        engine.split(
+            identity,
+            &request.observations,
+            request.keep_apart.unwrap_or(true),
+            request.actor,
+            request.reason,
+        )
+    })
+    .await?)
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConstraintsQuery {
+    observation: Option<String>,
+    identity: Option<String>,
+    removed: Option<bool>,
+}
+
+async fn list_constraints(
+    State(app): State<App>,
+    params: Result<Query<ConstraintsQuery>, QueryRejection>,
+) -> ApiResult {
+    let params = query(params)?;
+    let filter = ConstraintFilter {
+        observation: params
+            .observation
+            .as_deref()
+            .map(|observation| id(observation, "an observation ID"))
+            .transpose()?,
+        identity: params
+            .identity
+            .as_deref()
+            .map(|identity| id(identity, "an identity ID"))
+            .transpose()?,
+        include_removed: params.removed.unwrap_or(false),
+    };
+    let constraints = engine(&app, move |engine| engine.constraints(&filter)).await?;
+    ok(ConstraintList { constraints })
 }
 
 #[derive(serde::Deserialize)]
@@ -854,9 +942,38 @@ async fn list_review(
     let filter = ReviewFilter {
         status: params.status,
         entity_type: params.entity_type,
+        id: None,
     };
     let items = engine(&app, move |engine| engine.review_items(&filter)).await?;
     ok(ReviewList { items })
+}
+
+async fn read_review(State(app): State<App>, Path(item): Path<String>) -> ApiResult {
+    let item: u64 = id(&item, "a review item ID")?;
+    let filter = ReviewFilter {
+        id: Some(item),
+        ..ReviewFilter::default()
+    };
+    match engine(&app, move |engine| engine.review_items(&filter))
+        .await?
+        .pop()
+    {
+        Some(record) => ok(record),
+        None => Err(spool::Error::UnknownReviewItem(item).into()),
+    }
+}
+
+async fn dismiss_review(
+    State(app): State<App>,
+    Path(item): Path<String>,
+    body: Bytes,
+) -> ApiResult {
+    let item: u64 = id(&item, "a review item ID")?;
+    let request: DismissRequest = json_body(&body)?;
+    ok(engine(&app, move |engine| {
+        engine.dismiss_review(item, &request.actor, request.reason.as_deref())
+    })
+    .await?)
 }
 
 #[cfg(test)]
