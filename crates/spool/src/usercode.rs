@@ -26,6 +26,7 @@
 //! `packages/strategy`.
 
 use std::ffi::OsString;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -262,7 +263,7 @@ pub(crate) struct Task {
     pub dir: PathBuf,
     strategy: Strategy,
     command: Command,
-    timeout: Duration,
+    user_code: UserCode,
 }
 
 impl Task {
@@ -303,7 +304,7 @@ impl Task {
             command: user_code.command(strategy, Some(&dir))?,
             dir,
             strategy: strategy.clone(),
-            timeout: user_code.timeout,
+            user_code: user_code.clone(),
         })
     }
 
@@ -320,7 +321,18 @@ impl Task {
 
     /// Runs the strategy and waits for it. On success `judgements.parquet`
     /// is there to be read.
+    ///
+    /// The file is checked against the manifest once more, here, where it
+    /// is started. A resolve checks every strategy before it starts the
+    /// first, and the last may start long after: the run records the hash
+    /// in the manifest, so that must be the file that runs.
     pub(crate) fn execute(&mut self) -> Result<()> {
+        if let Err(error) = self.user_code.check(&self.strategy) {
+            // Nothing ran, so there is nothing in the task to look at.
+            let _ = std::fs::remove_dir_all(&self.dir);
+            return Err(error);
+        }
+        let timeout = self.user_code.timeout;
         let log = |name: &str| -> Result<Stdio> {
             let path = self.dir.join(name);
             Ok(std::fs::File::create(&path)
@@ -332,7 +344,7 @@ impl Task {
         self.command.stderr(log("stderr.log")?);
 
         let program = self.command.get_program().to_string_lossy().into_owned();
-        let finished = run(&mut self.command, self.timeout).map_err(|error| {
+        let finished = run(&mut self.command, timeout).map_err(|error| {
             self.fail(format!(
                 "`{program}`, which runs {} strategies, could not be started: {error}",
                 self.strategy.runtime
@@ -341,7 +353,7 @@ impl Task {
         match finished {
             Finished::TimedOut => Err(self.fail(format!(
                 "it was stopped after {} without finishing",
-                seconds(self.timeout)
+                seconds(timeout)
             ))),
             Finished::Exited(status) if !status.success() => {
                 let said = tail(&self.dir.join("stderr.log"));
@@ -383,15 +395,23 @@ fn seconds(duration: Duration) -> String {
     }
 }
 
-/// The last lines of a log, for an error message.
+/// The last lines of a log, for an error message. Only the end of the file
+/// is read: a strategy can write as much as the disk holds before it fails.
 fn tail(path: &Path) -> String {
-    const BYTES: usize = 4096;
+    const BYTES: u64 = 4096;
     const LINES: usize = 20;
-    let Ok(contents) = std::fs::read(path) else {
+    let read = || -> std::io::Result<Vec<u8>> {
+        let mut file = std::fs::File::open(path)?;
+        let length = file.metadata()?.len();
+        file.seek(SeekFrom::Start(length.saturating_sub(BYTES)))?;
+        let mut end = Vec::new();
+        file.take(BYTES).read_to_end(&mut end)?;
+        Ok(end)
+    };
+    let Ok(end) = read() else {
         return String::new();
     };
-    let start = contents.len().saturating_sub(BYTES);
-    let text = String::from_utf8_lossy(&contents[start..]);
+    let text = String::from_utf8_lossy(&end);
     let lines: Vec<&str> = text.trim_end().lines().collect();
     lines[lines.len().saturating_sub(LINES)..].join("\n")
 }
@@ -613,5 +633,15 @@ mod tests {
         assert!(tail.starts_with("line 31\n"));
         assert!(tail.ends_with("line 50"));
         assert_eq!(super::tail(&dir.path().join("missing")), "");
+
+        // A long log is read from its end, and cut where the read begins.
+        let lines: Vec<String> = (1..=100_000).map(|line| format!("line {line}")).collect();
+        std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+        let tail = super::tail(&path);
+        assert_eq!(tail.lines().count(), 20);
+        assert!(tail.starts_with("line 99981\n"));
+        assert!(tail.ends_with("line 100000"));
+        std::fs::write(&path, "é".repeat(5000)).unwrap();
+        assert!(super::tail(&path).len() <= 4096 + 4);
     }
 }

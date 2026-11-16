@@ -484,6 +484,105 @@ fn only_the_file_the_manifest_was_compiled_from_runs() {
 
 #[test]
 #[ignore = "runs uv"]
+fn a_strategy_that_changes_while_another_runs_is_not_started() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("project");
+    let work = dir.path().join("work");
+    let write = |file: &str, contents: &str| {
+        let path = project.join("entities").join(file);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, contents).unwrap();
+    };
+    // Two entity types, resolved in this order. The first one's strategy
+    // rewrites the second one's while it runs, which is what an edit made
+    // during a long run looks like to the engine.
+    for entity_type in ["first", "second"] {
+        write(
+            &format!("{entity_type}/features.sql"),
+            "SELECT observation_id, payload->>'name' AS name FROM observation",
+        );
+        write(
+            &format!("{entity_type}/rules/block/same_name.sql"),
+            "l.name = r.name",
+        );
+    }
+    write(
+        "first/strategies/model.py",
+        r#"
+from spool import strategy
+
+@strategy
+def judge(candidates):
+    with open("entities/second/strategies/model.py", "w") as file:
+        file.write("open('second-ran', 'w').close()\n")
+    return []
+"#,
+    );
+    write("second/strategies/model.py", SAME_NAME);
+
+    let engine = Engine::open_in_memory(Options::seeded(1)).unwrap();
+    engine.set_user_code(user_code(&project, &work));
+    engine.apply(&Manifest::load(&project).unwrap()).unwrap();
+    for entity_type in ["first", "second"] {
+        engine
+            .ingest(
+                entity_type,
+                entity_type,
+                common::rows(&[("1", Some("anvil"), None), ("2", Some("anvil"), None)]),
+                &spool::IngestOptions::keyed_by("id"),
+            )
+            .unwrap();
+    }
+
+    let error = engine
+        .resolve(&ResolveOptions::with_strategy("model"))
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("has changed since the manifest was compiled"),
+        "{error}"
+    );
+    // The file that changed was not run.
+    assert!(!project.join("second-ran").exists());
+
+    // The first type was resolved, and the second one's run failed with
+    // nothing committed for it.
+    let runs = engine.runs(&RunFilter::default()).unwrap();
+    let of = |entity_type: &str| {
+        runs.iter()
+            .find(|run| {
+                run.strategy.is_some()
+                    && run.entity_type.as_ref().map(EntityType::as_str) == Some(entity_type)
+            })
+            .unwrap_or_else(|| panic!("a match run for `{entity_type}`"))
+    };
+    assert_eq!(of("first").status, RunStatus::Succeeded);
+    assert_eq!(of("second").status, RunStatus::Failed);
+    assert!(
+        of("second")
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("has changed")),
+        "{:?}",
+        of("second").error
+    );
+    assert_eq!(engine.log().unwrap().len(), 1);
+    // Nothing ran for the second task, so there is nothing to keep of it.
+    let kept: Vec<PathBuf> = fs::read_dir(&work)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with("run-"))
+        })
+        .collect();
+    assert!(kept.is_empty(), "{kept:?}");
+    engine.verify().unwrap();
+}
+
+#[test]
+#[ignore = "runs uv"]
 fn a_strategy_that_finds_its_own_pairs_is_given_every_observation() {
     let things = Things::new();
     // No block rules: the engine finds no candidates for this type.

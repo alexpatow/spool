@@ -525,7 +525,7 @@ The engine embeds no Python or JavaScript runtime and never calls into one. When
 
 A user-code strategy is a file under `strategies/`. `entities/company/strategies/splink.py` is the strategy `splink` for companies. A `.py` file runs with `uv run --script` and a `.ts` file with `bun run`. Each tool is a single binary that runs the file and resolves its dependencies: a Python file names its own in a comment at its top ([uv](https://docs.astral.sh/uv/guides/scripts/)), and `bun` fetches what a TypeScript file imports ([bun](https://bun.com/docs/runtime/typescript)). Files that belong to a strategy, such as a model, go in a directory beside it with the same name: `strategies/splink/model.json`. Anything else under `strategies/` is reported by `spool info` and not used.
 
-The manifest records each strategy with its runtime, its path and a SHA-256 of the file and of the files in its directory. That hash is the strategy's version in `spool.run`. Before a run the engine checks that the file on disk still has it, and refuses to run one that changed: the project is built and applied again first. `spool dev` does that as files are saved.
+The manifest records each strategy with its runtime, its path and a SHA-256 of the file and of the files in its directory. That hash is the strategy's version in `spool.run`. Before a run the engine checks that the file on disk still has it, and refuses to run one that changed: the project is built and applied again first. It checks every strategy before it starts the first, and each one again as it is started, since a run over several entity types can start its last strategy long after its first. `spool dev` does that as files are saved.
 
 The protocol is a directory of files per task:
 
