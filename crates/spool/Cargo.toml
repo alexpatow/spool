@@ -1,0 +1,21 @@
+[package]
+name = "spool"
+description = "The Spool engine: DuckDB store, project discovery, ingest, the built-in rule runner and metrics."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+duckdb.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+spool-core.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+tempfile.workspace = true
