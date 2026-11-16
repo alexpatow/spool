@@ -7104,19 +7104,12 @@ class Task {
     this.rematch = info.rematch === true;
   }
   static async open(dir) {
-    const info = JSON.parse(await readFile(join(dir, "task.json"), "utf8"));
-    if (info.protocol !== PROTOCOL) {
-      throw new Error(`this task was written with protocol ${info.protocol}, and this helper speaks protocol ${PROTOCOL}`);
-    }
-    return new Task(dir, info);
+    return new Task(dir, await taskInfo(dir, "match", "strategy"));
   }
   read(name) {
     let table = this.tables.get(name);
     if (table === undefined) {
-      table = readFile(join(this.dir, this.info.inputs[name])).then((bytes) => {
-        const file = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-        return parquetReadObjects({ file });
-      });
+      table = readRows(join(this.dir, this.info.inputs[name]));
       this.tables.set(name, table);
     }
     return table;
@@ -7144,10 +7137,28 @@ class Task {
         { name: "detail", data: rows.map((row) => detail(row.detail)), type: "STRING", nullable: true }
       ]
     });
-    const path = join(this.dir, this.info.output);
-    await writeFile(`${path}.part`, new Uint8Array(buffer));
-    await rename(`${path}.part`, path);
+    await writeWhole(join(this.dir, this.info.output), buffer);
   }
+}
+async function taskInfo(dir, kind, caller) {
+  const info = JSON.parse(await readFile(join(dir, "task.json"), "utf8"));
+  if (info.protocol !== PROTOCOL) {
+    throw new Error(`this task was written with protocol ${info.protocol}, and this helper speaks protocol ${PROTOCOL}`);
+  }
+  const found = info.kind ?? "match";
+  if (found !== kind) {
+    throw new Error(`\`${caller}\` was given a task of kind \`${found}\`: a strategy belongs under an entity type's ` + "`strategies/` directory and an extractor under the project's `extractors/` directory");
+  }
+  return info;
+}
+async function readRows(path) {
+  const bytes = await readFile(path);
+  const file = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  return parquetReadObjects({ file });
+}
+async function writeWhole(path, buffer) {
+  await writeFile(`${path}.part`, new Uint8Array(buffer));
+  await rename(`${path}.part`, path);
 }
 function check(row, index) {
   if (row === null || typeof row !== "object" || Array.isArray(row)) {
@@ -7189,8 +7200,155 @@ async function strategy(judge) {
   const task = await Task.open(dir);
   await task.write(await judge(task) ?? []);
 }
+var INSIDE = 4294967295;
+
+class Document {
+  id;
+  source;
+  key;
+  uri;
+  text;
+  points;
+  constructor(id, source, key, uri, text) {
+    this.id = id;
+    this.source = source;
+    this.key = key;
+    this.uri = uri;
+    this.text = text;
+  }
+  mention(entityType, start, end, attributes = {}) {
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || start >= end || end > this.text.length) {
+      throw new RangeError(`${start}-${end} is not a part of the text of document \`${this.key}\`, which is ${this.text.length} long`);
+    }
+    return {
+      document_id: this.id,
+      entity_type: entityType,
+      start: this.point(start),
+      end: this.point(end),
+      attributes
+    };
+  }
+  find(quote) {
+    const places = [];
+    if (quote.length === 0)
+      return places;
+    let at = this.text.indexOf(quote);
+    while (at !== -1) {
+      places.push([at, at + quote.length]);
+      at = this.text.indexOf(quote, at + quote.length);
+    }
+    return places;
+  }
+  point(index) {
+    if (this.points === undefined) {
+      const text = this.text;
+      const points = new Uint32Array(text.length + 1);
+      let count = 0;
+      for (let at = 0;at < text.length; at++) {
+        points[at] = count++;
+        const unit = text.charCodeAt(at);
+        const next = text.charCodeAt(at + 1);
+        if (unit >= 55296 && unit <= 56319 && next >= 56320 && next <= 57343) {
+          points[++at] = INSIDE;
+        }
+      }
+      points[text.length] = count;
+      this.points = points;
+    }
+    const point = this.points[index];
+    if (point === INSIDE) {
+      throw new RangeError(`position ${index} of document \`${this.key}\` is in the middle of a character`);
+    }
+    return point;
+  }
+}
+
+class ExtractTask {
+  dir;
+  info;
+  run;
+  extractor;
+  entityTypes;
+  read;
+  constructor(dir, info) {
+    this.dir = dir;
+    this.info = info;
+    this.run = info.run;
+    this.extractor = info.extractor.name;
+    this.entityTypes = info.entity_types.map((entry) => entry.name);
+  }
+  static async open(dir) {
+    return new ExtractTask(dir, await taskInfo(dir, "extract", "extractor"));
+  }
+  entityType(name) {
+    const entry = this.info.entity_types.find((entry) => entry.name === name);
+    if (entry === undefined)
+      throw new Error(`the project declares no entity type \`${name}\``);
+    return entry;
+  }
+  instructions(entityType) {
+    return this.entityType(entityType).instructions ?? null;
+  }
+  features(entityType) {
+    return this.entityType(entityType).features;
+  }
+  documents() {
+    this.read ??= readRows(join(this.dir, this.info.inputs.documents)).then((rows) => rows.map((row) => new Document(row.document_id, row.source, row.key, row.uri ?? null, row.text)));
+    return this.read;
+  }
+  async write(mentions) {
+    const rows = [...mentions];
+    rows.forEach(checkMention);
+    const buffer = parquetWriteBuffer({
+      columnData: [
+        { name: "document_id", data: rows.map((row) => String(row.document_id)), type: "STRING" },
+        { name: "entity_type", data: rows.map((row) => String(row.entity_type)), type: "STRING" },
+        { name: "start", data: rows.map((row) => row.start), type: "INT32" },
+        { name: "end", data: rows.map((row) => row.end), type: "INT32" },
+        { name: "attributes", data: rows.map((row) => detail(row.attributes)), type: "STRING", nullable: true }
+      ]
+    });
+    await writeWhole(join(this.dir, this.info.output), buffer);
+  }
+}
+var MENTION = ["document_id", "entity_type", "start", "end", "attributes"];
+function checkMention(row, index) {
+  if (row === null || typeof row !== "object" || Array.isArray(row)) {
+    throw new TypeError(`an extractor returns mentions, as \`document.mention(...)\` makes them, and mention ${index} is ${describe(row)}`);
+  }
+  const given = row;
+  const missing = MENTION.slice(0, 4).filter((name) => given[name] === undefined || given[name] === null);
+  const unknown = Object.keys(given).filter((name) => !MENTION.includes(name));
+  if (missing.length > 0 || unknown.length > 0) {
+    const problems = [];
+    if (missing.length > 0)
+      problems.push(`no ${missing.map((name) => `\`${name}\``).join(", ")}`);
+    if (unknown.length > 0)
+      problems.push(`also ${unknown.map((name) => `\`${name}\``).join(", ")}`);
+    throw new TypeError("a mention has `document_id`, `entity_type`, `start` and `end`, and optionally `attributes`; " + `mention ${index} has ${problems.join(" and ")}`);
+  }
+  for (const name of ["start", "end"]) {
+    if (!Number.isInteger(row[name])) {
+      throw new TypeError(`\`${name}\` is a position in the document's text, and mention ${index} has ${describe(row[name])}`);
+    }
+  }
+  const attributes = row.attributes;
+  if (attributes !== undefined && attributes !== null && (typeof attributes !== "object" || Array.isArray(attributes))) {
+    throw new TypeError(`\`attributes\` is an object, and mention ${index} has ${describe(attributes)}`);
+  }
+}
+async function extractor(find) {
+  const dir = process.env.SPOOL_TASK_DIR;
+  if (!dir)
+    return;
+  const task = await ExtractTask.open(dir);
+  await task.write(await find(task) ?? []);
+}
 export {
+  Document,
+  ExtractTask,
   PROTOCOL,
   Task,
+  extractor,
   strategy
 };
