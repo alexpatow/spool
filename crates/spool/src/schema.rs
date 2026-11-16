@@ -40,7 +40,7 @@ CREATE TABLE spool.document (          -- text a source holds, kept so that what
   ingest_run  BIGINT      NOT NULL
 );
 
-CREATE TABLE spool.extraction (        -- which extractor has read which document; kept
+CREATE TABLE spool.extraction (        -- one row each time an extractor read a document
   document_id       UUID    NOT NULL,
   extractor         VARCHAR NOT NULL,
   extractor_version VARCHAR NOT NULL,
