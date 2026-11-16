@@ -20,8 +20,10 @@
 //! removed.
 //!
 //! A `.py` file runs with `uv run` and a `.ts` file with `bun run`. Each
-//! finds a module called `spool`, which this crate carries and writes out
-//! beside the tasks, that hides the files from the strategy's author.
+//! finds a module that hides the files from the strategy's author: `spool`
+//! in Python and `spool-strategy` in TypeScript. This crate carries both
+//! and writes them out beside the tasks. The TypeScript one is built from
+//! `packages/strategy`.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -214,10 +216,13 @@ impl UserCode {
             std::fs::write(&path, contents).map_err(Error::io(&path))
         };
         write(partial.join("python/spool/__init__.py"), PYTHON_HELPER)?;
-        write(partial.join("node/spool/index.js"), TYPESCRIPT_HELPER)?;
         write(
-            partial.join("node/spool/package.json"),
-            "{ \"name\": \"spool\", \"type\": \"module\", \"main\": \"index.js\" }\n",
+            partial.join("node/spool-strategy/index.js"),
+            TYPESCRIPT_HELPER,
+        )?;
+        write(
+            partial.join("node/spool-strategy/package.json"),
+            "{ \"name\": \"spool-strategy\", \"type\": \"module\", \"main\": \"index.js\" }\n",
         )?;
         if std::fs::rename(&partial, &dir).is_err() {
             // Someone else got there first, with the same files.
