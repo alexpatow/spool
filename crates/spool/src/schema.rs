@@ -7,7 +7,7 @@ use crate::error::{Error, Result};
 
 /// Written to `spool.meta` when a store is created and checked when one is
 /// opened.
-pub(crate) const FORMAT_VERSION: &str = "2";
+pub(crate) const FORMAT_VERSION: &str = "3";
 
 const TABLES: &str = "
 CREATE SCHEMA spool;
@@ -37,17 +37,19 @@ CREATE TABLE spool.entity_type (       -- declared by the project; the engine sh
   declared_at      TIMESTAMPTZ NOT NULL
 );
 
-CREATE TABLE spool.run (
+CREATE TABLE spool.run (               -- also the task record a client reads
   run_id           BIGINT      NOT NULL,
   kind             VARCHAR     NOT NULL, -- 'ingest' | 'match' | 'reconcile'
-  status           VARCHAR     NOT NULL, -- 'running' | 'succeeded' | 'failed'
+  status           VARCHAR     NOT NULL, -- 'running' | 'open' | 'drafted' | 'succeeded' | 'failed'
   strategy         VARCHAR,
   strategy_version VARCHAR,
   config           JSON,
   config_hash      VARCHAR,
   engine_version   VARCHAR     NOT NULL,
   started_at       TIMESTAMPTZ NOT NULL,
-  finished_at      TIMESTAMPTZ
+  finished_at      TIMESTAMPTZ,
+  error            VARCHAR,              -- failed: why
+  result           JSON                  -- what the run reported: an ingest's counts, a match run's resolution
 );
 
 CREATE TABLE spool.candidate (         -- per run, disposable
@@ -76,6 +78,33 @@ CREATE TABLE spool.review_item (       -- what a reconcile run would not decide;
   status          VARCHAR NOT NULL,    -- 'open' | 'resolved' | 'superseded'
   closed_seq      BIGINT,              -- resolved: the changeset after which every observation had an identity
   closed_run      BIGINT               -- superseded: the reconcile run that raised it again in another form
+);
+
+CREATE TABLE spool.draft (             -- a changeset a reconcile run drafted and left for review; kept
+  changeset_id  UUID    NOT NULL,      -- the draft's handle, and the ID it is committed under
+  run_id        BIGINT  NOT NULL,      -- reconcile run that drafted it
+  match_run     BIGINT  NOT NULL,      -- match run whose judgements it rests on
+  entity_type   VARCHAR NOT NULL,
+  base_seq      BIGINT  NOT NULL,      -- log position it was drafted against
+  actor         VARCHAR NOT NULL,
+  reason        VARCHAR,
+  status        VARCHAR NOT NULL,      -- 'open' | 'committed' | 'rejected' | 'superseded'
+  closed_seq    BIGINT,                -- committed: its log position
+  closed_run    BIGINT,                -- superseded: the reconcile run that drafted the type again
+  closed_at     TIMESTAMPTZ,           -- rejected: when
+  closed_reason VARCHAR                -- rejected: why, if the reviewer said
+);
+
+CREATE TABLE spool.draft_op (          -- a draft's operations, in the shape of spool.changeset_op
+  changeset_id         UUID    NOT NULL,
+  op_index             INTEGER NOT NULL,
+  kind                 VARCHAR NOT NULL,
+  identity_id          UUID,
+  from_identity_id     UUID,
+  observation_id       UUID,
+  other_observation_id UUID,
+  entity_type          VARCHAR,
+  constraint_kind      VARCHAR
 );
 
 -- Identity state
@@ -141,6 +170,11 @@ CREATE VIEW spool.membership_current AS
 CREATE VIEW spool.review_open AS
   SELECT review_id, run_id, entity_type, kind, observation_ids, identity_ids
   FROM spool.review_item
+  WHERE status = 'open';
+
+CREATE VIEW spool.draft_open AS
+  SELECT changeset_id, run_id, match_run, entity_type, base_seq
+  FROM spool.draft
   WHERE status = 'open';
 ";
 

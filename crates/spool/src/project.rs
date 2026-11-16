@@ -89,6 +89,7 @@ pub struct Declaration {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct FeatureColumn {
     pub name: String,
     pub data_type: String,
@@ -115,6 +116,44 @@ impl Manifest {
     /// Reads and compiles the project at `dir`.
     pub fn load(dir: impl AsRef<Path>) -> Result<Self> {
         Project::read(dir)?.compile()
+    }
+
+    /// Reads a manifest that [`write_file`](Self::write_file) wrote, and
+    /// checks that its hashes are those of its content.
+    pub fn read_file(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref();
+        let invalid = |message: String| Error::Project {
+            file: path.to_owned(),
+            message,
+        };
+        let text = std::fs::read_to_string(path).map_err(Error::io(path))?;
+        let manifest: Manifest = serde_json::from_str(&text)
+            .map_err(|error| invalid(format!("this is not a manifest: {error}")))?;
+        for entity_type in &manifest.entity_types {
+            if hash_json(&entity_type.declaration) != entity_type.declaration_hash {
+                return Err(invalid(format!(
+                    "the declaration of `{}` does not have the hash recorded for it; build the manifest again",
+                    entity_type.name
+                )));
+            }
+        }
+        if hash_json(&manifest.entity_types) != manifest.hash {
+            return Err(invalid(
+                "the manifest does not have the hash recorded in it; build it again".to_owned(),
+            ));
+        }
+        Ok(manifest)
+    }
+
+    /// Writes the manifest as JSON, creating the directory if it is missing.
+    pub fn write_file(&self, path: impl AsRef<Path>) -> Result<()> {
+        let path = path.as_ref();
+        if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+            std::fs::create_dir_all(dir).map_err(Error::io(dir))?;
+        }
+        let mut json = serde_json::to_string_pretty(self).expect("a manifest serialises to JSON");
+        json.push('\n');
+        std::fs::write(path, json).map_err(Error::io(path))
     }
 
     pub fn entity_type(&self, name: &str) -> Option<&EntityTypeManifest> {

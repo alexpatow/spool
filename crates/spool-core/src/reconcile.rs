@@ -14,6 +14,7 @@ use crate::state::{IdentityState, IdentityStatus, Result};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum Verdict {
     Match,
     NoMatch,
@@ -85,6 +86,7 @@ pub struct IdentityLink {
 /// Reconciliation policy. The default policy has no settings yet.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Policy {}
 
 /// A changeset that has not been committed, and what it deliberately left out.
@@ -99,6 +101,7 @@ pub struct Draft {
 /// without an identity.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum ReviewItem {
     /// The observations match members of more than one identity. Those
     /// identities may be the same real thing, which only a reviewer can say.

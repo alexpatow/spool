@@ -33,6 +33,7 @@ impl Validated {
 /// Why a changeset was not accepted. `op_index` and `op` name the operation
 /// that conflicted, and are `None` when the changeset as a whole is at fault.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Rejection {
     pub op_index: Option<usize>,
     pub op: Option<Op>,
@@ -52,6 +53,7 @@ impl std::fmt::Display for Rejection {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
 #[serde(tag = "reason", rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum Reason {
     #[error("the changeset has no operations")]
     EmptyChangeset,

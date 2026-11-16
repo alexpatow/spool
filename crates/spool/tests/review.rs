@@ -431,7 +431,10 @@ fn a_draft_that_is_not_committed_still_records_what_it_left_out() {
     assert_eq!(draft.review.len(), 1);
     assert_eq!(open_reviews(&engine), 1);
 
-    // Reconciling the same run again raises nothing new.
-    engine.reconcile(run, &policy).unwrap();
+    // There was nothing to commit, so the run is finished, and it cannot be
+    // reconciled a second time.
+    assert_eq!(engine.run(run).unwrap().status, spool::RunStatus::Succeeded);
+    let error = engine.reconcile(run, &policy).unwrap_err();
+    assert!(matches!(error, spool::Error::Run { .. }), "{error}");
     assert_eq!(stored(&engine).len(), 1);
 }

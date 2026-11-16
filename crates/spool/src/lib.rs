@@ -26,34 +26,45 @@
 
 mod batch;
 mod bench;
+mod drafts;
 mod engine;
 mod error;
 mod features;
 mod ingest;
+mod lookup;
 mod metrics;
 mod project;
 mod review;
 mod rows;
 mod rules;
+mod runs;
 mod schema;
 mod store;
 #[cfg(test)]
 mod store_property;
+mod time;
 
 /// The Arrow version the engine is built against.
 pub use duckdb::arrow;
 pub use spool_core as core;
 
 pub use bench::{BenchReport, IngestSummary, Scenario, StepReport};
+pub use drafts::{DraftFilter, DraftRecord, DraftStatus, DraftSummary};
 pub use engine::{
-    ApplyReport, Engine, JudgementCounts, Options, ResolveOptions, ResolveReport, Scope,
-    StrategyRef, TypeResolution,
+    ApplyReport, Disposition, Engine, JudgementCounts, MintedIds, Options, ResolveOptions,
+    ResolveReport, Scope, StrategyRef, TypeResolution, watch_runs,
 };
 pub use error::{Error, Result};
 pub use ingest::{IngestOptions, IngestReport};
+pub use lookup::{
+    HistoryEntry, IdentityFilter, IdentitySummary, IdentityView, Member, ObservationFilter,
+    ObservationRecord, StoreInfo, TypeInfo,
+};
 pub use metrics::{BCubed, IdStability, Metrics, PairMetrics};
 pub use project::{
     Declaration, EntityTypeManifest, EntityTypeSource, FeatureColumn, Manifest, Project, Rule,
     RuleSet, SqlFile,
 };
+pub use review::{ReviewFilter, ReviewKind, ReviewRecord, ReviewStatus};
 pub use rows::Rows;
+pub use runs::{RunFilter, RunKind, RunRecord, RunStatus};

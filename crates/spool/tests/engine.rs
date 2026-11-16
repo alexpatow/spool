@@ -449,6 +449,7 @@ fn entity_types_are_resolved_apart() {
 
     let only_widgets = ResolveOptions {
         entity_type: Some(EntityType::new("widget").unwrap()),
+        ..ResolveOptions::default()
     };
     let report = engine.resolve(&only_widgets).unwrap();
     assert_eq!(report.resolved.len(), 1);
@@ -882,7 +883,7 @@ fn the_same_seed_gives_the_same_changesets() {
 }
 
 #[test]
-fn state_survives_reopening_and_a_declaration_cannot_change() {
+fn state_survives_reopening_and_a_changed_declaration() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("spool.duckdb");
     let (snapshot, anvil) = {
@@ -909,20 +910,75 @@ fn state_survives_reopening_and_a_declaration_cannot_change() {
         ),
         ..thing()
     };
-    let error = engine.apply(&manifest_of(vec![changed])).unwrap_err();
-    assert!(
-        matches!(&error, Error::DeclarationChanged(name) if name == "thing"),
-        "{error}"
-    );
-
-    // Rules may change; the declaration is what is fixed.
+    // Rules may change without touching what is stored.
     let fewer_rules = EntityTypeSource {
         no_match: Vec::new(),
         ..thing()
     };
     let report = engine.apply(&manifest_of(vec![fewer_rules])).unwrap();
     assert!(report.declared.is_empty());
+    assert!(report.rebuilt.is_empty());
     assert_eq!(report.unchanged.len(), 1);
+
+    // A changed declaration computes the feature table again from the stored
+    // payloads, under the next version. Identities are not touched.
+    let names = |engine: &Engine| {
+        select(
+            engine,
+            "SELECT DISTINCT name, declaration_version::VARCHAR FROM spool.features_thing
+             WHERE name IS NOT NULL ORDER BY 1",
+        )
+    };
+    let before = names(&engine);
+    let report = engine.apply(&manifest_of(vec![changed.clone()])).unwrap();
+    assert_eq!(report.rebuilt.len(), 1);
+    assert!(report.declared.is_empty() && report.unchanged.is_empty());
+    let after = names(&engine);
+    assert_eq!(after.len(), before.len());
+    for (old, new) in before.iter().zip(&after) {
+        assert_eq!(
+            old[0].as_ref().unwrap().to_uppercase(),
+            *new[0].as_ref().unwrap()
+        );
+        assert_eq!(
+            (old[1].as_deref(), new[1].as_deref()),
+            (Some("1"), Some("2"))
+        );
+    }
+    assert_eq!(
+        count(&engine, "SELECT count(*) FROM spool.features_thing"),
+        count(&engine, "SELECT count(*) FROM spool.observation")
+    );
+    assert_eq!(engine.snapshot().unwrap(), snapshot);
+    assert_eq!(identity(&engine, "shop", "1"), anvil);
+    assert_eq!(
+        engine.info().unwrap().entity_types[0].declaration_version,
+        2
+    );
+    engine.verify().unwrap();
+
+    // The entity view follows the new columns, and later ingests use them.
+    ingest(&engine, "kiosk", &[("1", Some("anvil"), None)]);
+    resolve(&engine);
+    assert_eq!(identity(&engine, "kiosk", "1"), anvil);
+    assert_eq!(
+        count(
+            &engine,
+            "SELECT count(*) FROM spool.entity_thing WHERE name = 'ANVIL'"
+        ),
+        3
+    );
+
+    // Applying it again changes nothing. Going back to the first declaration
+    // is a change like any other, and gets a version of its own.
+    let report = engine.apply(&manifest_of(vec![changed])).unwrap();
+    assert_eq!(report.unchanged.len(), 1);
+    let report = engine.apply(&things()).unwrap();
+    assert_eq!(report.rebuilt.len(), 1);
+    assert_eq!(
+        engine.info().unwrap().entity_types[0].declaration_version,
+        3
+    );
 
     ingest(&engine, "depot", &[("9", Some("anvil"), None)]);
     resolve(&engine);

@@ -1,13 +1,15 @@
-//! The `spool` command. For now it runs one benchmark scenario.
+//! `spool bench`: runs one benchmark scenario in this process.
 
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
 
 use spool::arrow::array::{Array, AsArray};
 use spool::core::ReviewItem;
 use spool::{BenchReport, Engine, Options, Scenario, StepReport};
 
-const USAGE: &str = "\
+use crate::Failure;
+use crate::args::Spec;
+
+pub const USAGE: &str = "\
 Usage: spool bench <scenario> [options]
 
 Runs a benchmark scenario: ingests each step's files, resolves, and scores
@@ -23,6 +25,12 @@ Options:
   --list <n>      print at most this many identities per step (default: 50)
 ";
 
+const SPEC: Spec = Spec {
+    values: &["--db", "--seed", "--out", "--list"],
+    flags: &[],
+    positional: 1,
+};
+
 struct Arguments {
     scenario: PathBuf,
     db: Option<PathBuf>,
@@ -31,68 +39,24 @@ struct Arguments {
     list: usize,
 }
 
-fn main() -> ExitCode {
-    let arguments: Vec<String> = std::env::args().skip(1).collect();
-    if arguments.is_empty() || arguments.iter().any(|a| a == "--help" || a == "-h") {
-        print!("{USAGE}");
-        return ExitCode::SUCCESS;
-    }
-    let arguments = match parse(&arguments) {
-        Ok(arguments) => arguments,
-        Err(message) => {
-            eprintln!("spool: {message}\n\n{USAGE}");
-            return ExitCode::from(2);
-        }
+pub fn bench(arguments: &[String]) -> Result<(), Failure> {
+    let parsed = super::arguments(arguments, &SPEC)?;
+    let usage = Failure::Usage;
+    let arguments = Arguments {
+        scenario: parsed
+            .positional
+            .first()
+            .map(PathBuf::from)
+            .ok_or_else(|| usage("`bench` needs a scenario".to_owned()))?,
+        db: parsed.path("--db"),
+        seed: parsed.number("--seed").map_err(usage)?.unwrap_or(0),
+        out: parsed.path("--out"),
+        list: parsed.number("--list").map_err(usage)?.unwrap_or(50) as usize,
     };
-    match bench(&arguments) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(error) => {
-            eprintln!("spool: {error}");
-            ExitCode::FAILURE
-        }
-    }
+    Ok(run(&arguments)?)
 }
 
-fn parse(arguments: &[String]) -> Result<Arguments, String> {
-    let mut rest = arguments.iter();
-    match rest.next().map(String::as_str) {
-        Some("bench") => {}
-        Some(other) => return Err(format!("unknown command `{other}`")),
-        None => return Err("a command is needed".to_owned()),
-    }
-    let mut parsed = Arguments {
-        scenario: PathBuf::new(),
-        db: None,
-        seed: 0,
-        out: None,
-        list: 50,
-    };
-    let mut scenario = None;
-    while let Some(argument) = rest.next() {
-        let mut value = || {
-            rest.next()
-                .ok_or_else(|| format!("`{argument}` needs a value"))
-        };
-        let number = |value: &String| {
-            value
-                .parse::<u64>()
-                .map_err(|_| format!("`{argument}` needs a whole number, not `{value}`"))
-        };
-        match argument.as_str() {
-            "--db" => parsed.db = Some(PathBuf::from(value()?)),
-            "--out" => parsed.out = Some(PathBuf::from(value()?)),
-            "--seed" => parsed.seed = number(value()?)?,
-            "--list" => parsed.list = number(value()?)? as usize,
-            option if option.starts_with('-') => return Err(format!("unknown option `{option}`")),
-            path if scenario.is_none() => scenario = Some(PathBuf::from(path)),
-            extra => return Err(format!("unexpected argument `{extra}`")),
-        }
-    }
-    parsed.scenario = scenario.ok_or("`bench` needs a scenario")?;
-    Ok(parsed)
-}
-
-fn bench(arguments: &Arguments) -> spool::Result<()> {
+fn run(arguments: &Arguments) -> spool::Result<()> {
     let scenario = Scenario::load(&arguments.scenario)?;
     let db = match &arguments.db {
         Some(db) => db.clone(),

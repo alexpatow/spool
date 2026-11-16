@@ -7,7 +7,13 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+# Describes the wire types with JSON Schema. The server enables it; nothing in
+# the rules needs it.
+schema = ["dep:schemars"]
+
 [dependencies]
+schemars = { workspace = true, optional = true }
 serde.workspace = true
 sha2.workspace = true
 thiserror.workspace = true

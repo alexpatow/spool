@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/spool-core", "crates/spool"]
+members = ["crates/spool-core", "crates/spool", "crates/spool-cli"]
 
 [workspace.package]
 version = "0.1.0"
@@ -11,9 +11,24 @@ repository = "https://github.com/alexpatow/spool"
 
 [workspace.dependencies]
 spool-core = { path = "crates/spool-core", version = "0.1.0" }
+spool = { path = "crates/spool", version = "0.1.0" }
+
+# The server's HTTP stack. Only spool-cli depends on it.
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 
 # duckdb re-exports the arrow version it was built against. Upgrade the two together.
+# spool-cli names arrow itself for the IPC and JSON forms the server speaks.
+arrow = { version = "60.1", default-features = false, features = ["ipc", "json"] }
 duckdb = { version = "~1.20000.2", features = ["appender-arrow", "vtab-arrow"] }
+# Named by spool-cli only so that its build script runs after the one that
+# downloads the DuckDB library.
+libduckdb-sys = "~1.20000.2"
+# For one call in spool-cli: a command whose output is piped to `head` ends
+# quietly when the pipe closes.
+libc = "0.2"
+# Feature `schema` of the crates below: the JSON Schema of the API's types.
+schemars = "1"
 proptest = { version = "1.12", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

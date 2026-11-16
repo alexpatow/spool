@@ -22,6 +22,7 @@ pub type Result<T, E = StateError> = std::result::Result<T, E>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum IdentityStatus {
     Active,
     MergedInto(IdentityId),
@@ -49,6 +50,7 @@ pub struct Membership {
 
 /// The receipt for a committed changeset.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Committed {
     pub seq: Seq,
     pub changeset: ChangesetId,
@@ -57,6 +59,7 @@ pub struct Committed {
 
 /// A committed changeset as the log holds it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct LogEntry {
     pub seq: Seq,
     pub changeset: Changeset,

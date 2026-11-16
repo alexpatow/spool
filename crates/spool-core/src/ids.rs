@@ -136,6 +136,7 @@ uuid_id!(
     Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
 )]
 #[serde(transparent)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Seq(pub u64);
 
 impl Seq {
@@ -155,6 +156,7 @@ impl fmt::Display for Seq {
 /// Identifies a run of the engine: an ingest, a match or a reconcile.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct RunId(pub u64);
 
 impl fmt::Display for RunId {
@@ -265,6 +267,57 @@ impl From<Actor> for String {
     fn from(value: Actor) -> Self {
         value.to_string()
     }
+}
+
+/// How the types with a hand-written text form appear in the JSON Schema of
+/// the API.
+#[cfg(feature = "schema")]
+mod schema {
+    use std::borrow::Cow;
+
+    use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
+
+    use super::{Actor, ChangesetId, EntityType, IdentityId, ObservationId};
+
+    macro_rules! text_schema {
+        ($type:ty, $name:literal, $schema:tt) => {
+            impl JsonSchema for $type {
+                fn schema_name() -> Cow<'static, str> {
+                    Cow::Borrowed($name)
+                }
+
+                fn json_schema(_: &mut SchemaGenerator) -> Schema {
+                    json_schema!($schema)
+                }
+            }
+        };
+    }
+
+    text_schema!(ObservationId, "ObservationId", {
+        "description": "Identifies an observation. Derived by the engine from the observation's source, key and content.",
+        "type": "string",
+        "format": "uuid"
+    });
+    text_schema!(IdentityId, "IdentityId", {
+        "description": "Identifies an identity. Minted once, never derived from content and never reused.",
+        "type": "string",
+        "format": "uuid"
+    });
+    text_schema!(ChangesetId, "ChangesetId", {
+        "description": "Identifies a changeset, and the draft it was while it waited.",
+        "type": "string",
+        "format": "uuid"
+    });
+    text_schema!(EntityType, "EntityType", {
+        "description": "The name of an entity type the project declares.",
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_]{0,47}$"
+    });
+    text_schema!(Actor, "Actor", {
+        "description": "Who authored a changeset: `engine`, `user:<id>` or `agent:<id>`.",
+        "type": "string",
+        "pattern": "^(engine|user:.+|agent:.+)$"
+    });
 }
 
 #[cfg(test)]
