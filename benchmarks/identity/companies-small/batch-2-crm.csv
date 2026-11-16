@@ -1,0 +1,12 @@
+id,name,website,country,city,registry_number
+c-101,Larkfield Logistics,https://www.larkfield.example,GB,Leeds,
+c-105,Sunny Café,https://sunnycafe.example,GB,Brighton,
+c-104,Kestrel Analytics,https://kestrel.example,GB,Bristol,
+c-115,Kestrel,https://www.kestrel.example,,,
+c-116,Larkfield Logistics Ltd,,GB,Leeds,
+c-117,Pioneer Supplies,,GB,,
+c-118,Halden Energy,https://halden.example/energy,GB,Aberdeen,04100015
+c-119,Tamarind Systems,https://tamarind.example,GB,Glasgow,
+c-120,Fennmore Energy,https://fennmore.example,IE,Cork,
+c-121,Brightside Holdings,,GB,Brighton,
+c-122,Orchard Foods,https://orchardfoods.example,GB,Norwich,

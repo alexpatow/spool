@@ -1,0 +1,49 @@
+# Company records from two sources, arriving in two batches.
+#
+# Every company, name, address and domain here is invented. The fixture holds
+# the cases that make company resolution hard:
+#
+#   aliases                 "Acorn Tools", "Acorn Tool Co." and "ACORN TOOL COMPANY LTD"
+#   legal and trading names "BRIGHTSIDE HOLDINGS LTD" trades as "Sunny Café"
+#   a domain change         c-104 moves from kestrel-analytics.example to kestrel.example
+#   subsidiaries            the Halden companies share a domain and differ in registry number
+#   a shared name           two unrelated companies are both "PIONEER SUPPLIES LTD"
+#   few attributes          c-111 is only the name "Orchard"
+#
+# Batch two re-sends some rows unchanged, adds records for known companies,
+# adds new companies, and has one record (c-117) that fits two identities.
+
+project = "."
+
+[truth]
+file = "truth.csv"
+
+[[step]]
+name = "batch one"
+
+[[step.ingest]]
+file = "batch-1-crm.csv"
+source = "crm"
+entity_type = "company"
+key = "id"
+
+[[step.ingest]]
+file = "batch-1-registry.csv"
+source = "registry"
+entity_type = "company"
+key = "number"
+
+[[step]]
+name = "batch two"
+
+[[step.ingest]]
+file = "batch-2-crm.csv"
+source = "crm"
+entity_type = "company"
+key = "id"
+
+[[step.ingest]]
+file = "batch-2-registry.csv"
+source = "registry"
+entity_type = "company"
+key = "number"
