@@ -63,21 +63,24 @@ pub struct IdStability {
     pub observations: u64,
     /// Those whose identity ID is the same at the later position.
     pub unchanged: u64,
-    /// Those whose identity is the same once merged IDs are followed to
-    /// their survivors.
+    /// Those whose identity is the same once merged IDs are followed to the
+    /// identities that stood for them at the later position.
     pub unchanged_following_redirects: u64,
     pub strict: Option<f64>,
     pub following_redirects: Option<f64>,
 }
 
 /// How much identity state changed between two log positions, against how
-/// much arrived. The counts compare the two positions: an identity that was
-/// merged and reinstated in between is not counted.
+/// much arrived. The counts compare the two positions, and do not depend on
+/// what was committed after the later one.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Churn {
     /// Observations ingested between the two positions.
     pub new_observations: u64,
     pub identities_created: u64,
+    /// Identities that are merged at the later position by a merge made after
+    /// the earlier one. One that was merged and reinstated in between is not
+    /// counted.
     pub identities_merged: u64,
     /// Observations that had an identity at the earlier position and have
     /// another, or none, at the later one. A merge reassigns the members it
@@ -295,21 +298,58 @@ pub(crate) fn score(conn: &Connection) -> Result<Metrics> {
     .map_err(Into::into)
 }
 
+/// The identities that were merged at a log position, each with the identity
+/// its merge named and the position of that merge.
+///
+/// This is read from the log. The identity projection holds only what is
+/// merged now: reinstating an identity clears its merge, and merging it again
+/// replaces the position, so the projection cannot answer for an earlier
+/// position. A changeset merges or reinstates an identity at most once, so
+/// the last such operation at or before the position decides.
+fn merged_at(seq: Seq) -> String {
+    format!(
+        "SELECT identity_id, arg_max(target, seq) AS target, max(seq) AS seq
+         FROM (
+           SELECT CASE kind WHEN 'merge' THEN from_identity_id ELSE identity_id END AS identity_id,
+                  kind,
+                  identity_id AS target,
+                  seq
+           FROM spool.changeset_op
+           WHERE kind IN ('merge', 'reinstate') AND seq <= {seq}
+         )
+         GROUP BY identity_id
+         HAVING arg_max(kind, seq) = 'merge'"
+    )
+}
+
 /// Compares membership at two log positions using the membership intervals.
+/// Redirects are those of the later position.
 pub(crate) fn id_stability(conn: &Connection, before: Seq, after: Seq) -> Result<IdStability> {
     let at = |seq: Seq| {
         format!(
-            "SELECT m.observation_id, m.identity_id, coalesce(i.merged_into, m.identity_id) AS survivor
+            "SELECT m.observation_id, m.identity_id, coalesce(s.survivor, m.identity_id) AS survivor
              FROM spool.membership m
-             JOIN spool.identity i ON i.identity_id = m.identity_id
+             LEFT JOIN survivor s ON s.identity_id = m.identity_id
              WHERE m.from_seq <= {seq} AND (m.to_seq IS NULL OR m.to_seq > {seq})"
         )
     };
     let sql = format!(
-        "SELECT count(*)::BIGINT,
+        "WITH RECURSIVE merged AS ({}),
+         follow(identity_id, stands_for) AS (
+           SELECT identity_id, target FROM merged
+           UNION ALL
+           SELECT f.identity_id, m.target
+           FROM follow f JOIN merged m ON m.identity_id = f.stands_for
+         ),
+         survivor AS (
+           SELECT identity_id, stands_for AS survivor FROM follow
+           WHERE stands_for NOT IN (SELECT identity_id FROM merged)
+         )
+         SELECT count(*)::BIGINT,
                 count(*) FILTER (WHERE a.identity_id = b.identity_id)::BIGINT,
                 count(*) FILTER (WHERE a.survivor = b.survivor)::BIGINT
          FROM ({}) b LEFT JOIN ({}) a ON a.observation_id = b.observation_id",
+        merged_at(after),
         at(before),
         at(after)
     );
@@ -345,10 +385,10 @@ pub(crate) fn churn(
         "SELECT
            (SELECT count(*) FROM spool.identity
             WHERE created_seq > {before} AND created_seq <= {after})::BIGINT,
-           (SELECT count(*) FROM spool.identity
-            WHERE merged_seq > {before} AND merged_seq <= {after})::BIGINT,
+           (SELECT count(*) FROM ({}) WHERE seq > {before})::BIGINT,
            (SELECT count(*) FROM ({}) b LEFT JOIN ({}) a ON a.observation_id = b.observation_id
             WHERE a.identity_id IS DISTINCT FROM b.identity_id)::BIGINT",
+        merged_at(after),
         at(before),
         at(after)
     );

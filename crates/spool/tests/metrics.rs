@@ -222,3 +222,146 @@ fn an_empty_truth_has_no_ratios() {
     assert_eq!(metrics.b_cubed.recall, None);
     assert_eq!(metrics.unassigned_share, None);
 }
+
+/// An anvil and a hammer, each an identity of its own at log position 1,
+/// and what a reviewer then did: merged the anvil into the hammer at 2, took
+/// that back at 3, and merged them again at 4.
+fn merged_undone_and_merged_again(engine: &Engine, steps: usize) {
+    let reviewer = || Actor::User("reviewer".to_owned());
+    ingest(
+        engine,
+        "shop",
+        &[("1", Some("anvil"), None), ("2", Some("hammer"), None)],
+    );
+    engine.resolve(&spool::ResolveOptions::default()).unwrap();
+    let anvil = identity(engine, "shop", "1").unwrap();
+    let hammer = identity(engine, "shop", "2").unwrap();
+    let merge = || {
+        vec![Op::Merge {
+            from: anvil,
+            into: hammer,
+        }]
+    };
+    if steps >= 1 {
+        engine.author(reviewer(), None, merge()).unwrap();
+    }
+    if steps >= 2 {
+        engine
+            .undo(spool::core::Seq(2), reviewer(), None, true)
+            .unwrap();
+    }
+    if steps >= 3 {
+        engine.author(reviewer(), None, merge()).unwrap();
+    }
+}
+
+#[test]
+fn churn_between_two_positions_does_not_depend_on_what_was_committed_later() {
+    use spool::core::Seq;
+    let merged = |engine: &Engine, before: u64, after: u64| {
+        engine
+            .churn(Seq(before), Seq(after), 0)
+            .unwrap()
+            .identities_merged
+    };
+
+    for steps in 1..=3 {
+        let engine = engine();
+        merged_undone_and_merged_again(&engine, steps);
+        // The merge at position 2 is a merge between 1 and 2, whatever
+        // became of it afterwards.
+        assert_eq!(merged(&engine, 1, 2), 1, "after {steps} corrections");
+        assert_eq!(merged(&engine, 0, 1), 0, "after {steps} corrections");
+        if steps >= 2 {
+            // Merged and reinstated in between: the two positions agree.
+            assert_eq!(merged(&engine, 1, 3), 0, "after {steps} corrections");
+            assert_eq!(merged(&engine, 2, 3), 0, "after {steps} corrections");
+        }
+        if steps >= 3 {
+            assert_eq!(merged(&engine, 3, 4), 1);
+            assert_eq!(merged(&engine, 1, 4), 1);
+        }
+    }
+}
+
+#[test]
+fn id_stability_follows_the_redirects_of_the_later_position() {
+    use spool::core::Seq;
+    for steps in 1..=3 {
+        let engine = engine();
+        merged_undone_and_merged_again(&engine, steps);
+        // At position 2 the anvil's ID redirected to the hammer's, whatever
+        // became of the merge afterwards.
+        let stability = engine.id_stability(Seq(1), Seq(2)).unwrap();
+        assert_eq!(
+            (
+                stability.observations,
+                stability.unchanged,
+                stability.unchanged_following_redirects
+            ),
+            (2, 1, 2),
+            "after {steps} corrections"
+        );
+        if steps >= 2 {
+            // At position 3 the merge had been taken back.
+            let stability = engine.id_stability(Seq(1), Seq(3)).unwrap();
+            assert_eq!(
+                (stability.unchanged, stability.unchanged_following_redirects),
+                (2, 2),
+                "after {steps} corrections"
+            );
+            // Between 2 and 3 the anvil left the hammer's identity, and
+            // nothing at position 3 redirects one to the other.
+            let stability = engine.id_stability(Seq(2), Seq(3)).unwrap();
+            assert_eq!(
+                (stability.unchanged, stability.unchanged_following_redirects),
+                (1, 1),
+                "after {steps} corrections"
+            );
+        }
+    }
+}
+
+#[test]
+fn id_stability_follows_a_chain_of_merges_as_far_as_it_went_by_then() {
+    use spool::core::Seq;
+    let engine = engine();
+    ingest(
+        &engine,
+        "shop",
+        &[
+            ("1", Some("anvil"), None),
+            ("2", Some("hammer"), None),
+            ("3", Some("tongs"), None),
+        ],
+    );
+    engine.resolve(&spool::ResolveOptions::default()).unwrap();
+    let [anvil, hammer, tongs] = ["1", "2", "3"].map(|key| identity(&engine, "shop", key).unwrap());
+    let merge = |from, into| {
+        engine
+            .author(
+                Actor::User("reviewer".to_owned()),
+                None,
+                vec![Op::Merge { from, into }],
+            )
+            .unwrap();
+    };
+    merge(anvil, hammer);
+    merge(hammer, tongs);
+
+    let counts = |before: u64, after: u64| {
+        let stability = engine.id_stability(Seq(before), Seq(after)).unwrap();
+        (stability.unchanged, stability.unchanged_following_redirects)
+    };
+    // At position 2 only the anvil had been merged, into the hammer.
+    assert_eq!(counts(1, 2), (2, 3));
+    // At position 3 the anvil's ID leads through the hammer's to the tongs'.
+    assert_eq!(counts(1, 3), (1, 3));
+    assert_eq!(counts(2, 3), (1, 3));
+    let churn = engine.churn(Seq(1), Seq(3), 0).unwrap();
+    assert_eq!(churn.identities_merged, 2);
+    assert_eq!(
+        engine.churn(Seq(2), Seq(3), 0).unwrap().identities_merged,
+        1
+    );
+}
