@@ -11,6 +11,7 @@
 //!   conflicting operation": the conformance suite, and
 //!   `a_stale_draft_is_rejected_and_names_the_operation` in `engine.rs`.
 
+#[path = "../../spool/tests/common/mod.rs"]
 mod common;
 
 use std::collections::BTreeSet;

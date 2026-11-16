@@ -1,0 +1,34 @@
+[package]
+name = "spool-cli"
+description = "The `spool` command: project commands, the HTTP server and the benchmark runner."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "spool_cli"
+
+[[bin]]
+name = "spool"
+path = "src/main.rs"
+
+[features]
+# Compiles DuckDB from source and links it statically, so the binary needs no
+# library beside it. Slow to build; meant for releases.
+bundled = ["duckdb/bundled"]
+
+[dependencies]
+arrow.workspace = true
+axum.workspace = true
+duckdb.workspace = true
+libduckdb-sys.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+spool = { workspace = true, features = ["schema"] }
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

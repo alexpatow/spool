@@ -25,6 +25,11 @@ impl Rows {
         }
     }
 
+    /// The batches that have not been read yet.
+    pub fn into_batches(self) -> Vec<RecordBatch> {
+        self.batches.collect()
+    }
+
     /// Rows of text. `None` is a missing value.
     pub fn from_text(columns: &[&str], rows: &[Vec<Option<&str>>]) -> Result<Self> {
         let schema = Arc::new(Schema::new(

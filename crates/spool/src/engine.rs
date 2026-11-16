@@ -28,6 +28,7 @@ use crate::lookup::{
 use crate::metrics::{self, IdStability, Metrics};
 use crate::project::{EntityTypeManifest, Manifest, hash_json};
 use crate::review::{self, ReviewFilter, ReviewRecord};
+use crate::rows::Rows;
 use crate::rules;
 use crate::runs::{self, RunFilter, RunRecord, RunStatus};
 use crate::schema;
@@ -416,6 +417,12 @@ impl Engine {
     /// `right_id`, then every feature column prefixed with `left_` and with
     /// `right_`.
     pub fn candidates(&self, run: RunId) -> Result<Vec<RecordBatch>> {
+        Ok(self.candidate_rows(run)?.into_batches())
+    }
+
+    /// The same as [`candidates`](Self::candidates), with the schema, which
+    /// is known even when there are no pairs.
+    pub fn candidate_rows(&self, run: RunId) -> Result<Rows> {
         self.read(|conn| candidates(conn, run))
     }
 
@@ -688,7 +695,7 @@ impl Engine {
 }
 
 /// The candidate pairs of a run with both sides' features.
-fn candidates(conn: &Connection, run: RunId) -> Result<Vec<RecordBatch>> {
+fn candidates(conn: &Connection, run: RunId) -> Result<Rows> {
     let (_, config) = match_run(conn, run)?;
     let table = features::table(&config.entity_type);
     let exclude = "EXCLUDE (observation_id, declaration_version)";
@@ -709,7 +716,9 @@ fn candidates(conn: &Connection, run: RunId) -> Result<Vec<RecordBatch>> {
          JOIN {table} r ON r.observation_id = c.right_id
          ORDER BY c.left_id, c.right_id"
     ))?;
-    Ok(statement.query_arrow([run.0 as i64])?.collect())
+    let arrow = statement.query_arrow([run.0 as i64])?;
+    let schema = arrow.get_schema();
+    Ok(Rows::new(schema, arrow.collect()))
 }
 
 fn run_row(conn: &Connection, run: RunId) -> Result<RunRow> {

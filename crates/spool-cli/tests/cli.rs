@@ -1,22 +1,10 @@
 //! The `spool` command's arguments and exit codes.
 
-mod common;
+mod support;
 
 use std::path::Path;
-use std::process::{Command, Output};
 
-use common::benchmarks;
-
-fn spool(arguments: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_spool"))
-        .args(arguments)
-        .output()
-        .unwrap()
-}
-
-fn text(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(bytes).into_owned()
-}
+use support::{benchmarks, run as spool, text};
 
 fn copy_dir(from: &Path, to: &Path) {
     std::fs::create_dir_all(to).unwrap();
@@ -35,11 +23,30 @@ fn copy_dir(from: &Path, to: &Path) {
 
 #[test]
 fn usage_is_printed_on_request_and_on_a_mistake() {
-    for arguments in [&[][..], &["--help"], &["bench", "--help"]] {
+    for arguments in [&[][..], &["--help"], &["help"]] {
         let output = spool(arguments);
         assert!(output.status.success());
-        assert!(text(&output.stdout).starts_with("Usage: spool bench <scenario>"));
+        let stdout = text(&output.stdout);
+        assert!(stdout.starts_with("Usage: spool <command>"), "{stdout}");
+        for command in ["init", "info", "build", "apply", "serve", "dev", "bench"] {
+            assert!(stdout.contains(&format!("\n  {command} ")), "{command}");
+        }
     }
+    for command in ["init", "info", "build", "apply", "serve", "dev", "bench"] {
+        for arguments in [&[command, "--help"][..], &[command, "x", "-h"]] {
+            let output = spool(arguments);
+            assert!(output.status.success());
+            let stdout = text(&output.stdout);
+            assert!(
+                stdout.starts_with(&format!("Usage: spool {command}")),
+                "{stdout}"
+            );
+        }
+    }
+    assert_eq!(
+        text(&spool(&["--version"]).stdout),
+        format!("spool {}\n", env!("CARGO_PKG_VERSION"))
+    );
 
     for (arguments, expected) in [
         (&["frobnicate"][..], "unknown command `frobnicate`"),
@@ -48,6 +55,15 @@ fn usage_is_printed_on_request_and_on_a_mistake() {
         (&["bench", "a", "--fast"], "unknown option `--fast`"),
         (&["bench", "a", "--seed"], "`--seed` needs a value"),
         (&["bench", "a", "--seed", "lucky"], "needs a whole number"),
+        (&["init", "a", "--entity", "Not A Name"], "Not A Name"),
+        (&["info", "a", "b"], "unexpected argument `b`"),
+        (&["apply", "a"], "`--store` or `SPOOL_STORE`"),
+        (&["serve", "extra"], "unexpected argument `extra`"),
+        (
+            &["serve", "--store", "s", "--listen", "nowhere"],
+            "`--listen` needs an address",
+        ),
+        (&["dev", "--port", "1"], "unknown option `--port`"),
     ] {
         let output = spool(arguments);
         assert_eq!(output.status.code(), Some(2), "{arguments:?}");
