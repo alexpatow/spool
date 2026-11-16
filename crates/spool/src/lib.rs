@@ -3,6 +3,7 @@
 mod batch;
 mod error;
 mod features;
+mod ingest;
 mod project;
 mod schema;
 mod store;
@@ -10,6 +11,7 @@ mod store;
 mod store_property;
 
 pub use error::{Error, Result};
+pub use ingest::{IngestOptions, IngestReport};
 pub use project::{
     Declaration, EntityTypeManifest, EntityTypeSource, FeatureColumn, Manifest, Project, Rule,
     RuleSet, SqlFile,
