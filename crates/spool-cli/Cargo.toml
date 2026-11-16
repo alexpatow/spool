@@ -14,15 +14,9 @@ name = "spool_cli"
 name = "spool"
 path = "src/main.rs"
 
-[features]
-# Compiles DuckDB from source and links it statically, so the binary needs no
-# library beside it. Slow to build; meant for releases.
-bundled = ["duckdb/bundled"]
-
 [dependencies]
 arrow.workspace = true
 axum.workspace = true
-duckdb.workspace = true
 libduckdb-sys.workspace = true
 schemars.workspace = true
 serde.workspace = true

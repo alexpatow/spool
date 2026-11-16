@@ -1,0 +1,5 @@
+.git
+target
+**/node_modules
+**/.spool
+benchmarks/.cache

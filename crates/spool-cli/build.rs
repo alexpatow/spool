@@ -9,17 +9,11 @@
 //!    puts it,
 //! 3. where the build downloaded it, which is what makes a development build
 //!    run from `target/`.
-//!
-//! With the `bundled` feature DuckDB is linked statically and none of this
-//! matters.
 
 use std::path::{Path, PathBuf};
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-    if std::env::var_os("CARGO_FEATURE_BUNDLED").is_some() {
-        return;
-    }
     let (origin, library) = match std::env::var("CARGO_CFG_TARGET_OS").as_deref() {
         Ok("macos") => ("@executable_path", "libduckdb.dylib"),
         Ok("linux") => ("$ORIGIN", "libduckdb.so"),

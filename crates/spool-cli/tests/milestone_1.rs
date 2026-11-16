@@ -106,7 +106,7 @@ fn person_records_run_through_the_same_binary_as_the_company_fixture() {
 }
 
 /// Downloads the dataset on first use, so it needs the network and `curl`:
-/// `cargo test -p spool --test exit_criteria -- --ignored`
+/// `cargo test -p spool-cli --test milestone_1 -- --ignored`
 #[test]
 #[ignore = "downloads fake_1000"]
 fn fake_1000_runs_through_the_same_binary_as_the_company_fixture() {

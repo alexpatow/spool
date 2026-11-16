@@ -112,6 +112,7 @@ FROM {base_image}
 COPY --from=build /project/.spool/manifest.json /spool/manifest.json
 ENV SPOOL_STORE=/data/spool.duckdb
 VOLUME /data
+USER spool
 EXPOSE 7765
 CMD [\"serve\", \"--manifest\", \"/spool/manifest.json\", \"--listen\", \"0.0.0.0:7765\"]
 "

@@ -96,8 +96,9 @@ A project with no `entities/company/` has no company type. A project that resolv
 | `spool info` | Lists the discovered entity types, rules and strategies, with diagnostics. |
 | `spool build` | Validates the project and compiles it into a manifest. Every SQL file is prepared against DuckDB, so a mistake fails the build, not a run. Writes a `Dockerfile` if the project has none. |
 | `spool apply` | Applies a manifest to a store: declares entity types and rebuilds the feature tables whose declaration changed. |
-| `spool serve` | Runs the server from a manifest and a store location. |
+| `spool serve` | Runs the server from a manifest and a store location. An empty store is set up from the manifest. |
 | `spool bench` | Runs benchmark scenarios in-process (section 9). |
+| `spool schema` | Prints the JSON Schema of the API's values (section 5). |
 
 Three rules keep deployment simple:
 
@@ -105,9 +106,11 @@ Three rules keep deployment simple:
 2. **A project of data files needs only the `spool` binary.** Discovery and the build are in Rust, so no Node or Python is involved. Only a project with user code adds `uv` or `bun` to its image.
 3. **State is never in the image.** The image holds the binary, the manifest, and any user code with its dependencies. The store is a file on a volume, and its location is configuration.
 
-The generated Dockerfile starts from a published Spool base image, copies the project, installs user-code dependencies from their lockfiles, compiles the manifest, declares a volume for the store and runs `spool serve`. It belongs to the project and can be edited. The result is one container and one volume, run wherever containers run.
+The generated Dockerfile starts from the Spool base image, copies the project, compiles the manifest, declares a volume for the store at `/data` and runs `spool serve` as a user that is not root. When user code exists (Milestone 4) it will also install that code's dependencies from their lockfiles. It belongs to the project and can be edited: `spool build` writes it once and never again. The result is one container and one volume, run wherever containers run.
 
-Applying a changed definition to an existing store is an explicit step, never a side effect of a container starting. It rebuilds feature tables, which can take time. It cannot change an identity (section 1). `spool serve` refuses to start on a store whose applied manifest differs from its own.
+The base image is built from the `Dockerfile` at the root of this repository. It holds the `spool` binary in `/usr/local/bin` and the DuckDB shared library in `/usr/local/lib`, where the binary looks for it. The generated Dockerfile names `ghcr.io/alexpatow/spool:<version>`, and `spool build --base-image` names another. No image is published yet, so for now the base image is built locally under that name.
+
+Applying a changed definition to an existing store is an explicit step, never a side effect of a container starting. It rebuilds feature tables, which can take time. It cannot change an identity (section 1). `spool serve` refuses to start on a store whose applied manifest differs from its own, and says which `spool apply` to run. A store that has never had a manifest applied is the one exception: there is nothing to rebuild and no identity to protect, so `serve` applies its manifest and starts. A first deploy is then one container start, with no separate step against an empty volume.
 
 Tradeoff: the file layout becomes an interface that has to be documented and kept stable, and the model cannot be changed through the API. Changing an entity type means a build and a deploy. `spool dev` covers fast iteration, and `spool info` shows what the conventions resolved to.
 
@@ -153,11 +156,13 @@ CREATE TABLE spool.features_company (
   declaration_version INTEGER NOT NULL  -- the declaration version that produced the row
 );
 
-CREATE TABLE spool.run (                  -- also the task record a client polls (section 5)
-  run_id BIGINT NOT NULL, kind VARCHAR NOT NULL,   -- 'ingest' | 'match' | 'reconcile' | 'bench'
-  status VARCHAR NOT NULL,                         -- 'running' | 'succeeded' | 'failed'
+CREATE TABLE spool.run (                  -- also the task record a client reads (section 5)
+  run_id BIGINT NOT NULL, kind VARCHAR NOT NULL,   -- 'ingest' | 'match' | 'reconcile'
+  status VARCHAR NOT NULL,                         -- 'running' | 'open' | 'drafted' | 'succeeded' | 'failed'
   strategy VARCHAR, strategy_version VARCHAR, config JSON, config_hash VARCHAR,
-  engine_version VARCHAR NOT NULL, started_at TIMESTAMPTZ NOT NULL, finished_at TIMESTAMPTZ
+  engine_version VARCHAR NOT NULL, started_at TIMESTAMPTZ NOT NULL, finished_at TIMESTAMPTZ,
+  error VARCHAR,                                   -- failed: why
+  result JSON                                      -- what the run reported: an ingest's counts, a match run's resolution
 );
 
 CREATE TABLE spool.candidate (            -- per run, disposable
@@ -184,6 +189,20 @@ CREATE TABLE spool.review_item (          -- what a reconcile run would not deci
   closed_seq      BIGINT,                 -- resolved: the changeset after which every observation had an identity
   closed_run      BIGINT                  -- superseded: the reconcile run that raised it again in another form
 );
+
+CREATE TABLE spool.draft (                -- a changeset a reconcile run drafted and left for review; kept
+  changeset_id  UUID    NOT NULL,         -- the draft's handle, and the ID it is committed under
+  run_id        BIGINT  NOT NULL,         -- reconcile run that drafted it
+  match_run     BIGINT  NOT NULL,         -- match run whose judgements it rests on
+  entity_type   VARCHAR NOT NULL,
+  base_seq      BIGINT  NOT NULL,         -- log position it was drafted against
+  actor VARCHAR NOT NULL, reason VARCHAR,
+  status        VARCHAR NOT NULL,         -- 'open' | 'committed' | 'rejected' | 'superseded'
+  closed_seq    BIGINT,                   -- committed: its log position
+  closed_run    BIGINT,                   -- superseded: the reconcile run that drafted the type again
+  closed_at TIMESTAMPTZ, closed_reason VARCHAR     -- rejected: when, and why if the reviewer said
+);
+-- spool.draft_op holds a draft's operations in the shape of spool.changeset_op below.
 ```
 
 `spool.features_company` above is not part of Spool. It is what the engine generates from this file, which is one project's idea of a company:
@@ -254,6 +273,8 @@ Design points:
 - **Membership keeps intervals.** "What was this identity at log position N" is a filter, and undoing a merge can read which observations it moved.
 - **No primary keys or foreign keys on the large tables at first.** Uniqueness is guaranteed by the Rust validator and by anti-join inserts, and checked by a `verify` routine in tests. DuckDB constraints did behave correctly when tested (including update and delete-then-insert of a keyed row in one transaction), but index maintenance on bulk loads is a cost that has not been measured, and the identity rules must not depend on the database.
 - **Review items are rows, and they are evidence.** `spool.review_item` holds what a reconcile run would not decide, so the question outlives the call that raised it. The table is not identity state: it is not in the log, no changeset mentions it, and replaying the log does not need it. The engine keeps `status` in step with membership inside the transaction that commits a changeset. Section 4 says when an item opens and closes.
+- **A draft left for review is a row too.** `spool.draft` holds a changeset that a reconcile run drafted and nobody has committed yet, with its operations in `spool.draft_op`. Like a review item it is not identity state: the log does not mention it until it is committed, and then under the same changeset ID. A match run whose draft waits has the status `drafted`, not `succeeded`. What is new to a run is counted from the last run of the type that succeeded, so the observations of a draft that is rejected, replaced or never decided are examined again by the next run. A type has at most one open draft: drafting it again closes the earlier one as superseded.
+- **A run that the engine was working on when it stopped is marked failed.** A run is `running` only while a call is inside the engine. Opening a store marks any run it finds `running` as `failed`, with an error that says it was interrupted, so a client reading the run sees an end.
 - **Public read surface is views.** `spool.identity_current`, `spool.membership_current`, `spool.review_open` and a generated per-type entity view are documented and stable; base tables are not.
 
 Tradeoffs of declared types:
@@ -403,14 +424,19 @@ impl Engine {
     pub fn begin_run(&self, strategy: StrategyRef, scope: Scope) -> Result<RunId>;
     pub fn candidates(&self, run: RunId) -> Result<impl RecordBatchReader>;   // pairs with both sides' features
     pub fn submit_judgements(&self, run: RunId, rows: impl RecordBatchReader) -> Result<u64>;
-    pub fn reconcile(&self, run: RunId, policy: &Policy) -> Result<Draft>;
+    pub fn reconcile_with(&self, run: RunId, policy: &Policy, then: Disposition) -> Result<TypeResolution>; // commit, or leave for review
     pub fn commit(&self, changeset: Changeset) -> Result<Committed, Rejected>;
+    pub fn approve_draft(&self, draft: ChangesetId) -> Result<Committed, Rejected>;
+    pub fn reject_draft(&self, draft: ChangesetId, reason: Option<&str>) -> Result<DraftSummary>;
     pub fn resolve(&self, options: ResolveOptions) -> Result<ResolveReport>; // built-in strategy, default policy
+    pub fn run(&self, run: RunId) -> Result<RunRecord>;                       // the task record
     pub fn identity_of(&self, observation: ObservationId) -> Result<Option<IdentityId>>;
     pub fn current_id(&self, id: IdentityId) -> Result<IdentityId>;          // follows redirects
     pub fn query(&self, sql: &str) -> Result<impl RecordBatchReader>;        // read-only, against the views
 }
 ```
+
+The listing is the core. The library also has typed reads for everything the API returns: runs, drafts, review items, identities with their members and history, observations, the log, and a summary of the store.
 
 `spool serve` wraps that type in an HTTP API. The server is the only process that opens the store. Applications and agents reach it through a client, and Spool does not run inside the caller's process or sandbox. Tests and benchmarks use the library directly, with no server.
 
@@ -421,37 +447,48 @@ Why one server, and not an engine in each caller:
 - **A DuckDB file has one owner.** While the engine has the file open, no other process can open it, even read-only (tested). One server that owns the file fits that.
 - **One writer has nothing to synchronise.** Sync transport, conflict policy, and two copies each creating an identity for the same new entity all disappear.
 
-The routes are not designed yet. These are the operations the API has to carry:
+Every path is under `/v1` and needs the bearer token, except `GET /healthz`. Small values are JSON. `spool schema` prints one JSON Schema for all of them, a copy is committed at `schema/spool-api.v1.schema.json`, and a test fails when the two differ.
 
-| Operation | Response |
-| --- | --- |
-| Ingest observations | A report, or a run ID for a large batch |
-| Start a run: match and reconcile new observations with a named strategy | The draft changeset and review items, or a run ID |
-| Read a run | Its status, and its result when finished |
-| Pull a run's candidates; submit judgements to a run | Arrow; a count |
-| List drafts; approve or reject one; commit a changeset the caller authored | The committed changeset, or the operations that were rejected |
-| Look up identities: by observation, by ID following redirects, members, history | JSON |
-| List review items | JSON |
+| Call | What it does | Response |
+| --- | --- | --- |
+| `GET /v1/info` | What the store holds: the manifest hash, the head of the log, and counts per entity type | JSON |
+| `POST /v1/ingest` | Adds rows as observations. The body is JSON with the rows as objects, or an Arrow stream with the other fields in the query string | The ingest run |
+| `POST /v1/runs` | Matches the new observations of one entity type. With no strategy, the server runs the rules and reconciles, and `commit` says whether the draft is committed (the default) or left for review. With a strategy of the caller's own, the run opens and waits for judgements | The match run, or `null` when nothing was new |
+| `GET /v1/runs`, `GET /v1/runs/{run}` | Lists runs; reads one, optionally waiting for it to end | Runs |
+| `GET /v1/runs/{run}/candidates` | The candidate pairs of an open run with both sides' features | Arrow, or JSON when the `Accept` header asks for it |
+| `POST /v1/runs/{run}/judgements` | Stores judgements, as Arrow or JSON | A count |
+| `POST /v1/runs/{run}/reconcile` | Turns the run's judgements into a changeset and commits it, or leaves it as a draft with `commit: false` | The resolution: counts, review items, and the commit or the draft's ID |
+| `POST /v1/runs/{run}/cancel` | Gives up an open run | The run |
+| `GET /v1/drafts`, `GET /v1/drafts/{draft}` | Lists drafts; reads one with its changeset | JSON |
+| `POST /v1/drafts/{draft}/approve`, `.../reject` | Commits a draft, or closes it | The commit, or the operations that were rejected; the draft |
+| `GET /v1/changesets`, `POST /v1/changesets` | Reads the log in pages; commits a changeset the caller wrote | The log; the commit, or the operations that were rejected |
+| `POST /v1/ids` | Mints identity and changeset IDs for a caller that writes its own changeset | JSON |
+| `GET /v1/identities`, `GET /v1/identities/{id}`, `.../history` | Lists identities in pages; reads one with its members, following redirects; the changesets that touched it | JSON |
+| `GET /v1/observations`, `GET /v1/observations/{id}` | Finds observations by source and key, or those with no identity; reads one | JSON |
+| `POST /v1/observations/identities` | The identities of many observations in one call | JSON |
+| `GET /v1/review` | Review items, typed | JSON |
 
-- **A call that starts work says how long it will wait.** If the run finishes within that time, the response is the result. Otherwise it is the run ID, which the client reads until the run finishes. The run ID is `spool.run.run_id`, so tasks add no new concept.
-- **A run either commits its draft or leaves it for review**, as the caller asks. A draft left for review is how an agent experiments without changing shared identities.
-- **Small values are JSON**, defined once with `serde` and described by one versioned JSON Schema. Client types are generated from it. The same serialised form is the log's exchange format.
-- **Bulk data is Arrow**, as IPC streams in request and response bodies. Clients also accept plain objects for convenience, up to some thousands of rows.
+- **A call that starts work says how long it will wait.** `POST /v1/ingest` and `POST /v1/runs` take `wait_ms`, 30 seconds if left out. If the run finishes within that time, the response is `200` with the finished run. Otherwise it is `202` with the run as far as it has got, and the client reads `GET /v1/runs/{run}?wait_ms=...` until its status is no longer `running`. The work goes on whether or not anyone waits. The run ID is `spool.run.run_id`, so tasks add no new concept. One limit: a call that finds the writer busy has no run to report until its own work starts, so it can wait longer than it asked to.
+- **A run has one of five statuses.** `running` while the engine works on it, `open` while it waits for a caller's judgements, `drafted` while its draft waits for review, and then `succeeded` or `failed`.
+- **A run either commits its draft or leaves it for review**, as the caller asks. A draft left for review is how an agent experiments without changing shared identities. The draft is stored on the server and named by its changeset ID, so whoever reviews it need not be whoever started the run. Approving it validates it like any changeset: if state moved under it, the response names the operations that no longer hold and the draft stays open. Section 1 says why a draft nobody commits does not strand its observations.
+- **Small values are JSON**, defined once with `serde` and described by one versioned JSON Schema. Client types are generated from it. The same serialised form is the log's exchange format. A request with a field the server does not know is refused, so a misspelt `commit` cannot commit by mistake.
+- **Bulk data is Arrow**, as IPC streams in request and response bodies. Clients also accept plain objects for convenience, up to some thousands of rows. Rows sent as JSON become the same observations as the same rows sent as Arrow: a number with no fractional part is stored as an integer whichever way it arrived, so an observation's ID does not depend on the encoding or on the other rows in its batch.
 - **IDs cross as strings** in the first version. DuckDB exports `UUID` columns to Arrow as strings by default (tested), which is also what JavaScript and pandas users expect.
-- **The API is tested by hash.** With a seeded ID generator, the same fixture must produce the same changeset `content_hash` through the library and through the server. Only Rust computes observation IDs and content hashes.
+- **Errors have one shape.** Every response that is not a success is `{"error": {"code", "message"}}`, with `rejections` when a changeset broke a rule. The codes are `unauthorized`, `invalid`, `not_found`, `conflict`, `rejected`, `too_large` and `internal`.
+- **The API is tested by hash.** With a seeded ID generator, the same fixture must produce the same changeset `content_hash` through the library, through the server with Arrow and with JSON bodies, and through the TypeScript client. Only Rust computes observation IDs and content hashes.
 
 A client is a small package that speaks this API. The first is TypeScript, and a Python client is the same amount of work. No client contains engine code, so there are no native packages to build per platform. An agent built with a framework such as eve reaches Spool the same way: a tool in the agent calls the client.
 
-Scope of the server: one store, one writer and one tenant. Access is a bearer token. It scales up, not out. Tenancy, user management and provisioning compute are out of scope, which keeps Spool short of a hosted control plane. Inside the server, reads run concurrently and commits are serialised, so the log's order is the order of commit.
+Scope of the server: one store, one writer and one tenant. Access is a bearer token. It scales up, not out. Tenancy, user management and provisioning compute are out of scope, which keeps Spool short of a hosted control plane. Inside the server, reads run concurrently and commits are serialised, so the log's order is the order of commit. Reads use their own connections to the same DuckDB instance and see committed state, so reading a run or looking up an identity does not wait for an ingest or a resolve in progress.
 
 Two packaging facts to plan around:
 
 - `duckdb` 1.20000.2 and `arrow` 60 require Rust 1.88, and `uuid` 1.29 requires 1.89. Pin them at the workspace root and upgrade `duckdb` and `arrow` together.
-- The `duckdb` crate links a prebuilt shared library by default (12 s clean build when measured, but a 96 MB library that must ship beside the binary) or compiles DuckDB from source with `bundled` (about 6 min 40 s on 4 cores when measured; that build was not linked or run). Use the prebuilt library for development. A container image and a one-file install both favour the statically linked build for releases, at the cost of build time in CI. Decide in Milestone 2.
+- The `duckdb` crate links a prebuilt shared library by default (12 s clean build when measured, but a 96 MB library that must ship beside the binary) or compiles DuckDB from source with `bundled` (about 6 min 40 s on 4 cores when measured; that build was not linked or run). Decided in Milestone 2: the binary links the prebuilt shared library, in development and in the image. It finds the library through its own run path: beside itself, then in `../lib`, then where the build downloaded it. So a development build starts without `cargo run`, and the image puts the library in `/usr/local/lib`. The static build is not offered yet. The engine uses DuckDB's JSON and ICU extensions, which the prebuilt library includes and the `bundled` feature does not: a static build needs the crate's CMake build with both extensions, and has not been built or run.
 
 Tradeoff: a server has to be run, backed up and secured, where a library needed none of that. Every call crosses the network, which is small next to matching work and costly for per-record lookups, so lookups need batch forms. The library remains for Rust callers and for tests.
 
-**Decide now:** the engine as a library with the server as a wrapper, JSON and Arrow as the only two wire forms, the run ID as the task handle, one tenant and one writer, no native bindings. **Defer:** route design, authentication beyond a bearer token, streaming a run's progress, a Python client, release linking of DuckDB, Windows on ARM.
+**Decide now:** the engine as a library with the server as a wrapper, JSON and Arrow as the only two wire forms, the run ID as the task handle, one tenant and one writer, no native bindings. **Defer:** authentication beyond a bearer token, streaming a run's progress, a queue so that a call never waits for the writer before it has a run ID, a Python client, a statically linked DuckDB, a published base image, Windows on ARM.
 
 ## 6. Python and TypeScript user code without embedded runtimes
 
@@ -621,7 +658,7 @@ spool/
     └── identity/companies-small/   # a project directory, two CSV batches, truth, scenario file
 ```
 
-Milestone 2 adds `crates/spool-cli`, which takes over the binary and holds the HTTP server and the `init`, `dev`, `build`, `apply` and `serve` commands, so the library carries no HTTP stack. It also adds `packages/client`, the TypeScript client. `spool-duckdb` is split out when a second store exists, and `spool-resolution` when a second native strategy exists.
+Milestone 2 adds `crates/spool-cli`, which takes over the binary and holds the HTTP server and the `init`, `dev`, `build`, `apply` and `serve` commands, so the library carries no HTTP stack. It also adds `packages/client`, the TypeScript client, `schema/`, the JSON Schema its types are generated from, and the `Dockerfile` of the base image. Its exit criteria are listed after Milestone 1's. `spool-duckdb` is split out when a second store exists, and `spool-resolution` when a second native strategy exists.
 
 What it does:
 
@@ -648,7 +685,23 @@ Exit criteria, each a test:
 - Two runs with the same seed produce the same changeset content hashes.
 - A changeset with a stale precondition is rejected and names the conflicting operation.
 
-In scope for the types but not implemented: `Merge`, `Constrain`, `Unconstrain`, `Reinstate`. Out of scope: the server and clients, user code, changing a declaration after data exists, superseding observations, probabilistic or LLM matching, extraction, relationships, canonical attribute views, the studio.
+Milestone 2's exit criteria, each a test in `crates/spool-cli/tests` unless it says otherwise:
+
+- With the same seed, the company fixture produces the same changeset content hashes through the library, through the server with Arrow bodies and with JSON bodies, and through the TypeScript client (`packages/client/test`).
+- Every call under `/v1` is refused without the bearer token, and `serve` does not start without one.
+- `serve` sets up an empty store, starts again on a store its manifest was applied to, and refuses a store that was applied with another manifest until `spool apply` has run.
+- A call that outlasts its wait answers `202` with the run, the run is read until it ends, and reads are answered while it is in progress.
+- A run leaves its draft for review when asked. The draft is listed, read, approved or rejected, and approving one that went stale names the operations at fault.
+- A draft that is rejected, replaced or never decided does not strand its observations: the next run examines them again.
+- A caller reads a run's candidates and submits judgements, as Arrow and as JSON, and reconciles the run.
+- Identities, members, history, observations and typed review items are read through the API.
+- `init` scaffolds a project that `info` lists and `build` compiles; `build` writes the Dockerfile once.
+- `apply` rebuilds the feature table of a changed declaration and changes no identity; `dev` does the same as files are saved, and keeps the last version that compiled.
+- A run cut short by a killed server is recorded as failed when the store is next opened.
+- The binary starts with no library path set.
+- The committed JSON Schema is the one the server speaks, and the client's generated types are those of the schema (`packages/client`).
+
+In scope for the types but not implemented: `Merge`, `Constrain`, `Unconstrain`, `Reinstate`. Out of scope after Milestone 2: user code, superseding observations, probabilistic or LLM matching, extraction, relationships, canonical attribute views, the studio.
 
 Proposed roadmap:
 
@@ -666,7 +719,7 @@ Milestones 2 and 3 do not depend on each other. Sandbox synchronisation, initial
 | Decide now | Defer |
 | --- | --- |
 | Evidence versus identity-state split; `spool-core` without DuckDB or Arrow | A Postgres store; any abstraction over evidence storage |
-| One server that owns the store; thin clients; one tenant, one writer; no native bindings | Route design; richer authentication; a Python client |
+| One server that owns the store; thin clients; one tenant, one writer; no native bindings | Richer authentication; a Python client; a published base image |
 | A project directory with path-derived names, compiled to a manifest; state outside the image | Mountable packages of entity types; Markdown instruction files |
 | Entity types declared by the project; feature tables generated from a query; rules as files; no built-in types | Feature columns from user code; client types generated from a manifest |
 | User code as child processes over Parquet files; evidence only; workers inside the service | Separate worker containers; a streaming protocol; per-task resource limits |
@@ -676,6 +729,6 @@ Milestones 2 and 3 do not depend on each other. Sandbox synchronisation, initial
 | Changeset log as truth, projection in the same transaction, per-operation preconditions | Compaction, hash chaining |
 | Operation set: create, assign, merge, constrain, unconstrain, reinstate | Implementing all but create and assign until Milestone 3 |
 | Default policy never merges or splits existing identities automatically | Policy plug-ins; automatic merges above a threshold |
-| JSON and Arrow as the only wire forms; the run ID as the task handle | Streaming run progress; an ad hoc SQL endpoint |
+| JSON and Arrow as the only wire forms; the run ID as the task handle; drafts stored on the server | Streaming run progress; an ad hoc SQL endpoint |
 | Scenario-based benchmark with identity metrics and a CI baseline | GLEIF scenario generator; extraction and end-to-end suites |
-| Two crates; injected ID generator and clock; format version in the file | Further crate splits; release linking of DuckDB; indexes and keys |
+| Two library crates and one for the command and server; injected ID generator and clock; format version in the file; the prebuilt DuckDB library found by run path | Further crate splits; a statically linked DuckDB; indexes and keys |
