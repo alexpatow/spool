@@ -107,7 +107,8 @@ export interface Comparison {
    */
   blocked_by: string[];
   /**
-   * When the run's draft was left for review: what became of it.
+   * When the run's draft was left for review: what became of it. Of a
+   * run that was reconciled more than once, the latest draft.
    */
   draft?: DraftStatus | null;
   /**

@@ -539,9 +539,12 @@ impl View<'_> {
         let history = self
             .remote
             .get(&format!("/identities/{identity}/history"), &[], missing)?;
-        let constraints = self
-            .remote
-            .list("/constraints", &[("identity", identity.to_string())])?;
+        // A merged identity answers with the members of the one that stands
+        // for it, and the constraints are those on the members shown.
+        let current = view["current"]
+            .as_str()
+            .map_or_else(|| identity.to_string(), str::to_owned);
+        let constraints = self.remote.list("/constraints", &[("identity", current)])?;
         if self.json {
             print_json(&json!({
                 "identity": view,

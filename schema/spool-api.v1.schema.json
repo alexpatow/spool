@@ -215,7 +215,7 @@
               "type": "null"
             }
           ],
-          "description": "When the run's draft was left for review: what became of it."
+          "description": "When the run's draft was left for review: what became of it. Of a\nrun that was reconciled more than once, the latest draft."
         },
         "judgements": {
           "description": "What the strategy judged. Empty when the pair was a candidate and\ngot no judgement.",

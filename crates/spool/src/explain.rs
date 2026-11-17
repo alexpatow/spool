@@ -144,7 +144,8 @@ pub struct Comparison {
     /// What the strategy judged. Empty when the pair was a candidate and
     /// got no judgement.
     pub judgements: Vec<RecordedJudgement>,
-    /// When the run's draft was left for review: what became of it.
+    /// When the run's draft was left for review: what became of it. Of a
+    /// run that was reconciled more than once, the latest draft.
     pub draft: Option<DraftStatus>,
 }
 
@@ -379,7 +380,8 @@ fn comparisons(
 
     let mut statement = conn.prepare(
         "SELECT r.run_id, r.status, r.strategy, r.strategy_version, epoch_us(r.started_at),
-                (SELECT max(d.status) FROM spool.draft d WHERE d.match_run = r.run_id)
+                (SELECT d.status FROM spool.draft d WHERE d.match_run = r.run_id
+                 ORDER BY d.run_id DESC LIMIT 1)
          FROM spool.run r
          WHERE r.run_id IN (
            SELECT run_id FROM spool.candidate WHERE left_id = $1::UUID AND right_id = $2::UUID

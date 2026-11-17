@@ -525,6 +525,44 @@ fn a_draft_that_waits_or_was_rejected_explains_why_nothing_came_of_a_match() {
 }
 
 #[test]
+fn a_run_reconciled_again_is_explained_by_its_latest_draft() {
+    let engine = engine();
+    ingest(
+        &engine,
+        "shop",
+        &[("1", Some("anvil"), None), ("2", Some("anvil"), None)],
+    );
+    engine
+        .resolve(&ResolveOptions {
+            leave_for_review: true,
+            ..ResolveOptions::default()
+        })
+        .unwrap();
+    let run = explain(&engine, ("shop", "1"), ("shop", "2")).comparisons[0].run;
+
+    // The second draft takes the place of the first, which is superseded.
+    let again = engine.reconcile(run, &Policy::default()).unwrap();
+    let explanation = explain(&engine, ("shop", "1"), ("shop", "2"));
+    assert_eq!(explanation.comparisons[0].draft, Some(DraftStatus::Open));
+    assert!(says(
+        &explanation,
+        "Run 2 (strategy `rules`) judged them `match` (match rule `same_name` held). Its draft waits for a decision."
+    ));
+
+    engine.approve_draft(again.changeset.id).unwrap();
+    let explanation = explain(&engine, ("shop", "1"), ("shop", "2"));
+    assert_eq!(explanation.outcome, Outcome::SameIdentity);
+    assert_eq!(
+        explanation.comparisons[0].draft,
+        Some(DraftStatus::Committed)
+    );
+    assert!(!says(
+        &explanation,
+        "Run 2 (strategy `rules`) judged them `match` (match rule `same_name` held). Its draft"
+    ));
+}
+
+#[test]
 fn a_strategy_of_the_callers_own_is_explained_by_what_it_stored() {
     let engine = engine();
     ingest(

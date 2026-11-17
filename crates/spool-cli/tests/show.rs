@@ -666,6 +666,53 @@ fn a_source_and_key_name_the_latest_version_however_many_there_were() {
 }
 
 #[test]
+fn a_merged_identity_is_shown_with_the_constraints_of_the_one_it_became() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = workshop(dir.path());
+    let (one, two, hammer) = (
+        id_of(&server, "shop", "1"),
+        id_of(&server, "shop", "2"),
+        id_of(&server, "shop", "4"),
+    );
+    let identity_of = |observation: &str| {
+        server.read(&format!("/v1/observations/{observation}"))["identity"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let (anvils, hammers) = (identity_of(&one), identity_of(&hammer));
+    server.call(
+        "/v1/changesets",
+        json!({
+            "actor": "user:reviewer",
+            "ops": [{ "op": "constrain", "kind": "must_link", "a": one, "b": two }],
+        }),
+    );
+    server.call(
+        "/v1/changesets",
+        json!({
+            "actor": "user:reviewer",
+            "ops": [{ "op": "merge", "from": anvils, "into": hammers }],
+        }),
+    );
+
+    // The merged ID answers with the members of the identity that stands
+    // for it, and so with the constraints on those members.
+    let expected =
+        server.read(&format!("/v1/constraints?identity={hammers}"))["constraints"].clone();
+    assert_eq!(expected.as_array().unwrap().len(), 1);
+    let bundle = answered(&server, &["show", "identity", &anvils]);
+    assert_eq!(bundle["identity"]["current"], hammers.as_str());
+    assert_eq!(bundle["identity"]["members"].as_array().unwrap().len(), 3);
+    assert_eq!(bundle["constraints"], expected);
+    let merged = shown(&server, &["show", "identity", &anvils]);
+    has(&merged, &format!("merged into  {hammers}"));
+    assert!(merged.contains("\nmust_link   "), "{merged}");
+    let current = shown(&server, &["show", "identity", &hammers]);
+    assert!(current.contains("\nmust_link   "), "{current}");
+}
+
+#[test]
 fn a_type_with_no_feature_columns_and_no_rules_is_explained() {
     let dir = tempfile::tempdir().unwrap();
     let project = dir.path().join("project");
