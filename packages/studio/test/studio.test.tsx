@@ -984,4 +984,18 @@ describe("news items an extractor read", () => {
     expect(nav.getByRole("link", { name: "Review" }).textContent).toBe("Review");
     expect(nav.getByRole("link", { name: "Drafts" }).textContent).toBe("Drafts");
   });
+
+  test("a source and a key with a space in it, typed into the box that finds things, goes to what it names", async () => {
+    await server.client.addDocuments("news", [{ key: "Annual Report.txt", text: "Halden Energy Ltd reported." }]);
+    const { documents } = await server.client.documents({ source: "news", key: "Annual Report.txt" });
+    open(server, "#/runs");
+    await heading("Runs");
+
+    fireEvent.click(screen.getByRole("button", { name: /^Find a name, an ID, or source:key/ }));
+    const box = await screen.findByRole("combobox", { name: "Find by words, by ID, or by source and key" });
+    fireEvent.change(box, { target: { value: "news:Annual Report.txt" } });
+    fireEvent.click(await screen.findByRole("option", { name: "Open what news:Annual Report.txt names" }));
+    await waitFor(() => expect(window.location.hash).toBe(`#/documents/${documents[0]!.id}`));
+    await heading("news:Annual Report.txt");
+  });
 });

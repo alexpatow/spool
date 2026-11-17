@@ -9,7 +9,7 @@ import type { ReactNode } from "react";
 import type { IdentitySummary, ObservationRecord } from "./api.ts";
 import { Source, Sources, message } from "./components.tsx";
 import * as Command from "./components/ui/command";
-import { findScreen, isId } from "./find.ts";
+import { findScreen, isReference } from "./find.ts";
 import { count, observationName, short } from "./format.ts";
 import { useStudio } from "./hooks.ts";
 import { ArrowRightIcon, IdentityIcon, RecordIcon, SearchIcon } from "./icons.tsx";
@@ -46,11 +46,6 @@ interface Results {
   words: string;
   identities: IdentitySummary[];
   observations: ObservationRecord[];
-}
-
-/** Whether what was typed could name one thing: an ID, or a source and a key. */
-function names(words: string): boolean {
-  return isId(words) || /^[^\s:]+:\S+$/.test(words);
 }
 
 export function Palette({
@@ -111,7 +106,7 @@ export function Palette({
       onOpenChange(false);
     };
     const list: Group[] = [];
-    if (words !== "" && names(words)) {
+    if (words !== "" && isReference(words)) {
       list.push({
         value: "Open",
         items: [
