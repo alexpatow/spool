@@ -331,12 +331,12 @@ describe("an identity", () => {
     await heading("Identity");
     await screen.findByText("Members (3)");
     await idle();
-    expect(screen.queryByRole("button", { name: /^Split off/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Split the/ })).toBeNull();
 
     // The reviewer said crm:c-111 and registry:X0000011 are one company, so
     // the engine does not part them.
     fireEvent.click(screen.getByRole("checkbox", { name: `Choose observation ${orchard.id}` }));
-    make("Split off the 1 ticked", ada);
+    make("Split the 1 ticked from the rest", ada);
     const answer = await refused();
     expect(answer).toContain("have a must_link constraint, and would belong to identities");
     expect(answer).toContain("Nothing was changed.");
@@ -344,7 +344,7 @@ describe("an identity", () => {
 
     fireEvent.click(screen.getByRole("checkbox", { name: `Choose observation ${orchard.id}` }));
     fireEvent.click(screen.getByRole("checkbox", { name: `Choose observation ${other.id}` }));
-    make("Split off the 1 ticked", { Reason: "Orchard Garden is another company" });
+    make("Split the 1 ticked from the rest", { Reason: "Orchard Garden is another company" });
     expect(await said()).toMatch(/^Split at log position 8: 1 observation moved to the new identity 0\S+\.$/);
     await screen.findByText("Members (2)");
 
@@ -376,8 +376,8 @@ describe("an identity", () => {
     await idle();
 
     fireEvent.click(screen.getByRole("checkbox", { name: `Choose observation ${other.id}` }));
-    fireEvent.click(formOf("Split off the 1 ticked").getByLabelText("Keep the two sides apart from now on"));
-    make("Split off the 1 ticked", ada);
+    fireEvent.click(formOf("Split the 1 ticked from the rest").getByLabelText("Keep the two sides apart from now on"));
+    make("Split the 1 ticked from the rest", ada);
     expect(await said()).toMatch(/^Split at log position 8: /);
     await screen.findByText("Members (2)");
     expect(await server.client.constraints({ observation: other.id })).toEqual([]);
@@ -446,9 +446,75 @@ describe("an identity", () => {
     // Read again, it shows what it holds now, and the merge is made of that.
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     await screen.findByText("Members (3)");
+    fireEvent.click(screen.getByRole("button", { name: "Look it up" }));
+    await screen.findByRole("button", { name: "Merge it into this one" });
     make("Merge it into this one", ada);
     expect(await said()).toBe("Merged at log position 9.");
     await screen.findByText("Members (5)");
+  });
+
+  test("says which side of a split stays, and it is the side that does", async () => {
+    const orchard = await row(server.client, "crm", "c-111");
+    const registered = await row(server.client, "registry", "X0000011");
+    const other = await row(server.client, "crm", "c-122");
+    open(server, `#/identities/${orchard.identity}`);
+    await heading("Identity");
+    await screen.findByText("Members (3)");
+    await idle();
+
+    // The larger side keeps the ID, whichever side was ticked.
+    fireEvent.click(screen.getByRole("checkbox", { name: `Choose observation ${other.id}` }));
+    screen.getByText("The ticked member moves to a new identity. The other 2 stay here, under this ID.");
+    fireEvent.click(screen.getByRole("checkbox", { name: `Choose observation ${other.id}` }));
+    fireEvent.click(screen.getByRole("checkbox", { name: `Choose observation ${orchard.id}` }));
+    fireEvent.click(screen.getByRole("checkbox", { name: `Choose observation ${registered.id}` }));
+    screen.getByText(
+      "The 2 ticked are the larger side, so they stay here, under this ID. The other member moves to a new identity.",
+    );
+
+    make("Split the 2 ticked from the rest", ada);
+    expect(await said()).toMatch(/^Split at log position 8: 1 observation moved to the new identity 0\S+\.$/);
+    await screen.findByText("Members (2)");
+    expect((await server.client.observation(orchard.id)).identity).toBe(orchard.identity!);
+    expect((await server.client.observation(registered.id)).identity).toBe(orchard.identity!);
+    expect((await server.client.observation(other.id)).identity).not.toBe(orchard.identity!);
+  });
+
+  test("does not take in members the reviewer has not seen", async () => {
+    const atlas = await row(server.client, "crm", "c-108");
+    const other = await row(server.client, "crm", "c-109");
+    const moved = await row(server.client, "registry", "X0000010");
+    open(server, `#/identities/${atlas.identity}`);
+    await heading("Identity");
+    await screen.findByText("Members (2)");
+    await idle();
+    make("Look it up", { "The other identity": "crm:c-109" });
+    await screen.findByText(/is a company with 2 members/);
+    await idle();
+
+    // Someone gives the other identity a member after it was looked up.
+    await server.client.commit({
+      actor: REVIEWER,
+      ops: [{ op: "assign", observation: moved.id, from: moved.identity!, to: other.identity! }],
+    });
+
+    // Reading this screen again moves on what a merge is written against,
+    // so what was looked up before is no longer what would be merged.
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await screen.findByText("The log moved on after that identity was looked up. Look it up again.");
+    await idle();
+    expect(screen.queryByRole("button", { name: "Merge it into this one" })).toBeNull();
+    expect(screen.queryByText(/is a company with 2 members/)).toBeNull();
+    expect(changes()).toEqual([]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Look it up" }));
+    expect((await screen.findByText(/is a company with 3 members/)).textContent).toContain(
+      "crm:c-109, registry:X0000010, registry:X0512345",
+    );
+    make("Merge it into this one", ada);
+    expect(await said()).toBe("Merged at log position 9.");
+    await screen.findByText("Members (5)");
+    expect((await entry(9)).changeset).toMatchObject({ actor: "user:ada", base: 8 });
   });
 
   test("that was merged away offers no change", async () => {

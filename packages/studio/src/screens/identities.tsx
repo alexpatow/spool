@@ -177,44 +177,63 @@ function IdentityScreen({ head, view, constraints, history }: Loaded) {
   );
 }
 
-/** Divides the identity in two: the members that are ticked, and the rest. */
+/**
+ * Divides the identity in two: the members that are ticked, and the rest.
+ * The engine leaves the larger side under this ID, and the side that was
+ * not ticked when they are equal, so the screen says which side that is
+ * before the reviewer asks for it. What moved is told from the engine's
+ * answer afterwards.
+ */
 function Split({ view, chosen }: { view: IdentityView; chosen: string[] }) {
   const [done, setDone] = useState<ReactNode>(null);
   // A member that was ticked and has left since is no longer one to split off.
   const ticked = chosen.filter((id) => view.members.some((member) => member.observation === id));
+  const rest = view.members.length - ticked.length;
   return (
     <Section title="Split it">
       <Done>{done}</Done>
-      {ticked.length === 0 || ticked.length === view.members.length ? (
+      {ticked.length === 0 || rest === 0 ? (
         <p className="quiet">
-          Tick the members that are something else, and not all of them, to move them to an identity of their own.
+          Tick some of the members, and not all of them, to part them from the rest. The larger side stays here, and the
+          other side moves to an identity of its own.
         </p>
       ) : (
-        <Act
-          label={`Split off the ${ticked.length} ticked`}
-          who
-          why="Reason"
-          act={async (client, { actor, reason, entered }) => {
-            const report = await client.split(view.id, {
-              actor,
-              reason,
-              observations: ticked,
-              keep_apart: entered.get("keep_apart") !== null,
-            });
-            return (
-              <>
-                Split at <At committed={report.committed} />: {count(report.moved.length, "observation")} moved to the
-                new identity <Ref kind="identity" id={report.identity} />.
-              </>
-            );
-          }}
-          done={setDone}
-        >
-          <label className="flag">
-            <input type="checkbox" name="keep_apart" defaultChecked />
-            Keep the two sides apart from now on
-          </label>
-        </Act>
+        <>
+          <p className="quiet">
+            {ticked.length > rest
+              ? `The ${ticked.length} ticked are the larger side, so they stay here, under this ID. ${
+                  rest === 1 ? "The other member moves" : `The other ${rest} move`
+                } to a new identity.`
+              : `${ticked.length === 1 ? "The ticked member moves" : `The ${ticked.length} ticked move`} to a new identity. ${
+                  rest === 1 ? "The other member stays" : `The other ${rest} stay`
+                } here, under this ID.`}
+          </p>
+          <Act
+            label={`Split the ${ticked.length} ticked from the rest`}
+            who
+            why="Reason"
+            act={async (client, { actor, reason, entered }) => {
+              const report = await client.split(view.id, {
+                actor,
+                reason,
+                observations: ticked,
+                keep_apart: entered.get("keep_apart") !== null,
+              });
+              return (
+                <>
+                  Split at <At committed={report.committed} />: {count(report.moved.length, "observation")} moved to the
+                  new identity <Ref kind="identity" id={report.identity} />.
+                </>
+              );
+            }}
+            done={setDone}
+          >
+            <label className="flag">
+              <input type="checkbox" name="keep_apart" defaultChecked />
+              Keep the two sides apart from now on
+            </label>
+          </Act>
+        </>
       )}
     </Section>
   );
@@ -223,14 +242,28 @@ function Split({ view, chosen }: { view: IdentityView; chosen: string[] }) {
 /** The most members of the other identity that are named before the merge is made. */
 const MOST_NAMED = 5;
 
+/** Another identity as it was looked up, and where the log ended on this screen then. */
+interface Looked {
+  view: IdentityView;
+  head: number;
+}
+
 /**
  * Merges another identity into this one. The other is looked up and shown
  * first, so that the reviewer sees what is about to be joined.
+ *
+ * The merge is written against where the log ended when this screen was
+ * read, and the other identity is looked up after that, so the engine
+ * rejects the merge if either changed after the reviewer saw it. Reading
+ * the screen again moves that position on, and what was looked up before
+ * it is then older than what the merge would be written against, so it is
+ * taken away and has to be looked up again.
  */
 function Merge({ view, head }: { view: IdentityView; head: number }) {
   const { client } = useStudio();
   const [done, setDone] = useState<ReactNode>(null);
-  const [other, setOther] = useState<IdentityView | null>(null);
+  const [looked, setOther] = useState<Looked | null>(null);
+  const other = looked?.head === head ? looked.view : null;
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   return (
@@ -250,7 +283,7 @@ function Merge({ view, head }: { view: IdentityView; head: number }) {
               setBusy(false);
               if (found === null) setProblem(`No identity is named ${reference}.`);
               else if (found.id === view.id) setProblem("That is this identity.");
-              else setOther(found);
+              else setOther({ view: found, head });
             },
             (error: unknown) => {
               setBusy(false);
@@ -278,6 +311,9 @@ function Merge({ view, head }: { view: IdentityView; head: number }) {
           </p>
         ) : null}
       </form>
+      {looked && !other ? (
+        <p className="notice">The log moved on after that identity was looked up. Look it up again.</p>
+      ) : null}
       {other ? (
         <>
           <p>

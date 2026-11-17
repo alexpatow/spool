@@ -557,7 +557,8 @@ The studio is the same API in a browser. The server answers `GET /` with a page,
 A reviewer also makes changes from it, each on the screen of the thing it changes: a draft is approved or rejected, a review item's observations are placed or the item is dismissed, an observation is moved, an identity is split or takes in another, a constraint between two observations is recorded or removed, and a changeset in the log is undone.
 
 - **A change is one call of the API, and the engine decides whether it holds.** The studio keeps no rule of its own. A changeset the engine rejects is shown in the engine's words, with the operations it names, and nothing is changed. Operations are counted from 0 everywhere, as the engine counts them.
-- **A change is written against what the reviewer saw.** A move names the identity the observation was in when the screen was read, and a merge is committed with the log position the screen was read at as its base. If either changed since, the engine rejects the change and the reviewer reads again. Before a merge, the other identity is looked up and its members shown.
+- **A change is written against what the reviewer saw.** A move names the identity the observation was in when the screen was read, and a merge is committed with the log position the screen was read at as its base. If either changed since, the engine rejects the change and the reviewer reads again. Before a merge, the other identity is looked up and its members shown. Reading the screen again moves the merge's base on, so what was looked up before that is taken away and is looked up again: a merge never takes in members the reviewer was not shown.
+- **A split says which side stays before it is made.** The engine leaves the larger side under the identity's ID, whichever side was ticked, and the screen says which side that is.
 - **A change is recorded under a name the reviewer gives**, as `user:<name>`, with a reason if they give one. The name is kept in the browser's local storage, which outlives the tab: it is no secret, and the token still is not kept there. Approving or rejecting a draft takes no name, because the API takes none.
 - **An undo can be seen before it is made.** The engine writes the changeset that would take another back, and checks it, without committing it.
 
@@ -946,6 +947,8 @@ Milestone 6 continues with the studio: `packages/studio`, `crates/spool-cli/src/
 - Looking at the screens makes no call that changes anything.
 - Each change is made on its screen and is then what the server holds: a draft approved and rejected, a review item's observation placed in an identity it matched and in a new one, an item dismissed, an observation moved to another identity, to a new one and out of any, an identity split with and without keeping the sides apart, an identity merged into another, a constraint recorded and removed, and a changeset undone after the undo was shown (`packages/studio/test/changes.test.tsx`).
 - A change the engine rejects changes nothing and is shown with the operations it names: a draft whose observation was placed elsewhere, a move and a merge of something that changed after the screen was read, a split that a `must_link` constraint forbids, and an undo of what was undone before.
+- An identity that was looked up for a merge is not merged after the screen was read again, until it is looked up again and shows the member it gained meanwhile.
+- A split of the larger side says that side stays, and it does.
 - A change that needs a name is not sent without one, and the name is kept for the next.
 - `bun run demo` fills only the server it started, and stops when another server already listens at its address.
 
