@@ -243,6 +243,18 @@ impl Server {
         assert!(status.success(), "the server stopped with {status}");
     }
 
+    /// Stops the server as `stop` does, and returns the lines it printed
+    /// that nothing has read yet.
+    pub fn stopped(mut self) -> Vec<String> {
+        let _ = Command::new("kill")
+            .args(["-TERM", &self.child.id().to_string()])
+            .status();
+        let status = self.child.wait().unwrap();
+        assert!(status.success(), "the server stopped with {status}");
+        // The stream ends with the process, and the lines end with it.
+        self.stdout.lock().unwrap().iter().collect()
+    }
+
     pub fn request(&self, method: &str, path: &str) -> Request<'_> {
         Request::to(&self.address, method, path)
             .header("Authorization", &format!("Bearer {}", self.token))

@@ -1,0 +1,31 @@
+{
+  "name": "spool-studio",
+  "version": "0.1.0",
+  "description": "The Spool studio: what a running server holds, in a browser.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "demo": "bun scripts/demo.ts",
+    "build": "bun scripts/build.ts",
+    "check-build": "bun scripts/build.ts --check",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@happy-dom/global-registrator": "21.0.4",
+    "@testing-library/dom": "10.4.2",
+    "@testing-library/react": "16.3.3",
+    "@types/bun": "^1.2.0",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.3.0",
+    "typescript": "^5.6.0",
+    "vite": "8.3.8"
+  }
+}
