@@ -317,6 +317,34 @@ main {
   background: var(--bad-soft);
 }
 
+.notice.done {
+  border-color: var(--good);
+  background: var(--good-soft);
+}
+
+div.notice > :first-child {
+  margin-top: 0;
+}
+
+div.notice > :last-child {
+  margin-bottom: 0;
+}
+
+/* A change */
+
+.act {
+  max-width: 62rem;
+  margin: 0.75rem 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.act .looked {
+  flex-basis: 100%;
+}
+
 .fields {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
@@ -507,8 +535,9 @@ ul.plain li {
   padding: 0.15rem 0;
 }
 
+/* Operations are counted from 0, as the engine counts them when it names one. */
 ol.ops {
-  counter-reset: op;
+  counter-reset: op -1;
 }
 
 ol.ops li {

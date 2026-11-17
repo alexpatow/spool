@@ -25,7 +25,7 @@ An empty store is set up from the manifest. A store that was applied with
 another manifest is refused: run `spool apply` on it first.
 
 The server answers a browser at its address with the studio, which shows what
-the store holds once it is given the token.
+the store holds and takes a reviewer's changes, once it is given the token.
 
 Options:
   --manifest <path>   the manifest to run on (default: .spool/manifest.json)
@@ -55,7 +55,7 @@ saved; a change that does not compile is reported and the last version that
 did keeps running.
 
 Open the address it listens on in a browser for the studio, which shows what
-the store holds.
+the store holds and takes a reviewer's changes.
 
   <dir>               the project directory (default: the current directory)
 

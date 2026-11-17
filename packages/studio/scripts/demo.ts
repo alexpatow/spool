@@ -24,29 +24,48 @@ const token = option("--token", "dev");
 const scenario = args.includes("news") ? "news" : "companies";
 
 const project = copyProject(scenario === "news" ? news : companies);
-const url = `http://127.0.0.1:${port}`;
 const child = Bun.spawn(
   [binary(), "dev", project, "--listen", `127.0.0.1:${port}`, "--store", join(project, "dev.duckdb"), "--token", token],
-  { stdout: "inherit", stderr: "inherit" },
+  { stdout: "pipe", stderr: "inherit" },
 );
 
-const stop = async () => {
+const stop = async (code = 0) => {
   child.kill("SIGTERM");
   await child.exited;
   rmSync(project, { recursive: true, force: true });
-  process.exit(0);
+  process.exit(code);
 };
-process.on("SIGINT", stop);
-process.on("SIGTERM", stop);
+process.on("SIGINT", () => stop());
+process.on("SIGTERM", () => stop());
 
-const client = new SpoolClient({ url, token });
-for (let tries = 0; !(await client.healthy()); tries++) {
-  if (tries > 100 || child.exitCode !== null) {
-    console.error("the server did not start");
-    await stop();
+// The server says where it listens once it does. Nothing is sent before
+// that, and nothing to an address it did not print: when another server
+// has the port, this one does not start, and that one is not ours to fill.
+const reader = child.stdout.getReader();
+const decoder = new TextDecoder();
+let printed = "";
+let url: string | undefined;
+while (url === undefined) {
+  const { value, done } = await reader.read();
+  if (done) {
+    console.error("the server did not start, so nothing was filled");
+    await stop(1);
+    break;
   }
-  await Bun.sleep(100);
+  process.stdout.write(value);
+  printed += decoder.decode(value, { stream: true });
+  url = /listening on (http:\/\/\S+)/.exec(printed)?.[1];
 }
+// What it prints from here on is passed on as it comes.
+void (async () => {
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) return;
+    process.stdout.write(value);
+  }
+})();
+
+const client = new SpoolClient({ url: url!, token });
 await (scenario === "news" ? seedNews(client) : seedCompanies(client));
 console.log(`\nthe ${scenario} scenario is at ${url}`);
 await child.exited;

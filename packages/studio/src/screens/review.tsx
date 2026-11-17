@@ -1,7 +1,11 @@
-import type { ObservationRecord, ReviewRecord, ReviewStatus } from "../api.ts";
+import { useState } from "react";
+import type { ReactNode } from "react";
+
+import { Act, At, Done, Mistake } from "../act.tsx";
+import type { Op, ObservationRecord, ReviewRecord, ReviewStatus } from "../api.ts";
 import { Fields, Filters, Load, Page, Ref, Section, Table, When, Word, usePair } from "../components.tsx";
 import { found } from "../find.ts";
-import { count, observationName } from "../format.ts";
+import { count, observationName, short } from "../format.ts";
 import { useLoad } from "../hooks.ts";
 import type { Route } from "../router.ts";
 
@@ -100,6 +104,7 @@ function ReviewScreen({ item, observations }: Loaded) {
           ],
         ]}
       />
+      <Decide item={item} observations={observations} />
       <Section title="Observations left without an identity">
         <Table
           columns={[
@@ -139,5 +144,89 @@ function ReviewScreen({ item, observations }: Loaded) {
         </Section>
       ) : null}
     </>
+  );
+}
+
+/** In a new identity, as a choice of where an observation goes. */
+const NEW = "new";
+
+/**
+ * Settles an open item: its observations are placed, which resolves it once
+ * each has an identity, or it is dismissed.
+ */
+function Decide({ item, observations }: Loaded) {
+  const [done, setDone] = useState<ReactNode>(null);
+  const open = item.status === "open";
+  if (!open && done === null) return null;
+  const waiting = observations.filter((observation) => !observation.identity);
+  return (
+    <Section title="Decide">
+      <Done>{done}</Done>
+      {open && waiting.length > 0 ? (
+        <Act
+          label={waiting.length === 1 ? "Place it" : "Place them"}
+          who
+          why="Reason"
+          act={async (client, { actor, reason, entered }) => {
+            const chosen = waiting.flatMap((observation) => {
+              const to = String(entered.get(`to-${observation.id}`) ?? "");
+              return to === "" ? [] : [{ observation: observation.id, to }];
+            });
+            if (chosen.length === 0) throw new Mistake("Choose where at least one of them goes.");
+            const created = chosen.filter(({ to }) => to === NEW).length;
+            const minted = created > 0 ? (await client.mintIds({ identities: created })).identities : [];
+            const ops: Op[] = [];
+            for (const { observation, to } of chosen) {
+              let identity = to;
+              if (to === NEW) {
+                identity = minted.shift()!;
+                ops.push({ op: "create_identity", entity_type: item.entity_type, identity });
+              }
+              ops.push({ op: "assign", observation, from: null, to: identity });
+            }
+            const committed = await client.commit({ actor, reason, ops });
+            return (
+              <>
+                {count(chosen.length, "observation")} placed at <At committed={committed} />.
+              </>
+            );
+          }}
+          done={setDone}
+        >
+          {waiting.map((observation) => (
+            <label key={observation.id}>
+              Where {observationName(observation)} goes
+              <select name={`to-${observation.id}`} defaultValue="">
+                <option value="">nowhere yet</option>
+                {item.identities.map((identity) => (
+                  <option key={identity} value={identity}>
+                    identity {short(identity)}
+                  </option>
+                ))}
+                <option value={NEW}>a new identity of its own</option>
+              </select>
+            </label>
+          ))}
+        </Act>
+      ) : null}
+      {open ? (
+        <Act
+          label="Dismiss"
+          who
+          why="Reason"
+          act={async (client, { actor, reason }) => {
+            await client.dismissReview(item.id, { actor, reason });
+            return "The item was dismissed. Later runs leave its observations alone.";
+          }}
+          done={setDone}
+        />
+      ) : null}
+      {open && item.identities.length > 1 ? (
+        <p className="quiet">
+          If the identities they matched are one, merge one into the other on its screen, and then place the
+          observations in it.
+        </p>
+      ) : null}
+    </Section>
   );
 }

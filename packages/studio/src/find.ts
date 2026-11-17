@@ -2,7 +2,7 @@
 // or the source and key of a row.
 
 import { SpoolError } from "./api.ts";
-import type { ObservationRecord, SpoolClient } from "./api.ts";
+import type { IdentityView, ObservationRecord, SpoolClient } from "./api.ts";
 import { href } from "./router.ts";
 
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -45,6 +45,24 @@ export async function findObservation(client: SpoolClient, reference: string): P
     if (!page.next) return last;
     after = page.next;
   }
+}
+
+/**
+ * The identity a reference names, as it stands now: an identity ID, or an
+ * observation that belongs to it, by ID or as `<source>:<key>`. An identity
+ * that was merged away names the one that stands for it. `null` if there is
+ * none, or the observation has no identity.
+ */
+export async function findIdentity(client: SpoolClient, reference: string): Promise<IdentityView | null> {
+  const text = reference.trim();
+  if (text === "") return null;
+  let view = isId(text) ? await found(client.identity(text)) : null;
+  if (view === null) {
+    const observation = await findObservation(client, text);
+    if (!observation?.identity) return null;
+    view = await client.identity(observation.identity);
+  }
+  return view.current === view.id ? view : client.identity(view.current);
 }
 
 /**

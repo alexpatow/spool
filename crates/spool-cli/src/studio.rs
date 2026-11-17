@@ -1,10 +1,11 @@
-//! The studio: a page that shows what the server holds, in a browser.
+//! The studio: a page that shows what the server holds, in a browser, and
+//! takes a reviewer's changes to it.
 //!
 //! It is three files, built from `packages/studio` and compiled into the
 //! binary: the page, its script and its style sheet. They are the same for
 //! every server and say nothing about its store, so they need no token. The
-//! page reads through `/v1` like any other caller, with the token its reader
-//! gives it.
+//! page reads and writes through `/v1` like any other caller, with the token
+//! its reader gives it.
 
 use std::sync::LazyLock;
 

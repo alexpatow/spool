@@ -348,6 +348,47 @@ export function Filters({
 }
 
 /**
+ * Keeps which observations of a list the reader ticked, in the order they
+ * were ticked. With `most`, ticking one more lets go of the earliest.
+ */
+export function useTicks(most?: number): {
+  chosen: string[];
+  tick: (id: string) => ReactNode;
+} {
+  const [chosen, setChosen] = useState<string[]>([]);
+  const toggle = (id: string) =>
+    setChosen((before) =>
+      before.includes(id)
+        ? before.filter((other) => other !== id)
+        : [...before, id].slice(-(most ?? before.length + 1)),
+    );
+  return {
+    chosen,
+    tick: (id) => (
+      <input
+        type="checkbox"
+        aria-label={`Choose observation ${id}`}
+        checked={chosen.includes(id)}
+        onChange={() => toggle(id)}
+      />
+    ),
+  };
+}
+
+/** The link that explains two ticked observations, or what to tick to get it. */
+export function ExplainTicked({ chosen }: { chosen: string[] }) {
+  return chosen.length === 2 ? (
+    <p className="notice">
+      <LinkTo path={["explain"]} query={{ a: chosen[0], b: chosen[1] }}>
+        Explain the two that are ticked
+      </LinkTo>
+    </p>
+  ) : (
+    <p className="quiet">Tick two observations to ask why they share an identity, or why they do not.</p>
+  );
+}
+
+/**
  * Keeps which two observations of a list the reader ticked, and gives the
  * link that explains them.
  */
@@ -355,27 +396,6 @@ export function usePair(): {
   tick: (id: string) => ReactNode;
   explain: ReactNode;
 } {
-  const [chosen, setChosen] = useState<string[]>([]);
-  const toggle = (id: string) =>
-    setChosen((before) => (before.includes(id) ? before.filter((other) => other !== id) : [...before, id].slice(-2)));
-  return {
-    tick: (id) => (
-      <input
-        type="checkbox"
-        aria-label={`Choose observation ${id} to explain`}
-        checked={chosen.includes(id)}
-        onChange={() => toggle(id)}
-      />
-    ),
-    explain:
-      chosen.length === 2 ? (
-        <p className="notice">
-          <LinkTo path={["explain"]} query={{ a: chosen[0], b: chosen[1] }}>
-            Explain the two that are ticked
-          </LinkTo>
-        </p>
-      ) : (
-        <p className="quiet">Tick two observations to ask why they share an identity, or why they do not.</p>
-      ),
-  };
+  const { chosen, tick } = useTicks(2);
+  return { tick, explain: <ExplainTicked chosen={chosen} /> };
 }

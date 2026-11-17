@@ -552,7 +552,14 @@ The explanation is about what was recorded. It does not run a strategy again, so
 
 `spool show` and `spool explain` are the same API from a terminal. They are a client: they take `--url` and `--token`, by default those of `spool dev`, and never open a store, so they work against a development server and a deployed one alike. `show` lists runs, identities, observations, documents, review items, drafts and the log, and shows one of each: an identity with its members, the constraints on them and its history; an observation with its payload, its evidence and, for a mention, the text around it in its document; a draft with the operations it would commit. `--json` prints what the server answered. The commands speak HTTP with `ureq`, a crate the build of the DuckDB library already used, so the lock file gained no package.
 
-The studio is the same API in a browser. The server answers `GET /` with a page, and the page reads through `/v1` with the TypeScript client, like any other caller. It has a screen for each thing `show` shows and one for `explain`: an overview of the store, runs, identities, observations, documents with each mention marked in the text, review items, drafts and the log. A value that names something else is a link to it, and two observations ticked in any list lead to their explanation. This first version only reads. Approving a draft, merging, splitting and dismissing a review item from the studio come next.
+The studio is the same API in a browser. The server answers `GET /` with a page, and the page reads through `/v1` with the TypeScript client, like any other caller. It has a screen for each thing `show` shows and one for `explain`: an overview of the store, runs, identities, observations, documents with each mention marked in the text, review items, drafts and the log. A value that names something else is a link to it, and two observations ticked in any list lead to their explanation.
+
+A reviewer also makes changes from it, each on the screen of the thing it changes: a draft is approved or rejected, a review item's observations are placed or the item is dismissed, an observation is moved, an identity is split or takes in another, a constraint between two observations is recorded or removed, and a changeset in the log is undone.
+
+- **A change is one call of the API, and the engine decides whether it holds.** The studio keeps no rule of its own. A changeset the engine rejects is shown in the engine's words, with the operations it names, and nothing is changed. Operations are counted from 0 everywhere, as the engine counts them.
+- **A change is written against what the reviewer saw.** A move names the identity the observation was in when the screen was read, and a merge is committed with the log position the screen was read at as its base. If either changed since, the engine rejects the change and the reviewer reads again. Before a merge, the other identity is looked up and its members shown.
+- **A change is recorded under a name the reviewer gives**, as `user:<name>`, with a reason if they give one. The name is kept in the browser's local storage, which outlives the tab: it is no secret, and the token still is not kept there. Approving or rejecting a draft takes no name, because the API takes none.
+- **An undo can be seen before it is made.** The engine writes the changeset that would take another back, and checks it, without committing it.
 
 - **It is three files compiled into the binary.** `packages/studio` is a React application that Vite builds to a page, one script and one style sheet, with fixed names. The built files are committed under `crates/spool-cli/src/studio`, so building the binary needs neither `bun` nor the network, and a test fails if they are not what the package builds. The script carries the licence text of the packages in it.
 - **The files need no token, and what they show does.** The files are the same for every server and say nothing about its store. The page asks for the token and keeps it for as long as the tab is open, in the tab's session storage. Before it asks, it tries `dev`, which is the token of `spool dev`, so a development server opens with no question.
@@ -936,9 +943,13 @@ Milestone 6 continues with the studio: `packages/studio`, `crates/spool-cli/src/
 - The files compiled into the binary are what `packages/studio` builds (run with `--include-ignored`, as are the tests of the screens).
 - Each screen shows what the server holds, against a real server with the company and the news scenarios: the overview, runs, identities with their members, constraints and history, observations, a document with its mentions in the text, review items, drafts, the log, and an explanation with the engine's sentences (`packages/studio/test`).
 - The studio asks for the token when the one of `spool dev` is refused, keeps the one that works, and forgets it when asked.
-- The studio makes no call that changes anything.
+- Looking at the screens makes no call that changes anything.
+- Each change is made on its screen and is then what the server holds: a draft approved and rejected, a review item's observation placed in an identity it matched and in a new one, an item dismissed, an observation moved to another identity, to a new one and out of any, an identity split with and without keeping the sides apart, an identity merged into another, a constraint recorded and removed, and a changeset undone after the undo was shown (`packages/studio/test/changes.test.tsx`).
+- A change the engine rejects changes nothing and is shown with the operations it names: a draft whose observation was placed elsewhere, a move and a merge of something that changed after the screen was read, a split that a `must_link` constraint forbids, and an undo of what was undone before.
+- A change that needs a name is not sent without one, and the name is kept for the next.
+- `bun run demo` fills only the server it started, and stops when another server already listens at its address.
 
-Out of scope after this part of Milestone 6: changing anything from the studio, a studio that follows a running server without being asked to read again, explaining what a user-code strategy would judge now, explaining a pair as of an earlier log position, LLM matching, an extractor built into the engine, documents that are not text, relationships between entities, canonical attribute views, applying a rematch's suggestions automatically.
+Out of scope after this part of Milestone 6: a studio that follows a running server without being asked to read again, explaining what a user-code strategy would judge now, explaining a pair as of an earlier log position, LLM matching, an extractor built into the engine, documents that are not text, relationships between entities, canonical attribute views, applying a rematch's suggestions automatically.
 
 Proposed roadmap:
 
@@ -947,7 +958,7 @@ Proposed roadmap:
 3. **Identity lifecycle.** Merge, split, constraints, undo and superseding observations, plus the identity benchmark.
 4. **User code.** The child-process protocol, Python first and then TypeScript, with Splink as the second strategy.
 5. **Extraction.** Observations from unstructured documents.
-6. **Developer tooling.** Inspection and a studio, both through the API. Inspection is built, and so is a studio that reads. A studio that also approves, merges, splits and dismisses is next.
+6. **Developer tooling.** Inspection and a studio, both through the API. Both are built: the studio shows what the store holds, and a reviewer approves, places, merges, splits, constrains, undoes and dismisses from it.
 
 Milestones 2 and 3 do not depend on each other. Sandbox synchronisation, initial Milestone 6, is not in this roadmap.
 
@@ -969,6 +980,7 @@ Milestones 2 and 3 do not depend on each other. Sandbox synchronisation, initial
 | Default policy never merges or splits existing identities automatically; a rematch suggests and does not change | Policy plug-ins; automatic merges above a threshold; applying suggestions in bulk |
 | JSON and Arrow as the only wire forms; the run ID as the task handle; drafts stored on the server | Streaming run progress; an ad hoc SQL endpoint |
 | Inspection through the API only; an explanation computed from what the store holds, with sentences the engine writes | Running a strategy again to explain; explaining a pair as of an earlier log position |
-| A studio served by the server as three files compiled into the binary, built from `packages/studio` and committed; the files without a token and the API with one; a policy that lets the page call only its server | Changing identities from the studio; live updates; a studio published apart from the binary |
+| A studio served by the server as three files compiled into the binary, built from `packages/studio` and committed; the files without a token and the API with one; a policy that lets the page call only its server | Live updates; a studio published apart from the binary |
+| Changes from the studio as single calls of the API, written against what the reviewer saw and recorded under a name they give; the engine alone decides whether a change holds | Sign-in and who may change what; a changeset the reviewer puts together from operations of their choice; starting runs, ingesting and extracting from the studio |
 | Scenario-based benchmark with identity metrics and a CI baseline; extraction scored by exact span, apart from resolution | GLEIF scenario generator; a public extraction dataset; partial credit for overlapping spans; one end-to-end score |
 | Two library crates and one for the command and server; injected ID generator and clock; format version in the file; the prebuilt DuckDB library found by run path | Further crate splits; a statically linked DuckDB; indexes and keys |

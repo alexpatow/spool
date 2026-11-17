@@ -1,6 +1,8 @@
 import { useState } from "react";
+import type { ReactNode } from "react";
 
-import type { DocumentRecord, ObservationRecord, ReviewRecord } from "../api.ts";
+import { Act, At, Done, Mistake } from "../act.tsx";
+import type { DocumentRecord, ObservationRecord, Op, ReviewRecord } from "../api.ts";
 import {
   Fields,
   Filters,
@@ -16,7 +18,7 @@ import {
   message,
   usePair,
 } from "../components.tsx";
-import { findObservation, found } from "../find.ts";
+import { findIdentity, findObservation, found } from "../find.ts";
 import { excerpt, mentionOf, named, observationName } from "../format.ts";
 import type { Excerpt, Mention } from "../format.ts";
 import { useLoad, usePages, useStudio } from "../hooks.ts";
@@ -162,7 +164,72 @@ function ObservationScreen({ observation, review, document }: Loaded) {
       <Section title="Explain">
         <ExplainWith observation={observation} />
       </Section>
+      <Move observation={observation} />
     </>
+  );
+}
+
+/** Puts the observation in another identity, in a new one, or in none. */
+function Move({ observation }: { observation: ObservationRecord }) {
+  const [done, setDone] = useState<ReactNode>(null);
+  const [chosen, setWhere] = useState("identity");
+  const from = observation.identity ?? null;
+  // Once it is out of its identity, it cannot be taken out again.
+  const where = chosen === "none" && from === null ? "identity" : chosen;
+  return (
+    <Section title={from ? "Move it" : "Place it"}>
+      <Done>{done}</Done>
+      <Act
+        label={from ? "Move" : "Place"}
+        who
+        why="Reason"
+        act={async (client, { actor, reason, entered }) => {
+          const ops: Op[] = [];
+          let to: string | null = null;
+          if (where === "new") {
+            to = (await client.mintIds({ identities: 1 })).identities[0]!;
+            ops.push({ op: "create_identity", entity_type: observation.entity_type, identity: to });
+          } else if (where === "identity") {
+            const reference = String(entered.get("identity") ?? "").trim();
+            if (reference === "") throw new Mistake("Name the identity it goes to.");
+            const identity = await findIdentity(client, reference);
+            if (identity === null) throw new Mistake(`No identity is named ${reference}.`);
+            to = identity.id;
+          }
+          // Where it is now is what the reviewer saw: if that has changed
+          // since, the engine rejects the move.
+          ops.push({ op: "assign", observation: observation.id, from, to });
+          const committed = await client.commit({ actor, reason, ops });
+          return (
+            <>
+              {to === null ? "Taken out of its identity" : from ? "Moved" : "Placed"} at <At committed={committed} />.
+            </>
+          );
+        }}
+        done={setDone}
+      >
+        <label>
+          Where to
+          <select value={where} onChange={(event) => setWhere(event.target.value)}>
+            <option value="identity">an identity there is</option>
+            <option value="new">a new identity of its own</option>
+            {from ? <option value="none">no identity</option> : null}
+          </select>
+        </label>
+        {where === "identity" ? (
+          <label>
+            That identity
+            <input
+              name="identity"
+              placeholder="its ID, or an observation of it as source:key"
+              spellCheck={false}
+              autoComplete="off"
+              size={40}
+            />
+          </label>
+        ) : null}
+      </Act>
+    </Section>
   );
 }
 

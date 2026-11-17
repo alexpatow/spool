@@ -2,97 +2,34 @@
 // document, and what it shows is what the server holds.
 
 import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test";
-import { rmSync } from "node:fs";
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
-import { TOKEN, serve } from "../../client/test/server.ts";
+import { TOKEN } from "../../client/test/server.ts";
 import type { Server } from "../../client/test/server.ts";
 import { App, TOKEN_KEY } from "../src/app.tsx";
-import { REVIEWER, companies, copyProject, news, row, seedCompanies, seedNews } from "./seed.ts";
-
-const SEEDING = 120_000;
-
-type Fetch = typeof fetch;
-
-/** A `fetch` that does something before the real one is called. */
-function wrapped(call: (...args: Parameters<Fetch>) => ReturnType<Fetch>): Fetch {
-  return Object.assign(call, { preconnect: fetch.preconnect });
-}
-
-/** What a tab keeps, without a tab. */
-function memory(token?: string) {
-  const kept = new Map<string, string>(token === undefined ? [] : [[TOKEN_KEY, token]]);
-  return {
-    getItem: (name: string) => kept.get(name) ?? null,
-    setItem: (name: string, value: string) => void kept.set(name, value),
-    removeItem: (name: string) => void kept.delete(name),
-  };
-}
-
-/** Every call the studio made, as `GET /v1/info`. */
-const calls: string[] = [];
-const recording = wrapped((input, init) => {
-  calls.push(`${init?.method ?? "GET"} ${new URL(String(input)).pathname}`);
-  return fetch(input, init);
-});
-
-/** Opens the studio at an address, with the token already entered unless `storage` says otherwise. */
-function open(server: Server, address: string, storage = memory(TOKEN)) {
-  window.location.hash = address;
-  render(<App url={server.url} fetch={recording} storage={storage} />);
-  return storage;
-}
-
-/** Follows a link of the studio, as a click in a browser would. */
-function follow(link: Element) {
-  const address = link.getAttribute("href");
-  if (address === null || !address.startsWith("#")) throw new Error(`${link.outerHTML} is not a link of the studio`);
-  window.location.hash = address;
-}
-
-const heading = (name: string | RegExp) => screen.findByRole("heading", { level: 1, name });
-
-/** The rows of a table, each as the text of its cells. */
-function rowsOf(table: HTMLElement): string[][] {
-  return within(table)
-    .getAllByRole("row")
-    .slice(1)
-    .map((line) =>
-      within(line)
-        .getAllByRole("cell")
-        .map((cell) => cell.textContent ?? ""),
-    );
-}
-
-/** The value beside a label in a list of fields. */
-function field(label: string, within: ParentNode = document): string | null {
-  const term = [...within.querySelectorAll("dt")].find((term) => term.textContent === label);
-  return term?.nextElementSibling?.textContent ?? null;
-}
-
-const texts = (selector: string) => [...document.querySelectorAll(selector)].map((found) => found.textContent ?? "");
-
-const servers: Server[] = [];
-const projects: string[] = [];
+import {
+  SEEDING,
+  calls,
+  field,
+  follow,
+  heading,
+  memory,
+  open,
+  rowsOf,
+  start,
+  stopAll,
+  texts,
+  wrapped,
+} from "./harness.tsx";
+import { REVIEWER, companies, news, row, seedCompanies, seedNews } from "./seed.ts";
 
 afterEach(() => {
   cleanup();
   window.location.hash = "";
 });
 
-afterAll(async () => {
-  for (const server of servers) await server.stop();
-  for (const project of projects) rmSync(project, { recursive: true, force: true });
-});
-
-async function start(scenario: string, seed: number): Promise<Server> {
-  const project = copyProject(scenario);
-  projects.push(project);
-  const server = await serve(project, seed);
-  servers.push(server);
-  return server;
-}
+afterAll(stopAll);
 
 describe("the door", () => {
   let server: Server;
@@ -502,7 +439,7 @@ describe("company records a reviewer corrected", () => {
     }
   });
 
-  test("it only reads", () => {
+  test("looking at the screens changes nothing", () => {
     expect(calls.length).toBeGreaterThan(60);
     expect(calls.filter((call) => !call.startsWith("GET /v1/"))).toEqual([]);
   });
