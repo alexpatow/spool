@@ -11,11 +11,31 @@ fn repository() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// The three files, with the path and the media type each is served at.
-const FILES: [(&str, &str, &str); 3] = [
+/// The files, with the path and the media type each is served at.
+const FILES: [(&str, &str, &str); 7] = [
     ("/", "index.html", "text/html; charset=utf-8"),
     ("/studio.js", "studio.js", "text/javascript; charset=utf-8"),
     ("/studio.css", "studio.css", "text/css; charset=utf-8"),
+    (
+        "/geist-latin-wght-normal.woff2",
+        "geist-latin-wght-normal.woff2",
+        "font/woff2",
+    ),
+    (
+        "/geist-latin-ext-wght-normal.woff2",
+        "geist-latin-ext-wght-normal.woff2",
+        "font/woff2",
+    ),
+    (
+        "/geist-mono-latin-wght-normal.woff2",
+        "geist-mono-latin-wght-normal.woff2",
+        "font/woff2",
+    ),
+    (
+        "/geist-mono-latin-ext-wght-normal.woff2",
+        "geist-mono-latin-ext-wght-normal.woff2",
+        "font/woff2",
+    ),
 ];
 
 fn built(file: &str) -> Vec<u8> {
@@ -65,6 +85,23 @@ fn the_server_answers_a_browser_with_the_studio_and_asks_no_token_for_it() {
     assert!(!page.contains("<style"), "{page}");
     assert_eq!(page.matches("<script").count(), 1, "{page}");
 
+    // The style sheet names its fonts beside itself too, and names no file
+    // the server does not have.
+    let style = text(&built("studio.css"));
+    let mut named: Vec<&str> = style
+        .split("url(")
+        .skip(1)
+        .map(|rest| rest.split(')').next().unwrap().trim_matches('"'))
+        .collect();
+    named.sort_unstable();
+    let mut fonts: Vec<String> = FILES
+        .iter()
+        .filter(|(_, _, media_type)| *media_type == "font/woff2")
+        .map(|(at, _, _)| format!(".{at}"))
+        .collect();
+    fonts.sort_unstable();
+    assert_eq!(named, fonts);
+
     // What the store holds still needs the token.
     server
         .request("GET", "/v1/info")
@@ -89,6 +126,7 @@ fn the_studio_may_load_nothing_but_itself_and_call_nothing_but_its_server() {
                 "default-src 'none'",
                 "script-src 'self'",
                 "style-src 'self'",
+                "font-src 'self'",
                 "img-src 'self' data:",
                 "connect-src 'self'",
                 "base-uri 'none'",
@@ -152,11 +190,11 @@ fn a_browser_is_told_when_the_studio_it_has_is_still_the_one() {
     }
     tags.sort();
     tags.dedup();
-    assert_eq!(tags.len(), 3, "each file has its own tag");
+    assert_eq!(tags.len(), FILES.len(), "each file has its own tag");
 }
 
 #[test]
-fn the_studio_is_three_paths_and_takes_only_reads() {
+fn the_studio_is_its_own_paths_and_takes_only_reads() {
     let dir = tempfile::tempdir().unwrap();
     let server = serve_things(dir.path(), &[]);
 
@@ -173,6 +211,8 @@ fn the_studio_is_three_paths_and_takes_only_reads() {
         "/index.html",
         "/studio",
         "/studio.js.map",
+        "/geist-latin-wght-normal.woff",
+        "/fonts/geist-latin-wght-normal.woff2",
         "/runs",
         "/favicon.ico",
         "/v1",
@@ -270,7 +310,7 @@ fn bun(arguments: &[&str]) {
 fn the_studio_this_binary_serves_is_built_from_its_source_and_passes_its_tests() {
     bun(&["install", "--frozen-lockfile"]);
     bun(&["run", "typecheck"]);
-    // The three files compiled into the binary are what the source builds to.
+    // The files compiled into the binary are what the source builds to.
     bun(&["run", "check-build"]);
     // Every screen is rendered against a real server of this binary.
     bun(&["test"]);

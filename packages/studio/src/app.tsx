@@ -4,14 +4,49 @@
 // Every screen is one or a few calls a client could make, shown, and every
 // change is one more; the address after `#` says which screen.
 
+import * as stylex from "@stylexjs/stylex";
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
 import { SpoolClient, SpoolError } from "./api.ts";
 import type { Fetch, Info } from "./api.ts";
-import { Failure, Page, message } from "./components.tsx";
-import { findScreen } from "./find.ts";
-import { StudioContext, useRoute, useStudio } from "./hooks.ts";
+import { Code, Failure, Labelled, LinkTo, Notice, Page, Quiet, Text } from "./components.tsx";
+import { Button } from "./components/ui/button";
+import { Input } from "./components/ui/input";
+import { Kbd } from "./components/ui/kbd";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarTrigger,
+  useSidebar,
+} from "./components/ui/sidebar";
+import { StudioContext, useRoute } from "./hooks.ts";
+import {
+  DarkModeIcon,
+  DraftIcon,
+  ExplainIcon,
+  FileTextIcon,
+  IdentityIcon,
+  InboxIcon,
+  LayoutDashboardIcon,
+  LightModeIcon,
+  LogIcon,
+  RecordIcon,
+  RefreshIcon,
+  RunIcon,
+  SearchIcon,
+  TokenIcon,
+} from "./icons.tsx";
+import { Palette } from "./palette.tsx";
 import { href } from "./router.ts";
 import type { Route } from "./router.ts";
 import { Document, Documents } from "./screens/documents.tsx";
@@ -23,6 +58,10 @@ import { Observation, Observations } from "./screens/observations.tsx";
 import { Overview } from "./screens/overview.tsx";
 import { ReviewItem, ReviewItems } from "./screens/review.tsx";
 import { Run, Runs } from "./screens/runs.tsx";
+import { colors, radius, spacing, typography } from "./styles/shelf/tokens.stylex";
+import { applyTheme } from "./styles/themes.ts";
+import type { Theme } from "./styles/themes.ts";
+import { tones } from "./styles/tones.stylex";
 
 /** Where the token is kept: for as long as the tab is open, and no longer. */
 export const TOKEN_KEY = "spool.token";
@@ -32,6 +71,9 @@ export const DEV_TOKEN = "dev";
 
 /** Where the reviewer's name is kept. It is no secret, so it outlives the tab. */
 export const REVIEWER_KEY = "spool.reviewer";
+
+/** Where it is kept whether the reader chose a light or a dark page. */
+export const THEME_KEY = "spool.theme";
 
 type Kept = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
@@ -53,6 +95,24 @@ type Connection =
   | { status: "refused" }
   | { status: "failed"; error: unknown };
 
+/** Light or dark as the reader chose, or as their system is set when they have not. */
+function useTheme(kept: Kept): [Theme, () => void] {
+  const [theme, setTheme] = useState<Theme>(() => {
+    const chosen = kept.getItem(THEME_KEY);
+    if (chosen === "light" || chosen === "dark") return chosen;
+    return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  });
+  useEffect(() => applyTheme(theme), [theme]);
+  return [
+    theme,
+    () => {
+      const next = theme === "dark" ? "light" : "dark";
+      kept.setItem(THEME_KEY, next);
+      setTheme(next);
+    },
+  ];
+}
+
 export function App({
   url = window.location.origin,
   fetch,
@@ -64,6 +124,7 @@ export function App({
   const [version, setVersion] = useState(0);
   const [connection, setConnection] = useState<Connection>({ status: "checking" });
   const client = useMemo(() => new SpoolClient({ url, token, fetch }), [url, token, fetch]);
+  const [theme, toggleTheme] = useTheme(names);
 
   useEffect(() => {
     let current = true;
@@ -90,7 +151,7 @@ export function App({
   if (connection.status === "checking") {
     return (
       <Door url={url}>
-        <p className="quiet">Asking the server what it holds…</p>
+        <Quiet>Asking the server what it holds…</Quiet>
       </Door>
     );
   }
@@ -105,11 +166,11 @@ export function App({
     return (
       <Door url={url}>
         <Failure error={connection.error} />
-        <p>
-          <button type="button" onClick={() => setVersion((before) => before + 1)}>
+        <div>
+          <Button variant="outline" onClick={() => setVersion((before) => before + 1)}>
             Try again
-          </button>
-        </p>
+          </Button>
+        </div>
       </Door>
     );
   }
@@ -119,11 +180,13 @@ export function App({
     setReviewer(name);
   };
   return (
-    <StudioContext.Provider value={{ client, version, refresh, reviewer, remember }}>
+    <StudioContext.Provider value={{ client, version, refresh, reviewer, remember, info: connection.info }}>
       <Shell
         url={url}
         info={connection.info}
         refresh={refresh}
+        theme={theme}
+        toggleTheme={toggleTheme}
         forget={() => {
           storage.removeItem(TOKEN_KEY);
           setConnection({ status: "refused" });
@@ -133,18 +196,33 @@ export function App({
   );
 }
 
+function Mark() {
+  return (
+    <svg viewBox="0 0 32 32" aria-hidden {...stylex.props(styles.mark)}>
+      <rect width="32" height="32" rx="8" fill="currentColor" />
+      <circle cx="16" cy="16" r="7.5" fill="none" strokeWidth="3" {...stylex.props(styles.markRing)} />
+      <circle cx="16" cy="16" r="2" {...stylex.props(styles.markDot)} />
+    </svg>
+  );
+}
+
 /** What is shown before the studio can read: the server it is asking, and what is in the way. */
 function Door({ url, children }: { url: string; children: ReactNode }) {
   useEffect(() => {
     document.title = "Spool studio";
   }, []);
   return (
-    <main className="door">
-      <h1>Spool studio</h1>
-      <p className="quiet">
-        Server <code>{url}</code>
-      </p>
-      {children}
+    <main {...stylex.props(styles.door)}>
+      <div {...stylex.props(styles.doorCard)}>
+        <div {...stylex.props(styles.doorHead)}>
+          <Mark />
+          <h1 {...stylex.props(styles.doorTitle)}>Spool studio</h1>
+        </div>
+        <Quiet>
+          Server <Code>{url}</Code>
+        </Quiet>
+        {children}
+      </div>
     </main>
   );
 }
@@ -152,24 +230,25 @@ function Door({ url, children }: { url: string; children: ReactNode }) {
 function TokenForm({ guessed, connect }: { guessed: boolean; connect: (token: string) => void }) {
   return (
     <form
-      className="token"
+      {...stylex.props(styles.tokenForm)}
       onSubmit={(event) => {
         event.preventDefault();
         const entered = String(new FormData(event.currentTarget).get("token") ?? "").trim();
         if (entered !== "") connect(entered);
       }}
     >
-      <p>
-        {guessed
-          ? "This server needs its bearer token: the value of SPOOL_TOKEN it was started with."
-          : "The server refused that token."}
-      </p>
-      <label>
-        Token
-        <input name="token" type="password" autoComplete="off" autoFocus />
-      </label>
-      <button type="submit">Connect</button>
-      <p className="quiet">The token is kept in this tab until it is closed, and sent only to this server.</p>
+      {guessed ? (
+        <Text>This server needs its bearer token: the value of SPOOL_TOKEN it was started with.</Text>
+      ) : (
+        <Notice tone="bad" role="alert">
+          The server refused that token.
+        </Notice>
+      )}
+      <Labelled label="Token">
+        <Input name="token" type="password" autoComplete="off" autoFocus />
+      </Labelled>
+      <Button type="submit">Connect</Button>
+      <Quiet>The token is kept in this tab until it is closed, and sent only to this server.</Quiet>
     </form>
   );
 }
@@ -177,24 +256,71 @@ function TokenForm({ guessed, connect }: { guessed: boolean; connect: (token: st
 interface Entry {
   path: string;
   label: string;
+  icon: ReactNode;
   /** How many wait for someone, shown beside the label when there are any. */
   waiting?: number;
 }
 
-function Shell({ url, info, refresh, forget }: { url: string; info: Info; refresh: () => void; forget: () => void }) {
+function Shell({
+  url,
+  info,
+  refresh,
+  theme,
+  toggleTheme,
+  forget,
+}: {
+  url: string;
+  info: Info;
+  refresh: () => void;
+  theme: Theme;
+  toggleTheme: () => void;
+  forget: () => void;
+}) {
   const route = useRoute();
+  const [finding, setFinding] = useState(false);
   const types = info.store.entity_types;
-  const entries: Entry[] = [
-    { path: "", label: "Overview" },
-    { path: "runs", label: "Runs" },
-    { path: "identities", label: "Identities" },
-    { path: "observations", label: "Observations" },
-    { path: "documents", label: "Documents" },
-    { path: "review", label: "Review", waiting: types.reduce((sum, type) => sum + type.open_review_items, 0) },
-    { path: "drafts", label: "Drafts", waiting: types.filter((type) => type.open_draft).length },
-    { path: "log", label: "Log" },
-    { path: "explain", label: "Explain" },
+  const groups: Array<{ label: string; entries: Entry[] }> = [
+    {
+      label: "Decide",
+      entries: [
+        { path: "", label: "Overview", icon: <LayoutDashboardIcon /> },
+        {
+          path: "review",
+          label: "Review",
+          icon: <InboxIcon />,
+          waiting: types.reduce((sum, type) => sum + type.open_review_items, 0),
+        },
+        {
+          path: "drafts",
+          label: "Drafts",
+          icon: <DraftIcon />,
+          waiting: types.filter((type) => type.open_draft).length,
+        },
+      ],
+    },
+    {
+      label: "Look",
+      entries: [
+        { path: "identities", label: "Identities", icon: <IdentityIcon /> },
+        { path: "observations", label: "Records", icon: <RecordIcon /> },
+        { path: "documents", label: "Documents", icon: <FileTextIcon /> },
+        { path: "explain", label: "Explain", icon: <ExplainIcon /> },
+      ],
+    },
+    {
+      label: "What happened",
+      entries: [
+        { path: "runs", label: "Runs", icon: <RunIcon /> },
+        { path: "log", label: "Log", icon: <LogIcon /> },
+      ],
+    },
   ];
+  const places = useMemo(
+    () => groups.flatMap((group) => group.entries.map(({ path, label, icon }) => ({ path, label, icon }))),
+    // The screens are the same whatever the server holds.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
   const here = route.path[0] ?? "";
   // A screen is made anew for each address: what it read belongs to the
   // address it was read for.
@@ -203,98 +329,114 @@ function Shell({ url, info, refresh, forget }: { url: string; info: Info; refres
     window.scrollTo?.(0, 0);
   }, [address]);
 
+  useEffect(() => {
+    const pressed = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== "k" || !(event.metaKey || event.ctrlKey)) return;
+      event.preventDefault();
+      setFinding((before) => !before);
+    };
+    window.addEventListener("keydown", pressed);
+    return () => window.removeEventListener("keydown", pressed);
+  }, []);
+
   return (
-    <div className="shell">
-      <nav className="nav" aria-label="Screens">
-        <a className="brand" href={href([])}>
-          Spool <span>studio</span>
-        </a>
-        <ul>
-          {entries.map((entry) => (
-            <li key={entry.path}>
-              <a
-                href={href(entry.path === "" ? [] : [entry.path])}
-                aria-current={entry.path === here ? "page" : undefined}
-              >
-                {entry.label}
-                {entry.waiting ? <span className="waiting">{entry.waiting}</span> : null}
-              </a>
-            </li>
-          ))}
-        </ul>
-        <p className="server" title={url}>
-          <code>{url.replace(/^https?:\/\//, "")}</code>
-        </p>
-      </nav>
-      <div className="main">
-        <header className="bar">
-          <Find key={address} />
-          <button type="button" onClick={refresh} title="Read what is shown again">
-            Refresh
+    <SidebarProvider>
+      <Sidebar collapsible="icon">
+        <SidebarHeader>
+          <a href={href([])} {...stylex.props(styles.brand)}>
+            <Mark />
+            <Hidden>
+              <span {...stylex.props(styles.brandName)}>Spool</span>
+              <span {...stylex.props(styles.brandKind)}>studio</span>
+            </Hidden>
+          </a>
+        </SidebarHeader>
+        <SidebarContent>
+          <nav aria-label="Screens" {...stylex.props(styles.nav)}>
+            {groups.map((group) => (
+              <SidebarGroup key={group.label}>
+                <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+                <SidebarMenu>
+                  {group.entries.map((entry) => (
+                    <SidebarMenuItem key={entry.path}>
+                      <SidebarMenuButton
+                        isActive={entry.path === here}
+                        tooltip={entry.label}
+                        render={
+                          <a
+                            href={href(entry.path === "" ? [] : [entry.path])}
+                            aria-current={entry.path === here ? "page" : undefined}
+                          />
+                        }
+                      >
+                        {entry.icon}
+                        <span>{entry.label}</span>
+                        {entry.waiting ? (
+                          <span data-part="waiting" {...stylex.props(styles.waiting)}>
+                            {entry.waiting}
+                          </span>
+                        ) : null}
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ))}
+                </SidebarMenu>
+              </SidebarGroup>
+            ))}
+          </nav>
+        </SidebarContent>
+        <SidebarFooter>
+          <Hidden>
+            <div title={url} {...stylex.props(styles.server)}>
+              <span {...stylex.props(styles.serverMark)} />
+              <span {...stylex.props(styles.serverName)}>{url.replace(/^https?:\/\//, "")}</span>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={forget}
+              title="Forget the token and ask for it again"
+              style={styles.footButton}
+            >
+              <TokenIcon /> Change token
+            </Button>
+          </Hidden>
+        </SidebarFooter>
+      </Sidebar>
+      <SidebarInset>
+        <header {...stylex.props(styles.bar)}>
+          <SidebarTrigger />
+          <button type="button" onClick={() => setFinding(true)} {...stylex.props(styles.find)}>
+            <SearchIcon />
+            <span {...stylex.props(styles.findWords)}>Find a name, an ID, or source:key</span>
+            <Kbd>⌘K</Kbd>
           </button>
-          <button type="button" className="quiet-button" onClick={forget} title="Forget the token and ask for it again">
-            Change token
-          </button>
+          <div {...stylex.props(styles.barEnd)}>
+            <Button variant="ghost" size="sm" onClick={refresh} title="Read what is shown again">
+              <RefreshIcon /> Refresh
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={toggleTheme}
+              aria-label={theme === "dark" ? "Make the page light" : "Make the page dark"}
+            >
+              {theme === "dark" ? <LightModeIcon /> : <DarkModeIcon />}
+            </Button>
+          </div>
         </header>
-        <main key={address}>
+        <div key={address} {...stylex.props(styles.screen)}>
           <Screen route={route} types={types.map((type) => type.name)} />
-        </main>
-      </div>
-    </div>
+        </div>
+      </SidebarInset>
+      <Palette open={finding} onOpenChange={setFinding} places={places} />
+    </SidebarProvider>
   );
 }
 
-/** Goes to the screen of whatever a pasted ID, or a source and key, names. */
-function Find() {
-  const { client } = useStudio();
-  const [busy, setBusy] = useState(false);
-  const [problem, setProblem] = useState<string | null>(null);
-  return (
-    <form
-      className="find"
-      role="search"
-      onSubmit={(event) => {
-        event.preventDefault();
-        const form = event.currentTarget;
-        const reference = String(new FormData(form).get("reference") ?? "").trim();
-        if (reference === "" || busy) return;
-        setBusy(true);
-        setProblem(null);
-        findScreen(client, reference).then(
-          (screen) => {
-            setBusy(false);
-            if (screen === null) setProblem(`Nothing here is named ${reference}.`);
-            else {
-              form.reset();
-              window.location.hash = screen;
-            }
-          },
-          (error: unknown) => {
-            setBusy(false);
-            setProblem(message(error));
-          },
-        );
-      }}
-    >
-      <input
-        name="reference"
-        type="search"
-        aria-label="Find by ID, or by source and key"
-        placeholder="Find an ID, or source:key"
-        spellCheck={false}
-        autoComplete="off"
-        onChange={() => setProblem(null)}
-      />
-      <button type="submit" disabled={busy}>
-        Find
-      </button>
-      {problem ? (
-        <span className="failure" role="alert">
-          {problem}
-        </span>
-      ) : null}
-    </form>
-  );
+/** What the sidebar shows only while it is wide enough to. */
+function Hidden({ children }: { children: ReactNode }) {
+  const { open, isMobile } = useSidebar();
+  return open || isMobile ? <>{children}</> : null;
 }
 
 function Screen({ route, types }: { route: Route; types: string[] }) {
@@ -327,9 +469,187 @@ function Screen({ route, types }: { route: Route; types: string[] }) {
 function Nowhere() {
   return (
     <Page title="No such screen">
-      <p>
-        The studio has no screen at this address. <a href={href([])}>Go to the overview.</a>
-      </p>
+      <Text>
+        The studio has no screen at this address. <LinkTo path={[]}>Go to the overview.</LinkTo>
+      </Text>
     </Page>
   );
 }
+
+const styles = stylex.create({
+  mark: {
+    color: colors.primary,
+    flexShrink: 0,
+    height: "1.5rem",
+    width: "1.5rem",
+  },
+  markRing: {
+    stroke: colors.primaryForeground,
+  },
+  markDot: {
+    fill: colors.primaryForeground,
+  },
+  door: {
+    padding: spacing["6"],
+    alignItems: "center",
+    backgroundColor: colors.card,
+    boxSizing: "border-box",
+    color: colors.foreground,
+    display: "flex",
+    fontFamily: typography.fontFamily,
+    fontSize: typography.fontSizeSm,
+    justifyContent: "center",
+    lineHeight: typography.lineHeightSm,
+    minHeight: "100svh",
+  },
+  doorCard: {
+    borderColor: colors.border,
+    borderRadius: radius.lg,
+    borderStyle: "solid",
+    borderWidth: 1,
+    gap: spacing["4"],
+    padding: spacing["6"],
+    backgroundColor: colors.background,
+    boxSizing: "border-box",
+    display: "flex",
+    flexDirection: "column",
+    maxWidth: "26rem",
+    width: "100%",
+  },
+  doorHead: {
+    gap: spacing["2.5"],
+    alignItems: "center",
+    display: "flex",
+  },
+  doorTitle: {
+    margin: 0,
+    fontSize: typography.fontSizeLg,
+    fontWeight: typography.fontWeightSemibold,
+    letterSpacing: "-0.01em",
+    lineHeight: typography.lineHeightLg,
+  },
+  tokenForm: {
+    gap: spacing["4"],
+    display: "flex",
+    flexDirection: "column",
+  },
+  brand: {
+    gap: spacing["2"],
+    padding: spacing["1"],
+    alignItems: "center",
+    color: colors.foreground,
+    display: "flex",
+    textDecorationLine: "none",
+  },
+  brandName: {
+    fontSize: typography.fontSizeBase,
+    fontWeight: typography.fontWeightSemibold,
+    letterSpacing: "-0.01em",
+  },
+  brandKind: {
+    color: colors.mutedForeground,
+  },
+  nav: {
+    display: "flex",
+    flexDirection: "column",
+  },
+  waiting: {
+    borderRadius: radius.full,
+    paddingInline: spacing["1.5"],
+    backgroundColor: tones.waitsSurface,
+    color: tones.waits,
+    fontSize: typography.fontSizeXs,
+    fontVariantNumeric: "tabular-nums",
+    fontWeight: typography.fontWeightMedium,
+    justifySelf: "end",
+    lineHeight: "1.125rem",
+    marginInlineStart: "auto",
+    minWidth: "1.125rem",
+    textAlign: "center",
+    boxSizing: "border-box",
+  },
+  server: {
+    gap: spacing["2"],
+    paddingInline: spacing["2"],
+    alignItems: "center",
+    color: colors.mutedForeground,
+    display: "flex",
+    fontSize: typography.fontSizeXs,
+    lineHeight: typography.lineHeightXs,
+    minWidth: 0,
+  },
+  serverMark: {
+    borderRadius: radius.full,
+    backgroundColor: tones.goodMark,
+    flexShrink: 0,
+    height: "0.375rem",
+    width: "0.375rem",
+  },
+  serverName: {
+    fontFamily: typography.fontFamilyMono,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  footButton: {
+    color: colors.mutedForeground,
+    justifyContent: "flex-start",
+  },
+  bar: {
+    borderBottomColor: colors.border,
+    borderBottomStyle: "solid",
+    borderBottomWidth: 1,
+    gap: spacing["3"],
+    paddingInline: spacing["4"],
+    alignItems: "center",
+    backgroundColor: colors.background,
+    display: "flex",
+    flexShrink: 0,
+    position: "sticky",
+    zIndex: 10,
+    height: "3rem",
+    top: 0,
+  },
+  find: {
+    borderColor: colors.input,
+    borderRadius: radius.md,
+    borderStyle: "solid",
+    borderWidth: 1,
+    gap: spacing["2"],
+    paddingInline: spacing["2.5"],
+    alignItems: "center",
+    backgroundColor: { default: colors.background, ":hover": colors.card },
+    color: colors.mutedForeground,
+    cursor: "pointer",
+    display: "flex",
+    flexGrow: 1,
+    fontFamily: typography.fontFamily,
+    fontSize: typography.fontSizeSm,
+    height: "2rem",
+    maxWidth: "26rem",
+    minWidth: 0,
+    outlineColor: colors.ring,
+    outlineOffset: 2,
+    outlineStyle: { default: "none", ":focus-visible": "solid" },
+    outlineWidth: 2,
+  },
+  findWords: {
+    flexGrow: 1,
+    overflow: "hidden",
+    textAlign: "start",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  barEnd: {
+    gap: spacing["1"],
+    alignItems: "center",
+    display: "flex",
+    marginInlineStart: "auto",
+  },
+  screen: {
+    display: "flex",
+    flexDirection: "column",
+    flexGrow: 1,
+    minWidth: 0,
+  },
+});

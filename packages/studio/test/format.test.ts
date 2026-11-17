@@ -13,6 +13,7 @@ import {
   short,
   when,
 } from "../src/format.ts";
+import { isReference } from "../src/find.ts";
 import { href, parseHash } from "../src/router.ts";
 
 const A = "2060cadc-cebd-9817-f61a-f4fd7fd74ee7";
@@ -184,5 +185,16 @@ describe("an address", () => {
       query: { source: "crm", key: "a b&c", unassigned: "true" },
     });
     expect(parseHash(href(["documents", "a/b"]))).toEqual({ path: ["documents", "a/b"], query: {} });
+  });
+});
+
+describe("a reference", () => {
+  test("is an ID, or a source and whatever the source calls its row", () => {
+    for (const text of [A, "crm:c-104", "news:Annual Report.txt", "web:https://example.com/a b", "news:a.txt[0-14]"]) {
+      expect([text, isReference(text)]).toEqual([text, true]);
+    }
+    for (const text of ["", "halden energy", "crm:", ":c-104", "halden energy: a note", A.slice(0, 20)]) {
+      expect([text, isReference(text)]).toEqual([text, false]);
+    }
   });
 });

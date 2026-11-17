@@ -988,6 +988,179 @@ fn identities_observations_and_review_items_are_looked_up() {
 }
 
 #[test]
+fn what_is_read_says_what_things_are_called_where_they_came_from_and_what_waits() {
+    let library = library(5);
+    let dir = tempfile::tempdir().unwrap();
+    let server = company_server(dir.path(), 5);
+    run_companies(&server, Encoding::Json);
+
+    // A record is called what its payload names it, whatever the field.
+    let crm = server.read("/v1/observations?source=crm&key=c-102");
+    assert_eq!(crm["observations"][0]["label"], "Acorn Tools");
+    let registry = server.read("/v1/observations?source=registry&key=X0000002");
+    assert_eq!(
+        registry["observations"][0]["label"],
+        "ACORN TOOL COMPANY LTD"
+    );
+    let identity = crm["observations"][0]["identity"].as_str().unwrap();
+    assert_eq!(registry["observations"][0]["identity"], identity);
+
+    // An identity is called what most of its records are, and says how many
+    // each source gave.
+    let view = server.read(&format!("/v1/identities/{identity}"));
+    assert_eq!(view["label"], "Acorn Tools");
+    let page = server.read("/v1/identities?limit=1000");
+    assert_eq!(
+        page["identities"],
+        serde_json::to_value(
+            library
+                .identities(&IdentityFilter {
+                    limit: 1000,
+                    ..IdentityFilter::default()
+                })
+                .unwrap()
+        )
+        .unwrap()
+    );
+    let listed = page["identities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|listed| listed["id"] == identity)
+        .unwrap();
+    assert_eq!(listed["label"], "Acorn Tools");
+    assert_eq!(
+        listed["sources"],
+        json!([
+            { "source": "crm", "observations": 2 },
+            { "source": "registry", "observations": 1 },
+        ])
+    );
+
+    // Its members are read as observations, with what each of them says.
+    let members = server.read(&format!("/v1/observations?identity={identity}"));
+    let mut labels: Vec<&str> = members["observations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|member| member["label"].as_str().unwrap())
+        .collect();
+    labels.sort();
+    assert_eq!(
+        labels,
+        ["ACORN TOOL COMPANY LTD", "Acorn Tool Co.", "Acorn Tools"]
+    );
+    server
+        .get("/v1/observations?identity=acorn")
+        .error(400, "invalid");
+
+    // Identities are read by their IDs, as the list gives them.
+    let all = page["identities"].as_array().unwrap();
+    let other = all.iter().find(|listed| listed["id"] != identity).unwrap()["id"]
+        .as_str()
+        .unwrap();
+    let named = server.read(&format!("/v1/identities?ids={other},{identity}"));
+    let wanted: Vec<&serde_json::Value> = all
+        .iter()
+        .filter(|listed| listed["id"] == identity || listed["id"] == other)
+        .collect();
+    assert_eq!(named["identities"], json!(wanted));
+    assert_eq!(named["next"], json!(null));
+    assert_eq!(
+        server.read(&format!("/v1/identities?ids={identity}&q=sheffield"))["identities"],
+        json!([listed])
+    );
+    assert_eq!(server.read("/v1/identities?ids=")["identities"], json!([]));
+    server
+        .get(&format!("/v1/identities?ids={identity},acorn"))
+        .error(400, "invalid");
+    let many = vec![identity; 1001].join(",");
+    server
+        .get(&format!("/v1/identities?ids={many}"))
+        .error(400, "invalid");
+
+    // Records and identities are found by the words they hold.
+    let found = server.read("/v1/identities?q=acorn%20sheffield");
+    assert_eq!(found["identities"].as_array().unwrap().len(), 1);
+    assert_eq!(found["identities"][0]["id"], identity);
+    let found = server.read("/v1/observations?q=ACORN&source=registry");
+    assert_eq!(found["observations"], registry["observations"]);
+    assert_eq!(
+        server.read("/v1/observations?q=no-such-company")["observations"],
+        json!([])
+    );
+
+    // The store says what each source gave.
+    let info = server.read("/v1/info");
+    let sources = info["store"]["entity_types"][0]["sources"]
+        .as_array()
+        .unwrap();
+    assert_eq!(
+        sources
+            .iter()
+            .map(|source| (
+                source["source"].as_str().unwrap(),
+                source["observations"].as_u64().unwrap(),
+                source["unassigned"].as_u64().unwrap()
+            ))
+            .collect::<Vec<_>>(),
+        [("crm", 23, 1), ("registry", 16, 0)]
+    );
+    assert_eq!(
+        info["store"],
+        serde_json::to_value(library.info().unwrap()).unwrap()
+    );
+    assert_eq!(
+        sources[0]["observations"].as_u64().unwrap() + sources[1]["observations"].as_u64().unwrap(),
+        info["store"]["entity_types"][0]["observations"]
+    );
+
+    // A review item is read with the records it is about: the one that
+    // waits, the identities it matched with their members, and the
+    // judgements that say so.
+    let case = server.read("/v1/review/1/case");
+    assert_eq!(
+        case,
+        serde_json::to_value(library.review_case(1).unwrap()).unwrap()
+    );
+    assert_eq!(case["item"], server.read("/v1/review/1"));
+    assert_eq!(case["observations"][0]["key"], "c-117");
+    assert!(case["observations"][0]["label"].is_string());
+    let candidates = case["candidates"].as_array().unwrap();
+    assert_eq!(candidates.len(), 2);
+    for candidate in candidates {
+        assert!(candidate["identity"]["label"].is_string(), "{candidate}");
+        assert_eq!(
+            candidate["members"].as_array().unwrap().len() as u64,
+            candidate["identity"]["members"].as_u64().unwrap()
+        );
+    }
+    let judgements = case["judgements"].as_array().unwrap();
+    assert!(judgements.len() >= 2, "{case}");
+    assert!(
+        judgements
+            .iter()
+            .all(|judgement| judgement["observation"] == case["observations"][0]["id"])
+    );
+    assert!(
+        judgements
+            .iter()
+            .any(|judgement| judgement["verdict"] == "match")
+    );
+    // Each names the candidate it is about.
+    for judgement in judgements {
+        assert!(
+            candidates
+                .iter()
+                .any(|candidate| candidate["identity"]["id"] == judgement["identity"]),
+            "{judgement}"
+        );
+    }
+    server.get("/v1/review/99/case").error(404, "not_found");
+    server.get("/v1/review/x/case").error(400, "invalid");
+}
+
+#[test]
 fn a_pair_of_observations_is_explained() {
     let dir = tempfile::tempdir().unwrap();
     let server = things_server(dir.path());

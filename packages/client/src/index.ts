@@ -35,6 +35,7 @@ import type {
   ObservationList,
   ObservationRecord,
   Rejection,
+  ReviewCase,
   ReviewRecord,
   ReviewStatus,
   RunId,
@@ -126,6 +127,17 @@ export interface ConstraintFilter {
 
 export interface IdentityFilter {
   entity_type?: EntityType;
+  /**
+   * Only identities with a member that holds every word of this text: in a
+   * value of its payload, in the name of its source or in its key, whatever
+   * the case and the accents of the letters.
+   */
+  q?: string;
+  /**
+   * Only these identities, which is how a caller that holds IDs reads what
+   * they are called. One that was merged away is left out. At most 1000.
+   */
+  ids?: IdentityId[];
   /** The `next` of the page before. */
   after?: IdentityId;
   limit?: number;
@@ -147,6 +159,14 @@ export interface ObservationFilter {
   key?: string;
   /** Only the mentions an extractor found in this version of a document. */
   document?: DocumentId;
+  /** Only the members this identity has now. */
+  identity?: IdentityId;
+  /**
+   * Only observations that hold every word of this text: in a value of the
+   * payload, in the name of the source or in the key, whatever the case and
+   * the accents of the letters.
+   */
+  q?: string;
   /** Only observations that have no identity. */
   unassigned?: boolean;
   /** The `next` of the page before. */
@@ -454,7 +474,7 @@ export class SpoolClient {
 
   /** A page of active identities. Pass `next` as `after` for the page after. */
   identities(filter: IdentityFilter = {}): Promise<IdentityList> {
-    return this.json("GET", "/v1/identities", { query: { ...filter } });
+    return this.json("GET", "/v1/identities", { query: { ...filter, ids: filter.ids?.join(",") } });
   }
 
   /** An identity and its members. */
@@ -508,6 +528,15 @@ export class SpoolClient {
 
   reviewItem(item: number): Promise<ReviewRecord> {
     return this.json("GET", `/v1/review/${item}`);
+  }
+
+  /**
+   * A review item with what a reviewer reads to decide it: the observations
+   * it holds back, the identities they matched with their members, and what
+   * was judged between them.
+   */
+  reviewCase(item: number): Promise<ReviewCase> {
+    return this.json("GET", `/v1/review/${item}/case`);
   }
 
   /**

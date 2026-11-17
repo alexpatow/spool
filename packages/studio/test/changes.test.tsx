@@ -7,7 +7,22 @@ import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-libra
 
 import type { Server } from "../../client/test/server.ts";
 import { REVIEWER_KEY } from "../src/app.tsx";
-import { SEEDING, calls, field, heading, idle, memory, open, start, stopAll, texts } from "./harness.tsx";
+import {
+  SEEDING,
+  calls,
+  counted,
+  field,
+  follow,
+  heading,
+  idle,
+  memory,
+  open,
+  parts,
+  screens,
+  start,
+  stopAll,
+  texts,
+} from "./harness.tsx";
 import { REVIEWER, companies, row, seedCompanies } from "./seed.ts";
 
 let server: Server;
@@ -25,29 +40,55 @@ afterEach(async () => {
   await stopAll();
 });
 
-/** The form a button belongs to. */
-function formOf(button: string | RegExp) {
-  const form = screen.getByRole("button", { name: button }).closest("form");
-  if (form === null) throw new Error(`the button ${button} is in no form`);
-  return within(form);
+// A change is proposed by a button, and made from the dialog the button
+// opens: it says what the change would do, and takes the reviewer's name and
+// their reason.
+
+/**
+ * Whether a dialog is open. Asked as a yes or no: an element that an
+ * expectation fails on is written out whole, and a page is long.
+ */
+const asking = () => screen.queryByRole("dialog") !== null;
+
+/** The dialog a button opens. It is opened unless one already is. */
+async function asked(button: string | RegExp) {
+  if (!asking()) fireEvent.click(screen.getByRole("button", { name: button }));
+  return within(await screen.findByRole("dialog"));
 }
 
-/** Fills the fields of a form by their labels. */
-function fill(button: string | RegExp, fields: Record<string, string>) {
-  const form = formOf(button);
+/** Fills the fields of a button's dialog by their labels. */
+async function fill(button: string | RegExp, fields: Record<string, string>) {
+  const dialog = await asked(button);
   for (const [label, value] of Object.entries(fields)) {
-    fireEvent.change(form.getByLabelText(label), { target: { value } });
+    fireEvent.change(dialog.getByLabelText(label), { target: { value } });
   }
+  return dialog;
 }
 
-/** Fills a form and presses the button that makes the change. */
-function make(button: string | RegExp, fields: Record<string, string> = {}) {
-  fill(button, fields);
-  fireEvent.click(screen.getByRole("button", { name: button }));
+/** Fills a button's dialog and presses the button in it that makes the change. */
+async function make(button: string | RegExp, fields: Record<string, string> = {}) {
+  const dialog = await fill(button, fields);
+  fireEvent.click(dialog.getByRole("button", { name: button }));
+}
+
+/** Leaves a dialog without making its change. */
+async function cancel() {
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(asking()).toBe(false));
+}
+
+/** Looks up the identity that another is merged with, on the screen of that other. */
+function lookUp(reference?: string) {
+  if (reference !== undefined) {
+    fireEvent.change(screen.getByLabelText("The other identity"), { target: { value: reference } });
+  }
+  fireEvent.click(screen.getByRole("button", { name: "Look it up" }));
 }
 
 /** What the screen says came of the last change. */
 async function said(): Promise<string | null> {
+  // A change that was made closes its dialog, and the screen says what came of it.
+  await waitFor(() => expect(asking()).toBe(false));
   const status = await screen.findByRole("status");
   await idle();
   return status.textContent;
@@ -74,11 +115,16 @@ describe("a draft", () => {
     const [draft] = await server.client.drafts({ status: "open" });
     open(server, `#/drafts/${draft!.id}`);
     await heading("Draft");
-    await screen.findByText("Operations (5)");
+    await counted("Operations", 5);
     await idle();
 
+    // The dialog says what approving would do before it is done.
+    const dialog = await asked("Approve and commit");
+    expect(dialog.getByText(/^4 observations placed, 1 identity created\./)).toBeTruthy();
+    expect(changes()).toEqual([]);
+
     // Pressed twice before the screen has shown the first press, it is made once.
-    const form = screen.getByRole("button", { name: "Approve and commit" }).closest("form")!;
+    const form = dialog.getByRole("button", { name: "Approve and commit" }).closest("form")!;
     act(() => {
       fireEvent.submit(form);
       fireEvent.submit(form);
@@ -90,9 +136,7 @@ describe("a draft", () => {
     // It is decided, so there is nothing left to press.
     expect(screen.queryByRole("button", { name: "Approve and commit" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Reject" })).toBeNull();
-    await waitFor(() =>
-      expect(within(screen.getByRole("navigation")).getByRole("link", { name: /^Drafts/ }).textContent).toBe("Drafts"),
-    );
+    await waitFor(() => expect(screens().getByRole("link", { name: /^Drafts/ }).textContent).toBe("Drafts"));
 
     expect((await server.client.draft(draft!.id)).draft.status).toBe("committed");
     expect(await head()).toBe(8);
@@ -107,7 +151,7 @@ describe("a draft", () => {
     const name = (await server.client.observation(placed.observation)).key;
     open(server, `#/drafts/${draft!.id}`);
     await heading("Draft");
-    await screen.findByText("Operations (5)");
+    await counted("Operations", 5);
     await idle();
 
     // Someone places one of its observations elsewhere while it is read.
@@ -120,7 +164,7 @@ describe("a draft", () => {
       ],
     });
 
-    make("Approve and commit");
+    await make("Approve and commit");
     const answer = await refused();
     expect(answer).toContain(
       `changeset rejected: operation 0 (assign): stale precondition: observation ${placed.observation} was expected to belong to no identity`,
@@ -129,8 +173,14 @@ describe("a draft", () => {
     // The operation the engine names is shown as the list of them shows it.
     expect(texts("[role=alert] li")).toHaveLength(1);
     expect(texts("[role=alert] li")[0]).toMatch(/^Operation 0: place observation \S+ in 0/);
-    await waitFor(() => expect(texts(".ops li")[0]).toStartWith(`place observation registry:${name} in 0`));
+    await waitFor(() =>
+      expect(texts("[data-part=ops] li")[0]).toMatch(
+        new RegExp(`^place observation registry:${name} in .+ \\(…[0-9a-f]{4}\\)$`),
+      ),
+    );
 
+    // The dialog stays, with why, and the screen behind it says nothing was done.
+    expect(asking()).toBe(true);
     expect(screen.queryByRole("status")).toBeNull();
     expect(field("Status")).toBe("open");
     expect((await server.client.draft(draft!.id)).draft.status).toBe("open");
@@ -141,10 +191,10 @@ describe("a draft", () => {
     const [draft] = await server.client.drafts({ status: "open" });
     open(server, `#/drafts/${draft!.id}`);
     await heading("Draft");
-    await screen.findByText("Operations (5)");
+    await counted("Operations", 5);
     await idle();
 
-    make("Reject", { "Why it is rejected": " the Leeds record is not ours " });
+    await make("Reject", { "Why it is rejected": " the Leeds record is not ours " });
     expect(await said()).toBe("The draft was rejected. The next run examines its observations again.");
     await waitFor(() => expect(field("Status")).toBe("rejected"));
     expect(field("Rejected")).toMatch(/“the Leeds record is not ours”$/);
@@ -158,100 +208,384 @@ describe("a draft", () => {
 });
 
 describe("a review item", () => {
+  /** The item's screen, once it shows what the item is decided from. */
+  async function item() {
+    await heading("Review item 1");
+    const card = await screen.findByRole("article", { name: "Review item 1" });
+    await idle();
+    return within(card);
+  }
+
   test("is resolved by placing its observation in an identity it matched", async () => {
     const waiting = await row(server.client, "crm", "c-117");
-    const item = await server.client.reviewItem(1);
+    const found = await server.client.reviewCase(1);
+    const [, other] = found.candidates.map((candidate) => candidate.identity);
     const names = memory();
     open(server, "#/review/1", undefined, names);
-    await heading("Review item 1");
-    await screen.findByText("Identities they matched");
-    await idle();
+    const card = await item();
 
-    // Where it may go: nowhere, an identity it matched, or one of its own.
-    const where = formOf("Place it").getByLabelText("Where crm:c-117 goes") as HTMLSelectElement;
-    expect([...where.options].map((option) => option.value)).toEqual(["", ...item.identities, "new"]);
+    // The button under an identity proposes that identity, and the dialog
+    // lets the record go elsewhere: nowhere, another it matched, or one of its own.
+    const dialog = await asked(`Place in ${other!.label}`);
+    expect(dialog.getByRole("heading").textContent).toBe("Place Pioneer Supplies");
+    const where = dialog.getByLabelText("Where crm:c-117 goes") as HTMLSelectElement;
+    expect([...where.options].map((option) => option.value)).toEqual([
+      "",
+      ...found.candidates.map((candidate) => candidate.identity.id),
+      "new",
+    ]);
+    expect(where.value).toBe(other!.id);
+    expect(changes()).toEqual([]);
 
-    make("Place it", { ...ada, Reason: "the Leeds office of Atlas", "Where crm:c-117 goes": item.identities[1]! });
+    await make(`Place in ${other!.label}`, { ...ada, Reason: "the Bristol company" });
     expect(await said()).toBe("1 observation placed at log position 8.");
     await waitFor(() => expect(field("Status")).toBe("resolved"));
     expect(field("Resolved at")).toBe("log position 8");
-    expect(screen.queryByRole("button", { name: "Place it" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Dismiss" })).toBeNull();
-    await waitFor(() =>
-      expect(within(screen.getByRole("navigation")).getByRole("link", { name: /^Review/ }).textContent).toBe("Review"),
-    );
+    // It is decided, so there is nothing left to press.
+    expect(card.queryAllByRole("button")).toEqual([]);
+    await waitFor(() => expect(screens().getByRole("link", { name: /^Review/ }).textContent).toBe("Review"));
 
-    expect((await server.client.observation(waiting.id)).identity).toBe(item.identities[1]!);
+    expect((await server.client.observation(waiting.id)).identity).toBe(other!.id);
     const { changeset } = await entry(8);
     expect(changeset.actor).toBe("user:ada");
-    expect(changeset.reason).toBe("the Leeds office of Atlas");
-    expect(changeset.ops).toEqual([{ op: "assign", observation: waiting.id, from: null, to: item.identities[1]! }]);
+    expect(changeset.reason).toBe("the Bristol company");
+    expect(changeset.ops).toEqual([{ op: "assign", observation: waiting.id, from: null, to: other!.id }]);
     // The name is kept for the next change, in this tab or another.
     expect(names.getItem(REVIEWER_KEY)).toBe("ada");
   });
 
   test("is resolved by placing its observation in a new identity", async () => {
     const waiting = await row(server.client, "crm", "c-117");
-    const item = await server.client.reviewItem(1);
+    const found = await server.client.reviewItem(1);
     open(server, "#/review/1");
-    await heading("Review item 1");
-    await screen.findByText("Identities they matched");
-    await idle();
+    await item();
 
-    make("Place it", { ...ada, "Where crm:c-117 goes": "new" });
+    const dialog = await asked("None of them: new identity");
+    expect((dialog.getByLabelText("Where crm:c-117 goes") as HTMLSelectElement).value).toBe("new");
+    await make("None of them: new identity", ada);
     expect(await said()).toBe("1 observation placed at log position 8.");
     await waitFor(() => expect(field("Status")).toBe("resolved"));
 
     const { identity } = await server.client.observation(waiting.id);
     expect(identity).toBeTruthy();
-    expect(item.identities).not.toContain(identity!);
+    expect(found.identities).not.toContain(identity!);
     expect((await entry(8)).changeset.ops).toEqual([
       { op: "create_identity", entity_type: "company", identity: identity! },
       { op: "assign", observation: waiting.id, from: null, to: identity! },
     ]);
   });
 
-  test("is not changed until the reviewer says who they are and where its observation goes", async () => {
+  /** The two identities the item matched, the one with the most records first: it stands for the other once they are one. */
+  async function matched() {
+    const found = await server.client.reviewCase(1);
+    const [into, other] = [...found.candidates].sort((a, b) => b.identity.members - a.identity.members);
+    expect(into!.identity.members).toBeGreaterThan(other!.identity.members);
+    return { found, into: into!.identity, other: other!.identity };
+  }
+
+  /** Takes back the decision that the two identities are not one, as a reviewer does on the screen of the pair. */
+  async function allow() {
+    const { found } = await matched();
+    for (const { kind, a, b } of found.constraints) {
+      await server.client.commit({
+        actor: REVIEWER,
+        reason: "one company after all",
+        ops: [{ op: "unconstrain", kind, a, b }],
+      });
+    }
+    return head();
+  }
+
+  const merging = () => screen.queryAllByRole("button", { name: "They are one: merge them" }).length;
+
+  test("says what was decided about the identities it matched, and does not offer what that rules out", async () => {
+    const { found, into, other } = await matched();
+    // A reviewer split the two apart before the record arrived.
+    const [kept] = found.constraints;
+    expect(found.constraints).toHaveLength(1);
+    expect(kept).toMatchObject({ kind: "cannot_link" });
+    expect([...kept!.identities].sort()).toEqual([into.id, other.id].sort());
+    const name = async (id: string) => {
+      const record = await server.client.observation(id);
+      return `${record.source}:${record.key}`;
+    };
     open(server, "#/review/1");
-    await heading("Review item 1");
-    await screen.findByText("Identities they matched");
+    const card = await item();
+
+    // It is said under each of the two, with the changeset that decided it and the way to why.
+    const line = `kept apart${await name(kept!.a)} and ${await name(kept!.b)} must not share an identity, since log position ${kept!.from}why`;
+    await waitFor(() => expect(parts("constraint")).toEqual([line, line]));
+    const decided = document.querySelector("tr[data-part=decided]")!;
+    expect(decided.querySelector("th")!.textContent).toBe("Already decided");
+    expect(texts("td", decided)[0]).toBe("nothing");
+    expect(decided.querySelector(`a[href='#/log/${kept!.from}']`)).toBeTruthy();
+    expect(decided.querySelector("[data-part=constraint] a[href^='#/explain']")!.getAttribute("href")).toBe(
+      `#/explain?a=${kept!.a}&b=${kept!.b}`,
+    );
+
+    // The engine would refuse the merge, so it is not offered, and the item says why.
+    expect(merging()).toBe(0);
+    expect(parts("apart")).toEqual(["A constraint keeps these apart, so they cannot be merged into one."]);
+    expect(
+      card.getByText(/^Place it in the one it belongs to\. If it is none of them, make a new identity\.$/),
+    ).toBeTruthy();
+    // The record can still go to either, or to an identity of its own.
+    expect(card.getAllByRole("button").map((button) => button.textContent)).toEqual([
+      "None of them: new identity",
+      ...found.candidates.map((candidate) => `Place in ${candidate.identity.label}`),
+      "Dismiss",
+    ]);
+    expect(changes()).toEqual([]);
+  });
+
+  test("does not offer an identity that its record is kept out of", async () => {
+    const waiting = await row(server.client, "crm", "c-117");
+    const { found, into, other } = await matched();
+    const member = found.candidates.find((candidate) => candidate.identity.id === other.id)!.members[0]!;
+    await server.client.commit({
+      actor: REVIEWER,
+      reason: "not the Bristol company",
+      ops: [{ op: "constrain", kind: "cannot_link", a: waiting.id, b: member.id }],
+    });
+    calls.length = 0;
+    open(server, "#/review/1");
+    const card = await item();
+
+    await waitFor(() => expect(parts("constraint")).toHaveLength(3));
+    expect(card.queryAllByRole("button", { name: `Place in ${other.label}` })).toHaveLength(0);
+    expect(card.getByText("It cannot go here")).toBeTruthy();
+    // Nor is it a choice where the record is placed from another button.
+    const dialog = await asked(`Place in ${into.label}`);
+    const where = dialog.getByLabelText("Where crm:c-117 goes") as HTMLSelectElement;
+    expect([...where.options].map((option) => option.value)).toEqual(["", into.id, "new"]);
+    expect(where.value).toBe(into.id);
+    await make(`Place in ${into.label}`, ada);
+    expect(await said()).toBe("1 observation placed at log position 9.");
+    expect((await server.client.observation(waiting.id)).identity).toBe(into.id);
+  });
+
+  test("is resolved by saying the identities it matched are one", async () => {
+    const waiting = await row(server.client, "crm", "c-117");
+    const { into, other } = await matched();
+    open(server, "#/review/1");
+    await item();
+    expect(merging()).toBe(0);
+
+    // Once the decision that kept them apart is taken back, the screen read again offers the merge.
+    expect(await allow()).toBe(8);
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await screen.findByRole("button", { name: "They are one: merge them" });
+    await idle();
+    expect(parts("constraint")).toEqual([]);
+    expect(parts("apart")).toEqual([]);
+
+    const dialog = await asked("They are one: merge them");
+    expect(dialog.getByRole("heading").textContent).toBe("Merge 2 identities and place Pioneer Supplies");
+    expect(
+      dialog.getByText(
+        `${other.label} is merged into ${into.label}, which has the most records, and the record that waits is placed in it. Undoing the changeset in the log takes it back.`,
+      ),
+    ).toBeTruthy();
+    expect(changes()).toEqual([]);
+
+    await make("They are one: merge them", { ...ada, Reason: "one company, two registrations" });
+    expect(await said()).toBe("2 identities merged and 1 observation placed at log position 9.");
+    await waitFor(() => expect(field("Status")).toBe("resolved"));
+
+    // One changeset, written against what the screen read, that the log can undo.
+    expect((await entry(9)).changeset).toMatchObject({
+      actor: "user:ada",
+      base: 8,
+      reason: "one company, two registrations",
+      ops: [
+        { op: "merge", from: other.id, into: into.id },
+        { op: "assign", observation: waiting.id, from: null, to: into.id },
+      ],
+    });
+    expect((await server.client.observation(waiting.id)).identity).toBe(into.id);
+    const merged = await server.client.identity(other.id);
+    expect(merged.current).toBe(into.id);
+    expect(merged.members).toHaveLength(into.members + other.members + 1);
+  });
+
+  test("does not merge identities that changed after the screen was read", async () => {
+    const waiting = await row(server.client, "crm", "c-117");
+    const moved = await row(server.client, "crm", "c-108");
+    const { into } = await matched();
+    expect(await allow()).toBe(8);
+    open(server, "#/review/1");
+    await item();
+
+    // Someone gives one of them another record while the item is read.
+    await server.client.commit({
+      actor: REVIEWER,
+      ops: [{ op: "assign", observation: moved.id, from: moved.identity!, to: into.id }],
+    });
+
+    await make("They are one: merge them", ada);
+    const answer = await refused();
+    expect(answer).toContain(
+      `stale merge: the members of identity ${into.id} changed at log position 9, after the changeset's base 8`,
+    );
+    expect(answer).toContain("Nothing was changed.");
+    expect((await server.client.observation(waiting.id)).identity ?? null).toBeNull();
+    expect(await head()).toBe(9);
+
+    // Read again, the item shows what the identity holds now, and the merge is made of that.
+    await cancel();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await screen.findByText("3 records");
+    await idle();
+    await make("They are one: merge them", ada);
+    expect(await said()).toBe("2 identities merged and 1 observation placed at log position 10.");
+    expect((await entry(10)).changeset).toMatchObject({ base: 9 });
+  });
+
+  test("is merged against what its card showed, though the store changed before the card was read", async () => {
+    const waiting = await row(server.client, "crm", "c-117");
+    const moved = await row(server.client, "crm", "c-108");
+    const { into } = await matched();
+    expect(await allow()).toBe(8);
+    // The studio is open, and then someone gives one of the identities another record.
+    open(server, "");
+    await heading("Overview");
+    await idle();
+    await server.client.commit({
+      actor: REVIEWER,
+      ops: [{ op: "assign", observation: moved.id, from: moved.identity!, to: into.id }],
+    });
+
+    // The reviewer goes to the items without reading the studio again. The card shows
+    // the identity as it is now, so the merge is of what they saw.
+    follow(screens().getByRole("link", { name: /^Review/ }));
+    await heading("Review");
+    await screen.findByRole("article", { name: "Review item 1" });
+    await screen.findByText("3 records");
+    await idle();
+    await make("They are one: merge them", ada);
+    expect(await said()).toBe("2 identities merged and 1 observation placed at log position 10.");
+    expect((await entry(10)).changeset).toMatchObject({ base: 9 });
+    expect((await server.client.observation(waiting.id)).identity).toBe(into.id);
+  });
+
+  test("says what the run found against every record of an identity, those it does not show too", async () => {
+    const { into } = await matched();
+    // The identity gains more records than a card shows, each with the name of the one that waits.
+    const rows = Array.from({ length: 30 }, (_, n) => ({
+      id: `c-9${String(n).padStart(2, "0")}`,
+      name: "Pioneer Supplies",
+      country: "GB",
+    }));
+    const ingested = await server.client.ingest({ source: "crm", entity_type: "company", key: "id", rows });
+    expect(ingested.status).toBe("succeeded");
+    const added = await Promise.all(rows.map(({ id }) => row(server.client, "crm", id)));
+    await server.client.commit({
+      actor: REVIEWER,
+      reason: "branches of the Leeds company",
+      ops: added.map((record) => ({ op: "assign", observation: record.id, from: null, to: into.id })),
+    });
+    await server.client.startRun({ entity_type: "company" });
+
+    const found = await server.client.reviewCase(1);
+    expect(found.item.status).toBe("open");
+    const shown = found.candidates.find((candidate) => candidate.identity.id === into.id)!.members;
+    const against = found.judgements.filter((judgement) => judgement.identity === into.id);
+    expect(shown).toHaveLength(25);
+    expect(against).toHaveLength(32);
+
+    open(server, "#/review/1");
+    await item();
+    await screen.findByText("32 records");
+    const column = found.candidates.findIndex((candidate) => candidate.identity.id === into.id);
+    // The card says that it compares some of the identity's records, and how many.
+    expect(parts("sample")).toEqual(["25 of them compared here"]);
+    // A field in which they all differ is not written out value by value.
+    const ids = new Set(shown.flatMap((member) => (member.payload as { id?: string }).id ?? []));
+    expect(ids.size).toBeGreaterThan(20);
+    const held = document.querySelectorAll("tr[data-field=id] td")[found.observations.length + column]!;
+    expect(held.querySelectorAll("[data-agrees]")).toHaveLength(4);
+    expect(parts("more", held)).toEqual([`and ${ids.size - 4} more values`]);
+
+    // Under the identity, the first of them are written out and the rest are counted: none is left out.
+    const cell = () => document.querySelectorAll("tr[data-part=found] td")[found.observations.length + column]!;
+    expect(parts("judgement", cell())).toHaveLength(6);
+    expect(parts("more", cell())).toEqual(["and 26 more against its records: 26 match"]);
+    // Asked for, the rest are written out too, each named though the case did not hold its record.
+    fireEvent.click(within(cell() as HTMLElement).getByRole("button", { name: "Show all 32" }));
+    expect(parts("judgement", cell())).toHaveLength(32);
+    expect(parts("more", cell())).toEqual([]);
+    const beyond = against.filter((judgement) => shown.every((member) => member.id !== judgement.other));
+    expect(beyond).toHaveLength(7);
+    await waitFor(() =>
+      expect(
+        texts("[data-part=judgement] a[data-kind=observation]", cell()).every((name) =>
+          /^crm:c-|^registry:X/.test(name),
+        ),
+      ).toBe(true),
+    );
+    expect(changes()).toEqual([]);
+  });
+
+  test("is decided from the list of those that wait, and leaves it", async () => {
+    const waiting = await row(server.client, "crm", "c-117");
+    const found = await server.client.reviewCase(1);
+    const [first] = found.candidates.map((candidate) => candidate.identity);
+    open(server, "#/review");
+    await heading("Review");
+    await screen.findByRole("article", { name: "Review item 1" });
     await idle();
 
-    make("Place it", { "Where crm:c-117 goes": "new" });
+    await make(`Place in ${first!.label}`, ada);
+    // What came of it is said where the item was.
+    expect(await said()).toBe("1 observation placed at log position 8.");
+    await waitFor(() => expect(screen.queryByRole("article")).toBeNull());
+    expect(parts("empty")[0]).toStartWith("Nothing waits for review.");
+    expect(document.querySelector("[role=status] a")?.getAttribute("href")).toBe("#/log/8");
+    await waitFor(() => expect(screens().getByRole("link", { name: /^Review/ }).textContent).toBe("Review"));
+    expect((await server.client.observation(waiting.id)).identity).toBe(first!.id);
+    expect((await server.client.reviewItem(1)).status).toBe("resolved");
+  });
+
+  test("is not changed until the reviewer says who they are and where its observation goes", async () => {
+    open(server, "#/review/1");
+    await item();
+
+    await make("None of them: new identity");
     expect(await refused()).toBe("Say who you are: the change is recorded under your name.");
-    make("Place it", { ...ada, "Where crm:c-117 goes": "" });
+    await make("None of them: new identity", { ...ada, "Where crm:c-117 goes": "" });
     await waitFor(async () => expect(await refused()).toBe("Choose where at least one of them goes."));
 
     expect(changes()).toEqual([]);
     expect(await head()).toBe(7);
+
+    // Leaving the dialog leaves the item as it was.
+    await cancel();
+    expect(field("Status")).toBe("open");
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   test("is dismissed under the reviewer's name", async () => {
     open(server, "#/review/1", undefined, memory());
-    await heading("Review item 1");
-    await screen.findByText("Identities they matched");
-    await idle();
+    const card = await item();
 
-    make("Dismiss", { ...ada, Reason: "not a company of ours" });
+    await make("Dismiss", { ...ada, Reason: "not a company of ours" });
     expect(await said()).toBe("The item was dismissed. Later runs leave its observations alone.");
     await waitFor(() => expect(field("Status")).toBe("dismissed"));
     expect(field("Dismissed by")).toMatch(/^user:ada at \S+ \S+ “not a company of ours”$/);
-    expect(screen.queryByRole("button", { name: "Dismiss" })).toBeNull();
+    expect(card.queryAllByRole("button")).toEqual([]);
 
-    const item = await server.client.reviewItem(1);
-    expect(item.status).toBe("dismissed");
-    expect(item.dismissed?.by).toBe("user:ada");
+    const dismissed = await server.client.reviewItem(1);
+    expect(dismissed.status).toBe("dismissed");
+    expect(dismissed.dismissed?.by).toBe("user:ada");
     expect(changes()).toEqual(["POST /v1/review/1/dismiss"]);
   });
 
   test("that someone else settled first says so", async () => {
     open(server, "#/review/1");
-    await heading("Review item 1");
-    await screen.findByText("Identities they matched");
-    await idle();
+    await item();
     await server.client.dismissReview(1, { actor: REVIEWER });
 
-    make("Dismiss", ada);
+    await make("Dismiss", ada);
     expect(await refused()).toMatch(/^review item 1: /);
     expect(screen.queryByRole("status")).toBeNull();
   });
@@ -264,41 +598,41 @@ describe("an observation", () => {
     const names = memory();
     names.setItem(REVIEWER_KEY, "grace");
     open(server, `#/observations/${moved.id}`, undefined, names);
-    await heading("Observation");
+    await heading("Atlas Trading");
     await screen.findByText("Move it");
     await idle();
     // The name the reviewer last used is filled in.
-    expect((formOf("Move").getByLabelText("Your name") as HTMLInputElement).value).toBe("grace");
+    expect(((await asked("Move")).getByLabelText("Your name") as HTMLInputElement).value).toBe("grace");
 
     // The identity it goes to can be named by an observation it holds.
-    make("Move", { "That identity": "crm:nothing" });
+    await make("Move", { "That identity": "crm:nothing" });
     expect(await refused()).toBe("No identity is named crm:nothing.");
-    make("Move", { "That identity": "crm:c-109", Reason: "one company after all" });
+    await make("Move", { "That identity": "crm:c-109", Reason: "one company after all" });
     expect(await said()).toBe("Moved at log position 8.");
     await waitFor(() =>
-      expect(document.querySelector("dd a[href^='#/identities/']")?.getAttribute("title")).toBe(other.identity!),
+      expect(document.querySelector("dd a[data-kind=identity]")?.getAttribute("title")).toBe(other.identity!),
     );
+    // The identity it is in now is named by what its records call it.
+    await waitFor(() => expect(field("Identity")).toBe(`Atlas Trading${other.identity!.slice(-4)}`));
     expect((await entry(8)).changeset).toMatchObject({
       actor: "user:grace",
       reason: "one company after all",
       ops: [{ op: "assign", observation: moved.id, from: moved.identity!, to: other.identity! }],
     });
 
-    make("Move", { "Where to": "new" });
+    await make("Move", { "Where to": "new" });
     await waitFor(async () => expect(await said()).toBe("Moved at log position 9."));
     const alone = (await server.client.observation(moved.id)).identity!;
     expect([moved.identity, other.identity]).not.toContain(alone);
-    await waitFor(() =>
-      expect(document.querySelector("dd a[href^='#/identities/']")?.getAttribute("title")).toBe(alone),
-    );
+    await waitFor(() => expect(document.querySelector("dd a[data-kind=identity]")?.getAttribute("title")).toBe(alone));
 
-    make("Move", { "Where to": "none" });
+    await make("Move", { "Where to": "none" });
     await waitFor(async () => expect(await said()).toBe("Taken out of its identity at log position 10."));
     await waitFor(() => expect(field("Identity")).toBe("none"));
     expect((await server.client.observation(moved.id)).identity ?? null).toBeNull();
     // It has no identity to be taken out of now, so it can only be placed.
     await screen.findByRole("button", { name: "Place" });
-    const where = formOf("Place").getByLabelText("Where to") as HTMLSelectElement;
+    const where = (await asked("Place")).getByLabelText("Where to") as HTMLSelectElement;
     expect([...where.options].map((option) => option.value)).toEqual(["identity", "new"]);
   });
 
@@ -306,7 +640,7 @@ describe("an observation", () => {
     const moved = await row(server.client, "crm", "c-108");
     const other = await row(server.client, "crm", "c-109");
     open(server, `#/observations/${moved.id}`);
-    await heading("Observation");
+    await heading("Atlas Trading");
     await screen.findByText("Move it");
     await idle();
     await server.client.commit({
@@ -314,7 +648,7 @@ describe("an observation", () => {
       ops: [{ op: "assign", observation: moved.id, from: moved.identity!, to: other.identity! }],
     });
 
-    make("Move", { ...ada, "Where to": "none" });
+    await make("Move", { ...ada, "Where to": "none" });
     const answer = await refused();
     expect(answer).toContain(`stale precondition: observation ${moved.id} was expected to belong to ${moved.identity}`);
     expect(answer).toContain("Nothing was changed.");
@@ -328,25 +662,25 @@ describe("an identity", () => {
     const orchard = await row(server.client, "crm", "c-111");
     const other = await row(server.client, "crm", "c-122");
     open(server, `#/identities/${orchard.identity}`);
-    await heading("Identity");
-    await screen.findByText("Members (3)");
+    await counted("Records", 3);
     await idle();
     expect(screen.queryByRole("button", { name: /^Split the/ })).toBeNull();
 
     // The reviewer said crm:c-111 and registry:X0000011 are one company, so
     // the engine does not part them.
     fireEvent.click(screen.getByRole("checkbox", { name: `Choose observation ${orchard.id}` }));
-    make("Split the 1 ticked from the rest", ada);
+    await make("Split the 1 ticked from the rest", ada);
     const answer = await refused();
     expect(answer).toContain("have a must_link constraint, and would belong to identities");
     expect(answer).toContain("Nothing was changed.");
     expect(await head()).toBe(7);
 
+    await cancel();
     fireEvent.click(screen.getByRole("checkbox", { name: `Choose observation ${orchard.id}` }));
     fireEvent.click(screen.getByRole("checkbox", { name: `Choose observation ${other.id}` }));
-    make("Split the 1 ticked from the rest", { Reason: "Orchard Garden is another company" });
+    await make("Split the 1 ticked from the rest", { Reason: "Orchard Garden is another company" });
     expect(await said()).toMatch(/^Split at log position 8: 1 observation moved to the new identity 0\S+\.$/);
-    await screen.findByText("Members (2)");
+    await counted("Records", 2);
 
     const parted = (await server.client.observation(other.id)).identity!;
     expect(parted).not.toBe(orchard.identity!);
@@ -371,15 +705,24 @@ describe("an identity", () => {
     const orchard = await row(server.client, "crm", "c-111");
     const other = await row(server.client, "crm", "c-122");
     open(server, `#/identities/${orchard.identity}`);
-    await heading("Identity");
-    await screen.findByText("Members (3)");
+    await counted("Records", 3);
     await idle();
 
     fireEvent.click(screen.getByRole("checkbox", { name: `Choose observation ${other.id}` }));
-    fireEvent.click(formOf("Split the 1 ticked from the rest").getByLabelText("Keep the two sides apart from now on"));
-    make("Split the 1 ticked from the rest", ada);
+    const dialog = await asked("Split the 1 ticked from the rest");
+    // What the split would do is said again where it is made.
+    expect(
+      dialog.getByText("The ticked record moves to a new identity. The other 2 stay here, under this ID."),
+    ).toBeTruthy();
+    const apart = dialog.getByRole("checkbox", { name: "Keep the two sides apart from now on" });
+    expect(apart.getAttribute("aria-checked")).toBe("true");
+    // The words are pressed, as a label is: where these tests run, a press on the box itself
+    // counts twice, which a browser does not do.
+    fireEvent.click(dialog.getByText("Keep the two sides apart from now on"));
+    expect(apart.getAttribute("aria-checked")).toBe("false");
+    await make("Split the 1 ticked from the rest", ada);
     expect(await said()).toMatch(/^Split at log position 8: /);
-    await screen.findByText("Members (2)");
+    await counted("Records", 2);
     expect(await server.client.constraints({ observation: other.id })).toEqual([]);
   });
 
@@ -387,26 +730,25 @@ describe("an identity", () => {
     const atlas = await row(server.client, "crm", "c-108");
     const other = await row(server.client, "crm", "c-109");
     open(server, `#/identities/${atlas.identity}`);
-    await heading("Identity");
-    await screen.findByText("Members (2)");
+    await counted("Records", 2);
     await idle();
     expect(screen.queryByRole("button", { name: "Merge it into this one" })).toBeNull();
 
-    make("Look it up", { "The other identity": "crm:nothing" });
+    lookUp("crm:nothing");
     expect(await refused()).toBe("No identity is named crm:nothing.");
-    make("Look it up", { "The other identity": atlas.identity! });
+    lookUp(atlas.identity!);
     await waitFor(async () => expect(await refused()).toBe("That is this identity."));
 
-    make("Look it up", { "The other identity": "crm:c-109" });
+    lookUp("crm:c-109");
     await screen.findByRole("button", { name: "Merge it into this one" });
-    expect(screen.getByText(/is a company with 2 members/).textContent).toMatch(
-      /^0\S+ is a company with 2 members: crm:c-109, registry:X0512345\. Merging moves them here/,
+    expect(screen.getByText(/is a company with 2 records/).textContent).toMatch(
+      /^Atlas Trading is a company with 2 records: crm:c-109, registry:X0512345\. Merging moves them here/,
     );
     expect(changes()).toEqual([]);
 
-    make("Merge it into this one", { ...ada, Reason: "one company, two offices" });
+    await make("Merge it into this one", { ...ada, Reason: "one company, two offices" });
     expect(await said()).toBe("Merged at log position 8.");
-    await screen.findByText("Members (4)");
+    await counted("Records", 4);
     expect(screen.queryByRole("button", { name: "Merge it into this one" })).toBeNull();
 
     expect((await server.client.observation(other.id)).identity).toBe(atlas.identity!);
@@ -423,8 +765,7 @@ describe("an identity", () => {
     const other = await row(server.client, "crm", "c-109");
     const moved = await row(server.client, "registry", "X0000010");
     open(server, `#/identities/${atlas.identity}`);
-    await heading("Identity");
-    await screen.findByText("Members (2)");
+    await counted("Records", 2);
     await idle();
 
     // Someone gives it another member while it is read.
@@ -433,9 +774,9 @@ describe("an identity", () => {
       ops: [{ op: "assign", observation: moved.id, from: moved.identity!, to: atlas.identity! }],
     });
 
-    make("Look it up", { "The other identity": other.identity! });
+    lookUp(other.identity!);
     await screen.findByRole("button", { name: "Merge it into this one" });
-    make("Merge it into this one", ada);
+    await make("Merge it into this one", ada);
     const answer = await refused();
     expect(answer).toContain(
       `stale merge: the members of identity ${atlas.identity} changed at log position 8, after the changeset's base 7`,
@@ -444,13 +785,14 @@ describe("an identity", () => {
     expect((await server.client.observation(other.id)).identity).toBe(other.identity!);
 
     // Read again, it shows what it holds now, and the merge is made of that.
+    await cancel();
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
-    await screen.findByText("Members (3)");
-    fireEvent.click(screen.getByRole("button", { name: "Look it up" }));
+    await counted("Records", 3);
+    lookUp();
     await screen.findByRole("button", { name: "Merge it into this one" });
-    make("Merge it into this one", ada);
+    await make("Merge it into this one", ada);
     expect(await said()).toBe("Merged at log position 9.");
-    await screen.findByText("Members (5)");
+    await counted("Records", 5);
   });
 
   test("says which side of a split stays, and it is the side that does", async () => {
@@ -458,23 +800,22 @@ describe("an identity", () => {
     const registered = await row(server.client, "registry", "X0000011");
     const other = await row(server.client, "crm", "c-122");
     open(server, `#/identities/${orchard.identity}`);
-    await heading("Identity");
-    await screen.findByText("Members (3)");
+    await counted("Records", 3);
     await idle();
 
     // The larger side keeps the ID, whichever side was ticked.
     fireEvent.click(screen.getByRole("checkbox", { name: `Choose observation ${other.id}` }));
-    screen.getByText("The ticked member moves to a new identity. The other 2 stay here, under this ID.");
+    screen.getByText("The ticked record moves to a new identity. The other 2 stay here, under this ID.");
     fireEvent.click(screen.getByRole("checkbox", { name: `Choose observation ${other.id}` }));
     fireEvent.click(screen.getByRole("checkbox", { name: `Choose observation ${orchard.id}` }));
     fireEvent.click(screen.getByRole("checkbox", { name: `Choose observation ${registered.id}` }));
     screen.getByText(
-      "The 2 ticked are the larger side, so they stay here, under this ID. The other member moves to a new identity.",
+      "The 2 ticked are the larger side, so they stay here, under this ID. The other record moves to a new identity.",
     );
 
-    make("Split the 2 ticked from the rest", ada);
+    await make("Split the 2 ticked from the rest", ada);
     expect(await said()).toMatch(/^Split at log position 8: 1 observation moved to the new identity 0\S+\.$/);
-    await screen.findByText("Members (2)");
+    await counted("Records", 2);
     expect((await server.client.observation(orchard.id)).identity).toBe(orchard.identity!);
     expect((await server.client.observation(registered.id)).identity).toBe(orchard.identity!);
     expect((await server.client.observation(other.id)).identity).not.toBe(orchard.identity!);
@@ -486,8 +827,7 @@ describe("an identity", () => {
     const other = await row(server.client, "crm", "c-122");
     const added = await row(server.client, "registry", "X0000010");
     open(server, `#/identities/${orchard.identity}`);
-    await heading("Identity");
-    await screen.findByText("Members (3)");
+    await counted("Records", 3);
     await idle();
     fireEvent.click(screen.getByRole("checkbox", { name: `Choose observation ${orchard.id}` }));
     fireEvent.click(screen.getByRole("checkbox", { name: `Choose observation ${registered.id}` }));
@@ -500,7 +840,7 @@ describe("an identity", () => {
       ops: [{ op: "assign", observation: added.id, from: added.identity!, to: orchard.identity! }],
     });
 
-    make("Split the 2 ticked from the rest", ada);
+    await make("Split the 2 ticked from the rest", ada);
     expect(await refused()).toBe(
       `identity ${orchard.identity} cannot be split: its members changed at log position 8, after log position 7 that the split is based on`,
     );
@@ -508,10 +848,11 @@ describe("an identity", () => {
     expect((await server.client.identity(orchard.identity!)).members).toHaveLength(4);
 
     // Read again, it says what a split of what it holds now would do.
+    await cancel();
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
-    await screen.findByText("Members (4)");
+    await counted("Records", 4);
     screen.getByText("The 2 ticked move to a new identity. The other 2 stay here, under this ID.");
-    make("Split the 2 ticked from the rest", ada);
+    await make("Split the 2 ticked from the rest", ada);
     expect(await said()).toMatch(/^Split at log position 9: 2 observations moved to the new identity 0\S+\.$/);
     expect((await server.client.observation(other.id)).identity).toBe(orchard.identity!);
     expect((await server.client.observation(orchard.id)).identity).not.toBe(orchard.identity!);
@@ -522,11 +863,10 @@ describe("an identity", () => {
     const other = await row(server.client, "crm", "c-109");
     const moved = await row(server.client, "registry", "X0000010");
     open(server, `#/identities/${atlas.identity}`);
-    await heading("Identity");
-    await screen.findByText("Members (2)");
+    await counted("Records", 2);
     await idle();
-    make("Look it up", { "The other identity": "crm:c-109" });
-    await screen.findByText(/is a company with 2 members/);
+    lookUp("crm:c-109");
+    await screen.findByText(/is a company with 2 records/);
     await idle();
 
     // Someone gives the other identity a member after it was looked up.
@@ -541,16 +881,16 @@ describe("an identity", () => {
     await screen.findByText("The log moved on after that identity was looked up. Look it up again.");
     await idle();
     expect(screen.queryByRole("button", { name: "Merge it into this one" })).toBeNull();
-    expect(screen.queryByText(/is a company with 2 members/)).toBeNull();
+    expect(screen.queryByText(/is a company with 2 records/)).toBeNull();
     expect(changes()).toEqual([]);
 
-    fireEvent.click(screen.getByRole("button", { name: "Look it up" }));
-    expect((await screen.findByText(/is a company with 3 members/)).textContent).toContain(
+    lookUp();
+    expect((await screen.findByText(/is a company with 3 records/)).textContent).toContain(
       "crm:c-109, registry:X0000010, registry:X0512345",
     );
-    make("Merge it into this one", ada);
+    await make("Merge it into this one", ada);
     expect(await said()).toBe("Merged at log position 9.");
-    await screen.findByText("Members (5)");
+    await counted("Records", 5);
     expect((await entry(9)).changeset).toMatchObject({ actor: "user:ada", base: 8 });
   });
 
@@ -559,8 +899,7 @@ describe("an identity", () => {
     const merge = changeset.ops.find((op) => op.op === "merge");
     if (merge?.op !== "merge") throw new Error("log position 6 has no merge");
     open(server, `#/identities/${merge.from}`);
-    await heading("Identity");
-    await screen.findByText("Members (3)");
+    await counted("Records", 3);
     await idle();
     expect(screen.queryByText("Split it")).toBeNull();
     expect(screen.queryByText("Merge another identity into it")).toBeNull();
@@ -577,10 +916,10 @@ describe("two observations", () => {
     await idle();
 
     // They are apart, so a constraint that they are one would not hold.
-    const kind = formOf("Record it").getByLabelText("The two") as HTMLSelectElement;
+    const kind = (await asked("Record it")).getByLabelText("The two") as HTMLSelectElement;
     expect([...kind.options].map((option) => option.value)).toEqual(["cannot_link"]);
 
-    make("Record it", { ...ada, Reason: "two companies of one name" });
+    await make("Record it", { ...ada, Reason: "two companies of one name" });
     expect(await said()).toBe("The cannot_link constraint was recorded at log position 8.");
     await screen.findByText("Constraints between them");
     await screen.findByRole("button", { name: "Remove the cannot_link constraint" });
@@ -588,7 +927,7 @@ describe("two observations", () => {
     expect(await server.client.constraints({ observation: a.id })).toMatchObject([{ kind: "cannot_link", from: 8 }]);
     expect((await entry(8)).changeset).toMatchObject({ actor: "user:ada", reason: "two companies of one name" });
 
-    make("Remove the cannot_link constraint");
+    await make("Remove the cannot_link constraint");
     await waitFor(async () => expect(await said()).toBe("The cannot_link constraint was removed at log position 9."));
     await screen.findByRole("button", { name: "Record it" });
     expect(await server.client.constraints({ observation: a.id })).toEqual([]);
@@ -600,7 +939,7 @@ describe("two observations", () => {
     await heading("Explain");
     await screen.findByText("The same identity");
     await idle();
-    const kind = formOf("Record it").getByLabelText("The two") as HTMLSelectElement;
+    const kind = (await asked("Record it")).getByLabelText("The two") as HTMLSelectElement;
     expect([...kind.options].map((option) => option.value)).toEqual(["must_link"]);
   });
 
@@ -612,7 +951,7 @@ describe("two observations", () => {
     await screen.findByText("Not both placed");
     await idle();
 
-    make("Record it", { ...ada, "The two": "must_link" });
+    await make("Record it", { ...ada, "The two": "must_link" });
     expect(await said()).toBe("The must_link constraint was recorded at log position 8.");
     await screen.findByRole("button", { name: "Remove the must_link constraint" });
     expect(await server.client.constraints({ observation: a.id })).toMatchObject([{ kind: "must_link", from: 8 }]);
@@ -624,16 +963,19 @@ describe("a changeset in the log", () => {
     const orchard = await row(server.client, "crm", "c-111");
     open(server, "#/log/6");
     await heading("Log position 6");
-    await screen.findByText("Operations (2)");
+    await counted("Operations", 2);
     await idle();
 
-    make("Show what undoing it would do", ada);
+    // The dialog that undoes it can show what that would do first.
+    const dialog = await fill("Undo it", ada);
+    fireEvent.click(dialog.getByRole("button", { name: "Show what undoing it would do" }));
     await screen.findByText("Undoing it would make this changeset, which holds as the store is now:");
     await waitFor(() =>
-      expect(texts(".looked .ops li")).toEqual([
+      expect(texts("[data-part=looked] [data-part=ops] li")).toEqual([
         expect.stringMatching(/^remove the must_link constraint on crm:c-111 and registry:X0000011$/),
-        expect.stringMatching(/^reinstate identity 0/),
-        expect.stringMatching(/^move observation crm:c-111 from 0\S+ to 0/),
+        // The identity that comes back holds no record yet, so nothing calls it anything.
+        expect.stringMatching(/^reinstate identity 0\S+$/),
+        expect.stringMatching(/^move observation crm:c-111 from .+ \(…[0-9a-f]{4}\) to 0\S+$/),
       ]),
     );
     // Looking made a call, and changed nothing.
@@ -641,7 +983,7 @@ describe("a changeset in the log", () => {
     expect(await head()).toBe(7);
     expect(screen.queryByRole("status")).toBeNull();
 
-    make("Undo it", { Reason: "Orchard is not Orchard Foods" });
+    await make("Undo it", { Reason: "Orchard is not Orchard Foods" });
     expect(await said()).toBe("Undone at log position 8.");
     expect(await head()).toBe(8);
     expect((await entry(8)).changeset).toMatchObject({ actor: "user:ada", reason: "Orchard is not Orchard Foods" });
@@ -652,10 +994,10 @@ describe("a changeset in the log", () => {
   test("that was undone before is not undone again", async () => {
     open(server, "#/log/2");
     await heading("Log position 2");
-    await screen.findByText("Operations (1)");
+    await counted("Operations", 1);
     await idle();
 
-    make("Undo it", ada);
+    await make("Undo it", ada);
     const answer = await refused();
     expect(answer).toMatch(/^changeset rejected: operation 0 \(reinstate\): identity \S+ is active/);
     expect(answer).toContain("Nothing was changed.");

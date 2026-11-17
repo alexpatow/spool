@@ -73,7 +73,7 @@ pub use explain::{
 pub use ingest::{IngestOptions, IngestReport};
 pub use lookup::{
     HistoryEntry, IdentityFilter, IdentitySummary, IdentityView, Member, ObservationFilter,
-    ObservationRecord, StoreInfo, TypeInfo,
+    ObservationRecord, SourceCount, SourceInfo, StoreInfo, TypeInfo, label_of,
 };
 pub use metrics::{
     BCubed, Churn, ExtractionMetrics, IdStability, Metrics, OrderSensitivity, OverridePersistence,
@@ -83,7 +83,10 @@ pub use project::{
     Declaration, EntityTypeManifest, EntityTypeSource, Extractor, FeatureColumn, Manifest, Project,
     Rule, RuleSet, Runtime, SqlFile, Strategy, StrategySource,
 };
-pub use review::{Dismissal, ReviewFilter, ReviewKind, ReviewRecord, ReviewStatus};
+pub use review::{
+    CASE_MEMBERS, Candidate, CaseConstraint, Dismissal, PairJudgement, ReviewCase, ReviewFilter,
+    ReviewKind, ReviewRecord, ReviewStatus,
+};
 pub use rows::Rows;
 pub use runs::{RunFilter, RunKind, RunRecord, RunStatus};
 pub use usercode::{Code, UserCode};

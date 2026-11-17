@@ -1,0 +1,54 @@
+// The icons the screens use that the components do not bring. Like theirs,
+// each is as large as the text beside it and says nothing to a screen reader.
+
+import {
+  ActivityIcon as Activity,
+  ArrowRightIcon as ArrowRight,
+  DatabaseIcon as Database,
+  FilePenLineIcon as FilePenLine,
+  FingerprintIcon as Fingerprint,
+  GitCompareArrowsIcon as GitCompareArrows,
+  GitMergeIcon as GitMerge,
+  KeyRoundIcon as KeyRound,
+  RefreshCwIcon as RefreshCw,
+  Rows3Icon as Rows3,
+  ScrollTextIcon as ScrollText,
+  SplitIcon as Split,
+  Undo2Icon as Undo2,
+  UserRoundIcon as UserRound,
+} from "lucide-react";
+import type { SVGProps } from "react";
+
+export {
+  CheckIcon,
+  CircleAlertIcon,
+  CircleCheckIcon,
+  CloseIcon,
+  DarkModeIcon,
+  FileTextIcon,
+  InboxIcon,
+  InfoIcon,
+  LayoutDashboardIcon,
+  LightModeIcon,
+  PlusIcon,
+  SearchIcon,
+} from "./components/ui/icons";
+
+type IconProps = Omit<SVGProps<SVGSVGElement>, "ref">;
+
+const DEFAULTS = { "aria-hidden": true, height: "1em", width: "1em" } as const;
+
+export const ArrowRightIcon = (props: IconProps) => <ArrowRight {...DEFAULTS} {...props} />;
+export const DraftIcon = (props: IconProps) => <FilePenLine {...DEFAULTS} {...props} />;
+export const ExplainIcon = (props: IconProps) => <GitCompareArrows {...DEFAULTS} {...props} />;
+export const IdentityIcon = (props: IconProps) => <Fingerprint {...DEFAULTS} {...props} />;
+export const LogIcon = (props: IconProps) => <ScrollText {...DEFAULTS} {...props} />;
+export const MergeIcon = (props: IconProps) => <GitMerge {...DEFAULTS} {...props} />;
+export const RecordIcon = (props: IconProps) => <Rows3 {...DEFAULTS} {...props} />;
+export const RefreshIcon = (props: IconProps) => <RefreshCw {...DEFAULTS} {...props} />;
+export const RunIcon = (props: IconProps) => <Activity {...DEFAULTS} {...props} />;
+export const SourceIcon = (props: IconProps) => <Database {...DEFAULTS} {...props} />;
+export const SplitIcon = (props: IconProps) => <Split {...DEFAULTS} {...props} />;
+export const TokenIcon = (props: IconProps) => <KeyRound {...DEFAULTS} {...props} />;
+export const UndoIcon = (props: IconProps) => <Undo2 {...DEFAULTS} {...props} />;
+export const UserIcon = (props: IconProps) => <UserRound {...DEFAULTS} {...props} />;

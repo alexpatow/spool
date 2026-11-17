@@ -11,6 +11,16 @@ export function isId(text: string): boolean {
   return ID.test(text);
 }
 
+/**
+ * Whether text could name one thing: an ID, or `<source>:<key>`. A key is
+ * whatever the source calls its row, so it can hold spaces and colons.
+ */
+export function isReference(text: string): boolean {
+  if (isId(text)) return true;
+  const colon = text.indexOf(":");
+  return colon >= 1 && colon < text.length - 1 && !/\s/.test(text.slice(0, colon));
+}
+
 /** The answer of a call, or `null` if the server has no such thing. */
 export async function found<T>(call: Promise<T>): Promise<T | null> {
   try {

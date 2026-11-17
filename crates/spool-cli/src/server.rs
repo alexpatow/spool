@@ -132,6 +132,7 @@ pub fn router(engine: Arc<Engine>, options: &ServerOptions) -> Router {
         .route("/explain", get(explain))
         .route("/review", get(list_review))
         .route("/review/{item}", get(read_review))
+        .route("/review/{item}/case", get(review_case))
         .route("/review/{item}/dismiss", post(dismiss_review))
         .fallback(not_found)
         .layer(middleware::from_fn_with_state(app.clone(), authorize));
@@ -958,6 +959,9 @@ async fn mint_ids(State(app): State<App>, body: Bytes) -> ApiResult {
 #[serde(deny_unknown_fields)]
 struct IdentitiesQuery {
     entity_type: Option<EntityType>,
+    q: Option<String>,
+    /// Identity IDs with commas between them.
+    ids: Option<String>,
     after: Option<String>,
     limit: Option<u64>,
 }
@@ -968,8 +972,25 @@ async fn list_identities(
 ) -> ApiResult {
     let params = query(params)?;
     let limit = page(params.limit);
+    let ids = params
+        .ids
+        .as_deref()
+        .map(|ids| {
+            let ids: Vec<&str> = ids.split(',').filter(|id| !id.is_empty()).collect();
+            if ids.len() as u64 > MAX_PAGE {
+                return Err(ApiError::invalid(format!(
+                    "at most {MAX_PAGE} identities are read by their IDs in one call"
+                )));
+            }
+            ids.into_iter()
+                .map(|identity| id(identity, "an identity ID"))
+                .collect::<ApiResult<Vec<_>>>()
+        })
+        .transpose()?;
     let filter = IdentityFilter {
         entity_type: params.entity_type,
+        q: params.q,
+        ids,
         after: params
             .after
             .as_deref()
@@ -1002,6 +1023,8 @@ struct ObservationsQuery {
     source: Option<String>,
     key: Option<String>,
     document: Option<String>,
+    identity: Option<String>,
+    q: Option<String>,
     unassigned: Option<bool>,
     after: Option<String>,
     limit: Option<u64>,
@@ -1022,6 +1045,12 @@ async fn list_observations(
             .as_deref()
             .map(|document| id(document, "a document ID"))
             .transpose()?,
+        identity: params
+            .identity
+            .as_deref()
+            .map(|identity| id(identity, "an identity ID"))
+            .transpose()?,
+        q: params.q,
         unassigned: params.unassigned.unwrap_or(false),
         after: params
             .after
@@ -1113,6 +1142,12 @@ async fn read_review(State(app): State<App>, Path(item): Path<String>) -> ApiRes
         Some(record) => ok(record),
         None => Err(spool::Error::UnknownReviewItem(item).into()),
     }
+}
+
+/// A review item with the records a reviewer reads to decide it.
+async fn review_case(State(app): State<App>, Path(item): Path<String>) -> ApiResult {
+    let item: u64 = id(&item, "a review item ID")?;
+    ok(engine(&app, move |engine| engine.review_case(item)).await?)
 }
 
 async fn dismiss_review(

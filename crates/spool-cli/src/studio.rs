@@ -1,11 +1,11 @@
 //! The studio: a page that shows what the server holds, in a browser, and
 //! takes a reviewer's changes to it.
 //!
-//! It is three files, built from `packages/studio` and compiled into the
-//! binary: the page, its script and its style sheet. They are the same for
-//! every server and say nothing about its store, so they need no token. The
-//! page reads and writes through `/v1` like any other caller, with the token
-//! its reader gives it.
+//! It is a few files, built from `packages/studio` and compiled into the
+//! binary: the page, its script, its style sheet and its fonts. They are the
+//! same for every server and say nothing about its store, so they need no
+//! token. The page reads and writes through `/v1` like any other caller, with
+//! the token its reader gives it.
 
 use std::sync::LazyLock;
 
@@ -19,24 +19,57 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use sha2::{Digest, Sha256};
 
-/// What the page may do: run its own script, use its own style sheet, and
-/// call the server it came from. Nothing it shows can make it load or send
-/// anything else, and no other page can put it in a frame.
+/// What the page may do: run its own script, use its own style sheet and
+/// fonts, and call the server it came from. Nothing it shows can make it load
+/// or send anything else, and no other page can put it in a frame.
 const POLICY: &str = "default-src 'none'; script-src 'self'; style-src 'self'; \
-                      img-src 'self' data:; connect-src 'self'; base-uri 'none'; \
-                      form-action 'none'; frame-ancestors 'none'";
+                      font-src 'self'; img-src 'self' data:; connect-src 'self'; \
+                      base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+
+const HTML: &str = "text/html; charset=utf-8";
+const SCRIPT: &str = "text/javascript; charset=utf-8";
+const STYLE: &str = "text/css; charset=utf-8";
+const FONT: &str = "font/woff2";
+
+/// Each path of the studio, with what is served there. The page names the
+/// others relative to itself.
+const SOURCES: [(&str, &str, &[u8]); 7] = [
+    ("/", HTML, include_bytes!("studio/index.html")),
+    ("/studio.js", SCRIPT, include_bytes!("studio/studio.js")),
+    ("/studio.css", STYLE, include_bytes!("studio/studio.css")),
+    (
+        "/geist-latin-wght-normal.woff2",
+        FONT,
+        include_bytes!("studio/geist-latin-wght-normal.woff2"),
+    ),
+    (
+        "/geist-latin-ext-wght-normal.woff2",
+        FONT,
+        include_bytes!("studio/geist-latin-ext-wght-normal.woff2"),
+    ),
+    (
+        "/geist-mono-latin-wght-normal.woff2",
+        FONT,
+        include_bytes!("studio/geist-mono-latin-wght-normal.woff2"),
+    ),
+    (
+        "/geist-mono-latin-ext-wght-normal.woff2",
+        FONT,
+        include_bytes!("studio/geist-mono-latin-ext-wght-normal.woff2"),
+    ),
+];
 
 struct File {
     media_type: &'static str,
-    contents: &'static str,
+    contents: &'static [u8],
     /// Changes when the contents do, so that a browser asks each time and is
     /// told when what it has is still right.
     tag: HeaderValue,
 }
 
 impl File {
-    fn new(media_type: &'static str, contents: &'static str) -> Self {
-        let hash: String = Sha256::digest(contents.as_bytes())
+    fn new(media_type: &'static str, contents: &'static [u8]) -> Self {
+        let hash: String = Sha256::digest(contents)
             .iter()
             .take(16)
             .map(|byte| format!("{byte:02x}"))
@@ -73,34 +106,19 @@ impl File {
     }
 }
 
-static PAGE: LazyLock<File> = LazyLock::new(|| {
-    File::new(
-        "text/html; charset=utf-8",
-        include_str!("studio/index.html"),
-    )
+static FILES: LazyLock<Vec<(&'static str, File)>> = LazyLock::new(|| {
+    SOURCES
+        .iter()
+        .map(|(path, media_type, contents)| (*path, File::new(media_type, contents)))
+        .collect()
 });
-static SCRIPT: LazyLock<File> = LazyLock::new(|| {
-    File::new(
-        "text/javascript; charset=utf-8",
-        include_str!("studio/studio.js"),
-    )
-});
-static STYLE: LazyLock<File> =
-    LazyLock::new(|| File::new("text/css; charset=utf-8", include_str!("studio/studio.css")));
 
-/// The studio's three paths. The page names the other two relative to itself.
+/// The studio's paths.
 pub fn routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
-    Router::new()
-        .route(
-            "/",
-            get(|headers: HeaderMap| async move { PAGE.respond(&headers) }),
+    FILES.iter().fold(Router::new(), |router, (path, file)| {
+        router.route(
+            path,
+            get(move |headers: HeaderMap| async move { file.respond(&headers) }),
         )
-        .route(
-            "/studio.js",
-            get(|headers: HeaderMap| async move { SCRIPT.respond(&headers) }),
-        )
-        .route(
-            "/studio.css",
-            get(|headers: HeaderMap| async move { STYLE.respond(&headers) }),
-        )
+    })
 }

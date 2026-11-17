@@ -22,12 +22,43 @@ export interface Authored {
 }
 
 /**
+ * An identity that the observations of a review item matched.
+ */
+export interface Candidate {
+  identity: IdentitySummary;
+  /**
+   * Its members: those a judgement of the case names before the others,
+   * and at most [`CASE_MEMBERS`] of them. `identity.members` says how
+   * many there are.
+   */
+  members: ObservationRecord[];
+}
+
+/**
  * `GET /v1/runs/{run}/candidates` when JSON is asked for. Each candidate has
  * `left_id`, `right_id`, and every feature column prefixed with `left_` and
  * with `right_`.
  */
 export interface CandidateList {
   candidates: Array<Record<string, unknown>>;
+}
+
+/**
+ * A constraint in force, with where its two observations are.
+ */
+export interface CaseConstraint {
+  a: ObservationId;
+  b: ObservationId;
+  /**
+   * The log position of the changeset that made it.
+   */
+  from: Seq;
+  /**
+   * The identities its observations belong to now, that of `a` first.
+   * `None` for one that has no identity.
+   */
+  identities: [IdentityId | null, IdentityId | null];
+  kind: ConstraintKind;
 }
 
 /**
@@ -546,7 +577,18 @@ export interface IdentitySummary {
   created: Seq;
   entity_type: EntityType;
   id: IdentityId;
+  /**
+   * What a person would call it: the label most of its members have. Of
+   * labels that as many have, the one that was ingested first. `None`
+   * when no member's payload names it. An identity with very many
+   * members is judged by the hundred that were ingested first.
+   */
+  label?: string | null;
   members: number;
+  /**
+   * The sources its members came from, the one with most members first.
+   */
+  sources: SourceCount[];
 }
 
 /**
@@ -567,6 +609,11 @@ export interface IdentityView {
    * The ID that was asked for.
    */
   id: IdentityId;
+  /**
+   * What a person would call the current identity: the label most of its
+   * members have. `None` when no member's payload names it.
+   */
+  label?: string | null;
   /**
    * The members of the current identity, ordered by observation ID.
    */
@@ -769,6 +816,11 @@ export interface ObservationRecord {
    */
   key?: string | null;
   /**
+   * What a person would call it: the name the payload gives, as
+   * [`label_of`] finds it. `None` when the payload has none.
+   */
+  label?: string | null;
+  /**
    * The attributes exactly as received.
    */
   payload: unknown;
@@ -831,6 +883,42 @@ export type Op =
  * Where the two observations are in relation to each other.
  */
 export type Outcome = "same_identity" | "different_identities" | "unassigned" | "different_types";
+
+/**
+ * What a run judged about one of a review item's observations and another
+ * observation.
+ */
+export interface PairJudgement {
+  /**
+   * What the strategy kept with the judgement. The built-in `rules`
+   * keeps the names of the rules that held.
+   */
+  detail?: unknown;
+  /**
+   * The identity `other` belongs to now: one of the candidates, unless
+   * `other` is another of the item's observations. A candidate's members
+   * are not all in the case, so this, not the members, says which
+   * candidate a judgement is about.
+   */
+  identity?: IdentityId | null;
+  /**
+   * One of the item's observations.
+   */
+  observation: ObservationId;
+  /**
+   * What it was compared with.
+   */
+  other: ObservationId;
+  /**
+   * The match run that judged.
+   */
+  run: RunId;
+  /**
+   * On the strategy's own scale.
+   */
+  score?: number | null;
+  verdict: Verdict;
+}
 
 /**
  * The changeset that put an observation where it is.
@@ -1010,6 +1098,41 @@ export interface Rejection {
   op?: Op | null;
   op_index?: number | null;
   reason: Reason;
+}
+
+/**
+ * A review item with what a reviewer reads to decide it: the observations
+ * it holds back, the identities they matched, what was judged between
+ * them, and what was already decided about them.
+ */
+export interface ReviewCase {
+  /**
+   * The identities the item names, as they stand now, ordered by ID. One
+   * that was merged away since is shown as the identity that stands for
+   * it, so there may be fewer than the item names.
+   */
+  candidates: Candidate[];
+  /**
+   * The constraints in force that bear on the decision, oldest first:
+   * those that name one of the item's observations, and those between
+   * members of two of the candidates. A changeset that would break one
+   * is refused, so a `cannot_link` between two candidates means they
+   * cannot be merged, and one between an observation and a member of a
+   * candidate means it cannot be placed there.
+   */
+  constraints: CaseConstraint[];
+  item: ReviewRecord;
+  /**
+   * What the latest run to judge each pair made of it, for every pair of
+   * one of the item's observations with another of them or with a member
+   * of a candidate. Only runs that were reconciled count.
+   */
+  judgements: PairJudgement[];
+  /**
+   * The observations the item names, as they are now, in the item's
+   * order.
+   */
+  observations: ObservationRecord[];
 }
 
 /**
@@ -1198,6 +1321,33 @@ export type Runtime = "python" | "typescript";
  * is the empty log.
  */
 export type Seq = number;
+
+/**
+ * How many observations a source gave.
+ */
+export interface SourceCount {
+  observations: number;
+  source: string;
+}
+
+/**
+ * What one source gave of an entity type.
+ */
+export interface SourceInfo {
+  /**
+   * When the latest of them was ingested.
+   */
+  last_ingested_at: string;
+  /**
+   * Counting each version of a row.
+   */
+  observations: number;
+  source: string;
+  /**
+   * Those of them no changeset has placed.
+   */
+  unassigned: number;
+}
 
 /**
  * What a split did.
@@ -1400,6 +1550,10 @@ export interface TypeInfo {
    */
   open_draft?: ChangesetId | null;
   open_review_items: number;
+  /**
+   * The sources the observations came from, by name.
+   */
+  sources: SourceInfo[];
   /**
    * The project's user-code strategies for the type. The built-in
    * `rules` is always there and is not listed.

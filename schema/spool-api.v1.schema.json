@@ -28,6 +28,26 @@
       ],
       "type": "object"
     },
+    "Candidate": {
+      "description": "An identity that the observations of a review item matched.",
+      "properties": {
+        "identity": {
+          "$ref": "#/$defs/IdentitySummary"
+        },
+        "members": {
+          "description": "Its members: those a judgement of the case names before the others,\nand at most [`CASE_MEMBERS`] of them. `identity.members` says how\nmany there are.",
+          "items": {
+            "$ref": "#/$defs/ObservationRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "identity",
+        "members"
+      ],
+      "type": "object"
+    },
     "CandidateList": {
       "description": "`GET /v1/runs/{run}/candidates` when JSON is asked for. Each candidate has\n`left_id`, `right_id`, and every feature column prefixed with `left_` and\nwith `right_`.",
       "properties": {
@@ -41,6 +61,48 @@
       },
       "required": [
         "candidates"
+      ],
+      "type": "object"
+    },
+    "CaseConstraint": {
+      "description": "A constraint in force, with where its two observations are.",
+      "properties": {
+        "a": {
+          "$ref": "#/$defs/ObservationId"
+        },
+        "b": {
+          "$ref": "#/$defs/ObservationId"
+        },
+        "from": {
+          "$ref": "#/$defs/Seq",
+          "description": "The log position of the changeset that made it."
+        },
+        "identities": {
+          "description": "The identities its observations belong to now, that of `a` first.\n`None` for one that has no identity.",
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/IdentityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "kind": {
+          "$ref": "#/$defs/ConstraintKind"
+        }
+      },
+      "required": [
+        "a",
+        "b",
+        "kind",
+        "from",
+        "identities"
       ],
       "type": "object"
     },
@@ -1154,17 +1216,33 @@
         "id": {
           "$ref": "#/$defs/IdentityId"
         },
+        "label": {
+          "default": null,
+          "description": "What a person would call it: the label most of its members have. Of\nlabels that as many have, the one that was ingested first. `None`\nwhen no member's payload names it. An identity with very many\nmembers is judged by the hundred that were ingested first.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "members": {
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "sources": {
+          "description": "The sources its members came from, the one with most members first.",
+          "items": {
+            "$ref": "#/$defs/SourceCount"
+          },
+          "type": "array"
         }
       },
       "required": [
         "id",
         "entity_type",
         "created",
-        "members"
+        "members",
+        "sources"
       ],
       "type": "object"
     },
@@ -1185,6 +1263,14 @@
         "id": {
           "$ref": "#/$defs/IdentityId",
           "description": "The ID that was asked for."
+        },
+        "label": {
+          "default": null,
+          "description": "What a person would call the current identity: the label most of its\nmembers have. `None` when no member's payload names it.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "members": {
           "description": "The members of the current identity, ordered by observation ID.",
@@ -1627,6 +1713,14 @@
             "null"
           ]
         },
+        "label": {
+          "default": null,
+          "description": "What a person would call it: the name the payload gives, as\n[`label_of`] finds it. `None` when the payload has none.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "payload": {
           "description": "The attributes exactly as received."
         },
@@ -1840,6 +1934,55 @@
           "type": "string"
         }
       ]
+    },
+    "PairJudgement": {
+      "description": "What a run judged about one of a review item's observations and another\nobservation.",
+      "properties": {
+        "detail": {
+          "description": "What the strategy kept with the judgement. The built-in `rules`\nkeeps the names of the rules that held."
+        },
+        "identity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IdentityId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The identity `other` belongs to now: one of the candidates, unless\n`other` is another of the item's observations. A candidate's members\nare not all in the case, so this, not the members, says which\ncandidate a judgement is about."
+        },
+        "observation": {
+          "$ref": "#/$defs/ObservationId",
+          "description": "One of the item's observations."
+        },
+        "other": {
+          "$ref": "#/$defs/ObservationId",
+          "description": "What it was compared with."
+        },
+        "run": {
+          "$ref": "#/$defs/RunId",
+          "description": "The match run that judged."
+        },
+        "score": {
+          "description": "On the strategy's own scale.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "verdict": {
+          "$ref": "#/$defs/Verdict"
+        }
+      },
+      "required": [
+        "observation",
+        "other",
+        "run",
+        "verdict"
+      ],
+      "type": "object"
     },
     "Placement": {
       "description": "The changeset that put an observation where it is.",
@@ -2480,6 +2623,50 @@
       ],
       "type": "object"
     },
+    "ReviewCase": {
+      "description": "A review item with what a reviewer reads to decide it: the observations\nit holds back, the identities they matched, what was judged between\nthem, and what was already decided about them.",
+      "properties": {
+        "candidates": {
+          "description": "The identities the item names, as they stand now, ordered by ID. One\nthat was merged away since is shown as the identity that stands for\nit, so there may be fewer than the item names.",
+          "items": {
+            "$ref": "#/$defs/Candidate"
+          },
+          "type": "array"
+        },
+        "constraints": {
+          "description": "The constraints in force that bear on the decision, oldest first:\nthose that name one of the item's observations, and those between\nmembers of two of the candidates. A changeset that would break one\nis refused, so a `cannot_link` between two candidates means they\ncannot be merged, and one between an observation and a member of a\ncandidate means it cannot be placed there.",
+          "items": {
+            "$ref": "#/$defs/CaseConstraint"
+          },
+          "type": "array"
+        },
+        "item": {
+          "$ref": "#/$defs/ReviewRecord"
+        },
+        "judgements": {
+          "description": "What the latest run to judge each pair made of it, for every pair of\none of the item's observations with another of them or with a member\nof a candidate. Only runs that were reconciled count.",
+          "items": {
+            "$ref": "#/$defs/PairJudgement"
+          },
+          "type": "array"
+        },
+        "observations": {
+          "description": "The observations the item names, as they are now, in the item's\norder.",
+          "items": {
+            "$ref": "#/$defs/ObservationRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "item",
+        "observations",
+        "candidates",
+        "judgements",
+        "constraints"
+      ],
+      "type": "object"
+    },
     "ReviewItem": {
       "description": "Something the reconciler would not decide. The observations named are left\nwithout an identity.",
       "oneOf": [
@@ -2937,6 +3124,55 @@
       "minimum": 0,
       "type": "integer"
     },
+    "SourceCount": {
+      "description": "How many observations a source gave.",
+      "properties": {
+        "observations": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "observations"
+      ],
+      "type": "object"
+    },
+    "SourceInfo": {
+      "description": "What one source gave of an entity type.",
+      "properties": {
+        "last_ingested_at": {
+          "description": "When the latest of them was ingested.",
+          "type": "string"
+        },
+        "observations": {
+          "description": "Counting each version of a row.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source": {
+          "type": "string"
+        },
+        "unassigned": {
+          "description": "Those of them no changeset has placed.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "source",
+        "observations",
+        "unassigned",
+        "last_ingested_at"
+      ],
+      "type": "object"
+    },
     "SplitReport": {
       "description": "What a split did.",
       "properties": {
@@ -3288,6 +3524,13 @@
           "minimum": 0,
           "type": "integer"
         },
+        "sources": {
+          "description": "The sources the observations came from, by name.",
+          "items": {
+            "$ref": "#/$defs/SourceInfo"
+          },
+          "type": "array"
+        },
         "strategies": {
           "default": [],
           "description": "The project's user-code strategies for the type. The built-in\n`rules` is always there and is not listed.",
@@ -3309,6 +3552,7 @@
         "features",
         "observations",
         "unassigned",
+        "sources",
         "identities",
         "open_review_items"
       ],

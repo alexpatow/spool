@@ -22,11 +22,13 @@ use std::collections::BTreeSet;
 use duckdb::{Connection, params};
 use serde::{Deserialize, Serialize};
 use spool_core::{
-    Actor, EntityType, IdentityId, ObservationId, ReviewItem, RunId, Seq, StateError,
+    Actor, Constraint, EntityType, IdentityId, IdentityStatus, ObservationId, ReviewItem, RunId,
+    Seq, StateError, Verdict,
 };
 
 use crate::error::{Error, Result};
-use crate::store::parse;
+use crate::lookup::{self, IdentitySummary, ObservationRecord};
+use crate::store::{self, parse};
 use crate::time::rfc3339;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -93,6 +95,84 @@ pub struct Dismissal {
     pub by: Actor,
     pub at: String,
     pub reason: Option<String>,
+}
+
+/// A review item with what a reviewer reads to decide it: the observations
+/// it holds back, the identities they matched, what was judged between
+/// them, and what was already decided about them.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct ReviewCase {
+    pub item: ReviewRecord,
+    /// The observations the item names, as they are now, in the item's
+    /// order.
+    pub observations: Vec<ObservationRecord>,
+    /// The identities the item names, as they stand now, ordered by ID. One
+    /// that was merged away since is shown as the identity that stands for
+    /// it, so there may be fewer than the item names.
+    pub candidates: Vec<Candidate>,
+    /// What the latest run to judge each pair made of it, for every pair of
+    /// one of the item's observations with another of them or with a member
+    /// of a candidate. Only runs that were reconciled count.
+    pub judgements: Vec<PairJudgement>,
+    /// The constraints in force that bear on the decision, oldest first:
+    /// those that name one of the item's observations, and those between
+    /// members of two of the candidates. A changeset that would break one
+    /// is refused, so a `cannot_link` between two candidates means they
+    /// cannot be merged, and one between an observation and a member of a
+    /// candidate means it cannot be placed there.
+    pub constraints: Vec<CaseConstraint>,
+}
+
+/// A constraint in force, with where its two observations are.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct CaseConstraint {
+    #[serde(flatten)]
+    pub constraint: Constraint,
+    /// The log position of the changeset that made it.
+    pub from: Seq,
+    /// The identities its observations belong to now, that of `a` first.
+    /// `None` for one that has no identity.
+    pub identities: [Option<IdentityId>; 2],
+}
+
+/// An identity that the observations of a review item matched.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct Candidate {
+    pub identity: IdentitySummary,
+    /// Its members: those a judgement of the case names before the others,
+    /// and at most [`CASE_MEMBERS`] of them. `identity.members` says how
+    /// many there are.
+    pub members: Vec<ObservationRecord>,
+}
+
+/// The most members of a candidate that a case shows.
+pub const CASE_MEMBERS: u64 = 25;
+
+/// What a run judged about one of a review item's observations and another
+/// observation.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct PairJudgement {
+    /// One of the item's observations.
+    pub observation: ObservationId,
+    /// What it was compared with.
+    pub other: ObservationId,
+    /// The identity `other` belongs to now: one of the candidates, unless
+    /// `other` is another of the item's observations. A candidate's members
+    /// are not all in the case, so this, not the members, says which
+    /// candidate a judgement is about.
+    pub identity: Option<IdentityId>,
+    /// The match run that judged.
+    pub run: RunId,
+    pub verdict: Verdict,
+    /// On the strategy's own scale.
+    pub score: Option<f64>,
+    /// What the strategy kept with the judgement. The built-in `rules`
+    /// keeps the names of the rules that held.
+    pub detail: Option<serde_json::Value>,
 }
 
 /// Which review items to list. The default lists every item.
@@ -240,6 +320,148 @@ fn split(joined: Option<String>) -> Vec<String> {
             .map(str::to_owned)
             .collect(),
     )
+}
+
+/// A review item with the records it is about.
+pub(crate) fn case(conn: &Connection, id: u64) -> Result<ReviewCase> {
+    let only = ReviewFilter {
+        id: Some(id),
+        ..ReviewFilter::default()
+    };
+    let item = list(conn, &only)?
+        .pop()
+        .ok_or(Error::UnknownReviewItem(id))?;
+    let observations = lookup::observations_by_id(conn, &item.observations)?;
+
+    let mut current: BTreeSet<IdentityId> = BTreeSet::new();
+    for record in store::read_identities(conn, &item.identities)?
+        .into_iter()
+        .flatten()
+    {
+        current.insert(match record.status {
+            IdentityStatus::Active => record.id,
+            IdentityStatus::MergedInto(survivor) => survivor,
+        });
+    }
+    let current: Vec<IdentityId> = current.into_iter().collect();
+    let identities = lookup::identities_by_id(conn, &current)?;
+
+    let mut judgements = Vec::new();
+    {
+        // A pair is stored with the smaller ID on the left, so one of the
+        // item's observations may be on either side.
+        let mut statement = conn.prepare(&format!(
+            "WITH held AS (SELECT unnest({held}) AS observation_id),
+                  near AS (
+                    SELECT observation_id FROM held
+                    UNION
+                    SELECT observation_id FROM spool.membership
+                    WHERE to_seq IS NULL AND list_contains({candidates}, identity_id)),
+                  judged AS (
+                    SELECT j.*, j.left_id IN (SELECT observation_id FROM held) AS left_held
+                    FROM spool.judgement j
+                    JOIN spool.run r ON r.run_id = j.run_id AND r.status IN ('succeeded', 'drafted')
+                    WHERE j.left_id IN (SELECT observation_id FROM near)
+                      AND j.right_id IN (SELECT observation_id FROM near)
+                      AND (j.left_id IN (SELECT observation_id FROM held)
+                           OR j.right_id IN (SELECT observation_id FROM held))
+                    QUALIFY j.run_id = max(j.run_id) OVER (PARTITION BY j.left_id, j.right_id))
+             SELECT (CASE WHEN left_held THEN left_id ELSE right_id END)::VARCHAR,
+                    (CASE WHEN left_held THEN right_id ELSE left_id END)::VARCHAR,
+                    run_id, verdict, score, detail::VARCHAR, m.identity_id::VARCHAR
+             FROM judged
+             LEFT JOIN spool.membership m
+               ON m.observation_id = (CASE WHEN left_held THEN right_id ELSE left_id END)
+              AND m.to_seq IS NULL
+             ORDER BY 1, 2, verdict, score",
+            held = lookup::uuid_list(&item.observations),
+            candidates = lookup::uuid_list(&current),
+        ))?;
+        let mut rows = statement.query([])?;
+        while let Some(row) = rows.next()? {
+            judgements.push(PairJudgement {
+                observation: parse(&row.get::<_, String>(0)?)?,
+                other: parse(&row.get::<_, String>(1)?)?,
+                identity: row
+                    .get::<_, Option<String>>(6)?
+                    .map(|identity| parse(&identity))
+                    .transpose()?,
+                run: RunId(row.get::<_, i64>(2)? as u64),
+                verdict: row
+                    .get::<_, String>(3)?
+                    .parse()
+                    .map_err(|message: String| StateError::new(message))?,
+                score: row.get(4)?,
+                detail: row
+                    .get::<_, Option<String>>(5)?
+                    .map(|detail| serde_json::from_str(&detail).map_err(StateError::new))
+                    .transpose()?,
+            });
+        }
+    }
+
+    let mut constraints = Vec::new();
+    {
+        let mut statement = conn.prepare(&format!(
+            "SELECT c.observation_a::VARCHAR, c.observation_b::VARCHAR, c.kind, c.from_seq,
+                    a.identity_id::VARCHAR, b.identity_id::VARCHAR
+             FROM spool.constraint_link c
+             LEFT JOIN spool.membership a
+               ON a.observation_id = c.observation_a AND a.to_seq IS NULL
+             LEFT JOIN spool.membership b
+               ON b.observation_id = c.observation_b AND b.to_seq IS NULL
+             WHERE c.to_seq IS NULL
+               AND (list_contains({held}, c.observation_a)
+                    OR list_contains({held}, c.observation_b)
+                    OR (a.identity_id <> b.identity_id
+                        AND list_contains({candidates}, a.identity_id)
+                        AND list_contains({candidates}, b.identity_id)))
+             ORDER BY c.from_seq, least(c.observation_a, c.observation_b),
+                      greatest(c.observation_a, c.observation_b)",
+            held = lookup::uuid_list(&item.observations),
+            candidates = lookup::uuid_list(&current),
+        ))?;
+        let mut rows = statement.query([])?;
+        while let Some(row) = rows.next()? {
+            let place = |column: usize| -> Result<Option<IdentityId>> {
+                row.get::<_, Option<String>>(column)?
+                    .map(|id| parse(&id))
+                    .transpose()
+            };
+            let constraint = store::constraint(row, 0)?;
+            // A constraint names the smaller ID first, however it is stored.
+            let stored_first: ObservationId = parse(&row.get::<_, String>(0)?)?;
+            let identities = if constraint.a == stored_first {
+                [place(4)?, place(5)?]
+            } else {
+                [place(5)?, place(4)?]
+            };
+            constraints.push(CaseConstraint {
+                constraint,
+                from: Seq(row.get::<_, i64>(3)? as u64),
+                identities,
+            });
+        }
+    }
+
+    let judged: Vec<ObservationId> = judgements
+        .iter()
+        .map(|judgement| judgement.other)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let mut candidates = Vec::new();
+    for identity in identities {
+        let members = lookup::members(conn, identity.id, &judged, CASE_MEMBERS)?;
+        candidates.push(Candidate { identity, members });
+    }
+    Ok(ReviewCase {
+        item,
+        observations,
+        candidates,
+        judgements,
+        constraints,
+    })
 }
 
 /// The open review items of an entity type, oldest first.

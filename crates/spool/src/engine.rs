@@ -29,7 +29,7 @@ use crate::lookup::{
 };
 use crate::metrics::{self, Churn, IdStability, Metrics};
 use crate::project::{EntityTypeManifest, Manifest, Strategy, hash_json};
-use crate::review::{self, ReviewFilter, ReviewRecord};
+use crate::review::{self, ReviewCase, ReviewFilter, ReviewRecord};
 use crate::rows::Rows;
 use crate::rules;
 use crate::runs::{self, RunFilter, RunRecord, RunStatus};
@@ -858,6 +858,13 @@ impl Engine {
     /// Review items, oldest first.
     pub fn review_items(&self, filter: &ReviewFilter) -> Result<Vec<ReviewRecord>> {
         self.read(|conn| review::list(conn, filter))
+    }
+
+    /// A review item with what a reviewer reads to decide it: the records
+    /// it holds back, the identities they matched with their members, and
+    /// what was judged between them.
+    pub fn review_case(&self, id: u64) -> Result<ReviewCase> {
+        self.read(|conn| review::case(conn, id))
     }
 
     pub fn identity_of(&self, observation: ObservationId) -> Result<Option<IdentityId>> {

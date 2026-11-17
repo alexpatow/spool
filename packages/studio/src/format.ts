@@ -117,6 +117,19 @@ export function observationsOf(ops: Op[]): string[] {
   return [...new Set(ids)];
 }
 
+/** The identities a list of operations names, each once. */
+export function identitiesOf(ops: Op[]): string[] {
+  const ids = ops
+    .flatMap(describeOp)
+    .flatMap((part) => (typeof part !== "string" && part.kind === "identity" ? [part.id] : []));
+  return [...new Set(ids)];
+}
+
+/** The end of an ID, which tells two things apart that are called the same. */
+export function tail(id: string): string {
+  return id.slice(-4);
+}
+
 /** The text around a span of a document, on one line. */
 export interface Excerpt {
   before: string;
