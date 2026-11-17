@@ -72,14 +72,14 @@ export function filled(row: Row): Row {
 }
 
 /** Sends rows in calls of at most `CHUNK`, waits for each, and says what became of them. */
-export async function ingest(client: SpoolClient, source: string, key: string, rows: Row[]): Promise<string> {
+export async function ingest(client: SpoolClient, source: string, rows: Row[]): Promise<string> {
   let inserted = 0;
   let duplicates = 0;
   let superseded = 0;
   for (let from = 0; from < rows.length; from += CHUNK) {
     const run = await finished(
       client,
-      await client.ingest({ source, entity_type: "company", key, rows: rows.slice(from, from + CHUNK).map(filled) }),
+      await client.ingest({ source, entity_type: "company", rows: rows.slice(from, from + CHUNK).map(filled) }),
     );
     if (run?.status !== "succeeded") throw new Error(`ingest ${run?.status}: ${run?.error ?? ""}`);
     inserted += run.ingest?.inserted ?? 0;
@@ -139,9 +139,9 @@ export async function scale(
     log(`${companies} companies, ${total} records, in ${dir}`);
     for (const [index, batch] of generated.batches.entries()) {
       const name = `batch ${index + 1}`;
-      const [crm, crmSeconds] = await timed(() => ingest(client, "crm", "id", batch.crm));
+      const [crm, crmSeconds] = await timed(() => ingest(client, "crm", batch.crm));
       await record(`${name}: ingest crm`, crmSeconds, `${batch.crm.length} rows: ${crm}`);
-      const [registry, registrySeconds] = await timed(() => ingest(client, "registry", "number", batch.registry));
+      const [registry, registrySeconds] = await timed(() => ingest(client, "registry", batch.registry));
       await record(`${name}: ingest registry`, registrySeconds, `${batch.registry.length} rows: ${registry}`);
       const [run, seconds] = await timed(() => match(client));
       const resolution = run?.resolution;

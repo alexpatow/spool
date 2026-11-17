@@ -1,13 +1,14 @@
 //! The Spool engine.
 //!
 //! Spool turns records about the same real-world thing into one durable
-//! identity. A project declares its entity types as files: a features query
-//! and SQL rules per type. The engine ingests records, matches new ones
+//! identity. A project declares what its sources send and its entity types
+//! as files: per type, its features, how each source's columns become them,
+//! and SQL rules. The engine ingests records, matches new ones
 //! against what it holds, and changes identity state only by committing
 //! changesets.
 //!
 //! ```no_run
-//! use spool::{Engine, IngestOptions, Manifest, Options, ResolveOptions};
+//! use spool::{Engine, Manifest, Options, ResolveOptions};
 //! # fn rows() -> spool::arrow::record_batch::RecordBatchIterator<
 //! #     std::vec::IntoIter<Result<spool::arrow::record_batch::RecordBatch, spool::arrow::error::ArrowError>>,
 //! # > { unimplemented!() }
@@ -15,7 +16,7 @@
 //! # fn main() -> spool::Result<()> {
 //! let engine = Engine::open("spool.duckdb", Options::default())?;
 //! engine.apply(&Manifest::load("my-project")?)?;
-//! engine.ingest("crm", "company", rows(), &IngestOptions::keyed_by("id"))?;
+//! engine.ingest("crm", "company", rows())?;
 //! let report = engine.resolve(&ResolveOptions::default())?;
 //! # Ok(())
 //! # }
@@ -70,10 +71,10 @@ pub use explain::{
     Comparison, Explained, Explanation, Link, LinkKind, Outcome, Placement, RecordedJudgement,
     RuleReading, RuleResult,
 };
-pub use ingest::{IngestOptions, IngestReport};
+pub use ingest::IngestReport;
 pub use lookup::{
     HistoryEntry, IdentityFilter, IdentitySummary, IdentityView, Member, RecordEntry, RecordFilter,
-    SourceCount, SourceInfo, StoreInfo, TypeInfo, label_of,
+    SourceCount, SourceInfo, StoreInfo, TypeInfo,
 };
 pub use metrics::{
     BCubed, Churn, ExtractionMetrics, IdStability, Metrics, OrderSensitivity, OverridePersistence,
@@ -81,7 +82,7 @@ pub use metrics::{
 };
 pub use project::{
     Declaration, EntityTypeManifest, EntityTypeSource, Extractor, FeatureColumn, Manifest, Project,
-    Rule, RuleSet, Runtime, SqlFile, Strategy, StrategySource,
+    Rule, RuleSet, Runtime, Source, SqlFile, Strategy, StrategySource, Transform, YamlFile,
 };
 pub use review::{
     CASE_MEMBERS, Candidate, CaseConstraint, Dismissal, PairJudgement, ReviewCase, ReviewEntry,

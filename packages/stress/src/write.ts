@@ -15,10 +15,17 @@ export const repository = resolve(import.meta.dir, "../../..");
 export const companiesProject = join(repository, "benchmarks/identity/companies-small");
 
 /** Writes the project and returns how many records it holds. */
+/** Copies the company fixture's sources, transforms and entity type into `dir`. */
+export function copyCompanies(dir: string): void {
+  for (const part of ["sources", "transforms", "entities"]) {
+    cpSync(join(companiesProject, part), join(dir, part), { recursive: true });
+  }
+}
+
 export function writeProject(dir: string, generated: Generated): number {
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
-  cpSync(join(companiesProject, "entities"), join(dir, "entities"), { recursive: true });
+  copyCompanies(dir);
   const steps: string[] = [];
   generated.batches.forEach((batch, index) => {
     const number = index + 1;
@@ -33,13 +40,11 @@ export function writeProject(dir: string, generated: Generated): number {
         `file = "batch-${number}-crm.csv"`,
         'source = "crm"',
         'entity_type = "company"',
-        'key = "id"',
         "",
         "[[step.ingest]]",
         `file = "batch-${number}-registry.csv"`,
         'source = "registry"',
         'entity_type = "company"',
-        'key = "number"',
         "",
       ].join("\n"),
     );

@@ -28,8 +28,13 @@ fn write(root: &Path, file: &str, contents: &str) {
 fn project(root: &Path) {
     write(
         root,
-        "bench/entities/paper/features.sql",
-        "SELECT record_id, lower(payload->>'title') AS title FROM record",
+        "bench/sources/library.yaml",
+        "key: id\ncolumns: [id, title]\n",
+    );
+    write(
+        root,
+        "bench/entities/paper/entity.yaml",
+        "label: title\nfeatures: [title]\nmapping:\n  library:\n    title: { from: title, transform: lower }\n",
     );
     write(
         root,
@@ -46,7 +51,7 @@ fn project(root: &Path) {
 fn scenario(ingest: &str) -> String {
     format!(
         "[truth]\ncolumn = \"work\"\n\n[[step]]\nname = \"all\"\n\n[[step.ingest]]\n{ingest}\n\
-         source = \"library\"\nentity_type = \"paper\"\nkey = \"id\"\n"
+         source = \"library\"\nentity_type = \"paper\"\n"
     )
 }
 
@@ -134,7 +139,7 @@ fn a_scenario_file_is_checked_when_it_is_loaded() {
         ),
         (
             "[truth]\nmentions = \"mentions.csv\"\n[[step]]\nname = \"all\"\n[[step.ingest]]\n\
-             file = \"papers.csv\"\nsource = \"library\"\nentity_type = \"paper\"\nkey = \"id\"\n",
+             file = \"papers.csv\"\nsource = \"library\"\nentity_type = \"paper\"\n",
             "step `all` ingests rows, and [truth] has no `file` or `column`",
         ),
         (
@@ -149,13 +154,8 @@ fn a_scenario_file_is_checked_when_it_is_loaded() {
         ),
         (
             "[truth]\ncolumn = \"work\"\n[[step]]\nname = \"all\"\n[[step.ingest]]\n\
-             source = \"library\"\nentity_type = \"paper\"\nkey = \"id\"\n",
+             source = \"library\"\nentity_type = \"paper\"\n",
             "exactly one of `file` and `dataset`",
-        ),
-        (
-            "[truth]\ncolumn = \"work\"\n[[step]]\nname = \"all\"\n[[step.ingest]]\n\
-             file = \"papers.csv\"\nsource = \"library\"\nentity_type = \"paper\"\n",
-            "needs a `key` column",
         ),
         (
             "[truth]\ncolumn = \"work\"\nshuffle = true\n[[step]]\nname = \"all\"\ningest = []\n",
@@ -267,7 +267,6 @@ name = "first"
 file = "papers.csv"
 source = "library"
 entity_type = "paper"
-key = "id"
 
 [[step]]
 name = "a mistake"
@@ -289,7 +288,6 @@ name = "second"
 file = "more.csv"
 source = "library"
 entity_type = "paper"
-key = "id"
 
 [[step]]
 name = "review"

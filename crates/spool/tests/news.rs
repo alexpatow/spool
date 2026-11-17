@@ -343,18 +343,9 @@ fn the_example_that_asks_a_language_model_places_what_the_model_quotes() {
     assert_eq!(
         found,
         vec![
-            // An attribute that is a list is not one a record can
-            // have, and is left out.
-            (
-                12,
-                26,
-                serde_json::json!({"listed": false, "name": "Brightwave Inc"})
-            ),
-            (
-                85,
-                99,
-                serde_json::json!({"listed": false, "name": "Brightwave Inc"})
-            ),
+            // An attribute the source does not list is left out.
+            (12, 26, serde_json::json!({"name": "Brightwave Inc"})),
+            (85, 99, serde_json::json!({"name": "Brightwave Inc"})),
             (
                 125,
                 145,

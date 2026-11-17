@@ -272,6 +272,26 @@ impl Inner {
             &|name| manifest.entity_type(name).is_some(),
             extractor,
         )?;
+        // A mention is a record of its document's source, and may say only
+        // what that source's file lists.
+        for (index, mention) in staged.iter().enumerate() {
+            let fail = |message: String| Error::Mentions(format!("row {}: {message}", index + 1));
+            let entry = manifest
+                .entity_type(&mention.entity_type)
+                .expect("a staged mention is of a declared type");
+            let source = manifest.source_of(&mention.source, entry).map_err(&fail)?;
+            let attributes: serde_json::Map<String, serde_json::Value> =
+                serde_json::from_str(&mention.payload).unwrap_or_default();
+            if let Some(unknown) = attributes
+                .keys()
+                .find(|name| !source.columns.contains(name))
+            {
+                return Err(fail(format!(
+                    "it has an attribute `{unknown}`, which sources/{}.yaml does not list",
+                    source.name
+                )));
+            }
+        }
 
         // Each type's declaration, for the feature rows of what is new.
         let mut declared: BTreeMap<&str, (EntityType, Declaration, u32)> = BTreeMap::new();

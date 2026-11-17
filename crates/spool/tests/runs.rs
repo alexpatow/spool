@@ -12,8 +12,8 @@ use spool::arrow::error::ArrowError;
 use spool::arrow::record_batch::{RecordBatch, RecordBatchReader};
 use spool::core::{EntityType, Policy, RunId, Seq};
 use spool::{
-    Engine, EntityTypeSource, Error, IngestOptions, Options, ResolveOptions, RunFilter, RunKind,
-    RunStatus, Scope, SqlFile, StrategyRef, watch_runs,
+    Engine, EntityTypeSource, Error, Options, ResolveOptions, RunFilter, RunKind, RunStatus, Scope,
+    SqlFile, StrategyRef, watch_runs,
 };
 
 fn thing_scope() -> Scope {
@@ -80,15 +80,9 @@ fn a_run_records_what_it_reported() {
     assert_eq!((record.ingest, record.resolution), (None, None));
 
     // A run that fails says why.
-    let no_key =
-        spool::Rows::from_text(&["id", "where"], &[vec![None, Some(r#"{"page": 1}"#)]]).unwrap();
-    let options = IngestOptions {
-        key_column: Some("id".to_owned()),
-        evidence_column: Some("where".to_owned()),
-    };
-    let error = engine
-        .ingest("shop", "thing", no_key, &options)
-        .unwrap_err();
+    let undeclared =
+        spool::Rows::from_text(&["id", "colour"], &[vec![Some("1"), Some("red")]]).unwrap();
+    let error = engine.ingest("shop", "thing", undeclared).unwrap_err();
     let failed = &engine
         .runs(&RunFilter {
             status: Some(RunStatus::Failed),
@@ -146,11 +140,7 @@ fn a_run_is_announced_before_its_work_is_done_and_reads_do_not_wait_for_it() {
             };
             watch_runs(
                 move |run| announced.lock().unwrap().push(run),
-                || {
-                    engine
-                        .ingest("depot", "thing", rows, &IngestOptions::keyed_by("id"))
-                        .unwrap()
-                },
+                || engine.ingest("depot", "thing", rows).unwrap(),
             )
         });
 
@@ -201,9 +191,7 @@ fn an_open_run_survives_a_restart_and_a_running_one_is_failed() {
             rows: rows(&[("3", Some("hammer"), None)]),
             before: || resume_unwind(Box::new("simulated crash")),
         };
-        let crashed = catch_unwind(AssertUnwindSafe(|| {
-            engine.ingest("depot", "thing", rows, &IngestOptions::keyed_by("id"))
-        }));
+        let crashed = catch_unwind(AssertUnwindSafe(|| engine.ingest("depot", "thing", rows)));
         assert!(crashed.is_err());
         let interrupted = RunId(open.0 + 1);
         assert_eq!(engine.run(interrupted).unwrap().status, RunStatus::Running);
@@ -295,10 +283,13 @@ fn changing_a_declaration_fails_the_runs_that_wait_on_the_old_one() {
     );
 
     let folded = EntityTypeSource {
-        features: SqlFile::new(
-            "features",
-            "SELECT record_id, lower(payload->>'name') AS name, payload->>'code' AS code
-             FROM record",
+        entity: entity(
+            Some("name"),
+            &[
+                ("name", "{ from: name, transform: lower }"),
+                ("code", "code"),
+            ],
+            &SOURCES,
         ),
         ..thing()
     };
@@ -323,19 +314,25 @@ fn changing_a_declaration_fails_the_runs_that_wait_on_the_old_one() {
 fn a_changed_declaration_that_breaks_its_contract_changes_nothing() {
     let engine = engine();
     ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
-    let doubled = EntityTypeSource {
-        features: SqlFile::new(
-            "features",
-            "SELECT o.record_id, o.payload->>'name' AS name, o.payload->>'code' AS code
-             FROM record o, range(2)",
+    // A transform that cannot work on what is stored.
+    let mut project = project_of(vec![EntityTypeSource {
+        entity: entity(
+            Some("name"),
+            &[
+                ("name", "{ from: name, transform: number }"),
+                ("code", "code"),
+            ],
+            &SOURCES,
         ),
+        block: Vec::new(),
+        no_match: Vec::new(),
+        match_: Vec::new(),
         ..thing()
-    };
-    let error = engine.apply(&manifest_of(vec![doubled])).unwrap_err();
-    assert!(
-        matches!(&error, Error::Apply(message) if message.contains("one row per record")),
-        "{error}"
-    );
+    }]);
+    project
+        .transforms
+        .push(SqlFile::new("number", "lambda name: name::INTEGER"));
+    engine.apply(&project.compile().unwrap()).unwrap_err();
     // The store is as it was, and so is the manifest the engine runs on.
     assert_eq!(
         engine.info().unwrap().entity_types[0].declaration_version,

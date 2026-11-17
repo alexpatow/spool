@@ -53,7 +53,6 @@ fn ingest(server: &Server, table: &[&[&str]]) {
         json!({
             "source": "shop",
             "entity_type": "thing",
-            "key": "id",
             "rows": json_rows(rows(table)),
         }),
     );

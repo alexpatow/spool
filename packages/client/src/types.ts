@@ -659,19 +659,13 @@ export interface IngestReport {
 export interface IngestRequest {
   entity_type: string;
   /**
-   * A column of JSON text that says where each row was found.
-   */
-  evidence?: string | null;
-  /**
-   * The column that holds each row's key within the source.
-   */
-  key?: string | null;
-  /**
-   * One object per row. A column holds text, booleans or numbers.
+   * One object per row, with the columns the source declares. A column
+   * holds text, booleans or numbers.
    */
   rows: Array<Record<string, unknown>>;
   /**
-   * The name of the source the rows come from.
+   * The name of the source the rows come from, which the project
+   * declares in `sources/<name>.yaml`.
    */
   source: string;
   wait_ms?: number | null;
@@ -1033,8 +1027,9 @@ export interface RecordEntry {
    */
   key?: string | null;
   /**
-   * What a person would call it: the name the payload gives, as
-   * [`label_of`] finds it. `None` when the payload has none.
+   * What a person would call it: its value of the feature its type
+   * names as the label. `None` when the type names none, or the record
+   * has no value there.
    */
   label?: string | null;
   /**

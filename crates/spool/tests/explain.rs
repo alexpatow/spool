@@ -6,9 +6,8 @@ use common::*;
 use serde_json::json;
 use spool::core::{Actor, ConstraintKind, EntityType, IdGenerator, Op, Policy, SeededIds, Verdict};
 use spool::{
-    Disposition, DraftStatus, Engine, Error, Explanation, IngestOptions, LinkKind, Options,
-    Outcome, ResolveOptions, ReviewFilter, ReviewStatus, Rows, RunStatus, Scope, SqlFile,
-    StrategyRef,
+    Disposition, DraftStatus, Engine, Error, Explanation, LinkKind, Options, Outcome,
+    ResolveOptions, ReviewFilter, ReviewStatus, Rows, RunStatus, Scope, SqlFile, StrategyRef,
 };
 
 fn reviewer() -> Actor {
@@ -781,20 +780,10 @@ fn records_of_different_types_are_never_compared() {
     let engine = Engine::open_in_memory(Options::seeded(1)).unwrap();
     let mut widget = thing();
     widget.name = "widget".to_owned();
-    widget.features = SqlFile::new(
-        "features",
-        "SELECT record_id, payload->>'name' AS name, payload->>'code' AS code
-         FROM record",
-    );
     engine.apply(&manifest_of(vec![thing(), widget])).unwrap();
     ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
     engine
-        .ingest(
-            "shop",
-            "widget",
-            rows(&[("2", Some("anvil"), None)]),
-            &IngestOptions::keyed_by("id"),
-        )
+        .ingest("shop", "widget", rows(&[("2", Some("anvil"), None)]))
         .unwrap();
     resolve(&engine);
 
@@ -809,38 +798,6 @@ fn records_of_different_types_are_never_compared() {
         explanation.summary
     );
     assert!(!says(&explanation, "No run has compared them."));
-}
-
-#[test]
-fn a_type_whose_features_are_only_the_record_is_explained() {
-    // A strategy that reads payloads itself needs no feature columns.
-    let mut bare = thing();
-    bare.features = SqlFile::new("features", "SELECT record_id FROM record");
-    bare.block.clear();
-    bare.no_match.clear();
-    bare.match_.clear();
-    let engine = Engine::open_in_memory(Options::seeded(1)).unwrap();
-    engine.apply(&manifest_of(vec![bare])).unwrap();
-    ingest(
-        &engine,
-        "shop",
-        &[("1", Some("anvil"), None), ("2", Some("anvil"), None)],
-    );
-    resolve(&engine);
-
-    let explanation = explain(&engine, ("shop", "1"), ("shop", "2"));
-    assert_eq!(explanation.outcome, Outcome::DifferentIdentities);
-    // Each has a feature row, with nothing in it.
-    for side in [&explanation.left, &explanation.right] {
-        assert_eq!(side.features, Some(serde_json::Map::new()));
-    }
-    let rules = explanation.rules.as_ref().expect("a reading of the rules");
-    assert!(rules.block.is_empty() && !rules.candidate);
-    assert_eq!(rules.verdict, None);
-    assert!(says(
-        &explanation,
-        "The entity type has no block rule, so a run of the rules would not compare them."
-    ));
 }
 
 #[test]
@@ -860,10 +817,10 @@ fn an_explanation_reads_the_rules_of_the_declaration_its_features_were_built_fro
     // The same type with its feature columns under other names, as a
     // project saved while `spool dev` runs would have them.
     let mut renamed = thing();
-    renamed.features = SqlFile::new(
-        "features",
-        "SELECT record_id, payload->>'name' AS label, payload->>'code' AS number
-         FROM record",
+    renamed.entity = entity(
+        Some("label"),
+        &[("label", "name"), ("number", "code")],
+        &SOURCES,
     );
     renamed.block = vec![SqlFile::new("same_name", "l.label = r.label")];
     renamed.no_match = vec![SqlFile::new("different_code", "l.number <> r.number")];

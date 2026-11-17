@@ -8,8 +8,7 @@ use spool::arrow::array::{Array, AsArray};
 use spool::arrow::record_batch::RecordBatch;
 use spool::core::{IdentityId, RecordId};
 use spool::{
-    Engine, EntityTypeSource, IngestOptions, IngestReport, Manifest, Options, Project, Rows,
-    SqlFile,
+    Engine, EntityTypeSource, IngestReport, Manifest, Options, Project, Rows, SqlFile, YamlFile,
 };
 
 /// The repository's `benchmarks` directory.
@@ -17,15 +16,42 @@ pub fn benchmarks() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../benchmarks")
 }
 
+/// The sources the tests take things from. Each gives rows of
+/// `(id, name, code)`, keyed by `id`.
+pub const SOURCES: [&str; 5] = ["shop", "depot", "kiosk", "yard", "late"];
+
+pub fn source(name: &str) -> YamlFile {
+    YamlFile::new(name, "key: id\ncolumns: [id, name, code]\n")
+}
+
+/// An `entity.yaml` that maps each feature the same way from every one of
+/// the sources: `("name", "name")` is the column as it is, and
+/// `("name", "{ from: name, transform: upper }")` is a transform of it.
+pub fn entity(label: Option<&str>, features: &[(&str, &str)], sources: &[&str]) -> YamlFile {
+    let names: Vec<&str> = features.iter().map(|(name, _)| *name).collect();
+    let mut yaml = String::new();
+    if let Some(label) = label {
+        yaml += &format!("label: {label}\n");
+    }
+    yaml += &format!("features: [{}]\nmapping:\n", names.join(", "));
+    for source in sources {
+        yaml += &format!("  {source}:\n");
+        for (name, from) in features {
+            yaml += &format!("    {name}: {from}\n");
+        }
+    }
+    YamlFile::new("entity", yaml)
+}
+
 /// An entity type with no meaning: a `thing` has a name and a code. Things
 /// with the same name or code match, unless their codes differ.
 pub fn thing() -> EntityTypeSource {
     EntityTypeSource {
         name: "thing".to_owned(),
-        features: SqlFile::new(
-            "features",
-            "SELECT record_id, payload->>'name' AS name, payload->>'code' AS code
-             FROM record",
+        entity: entity(
+            Some("name"),
+            &[("name", "name"), ("code", "code")],
+            &SOURCES,
         ),
         block: vec![
             SqlFile::new("same_name", "l.name = r.name"),
@@ -41,14 +67,21 @@ pub fn thing() -> EntityTypeSource {
     }
 }
 
-pub fn manifest_of(entity_types: Vec<EntityTypeSource>) -> Manifest {
+/// A project of the given types and the tests' sources.
+pub fn project_of(entity_types: Vec<EntityTypeSource>) -> Project {
     Project {
+        sources: SOURCES.iter().map(|name| source(name)).collect(),
+        transforms: Vec::new(),
         entity_types,
         extractors: Vec::new(),
         ignored: Vec::new(),
     }
-    .compile()
-    .expect("the test project compiles")
+}
+
+pub fn manifest_of(entity_types: Vec<EntityTypeSource>) -> Manifest {
+    project_of(entity_types)
+        .compile()
+        .expect("the test project compiles")
 }
 
 pub fn things() -> Manifest {
@@ -77,14 +110,7 @@ pub fn ingest(
     source: &str,
     things: &[(&str, Option<&str>, Option<&str>)],
 ) -> IngestReport {
-    engine
-        .ingest(
-            source,
-            "thing",
-            rows(things),
-            &IngestOptions::keyed_by("id"),
-        )
-        .unwrap()
+    engine.ingest(source, "thing", rows(things)).unwrap()
 }
 
 pub fn cell(batch: &RecordBatch, column: usize, row: usize) -> Option<String> {

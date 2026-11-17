@@ -91,8 +91,8 @@ export async function reviewer({
   let server: Running = await serve({ project: dir, store });
   let client: SpoolClient = server.client;
 
-  const send = async (source: string, key: string, rows: Row[]) => {
-    const run = await client.ingest({ source, entity_type: "company", key, rows: rows.map(filled) });
+  const send = async (source: string, rows: Row[]) => {
+    const run = await client.ingest({ source, entity_type: "company", rows: rows.map(filled) });
     if (run.status !== "succeeded") throw new Error(`the ingest ${run.status}: ${run.error ?? ""}`);
   };
   const match = async (request: { rematch?: boolean; commit?: boolean }) => {
@@ -139,7 +139,6 @@ export async function reviewer({
           if (mine.length > 0)
             await send(
               source,
-              mine[0]!.key,
               mine.map((row) => row.row),
             );
         }
@@ -155,7 +154,7 @@ export async function reviewer({
         const field = row.source === "crm" ? "name" : "legal_name";
         if (below(3) > 0)
           row.row = { ...row.row, [field]: `${row.row[field] ?? ""} ${pick(["Group", "Ltd", "AB", ""])}` };
-        await send(row.source, row.key, [row.row]);
+        await send(row.source, [row.row]);
       },
     ],
     ["match", 8, async () => void (await match({}))],
@@ -318,7 +317,6 @@ export async function reviewer({
   try {
     await send(
       "crm",
-      "id",
       waiting.splice(0, 30).map((row) => (sent.push(row), row.row)),
     );
     await match({});

@@ -63,13 +63,12 @@ fn has(printed: &str, line: &str) {
     );
 }
 
-fn ingest(server: &Server, source: &str, entity_type: &str, key: &str, rows: Rows) {
+fn ingest(server: &Server, source: &str, entity_type: &str, rows: Rows) {
     let response = server.post(
         "/v1/ingest",
         json!({
             "source": source,
             "entity_type": entity_type,
-            "key": key,
             "rows": json_rows(rows),
         }),
     );
@@ -97,7 +96,6 @@ fn workshop(dir: &Path) -> Server {
         &server,
         "shop",
         "thing",
-        "id",
         rows(&[
             &["id", "code", "colour"],
             &["1", "anvil", "black"],
@@ -389,12 +387,12 @@ fn drafts_and_review_items_are_shown_with_what_they_hold() {
     let project = dir.path().join("project");
     copy_project(&companies, &project);
     let server = Server::serve(&project, dir.path(), 1);
-    for (file, source, key) in [
-        ("batch-1-crm.csv", "crm", "id"),
-        ("batch-1-registry.csv", "registry", "number"),
+    for (file, source) in [
+        ("batch-1-crm.csv", "crm"),
+        ("batch-1-registry.csv", "registry"),
     ] {
         let rows = Rows::from_csv(companies.join(file)).unwrap();
-        ingest(&server, source, "company", key, rows);
+        ingest(&server, source, "company", rows);
     }
 
     // The first run's draft is left for a reviewer.
@@ -440,12 +438,12 @@ fn drafts_and_review_items_are_shown_with_what_they_hold() {
     server.call(&format!("/v1/drafts/{draft}/approve"), json!({}));
 
     // The second batch has a record that fits two companies.
-    for (file, source, key) in [
-        ("batch-2-crm.csv", "crm", "id"),
-        ("batch-2-registry.csv", "registry", "number"),
+    for (file, source) in [
+        ("batch-2-crm.csv", "crm"),
+        ("batch-2-registry.csv", "registry"),
     ] {
         let rows = Rows::from_csv(companies.join(file)).unwrap();
-        ingest(&server, source, "company", key, rows);
+        ingest(&server, source, "company", rows);
     }
     resolve(&server, "company");
     let stuck = id_of(&server, "crm", "c-117");
@@ -529,8 +527,6 @@ fn a_mention_is_shown_in_its_document() {
         json!({
             "source": "notes",
             "entity_type": "thing",
-            "key": "id",
-            "evidence": "where",
             "rows": [{ "id": "m1", "code": "anvil", "where": evidence.to_string() }],
         }),
     );
@@ -581,8 +577,6 @@ fn a_mention_is_shown_in_its_document() {
         json!({
             "source": "notes",
             "entity_type": "thing",
-            "key": "id",
-            "evidence": "where",
             "rows": [{ "id": "m2", "code": "tongs", "where": evidence.to_string() }],
         }),
     );
@@ -614,7 +608,6 @@ fn a_source_and_key_name_the_latest_version_however_many_there_were() {
             &server,
             "shop",
             "thing",
-            "id",
             rows(&[&["id", "code"], &["1", &code]]),
         );
     }
@@ -622,7 +615,6 @@ fn a_source_and_key_name_the_latest_version_however_many_there_were() {
         &server,
         "shop",
         "thing",
-        "id",
         rows(&[&["id", "code"], &["2", "anvil-250"]]),
     );
     let first = server.read("/v1/records?source=shop&key=1");
@@ -700,18 +692,16 @@ fn a_merged_identity_is_shown_with_the_constraints_of_the_one_it_became() {
 }
 
 #[test]
-fn a_type_with_no_feature_columns_and_no_rules_is_explained() {
+fn a_type_with_no_rules_is_explained() {
     let dir = tempfile::tempdir().unwrap();
     let project = dir.path().join("project");
-    let features = project.join("entities/thing/features.sql");
-    std::fs::create_dir_all(features.parent().unwrap()).unwrap();
-    std::fs::write(features, "SELECT record_id FROM record\n").unwrap();
+    write_things(&project);
+    std::fs::remove_dir_all(project.join("entities/thing/rules")).unwrap();
     let server = Server::serve(&project, dir.path(), 1);
     ingest(
         &server,
         "shop",
         "thing",
-        "id",
         rows(&[&["id", "code"], &["1", "anvil"], &["2", "anvil"]]),
     );
 
@@ -722,9 +712,6 @@ fn a_type_with_no_feature_columns_and_no_rules_is_explained() {
     );
     has(&explanation, "rules as they are now");
     has(&explanation, "  the entity type has none");
-    assert!(!explanation.contains("\nfeatures\n"), "{explanation}");
-    let answer = answered(&server, &["explain", "shop:1", "shop:2"]);
-    assert_eq!(answer["left"]["features"], json!({}));
 }
 
 #[test]
@@ -750,7 +737,6 @@ fn a_rule_that_sql_refuses_on_a_pair_is_shown_as_one_that_cannot_be_applied() {
         &server,
         "shop",
         "thing",
-        "id",
         rows(&[&["id", "code"], &["1", "anvil"], &["2", "anvil"]]),
     );
     assert_eq!(resolve(&server, "thing")["status"], "succeeded");

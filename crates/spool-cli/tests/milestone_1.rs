@@ -20,9 +20,7 @@ use std::process::Command;
 
 use common::*;
 use spool::core::{IdentityStore, MemoryState, ReviewItem, Seq, Snapshot};
-use spool::{
-    BenchReport, Engine, IngestOptions, Manifest, Options, ResolveOptions, Rows, Scenario,
-};
+use spool::{BenchReport, Engine, Manifest, Options, ResolveOptions, Rows, Scenario};
 
 fn companies() -> PathBuf {
     benchmarks().join("identity/companies-small")
@@ -154,16 +152,14 @@ fn resent_rows_create_no_records_and_no_operations() {
     // Sending every file again changes nothing at all.
     let records = count(&engine, "SELECT count(*) FROM spool.record");
     let head = engine.head().unwrap();
-    for (file, source, key) in [
-        ("batch-1-crm.csv", "crm", "id"),
-        ("batch-1-registry.csv", "registry", "number"),
-        ("batch-2-crm.csv", "crm", "id"),
-        ("batch-2-registry.csv", "registry", "number"),
+    for (file, source) in [
+        ("batch-1-crm.csv", "crm"),
+        ("batch-1-registry.csv", "registry"),
+        ("batch-2-crm.csv", "crm"),
+        ("batch-2-registry.csv", "registry"),
     ] {
         let rows = Rows::from_csv(companies().join(file)).unwrap();
-        let again = engine
-            .ingest(source, "company", rows, &IngestOptions::keyed_by(key))
-            .unwrap();
+        let again = engine.ingest(source, "company", rows).unwrap();
         assert_eq!(again.inserted, 0, "{file}");
         assert_eq!(again.duplicates, again.received, "{file}");
     }
@@ -286,9 +282,7 @@ fn two_records_a_rule_keeps_apart_are_not_attached_to_the_same_identity() {
         &[vec![Some("c-1"), Some("Pioneer Supplies"), Some("GB")]],
     )
     .unwrap();
-    engine
-        .ingest("crm", "company", crm, &IngestOptions::keyed_by("id"))
-        .unwrap();
+    engine.ingest("crm", "company", crm).unwrap();
     resolve();
     let known = identity(&engine, "crm", "c-1").unwrap();
 
@@ -312,14 +306,7 @@ fn two_records_a_rule_keeps_apart_are_not_attached_to_the_same_identity() {
         ],
     )
     .unwrap();
-    engine
-        .ingest(
-            "registry",
-            "company",
-            registry,
-            &IngestOptions::keyed_by("number"),
-        )
-        .unwrap();
+    engine.ingest("registry", "company", registry).unwrap();
     let report = resolve();
 
     // No identity holds two registry numbers.

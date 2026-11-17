@@ -12,20 +12,21 @@ use crate::args::Spec;
 pub const INIT_USAGE: &str = "\
 Usage: spool init [<dir>] [options]
 
-Scaffolds a project: one entity type with a features query and two rules, to
-be replaced with your own.
+Scaffolds a project: one source, one entity type with its features, a
+transform and two rules, to be replaced with your own.
 
   <dir>             the project directory (default: the current directory)
 
 Options:
   --entity <name>   the entity type to scaffold (default: record)
+  --source <name>   the source to scaffold (default: example)
 ";
 
 pub const INFO_USAGE: &str = "\
 Usage: spool info [<dir>] [options]
 
-Lists what the project directory declares: its entity types, their feature
-columns, their rules and their user-code strategies, and its extractors.
+Lists what the project directory declares: its sources, its entity types,
+their feature columns, their rules and their user-code strategies, and its extractors.
 Every SQL file is checked on the way.
 
   <dir>     the project directory (default: the current directory)
@@ -67,26 +68,46 @@ Options:
   --manifest <path>   the manifest to apply (default: <dir>/.spool/manifest.json)
 ";
 
-const FEATURES: &str = "\
--- The features of this entity type: one row per record, and whatever
--- columns the rules need. `record` holds this type's records, and
--- `payload` holds each one's attributes exactly as they were ingested.
-SELECT
-  record_id,
-  lower(trim(payload->>'name')) AS name
-FROM record
+const SOURCE: &str = "\
+# A source of rows. `key` is the column that tells one row from another, and
+# `columns` is every column a row may have.
+key: id
+columns: [id, name]
+";
+
+fn entity_yaml(source: &str) -> String {
+    format!(
+        "\
+# `features` is what records are compared by, and `label` is the feature a
+# record is called by. `mapping` says, for each source, which column each
+# feature comes from, and the transform it goes through if it needs one.
+label: name
+features: [name, name_key]
+
+mapping:
+  {source}:
+    name: name
+    name_key: {{ from: name, transform: name_key }}
+"
+    )
+}
+
+const TRANSFORM: &str = "\
+-- A transform is `lambda`, the names of its arguments, and a DuckDB
+-- expression over them.
+lambda name: lower(trim(name))
 ";
 
 const BLOCK_RULE: &str = "\
 -- A block rule says which pairs are worth comparing. `l` and `r` are two
 -- rows of the feature table.
-l.name = r.name
+l.name_key = r.name_key
 ";
 
 const MATCH_RULE: &str = "\
 -- A match rule says a pair is the same thing. A file under rules/no_match/
 -- says a pair is not, and wins over any match rule.
-l.name = r.name
+l.name_key = r.name_key
 ";
 
 /// The default base image of a written Dockerfile.
@@ -211,7 +232,7 @@ pub fn init(arguments: &[String]) -> Result<(), Failure> {
     let arguments = super::arguments(
         arguments,
         &Spec {
-            values: &["--entity"],
+            values: &["--entity", "--source"],
             flags: &[],
             positional: 1,
         },
@@ -228,8 +249,18 @@ pub fn init(arguments: &[String]) -> Result<(), Failure> {
             entities.display()
         )));
     }
+    let source = arguments.value("--source").unwrap_or("example");
+    let source_file = dir.join("sources").join(format!("{source}.yaml"));
+    let transform_file = dir.join("transforms/name_key.sql");
+    for file in [&source_file, &transform_file] {
+        if file.exists() {
+            return Err(failed(format!("{} already exists", file.display())));
+        }
+    }
     let entity_dir = entities.join(entity);
-    write(&entity_dir.join("features.sql"), FEATURES)?;
+    write(&source_file, SOURCE)?;
+    write(&transform_file, TRANSFORM)?;
+    write(&entity_dir.join("entity.yaml"), &entity_yaml(source))?;
     write(&entity_dir.join("rules/block/same_name.sql"), BLOCK_RULE)?;
     write(&entity_dir.join("rules/match/same_name.sql"), MATCH_RULE)?;
     let gitignore = dir.join(".gitignore");
@@ -241,8 +272,10 @@ pub fn init(arguments: &[String]) -> Result<(), Failure> {
     Manifest::load(&dir)?;
     println!("created   {}", entity_dir.display());
     println!(
-        "\nThe entity type `{entity}` matches records whose `name` is the same.\n\
-         Edit features.sql and the rules to say what makes two of yours the same thing.\n\n  \
+        "\nThe entity type `{entity}` takes rows from the source `{source}` and matches\n\
+         those whose `name` is the same but for case.\n\
+         Edit sources/{source}.yaml, entity.yaml and the rules to say what your rows\n\
+         hold and what makes two of them the same thing.\n\n  \
          spool info    lists what the project declares\n  \
          spool dev     runs the server on localhost and applies your changes as you save"
     );
@@ -295,9 +328,12 @@ pub fn info(arguments: &[String]) -> Result<(), Failure> {
     if arguments.flag("--json") {
         let listing = serde_json::json!({
             "manifest_hash": manifest.hash,
+            "sources": manifest.sources,
             "entity_types": manifest.entity_types.iter().map(|entity_type| serde_json::json!({
                 "name": entity_type.name,
+                "label": entity_type.declaration.label,
                 "features": entity_type.declaration.columns,
+                "sources": entity_type.sources,
                 "rules": {
                     "block": names(&entity_type.rules.block),
                     "no_match": names(&entity_type.rules.no_match),
@@ -320,7 +356,7 @@ pub fn info(arguments: &[String]) -> Result<(), Failure> {
     println!("project   {}", dir.display());
     println!("manifest  {}", manifest.hash);
     if manifest.entity_types.is_empty() {
-        println!("\nno entity types: add a directory under entities/ with a features.sql");
+        println!("\nno entity types: add a directory under entities/ with an entity.yaml");
     }
     for entity_type in &manifest.entity_types {
         println!("\nentity type `{}`", entity_type.name);
@@ -331,6 +367,10 @@ pub fn info(arguments: &[String]) -> Result<(), Failure> {
             .map(|column| format!("{} {}", column.name, column.data_type))
             .collect();
         println!("  features  {}", columns.join(", "));
+        if let Some(label) = &entity_type.declaration.label {
+            println!("  label     {label}");
+        }
+        println!("  sources   {}", entity_type.sources.join(", "));
         for (label, rules) in [
             ("block", &entity_type.rules.block),
             ("no_match", &entity_type.rules.no_match),

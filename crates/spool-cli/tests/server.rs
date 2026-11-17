@@ -15,15 +15,15 @@ fn companies() -> PathBuf {
 }
 
 /// The files of the company scenario, in the order it ingests them, in two
-/// steps: `(file, source, key column)`.
-const STEPS: [[(&str, &str, &str); 2]; 2] = [
+/// steps: `(file, source)`.
+const STEPS: [[(&str, &str); 2]; 2] = [
     [
-        ("batch-1-crm.csv", "crm", "id"),
-        ("batch-1-registry.csv", "registry", "number"),
+        ("batch-1-crm.csv", "crm"),
+        ("batch-1-registry.csv", "registry"),
     ],
     [
-        ("batch-2-crm.csv", "crm", "id"),
-        ("batch-2-registry.csv", "registry", "number"),
+        ("batch-2-crm.csv", "crm"),
+        ("batch-2-registry.csv", "registry"),
     ],
 ];
 
@@ -54,11 +54,11 @@ fn company_server(dir: &Path, seed: u64) -> Server {
 /// makes, in the same order.
 fn run_companies(server: &Server, encoding: Encoding) {
     for step in STEPS {
-        for (file, source, key) in step {
+        for (file, source) in step {
             let rows = Rows::from_csv(companies().join(file)).unwrap();
             let response = match encoding {
                 Encoding::Arrow => server.post_arrow(
-                    &format!("/v1/ingest?source={source}&entity_type=company&key={key}"),
+                    &format!("/v1/ingest?source={source}&entity_type=company"),
                     rows,
                 ),
                 Encoding::Json => server.post(
@@ -66,7 +66,6 @@ fn run_companies(server: &Server, encoding: Encoding) {
                     json!({
                         "source": source,
                         "entity_type": "company",
-                        "key": key,
                         "rows": json_rows(rows),
                     }),
                 ),
@@ -358,7 +357,7 @@ fn a_call_that_outlasts_its_wait_answers_202_and_the_run_is_read_until_it_ends()
     let server = Server::serve(&project, dir.path(), 1);
 
     let response = server.post_arrow(
-        "/v1/ingest?source=bulk&entity_type=thing&key=id&wait_ms=0",
+        "/v1/ingest?source=bulk&entity_type=thing&wait_ms=0",
         many_things(30_000),
     );
     let accepted = response.expect(202);
@@ -395,10 +394,7 @@ fn a_call_that_outlasts_its_wait_answers_202_and_the_run_is_read_until_it_ends()
     assert_eq!(server.read("/v1/info")["store"]["head"], 1);
 
     // A call that is given the time answers 200 with the finished run.
-    let response = server.post_arrow(
-        "/v1/ingest?source=more&entity_type=thing&key=id",
-        many_things(10),
-    );
+    let response = server.post_arrow("/v1/ingest?source=more&entity_type=thing", many_things(10));
     assert_eq!(response.ok()["run"]["status"], "succeeded");
 }
 
@@ -408,7 +404,6 @@ fn ingest_things(server: &Server, source: &str, table: &[&[&str]]) {
         json!({
             "source": source,
             "entity_type": "thing",
-            "key": "id",
             "rows": json_rows(rows(table)),
         }),
     );
@@ -1251,7 +1246,6 @@ fn calls_made_at_once_are_all_served_and_writes_take_turns() {
                         json!({
                             "source": format!("source-{writer}"),
                             "entity_type": "thing",
-                            "key": "id",
                             "rows": rows,
                         }),
                     );

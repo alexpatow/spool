@@ -1,0 +1,19 @@
+# What a person is compared by, and how each source's columns become that.
+label: name
+features: [name, first_name, surname, dob, city, email]
+
+mapping:
+  sample:
+    name: { from: [first_name, surname], transform: full_name }
+    first_name: { from: first_name, transform: folded }
+    surname: { from: surname, transform: folded }
+    dob: { from: dob, transform: date_of }
+    city: { from: city, transform: folded }
+    email: { from: email, transform: folded }
+  fake_1000:
+    name: { from: [first_name, surname], transform: full_name }
+    first_name: { from: first_name, transform: folded }
+    surname: { from: surname, transform: folded }
+    dob: { from: dob, transform: date_of }
+    city: { from: city, transform: folded }
+    email: { from: email, transform: folded }

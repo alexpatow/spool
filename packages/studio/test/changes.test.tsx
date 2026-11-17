@@ -472,7 +472,7 @@ describe("a review item", () => {
       name: "Pioneer Supplies",
       country: "GB",
     }));
-    const ingested = await server.client.ingest({ source: "crm", entity_type: "company", key: "id", rows });
+    const ingested = await server.client.ingest({ source: "crm", entity_type: "company", rows });
     expect(ingested.status).toBe("succeeded");
     const added = await Promise.all(rows.map(({ id }) => row(server.client, "crm", id)));
     await server.client.commit({

@@ -22,7 +22,6 @@
 //! file = "batch-1.csv"          # or: dataset = "<name in datasets.toml>"
 //! source = "crm"
 //! entity_type = "company"
-//! key = "id"
 //!
 //! [[step]]
 //! name = "review"               # a step may have corrections and no files
@@ -104,7 +103,6 @@ use crate::engine::{
     ConstraintFilter, Engine, Options, ResolveOptions, ResolveReport, StrategyRef, Suggestions,
 };
 use crate::error::{Error, Result};
-use crate::ingest::IngestOptions;
 use crate::lookup::{RecordEntry, RecordFilter};
 use crate::metrics::{
     Churn, ExtractionMetrics, IdStability, Metrics, OrderSensitivity, OverridePersistence,
@@ -275,7 +273,6 @@ struct IngestSpec {
     dataset: Option<String>,
     source: String,
     entity_type: String,
-    key: Option<String>,
 }
 
 /// An entry of `datasets.toml`: a public dataset that is downloaded and
@@ -562,12 +559,6 @@ impl Scenario {
                         step.name
                     )));
                 }
-                if ingest.key.is_none() {
-                    return Err(invalid(format!(
-                        "step `{}`: an ingest needs a `key` column, which is how truth is joined to records",
-                        step.name
-                    )));
-                }
                 if !rows_have_truth {
                     return Err(invalid(format!(
                         "step `{}` ingests rows, and [truth] has no `file` or `column` to say what they are",
@@ -791,7 +782,17 @@ impl Scenario {
             (None, Some(dataset)) => fetch_dataset(&self.dir, dataset)?,
             (None, None) => unreachable!("checked when the scenario was loaded"),
         };
-        let key = ingest.key.as_deref().unwrap_or_default();
+        // Truth is joined to records by the key the source declares.
+        let key = engine
+            .manifest()
+            .and_then(|manifest| manifest.source(&ingest.source)?.key.clone())
+            .ok_or_else(|| {
+                Error::Scenario(format!(
+                    "source `{}` needs a sources/{}.yaml with a `key`, which is how truth is joined to records",
+                    ingest.source, ingest.source
+                ))
+            })?;
+        let key = key.as_str();
         let mut rows = Rows::from_csv(&path)?;
         if let Some(column) = &self.spec.truth.column {
             let (rest, pairs) = rows.take_column(column, key)?;
@@ -800,12 +801,7 @@ impl Scenario {
                 truth.entities.insert((ingest.source.clone(), key), entity);
             }
         }
-        let report = engine.ingest(
-            &ingest.source,
-            &ingest.entity_type,
-            rows,
-            &IngestOptions::keyed_by(key),
-        )?;
+        let report = engine.ingest(&ingest.source, &ingest.entity_type, rows)?;
         Ok(IngestSummary {
             source: ingest.source.clone(),
             entity_type: ingest.entity_type.clone(),

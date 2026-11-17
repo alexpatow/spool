@@ -30,6 +30,10 @@ from spool import extractor
 
 BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 
+# The attributes `sources/news.yaml` lists. A mention with any other is
+# refused, so what else the model says of a mention is dropped.
+ATTRIBUTES = {"name"}
+
 
 def prompt(task):
     """What the model is told before it is shown a document."""
@@ -108,7 +112,7 @@ def find(documents, task):
             kept = {
                 name: value
                 for name, value in attributes.items()
-                if isinstance(value, (str, int, float, bool))
+                if name in ATTRIBUTES and isinstance(value, (str, int, float, bool))
             }
             for start, end in document.find(quote):
                 if any(start < other_end and other_start < end for other_start, other_end in taken):

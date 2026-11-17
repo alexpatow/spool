@@ -275,8 +275,8 @@ fn watch(dir: &Path, engine: &Engine, mut seen: u64) {
     }
 }
 
-/// A number that changes when a file under `entities/` or `extractors/` is
-/// added, removed or edited. Contents are read, not timestamps: projects are small, and two
+/// A number that changes when one of the project's files is added, removed
+/// or edited. Contents are read, not timestamps: projects are small, and two
 /// saves within a timestamp's resolution must both be seen.
 fn fingerprint(dir: &Path) -> u64 {
     fn visit(path: &Path, hasher: &mut impl Hasher) {
@@ -297,7 +297,7 @@ fn fingerprint(dir: &Path) -> u64 {
         }
     }
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    for part in ["entities", "extractors"] {
+    for part in ["sources", "transforms", "entities", "extractors"] {
         visit(&dir.join(part), &mut hasher);
     }
     hasher.finish()

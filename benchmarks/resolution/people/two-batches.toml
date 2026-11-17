@@ -19,7 +19,6 @@ name = "first batch"
 file = "sample.csv"
 source = "sample"
 entity_type = "person"
-key = "unique_id"
 
 [[step]]
 name = "second batch"
@@ -28,4 +27,3 @@ name = "second batch"
 file = "later.csv"
 source = "sample"
 entity_type = "person"
-key = "unique_id"

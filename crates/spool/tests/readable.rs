@@ -11,9 +11,27 @@ use spool::core::{
     Actor, Changeset, Constraint, ConstraintKind, IdGenerator, IdentityId, Op, SeededIds, Verdict,
 };
 use spool::{
-    CaseConstraint, Engine, Error, IdentityFilter, IngestOptions, RecordFilter, ResolveOptions,
-    ReviewFilter, Rows, label_of,
+    CaseConstraint, Engine, Error, IdentityFilter, Options, RecordFilter, ResolveOptions,
+    ReviewFilter, Rows, YamlFile,
 };
+
+/// The tests' things, and three sources more whose rows name a thing in
+/// columns of their own.
+fn engine() -> Engine {
+    let mut thing = thing();
+    thing.entity.yaml += "  catalogue:\n    name: title\n    code: code\n";
+    thing.entity.yaml += "  registry:\n    name: legal_name\n    code: code\n";
+    thing.entity.yaml += "  crm:\n    name: name\n    code: code\n";
+    let mut project = project_of(vec![thing]);
+    project.sources.extend([
+        YamlFile::new("catalogue", "key: id\ncolumns: [id, title, code]\n"),
+        YamlFile::new("registry", "key: id\ncolumns: [id, legal_name, code]\n"),
+        YamlFile::new("crm", "key: id\ncolumns: [id, name, city, code, staff]\n"),
+    ]);
+    let engine = Engine::open_in_memory(Options::seeded(1)).unwrap();
+    engine.apply(&project.compile().unwrap()).unwrap();
+    engine
+}
 
 fn resolve(engine: &Engine) {
     engine.resolve(&ResolveOptions::default()).unwrap();
@@ -40,68 +58,26 @@ fn search(engine: &Engine, q: &str) -> Vec<String> {
 }
 
 #[test]
-fn a_payload_is_called_by_the_field_that_names_it() {
-    for (payload, label) in [
-        (
-            json!({ "id": "1", "name": "Acorn Tools" }),
-            Some("Acorn Tools"),
-        ),
-        // `name` before the other names a payload may have.
-        (
-            json!({ "legal_name": "ACORN LTD", "name": "Acorn", "trading_name": "Oak" }),
-            Some("Acorn"),
-        ),
-        (
-            json!({ "number": "X1", "trading_name": "Oak", "legal_name": "ACORN LTD" }),
-            Some("ACORN LTD"),
-        ),
-        (json!({ "title": "  A report  " }), Some("A report")),
-        // Failing those, a field whose name ends in `name`, the first in
-        // alphabetical order that holds text.
-        (
-            json!({ "surname": "Lovelace", "FirstName": "Ada", "age": 36 }),
-            Some("Ada"),
-        ),
-        (
-            json!({ "company_name": "", "brand_name": null, "store_name": "Oak" }),
-            Some("Oak"),
-        ),
-        // Only text names anything.
-        (
-            json!({ "name": 7, "title": ["a"], "label": { "en": "x" } }),
-            None,
-        ),
-        (json!({ "name": "   " }), None),
-        (json!({ "code": "K7", "city": "Leeds" }), None),
-        (json!({}), None),
-        (json!("Acorn"), None),
-    ] {
-        assert_eq!(label_of(&payload).as_deref(), label, "{payload}");
-    }
-}
-
-#[test]
 fn an_identity_is_called_what_most_of_its_members_are_and_says_where_they_came_from() {
     let engine = engine();
     ingest(&engine, "shop", &[("1", Some("anvil"), Some("K7"))]);
     engine
         .ingest(
-            "depot",
+            "catalogue",
             "thing",
             json_rows(json!([
                 { "id": "8", "title": "Anvil, forged", "code": "K7" },
                 { "id": "9", "title": "Anvil, forged", "code": "K7" },
                 { "id": "10", "code": "Z1" },
             ])),
-            &IngestOptions::keyed_by("id"),
         )
         .unwrap();
     resolve(&engine);
     let anvil = identity(&engine, "shop", "1").unwrap();
-    let nameless = identity(&engine, "depot", "10").unwrap();
+    let nameless = identity(&engine, "catalogue", "10").unwrap();
 
     let record = engine
-        .record(record_id(&engine, "depot", "8"))
+        .record(record_id(&engine, "catalogue", "8"))
         .unwrap()
         .unwrap();
     assert_eq!(record.label.as_deref(), Some("Anvil, forged"));
@@ -116,7 +92,7 @@ fn an_identity_is_called_what_most_of_its_members_are_and_says_where_they_came_f
         .iter()
         .map(|source| (source.source.as_str(), source.records))
         .collect();
-    assert_eq!(sources, [("depot", 2), ("shop", 1)]);
+    assert_eq!(sources, [("catalogue", 2), ("shop", 1)]);
     assert_eq!(found(nameless).label, None);
     assert_eq!(found(nameless).sources.len(), 1);
     assert_eq!(
@@ -135,7 +111,7 @@ fn an_identity_is_called_what_most_of_its_members_are_and_says_where_they_came_f
         .unwrap();
     let mut names: Vec<String> = members.iter().map(|member| member.name()).collect();
     names.sort();
-    assert_eq!(names, ["depot:8", "depot:9", "shop:1"]);
+    assert_eq!(names, ["catalogue:8", "catalogue:9", "shop:1"]);
     assert!(members.iter().all(|member| member.identity == Some(anvil)));
 
     // The store says what each source gave.
@@ -145,7 +121,7 @@ fn an_identity_is_called_what_most_of_its_members_are_and_says_where_they_came_f
         .iter()
         .map(|source| (source.source.as_str(), source.records, source.unassigned))
         .collect();
-    assert_eq!(sources, [("depot", 3, 0), ("shop", 1, 0)]);
+    assert_eq!(sources, [("catalogue", 3, 0), ("shop", 1, 0)]);
     assert_eq!(
         info.entity_types[0].sources[1].last_ingested_at,
         engine
@@ -164,7 +140,6 @@ fn of_labels_that_as_many_members_have_the_first_to_arrive_stands() {
             "registry",
             "thing",
             json_rows(json!([{ "id": "1", "legal_name": "ANVIL WORKS LTD", "code": "K7" }])),
-            &IngestOptions::keyed_by("id"),
         )
         .unwrap();
     ingest(&engine, "shop", &[("2", Some("Anvil Works"), Some("K7"))]);
@@ -228,9 +203,7 @@ fn a_search_finds_the_records_that_hold_every_word() {
                 { "id": "c-1", "name": "Müller & Söhne GmbH", "city": "Köln", "code": "M1" },
                 { "id": "c-2", "name": "Acorn Tools", "city": "Sheffield", "code": "A1", "staff": 40 },
                 { "id": "c-3", "name": "Acorn Foods", "city": "Leeds", "code": "A2" },
-            ])),
-            &IngestOptions::keyed_by("id"),
-        )
+            ])))
         .unwrap();
     engine
         .ingest(
@@ -240,7 +213,6 @@ fn a_search_finds_the_records_that_hold_every_word() {
                 { "id": "X9", "legal_name": "ACORN TOOL COMPANY LTD", "code": "A1" },
                 { "id": "X10", "legal_name": "OAK 100% LTD", "code": "O_1" },
             ])),
-            &IngestOptions::keyed_by("id"),
         )
         .unwrap();
     resolve(&engine);

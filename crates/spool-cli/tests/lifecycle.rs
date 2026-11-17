@@ -24,7 +24,7 @@ fn stock(server: &Server, things: &[(&str, &str)]) {
         .collect();
     let response = server.post(
         "/v1/ingest",
-        json!({ "source": "shop", "entity_type": "thing", "key": "id", "rows": rows }),
+        json!({ "source": "shop", "entity_type": "thing", "rows": rows }),
     );
     assert_eq!(response.ok()["run"]["status"], "succeeded");
     let run = server.call("/v1/runs", json!({ "entity_type": "thing" }));
@@ -301,7 +301,7 @@ fn a_row_that_changed_is_read_with_the_version_it_replaced() {
     let rows = json!([{ "id": "1", "code": "anvil", "colour": "black" }]);
     let ingest = server.call(
         "/v1/ingest",
-        json!({ "source": "shop", "entity_type": "thing", "key": "id", "rows": rows }),
+        json!({ "source": "shop", "entity_type": "thing", "rows": rows }),
     );
     assert_eq!(ingest["run"]["ingest"]["superseded"], 1);
     server.call("/v1/runs", json!({ "entity_type": "thing" }));

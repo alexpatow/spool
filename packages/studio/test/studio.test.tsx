@@ -643,7 +643,7 @@ describe("company records a reviewer corrected", () => {
     expect(features).toContainEqual(["name_key", "atlas trading", "atlas trading", ""]);
     expect(features).toContainEqual(["trading_key", "-", "-", ""]);
     // Only a value both have is marked as shared: two that are missing are not.
-    expect(texts("tr[data-same] td:first-child")).toEqual(["name_key"]);
+    expect(texts("tr[data-same] td:first-child")).toEqual(["name", "name_key"]);
     expect(document.querySelector("tr[data-same] [aria-label='Same']")).toBeTruthy();
     expect(rules).toContainEqual(["block", "same_name", "l.name_key = r.name_key", "holds"]);
     expect(rules).toContainEqual(["match", "same_name_and_country", expect.any(String), "does not hold"]);

@@ -1352,24 +1352,8 @@
         "entity_type": {
           "type": "string"
         },
-        "evidence": {
-          "default": null,
-          "description": "A column of JSON text that says where each row was found.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "key": {
-          "default": null,
-          "description": "The column that holds each row's key within the source.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "rows": {
-          "description": "One object per row. A column holds text, booleans or numbers.",
+          "description": "One object per row, with the columns the source declares. A column\nholds text, booleans or numbers.",
           "items": {
             "additionalProperties": true,
             "type": "object"
@@ -1377,7 +1361,7 @@
           "type": "array"
         },
         "source": {
-          "description": "The name of the source the rows come from.",
+          "description": "The name of the source the rows come from, which the project\ndeclares in `sources/<name>.yaml`.",
           "type": "string"
         },
         "wait_ms": {
@@ -2479,7 +2463,7 @@
         },
         "label": {
           "default": null,
-          "description": "What a person would call it: the name the payload gives, as\n[`label_of`] finds it. `None` when the payload has none.",
+          "description": "What a person would call it: its value of the feature its type\nnames as the label. `None` when the type names none, or the record\nhas no value there.",
           "type": [
             "string",
             "null"

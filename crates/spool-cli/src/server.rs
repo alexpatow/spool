@@ -42,8 +42,8 @@ use serde::de::DeserializeOwned;
 use spool::core::{Changeset, DocumentId, EntityType, Policy, RunId, Seq};
 use spool::{
     ConstraintFilter, Disposition, DocumentFilter, DraftFilter, DraftStatus, Engine,
-    ExtractOptions, IdentityFilter, IngestOptions, RecordFilter, ResolveOptions, ReviewFilter,
-    ReviewStatus, Rows, RunFilter, RunKind, RunStatus, Scope, StrategyRef, watch_runs,
+    ExtractOptions, IdentityFilter, RecordFilter, ResolveOptions, ReviewFilter, ReviewStatus, Rows,
+    RunFilter, RunKind, RunStatus, Scope, StrategyRef, watch_runs,
 };
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
@@ -483,27 +483,19 @@ async fn ingest(
     headers: HeaderMap,
     body: Bytes,
 ) -> ApiResult {
-    fn options(key: Option<String>, evidence: Option<String>) -> IngestOptions {
-        IngestOptions {
-            key_column: key,
-            evidence_column: evidence,
-        }
-    }
     if is_arrow(&headers) {
         let params = query(params)?;
         let rows = arrow_rows(body)?;
-        let options = options(params.key, params.evidence);
         return job(&app, params.wait_ms, move |engine| {
-            let report = engine.ingest(&params.source, &params.entity_type, rows, &options)?;
+            let report = engine.ingest(&params.source, &params.entity_type, rows)?;
             Ok(Some(report.run))
         })
         .await;
     }
     let request: IngestRequest = json_body(&body)?;
     let rows = Rows::from_json(&request.rows)?;
-    let options = options(request.key, request.evidence);
     job(&app, request.wait_ms, move |engine| {
-        let report = engine.ingest(&request.source, &request.entity_type, rows, &options)?;
+        let report = engine.ingest(&request.source, &request.entity_type, rows)?;
         Ok(Some(report.run))
     })
     .await

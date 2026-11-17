@@ -21,13 +21,11 @@ name = "batch one"
 file = "batch-1-crm.csv"
 source = "crm"
 entity_type = "company"
-key = "id"
 
 [[step.ingest]]
 file = "batch-1-registry.csv"
 source = "registry"
 entity_type = "company"
-key = "number"
 
 [[step]]
 name = "two wrong merges"
@@ -65,13 +63,11 @@ name = "batch two"
 file = "batch-2-crm.csv"
 source = "crm"
 entity_type = "company"
-key = "id"
 
 [[step.ingest]]
 file = "batch-2-registry.csv"
 source = "registry"
 entity_type = "company"
-key = "number"
 
 [[step]]
 name = "the review item is placed"

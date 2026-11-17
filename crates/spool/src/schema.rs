@@ -7,7 +7,7 @@ use crate::error::{Error, Result};
 
 /// Written to `spool.meta` when a store is created and checked when one is
 /// opened.
-pub(crate) const FORMAT_VERSION: &str = "6";
+pub(crate) const FORMAT_VERSION: &str = "7";
 
 const TABLES: &str = "
 CREATE SCHEMA spool;
@@ -51,7 +51,7 @@ CREATE TABLE spool.extraction (        -- one row each time an extractor read a 
 CREATE TABLE spool.entity_type (       -- declared by the project; the engine ships none
   entity_type      VARCHAR     NOT NULL,
   version          INTEGER     NOT NULL,
-  declaration      JSON        NOT NULL, -- the features query and the columns inferred from it
+  declaration      JSON        NOT NULL, -- the features, the label, and the query and transforms compiled from entity.yaml
   declaration_hash VARCHAR     NOT NULL,
   declared_at      TIMESTAMPTZ NOT NULL
 );
@@ -184,6 +184,10 @@ CREATE VIEW spool.identity_current AS
   SELECT identity_id, entity_type, created_seq
   FROM spool.identity
   WHERE merged_into IS NULL;
+
+-- What to call each record. Replaced when a project is applied.
+CREATE VIEW spool.record_label AS
+  SELECT NULL::UUID AS record_id, NULL::VARCHAR AS label WHERE false;
 
 CREATE VIEW spool.membership_current AS
   SELECT record_id, identity_id, from_seq

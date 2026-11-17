@@ -80,10 +80,17 @@ impl Things {
             engine: Arc::new(Engine::open_in_memory(Options::seeded(1)).unwrap()),
             dir,
         };
+        for source in ["shop", "depot"] {
+            things.write(
+                &format!("../../sources/{source}.yaml"),
+                "key: id\ncolumns: [id, name, code]\n",
+            );
+        }
         things.write(
-            "features.sql",
-            "SELECT record_id, payload->>'name' AS name, payload->>'code' AS code
-             FROM record",
+            "entity.yaml",
+            "label: name\nfeatures: [name, code]\nmapping:\n  \
+             shop:\n    name: name\n    code: code\n  \
+             depot:\n    name: name\n    code: code\n",
         );
         things.write("rules/block/same_name.sql", "l.name = r.name");
         things.write("rules/block/same_code.sql", "l.code = r.code");
@@ -498,8 +505,12 @@ fn a_strategy_that_changes_while_another_runs_is_not_started() {
     // during a long run looks like to the engine.
     for entity_type in ["first", "second"] {
         write(
-            &format!("{entity_type}/features.sql"),
-            "SELECT record_id, payload->>'name' AS name FROM record",
+            &format!("../sources/{entity_type}.yaml"),
+            "key: id\ncolumns: [id, name, code]\n",
+        );
+        write(
+            &format!("{entity_type}/entity.yaml"),
+            &format!("features: [name]\nmapping:\n  {entity_type}:\n    name: name\n"),
         );
         write(
             &format!("{entity_type}/rules/block/same_name.sql"),
@@ -529,7 +540,6 @@ def judge(candidates):
                 entity_type,
                 entity_type,
                 common::rows(&[("1", Some("anvil"), None), ("2", Some("anvil"), None)]),
-                &spool::IngestOptions::keyed_by("id"),
             )
             .unwrap();
     }
@@ -976,7 +986,11 @@ fn an_engine_that_was_not_told_where_the_project_is_runs_no_user_code() {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, contents).unwrap();
     };
-    write("features.sql", "SELECT record_id FROM record");
+    write("../../sources/shop.yaml", "key: id\ncolumns: [id, name]\n");
+    write(
+        "entity.yaml",
+        "features: [name]\nmapping:\n  shop:\n    name: name\n",
+    );
     write("strategies/model.py", SAME_NAME);
     let engine = Engine::open_in_memory(Options::seeded(1)).unwrap();
     engine.apply(&Manifest::load(dir.path()).unwrap()).unwrap();

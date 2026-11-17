@@ -29,8 +29,9 @@ pub struct RecordEntry {
     pub key: Option<String>,
     /// The attributes exactly as received.
     pub payload: serde_json::Value,
-    /// What a person would call it: the name the payload gives, as
-    /// [`label_of`] finds it. `None` when the payload has none.
+    /// What a person would call it: its value of the feature its type
+    /// names as the label. `None` when the type names none, or the record
+    /// has no value there.
     #[serde(default)]
     pub label: Option<String>,
     /// Where in the source the record was found, if the source said.
@@ -74,49 +75,13 @@ impl RecordEntry {
     }
 }
 
-/// The payload fields that name what a row is about, the likeliest first.
-const LABEL_FIELDS: [&str; 6] = [
-    "name",
-    "legal_name",
-    "title",
-    "label",
-    "display_name",
-    "full_name",
-];
-
-/// What a person would call the thing a payload describes.
-///
-/// The engine does not know what a payload's fields mean, so this goes by
-/// their names: the first of `name`, `legal_name`, `title`, `label`,
-/// `display_name` and `full_name` that holds text, and failing those the
-/// first field, in alphabetical order, whose name ends in `name` and that
-/// holds text. A payload with no such field has no label.
-pub fn label_of(payload: &serde_json::Value) -> Option<String> {
-    let fields = payload.as_object()?;
-    let text = |field: &str| {
-        let value = fields.get(field)?.as_str()?.trim();
-        (!value.is_empty()).then(|| value.to_owned())
-    };
-    LABEL_FIELDS
-        .iter()
-        .find_map(|field| text(field))
-        .or_else(|| {
-            let mut named: Vec<&String> = fields
-                .keys()
-                .filter(|field| field.to_ascii_lowercase().ends_with("name"))
-                .collect();
-            named.sort();
-            named.into_iter().find_map(|field| text(field))
-        })
-}
-
-/// The label most of the given payloads have. Of labels that as many have,
-/// the one that comes first: callers give the payloads oldest first, so
+/// The label most of the given records have. Of labels that as many have,
+/// the one that comes first: callers give the labels oldest first, so
 /// that a label does not change because a row arrived that says the same
 /// in other words.
-fn common_label<'a>(payloads: impl Iterator<Item = &'a serde_json::Value>) -> Option<String> {
+fn common_label(labels: impl Iterator<Item = String>) -> Option<String> {
     let mut counted: Vec<(String, usize)> = Vec::new();
-    for label in payloads.filter_map(label_of) {
+    for label in labels {
         match counted.iter_mut().find(|(known, _)| *known == label) {
             Some((_, count)) => *count += 1,
             None => counted.push((label, 1)),
@@ -348,10 +313,12 @@ fn json(text: String) -> Result<serde_json::Value> {
 const RECORD: &str = "
     SELECT o.record_id::VARCHAR, o.entity_type, o.source_id, o.source_key,
            o.payload::VARCHAR, o.evidence::VARCHAR, epoch_us(o.ingested_at), o.ingest_run,
-           m.identity_id::VARCHAR, o.supersedes::VARCHAR, later.record_id::VARCHAR
+           m.identity_id::VARCHAR, o.supersedes::VARCHAR, later.record_id::VARCHAR,
+           named.label
     FROM spool.record o
     LEFT JOIN spool.membership m ON m.record_id = o.record_id AND m.to_seq IS NULL
-    LEFT JOIN spool.record later ON later.supersedes = o.record_id";
+    LEFT JOIN spool.record later ON later.supersedes = o.record_id
+    LEFT JOIN spool.record_label named ON named.record_id = o.record_id";
 
 fn record_from_row(row: &duckdb::Row<'_>) -> Result<RecordEntry> {
     fn id<T>(row: &duckdb::Row<'_>, at: usize) -> Result<Option<T>>
@@ -364,14 +331,13 @@ fn record_from_row(row: &duckdb::Row<'_>) -> Result<RecordEntry> {
             .map(parse)
             .transpose()
     }
-    let payload = json(row.get(4)?)?;
     Ok(RecordEntry {
         id: parse(&row.get::<_, String>(0)?)?,
         entity_type: entity_type(row.get(1)?)?,
         source: row.get(2)?,
         key: row.get(3)?,
-        label: label_of(&payload),
-        payload,
+        label: row.get(11)?,
+        payload: json(row.get(4)?)?,
         evidence: row.get::<_, Option<String>>(5)?.map(json).transpose()?,
         ingested_at: rfc3339(row.get(6)?),
         ingest_run: RunId(row.get::<_, i64>(7)? as u64),
@@ -551,33 +517,34 @@ pub(crate) fn uuid_list<T: std::fmt::Display>(ids: &[T]) -> String {
 /// have, judged from the members that were ingested first. An identity
 /// whose members name nothing is left out.
 fn labels(conn: &Connection, ids: &[IdentityId]) -> Result<BTreeMap<IdentityId, String>> {
-    let mut payloads: BTreeMap<IdentityId, Vec<serde_json::Value>> = BTreeMap::new();
+    let mut labels: BTreeMap<IdentityId, Vec<String>> = BTreeMap::new();
     if ids.is_empty() {
         return Ok(BTreeMap::new());
     }
     let mut statement = conn.prepare(&format!(
-        "SELECT identity_id::VARCHAR, payload::VARCHAR FROM (
-           SELECT m.identity_id, o.payload,
+        "SELECT identity_id::VARCHAR, label FROM (
+           SELECT m.identity_id, named.label,
                   row_number() OVER (
                     PARTITION BY m.identity_id
                     ORDER BY o.ingested_at, o.ingest_run, o.record_id) AS nth
            FROM spool.membership m
            JOIN spool.record o ON o.record_id = m.record_id
+           LEFT JOIN spool.record_label named ON named.record_id = o.record_id
            WHERE m.to_seq IS NULL AND list_contains({}, m.identity_id))
-         WHERE nth <= {LABEL_MEMBERS}
+         WHERE nth <= {LABEL_MEMBERS} AND label IS NOT NULL
          ORDER BY identity_id, nth",
         uuid_list(ids)
     ))?;
     let mut rows = statement.query([])?;
     while let Some(row) = rows.next()? {
-        payloads
+        labels
             .entry(parse(&row.get::<_, String>(0)?)?)
             .or_default()
-            .push(json(row.get(1)?)?);
+            .push(row.get(1)?);
     }
-    Ok(payloads
+    Ok(labels
         .into_iter()
-        .filter_map(|(id, payloads)| Some((id, common_label(payloads.iter())?)))
+        .filter_map(|(id, labels)| Some((id, common_label(labels.into_iter())?)))
         .collect())
 }
 

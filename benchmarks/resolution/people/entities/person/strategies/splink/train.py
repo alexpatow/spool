@@ -9,19 +9,23 @@
 # ///
 """Trains the model that `../splink.py` judges with, and writes `model.json`.
 
+    spool build benchmarks/resolution/people
     uv run benchmarks/resolution/people/entities/person/strategies/splink/train.py \
         benchmarks/.cache/fake_1000.csv
 
-The file is a CSV of person records. Its rows go through this entity type's
-`features.sql`, so the model is trained on the columns the strategy is given.
-`spool bench benchmarks/resolution/people/fake-1000.toml` downloads the file
-the committed model was trained on.
+The file is a CSV of person records. Its rows become features the way the
+engine makes them, with the query and the transforms that `spool build`
+compiled from `entity.yaml` into the manifest, so the model is trained on the
+columns the strategy is given. `spool bench
+benchmarks/resolution/people/fake-1000.toml` downloads the file the committed
+model was trained on.
 
 Training reads no truth column. The share of matching pairs is estimated from
 two deterministic rules, the `u` probabilities from random pairs, and the `m`
 probabilities by expectation maximisation.
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -30,7 +34,9 @@ import splink.comparison_library as cl
 from splink import DuckDBAPI, Linker, SettingsCreator, block_on
 
 HERE = Path(__file__).resolve().parent
-FEATURES = HERE.parent.parent / "features.sql"
+MANIFEST = HERE.parents[3] / ".spool" / "manifest.json"
+# The source whose mapping the rows go through.
+SOURCE = "fake_1000"
 
 
 def settings():
@@ -60,17 +66,29 @@ def settings():
 
 def train(csv, out):
     connection = duckdb.connect()
-    # What the engine's `record` relation looks like to features.sql:
-    # an ID, and the row as it was ingested. An empty field is left out.
+    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    declaration = next(
+        entity_type["declaration"]
+        for entity_type in manifest["entity_types"]
+        if entity_type["name"] == "person"
+    )
+    # What the engine's `record` relation looks like to the features query:
+    # an ID, the source, and the row as it was ingested. An empty field is
+    # left out.
     connection.execute(
         """
         CREATE TABLE record AS
-        SELECT row_number() OVER ()::VARCHAR AS record_id, to_json(csv) AS payload
+        SELECT row_number() OVER ()::VARCHAR AS record_id, ? AS source_id, to_json(csv) AS payload
         FROM read_csv(?, all_varchar = true) AS csv
         """,
-        [str(csv)],
+        [SOURCE, str(csv)],
     )
-    connection.execute(f"CREATE TABLE person AS {FEATURES.read_text(encoding='utf-8')}")
+    for transform in declaration.get("transforms", []):
+        connection.execute(
+            f"CREATE MACRO spool_transform_{transform['name']}({', '.join(transform['parameters'])}) "
+            f"AS ({transform['body']})"
+        )
+    connection.execute(f"CREATE TABLE person AS {declaration['features']}")
 
     linker = Linker(DuckDBAPI(connection).register("person"), settings())
     linker.training.estimate_probability_two_random_records_match(

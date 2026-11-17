@@ -18,15 +18,15 @@ export const REVIEWER = "user:studio-demo";
 /** Copies what a project is made of, so that building it leaves the original alone. */
 export function copyProject(from: string): string {
   const to = mkdtempSync(join(tmpdir(), "spool-studio-"));
-  for (const part of ["entities", "extractors"]) {
+  for (const part of ["sources", "transforms", "entities", "extractors"]) {
     if (existsSync(join(from, part))) cpSync(join(from, part), join(to, part), { recursive: true });
   }
   return to;
 }
 
-async function ingest(client: SpoolClient, file: string, source: string, key: string): Promise<void> {
+async function ingest(client: SpoolClient, file: string, source: string): Promise<void> {
   const rows = readCsv(join(companies, file));
-  const run = await client.ingest({ source, entity_type: "company", key, rows });
+  const run = await client.ingest({ source, entity_type: "company", rows });
   if (run.status !== "succeeded") throw new Error(`ingesting ${file} ${run.status}: ${run.error ?? ""}`);
 }
 
@@ -50,8 +50,8 @@ async function identityOf(client: SpoolClient, source: string, key: string): Pro
  * waits for a decision.
  */
 export async function seedCompanies(client: SpoolClient): Promise<void> {
-  await ingest(client, "batch-1-crm.csv", "crm", "id");
-  await ingest(client, "batch-1-registry.csv", "registry", "number");
+  await ingest(client, "batch-1-crm.csv", "crm");
+  await ingest(client, "batch-1-registry.csv", "registry");
   await client.startRun({ entity_type: "company" });
 
   const atlas = await client.commit({
@@ -96,9 +96,9 @@ export async function seedCompanies(client: SpoolClient): Promise<void> {
     ],
   });
 
-  await ingest(client, "batch-2-crm.csv", "crm", "id");
+  await ingest(client, "batch-2-crm.csv", "crm");
   await client.startRun({ entity_type: "company" });
-  await ingest(client, "batch-2-registry.csv", "registry", "number");
+  await ingest(client, "batch-2-registry.csv", "registry");
   await client.startRun({ entity_type: "company", commit: false });
 }
 
