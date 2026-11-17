@@ -730,6 +730,11 @@ fn summary(explanation: &Explanation) -> Vec<String> {
 
     if let Some(rules) = &explanation.rules {
         said.push(read(rules));
+        if let Some(run) = read_otherwise(&explanation.comparisons, rules) {
+            said.push(format!(
+                "That is not what run {run} recorded, so the rules or the features have changed since."
+            ));
+        }
         match (explanation.outcome, rules.verdict) {
             (Outcome::DifferentIdentities, Some(Verdict::Match)) => said.push(
                 "Both already have an identity, and a run compares a pair only when one of the two is new to it. A rematch compares every pair and lists a pair like this one as a suggested merge."
@@ -836,6 +841,23 @@ fn compared(comparison: &Comparison) -> String {
         _ => {}
     }
     text
+}
+
+/// The latest run of the rules whose record of the pair is not what the
+/// rules say of it now.
+fn read_otherwise(comparisons: &[Comparison], rules: &RuleReading) -> Option<RunId> {
+    let recorded = comparisons.iter().rev().find(|comparison| {
+        matches!(comparison.status, RunStatus::Succeeded | RunStatus::Drafted)
+            && comparison
+                .strategy
+                .as_ref()
+                .is_some_and(|strategy| strategy.name == StrategyRef::RULES)
+    })?;
+    let judged = recorded
+        .judgements
+        .last()
+        .map(|judgement| judgement.verdict);
+    (!rules.candidate || judged != rules.verdict).then_some(recorded.run)
 }
 
 fn read(rules: &RuleReading) -> String {

@@ -471,6 +471,19 @@ fn the_rules_are_read_as_they_are_now_and_the_run_as_it_was() {
         &explanation,
         "By the rules as they are now, block rule `same_name` makes them a candidate pair and no `no_match` or `match` rule holds, so they would get no judgement."
     ));
+    assert!(says(
+        &explanation,
+        "That is not what run 2 recorded, so the rules or the features have changed since."
+    ));
+
+    // With the rule back, the two readings agree and nothing is said.
+    engine.apply(&manifest_of(vec![thing()])).unwrap();
+    let explanation = explain(&engine, ("shop", "1"), ("shop", "2"));
+    assert_eq!(
+        explanation.rules.as_ref().unwrap().verdict,
+        Some(Verdict::Match)
+    );
+    assert!(!says(&explanation, "That is not what run"));
 }
 
 #[test]

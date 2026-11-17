@@ -321,6 +321,37 @@ describe("a reviewer", () => {
     const [item] = await client.reviewItems({ status: "open" });
     expect(item!.kind).toBe("possible_merge");
     expect(await client.reviewItem(item!.id)).toEqual(item!);
+    const fourth = await thing(client, "4");
+    expect(await client.reviewItems({ observation: fourth.id })).toEqual([item!]);
+    expect(await client.reviewItems({ observation: third.id })).toEqual([]);
+
+    // Why the first two are together, the third is apart, and the fourth
+    // has no identity.
+    const first = await thing(client, "1");
+    const second = await thing(client, "2");
+    const together = await client.explain(first.id, second.id);
+    expect(together.outcome).toBe("same_identity");
+    expect(together.rules).toMatchObject({ candidate: true, verdict: "match" });
+    expect(together.comparisons).toHaveLength(1);
+    expect(together.comparisons[0]!.judgements[0]!.verdict).toBe("match");
+    expect(together.path.map((link) => link.kind)).toEqual(["match"]);
+    expect(together.summary[0]).toContain("belong to the same identity");
+
+    const apart = await client.explain(third.id, first.id);
+    expect(apart.outcome).toBe("different_identities");
+    expect(apart.constraints).toEqual(
+      constraints.filter((constraint) => [constraint.a, constraint.b].includes(first.id)),
+    );
+    expect([apart.left.observation.id, apart.right.observation.id].sort()).toEqual([first.id, third.id].sort());
+    expect(apart.left.placed?.reason ?? apart.right.placed?.reason).toBeDefined();
+
+    const waiting = await client.explain(fourth.id, third.id);
+    expect(waiting.outcome).toBe("unassigned");
+    expect(waiting.review_items).toEqual([item!]);
+
+    const unknown = "00000000-0000-7000-8000-000000000000";
+    expect((await failureOf(client.explain(first.id, unknown))).code).toBe("not_found");
+    expect((await failureOf(client.explain(first.id, first.id))).code).toBe("invalid");
 
     const dismissed = await client.dismissReview(item!.id, { actor, reason: "not ours" });
     expect(dismissed).toMatchObject({ status: "dismissed", dismissed: { by: actor, reason: "not ours" } });

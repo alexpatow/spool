@@ -196,6 +196,63 @@
       ],
       "type": "object"
     },
+    "Comparison": {
+      "description": "What one match run made of a pair.",
+      "properties": {
+        "blocked_by": {
+          "description": "The block rules that made the pair a candidate in this run. Empty\nwhen a strategy judged a pair no block rule had found.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "draft": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DraftStatus"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When the run's draft was left for review: what became of it."
+        },
+        "judgements": {
+          "description": "What the strategy judged. Empty when the pair was a candidate and\ngot no judgement.",
+          "items": {
+            "$ref": "#/$defs/RecordedJudgement"
+          },
+          "type": "array"
+        },
+        "run": {
+          "$ref": "#/$defs/RunId"
+        },
+        "started_at": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/RunStatus"
+        },
+        "strategy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StrategyRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "run",
+        "status",
+        "started_at",
+        "blocked_by",
+        "judgements"
+      ],
+      "type": "object"
+    },
     "ConstraintKind": {
       "enum": [
         "must_link",
@@ -682,6 +739,110 @@
       },
       "required": [
         "error"
+      ],
+      "type": "object"
+    },
+    "Explained": {
+      "description": "One side of an explanation.",
+      "properties": {
+        "features": {
+          "additionalProperties": true,
+          "description": "Its row in the feature table of its entity type, by column name:\nwhat rules and strategies see of it. `null` when it has no row.",
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "observation": {
+          "$ref": "#/$defs/ObservationRecord"
+        },
+        "placed": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Placement"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The changeset that put it in the identity it has. `null` while it has\nnone."
+        }
+      },
+      "required": [
+        "observation"
+      ],
+      "type": "object"
+    },
+    "Explanation": {
+      "description": "What the store knows about a pair of observations, and what follows\nfrom it.",
+      "properties": {
+        "comparisons": {
+          "description": "The match runs that looked at the pair, oldest first.",
+          "items": {
+            "$ref": "#/$defs/Comparison"
+          },
+          "type": "array"
+        },
+        "constraints": {
+          "description": "The constraints between the two, oldest first, with those that were\nremoved.",
+          "items": {
+            "$ref": "#/$defs/ConstraintRecord"
+          },
+          "type": "array"
+        },
+        "left": {
+          "$ref": "#/$defs/Explained",
+          "description": "The observation with the smaller ID. It is `l` in a rule."
+        },
+        "outcome": {
+          "$ref": "#/$defs/Outcome"
+        },
+        "path": {
+          "description": "When the two share an identity: the shortest chain of links from\n`left` to `right` through members of that identity. Empty when they\ndo not share one, and when no chain joins them, which means a\nchangeset written by hand placed at least one of them.",
+          "items": {
+            "$ref": "#/$defs/Link"
+          },
+          "type": "array"
+        },
+        "review_items": {
+          "description": "The review items that name either of the two, oldest first.",
+          "items": {
+            "$ref": "#/$defs/ReviewRecord"
+          },
+          "type": "array"
+        },
+        "right": {
+          "$ref": "#/$defs/Explained",
+          "description": "The observation with the larger ID. It is `r` in a rule."
+        },
+        "rules": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuleReading"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the project's rules say about the pair now. `null` when the two\nare of different entity types, when the engine runs without a\nmanifest, and when either has no feature row."
+        },
+        "summary": {
+          "description": "The explanation in sentences, the outcome first.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "left",
+        "right",
+        "outcome",
+        "summary",
+        "comparisons",
+        "constraints",
+        "review_items",
+        "path"
       ],
       "type": "object"
     },
@@ -1237,6 +1398,57 @@
       ],
       "type": "object"
     },
+    "Link": {
+      "description": "One step in the chain that joins two members of an identity.",
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/ObservationId"
+        },
+        "kind": {
+          "$ref": "#/$defs/LinkKind"
+        },
+        "run": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "With `match`: the latest run that judged so."
+        },
+        "to": {
+          "$ref": "#/$defs/ObservationId"
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "LinkKind": {
+      "description": "What joins two observations of one identity directly.",
+      "oneOf": [
+        {
+          "const": "must_link",
+          "description": "A `must_link` constraint in force.",
+          "type": "string"
+        },
+        {
+          "const": "version",
+          "description": "One is a later version of the other: the same row of the same\nsource, sent again with other content.",
+          "type": "string"
+        },
+        {
+          "const": "match",
+          "description": "A run that finished judged them `match`.",
+          "type": "string"
+        }
+      ]
+    },
     "LogEntry": {
       "description": "A committed changeset as the log holds it.",
       "properties": {
@@ -1606,6 +1818,69 @@
           "type": "object"
         }
       ]
+    },
+    "Outcome": {
+      "description": "Where the two observations are in relation to each other.",
+      "oneOf": [
+        {
+          "enum": [
+            "same_identity",
+            "different_identities"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "unassigned",
+          "description": "At least one of the two has no identity.",
+          "type": "string"
+        },
+        {
+          "const": "different_types",
+          "description": "The two are of different entity types, and are never compared.",
+          "type": "string"
+        }
+      ]
+    },
+    "Placement": {
+      "description": "The changeset that put an observation where it is.",
+      "properties": {
+        "actor": {
+          "$ref": "#/$defs/Actor"
+        },
+        "changeset": {
+          "$ref": "#/$defs/ChangesetId"
+        },
+        "committed_at": {
+          "type": "string"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "run": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The reconcile run that drafted the changeset, if one did."
+        },
+        "seq": {
+          "$ref": "#/$defs/Seq"
+        }
+      },
+      "required": [
+        "seq",
+        "changeset",
+        "actor",
+        "committed_at"
+      ],
+      "type": "object"
     },
     "Reason": {
       "oneOf": [
@@ -2138,6 +2413,29 @@
       },
       "type": "object"
     },
+    "RecordedJudgement": {
+      "description": "A judgement as a run stored it.",
+      "properties": {
+        "detail": {
+          "description": "What the strategy kept with the judgement. The built-in `rules`\nkeeps the names of the rules that held."
+        },
+        "score": {
+          "description": "On the strategy's own scale.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "verdict": {
+          "$ref": "#/$defs/Verdict"
+        }
+      },
+      "required": [
+        "verdict"
+      ],
+      "type": "object"
+    },
     "RejectDraftRequest": {
       "additionalProperties": false,
       "description": "`POST /v1/drafts/{draft}/reject`. The body may be left out.",
@@ -2361,6 +2659,75 @@
         "dismissed"
       ],
       "type": "string"
+    },
+    "RuleReading": {
+      "description": "The project's rules applied to a pair as it is now.",
+      "properties": {
+        "block": {
+          "items": {
+            "$ref": "#/$defs/RuleResult"
+          },
+          "type": "array"
+        },
+        "candidate": {
+          "description": "Whether a block rule holds, so that a run of the rules would compare\nthe two.",
+          "type": "boolean"
+        },
+        "match": {
+          "items": {
+            "$ref": "#/$defs/RuleResult"
+          },
+          "type": "array"
+        },
+        "no_match": {
+          "items": {
+            "$ref": "#/$defs/RuleResult"
+          },
+          "type": "array"
+        },
+        "verdict": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Verdict"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What a run of the rules would judge. `null` when the pair is not a\ncandidate, and when no `no_match` or `match` rule holds."
+        }
+      },
+      "required": [
+        "block",
+        "no_match",
+        "match",
+        "candidate"
+      ],
+      "type": "object"
+    },
+    "RuleResult": {
+      "description": "One rule applied to a pair.",
+      "properties": {
+        "holds": {
+          "description": "Whether the predicate holds. `null` when it cannot be decided, which\nis what SQL makes of a comparison with a feature that is null. A rule\nthat cannot be decided does not hold.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "predicate": {
+          "description": "The rule's SQL, over the feature rows `l` and `r`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "predicate"
+      ],
+      "type": "object"
     },
     "RunId": {
       "description": "Identifies a run of the engine: an ingest, a match or a reconcile.",

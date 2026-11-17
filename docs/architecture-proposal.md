@@ -98,6 +98,8 @@ A project with no `entities/company/` has no company type. A project that resolv
 | `spool build` | Validates the project and compiles it into a manifest. Every SQL file is prepared against DuckDB, so a mistake fails the build, not a run. Writes a `Dockerfile` if the project has none. With `--install` it also starts each user-code strategy and extractor once with nothing to do, which fetches what it depends on. |
 | `spool apply` | Applies a manifest to a store: declares entity types and rebuilds the feature tables whose declaration changed. |
 | `spool serve` | Runs the server from a manifest and a store location. An empty store is set up from the manifest. |
+| `spool show` | Shows what a running server holds: runs, identities, observations, documents, review items, drafts and the log (section 5). |
+| `spool explain` | Says why two observations share an identity, or why they do not (section 5). |
 | `spool bench` | Runs benchmark scenarios in-process (section 9). |
 | `spool schema` | Prints the JSON Schema of the API's values (section 5). |
 
@@ -521,7 +523,8 @@ Every path is under `/v1` and needs the bearer token, except `GET /healthz`. Sma
 | `GET /v1/identities`, `GET /v1/identities/{id}`, `.../history` | Lists identities in pages; reads one with its members, following redirects; the changesets that touched it | JSON |
 | `GET /v1/observations`, `GET /v1/observations/{id}` | Finds observations by source and key, those found in one document, or those with no identity; reads one | JSON |
 | `POST /v1/observations/identities` | The identities of many observations in one call | JSON |
-| `GET /v1/review`, `GET /v1/review/{id}` | Review items, typed; one of them | JSON |
+| `GET /v1/review`, `GET /v1/review/{id}` | Review items, typed, by status, entity type or an observation they name; one of them | JSON |
+| `GET /v1/explain?a=&b=` | Why two observations share an identity, or why they do not | JSON |
 | `POST /v1/review/{id}/dismiss` | Closes a review item without placing its observations | The item |
 
 - **A call that starts work says how long it will wait.** `POST /v1/ingest`, `POST /v1/documents`, `POST /v1/extractions` and `POST /v1/runs` take `wait_ms`, 30 seconds if left out. If the run finishes within that time, the response is `200` with the finished run. Otherwise it is `202` with the run as far as it has got, and the client reads `GET /v1/runs/{run}?wait_ms=...` until its status is no longer `running`. The work goes on whether or not anyone waits. The run ID is `spool.run.run_id`, so tasks add no new concept. One limit: a call that finds the writer busy has no run to report until its own work starts, so it can wait longer than it asked to.
@@ -532,6 +535,22 @@ Every path is under `/v1` and needs the bearer token, except `GET /healthz`. Sma
 - **IDs cross as strings** in the first version. DuckDB exports `UUID` columns to Arrow as strings by default (tested), which is also what JavaScript and pandas users expect.
 - **Errors have one shape.** Every response that is not a success is `{"error": {"code", "message"}}`, with `rejections` when a changeset broke a rule. The codes are `unauthorized`, `invalid`, `not_found`, `conflict`, `rejected`, `too_large`, `strategy_failed`, `extractor_failed` and `internal`.
 - **The API is tested by hash.** With a seeded ID generator, the same fixture must produce the same changeset `content_hash` through the library, through the server with Arrow and with JSON bodies, and through the TypeScript client. Only Rust computes observation IDs and content hashes.
+
+### Inspection
+
+A person who asks why two records are one company, or why they are not, should not have to query the store. `GET /v1/explain` answers for a pair of observations from what the store already holds, and stores nothing of its own:
+
+- **Where each one is.** Its identity, and the changeset that put it there: the log position, the actor, the reason, and the reconcile run that drafted it if one did.
+- **What each run made of the pair.** Every match run that had the pair as a candidate or judged it, oldest first: the block rules that found it, the verdict with the strategy's score and what the strategy kept with it, and, when the run's draft was left for review, whether that draft still waits, was approved or was rejected.
+- **What a reviewer said.** The constraints between the two, with those that were removed, and the review items that name either.
+- **What the rules say now.** Each block, `no_match` and `match` rule of the type applied to the two feature rows as they are, with the feature rows themselves. This is the present reading, and it can differ from what a run recorded: the rules or the features may have changed since. The explanation says so when they differ.
+- **What joins them.** When the two share an identity without having been compared, the shortest chain of members between them. A link is a `must_link` constraint, a later version of the same row, or a `match` judgement of a run that finished, preferred in that order, which is the order a reconcile run listens to them in. No chain means a changeset written by hand placed one of them.
+
+The answer is data, with a `summary` that says the same in sentences. The engine writes the sentences, so the command, a client and a later studio say the same thing, and a test of the engine covers the wording. A sentence names an observation as its source and key, and a mention as its document and the span it was found at.
+
+The explanation is about what was recorded. It does not run a strategy again, so for user code it reports the verdict, score and detail the strategy stored and cannot say what the strategy would judge now.
+
+`spool show` and `spool explain` are the same API from a terminal. They are a client: they take `--url` and `--token`, by default those of `spool dev`, and never open a store, so they work against a development server and a deployed one alike. `show` lists runs, identities, observations, documents, review items, drafts and the log, and shows one of each: an identity with its members, the constraints on them and its history; an observation with its payload, its evidence and, for a mention, the text around it in its document; a draft with the operations it would commit. `--json` prints what the server answered. The commands speak HTTP with `ureq`, a crate the build of the DuckDB library already used, so the lock file gained no package.
 
 A client is a small package that speaks this API. The first is TypeScript, and a Python client is the same amount of work. No client contains engine code, so there are no native packages to build per platform. An agent built with a framework such as eve reaches Spool the same way: a tool in the agent calls the client.
 
@@ -891,7 +910,18 @@ Milestone 5 adds documents and extractors: `crates/spool/src/documents.rs` and `
 - Documents and extractions are reached through the API and the TypeScript client, a project's extractors are listed by `info` and by the API, and one that fails is reported as `extractor_failed` (`crates/spool-cli/tests`, `packages/client/test`).
 - `dev` runs an extractor as it was last saved, and `build` writes a Dockerfile that carries what the project's extractors need.
 
-Out of scope after Milestone 5: LLM matching, an extractor built into the engine, documents that are not text, relationships between entities, canonical attribute views, the studio, applying a rematch's suggestions automatically.
+Milestone 6 begins with inspection: `crates/spool/src/explain.rs` and the commands `show` and `explain`. The store's format does not change. Its exit criteria, each a test:
+
+- A pair that a run matched is explained by that run, the rule that held and the changeset that placed them (`crates/spool/tests/explain.rs`).
+- Two members of one identity that were never compared are explained by the chain of members between them.
+- A pair kept apart is explained by the `no_match` rule or the `cannot_link` constraint that did it, and a reviewer's merge, split and removed constraint each appear with the actor and the reason.
+- An observation left for review is explained by its review item, open or dismissed, and a pair whose draft waits or was rejected says so.
+- The rules as they are now are read apart from what a run recorded, and a rule that reads a null feature is reported as undecided.
+- An explanation is reached through the API, the TypeScript client and `spool explain`, and review items are found by an observation they name.
+- `spool show` lists and shows runs, identities with their members, constraints and history, observations with their evidence and the place in their document, documents, review items, drafts and the log, as text and as the server's JSON (`crates/spool-cli/tests/show.rs`).
+- A mistake in a command is a usage error, and a server that refuses or does not answer is reported in a sentence.
+
+Out of scope after this part of Milestone 6: the studio, explaining what a user-code strategy would judge now, explaining a pair as of an earlier log position, LLM matching, an extractor built into the engine, documents that are not text, relationships between entities, canonical attribute views, applying a rematch's suggestions automatically.
 
 Proposed roadmap:
 
@@ -900,7 +930,7 @@ Proposed roadmap:
 3. **Identity lifecycle.** Merge, split, constraints, undo and superseding observations, plus the identity benchmark.
 4. **User code.** The child-process protocol, Python first and then TypeScript, with Splink as the second strategy.
 5. **Extraction.** Observations from unstructured documents.
-6. **Developer tooling.** Inspection and a studio, both through the API.
+6. **Developer tooling.** Inspection and a studio, both through the API. Inspection is built; the studio is not.
 
 Milestones 2 and 3 do not depend on each other. Sandbox synchronisation, initial Milestone 6, is not in this roadmap.
 
@@ -921,5 +951,6 @@ Milestones 2 and 3 do not depend on each other. Sandbox synchronisation, initial
 | Operation set: create, assign, merge, constrain, unconstrain, reinstate; split and undo as changesets the engine writes | Constraints that choose between identities during a run; operations on more than two observations |
 | Default policy never merges or splits existing identities automatically; a rematch suggests and does not change | Policy plug-ins; automatic merges above a threshold; applying suggestions in bulk |
 | JSON and Arrow as the only wire forms; the run ID as the task handle; drafts stored on the server | Streaming run progress; an ad hoc SQL endpoint |
+| Inspection through the API only; an explanation computed from what the store holds, with sentences the engine writes | The studio; running a strategy again to explain; explaining a pair as of an earlier log position |
 | Scenario-based benchmark with identity metrics and a CI baseline; extraction scored by exact span, apart from resolution | GLEIF scenario generator; a public extraction dataset; partial credit for overlapping spans; one end-to-end score |
 | Two library crates and one for the command and server; injected ID generator and clock; format version in the file; the prebuilt DuckDB library found by run path | Further crate splits; a statically linked DuckDB; indexes and keys |
