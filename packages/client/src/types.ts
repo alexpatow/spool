@@ -364,8 +364,9 @@ export interface Explanation {
   /**
    * When the two share an identity: the shortest chain of links from
    * `left` to `right` through members of that identity. Empty when they
-   * do not share one, and when no chain joins them, which means a
-   * changeset written by hand placed at least one of them.
+   * do not share one, and when no chain joins them as things are now:
+   * what joined them was removed since, or a changeset placed one of
+   * them directly.
    */
   path: Link[];
   /**
@@ -1080,6 +1081,15 @@ export interface RuleReading {
    * the two.
    */
   candidate: boolean;
+  /**
+   * What SQL said when it refused to apply the `no_match` and `match`
+   * rules to the pair, as it refuses the cast of a value that does not
+   * convert. Their `holds` is then `null`. A run applies those rules
+   * only to pairs a block rule found, so a rule may rely on what the
+   * block rules let through and fail on a pair they did not. On a
+   * candidate pair, a run of the rules fails the same way.
+   */
+  failed?: string | null;
   match: RuleResult[];
   no_match: RuleResult[];
   /**
@@ -1095,8 +1105,9 @@ export interface RuleReading {
 export interface RuleResult {
   /**
    * Whether the predicate holds. `null` when it cannot be decided, which
-   * is what SQL makes of a comparison with a feature that is null. A rule
-   * that cannot be decided does not hold.
+   * is what SQL makes of a comparison with a feature that is null, and
+   * for a `no_match` or `match` rule when those `failed`. A rule that
+   * cannot be decided does not hold.
    */
   holds?: boolean | null;
   name: string;

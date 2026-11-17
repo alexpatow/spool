@@ -741,6 +741,48 @@ fn a_type_with_no_feature_columns_and_no_rules_is_explained() {
 }
 
 #[test]
+fn a_rule_that_sql_refuses_on_a_pair_is_shown_as_one_that_cannot_be_applied() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("project");
+    write_things(&project);
+    // The match rule is safe on what the block rule lets through.
+    for (file, sql) in [
+        (
+            "rules/block/same_code.sql",
+            "l.code = r.code AND TRY_CAST(l.code AS INTEGER) IS NOT NULL\n",
+        ),
+        (
+            "rules/match/same_code.sql",
+            "CAST(l.code AS INTEGER) = CAST(r.code AS INTEGER)\n",
+        ),
+    ] {
+        std::fs::write(project.join("entities/thing").join(file), sql).unwrap();
+    }
+    let server = Server::serve(&project, dir.path(), 1);
+    ingest(
+        &server,
+        "shop",
+        "thing",
+        "id",
+        rows(&[&["id", "code"], &["1", "anvil"], &["2", "anvil"]]),
+    );
+    assert_eq!(resolve(&server, "thing")["status"], "succeeded");
+
+    let explanation = shown(&server, &["explain", "shop:1", "shop:2"]);
+    has(&explanation, "  block     same_code     does not hold");
+    has(
+        &explanation,
+        "  match     same_code     cannot be applied to these values",
+    );
+    has(
+        &explanation,
+        "  applying the `no_match` and `match` rules failed: Conversion Error: Could not convert string 'anvil' to INT32 when casting from source column code",
+    );
+    // The server answers the next call.
+    has(&shown(&server, &["show"]), "  identities    2");
+}
+
+#[test]
 fn a_mistake_or_a_server_that_does_not_answer_is_said_plainly() {
     let dir = tempfile::tempdir().unwrap();
     let server = workshop(dir.path());

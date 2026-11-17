@@ -563,6 +563,151 @@ fn a_run_reconciled_again_is_explained_by_its_latest_draft() {
 }
 
 #[test]
+fn a_rule_that_cannot_be_applied_to_a_pair_does_not_end_the_explanation() {
+    // The match rule is safe on what the block rule lets through, and only
+    // there, which is all a run asks of it.
+    let mut numbered = thing();
+    numbered.block = vec![SqlFile::new(
+        "same_number",
+        "l.code = r.code AND TRY_CAST(l.code AS INTEGER) IS NOT NULL",
+    )];
+    numbered.no_match.clear();
+    numbered.match_ = vec![SqlFile::new(
+        "same_number",
+        "CAST(l.code AS INTEGER) = CAST(r.code AS INTEGER)",
+    )];
+    let engine = Engine::open_in_memory(Options::seeded(1)).unwrap();
+    engine.apply(&manifest_of(vec![numbered])).unwrap();
+    ingest(
+        &engine,
+        "shop",
+        &[
+            ("1", None, Some("12")),
+            ("2", None, Some("12")),
+            ("3", None, Some("twelve")),
+            ("4", None, Some("twelve")),
+        ],
+    );
+    resolve(&engine);
+
+    let explanation = explain(&engine, ("shop", "1"), ("shop", "2"));
+    assert_eq!(explanation.outcome, Outcome::SameIdentity);
+    assert_eq!(
+        held(&explanation, "match"),
+        [("same_number".to_owned(), Some(true))]
+    );
+
+    let explanation = explain(&engine, ("shop", "3"), ("shop", "4"));
+    assert_eq!(explanation.outcome, Outcome::DifferentIdentities);
+    assert_eq!(
+        held(&explanation, "block"),
+        [("same_number".to_owned(), Some(false))]
+    );
+    assert_eq!(
+        held(&explanation, "match"),
+        [("same_number".to_owned(), None)]
+    );
+    let rules = explanation.rules.as_ref().unwrap();
+    assert!(!rules.candidate);
+    assert_eq!(rules.verdict, None);
+    assert_eq!(
+        rules.failed.as_deref(),
+        Some(
+            "Conversion Error: Could not convert string 'twelve' to INT32 when casting from source column code"
+        )
+    );
+    assert_eq!(
+        explanation.summary.last().unwrap(),
+        "By the rules as they are now, no block rule holds for the pair, so a run would not compare them."
+    );
+
+    // A null feature is not a failure.
+    ingest(&engine, "shop", &[("5", None, None)]);
+    let explanation = explain(&engine, ("shop", "1"), ("shop", "5"));
+    let rules = explanation.rules.as_ref().unwrap();
+    assert_eq!((rules.match_[0].holds, &rules.failed), (None, &None));
+
+    // The engine goes on reading after an explanation that met a rule SQL
+    // refused.
+    let explanation = explain(&engine, ("shop", "3"), ("shop", "4"));
+    assert!(explanation.rules.as_ref().unwrap().failed.is_some());
+    assert_eq!(
+        engine.run(spool::core::RunId(1)).unwrap().status,
+        RunStatus::Succeeded
+    );
+
+    // With a block rule that lets the pair through, a run would reach the
+    // rule that fails.
+    let mut unguarded = thing();
+    unguarded.block = vec![SqlFile::new("same_number", "l.code = r.code")];
+    unguarded.no_match.clear();
+    unguarded.match_ = vec![SqlFile::new(
+        "same_number",
+        "CAST(l.code AS INTEGER) = CAST(r.code AS INTEGER)",
+    )];
+    engine.apply(&manifest_of(vec![unguarded])).unwrap();
+    let explanation = explain(&engine, ("shop", "3"), ("shop", "4"));
+    let rules = explanation.rules.as_ref().unwrap();
+    assert!(rules.candidate);
+    assert_eq!(rules.verdict, None);
+    assert!(says(
+        &explanation,
+        "By the rules as they are now, block rule `same_number` makes them a candidate pair, and the `no_match` and `match` rules cannot be applied to the pair's values, so a run of the rules that compared them would fail (Conversion Error: "
+    ));
+}
+
+#[test]
+fn a_constraint_that_was_removed_leaves_two_together_with_nothing_between_them() {
+    let engine = engine();
+    ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
+    resolve(&engine);
+    // Nothing about these tongs resembles the anvil.
+    ingest(&engine, "depot", &[("9", Some("tongs"), None)]);
+    let (anvil, tongs) = (
+        observation(&engine, "shop", "1"),
+        observation(&engine, "depot", "9"),
+    );
+    let must_link =
+        |op: fn(ConstraintKind, spool::core::ObservationId, spool::core::ObservationId) -> Op| {
+            engine
+                .author(
+                    reviewer(),
+                    None,
+                    vec![op(ConstraintKind::MustLink, anvil, tongs)],
+                )
+                .unwrap();
+        };
+    must_link(|kind, a, b| Op::Constrain { kind, a, b });
+    resolve(&engine);
+    must_link(|kind, a, b| Op::Unconstrain { kind, a, b });
+
+    // A run placed the tongs, because of a constraint that is gone.
+    let explanation = explain(&engine, ("shop", "1"), ("depot", "9"));
+    assert_eq!(explanation.outcome, Outcome::SameIdentity);
+    assert!(explanation.path.is_empty());
+    assert!(
+        explanation.right.placed.as_ref().unwrap().run.is_some()
+            && explanation.left.placed.as_ref().unwrap().run.is_some()
+    );
+    assert!(
+        !explanation
+            .summary
+            .iter()
+            .any(|sentence| sentence.contains("by hand")),
+        "{:#?}",
+        explanation.summary
+    );
+    assert!(says(
+        &explanation,
+        "No chain of matches, constraints or versions joins them within the identity as it is now. Either what joined them has since been removed, or a changeset placed one of them directly."
+    ));
+    assert!(says(
+        &explanation,
+        "A `must_link` constraint between them was in force from log position 2 until position 4."
+    ));
+}
+
+#[test]
 fn a_strategy_of_the_callers_own_is_explained_by_what_it_stored() {
     let engine = engine();
     ingest(

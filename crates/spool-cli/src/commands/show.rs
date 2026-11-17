@@ -1171,6 +1171,9 @@ fn print_explanation(explanation: &Explanation) {
                     match holds {
                         Some(true) => "holds",
                         Some(false) => "does not hold",
+                        None if group != "block" && rules.failed.is_some() => {
+                            "cannot be applied to these values"
+                        }
                         None => "cannot be decided: a feature it reads is null",
                     }
                     .to_owned(),
@@ -1181,6 +1184,9 @@ fn print_explanation(explanation: &Explanation) {
             println!("  the entity type has none");
         }
         aligned(&rows, "  ");
+        if let Some(failed) = &rules.failed {
+            println!("  applying the `no_match` and `match` rules failed: {failed}");
+        }
     }
 
     if !explanation.comparisons.is_empty() {

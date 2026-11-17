@@ -57,8 +57,9 @@ pub struct Explanation {
     pub review_items: Vec<ReviewRecord>,
     /// When the two share an identity: the shortest chain of links from
     /// `left` to `right` through members of that identity. Empty when they
-    /// do not share one, and when no chain joins them, which means a
-    /// changeset written by hand placed at least one of them.
+    /// do not share one, and when no chain joins them as things are now:
+    /// what joined them was removed since, or a changeset placed one of
+    /// them directly.
     pub path: Vec<Link>,
 }
 
@@ -115,6 +116,13 @@ pub struct RuleReading {
     /// What a run of the rules would judge. `null` when the pair is not a
     /// candidate, and when no `no_match` or `match` rule holds.
     pub verdict: Option<Verdict>,
+    /// What SQL said when it refused to apply the `no_match` and `match`
+    /// rules to the pair, as it refuses the cast of a value that does not
+    /// convert. Their `holds` is then `null`. A run applies those rules
+    /// only to pairs a block rule found, so a rule may rely on what the
+    /// block rules let through and fail on a pair they did not. On a
+    /// candidate pair, a run of the rules fails the same way.
+    pub failed: Option<String>,
 }
 
 /// One rule applied to a pair.
@@ -125,8 +133,9 @@ pub struct RuleResult {
     /// The rule's SQL, over the feature rows `l` and `r`.
     pub predicate: String,
     /// Whether the predicate holds. `null` when it cannot be decided, which
-    /// is what SQL makes of a comparison with a feature that is null. A rule
-    /// that cannot be decided does not hold.
+    /// is what SQL makes of a comparison with a feature that is null, and
+    /// for a `no_match` or `match` rule when those `failed`. A rule that
+    /// cannot be decided does not hold.
     pub holds: Option<bool>,
 }
 
@@ -206,17 +215,6 @@ pub(crate) fn explain(
         (Some(_), Some(_)) => Outcome::DifferentIdentities,
         _ => Outcome::Unassigned,
     };
-    let rules = match manifest.and_then(|manifest| manifest.entity_type(left.entity_type.as_str()))
-    {
-        Some(declared) if same_type => read_rules(
-            conn,
-            &features::table(&left.entity_type),
-            &declared.rules,
-            left.id,
-            right.id,
-        )?,
-        _ => None,
-    };
     let path = match (outcome, left.identity) {
         (Outcome::SameIdentity, Some(identity)) => path(conn, identity, left.id, right.id)?,
         _ => Vec::new(),
@@ -234,11 +232,28 @@ pub(crate) fn explain(
     review_items.sort_by_key(|item| item.id);
     review_items.dedup_by_key(|item| item.id);
 
+    let comparisons = comparisons(conn, left.id, right.id)?;
+    let constraints = constraints(conn, left.id, right.id)?;
+    let declared = manifest.and_then(|manifest| manifest.entity_type(left.entity_type.as_str()));
+    let table = features::table(&left.entity_type);
+    let (left, right) = (explained(conn, left)?, explained(conn, right)?);
+    // Last, because a rule SQL refuses ends the read: see `read_rules`.
+    let rules = match declared {
+        Some(declared) if same_type => read_rules(
+            conn,
+            &table,
+            &declared.rules,
+            left.observation.id,
+            right.observation.id,
+        )?,
+        _ => None,
+    };
+
     let mut explanation = Explanation {
-        comparisons: comparisons(conn, left.id, right.id)?,
-        constraints: constraints(conn, left.id, right.id)?,
-        left: explained(conn, left)?,
-        right: explained(conn, right)?,
+        comparisons,
+        constraints,
+        left,
+        right,
         outcome,
         summary: Vec::new(),
         rules,
@@ -313,6 +328,12 @@ fn has_table(conn: &Connection, table: &str) -> Result<bool> {
 
 /// Applies each rule to the pair's feature rows. `None` when either row is
 /// missing.
+///
+/// This has to be the last thing a read asks of its connection. A run
+/// applies `no_match` and `match` rules only to the pairs a block rule
+/// found, so such a rule may rely on what the block rules let through, and
+/// SQL may refuse it on a pair they did not. A statement SQL refuses ends
+/// the transaction it is in.
 fn read_rules(
     conn: &Connection,
     table: &str,
@@ -323,36 +344,58 @@ fn read_rules(
     if !has_table(conn, table)? {
         return Ok(None);
     }
-    let all: Vec<&Rule> = rules
-        .block
-        .iter()
-        .chain(&rules.no_match)
-        .chain(&rules.match_)
-        .collect();
-    let predicates: String = all
-        .iter()
-        .map(|rule| format!(", (\n{}\n)::BOOLEAN", rule.predicate))
-        .collect();
-    let mut statement = conn.prepare(&format!(
-        "SELECT 1{predicates}
-         FROM {table} l, {table} r
-         WHERE l.observation_id = ?::UUID AND r.observation_id = ?::UUID"
-    ))?;
-    let mut rows = statement.query(params![left.to_string(), right.to_string()])?;
-    let Some(row) = rows.next()? else {
+    let apply = |rules: &[&Rule]| -> Result<Option<Vec<RuleResult>>> {
+        let predicates: String = rules
+            .iter()
+            .map(|rule| format!(", (\n{}\n)::BOOLEAN", rule.predicate))
+            .collect();
+        let mut statement = conn.prepare(&format!(
+            "SELECT 1{predicates}
+             FROM {table} l, {table} r
+             WHERE l.observation_id = ?::UUID AND r.observation_id = ?::UUID"
+        ))?;
+        let mut rows = statement.query(params![left.to_string(), right.to_string()])?;
+        let Some(row) = rows.next()? else {
+            return Ok(None);
+        };
+        let mut results = Vec::with_capacity(rules.len());
+        for (index, rule) in rules.iter().enumerate() {
+            results.push(RuleResult {
+                name: rule.name.clone(),
+                predicate: rule.predicate.clone(),
+                holds: row.get(index + 1)?,
+            });
+        }
+        Ok(Some(results))
+    };
+
+    let Some(block) = apply(&rules.block.iter().collect::<Vec<_>>())? else {
         return Ok(None);
     };
-    let mut results = Vec::with_capacity(all.len());
-    for (index, rule) in all.iter().enumerate() {
-        results.push(RuleResult {
-            name: rule.name.clone(),
-            predicate: rule.predicate.clone(),
-            holds: row.get(index + 1)?,
-        });
-    }
-    let match_ = results.split_off(rules.block.len() + rules.no_match.len());
-    let no_match = results.split_off(rules.block.len());
-    let block = results;
+    let judging: Vec<&Rule> = rules.no_match.iter().chain(&rules.match_).collect();
+    let (mut no_match, failed) = match apply(&judging) {
+        Ok(Some(results)) => (results, None),
+        Ok(None) => return Ok(None),
+        Err(Error::Duckdb(error)) => {
+            let undecided = judging
+                .iter()
+                .map(|rule| RuleResult {
+                    name: rule.name.clone(),
+                    predicate: rule.predicate.clone(),
+                    holds: None,
+                })
+                .collect();
+            // The first line says what was wrong. The rest points into a
+            // statement the caller never saw.
+            let said = error.to_string();
+            (
+                undecided,
+                Some(said.lines().next().unwrap_or_default().to_owned()),
+            )
+        }
+        Err(error) => return Err(error),
+    };
+    let match_ = no_match.split_off(rules.no_match.len());
 
     let any = |results: &[RuleResult]| results.iter().any(|result| result.holds == Some(true));
     let candidate = any(&block);
@@ -367,6 +410,7 @@ fn read_rules(
         match_,
         candidate,
         verdict,
+        failed,
     }))
 }
 
@@ -663,7 +707,7 @@ fn summary(explanation: &Explanation) -> Vec<String> {
     if explanation.outcome == Outcome::SameIdentity {
         match explanation.path.as_slice() {
             [] => said.push(
-                "No chain of matches, constraints or versions joins them within the identity, so a changeset written by hand placed at least one of them."
+                "No chain of matches, constraints or versions joins them within the identity as it is now. Either what joined them has since been removed, or a changeset placed one of them directly."
                     .to_owned(),
             ),
             [_] => {}
@@ -906,6 +950,11 @@ fn read(rules: &RuleReading) -> String {
             if names.len() == 1 { "holds" } else { "hold" }
         )
     };
+    if let Some(failed) = &rules.failed {
+        return format!(
+            "{found}, and the `no_match` and `match` rules cannot be applied to the pair's values, so a run of the rules that compared them would fail ({failed})."
+        );
+    }
     match rules.verdict {
         Some(Verdict::NoMatch) => decided("no_match", &rules.no_match),
         Some(Verdict::Match) => decided("match", &rules.match_),

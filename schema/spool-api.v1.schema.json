@@ -798,7 +798,7 @@
           "$ref": "#/$defs/Outcome"
         },
         "path": {
-          "description": "When the two share an identity: the shortest chain of links from\n`left` to `right` through members of that identity. Empty when they\ndo not share one, and when no chain joins them, which means a\nchangeset written by hand placed at least one of them.",
+          "description": "When the two share an identity: the shortest chain of links from\n`left` to `right` through members of that identity. Empty when they\ndo not share one, and when no chain joins them as things are now:\nwhat joined them was removed since, or a changeset placed one of\nthem directly.",
           "items": {
             "$ref": "#/$defs/Link"
           },
@@ -2673,6 +2673,13 @@
           "description": "Whether a block rule holds, so that a run of the rules would compare\nthe two.",
           "type": "boolean"
         },
+        "failed": {
+          "description": "What SQL said when it refused to apply the `no_match` and `match`\nrules to the pair, as it refuses the cast of a value that does not\nconvert. Their `holds` is then `null`. A run applies those rules\nonly to pairs a block rule found, so a rule may rely on what the\nblock rules let through and fail on a pair they did not. On a\ncandidate pair, a run of the rules fails the same way.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "match": {
           "items": {
             "$ref": "#/$defs/RuleResult"
@@ -2709,7 +2716,7 @@
       "description": "One rule applied to a pair.",
       "properties": {
         "holds": {
-          "description": "Whether the predicate holds. `null` when it cannot be decided, which\nis what SQL makes of a comparison with a feature that is null. A rule\nthat cannot be decided does not hold.",
+          "description": "Whether the predicate holds. `null` when it cannot be decided, which\nis what SQL makes of a comparison with a feature that is null, and\nfor a `no_match` or `match` rule when those `failed`. A rule that\ncannot be decided does not hold.",
           "type": [
             "boolean",
             "null"
