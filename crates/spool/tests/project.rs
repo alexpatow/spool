@@ -278,6 +278,24 @@ fn a_mistake_fails_the_build_and_names_the_file() {
 }
 
 #[test]
+fn a_transform_may_hold_any_text_in_its_strings() {
+    for body in [
+        "replace(lower(text), $$é$$, 'e')",
+        "replace(text, 'é — select', $word$ select ü $word$)",
+        "replace(text, 'ü', 'u') -- ö\n",
+        "text /* ø */ || \"text\"",
+    ] {
+        let dir = papers();
+        write(
+            dir.path(),
+            "transforms/folded.sql",
+            &format!("lambda text: {body}"),
+        );
+        Manifest::load(dir.path()).unwrap_or_else(|error| panic!("{body}: {error}"));
+    }
+}
+
+#[test]
 fn a_rule_name_must_be_plain() {
     let dir = papers();
     write(dir.path(), "entities/paper/rules/match/it's.sql", "true");

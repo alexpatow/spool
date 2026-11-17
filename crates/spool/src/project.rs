@@ -851,24 +851,26 @@ fn after_comments(sql: &str) -> &str {
 /// The words of SQL text that are not inside a string, a quoted name or a
 /// comment.
 fn words(sql: &str) -> impl Iterator<Item = &str> {
+    // Every byte of a character outside ASCII counts as part of a word, so
+    // the scan only ever stops between characters.
+    let in_word = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_' || !byte.is_ascii();
     let bytes = sql.as_bytes();
     let mut at = 0;
     std::iter::from_fn(move || {
         while at < bytes.len() {
             let byte = bytes[at];
+            let rest = &bytes[at..];
             if byte == b'\'' || byte == b'"' {
-                at += 1;
-                while at < bytes.len() && bytes[at] != byte {
-                    at += 1;
-                }
-                at += 1;
-            } else if sql[at..].starts_with("--") {
-                at += sql[at..].find('\n').unwrap_or(sql.len() - at);
-            } else if sql[at..].starts_with("/*") {
-                at += sql[at..].find("*/").map_or(sql.len() - at, |end| end + 2);
-            } else if byte.is_ascii_alphabetic() || byte == b'_' {
+                at = past(bytes, at + 1, &[byte]);
+            } else if rest.starts_with(b"--") {
+                at = past(bytes, at, b"\n");
+            } else if rest.starts_with(b"/*") {
+                at = past(bytes, at + 2, b"*/");
+            } else if let Some(quote) = dollar_quote(rest) {
+                at = past(bytes, at + quote.len(), quote);
+            } else if in_word(byte) && !byte.is_ascii_digit() {
                 let start = at;
-                while at < bytes.len() && (bytes[at].is_ascii_alphanumeric() || bytes[at] == b'_') {
+                while at < bytes.len() && in_word(bytes[at]) {
                     at += 1;
                 }
                 return Some(&sql[start..at]);
@@ -878,6 +880,30 @@ fn words(sql: &str) -> impl Iterator<Item = &str> {
         }
         None
     })
+}
+
+/// Where the first `needle` at or after `from` ends, or the end of the text.
+fn past(bytes: &[u8], from: usize, needle: &[u8]) -> usize {
+    bytes
+        .get(from..)
+        .and_then(|rest| {
+            rest.windows(needle.len())
+                .position(|window| window == needle)
+        })
+        .map_or(bytes.len(), |found| from + found + needle.len())
+}
+
+/// The `$$` or `$tag$` that opens a dollar-quoted string, if the text begins
+/// with one.
+fn dollar_quote(text: &[u8]) -> Option<&[u8]> {
+    let tag = text.strip_prefix(b"$")?;
+    let length = tag
+        .iter()
+        .take_while(|byte| byte.is_ascii_alphanumeric() || **byte == b'_' || !byte.is_ascii())
+        .count();
+    let closed = tag.get(length) == Some(&b'$');
+    let numbered = tag.first().is_some_and(u8::is_ascii_digit);
+    (closed && !numbered).then(|| &text[..length + 2])
 }
 
 /// Checks an `entity.yaml` against the sources and transforms it names, and
