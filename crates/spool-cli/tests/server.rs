@@ -1054,6 +1054,31 @@ fn what_is_read_says_what_things_are_called_where_they_came_from_and_what_waits(
         .get("/v1/observations?identity=acorn")
         .error(400, "invalid");
 
+    // Identities are read by their IDs, as the list gives them.
+    let all = page["identities"].as_array().unwrap();
+    let other = all.iter().find(|listed| listed["id"] != identity).unwrap()["id"]
+        .as_str()
+        .unwrap();
+    let named = server.read(&format!("/v1/identities?ids={other},{identity}"));
+    let wanted: Vec<&serde_json::Value> = all
+        .iter()
+        .filter(|listed| listed["id"] == identity || listed["id"] == other)
+        .collect();
+    assert_eq!(named["identities"], json!(wanted));
+    assert_eq!(named["next"], json!(null));
+    assert_eq!(
+        server.read(&format!("/v1/identities?ids={identity}&q=sheffield"))["identities"],
+        json!([listed])
+    );
+    assert_eq!(server.read("/v1/identities?ids=")["identities"], json!([]));
+    server
+        .get(&format!("/v1/identities?ids={identity},acorn"))
+        .error(400, "invalid");
+    let many = vec![identity; 1001].join(",");
+    server
+        .get(&format!("/v1/identities?ids={many}"))
+        .error(400, "invalid");
+
     // Records and identities are found by the words they hold.
     let found = server.read("/v1/identities?q=acorn%20sheffield");
     assert_eq!(found["identities"].as_array().unwrap().len(), 1);

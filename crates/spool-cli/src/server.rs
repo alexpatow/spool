@@ -960,6 +960,8 @@ async fn mint_ids(State(app): State<App>, body: Bytes) -> ApiResult {
 struct IdentitiesQuery {
     entity_type: Option<EntityType>,
     q: Option<String>,
+    /// Identity IDs with commas between them.
+    ids: Option<String>,
     after: Option<String>,
     limit: Option<u64>,
 }
@@ -970,9 +972,25 @@ async fn list_identities(
 ) -> ApiResult {
     let params = query(params)?;
     let limit = page(params.limit);
+    let ids = params
+        .ids
+        .as_deref()
+        .map(|ids| {
+            let ids: Vec<&str> = ids.split(',').filter(|id| !id.is_empty()).collect();
+            if ids.len() as u64 > MAX_PAGE {
+                return Err(ApiError::invalid(format!(
+                    "at most {MAX_PAGE} identities are read by their IDs in one call"
+                )));
+            }
+            ids.into_iter()
+                .map(|identity| id(identity, "an identity ID"))
+                .collect::<ApiResult<Vec<_>>>()
+        })
+        .transpose()?;
     let filter = IdentityFilter {
         entity_type: params.entity_type,
         q: params.q,
+        ids,
         after: params
             .after
             .as_deref()

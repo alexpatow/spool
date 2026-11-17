@@ -44,6 +44,24 @@ export interface CandidateList {
 }
 
 /**
+ * A constraint in force, with where its two observations are.
+ */
+export interface CaseConstraint {
+  a: ObservationId;
+  b: ObservationId;
+  /**
+   * The log position of the changeset that made it.
+   */
+  from: Seq;
+  /**
+   * The identities its observations belong to now, that of `a` first.
+   * `None` for one that has no identity.
+   */
+  identities: [IdentityId | null, IdentityId | null];
+  kind: ConstraintKind;
+}
+
+/**
  * An ordered list of operations that is applied atomically or not at all.
  */
 export interface Changeset {
@@ -1077,8 +1095,8 @@ export interface Rejection {
 
 /**
  * A review item with what a reviewer reads to decide it: the observations
- * it holds back, the identities they matched, and what was judged between
- * them.
+ * it holds back, the identities they matched, what was judged between
+ * them, and what was already decided about them.
  */
 export interface ReviewCase {
   /**
@@ -1087,6 +1105,15 @@ export interface ReviewCase {
    * it, so there may be fewer than the item names.
    */
   candidates: Candidate[];
+  /**
+   * The constraints in force that bear on the decision, oldest first:
+   * those that name one of the item's observations, and those between
+   * members of two of the candidates. A changeset that would break one
+   * is refused, so a `cannot_link` between two candidates means they
+   * cannot be merged, and one between an observation and a member of a
+   * candidate means it cannot be placed there.
+   */
+  constraints: CaseConstraint[];
   item: ReviewRecord;
   /**
    * What the latest run to judge each pair made of it, for every pair of

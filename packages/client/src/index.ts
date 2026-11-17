@@ -133,6 +133,11 @@ export interface IdentityFilter {
    * the case and the accents of the letters.
    */
   q?: string;
+  /**
+   * Only these identities, which is how a caller that holds IDs reads what
+   * they are called. One that was merged away is left out. At most 1000.
+   */
+  ids?: IdentityId[];
   /** The `next` of the page before. */
   after?: IdentityId;
   limit?: number;
@@ -469,7 +474,7 @@ export class SpoolClient {
 
   /** A page of active identities. Pass `next` as `after` for the page after. */
   identities(filter: IdentityFilter = {}): Promise<IdentityList> {
-    return this.json("GET", "/v1/identities", { query: { ...filter } });
+    return this.json("GET", "/v1/identities", { query: { ...filter, ids: filter.ids?.join(",") } });
   }
 
   /** An identity and its members. */

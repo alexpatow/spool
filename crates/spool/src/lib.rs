@@ -84,8 +84,8 @@ pub use project::{
     Rule, RuleSet, Runtime, SqlFile, Strategy, StrategySource,
 };
 pub use review::{
-    CASE_MEMBERS, Candidate, Dismissal, PairJudgement, ReviewCase, ReviewFilter, ReviewKind,
-    ReviewRecord, ReviewStatus,
+    CASE_MEMBERS, Candidate, CaseConstraint, Dismissal, PairJudgement, ReviewCase, ReviewFilter,
+    ReviewKind, ReviewRecord, ReviewStatus,
 };
 pub use rows::Rows;
 pub use runs::{RunFilter, RunKind, RunRecord, RunStatus};

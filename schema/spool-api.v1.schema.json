@@ -64,6 +64,48 @@
       ],
       "type": "object"
     },
+    "CaseConstraint": {
+      "description": "A constraint in force, with where its two observations are.",
+      "properties": {
+        "a": {
+          "$ref": "#/$defs/ObservationId"
+        },
+        "b": {
+          "$ref": "#/$defs/ObservationId"
+        },
+        "from": {
+          "$ref": "#/$defs/Seq",
+          "description": "The log position of the changeset that made it."
+        },
+        "identities": {
+          "description": "The identities its observations belong to now, that of `a` first.\n`None` for one that has no identity.",
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/IdentityId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "kind": {
+          "$ref": "#/$defs/ConstraintKind"
+        }
+      },
+      "required": [
+        "a",
+        "b",
+        "kind",
+        "from",
+        "identities"
+      ],
+      "type": "object"
+    },
     "Changeset": {
       "description": "An ordered list of operations that is applied atomically or not at all.",
       "properties": {
@@ -2571,12 +2613,19 @@
       "type": "object"
     },
     "ReviewCase": {
-      "description": "A review item with what a reviewer reads to decide it: the observations\nit holds back, the identities they matched, and what was judged between\nthem.",
+      "description": "A review item with what a reviewer reads to decide it: the observations\nit holds back, the identities they matched, what was judged between\nthem, and what was already decided about them.",
       "properties": {
         "candidates": {
           "description": "The identities the item names, as they stand now, ordered by ID. One\nthat was merged away since is shown as the identity that stands for\nit, so there may be fewer than the item names.",
           "items": {
             "$ref": "#/$defs/Candidate"
+          },
+          "type": "array"
+        },
+        "constraints": {
+          "description": "The constraints in force that bear on the decision, oldest first:\nthose that name one of the item's observations, and those between\nmembers of two of the candidates. A changeset that would break one\nis refused, so a `cannot_link` between two candidates means they\ncannot be merged, and one between an observation and a member of a\ncandidate means it cannot be placed there.",
+          "items": {
+            "$ref": "#/$defs/CaseConstraint"
           },
           "type": "array"
         },
@@ -2602,7 +2651,8 @@
         "item",
         "observations",
         "candidates",
-        "judgements"
+        "judgements",
+        "constraints"
       ],
       "type": "object"
     },

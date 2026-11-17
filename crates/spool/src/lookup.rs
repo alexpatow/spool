@@ -246,6 +246,9 @@ pub struct IdentityFilter {
     /// Only those with a member that holds every word of this text, as
     /// [`ObservationFilter::q`] finds observations.
     pub q: Option<String>,
+    /// Only those among these IDs. One that names no active identity finds
+    /// nothing: an identity that was merged away is not in the list.
+    pub ids: Option<Vec<IdentityId>>,
     /// Only those after this ID: the last one of the page before.
     pub after: Option<IdentityId>,
     pub limit: u64,
@@ -256,6 +259,7 @@ impl Default for IdentityFilter {
         Self {
             entity_type: None,
             q: None,
+            ids: None,
             after: None,
             limit: 100,
         }
@@ -677,9 +681,14 @@ pub(crate) fn identities(
                  FROM spool.membership m
                  JOIN spool.observation o ON o.observation_id = m.observation_id
                  WHERE m.to_seq IS NULL AND {}))
+           AND {}
          ORDER BY i.identity_id
          LIMIT $3",
-        holds_words("$4")
+        holds_words("$4"),
+        match &filter.ids {
+            Some(ids) => format!("list_contains({}, i.identity_id)", uuid_list(ids)),
+            None => "true".to_owned(),
+        }
     ))?;
     let mut rows = statement.query(params![
         filter.entity_type.as_ref().map(EntityType::as_str),

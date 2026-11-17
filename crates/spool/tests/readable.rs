@@ -3,12 +3,16 @@
 
 mod common;
 
+use std::collections::BTreeSet;
+
 use common::*;
 use serde_json::json;
-use spool::core::{Actor, Changeset, IdGenerator, Op, SeededIds, Verdict};
+use spool::core::{
+    Actor, Changeset, Constraint, ConstraintKind, IdGenerator, IdentityId, Op, SeededIds, Verdict,
+};
 use spool::{
-    Engine, Error, IdentityFilter, IngestOptions, ObservationFilter, ResolveOptions, ReviewFilter,
-    Rows, label_of,
+    CaseConstraint, Engine, Error, IdentityFilter, IngestOptions, ObservationFilter,
+    ResolveOptions, ReviewFilter, Rows, label_of,
 };
 
 fn resolve(engine: &Engine) {
@@ -318,6 +322,80 @@ fn a_search_finds_the_records_that_hold_every_word() {
 }
 
 #[test]
+fn identities_are_listed_by_their_ids() {
+    let engine = engine();
+    ingest(
+        &engine,
+        "shop",
+        &[
+            ("1", Some("anvil"), None),
+            ("2", Some("anvil"), None),
+            ("3", Some("hammer"), None),
+            ("4", Some("tongs"), None),
+        ],
+    );
+    resolve(&engine);
+    let anvil = identity(&engine, "shop", "1").unwrap();
+    let hammer = identity(&engine, "shop", "3").unwrap();
+    let everything = engine.identities(&IdentityFilter::default()).unwrap();
+    assert_eq!(everything.len(), 3);
+    let among = |ids: &[IdentityId]| {
+        engine
+            .identities(&IdentityFilter {
+                ids: Some(ids.to_vec()),
+                ..IdentityFilter::default()
+            })
+            .unwrap()
+    };
+
+    // As the list gives them, in the list's order, whatever order they were asked for in.
+    let unknown = SeededIds::new(3).identity_id();
+    let wanted: Vec<_> = everything
+        .iter()
+        .filter(|listed| listed.id == anvil || listed.id == hammer)
+        .cloned()
+        .collect();
+    assert_eq!(among(&[hammer, anvil]), wanted);
+    assert_eq!(among(&[anvil, unknown, hammer, anvil]), wanted);
+    assert_eq!(among(&[anvil])[0].label.as_deref(), Some("anvil"));
+    assert_eq!(among(&[anvil])[0].members, 2);
+    // None asked for is none found, which is not the same as not asking.
+    assert_eq!(among(&[]), []);
+    assert_eq!(among(&[unknown]), []);
+
+    // With the other filters.
+    let found = engine
+        .identities(&IdentityFilter {
+            ids: Some(vec![anvil, hammer]),
+            q: Some("hammer".to_owned()),
+            ..IdentityFilter::default()
+        })
+        .unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].id, hammer);
+
+    // One that was merged away is not in the list, by its ID or otherwise.
+    engine
+        .commit(Changeset {
+            id: SeededIds::new(9).changeset_id(),
+            base: engine.head().unwrap(),
+            actor: Actor::User("reviewer".to_owned()),
+            reason: None,
+            run: None,
+            ops: vec![Op::Merge {
+                from: hammer,
+                into: anvil,
+            }],
+        })
+        .unwrap();
+    let [stands] = &among(&[hammer, anvil])[..] else {
+        panic!("one identity stands for the two");
+    };
+    assert_eq!(stands.id, anvil);
+    assert_eq!(stands.members, 3);
+}
+
+#[test]
 fn a_review_case_shows_the_records_the_identities_they_matched_and_what_was_judged() {
     let engine = engine();
     ingest(
@@ -486,4 +564,134 @@ fn a_case_names_the_members_that_were_judged_before_the_others() {
             .all(|member| judged.contains(&member.id))
     );
     assert_eq!(case.judgements.len(), 42);
+}
+
+#[test]
+fn a_case_says_what_reviewers_decided_about_its_records() {
+    let engine = engine();
+    ingest(
+        &engine,
+        "shop",
+        &[
+            ("1", Some("anvil"), None),
+            ("2", Some("anvil"), None),
+            ("3", None, Some("H1")),
+            ("7", Some("tongs"), None),
+            ("8", Some("tongs"), None),
+        ],
+    );
+    resolve(&engine);
+    ingest(&engine, "depot", &[("9", Some("anvil"), Some("H1"))]);
+    resolve(&engine);
+    let [item] = &engine.review_items(&ReviewFilter::open()).unwrap()[..] else {
+        panic!("one open review item");
+    };
+    assert_eq!(engine.review_case(item.id).unwrap().constraints, []);
+
+    let waiting = observation(&engine, "depot", "9");
+    let anvil = identity(&engine, "shop", "1").unwrap();
+    let hammer = identity(&engine, "shop", "3").unwrap();
+    let tongs = identity(&engine, "shop", "7").unwrap();
+    let of = |key: &str| observation(&engine, "shop", key);
+    let mut ids = SeededIds::new(21);
+    let mut decide = |ops: Vec<Op>| {
+        engine
+            .commit(Changeset {
+                id: ids.changeset_id(),
+                base: engine.head().unwrap(),
+                actor: Actor::User("reviewer".to_owned()),
+                reason: None,
+                run: None,
+                ops,
+            })
+            .unwrap()
+            .seq
+    };
+    let constrain = |kind, a, b| Op::Constrain { kind, a, b };
+
+    // Within one of the identities it matched, which decides nothing here.
+    decide(vec![constrain(ConstraintKind::MustLink, of("1"), of("2"))]);
+    // Between records the item does not name, in identities it did not match.
+    decide(vec![constrain(ConstraintKind::MustLink, of("7"), of("8"))]);
+    // One that was taken back.
+    decide(vec![constrain(
+        ConstraintKind::CannotLink,
+        waiting,
+        of("2"),
+    )]);
+    decide(vec![Op::Unconstrain {
+        kind: ConstraintKind::CannotLink,
+        a: waiting,
+        b: of("2"),
+    }]);
+    // The two identities it matched are not one.
+    let apart = decide(vec![constrain(
+        ConstraintKind::CannotLink,
+        of("2"),
+        of("3"),
+    )]);
+    // The record that waits is not the hammer, and is the tongs, which it did not match.
+    let not_hammer = decide(vec![constrain(
+        ConstraintKind::CannotLink,
+        waiting,
+        of("3"),
+    )]);
+    let is_tongs = decide(vec![constrain(ConstraintKind::MustLink, of("8"), waiting)]);
+
+    let case = engine.review_case(item.id).unwrap();
+    // Oldest first, each with where its two records are now.
+    let said = |kind, one, other, from| {
+        let constraint = Constraint::new(kind, one, other);
+        let place = |observation| engine.observation(observation).unwrap().unwrap().identity;
+        CaseConstraint {
+            constraint,
+            from,
+            identities: [place(constraint.a), place(constraint.b)],
+        }
+    };
+    assert_eq!(
+        case.constraints,
+        [
+            said(ConstraintKind::CannotLink, of("2"), of("3"), apart),
+            said(ConstraintKind::CannotLink, waiting, of("3"), not_hammer),
+            said(ConstraintKind::MustLink, waiting, of("8"), is_tongs),
+        ]
+    );
+    let places: Vec<BTreeSet<Option<IdentityId>>> = case
+        .constraints
+        .iter()
+        .map(|constraint| constraint.identities.into_iter().collect())
+        .collect();
+    assert_eq!(
+        places,
+        [
+            BTreeSet::from([Some(anvil), Some(hammer)]),
+            BTreeSet::from([None, Some(hammer)]),
+            BTreeSet::from([None, Some(tongs)]),
+        ]
+    );
+    // As JSON a constraint reads as it does elsewhere, with the two places after it.
+    let json = serde_json::to_value(case.constraints[0]).unwrap();
+    assert_eq!(json["kind"], "cannot_link");
+    assert_eq!(json["from"], apart.0);
+    assert_eq!(
+        json["identities"],
+        serde_json::to_value(case.constraints[0].identities).unwrap()
+    );
+
+    // Once the record has an identity the item is resolved, and the case still says what held.
+    decide(vec![Op::Assign {
+        observation: waiting,
+        from: None,
+        to: Some(tongs),
+    }]);
+    let case = engine.review_case(item.id).unwrap();
+    assert_eq!(case.constraints.len(), 3);
+    assert_eq!(
+        case.constraints[2]
+            .identities
+            .into_iter()
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([Some(tongs)])
+    );
 }

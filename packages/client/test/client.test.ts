@@ -363,6 +363,17 @@ describe("a reviewer", () => {
     );
     expect(reviewCase.candidates.map((candidate) => candidate.members.length).sort()).toEqual([1, 2]);
     expect(reviewCase.judgements).toHaveLength(3);
+    // It also says what a reviewer already decided: the two sides are not one.
+    const [held] = constraints;
+    expect(reviewCase.constraints).toEqual([
+      {
+        kind: "cannot_link",
+        a: held!.a,
+        b: held!.b,
+        from: split.committed.seq,
+        identities: held!.a === third.id ? [split.identity, anvils] : [anvils, split.identity],
+      },
+    ]);
     expect(reviewCase.judgements.every((judged) => judged.observation === fourth.id && judged.verdict === "match")).toBe(
       true,
     );
@@ -379,6 +390,11 @@ describe("a reviewer", () => {
     ]);
     expect((await client.observations({ q: "anvil 4" })).observations).toEqual([fourth]);
     expect((await client.identities({ q: "hammer" })).identities).toEqual([]);
+    // And read by their IDs, as the list gives them.
+    expect((await client.identities({ ids: [split.identity, anvils] })).identities).toEqual(
+      [...found.identities].sort((a, b) => a.id.localeCompare(b.id)),
+    );
+    expect((await client.identities({ ids: [] })).identities).toEqual([]);
 
     // Why the first two are together, the third is apart, and the fourth
     // has no identity.

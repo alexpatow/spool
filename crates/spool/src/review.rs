@@ -22,8 +22,8 @@ use std::collections::BTreeSet;
 use duckdb::{Connection, params};
 use serde::{Deserialize, Serialize};
 use spool_core::{
-    Actor, EntityType, IdentityId, IdentityStatus, ObservationId, ReviewItem, RunId, Seq,
-    StateError, Verdict,
+    Actor, Constraint, EntityType, IdentityId, IdentityStatus, ObservationId, ReviewItem, RunId,
+    Seq, StateError, Verdict,
 };
 
 use crate::error::{Error, Result};
@@ -98,8 +98,8 @@ pub struct Dismissal {
 }
 
 /// A review item with what a reviewer reads to decide it: the observations
-/// it holds back, the identities they matched, and what was judged between
-/// them.
+/// it holds back, the identities they matched, what was judged between
+/// them, and what was already decided about them.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ReviewCase {
@@ -115,6 +115,26 @@ pub struct ReviewCase {
     /// one of the item's observations with another of them or with a member
     /// of a candidate. Only runs that were reconciled count.
     pub judgements: Vec<PairJudgement>,
+    /// The constraints in force that bear on the decision, oldest first:
+    /// those that name one of the item's observations, and those between
+    /// members of two of the candidates. A changeset that would break one
+    /// is refused, so a `cannot_link` between two candidates means they
+    /// cannot be merged, and one between an observation and a member of a
+    /// candidate means it cannot be placed there.
+    pub constraints: Vec<CaseConstraint>,
+}
+
+/// A constraint in force, with where its two observations are.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct CaseConstraint {
+    #[serde(flatten)]
+    pub constraint: Constraint,
+    /// The log position of the changeset that made it.
+    pub from: Seq,
+    /// The identities its observations belong to now, that of `a` first.
+    /// `None` for one that has no identity.
+    pub identities: [Option<IdentityId>; 2],
 }
 
 /// An identity that the observations of a review item matched.
@@ -368,6 +388,50 @@ pub(crate) fn case(conn: &Connection, id: u64) -> Result<ReviewCase> {
         }
     }
 
+    let mut constraints = Vec::new();
+    {
+        let mut statement = conn.prepare(&format!(
+            "SELECT c.observation_a::VARCHAR, c.observation_b::VARCHAR, c.kind, c.from_seq,
+                    a.identity_id::VARCHAR, b.identity_id::VARCHAR
+             FROM spool.constraint_link c
+             LEFT JOIN spool.membership a
+               ON a.observation_id = c.observation_a AND a.to_seq IS NULL
+             LEFT JOIN spool.membership b
+               ON b.observation_id = c.observation_b AND b.to_seq IS NULL
+             WHERE c.to_seq IS NULL
+               AND (list_contains({held}, c.observation_a)
+                    OR list_contains({held}, c.observation_b)
+                    OR (a.identity_id <> b.identity_id
+                        AND list_contains({candidates}, a.identity_id)
+                        AND list_contains({candidates}, b.identity_id)))
+             ORDER BY c.from_seq, least(c.observation_a, c.observation_b),
+                      greatest(c.observation_a, c.observation_b)",
+            held = lookup::uuid_list(&item.observations),
+            candidates = lookup::uuid_list(&current),
+        ))?;
+        let mut rows = statement.query([])?;
+        while let Some(row) = rows.next()? {
+            let place = |column: usize| -> Result<Option<IdentityId>> {
+                row.get::<_, Option<String>>(column)?
+                    .map(|id| parse(&id))
+                    .transpose()
+            };
+            let constraint = store::constraint(row, 0)?;
+            // A constraint names the smaller ID first, however it is stored.
+            let stored_first: ObservationId = parse(&row.get::<_, String>(0)?)?;
+            let identities = if constraint.a == stored_first {
+                [place(4)?, place(5)?]
+            } else {
+                [place(5)?, place(4)?]
+            };
+            constraints.push(CaseConstraint {
+                constraint,
+                from: Seq(row.get::<_, i64>(3)? as u64),
+                identities,
+            });
+        }
+    }
+
     let judged: Vec<ObservationId> = judgements
         .iter()
         .map(|judgement| judgement.other)
@@ -384,6 +448,7 @@ pub(crate) fn case(conn: &Connection, id: u64) -> Result<ReviewCase> {
         observations,
         candidates,
         judgements,
+        constraints,
     })
 }
 
