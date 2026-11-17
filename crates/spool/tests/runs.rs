@@ -164,7 +164,7 @@ fn a_run_is_announced_before_its_work_is_done_and_reads_do_not_wait_for_it() {
         assert_eq!(record.finished_at, None);
         // Everything that only reads answers from committed state.
         assert_eq!(engine.head().unwrap(), Seq(1));
-        assert_eq!(engine.info().unwrap().entity_types[0].observations, 1);
+        assert_eq!(engine.info().unwrap().entity_types[0].records, 1);
         assert_eq!(engine.snapshot().unwrap().identities.len(), 1);
         assert!(identity(&engine, "shop", "1").is_some());
         assert_eq!(engine.log().unwrap().len(), 1);
@@ -174,7 +174,7 @@ fn a_run_is_announced_before_its_work_is_done_and_reads_do_not_wait_for_it() {
         let report = writer.join().unwrap();
         assert_eq!(report.run, run);
         assert_eq!(engine.run(run).unwrap().status, RunStatus::Succeeded);
-        assert_eq!(engine.info().unwrap().entity_types[0].observations, 2);
+        assert_eq!(engine.info().unwrap().entity_types[0].records, 2);
     });
 
     // Nothing is announced outside `watch_runs`.
@@ -251,7 +251,7 @@ fn an_open_run_survives_a_restart_and_a_running_one_is_failed() {
 }
 
 #[test]
-fn a_cancelled_run_is_failed_and_its_observations_are_still_new() {
+fn a_cancelled_run_is_failed_and_its_records_are_still_new() {
     let engine = engine();
     ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
     let run = engine.begin_run(&by_hand(), &thing_scope()).unwrap();
@@ -271,7 +271,7 @@ fn a_cancelled_run_is_failed_and_its_observations_are_still_new() {
     }
 
     let report = engine.resolve(&ResolveOptions::default()).unwrap();
-    assert_eq!(report.resolved[0].new_observations, 1);
+    assert_eq!(report.resolved[0].new_records, 1);
     // Only an open run can be cancelled.
     let error = engine.cancel_run(report.resolved[0].match_run).unwrap_err();
     assert!(matches!(error, Error::Run { .. }), "{error}");
@@ -297,8 +297,8 @@ fn changing_a_declaration_fails_the_runs_that_wait_on_the_old_one() {
     let folded = EntityTypeSource {
         features: SqlFile::new(
             "features",
-            "SELECT observation_id, lower(payload->>'name') AS name, payload->>'code' AS code
-             FROM observation",
+            "SELECT record_id, lower(payload->>'name') AS name, payload->>'code' AS code
+             FROM record",
         ),
         ..thing()
     };
@@ -326,14 +326,14 @@ fn a_changed_declaration_that_breaks_its_contract_changes_nothing() {
     let doubled = EntityTypeSource {
         features: SqlFile::new(
             "features",
-            "SELECT o.observation_id, o.payload->>'name' AS name, o.payload->>'code' AS code
-             FROM observation o, range(2)",
+            "SELECT o.record_id, o.payload->>'name' AS name, o.payload->>'code' AS code
+             FROM record o, range(2)",
         ),
         ..thing()
     };
     let error = engine.apply(&manifest_of(vec![doubled])).unwrap_err();
     assert!(
-        matches!(&error, Error::Apply(message) if message.contains("one row per observation")),
+        matches!(&error, Error::Apply(message) if message.contains("one row per record")),
         "{error}"
     );
     // The store is as it was, and so is the manifest the engine runs on.

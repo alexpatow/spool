@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::changeset::Op;
-use crate::ids::ObservationId;
+use crate::ids::RecordId;
 use crate::state::{IdentityState, LogEntry, Result, StateError};
 
 /// The operations that undo a committed changeset, for the state as it is
@@ -16,7 +16,7 @@ use crate::state::{IdentityState, LogEntry, Result, StateError};
 /// - an assignment is reversed;
 /// - a constraint that was added is removed, and one that was removed is
 ///   added;
-/// - a merge reinstates the merged identity and moves back the observations
+/// - a merge reinstates the merged identity and moves back the records
 ///   the merge moved, leaving out any that have left the surviving identity
 ///   since;
 /// - a reinstatement merges the identity back into the one it had been merged
@@ -25,10 +25,10 @@ use crate::state::{IdentityState, LogEntry, Result, StateError};
 ///   identity stays, with whatever members the rest of the undo leaves it.
 pub fn inverse<S: IdentityState + ?Sized>(state: &S, entry: &LogEntry) -> Result<Vec<Op>> {
     let ops = &entry.changeset.ops;
-    let assigned: HashSet<ObservationId> = ops
+    let assigned: HashSet<RecordId> = ops
         .iter()
         .filter_map(|op| match op {
-            Op::Assign { observation, .. } => Some(*observation),
+            Op::Assign { record, .. } => Some(*record),
             _ => None,
         })
         .collect();
@@ -37,12 +37,8 @@ pub fn inverse<S: IdentityState + ?Sized>(state: &S, entry: &LogEntry) -> Result
     for op in ops.iter().rev() {
         match op {
             Op::CreateIdentity { .. } => {}
-            Op::Assign {
-                observation,
-                from,
-                to,
-            } => undo.push(Op::Assign {
-                observation: *observation,
+            Op::Assign { record, from, to } => undo.push(Op::Assign {
+                record: *record,
                 from: *to,
                 to: *from,
             }),
@@ -58,12 +54,12 @@ pub fn inverse<S: IdentityState + ?Sized>(state: &S, entry: &LogEntry) -> Result
             }),
             Op::Merge { from, into } => {
                 undo.push(Op::Reinstate { identity: *from });
-                // An observation the same changeset assigned out of `from` is
+                // A record the same changeset assigned out of `from` is
                 // put back by undoing that assignment.
-                let moved: Vec<ObservationId> = state
+                let moved: Vec<RecordId> = state
                     .left_at(*from, entry.seq)?
                     .into_iter()
-                    .filter(|observation| !assigned.contains(observation))
+                    .filter(|record| !assigned.contains(record))
                     .collect();
                 let now: HashMap<_, _> = moved
                     .iter()
@@ -73,9 +69,9 @@ pub fn inverse<S: IdentityState + ?Sized>(state: &S, entry: &LogEntry) -> Result
                 undo.extend(
                     moved
                         .iter()
-                        .filter(|observation| now[*observation] == Some(*into))
-                        .map(|observation| Op::Assign {
-                            observation: *observation,
+                        .filter(|record| now[*record] == Some(*into))
+                        .map(|record| Op::Assign {
+                            record: *record,
                             from: Some(*into),
                             to: Some(*from),
                         }),

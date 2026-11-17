@@ -175,7 +175,7 @@ fn every_call_under_v1_needs_the_token() {
         .send();
     refused.error(401, "unauthorized");
     assert_eq!(
-        server.read("/v1/info")["store"]["entity_types"][0]["observations"],
+        server.read("/v1/info")["store"]["entity_types"][0]["records"],
         0
     );
 
@@ -201,7 +201,7 @@ fn failures_are_described_the_same_way_whatever_went_wrong() {
         .get("/v1/identities/00000000-0000-7000-8000-000000000000")
         .error(404, "not_found");
     server
-        .get("/v1/observations/00000000-0000-7000-8000-000000000000")
+        .get("/v1/records/00000000-0000-7000-8000-000000000000")
         .error(404, "not_found");
     server
         .get("/v1/drafts/00000000-0000-7000-8000-000000000000")
@@ -288,7 +288,7 @@ fn failures_are_described_the_same_way_whatever_went_wrong() {
             "run": null,
             "ops": [
                 { "op": "create_identity", "identity": "00000000-0000-7000-8000-000000000001", "entity_type": "thing" },
-                { "op": "assign", "observation": "00000000-0000-7000-8000-000000000002", "from": null, "to": "00000000-0000-7000-8000-000000000001" },
+                { "op": "assign", "record": "00000000-0000-7000-8000-000000000002", "from": null, "to": "00000000-0000-7000-8000-000000000001" },
             ],
         }),
     );
@@ -429,7 +429,7 @@ fn two_anvils_and_a_hammer(server: &Server) {
 }
 
 fn unassigned(server: &Server) -> usize {
-    server.read("/v1/observations?unassigned=true")["observations"]
+    server.read("/v1/records?unassigned=true")["records"]
         .as_array()
         .unwrap()
         .len()
@@ -473,7 +473,7 @@ fn a_draft_left_for_review_is_stored_listed_and_committed_when_approved() {
     assert_eq!(summary["id"], draft.as_str());
     assert_eq!(summary["match_run"], run["run"]);
     assert_eq!(summary["identities_created"], 2);
-    assert_eq!(summary["observations_assigned"], 3);
+    assert_eq!(summary["records_assigned"], 3);
 
     // The draft can be read whole before it is decided.
     let record = server.read(&format!("/v1/drafts/{draft}"));
@@ -505,13 +505,13 @@ fn a_draft_left_for_review_is_stored_listed_and_committed_when_approved() {
 }
 
 #[test]
-fn a_draft_nobody_commits_does_not_strand_its_observations() {
+fn a_draft_nobody_commits_does_not_strand_its_records() {
     let dir = tempfile::tempdir().unwrap();
     let server = things_server(dir.path());
     two_anvils_and_a_hammer(&server);
     let leave = json!({ "entity_type": "thing", "commit": false });
 
-    // Rejected: the next run examines the same observations again.
+    // Rejected: the next run examines the same records again.
     let first = server.call("/v1/runs", leave.clone());
     let first_draft = first["run"]["resolution"]["draft"]
         .as_str()
@@ -535,7 +535,7 @@ fn a_draft_nobody_commits_does_not_strand_its_observations() {
         .as_str()
         .unwrap()
         .to_owned();
-    assert_eq!(second["run"]["resolution"]["new_observations"], 3);
+    assert_eq!(second["run"]["resolution"]["new_records"], 3);
     ingest_things(&server, "shop", &[&["id", "code"], &["4", "hammer"]]);
     let third = server.call("/v1/runs", leave);
     let third_draft = third["run"]["resolution"]["draft"]
@@ -543,8 +543,8 @@ fn a_draft_nobody_commits_does_not_strand_its_observations() {
         .unwrap()
         .to_owned();
     let third_reconcile = third["run"]["resolution"]["reconcile_run"].clone();
-    assert_eq!(third["run"]["resolution"]["new_observations"], 4);
-    assert_eq!(third["run"]["resolution"]["observations_assigned"], 4);
+    assert_eq!(third["run"]["resolution"]["new_records"], 4);
+    assert_eq!(third["run"]["resolution"]["records_assigned"], 4);
 
     let superseded = server.read(&format!("/v1/drafts/{second_draft}"));
     assert_eq!(superseded["draft"]["status"], "superseded");
@@ -560,7 +560,7 @@ fn a_draft_nobody_commits_does_not_strand_its_observations() {
     // A run that commits takes everything, and leaves no draft open.
     let committed = server.call("/v1/runs", json!({ "entity_type": "thing" }));
     assert_eq!(committed["run"]["status"], "succeeded");
-    assert_eq!(committed["run"]["resolution"]["observations_assigned"], 4);
+    assert_eq!(committed["run"]["resolution"]["records_assigned"], 4);
     assert_eq!(unassigned(&server), 0);
     assert_eq!(server.read("/v1/drafts?status=open")["drafts"], json!([]));
     assert_eq!(
@@ -785,8 +785,8 @@ fn a_caller_judges_the_candidates_of_a_run_step_by_step() {
     );
 
     let identities = server.call(
-        "/v1/observations/identities",
-        json!({ "observations": [anvils.0, anvils.1, hammers.0, hammers.1] }),
+        "/v1/records/identities",
+        json!({ "records": [anvils.0, anvils.1, hammers.0, hammers.1] }),
     );
     let identities = identities["identities"].as_array().unwrap();
     assert!(identities.iter().all(|identity| identity.is_string()));
@@ -831,7 +831,7 @@ fn an_open_run_is_reconciled_at_once_by_default_or_cancelled() {
     let strategy = json!({ "name": "nobody", "version": "1" });
     let start = json!({ "entity_type": "thing", "strategy": strategy });
 
-    // Cancelled: the run fails and its observations wait for another.
+    // Cancelled: the run fails and its records wait for another.
     let run = server.call("/v1/runs", start.clone())["run"]["run"]
         .as_u64()
         .unwrap();
@@ -843,7 +843,7 @@ fn an_open_run_is_reconciled_at_once_by_default_or_cancelled() {
         .error(409, "conflict");
     assert_eq!(unassigned(&server), 3);
 
-    // Reconciled with no body and no judgements: every observation gets an
+    // Reconciled with no body and no judgements: every record gets an
     // identity of its own, committed.
     let run = server.call("/v1/runs", start)["run"]["run"]
         .as_u64()
@@ -872,24 +872,24 @@ fn an_open_run_is_reconciled_at_once_by_default_or_cancelled() {
 }
 
 #[test]
-fn identities_observations_and_review_items_are_looked_up() {
+fn identities_records_and_review_items_are_looked_up() {
     let library = library(5);
     let dir = tempfile::tempdir().unwrap();
     let server = company_server(dir.path(), 5);
     run_companies(&server, Encoding::Arrow);
 
-    // An observation is found by its source and key, and names its identity.
-    let found = server.read("/v1/observations?source=crm&key=c-101");
-    let [observation] = &found["observations"].as_array().unwrap()[..] else {
-        panic!("one observation: {found}");
+    // A record is found by its source and key, and names its identity.
+    let found = server.read("/v1/records?source=crm&key=c-101");
+    let [record] = &found["records"].as_array().unwrap()[..] else {
+        panic!("one record: {found}");
     };
-    assert_eq!(observation["source"], "crm");
-    assert_eq!(observation["key"], "c-101");
-    assert_eq!(observation["entity_type"], "company");
-    assert_eq!(observation["payload"]["id"], "c-101");
-    let id = observation["id"].as_str().unwrap();
-    let identity = observation["identity"].as_str().unwrap();
-    assert_eq!(server.read(&format!("/v1/observations/{id}")), *observation);
+    assert_eq!(record["source"], "crm");
+    assert_eq!(record["key"], "c-101");
+    assert_eq!(record["entity_type"], "company");
+    assert_eq!(record["payload"]["id"], "c-101");
+    let id = record["id"].as_str().unwrap();
+    let identity = record["identity"].as_str().unwrap();
+    assert_eq!(server.read(&format!("/v1/records/{id}")), *record);
 
     // The identity lists its members, and its history names the changesets.
     let view = server.read(&format!("/v1/identities/{identity}"));
@@ -900,7 +900,7 @@ fn identities_observations_and_review_items_are_looked_up() {
     assert_eq!(view["current"], identity);
     let members = view["members"].as_array().unwrap();
     assert!(members.len() > 1, "{view}");
-    assert!(members.iter().any(|member| member["observation"] == id));
+    assert!(members.iter().any(|member| member["record"] == id));
     let history = server.read(&format!("/v1/identities/{identity}/history"));
     assert_eq!(
         history["history"],
@@ -909,11 +909,11 @@ fn identities_observations_and_review_items_are_looked_up() {
     assert_eq!(history["history"][0]["seq"], 1);
     assert_eq!(history["history"][0]["ops"][0]["op"], "create_identity");
 
-    // Many observations are looked up in one call; an unknown one has none.
+    // Many records are looked up in one call; an unknown one has none.
     let unknown = "00000000-0000-7000-8000-000000000000";
     let identities = server.call(
-        "/v1/observations/identities",
-        json!({ "observations": [id, unknown] }),
+        "/v1/records/identities",
+        json!({ "records": [id, unknown] }),
     );
     assert_eq!(identities, json!({ "identities": [identity, null] }));
 
@@ -937,16 +937,11 @@ fn identities_observations_and_review_items_are_looked_up() {
     }
     assert_eq!(listed.len() as u64, total);
     assert!(listed.contains(&json!(identity)));
-    let first = server.read("/v1/observations?source=registry&limit=3");
-    assert_eq!(first["observations"].as_array().unwrap().len(), 3);
+    let first = server.read("/v1/records?source=registry&limit=3");
+    assert_eq!(first["records"].as_array().unwrap().len(), 3);
     let next = first["next"].as_str().unwrap();
-    let second = server.read(&format!(
-        "/v1/observations?source=registry&limit=3&after={next}"
-    ));
-    assert_ne!(
-        second["observations"][0]["id"],
-        first["observations"][2]["id"]
-    );
+    let second = server.read(&format!("/v1/records?source=registry&limit=3&after={next}"));
+    assert_ne!(second["records"][0]["id"], first["records"][2]["id"]);
 
     // The record that fits two identities is unassigned, and its review item
     // comes back typed, the same as the library reads it.
@@ -969,14 +964,11 @@ fn identities_observations_and_review_items_are_looked_up() {
     assert_eq!(item["entity_type"], "company");
     assert_eq!(item["status"], "open");
     assert_eq!(item["identities"].as_array().unwrap().len(), 2);
-    let stuck = server.read("/v1/observations?source=crm&key=c-117");
-    assert_eq!(stuck["observations"][0]["identity"], Value::Null);
-    assert_eq!(
-        item["observations"],
-        json!([stuck["observations"][0]["id"]])
-    );
-    let waiting = server.read("/v1/observations?unassigned=true");
-    assert_eq!(waiting["observations"], stuck["observations"]);
+    let stuck = server.read("/v1/records?source=crm&key=c-117");
+    assert_eq!(stuck["records"][0]["identity"], Value::Null);
+    assert_eq!(item["records"], json!([stuck["records"][0]["id"]]));
+    let waiting = server.read("/v1/records?unassigned=true");
+    assert_eq!(waiting["records"], stuck["records"]);
     assert_eq!(
         server.read("/v1/info")["store"]["entity_types"][0]["open_review_items"],
         1
@@ -995,15 +987,12 @@ fn what_is_read_says_what_things_are_called_where_they_came_from_and_what_waits(
     run_companies(&server, Encoding::Json);
 
     // A record is called what its payload names it, whatever the field.
-    let crm = server.read("/v1/observations?source=crm&key=c-102");
-    assert_eq!(crm["observations"][0]["label"], "Acorn Tools");
-    let registry = server.read("/v1/observations?source=registry&key=X0000002");
-    assert_eq!(
-        registry["observations"][0]["label"],
-        "ACORN TOOL COMPANY LTD"
-    );
-    let identity = crm["observations"][0]["identity"].as_str().unwrap();
-    assert_eq!(registry["observations"][0]["identity"], identity);
+    let crm = server.read("/v1/records?source=crm&key=c-102");
+    assert_eq!(crm["records"][0]["label"], "Acorn Tools");
+    let registry = server.read("/v1/records?source=registry&key=X0000002");
+    assert_eq!(registry["records"][0]["label"], "ACORN TOOL COMPANY LTD");
+    let identity = crm["records"][0]["identity"].as_str().unwrap();
+    assert_eq!(registry["records"][0]["identity"], identity);
 
     // An identity is called what most of its records are, and says how many
     // each source gave.
@@ -1032,14 +1021,14 @@ fn what_is_read_says_what_things_are_called_where_they_came_from_and_what_waits(
     assert_eq!(
         listed["sources"],
         json!([
-            { "source": "crm", "observations": 2 },
-            { "source": "registry", "observations": 1 },
+            { "source": "crm", "records": 2 },
+            { "source": "registry", "records": 1 },
         ])
     );
 
-    // Its members are read as observations, with what each of them says.
-    let members = server.read(&format!("/v1/observations?identity={identity}"));
-    let mut labels: Vec<&str> = members["observations"]
+    // Its members are read as records, with what each of them says.
+    let members = server.read(&format!("/v1/records?identity={identity}"));
+    let mut labels: Vec<&str> = members["records"]
         .as_array()
         .unwrap()
         .iter()
@@ -1051,7 +1040,7 @@ fn what_is_read_says_what_things_are_called_where_they_came_from_and_what_waits(
         ["ACORN TOOL COMPANY LTD", "Acorn Tool Co.", "Acorn Tools"]
     );
     server
-        .get("/v1/observations?identity=acorn")
+        .get("/v1/records?identity=acorn")
         .error(400, "invalid");
 
     // Identities are read by their IDs, as the list gives them.
@@ -1083,10 +1072,10 @@ fn what_is_read_says_what_things_are_called_where_they_came_from_and_what_waits(
     let found = server.read("/v1/identities?q=acorn%20sheffield");
     assert_eq!(found["identities"].as_array().unwrap().len(), 1);
     assert_eq!(found["identities"][0]["id"], identity);
-    let found = server.read("/v1/observations?q=ACORN&source=registry");
-    assert_eq!(found["observations"], registry["observations"]);
+    let found = server.read("/v1/records?q=ACORN&source=registry");
+    assert_eq!(found["records"], registry["records"]);
     assert_eq!(
-        server.read("/v1/observations?q=no-such-company")["observations"],
+        server.read("/v1/records?q=no-such-company")["records"],
         json!([])
     );
 
@@ -1100,7 +1089,7 @@ fn what_is_read_says_what_things_are_called_where_they_came_from_and_what_waits(
             .iter()
             .map(|source| (
                 source["source"].as_str().unwrap(),
-                source["observations"].as_u64().unwrap(),
+                source["records"].as_u64().unwrap(),
                 source["unassigned"].as_u64().unwrap()
             ))
             .collect::<Vec<_>>(),
@@ -1111,8 +1100,8 @@ fn what_is_read_says_what_things_are_called_where_they_came_from_and_what_waits(
         serde_json::to_value(library.info().unwrap()).unwrap()
     );
     assert_eq!(
-        sources[0]["observations"].as_u64().unwrap() + sources[1]["observations"].as_u64().unwrap(),
-        info["store"]["entity_types"][0]["observations"]
+        sources[0]["records"].as_u64().unwrap() + sources[1]["records"].as_u64().unwrap(),
+        info["store"]["entity_types"][0]["records"]
     );
 
     // A review item is read with the records it is about: the one that
@@ -1124,8 +1113,8 @@ fn what_is_read_says_what_things_are_called_where_they_came_from_and_what_waits(
         serde_json::to_value(library.review_case(1).unwrap()).unwrap()
     );
     assert_eq!(case["item"], server.read("/v1/review/1"));
-    assert_eq!(case["observations"][0]["key"], "c-117");
-    assert!(case["observations"][0]["label"].is_string());
+    assert_eq!(case["records"][0]["key"], "c-117");
+    assert!(case["records"][0]["label"].is_string());
     let candidates = case["candidates"].as_array().unwrap();
     assert_eq!(candidates.len(), 2);
     for candidate in candidates {
@@ -1140,7 +1129,7 @@ fn what_is_read_says_what_things_are_called_where_they_came_from_and_what_waits(
     assert!(
         judgements
             .iter()
-            .all(|judgement| judgement["observation"] == case["observations"][0]["id"])
+            .all(|judgement| judgement["record"] == case["records"][0]["id"])
     );
     assert!(
         judgements
@@ -1161,7 +1150,7 @@ fn what_is_read_says_what_things_are_called_where_they_came_from_and_what_waits(
 }
 
 #[test]
-fn a_pair_of_observations_is_explained() {
+fn a_pair_of_records_is_explained() {
     let dir = tempfile::tempdir().unwrap();
     let server = things_server(dir.path());
     ingest_things(
@@ -1176,7 +1165,7 @@ fn a_pair_of_observations_is_explained() {
     );
     server.call("/v1/runs", json!({ "entity_type": "thing" }));
     let id = |key: &str| {
-        server.read(&format!("/v1/observations?source=shop&key={key}"))["observations"][0]["id"]
+        server.read(&format!("/v1/records?source=shop&key={key}"))["records"][0]["id"]
             .as_str()
             .unwrap()
             .to_owned()
@@ -1222,7 +1211,7 @@ fn a_pair_of_observations_is_explained() {
     let message = server
         .get(&format!("/v1/explain?a={first}&b={unknown}"))
         .error(404, "not_found");
-    assert_eq!(message, format!("there is no observation {unknown}"));
+    assert_eq!(message, format!("there is no record {unknown}"));
     let message = server
         .get(&format!("/v1/explain?a={first}&b={first}"))
         .error(400, "invalid");
@@ -1234,13 +1223,13 @@ fn a_pair_of_observations_is_explained() {
         .get(&format!("/v1/explain?a={first}&b=nothing"))
         .error(400, "invalid");
 
-    // Review items are listed by an observation they name.
+    // Review items are listed by a record they name.
     assert_eq!(
-        server.read(&format!("/v1/review?observation={first}"))["items"],
+        server.read(&format!("/v1/review?record={first}"))["items"],
         json!([])
     );
     server
-        .get("/v1/review?observation=nothing")
+        .get("/v1/review?record=nothing")
         .error(400, "invalid");
 }
 
@@ -1288,12 +1277,12 @@ fn calls_made_at_once_are_all_served_and_writes_take_turns() {
         }
     });
 
-    // Whatever order the writers came in, every observation ends up in one
+    // Whatever order the writers came in, every record ends up in one
     // of fifty identities: one per code.
     server.call("/v1/runs", json!({ "entity_type": "thing" }));
     let info = server.read("/v1/info");
     let thing = &info["store"]["entity_types"][0];
-    assert_eq!(thing["observations"], 400);
+    assert_eq!(thing["records"], 400);
     assert_eq!(thing["unassigned"], 0, "{info}");
     assert_eq!(thing["identities"], 50, "{info}");
     assert_eq!(thing["open_review_items"], 0, "{info}");

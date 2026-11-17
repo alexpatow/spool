@@ -1,7 +1,7 @@
 //! Benchmark scenarios.
 //!
 //! A scenario is an ordered list of steps with the truth about every
-//! observation. Each step ingests files, applies the corrections a reviewer
+//! record. Each step ingests files, applies the corrections a reviewer
 //! would make, and resolves, through the same calls any caller uses.
 //! Committed state is then scored against the truth. Nothing is special-cased
 //! for the benchmark.
@@ -34,7 +34,7 @@
 //! [[step]]
 //! name = "a better model"
 //! strategy = "splink"           # the strategy this step resolves with
-//! rematch = true                # and it judges every observation again
+//! rematch = true                # and it judges every record again
 //! ```
 //!
 //! A step can also store documents and run extractors over them, before it
@@ -62,7 +62,7 @@
 //! one. The labels are the truth twice over. Extraction is scored against
 //! them on its own: a mention the extractor found is right when a label has
 //! the same document, entity type, start and end. Resolution is scored as it
-//! is for rows, over the observations that have a true entity, which for an
+//! is for rows, over the records that have a true entity, which for an
 //! extracted mention is the label at the same place. A mention the
 //! extractor made up has no true entity and is not scored there, so the two
 //! scores do not leak into each other.
@@ -72,13 +72,13 @@
 //! `rematch = true` matches everything again, which is what switching
 //! strategy on the same data means, and reports upgrade stability.
 //!
-//! A correction names observations as `source:key`, and is one of:
+//! A correction names records as `source:key`, and is one of:
 //!
 //! | Field | What it does |
 //! | --- | --- |
 //! | `merge = [a, b]` | merges the identity of `a` into the identity of `b` |
 //! | `assign = [a, b]` | puts `a` into the identity of `b` |
-//! | `split = [a, ...]` | splits the observations from the rest of their identity, and keeps the sides apart |
+//! | `split = [a, ...]` | splits the records from the rest of their identity, and keeps the sides apart |
 //! | `must_link = [a, b]` | records that the two share an identity |
 //! | `cannot_link = [a, b]` | records that the two never share an identity |
 //! | `undo = "name"` | undoes the named correction |
@@ -105,7 +105,7 @@ use crate::engine::{
 };
 use crate::error::{Error, Result};
 use crate::ingest::IngestOptions;
-use crate::lookup::{ObservationFilter, ObservationRecord};
+use crate::lookup::{RecordEntry, RecordFilter};
 use crate::metrics::{
     Churn, ExtractionMetrics, IdStability, Metrics, OrderSensitivity, OverridePersistence,
     SplitRecovery, UpgradeStability,
@@ -221,8 +221,8 @@ impl CorrectionSpec {
         if let Some(pair) = &self.assign {
             kinds.push(Correction::Assign(pair));
         }
-        if let Some(observations) = &self.split {
-            kinds.push(Correction::Split(observations));
+        if let Some(records) = &self.split {
+            kinds.push(Correction::Split(records));
         }
         if let Some(pair) = &self.must_link {
             kinds.push(Correction::Constrain(ConstraintKind::MustLink, pair));
@@ -257,12 +257,12 @@ impl Correction<'_> {
         }
     }
 
-    fn observations(&self) -> &[String] {
+    fn records(&self) -> &[String] {
         match self {
             Correction::Merge(pair) | Correction::Assign(pair) | Correction::Constrain(_, pair) => {
                 &pair[..]
             }
-            Correction::Split(observations) => observations,
+            Correction::Split(records) => records,
             Correction::Undo(_) => &[],
         }
     }
@@ -330,7 +330,7 @@ pub struct StepReport {
     /// scenario with labelled mentions has it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extraction: Option<ExtractionMetrics>,
-    /// Of the observations that had an identity before the step, how many
+    /// Of the records that had an identity before the step, how many
     /// kept it.
     pub id_stability: IdStability,
     pub churn: Churn,
@@ -371,7 +371,7 @@ pub struct ExtractSummary {
     /// Documents the extractor read.
     pub documents: u64,
     pub mentions: u64,
-    /// Observations created.
+    /// Records created.
     pub inserted: u64,
     pub duplicates: u64,
     pub superseded: u64,
@@ -380,7 +380,7 @@ pub struct ExtractSummary {
 /// What a scenario knows to be true about what it has fed the engine.
 #[derive(Default)]
 struct Truth {
-    /// `(source, key)` to true entity, for the observations there may be so
+    /// `(source, key)` to true entity, for the records there may be so
     /// far.
     entities: HashMap<(String, String), String>,
     /// The labelled mentions of each document, by `(source, document key)`.
@@ -451,7 +451,7 @@ struct Fed {
 }
 
 impl Fed {
-    fn new_observations(&self) -> u64 {
+    fn new_records(&self) -> u64 {
         self.ingest
             .iter()
             .map(|ingest| ingest.inserted)
@@ -475,7 +475,7 @@ pub struct CorrectionSummary {
 struct Tracked {
     /// Named corrections: where each was committed, and the split it made.
     named: HashMap<String, (Seq, Option<usize>)>,
-    /// The two sides of each split, as observation IDs. `None` once undone.
+    /// The two sides of each split, as record IDs. `None` once undone.
     splits: Vec<Option<[Vec<String>; 2]>>,
     constraints: BTreeSet<Constraint>,
 }
@@ -535,12 +535,12 @@ impl Scenario {
                 };
                 let kind = correction.kind().map_err(invalid)?;
                 if let Correction::Split([]) = kind {
-                    return Err(invalid("a split needs observations".to_owned()));
+                    return Err(invalid("a split needs records".to_owned()));
                 }
-                for observation in kind.observations() {
-                    if observation.split_once(':').is_none() {
+                for record in kind.records() {
+                    if record.split_once(':').is_none() {
                         return Err(invalid(format!(
-                            "`{observation}` does not name an observation as `source:key`"
+                            "`{record}` does not name a record as `source:key`"
                         )));
                     }
                 }
@@ -564,7 +564,7 @@ impl Scenario {
                 }
                 if ingest.key.is_none() {
                     return Err(invalid(format!(
-                        "step `{}`: an ingest needs a `key` column, which is how truth is joined to observations",
+                        "step `{}`: an ingest needs a `key` column, which is how truth is joined to records",
                         step.name
                     )));
                 }
@@ -727,10 +727,10 @@ impl Scenario {
 
             let resolve = self.resolve(engine, step)?;
             let head = engine.head()?;
-            let new_observations = fed.new_observations();
+            let new_records = fed.new_records();
             let (split_recovery, override_persistence) = held(engine, &tracked)?;
             let id_stability = engine.id_stability(before, head)?;
-            let churn = engine.churn(before, head, new_observations)?;
+            let churn = engine.churn(before, head, new_records)?;
             let upgrade_stability = step.rematch.then(|| {
                 let suggested = |count: fn(&Suggestions) -> usize| {
                     resolve
@@ -860,23 +860,23 @@ impl Scenario {
     }
 }
 
-/// Every observation with the group it is in: its identity, or itself when
+/// Every record with the group it is in: its identity, or itself when
 /// it has none.
 fn grouping(engine: &Engine) -> Result<Vec<(String, String)>> {
     let batches = engine.query(
-        "SELECT o.observation_id::VARCHAR,
-                coalesce(m.identity_id::VARCHAR, 'unassigned:' || o.observation_id::VARCHAR)
-         FROM spool.observation o
-         LEFT JOIN spool.membership m ON m.observation_id = o.observation_id AND m.to_seq IS NULL
-         ORDER BY o.observation_id",
+        "SELECT o.record_id::VARCHAR,
+                coalesce(m.identity_id::VARCHAR, 'unassigned:' || o.record_id::VARCHAR)
+         FROM spool.record o
+         LEFT JOIN spool.membership m ON m.record_id = o.record_id AND m.to_seq IS NULL
+         ORDER BY o.record_id",
     )?;
     let mut groups = Vec::new();
     for batch in &batches {
         let column = |index: usize| batch.column(index).as_string::<i32>();
-        let (observations, identities) = (column(0), column(1));
+        let (records, identities) = (column(0), column(1));
         for row in 0..batch.num_rows() {
             groups.push((
-                observations.value(row).to_owned(),
+                records.value(row).to_owned(),
                 identities.value(row).to_owned(),
             ));
         }
@@ -885,19 +885,19 @@ fn grouping(engine: &Engine) -> Result<Vec<(String, String)>> {
 }
 
 /// The version of a row the source holds now, named as `source:key`.
-fn observation(engine: &Engine, reference: &str) -> Result<ObservationRecord> {
+fn record(engine: &Engine, reference: &str) -> Result<RecordEntry> {
     let (source, key) = reference
         .split_once(':')
         .expect("checked when the scenario was loaded");
     engine
-        .observations(&ObservationFilter::keyed(source, key))?
+        .records(&RecordFilter::keyed(source, key))?
         .into_iter()
         .find(|version| version.superseded_by.is_none())
-        .ok_or_else(|| Error::Scenario(format!("no observation is `{reference}`")))
+        .ok_or_else(|| Error::Scenario(format!("no record is `{reference}`")))
 }
 
 fn identity_of(engine: &Engine, reference: &str) -> Result<IdentityId> {
-    observation(engine, reference)?
+    record(engine, reference)?
         .identity
         .ok_or_else(|| Error::Scenario(format!("`{reference}` has no identity")))
 }
@@ -907,7 +907,7 @@ fn members(engine: &Engine, identity: IdentityId) -> Result<Vec<String>> {
         .identity(identity)?
         .members
         .iter()
-        .map(|member| member.observation.to_string())
+        .map(|member| member.record.to_string())
         .collect())
 }
 
@@ -938,23 +938,23 @@ fn correct(
             (authored.changeset, authored.committed.map(|c| c.seq))
         }
         Correction::Assign([moved, target]) => {
-            let moved = observation(engine, moved)?;
+            let moved = record(engine, moved)?;
             let authored = author(vec![Op::Assign {
-                observation: moved.id,
+                record: moved.id,
                 from: moved.identity,
                 to: Some(identity_of(engine, target)?),
             }])?;
             (authored.changeset, authored.committed.map(|c| c.seq))
         }
-        Correction::Split(observations) => {
-            let identity = identity_of(engine, &observations[0])?;
-            let observations = observations
+        Correction::Split(records) => {
+            let identity = identity_of(engine, &records[0])?;
+            let records = records
                 .iter()
-                .map(|reference| observation(engine, reference).map(|found| found.id))
+                .map(|reference| record(engine, reference).map(|found| found.id))
                 .collect::<Result<Vec<_>>>()?;
             let report = engine.split(
                 identity,
-                &observations,
+                &records,
                 true,
                 None,
                 actor.clone(),
@@ -970,8 +970,8 @@ fn correct(
         Correction::Constrain(kind, [a, b]) => {
             let authored = author(vec![Op::Constrain {
                 kind: *kind,
-                a: observation(engine, a)?.id,
-                b: observation(engine, b)?.id,
+                a: record(engine, a)?.id,
+                b: record(engine, b)?.id,
             }])?;
             (authored.changeset, authored.committed.map(|c| c.seq))
         }
@@ -1004,7 +1004,7 @@ fn held(engine: &Engine, tracked: &Tracked) -> Result<(SplitRecovery, OverridePe
         return Ok((SplitRecovery::new(0, 0), OverridePersistence::new(0, 0)));
     }
     let groups: HashMap<String, String> = grouping(engine)?.into_iter().collect();
-    let group = |observation: &String| groups.get(observation);
+    let group = |record: &String| groups.get(record);
 
     let kept_apart = tracked
         .splits
@@ -1043,15 +1043,15 @@ fn held(engine: &Engine, tracked: &Tracked) -> Result<(SplitRecovery, OverridePe
     ))
 }
 
-/// The truth relation `(observation_id, true_entity)` for the observations
+/// The truth relation `(record_id, true_entity)` for the records
 /// the store holds, joined to the truth by source and key.
 fn truth_relation(engine: &Engine, truth: &HashMap<(String, String), String>) -> Result<Rows> {
-    let observations = engine.query(
-        "SELECT observation_id::VARCHAR, source_id, source_key
-         FROM spool.observation WHERE source_key IS NOT NULL",
+    let records = engine.query(
+        "SELECT record_id::VARCHAR, source_id, source_key
+         FROM spool.record WHERE source_key IS NOT NULL",
     )?;
     let mut rows: Vec<(String, &str)> = Vec::new();
-    for batch in &observations {
+    for batch in &records {
         let column = |index: usize| batch.column(index).as_string::<i32>();
         let (ids, sources, keys) = (column(0), column(1), column(2));
         for row in 0..batch.num_rows() {
@@ -1065,18 +1065,18 @@ fn truth_relation(engine: &Engine, truth: &HashMap<(String, String), String>) ->
         .iter()
         .map(|(id, entity)| vec![Some(id.as_str()), Some(*entity)])
         .collect();
-    Rows::from_text(&["observation_id", "true_entity"], &rows)
+    Rows::from_text(&["record_id", "true_entity"], &rows)
 }
 
 /// How the mentions extracted so far compare with the labelled mentions of
 /// the documents stored so far. A mention is one place in one document,
-/// however many versions of the observation there are.
+/// however many versions of the record there are.
 fn extraction(engine: &Engine, truth: &Truth) -> Result<Option<ExtractionMetrics>> {
     if !truth.labelled {
         return Ok(None);
     }
     let found = engine.query(
-        "SELECT DISTINCT source_id, source_key FROM spool.observation
+        "SELECT DISTINCT source_id, source_key FROM spool.record
          WHERE json_extract_string(evidence, '$.document') IS NOT NULL",
     )?;
     let (mut extracted, mut correct) = (0, 0);

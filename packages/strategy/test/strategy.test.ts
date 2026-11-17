@@ -16,7 +16,7 @@ afterAll(() => {
   for (const dir of cleanup) rmSync(dir, { recursive: true, force: true });
 });
 
-/** A task directory with two observations and the one pair of them. */
+/** A task directory with two records and the one pair of them. */
 function taskDirectory(protocol = PROTOCOL): string {
   const dir = mkdtempSync(join(tmpdir(), "spool-strategy-"));
   cleanup.push(dir);
@@ -30,7 +30,7 @@ function taskDirectory(protocol = PROTOCOL): string {
       rematch: false,
       strategy: { name: "model", version: "abc" },
       features: [
-        { name: "observation_id", data_type: "UUID" },
+        { name: "record_id", data_type: "UUID" },
         { name: "name", data_type: "VARCHAR" },
       ],
       inputs: { candidates: "candidates.parquet", features: "features.parquet" },
@@ -46,7 +46,7 @@ function taskDirectory(protocol = PROTOCOL): string {
     { name: "right_name", data: ["Anvil"], type: "STRING" },
   ]);
   write("features.parquet", [
-    { name: "observation_id", data: ["a", "b"], type: "STRING" },
+    { name: "record_id", data: ["a", "b"], type: "STRING" },
     { name: "is_new", data: [true, false], type: "BOOLEAN" },
     { name: "identity_id", data: [null, "i-1"], type: "STRING", nullable: true },
     { name: "name", data: ["anvil", "Anvil"], type: "STRING" },
@@ -90,8 +90,8 @@ describe("a task", () => {
       expect(task.strategy).toBe("model");
       expect(task.rematch).toBe(false);
       expect(await task.features()).toEqual([
-        { observation_id: "a", is_new: true, identity_id: null, name: "anvil" },
-        { observation_id: "b", is_new: false, identity_id: "i-1", name: "Anvil" },
+        { record_id: "a", is_new: true, identity_id: null, name: "anvil" },
+        { record_id: "b", is_new: false, identity_id: "i-1", name: "Anvil" },
       ]);
       const [pair] = await task.candidates();
       expect(pair).toEqual({ left_id: "a", right_id: "b", left_name: "anvil", right_name: "Anvil" });

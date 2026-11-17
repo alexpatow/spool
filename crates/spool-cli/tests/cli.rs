@@ -72,7 +72,7 @@ fn usage_is_printed_on_request_and_on_a_mistake() {
             &["show", "weather"],
             "`weather` is not something `show` shows",
         ),
-        (&["explain", "a:1"], "`explain` needs two observations"),
+        (&["explain", "a:1"], "`explain` needs two records"),
     ] {
         let output = spool(arguments);
         assert_eq!(output.status.code(), Some(2), "{arguments:?}");

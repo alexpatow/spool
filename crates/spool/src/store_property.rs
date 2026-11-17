@@ -4,13 +4,13 @@
 use proptest::prelude::*;
 use spool_core::{
     Actor, Changeset, ConstraintKind, EntityType, IdGenerator, IdentityId, IdentityState,
-    IdentityStatus, IdentityStore, MemoryState, ObservationId, Op, SeededIds, StepClock, inverse,
+    IdentityStatus, IdentityStore, MemoryState, Op, RecordId, SeededIds, StepClock, inverse,
     validate,
 };
 
-use crate::store::{DuckStore, insert_observations};
+use crate::store::{DuckStore, insert_records};
 
-const OBSERVATIONS: u128 = 8;
+const RECORDS: u128 = 8;
 
 /// An operation before it is bound to real IDs. Most choices are made so the
 /// operation is valid, and some are left to chance so that every kind of
@@ -22,7 +22,7 @@ enum OpSpec {
         gadget: bool,
     },
     Assign {
-        observation: u128,
+        record: u128,
         from: From,
         to: To,
     },
@@ -54,14 +54,14 @@ enum OpSpec {
 
 #[derive(Clone, Debug)]
 enum From {
-    /// Whatever the observation belongs to when the changeset is written.
+    /// Whatever the record belongs to when the changeset is written.
     Current,
     Given(Option<usize>),
 }
 
 #[derive(Clone, Debug)]
 enum To {
-    /// An identity of the observation's entity type, if there is one.
+    /// An identity of the record's entity type, if there is one.
     Compatible(usize),
     /// Any ID minted so far, whether or not it became an identity.
     Any(usize),
@@ -81,15 +81,15 @@ fn op_spec() -> impl Strategy<Value = OpSpec> {
     prop_oneof![
         1 => (proptest::option::weighted(0.1, 0..8usize), proptest::bool::weighted(0.25))
             .prop_map(|(reuse, gadget)| OpSpec::Create { reuse, gadget }),
-        4 => (1..=OBSERVATIONS, from, to)
-            .prop_map(|(observation, from, to)| OpSpec::Assign { observation, from, to }),
+        4 => (1..=RECORDS, from, to)
+            .prop_map(|(record, from, to)| OpSpec::Assign { record, from, to }),
         2 => (0..8usize, 0..8usize, proptest::bool::weighted(0.15))
             .prop_map(|(from, into, any)| OpSpec::Merge { from, into, any }),
         2 => (0..8usize, proptest::bool::weighted(0.15))
             .prop_map(|(identity, any)| OpSpec::Reinstate { identity, any }),
-        1 => (any::<bool>(), 1..=OBSERVATIONS, 1..=OBSERVATIONS)
+        1 => (any::<bool>(), 1..=RECORDS, 1..=RECORDS)
             .prop_map(|(cannot, a, b)| OpSpec::Constrain { cannot, a, b }),
-        1 => (0..8usize, proptest::bool::weighted(0.2), any::<bool>(), 1..=OBSERVATIONS, 1..=OBSERVATIONS)
+        1 => (0..8usize, proptest::bool::weighted(0.2), any::<bool>(), 1..=RECORDS, 1..=RECORDS)
             .prop_map(|(pick, any, cannot, a, b)| OpSpec::Unconstrain { pick, any, cannot, a, b }),
     ]
 }
@@ -98,11 +98,11 @@ fn entity_type(gadget: bool) -> EntityType {
     EntityType::new(if gadget { "gadget" } else { "widget" }).unwrap()
 }
 
-fn is_gadget(observation: u128) -> bool {
-    observation > 6
+fn is_gadget(record: u128) -> bool {
+    record > 6
 }
 
-/// `a`, and an observation of the same entity type that is not `a`.
+/// `a`, and a record of the same entity type that is not `a`.
 fn same_type(a: u128, b: u128) -> (u128, u128) {
     let (first, count) = if is_gadget(a) { (7, 2) } else { (1, 6) };
     let b = first + (b - 1) % count;
@@ -133,16 +133,16 @@ proptest! {
     fn memory_and_duckdb_agree(
         changesets in proptest::collection::vec(proptest::collection::vec(op_spec(), 1..6), 1..16)
     ) {
-        // Observations 1 to 6 are widgets, 7 and 8 are gadgets.
-        let observations: Vec<_> = (1..=OBSERVATIONS)
-            .map(|n| (ObservationId::from_u128(n), entity_type(is_gadget(n))))
+        // Records 1 to 6 are widgets, 7 and 8 are gadgets.
+        let records: Vec<_> = (1..=RECORDS)
+            .map(|n| (RecordId::from_u128(n), entity_type(is_gadget(n))))
             .collect();
         let mut memory = MemoryState::new();
-        for (id, entity_type) in &observations {
-            memory.observe(*id, entity_type.clone());
+        for (id, entity_type) in &records {
+            memory.add_record(*id, entity_type.clone());
         }
         let mut duck = DuckStore::open(None, Box::new(StepClock::new(0, 1))).unwrap();
-        insert_observations(&duck.conn, &observations).unwrap();
+        insert_records(&duck.conn, &records).unwrap();
 
         let mut ids = SeededIds::new(11);
         // Identities that exist, with whether each is a gadget, and every ID
@@ -170,7 +170,7 @@ proptest! {
                 .collect();
             let created_before = existing.clone();
             let mut created = Vec::new();
-            let all: Vec<_> = observations.iter().map(|(id, _)| *id).collect();
+            let all: Vec<_> = records.iter().map(|(id, _)| *id).collect();
             let in_force = memory.constraints_on(&all).unwrap();
             let mut moved = std::collections::HashSet::new();
             for spec in specs {
@@ -208,20 +208,20 @@ proptest! {
                         }
                     }
                     OpSpec::Constrain { cannot, a, b } => {
-                        // Mostly two different observations of one type.
+                        // Mostly two different records of one type.
                         let (a, b) = if (a + b) % 5 == 0 { (a, b) } else { same_type(a, b) };
                         ops.push(Op::Constrain {
                             kind: kind(cannot),
-                            a: ObservationId::from_u128(a),
-                            b: ObservationId::from_u128(b),
+                            a: RecordId::from_u128(a),
+                            b: RecordId::from_u128(b),
                         });
                     }
                     OpSpec::Unconstrain { pick: index, any, cannot, a, b } => {
                         if any {
                             ops.push(Op::Unconstrain {
                                 kind: kind(cannot),
-                                a: ObservationId::from_u128(a),
-                                b: ObservationId::from_u128(b),
+                                a: RecordId::from_u128(a),
+                                b: RecordId::from_u128(b),
                             });
                         } else if let Some(constraint) = pick(&in_force, index) {
                             ops.push(Op::Unconstrain {
@@ -231,13 +231,13 @@ proptest! {
                             });
                         }
                     }
-                    OpSpec::Assign { observation, from, to } => {
-                        let gadget = is_gadget(observation);
-                        let observation = ObservationId::from_u128(observation);
-                        let current = memory.assignments(&[observation]).unwrap()[0];
-                        // Mostly one move for an observation, and a move
+                    OpSpec::Assign { record, from, to } => {
+                        let gadget = is_gadget(record);
+                        let record = RecordId::from_u128(record);
+                        let current = memory.assignments(&[record]).unwrap()[0];
+                        // Mostly one move for a record, and a move
                         // that goes somewhere else.
-                        if matches!(from, From::Current) && !moved.insert(observation) {
+                        if matches!(from, From::Current) && !moved.insert(record) {
                             continue;
                         }
                         let to = match to {
@@ -268,7 +268,7 @@ proptest! {
                             From::Current => current,
                             From::Given(index) => index.and_then(|index| pick(&minted, index)),
                         };
-                        ops.push(Op::Assign { observation, from, to });
+                        ops.push(Op::Assign { record, from, to });
                     }
                 }
             }
@@ -304,7 +304,7 @@ proptest! {
             }
         }
 
-        let all: Vec<_> = observations.iter().map(|(id, _)| *id).collect();
+        let all: Vec<_> = records.iter().map(|(id, _)| *id).collect();
         let identities = minted;
         prop_assert_eq!(memory.snapshot().unwrap(), duck.snapshot().unwrap());
         prop_assert_eq!(memory.log().unwrap(), duck.log().unwrap());

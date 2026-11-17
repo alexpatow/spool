@@ -8,8 +8,7 @@ use std::path::Path;
 use common::benchmarks;
 use spool::{Error, Manifest, Project};
 
-const FEATURES: &str =
-    "SELECT observation_id, lower(payload->>'title') AS title FROM observation;\n";
+const FEATURES: &str = "SELECT record_id, lower(payload->>'title') AS title FROM record;\n";
 
 fn write(root: &Path, file: &str, contents: &str) {
     let path = root.join(file);
@@ -68,7 +67,7 @@ fn the_path_is_the_name() {
         .iter()
         .map(|column| (column.name.as_str(), column.data_type.as_str()))
         .collect();
-    assert_eq!(columns, [("observation_id", "UUID"), ("title", "VARCHAR")]);
+    assert_eq!(columns, [("record_id", "UUID"), ("title", "VARCHAR")]);
 
     let names = |rules: &[spool::Rule]| -> Vec<String> {
         rules.iter().map(|rule| rule.name.clone()).collect()
@@ -143,7 +142,7 @@ fn the_manifest_hash_covers_rules_and_the_declaration_hash_does_not() {
     write(
         dir.path(),
         "entities/paper/features.sql",
-        "SELECT observation_id, payload->>'title' AS title FROM observation",
+        "SELECT record_id, payload->>'title' AS title FROM record",
     );
     let with_features = Manifest::load(dir.path()).unwrap();
     assert_ne!(
@@ -162,12 +161,12 @@ fn a_mistake_fails_the_build_and_names_the_file() {
     let cases: [(&str, &str, &str); 12] = [
         (
             "entities/paper/features.sql",
-            "SELECT observation_id, true AS is_new FROM observation",
+            "SELECT record_id, true AS is_new FROM record",
             "entities/paper/features.sql",
         ),
         (
             "entities/paper/features.sql",
-            "SELECT observation_id, observation_id AS identity_id FROM observation",
+            "SELECT record_id, record_id AS identity_id FROM record",
             "entities/paper/features.sql",
         ),
         (
@@ -192,17 +191,17 @@ fn a_mistake_fails_the_build_and_names_the_file() {
         ),
         (
             "entities/paper/features.sql",
-            "SELECT payload->>'title' AS title FROM observation",
+            "SELECT payload->>'title' AS title FROM record",
             "entities/paper/features.sql",
         ),
         (
             "entities/paper/features.sql",
-            "SELECT observation_id::VARCHAR AS observation_id FROM observation",
+            "SELECT record_id::VARCHAR AS record_id FROM record",
             "entities/paper/features.sql",
         ),
         (
             "entities/paper/features.sql",
-            "SELECT observation_id, 1 AS declaration_version FROM observation",
+            "SELECT record_id, 1 AS declaration_version FROM record",
             "entities/paper/features.sql",
         ),
         (
@@ -212,7 +211,7 @@ fn a_mistake_fails_the_build_and_names_the_file() {
         ),
         (
             "entities/paper/rules/block/two.sql",
-            "l.title = r.title; DROP TABLE spool.observation",
+            "l.title = r.title; DROP TABLE spool.record",
             "entities/paper/rules/block/two.sql",
         ),
         (

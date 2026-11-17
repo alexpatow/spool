@@ -25,10 +25,10 @@ fn the_committed_schema_is_the_one_the_server_speaks() {
     let schema: serde_json::Value = serde_json::from_str(&printed).unwrap();
     assert_eq!(schema, spool_cli::api::schema());
     for name in [
-        "RunRecord",
+        "RunEntry",
         "Changeset",
-        "DraftRecord",
-        "ReviewRecord",
+        "DraftEntry",
+        "ReviewEntry",
         "ErrorResponse",
     ] {
         assert!(schema["$defs"][name].is_object(), "{name}");

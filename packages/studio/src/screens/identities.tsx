@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
 import { Act, At, Done } from "../act.tsx";
-import type { ConstraintRecord, HistoryEntry, IdentitySummary, IdentityView, ObservationRecord } from "../api.ts";
+import type { ConstraintEntry, HistoryEntry, IdentitySummary, IdentityView, RecordEntry } from "../api.ts";
 import {
   Code,
   ExplainTicked,
@@ -37,7 +37,7 @@ import * as ShelfTable from "../components/ui/table";
 import { facts, latest, sourcesOf } from "../facts.ts";
 import type { Fact } from "../facts.ts";
 import { findIdentity } from "../find.ts";
-import { count, identitiesOf, observationName, observationsOf, short, tail } from "../format.ts";
+import { count, identitiesOf, recordName, recordsOf, short, tail } from "../format.ts";
 import { useLabels, useLoad, useNames, usePages, useStudio } from "../hooks.ts";
 import { IdentityIcon, MergeIcon, SplitIcon } from "../icons.tsx";
 import type { Route } from "../router.ts";
@@ -101,8 +101,8 @@ interface Loaded {
   head: number;
   view: IdentityView;
   /** Its members in full, as many as are read. */
-  records: ObservationRecord[];
-  constraints: ConstraintRecord[];
+  records: RecordEntry[];
+  constraints: ConstraintEntry[];
   history: HistoryEntry[];
 }
 
@@ -114,9 +114,9 @@ export function Identity({ id }: { id: string }) {
     // it, and the constraints are those on the members shown.
     const [constraints, page] = await Promise.all([
       client.constraints({ identity: view.current }),
-      client.observations({ identity: view.current, limit: MOST_RECORDS }),
+      client.records({ identity: view.current, limit: MOST_RECORDS }),
     ]);
-    return { head: store.head, view, records: page.observations, constraints, history };
+    return { head: store.head, view, records: page.records, constraints, history };
   });
   const view = identity.status === "ready" ? identity.data.view : null;
   return (
@@ -140,14 +140,11 @@ function IdentityScreen({ head, view, records, constraints, history }: Loaded) {
   // shows the members of another.
   const stands = view.current === view.id;
   const byId = useMemo(() => new Map(records.map((record) => [record.id, record])), [records]);
-  const members = useMemo(() => new Map(records.map((record) => [record.id, observationName(record)])), [records]);
-  // The constraints and the history also name observations of other
+  const members = useMemo(() => new Map(records.map((record) => [record.id, recordName(record)])), [records]);
+  // The constraints and the history also name records of other
   // identities, and ones that have left this one since.
   const names = useNames(
-    [
-      ...constraints.flatMap((record) => [record.a, record.b]),
-      ...history.flatMap((entry) => observationsOf(entry.ops)),
-    ],
+    [...constraints.flatMap((record) => [record.a, record.b]), ...history.flatMap((entry) => recordsOf(entry.ops))],
     members,
   );
   // Its history names the identities it was merged with or parted from.
@@ -200,18 +197,14 @@ function IdentityScreen({ head, view, records, constraints, history }: Loaded) {
         <Table
           label="Records"
           columns={[
-            { title: "", cell: (member) => tick(member.observation) },
+            { title: "", cell: (member) => tick(member.record) },
             {
               title: "Record",
               cell: (member) => {
-                const record = byId.get(member.observation);
+                const record = byId.get(member.record);
                 return (
                   <span {...stylex.props(styles.record)}>
-                    <Ref
-                      kind="observation"
-                      id={member.observation}
-                      label={record?.label ?? names.get(member.observation)}
-                    />
+                    <Ref kind="record" id={member.record} label={record?.label ?? names.get(member.record)} />
                     {record?.superseded_by ? <Word value="replaced" label="superseded" /> : null}
                   </span>
                 );
@@ -222,14 +215,14 @@ function IdentityScreen({ head, view, records, constraints, history }: Loaded) {
             {
               title: "Key",
               cell: (member) => {
-                const record = byId.get(member.observation);
+                const record = byId.get(member.record);
                 return <Code>{record ? keyOf(record) : (member.key ?? "-")}</Code>;
               },
             },
             {
               title: "Ingested",
               cell: (member) => {
-                const record = byId.get(member.observation);
+                const record = byId.get(member.record);
                 return record ? (
                   <>
                     <When at={record.ingested_at} /> by{" "}
@@ -245,7 +238,7 @@ function IdentityScreen({ head, view, records, constraints, history }: Loaded) {
             },
           ]}
           rows={view.members}
-          rowKey={(member) => member.observation}
+          rowKey={(member) => member.record}
           empty="No records."
         />
       </Section>
@@ -258,9 +251,9 @@ function IdentityScreen({ head, view, records, constraints, history }: Loaded) {
               { title: "Constraint", cell: (record) => <Word value={record.kind} /> },
               {
                 title: "Between",
-                cell: (record) => <Ref kind="observation" id={record.a} label={names.get(record.a)} />,
+                cell: (record) => <Ref kind="record" id={record.a} label={names.get(record.a)} />,
               },
-              { title: "And", cell: (record) => <Ref kind="observation" id={record.b} label={names.get(record.b)} /> },
+              { title: "And", cell: (record) => <Ref kind="record" id={record.b} label={names.get(record.b)} /> },
               {
                 title: "Since",
                 cell: (record) => <Ref kind="log" id={record.from} label={`log position ${record.from}`} />,
@@ -280,8 +273,8 @@ function IdentityScreen({ head, view, records, constraints, history }: Loaded) {
 }
 
 /** What a record is known by in its source: its key, or where in a document it was found. */
-function keyOf(record: ObservationRecord): string {
-  const name = observationName(record);
+function keyOf(record: RecordEntry): string {
+  const name = recordName(record);
   return name.startsWith(`${record.source}:`) ? name.slice(record.source.length + 1) : name;
 }
 
@@ -371,11 +364,11 @@ export function Facts({ facts, of }: { facts: Fact[]; of: number }) {
 }
 
 /** A record that holds a value: its source, and its key as the link to it. */
-function Sayer({ record }: { record: ObservationRecord }) {
+function Sayer({ record }: { record: RecordEntry }) {
   return (
     <span {...stylex.props(styles.sayer)}>
       <Source name={record.source} />
-      <Ref kind="observation" id={record.id} label={keyOf(record)} />
+      <Ref kind="record" id={record.id} label={keyOf(record)} />
     </span>
   );
 }
@@ -393,7 +386,7 @@ function Split({ view, head, chosen }: { view: IdentityView; head: number; chose
   const [done, setDone] = useState<ReactNode>(null);
   const [apart, setApart] = useState(true);
   // A member that was ticked and has left since is no longer one to split off.
-  const ticked = chosen.filter((id) => view.members.some((member) => member.observation === id));
+  const ticked = chosen.filter((id) => view.members.some((member) => member.record === id));
   const rest = view.members.length - ticked.length;
   const moves = (n: number) => (n === 1 ? "moves" : "move");
   const keeps = (n: number) => (n === 1 ? "keeps" : "keep");
@@ -422,7 +415,7 @@ function Split({ view, head, chosen }: { view: IdentityView; head: number; chose
                 actor,
                 reason,
                 base: head,
-                observations: ticked,
+                records: ticked,
                 keep_apart: apart,
               });
               return (

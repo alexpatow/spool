@@ -10,7 +10,7 @@
 //! $SPOOL_TASK_DIR/
 //! ├── task.json             the run, the entity type, the strategy, the feature columns
 //! ├── candidates.parquet    left_id, right_id, and both sides' features as left_* and right_*
-//! ├── features.parquet      observation_id, is_new, identity_id, and the feature columns
+//! ├── features.parquet      record_id, is_new, identity_id, and the feature columns
 //! ├── judgements.parquet    written by the user code: left_id, right_id, verdict, score, detail
 //! ├── stdout.log
 //! └── stderr.log

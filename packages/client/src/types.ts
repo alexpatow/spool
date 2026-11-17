@@ -22,7 +22,7 @@ export interface Authored {
 }
 
 /**
- * An identity that the observations of a review item matched.
+ * An identity that the records of a review item matched.
  */
 export interface Candidate {
   identity: IdentitySummary;
@@ -31,7 +31,7 @@ export interface Candidate {
    * and at most [`CASE_MEMBERS`] of them. `identity.members` says how
    * many there are.
    */
-  members: ObservationRecord[];
+  members: RecordEntry[];
 }
 
 /**
@@ -44,17 +44,17 @@ export interface CandidateList {
 }
 
 /**
- * A constraint in force, with where its two observations are.
+ * A constraint in force, with where its two records are.
  */
 export interface CaseConstraint {
-  a: ObservationId;
-  b: ObservationId;
+  a: RecordId;
+  b: RecordId;
   /**
    * The log position of the changeset that made it.
    */
   from: Seq;
   /**
-   * The identities its observations belong to now, that of `a` first.
+   * The identities its records belong to now, that of `a` first.
    * `None` for one that has no identity.
    */
   identities: [IdentityId | null, IdentityId | null];
@@ -153,21 +153,21 @@ export interface Comparison {
   strategy?: StrategyRef | null;
 }
 
-export type ConstraintKind = "must_link" | "cannot_link";
-
-export interface ConstraintList {
-  constraints: ConstraintRecord[];
-}
-
 /**
  * One interval of a constraint. `to` is `None` while it is in force.
  */
-export interface ConstraintRecord {
-  a: ObservationId;
-  b: ObservationId;
+export interface ConstraintEntry {
+  a: RecordId;
+  b: RecordId;
   from: Seq;
   kind: ConstraintKind;
   to?: Seq | null;
+}
+
+export type ConstraintKind = "must_link" | "cannot_link";
+
+export interface ConstraintList {
+  constraints: ConstraintEntry[];
 }
 
 /**
@@ -177,7 +177,7 @@ export type ContentHash = string;
 
 /**
  * `POST /v1/review/{id}/dismiss`: close a review item without placing its
- * observations.
+ * records.
  */
 export interface DismissRequest {
   actor: Actor;
@@ -186,7 +186,7 @@ export interface DismissRequest {
 
 /**
  * A reviewer's decision to close a review item without placing its
- * observations.
+ * records.
  */
 export interface Dismissal {
   at: string;
@@ -195,44 +195,9 @@ export interface Dismissal {
 }
 
 /**
- * One reading of a document by an extractor.
- */
-export interface DocumentExtraction {
-  extractor: string;
-  /**
-   * How many mentions it found in the document.
-   */
-  mentions: number;
-  /**
-   * The extract run.
-   */
-  run: RunId;
-  /**
-   * The hash of the extractor's files when it ran.
-   */
-  version: string;
-}
-
-/**
- * Identifies one version of a document. Derived by the engine from the document's source, key and text.
- */
-export type DocumentId = string;
-
-export interface DocumentList {
-  /**
-   * Documents without their text.
-   */
-  documents: DocumentRecord[];
-  /**
-   * Pass as `after` for the next page. `null` on the last page.
-   */
-  next?: DocumentId | null;
-}
-
-/**
  * One version of a document as the store holds it.
  */
-export interface DocumentRecord {
+export interface DocumentEntry {
   /**
    * Each time an extractor read this version, oldest first.
    */
@@ -263,29 +228,64 @@ export interface DocumentRecord {
 }
 
 /**
+ * One reading of a document by an extractor.
+ */
+export interface DocumentExtraction {
+  extractor: string;
+  /**
+   * How many mentions it found in the document.
+   */
+  mentions: number;
+  /**
+   * The extract run.
+   */
+  run: RunId;
+  /**
+   * The hash of the extractor's files when it ran.
+   */
+  version: string;
+}
+
+/**
+ * Identifies one version of a document. Derived by the engine from the document's source, key and text.
+ */
+export type DocumentId = string;
+
+export interface DocumentList {
+  /**
+   * Documents without their text.
+   */
+  documents: DocumentEntry[];
+  /**
+   * Pass as `after` for the next page. `null` on the last page.
+   */
+  next?: DocumentId | null;
+}
+
+/**
  * `POST /v1/documents`: store documents from one source, to be read by an
  * extractor. The response is the ingest run that stored them.
  */
 export interface DocumentsRequest {
   documents: NewDocument[];
   /**
-   * The name of the source the documents come from. The observations
+   * The name of the source the documents come from. The records
    * extracted from them have the same source.
    */
   source: string;
   wait_ms?: number | null;
 }
 
-export interface DraftList {
-  drafts: DraftSummary[];
-}
-
 /**
  * A draft with the changeset it would commit.
  */
-export interface DraftRecord {
+export interface DraftEntry {
   changeset: Changeset;
   draft: DraftSummary;
+}
+
+export interface DraftList {
+  drafts: DraftSummary[];
 }
 
 export type DraftStatus = "open" | "committed" | "rejected" | "superseded";
@@ -312,12 +312,12 @@ export interface DraftSummary {
    * The match run whose judgements the draft rests on.
    */
   match_run: RunId;
-  observations_assigned: number;
   operations: number;
   /**
    * The reconcile run that drafted it.
    */
   reconcile_run: RunId;
+  records_assigned: number;
   /**
    * Rejected: when.
    */
@@ -365,16 +365,16 @@ export interface Explained {
    * what rules and strategies see of it. `null` when it has no row.
    */
   features?: Record<string, unknown> | null;
-  observation: ObservationRecord;
   /**
    * The changeset that put it in the identity it has. `null` while it has
    * none.
    */
   placed?: Placement | null;
+  record: RecordEntry;
 }
 
 /**
- * What the store knows about a pair of observations, and what follows
+ * What the store knows about a pair of records, and what follows
  * from it.
  */
 export interface Explanation {
@@ -386,9 +386,9 @@ export interface Explanation {
    * The constraints between the two, oldest first, with those that were
    * removed.
    */
-  constraints: ConstraintRecord[];
+  constraints: ConstraintEntry[];
   /**
-   * The observation with the smaller ID. It is `l` in a rule.
+   * The record with the smaller ID. It is `l` in a rule.
    */
   left: Explained;
   outcome: Outcome;
@@ -403,9 +403,9 @@ export interface Explanation {
   /**
    * The review items that name either of the two, oldest first.
    */
-  review_items: ReviewRecord[];
+  review_items: ReviewEntry[];
   /**
-   * The observation with the larger ID. It is `r` in a rule.
+   * The record with the larger ID. It is `r` in a rule.
    */
   right: Explained;
   /**
@@ -431,12 +431,12 @@ export interface ExtractReport {
    */
   duplicates: number;
   /**
-   * The ingest run the observations were stored under. There is none
+   * The ingest run the records were stored under. There is none
    * when nothing was found.
    */
   ingest_run?: RunId | null;
   /**
-   * Observations created.
+   * Records created.
    */
   inserted: number;
   /**
@@ -445,7 +445,7 @@ export interface ExtractReport {
   mentions: number;
   run: RunId;
   /**
-   * Observations created as a new version of a mention that was known
+   * Records created as a new version of a mention that was known
    * with other attributes.
    */
   superseded: number;
@@ -454,7 +454,7 @@ export interface ExtractReport {
 /**
  * `POST /v1/extractions`: run one of the project's extractors over the
  * documents it has not read. The response is the extract run. What it
- * found is observations, which `POST /v1/runs` then matches.
+ * found is records, which `POST /v1/runs` then matches.
  */
 export interface ExtractRequest {
   /**
@@ -542,17 +542,17 @@ export interface HistoryEntry {
 }
 
 /**
- * `POST /v1/observations/identities`: the identities of many observations
+ * `POST /v1/records/identities`: the identities of many records
  * in one call.
  */
 export interface IdentitiesOfRequest {
-  observations: ObservationId[];
+  records: RecordId[];
 }
 
 export interface IdentitiesOfResponse {
   /**
-   * One entry per observation asked about, in the same order. `null` for
-   * an observation that has no identity or is not known.
+   * One entry per record asked about, in the same order. `null` for
+   * a record that has no identity or is not known.
    */
   identities: Array<IdentityId | null>;
 }
@@ -592,7 +592,7 @@ export interface IdentitySummary {
 }
 
 /**
- * An identity and the observations that belong to it now.
+ * An identity and the records that belong to it now.
  */
 export interface IdentityView {
   /**
@@ -615,7 +615,7 @@ export interface IdentityView {
    */
   label?: string | null;
   /**
-   * The members of the current identity, ordered by observation ID.
+   * The members of the current identity, ordered by record ID.
    */
   members: Member[];
 }
@@ -637,7 +637,7 @@ export interface IngestReport {
    */
   duplicates: number;
   /**
-   * Observations created.
+   * Records created.
    */
   inserted: number;
   /**
@@ -646,7 +646,7 @@ export interface IngestReport {
   received: number;
   run: RunId;
   /**
-   * Observations created as a new version of a row the source had sent
+   * Records created as a new version of a row the source had sent
    * before under the same key with other content.
    */
   superseded?: number;
@@ -682,8 +682,8 @@ export interface Judgement {
    * Anything the strategy wants kept with the judgement.
    */
   detail?: unknown;
-  left_id: ObservationId;
-  right_id: ObservationId;
+  left_id: RecordId;
+  right_id: RecordId;
   /**
    * On the strategy's own scale. Scores are never compared across
    * strategies.
@@ -713,17 +713,17 @@ export interface JudgementsResponse {
  * One step in the chain that joins two members of an identity.
  */
 export interface Link {
-  from: ObservationId;
+  from: RecordId;
   kind: LinkKind;
   /**
    * With `match`: the latest run that judged so.
    */
   run?: RunId | null;
-  to: ObservationId;
+  to: RecordId;
 }
 
 /**
- * What joins two observations of one identity directly.
+ * What joins two records of one identity directly.
  */
 export type LinkKind = "must_link" | "version" | "match";
 
@@ -738,7 +738,7 @@ export interface LogEntry {
 
 export interface Member {
   key?: string | null;
-  observation: ObservationId;
+  record: RecordId;
   /**
    * The log position that placed it here.
    */
@@ -783,66 +783,11 @@ export interface NewDocument {
 }
 
 /**
- * Identifies an observation. Derived by the engine from the observation's source, key and content.
- */
-export type ObservationId = string;
-
-export interface ObservationList {
-  /**
-   * Pass as `after` for the next page. `null` on the last page.
-   */
-  next?: ObservationId | null;
-  observations: ObservationRecord[];
-}
-
-/**
- * An observation as it was ingested, and the identity it belongs to now.
- */
-export interface ObservationRecord {
-  entity_type: EntityType;
-  /**
-   * Where in the source the observation was found, if the source said.
-   */
-  evidence?: unknown;
-  id: ObservationId;
-  /**
-   * `None` while no changeset has placed it.
-   */
-  identity?: IdentityId | null;
-  ingest_run: RunId;
-  ingested_at: string;
-  /**
-   * The row's key within its source, if it had one.
-   */
-  key?: string | null;
-  /**
-   * What a person would call it: the name the payload gives, as
-   * [`label_of`] finds it. `None` when the payload has none.
-   */
-  label?: string | null;
-  /**
-   * The attributes exactly as received.
-   */
-  payload: unknown;
-  source: string;
-  /**
-   * The version that replaced this one, if the source has sent the row
-   * again with other content.
-   */
-  superseded_by?: ObservationId | null;
-  /**
-   * The version of the row this one replaced: what the source held under
-   * the same key before.
-   */
-  supersedes?: ObservationId | null;
-}
-
-/**
  * One change to identity state. Each operation carries its own precondition,
  * which is checked against the state the changeset is committed to.
  *
  * There is no operation that splits an identity. A split is a
- * `CreateIdentity` and the `Assign` operations that move observations to it,
+ * `CreateIdentity` and the `Assign` operations that move records to it,
  * usually with a `cannot_link` constraint, in one changeset.
  */
 export type Op =
@@ -853,8 +798,8 @@ export type Op =
     }
   | {
       from?: IdentityId | null;
-      observation: ObservationId;
       op: "assign";
+      record: RecordId;
       to?: IdentityId | null;
     }
   | {
@@ -863,14 +808,14 @@ export type Op =
       op: "merge";
     }
   | {
-      a: ObservationId;
-      b: ObservationId;
+      a: RecordId;
+      b: RecordId;
       kind: ConstraintKind;
       op: "constrain";
     }
   | {
-      a: ObservationId;
-      b: ObservationId;
+      a: RecordId;
+      b: RecordId;
       kind: ConstraintKind;
       op: "unconstrain";
     }
@@ -880,13 +825,13 @@ export type Op =
     };
 
 /**
- * Where the two observations are in relation to each other.
+ * Where the two records are in relation to each other.
  */
 export type Outcome = "same_identity" | "different_identities" | "unassigned" | "different_types";
 
 /**
- * What a run judged about one of a review item's observations and another
- * observation.
+ * What a run judged about one of a review item's records and another
+ * record.
  */
 export interface PairJudgement {
   /**
@@ -896,19 +841,19 @@ export interface PairJudgement {
   detail?: unknown;
   /**
    * The identity `other` belongs to now: one of the candidates, unless
-   * `other` is another of the item's observations. A candidate's members
+   * `other` is another of the item's records. A candidate's members
    * are not all in the case, so this, not the members, says which
    * candidate a judgement is about.
    */
   identity?: IdentityId | null;
   /**
-   * One of the item's observations.
-   */
-  observation: ObservationId;
-  /**
    * What it was compared with.
    */
-  other: ObservationId;
+  other: RecordId;
+  /**
+   * One of the item's records.
+   */
+  record: RecordId;
   /**
    * The match run that judged.
    */
@@ -921,7 +866,7 @@ export interface PairJudgement {
 }
 
 /**
- * The changeset that put an observation where it is.
+ * The changeset that put a record where it is.
  */
 export interface Placement {
   actor: Actor;
@@ -953,8 +898,8 @@ export type Reason =
       reason: "identity_exists";
     }
   | {
-      observation: ObservationId;
-      reason: "unknown_observation";
+      reason: "unknown_record";
+      record: RecordId;
     }
   | {
       identity: IdentityId;
@@ -968,24 +913,24 @@ export type Reason =
   | {
       actual?: IdentityId | null;
       expected?: IdentityId | null;
-      observation: ObservationId;
       reason: "stale_assignment";
+      record: RecordId;
     }
   | {
-      observation: ObservationId;
       reason: "no_change";
+      record: RecordId;
     }
   | {
       identity: IdentityId;
       identity_type: EntityType;
-      observation: ObservationId;
-      observation_type: EntityType;
       reason: "entity_type_mismatch";
+      record: RecordId;
+      record_type: EntityType;
     }
   | {
       first_op: number;
-      observation: ObservationId;
-      reason: "observation_assigned_twice";
+      reason: "record_assigned_twice";
+      record: RecordId;
     }
   | {
       identity: IdentityId;
@@ -1019,38 +964,38 @@ export type Reason =
       reason: "identity_changed_twice";
     }
   | {
-      observation: ObservationId;
-      reason: "same_observation";
+      reason: "same_record";
+      record: RecordId;
     }
   | {
-      a: ObservationId;
+      a: RecordId;
       a_type: EntityType;
-      b: ObservationId;
+      b: RecordId;
       b_type: EntityType;
       reason: "constraint_across_types";
     }
   | {
-      a: ObservationId;
-      b: ObservationId;
+      a: RecordId;
+      b: RecordId;
       kind: ConstraintKind;
       reason: "constraint_exists";
     }
   | {
-      a: ObservationId;
-      b: ObservationId;
+      a: RecordId;
+      b: RecordId;
       kind: ConstraintKind;
       reason: "unknown_constraint";
     }
   | {
-      a: ObservationId;
-      b: ObservationId;
+      a: RecordId;
+      b: RecordId;
       first_op: number;
       kind: ConstraintKind;
       reason: "constraint_changed_twice";
     }
   | {
-      a: ObservationId;
-      b: ObservationId;
+      a: RecordId;
+      b: RecordId;
       identity_a?: IdentityId | null;
       identity_b?: IdentityId | null;
       kind: ConstraintKind;
@@ -1065,6 +1010,61 @@ export interface ReconcileRequest {
    * Commit the draft (the default), or store it for review.
    */
   commit?: boolean | null;
+}
+
+/**
+ * A record as it was ingested, and the identity it belongs to now.
+ */
+export interface RecordEntry {
+  entity_type: EntityType;
+  /**
+   * Where in the source the record was found, if the source said.
+   */
+  evidence?: unknown;
+  id: RecordId;
+  /**
+   * `None` while no changeset has placed it.
+   */
+  identity?: IdentityId | null;
+  ingest_run: RunId;
+  ingested_at: string;
+  /**
+   * The row's key within its source, if it had one.
+   */
+  key?: string | null;
+  /**
+   * What a person would call it: the name the payload gives, as
+   * [`label_of`] finds it. `None` when the payload has none.
+   */
+  label?: string | null;
+  /**
+   * The attributes exactly as received.
+   */
+  payload: unknown;
+  source: string;
+  /**
+   * The version that replaced this one, if the source has sent the row
+   * again with other content.
+   */
+  superseded_by?: RecordId | null;
+  /**
+   * The version of the row this one replaced: what the source held under
+   * the same key before.
+   */
+  supersedes?: RecordId | null;
+}
+
+/**
+ * Identifies a record. Derived by the engine from the record's source, key and content.
+ */
+export type RecordId = string;
+
+export interface RecordList {
+  /**
+   * Pass as `after` for the next page. `null` on the last page.
+   */
+  next?: RecordId | null;
+  records: RecordEntry[];
 }
 
 /**
@@ -1101,7 +1101,7 @@ export interface Rejection {
 }
 
 /**
- * A review item with what a reviewer reads to decide it: the observations
+ * A review item with what a reviewer reads to decide it: the records
  * it holds back, the identities they matched, what was judged between
  * them, and what was already decided about them.
  */
@@ -1114,53 +1114,31 @@ export interface ReviewCase {
   candidates: Candidate[];
   /**
    * The constraints in force that bear on the decision, oldest first:
-   * those that name one of the item's observations, and those between
+   * those that name one of the item's records, and those between
    * members of two of the candidates. A changeset that would break one
    * is refused, so a `cannot_link` between two candidates means they
-   * cannot be merged, and one between an observation and a member of a
+   * cannot be merged, and one between a record and a member of a
    * candidate means it cannot be placed there.
    */
   constraints: CaseConstraint[];
-  item: ReviewRecord;
+  item: ReviewEntry;
   /**
    * What the latest run to judge each pair made of it, for every pair of
-   * one of the item's observations with another of them or with a member
+   * one of the item's records with another of them or with a member
    * of a candidate. Only runs that were reconciled count.
    */
   judgements: PairJudgement[];
   /**
-   * The observations the item names, as they are now, in the item's
+   * The records the item names, as they are now, in the item's
    * order.
    */
-  observations: ObservationRecord[];
-}
-
-/**
- * Something the reconciler would not decide. The observations named are left
- * without an identity.
- */
-export type ReviewItem =
-  | {
-      identities: IdentityId[];
-      kind: "possible_merge";
-      observations: ObservationId[];
-    }
-  | {
-      identity?: IdentityId | null;
-      kind: "conflict";
-      observations: ObservationId[];
-    };
-
-export type ReviewKind = "possible_merge" | "conflict";
-
-export interface ReviewList {
-  items: ReviewRecord[];
+  records: RecordEntry[];
 }
 
 /**
  * A review item as the store keeps it.
  */
-export interface ReviewRecord {
+export interface ReviewEntry {
   /**
    * Dismissed: who closed it, when and why.
    */
@@ -1169,16 +1147,16 @@ export interface ReviewRecord {
   id: number;
   /**
    * The identities they matched. Empty when the conflict is among the
-   * observations themselves.
+   * records themselves.
    */
   identities: IdentityId[];
   kind: ReviewKind;
   /**
-   * The observations left without an identity.
+   * The records left without an identity.
    */
-  observations: ObservationId[];
+  records: RecordId[];
   /**
-   * Resolved: the changeset after which every observation had an identity.
+   * Resolved: the changeset after which every record had an identity.
    */
   resolved_seq?: Seq | null;
   /**
@@ -1190,6 +1168,28 @@ export interface ReviewRecord {
    * Superseded: the reconcile run that raised it again in another form.
    */
   superseded_by?: RunId | null;
+}
+
+/**
+ * Something the reconciler would not decide. The records named are left
+ * without an identity.
+ */
+export type ReviewItem =
+  | {
+      identities: IdentityId[];
+      kind: "possible_merge";
+      records: RecordId[];
+    }
+  | {
+      identity?: IdentityId | null;
+      kind: "conflict";
+      records: RecordId[];
+    };
+
+export type ReviewKind = "possible_merge" | "conflict";
+
+export interface ReviewList {
+  items: ReviewEntry[];
 }
 
 export type ReviewStatus = "open" | "resolved" | "superseded" | "dismissed";
@@ -1241,20 +1241,9 @@ export interface RuleResult {
 }
 
 /**
- * Identifies a run of the engine: an ingest, a match or a reconcile.
- */
-export type RunId = number;
-
-export type RunKind = "ingest" | "extract" | "match" | "reconcile";
-
-export interface RunList {
-  runs: RunRecord[];
-}
-
-/**
  * A run as a caller sees it.
  */
-export interface RunRecord {
+export interface RunEntry {
   /**
    * The entity type an ingest or a match run is about.
    */
@@ -1294,11 +1283,22 @@ export interface RunRecord {
 }
 
 /**
+ * Identifies a run of the engine: an ingest, a match or a reconcile.
+ */
+export type RunId = number;
+
+export type RunKind = "ingest" | "extract" | "match" | "reconcile";
+
+export interface RunList {
+  runs: RunEntry[];
+}
+
+/**
  * A run, as the response of a call that started one or read one. `run` is
  * `null` when there was nothing to do, so no run was started.
  */
 export interface RunResponse {
-  run?: RunRecord | null;
+  run?: RunEntry | null;
 }
 
 /**
@@ -1323,10 +1323,10 @@ export type Runtime = "python" | "typescript";
 export type Seq = number;
 
 /**
- * How many observations a source gave.
+ * How many records a source gave.
  */
 export interface SourceCount {
-  observations: number;
+  records: number;
   source: string;
 }
 
@@ -1341,7 +1341,7 @@ export interface SourceInfo {
   /**
    * Counting each version of a row.
    */
-  observations: number;
+  records: number;
   source: string;
   /**
    * Those of them no changeset has placed.
@@ -1364,9 +1364,9 @@ export interface SplitReport {
    */
   kept: IdentityId;
   /**
-   * The observations that moved to the new identity, in order.
+   * The records that moved to the new identity, in order.
    */
-  moved: ObservationId[];
+  moved: RecordId[];
 }
 
 /**
@@ -1386,17 +1386,17 @@ export interface SplitRequest {
    * default), so that nothing puts them back together unnoticed.
    */
   keep_apart?: boolean | null;
+  reason?: string | null;
   /**
-   * The observations on one side. The rest of the identity's members are
+   * The records on one side. The rest of the identity's members are
    * the other side. The larger side keeps the ID, the side not named here
    * on a tie.
    */
-  observations: ObservationId[];
-  reason?: string | null;
+  records: RecordId[];
 }
 
 /**
- * `POST /v1/runs`: match the new observations of one entity type.
+ * `POST /v1/runs`: match the new records of one entity type.
  */
 export interface StartRunRequest {
   /**
@@ -1407,8 +1407,8 @@ export interface StartRunRequest {
   commit?: boolean | null;
   entity_type: EntityType;
   /**
-   * Match every observation of the type again, not only the new ones.
-   * Observations that have an identity keep it: where the strategy
+   * Match every record of the type again, not only the new ones.
+   * Records that have an identity keep it: where the strategy
    * disagrees with the identities as they are, the run's `resolution`
    * lists `suggestions`.
    */
@@ -1544,14 +1544,14 @@ export interface TypeInfo {
   features: FeatureColumn[];
   identities: number;
   name: EntityType;
-  observations: number;
   /**
    * The draft that waits for a decision, if there is one.
    */
   open_draft?: ChangesetId | null;
   open_review_items: number;
+  records: number;
   /**
-   * The sources the observations came from, by name.
+   * The sources the records came from, by name.
    */
   sources: SourceInfo[];
   /**
@@ -1560,7 +1560,7 @@ export interface TypeInfo {
    */
   strategies?: Strategy[];
   /**
-   * Observations no changeset has placed.
+   * Records no changeset has placed.
    */
   unassigned: number;
 }
@@ -1585,17 +1585,17 @@ export interface TypeResolution {
   judgements: JudgementCounts;
   match_run: RunId;
   /**
-   * Observations the run examined: those ingested since the last run, and
+   * Records the run examined: those ingested since the last run, and
    * those an earlier run left for review.
    */
-  new_observations: number;
-  observations_assigned: number;
+  new_records: number;
+  reconcile_run: RunId;
+  records_assigned: number;
   /**
-   * Examined observations left without an identity. Each is named in
+   * Examined records left without an identity. Each is named in
    * `review`.
    */
-  observations_unassigned: number;
-  reconcile_run: RunId;
+  records_unassigned: number;
   /**
    * How many of them an earlier run had left for review.
    */
@@ -1606,7 +1606,7 @@ export interface TypeResolution {
   review: ReviewItem[];
   /**
    * Where the strategy disagrees with the identities as they are. Only a
-   * rematch has these: no other run judges pairs of observations that
+   * rematch has these: no other run judges pairs of records that
    * both have an identity.
    */
   suggestions?: Suggestions | null;

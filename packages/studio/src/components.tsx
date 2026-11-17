@@ -380,30 +380,30 @@ function sourceMark(source: string) {
 }
 
 /** Where records came from: the source's name, and how many of them when that is said. */
-export function Source({ name, observations }: { name: string; observations?: number }) {
+export function Source({ name, records }: { name: string; records?: number }) {
   return (
     <span data-part="source" {...stylex.props(styles.source)}>
       <span {...stylex.props(styles.sourceMark, sourceMark(name))} />
       {name}
-      {observations !== undefined ? <span {...stylex.props(styles.sourceCount)}>{observations}</span> : null}
+      {records !== undefined ? <span {...stylex.props(styles.sourceCount)}>{records}</span> : null}
     </span>
   );
 }
 
-export function Sources({ sources }: { sources: Array<{ source: string; observations: number }> }) {
+export function Sources({ sources }: { sources: Array<{ source: string; records: number }> }) {
   return (
     <span {...stylex.props(styles.sources)}>
-      {sources.map(({ source, observations }) => (
-        <Source key={source} name={source} observations={observations} />
+      {sources.map(({ source, records }) => (
+        <Source key={source} name={source} records={records} />
       ))}
     </span>
   );
 }
 
-export type Kind = "observation" | "identity" | "document" | "draft" | "run" | "review" | "log";
+export type Kind = "record" | "identity" | "document" | "draft" | "run" | "review" | "log";
 
 const SCREENS: Record<Kind, string> = {
-  observation: "records",
+  record: "records",
   identity: "identities",
   document: "documents",
   draft: "drafts",
@@ -509,7 +509,7 @@ export function Onward({
   );
 }
 
-/** A sentence with links in it. `names` gives observations a name to show in place of their ID. */
+/** A sentence with links in it. `names` gives records a name to show in place of their ID. */
 export function Parts({ parts, names }: { parts: Part[]; names?: Map<string, string> }) {
   return (
     <>
@@ -697,7 +697,7 @@ export function Filters({
 }
 
 /**
- * Keeps which observations of a list the reader ticked, in the order they
+ * Keeps which records of a list the reader ticked, in the order they
  * were ticked. With `most`, ticking one more lets go of the earliest.
  */
 export function useTicks(most?: number): {
@@ -719,7 +719,7 @@ export function useTicks(most?: number): {
   };
 }
 
-/** The link that explains two ticked observations, or what to tick to get it. */
+/** The link that explains two ticked records, or what to tick to get it. */
 export function ExplainTicked({ chosen }: { chosen: string[] }) {
   return chosen.length === 2 ? (
     <Onward path={["explain"]} query={{ a: chosen[0], b: chosen[1] }}>
@@ -731,7 +731,7 @@ export function ExplainTicked({ chosen }: { chosen: string[] }) {
 }
 
 /**
- * Keeps which two observations of a list the reader ticked, and gives the
+ * Keeps which two records of a list the reader ticked, and gives the
  * link that explains them.
  */
 export function usePair(): {

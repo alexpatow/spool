@@ -62,7 +62,7 @@ fn the_benchmark_measures_what_a_wrong_merge_costs_and_whether_its_repair_holds(
     assert_eq!(merged.id_stability.unchanged, 23);
     assert_eq!(merged.id_stability.following_redirects, Some(1.0));
     assert_eq!(merged.churn.identities_merged, 2);
-    assert_eq!(merged.churn.observations_reassigned, 3);
+    assert_eq!(merged.churn.records_reassigned, 3);
 
     // One is undone and one is split, and a missed match is merged by hand.
     // State is then exactly the truth.
@@ -72,7 +72,7 @@ fn the_benchmark_measures_what_a_wrong_merge_costs_and_whether_its_repair_holds(
         (0, 0)
     );
     assert_eq!(repaired.metrics.pairs.recall, Some(1.0));
-    // The undo gave two observations their identity back, the split gave one
+    // The undo gave two records their identity back, the split gave one
     // a new identity, and the merge moved one. Only the last is a redirect.
     assert_eq!(repaired.id_stability.unchanged, 22);
     assert_eq!(repaired.id_stability.unchanged_following_redirects, 23);
@@ -90,11 +90,11 @@ fn the_benchmark_measures_what_a_wrong_merge_costs_and_whether_its_repair_holds(
     assert_eq!(second.override_persistence.share, Some(1.0));
     assert_eq!(second.metrics.false_merges, 0);
     assert_eq!(second.metrics.unassigned, 1);
-    assert_eq!(second.churn.new_observations, 13);
+    assert_eq!(second.churn.new_records, 13);
     assert_eq!(second.churn.identities_created, 4);
-    assert_eq!(second.churn.observations_reassigned, 0);
+    assert_eq!(second.churn.records_reassigned, 0);
 
-    // A reviewer places it, and every observation is where the truth says.
+    // A reviewer places it, and every record is where the truth says.
     let last = report.steps.last().unwrap();
     assert_eq!(last.metrics.unassigned, 0);
     assert_eq!(last.metrics.identities, last.metrics.true_entities);
@@ -108,16 +108,16 @@ fn the_benchmark_measures_what_a_wrong_merge_costs_and_whether_its_repair_holds(
     // The default policy never merges identities, so what it decides depends
     // on which batch came first. The benchmark says by how much.
     let order = report.order_sensitivity.as_ref().unwrap();
-    assert_eq!((order.same_group, order.observations), (32, 39));
+    assert_eq!((order.same_group, order.records), (32, 39));
     assert_eq!((order.pairs_in_both, order.pairs_in_either), (22, 27));
 
     for line in [
         "corrected merge `atlas`: changeset at 2",
         "corrected undo: changeset at 4",
-        "churn         0 identities created, 2 merged, 3 observations reassigned",
+        "churn         0 identities created, 2 merged, 3 records reassigned",
         "splits        1 of 1 still apart (1.0000)",
         "constraints   2 of 2 still honoured (1.0000)",
-        "same group    32 of 39 observations (0.8205)",
+        "same group    32 of 39 records (0.8205)",
     ] {
         assert!(printed.contains(line), "no `{line}` in:\n{printed}");
     }

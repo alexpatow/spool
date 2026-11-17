@@ -31,13 +31,13 @@ fn stock(server: &Server, things: &[(&str, &str)]) {
     assert_eq!(run["run"]["status"], "succeeded", "{run}");
 }
 
-/// The observation the shop holds under a key.
+/// The record the shop holds under a key.
 fn thing(server: &Server, key: &str) -> Value {
-    let found = server.read(&format!("/v1/observations?source=shop&key={key}"));
-    let [observation] = &found["observations"].as_array().unwrap()[..] else {
-        panic!("one observation under {key}: {found}");
+    let found = server.read(&format!("/v1/records?source=shop&key={key}"));
+    let [record] = &found["records"].as_array().unwrap()[..] else {
+        panic!("one record under {key}: {found}");
     };
-    observation.clone()
+    record.clone()
 }
 
 fn head(server: &Server) -> u64 {
@@ -176,7 +176,7 @@ fn an_identity_is_split_and_a_constraint_keeps_the_sides_apart() {
 
     let split = server.call(
         &format!("/v1/identities/{}/split", anvils.as_str().unwrap()),
-        json!({ "observations": [third], "actor": REVIEWER, "reason": "another anvil" }),
+        json!({ "records": [third], "actor": REVIEWER, "reason": "another anvil" }),
     );
     assert_eq!(split["kept"], anvils);
     assert_eq!(split["moved"], json!([third]));
@@ -194,7 +194,7 @@ fn an_identity_is_split_and_a_constraint_keeps_the_sides_apart() {
     assert_eq!(constraint["to"], Value::Null);
     assert!([&constraint["a"], &constraint["b"]].contains(&&third));
     for filter in [
-        format!("observation={}", third.as_str().unwrap()),
+        format!("record={}", third.as_str().unwrap()),
         format!("identity={}", other.as_str().unwrap()),
         format!("identity={}", anvils.as_str().unwrap()),
     ] {
@@ -206,7 +206,7 @@ fn an_identity_is_split_and_a_constraint_keeps_the_sides_apart() {
     }
     let unrelated = thing(&server, "2")["id"].clone();
     let none = server.read(&format!(
-        "/v1/constraints?observation={}",
+        "/v1/constraints?record={}",
         unrelated.as_str().unwrap()
     ));
     let named = [&constraint["a"], &constraint["b"]].contains(&&unrelated);
@@ -277,10 +277,10 @@ fn an_identity_is_split_and_a_constraint_keeps_the_sides_apart() {
     dismiss(id).error(409, "conflict");
     dismiss(999).error(404, "not_found");
     server.get("/v1/review/999").error(404, "not_found");
-    let split = |identity: &str, observations: Value| {
+    let split = |identity: &str, records: Value| {
         server.post(
             &format!("/v1/identities/{identity}/split"),
-            json!({ "observations": observations, "actor": REVIEWER }),
+            json!({ "records": records, "actor": REVIEWER }),
         )
     };
     split(anvils.as_str().unwrap(), json!([third])).error(409, "conflict");
@@ -306,13 +306,10 @@ fn a_row_that_changed_is_read_with_the_version_it_replaced() {
     assert_eq!(ingest["run"]["ingest"]["superseded"], 1);
     server.call("/v1/runs", json!({ "entity_type": "thing" }));
 
-    let versions = server.read("/v1/observations?source=shop&key=1");
-    let versions = versions["observations"].as_array().unwrap();
+    let versions = server.read("/v1/records?source=shop&key=1");
+    let versions = versions["records"].as_array().unwrap();
     assert_eq!(versions.len(), 2);
-    let old = server.read(&format!(
-        "/v1/observations/{}",
-        first["id"].as_str().unwrap()
-    ));
+    let old = server.read(&format!("/v1/records/{}", first["id"].as_str().unwrap()));
     let new = versions
         .iter()
         .find(|version| version["id"] != first["id"])

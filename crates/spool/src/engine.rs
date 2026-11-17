@@ -11,28 +11,28 @@ use duckdb::{Connection, params};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use spool_core::{
-    Actor, Changeset, ChangesetId, Clock, Committed, ConstraintKind, ConstraintRecord, Draft,
+    Actor, Changeset, ChangesetId, Clock, Committed, ConstraintEntry, ConstraintKind, Draft,
     EntityType, EvidenceSummary, IdGenerator, IdentityId, IdentityLink, IdentityState,
-    IdentityStatus, IdentityStore, LogEntry, MemoryState, NewObservation, NewPair, ObservationId,
-    Op, Policy, RandomIds, ReviewItem, RunId, SeededIds, Seq, Snapshot, StepClock, SystemClock,
+    IdentityStatus, IdentityStore, LogEntry, MemoryState, NewPair, NewRecord, Op, Policy,
+    RandomIds, RecordId, ReviewItem, RunId, SeededIds, Seq, Snapshot, StepClock, SystemClock,
     Verdict, inverse, reconcile, validate,
 };
 
-use crate::drafts::{self, DraftFilter, DraftRecord, DraftStatus, DraftSummary};
+use crate::drafts::{self, DraftEntry, DraftFilter, DraftStatus, DraftSummary};
 use crate::error::{Error, Result};
 use crate::explain::{self, Explanation};
 use crate::features;
 use crate::ingest::{self, IngestOptions, IngestReport};
 use crate::lookup::{
-    self, HistoryEntry, IdentityFilter, IdentitySummary, IdentityView, ObservationFilter,
-    ObservationRecord, StoreInfo,
+    self, HistoryEntry, IdentityFilter, IdentitySummary, IdentityView, RecordEntry, RecordFilter,
+    StoreInfo,
 };
 use crate::metrics::{self, Churn, IdStability, Metrics};
 use crate::project::{EntityTypeManifest, Manifest, Strategy, hash_json};
-use crate::review::{self, ReviewCase, ReviewFilter, ReviewRecord};
+use crate::review::{self, ReviewCase, ReviewEntry, ReviewFilter};
 use crate::rows::Rows;
 use crate::rules;
-use crate::runs::{self, RunFilter, RunRecord, RunStatus};
+use crate::runs::{self, RunEntry, RunFilter, RunStatus};
 use crate::schema;
 use crate::store::{self, DuckStore};
 use crate::usercode::{self, Task, TaskInfo, UserCode};
@@ -96,18 +96,18 @@ impl StrategyRef {
     }
 }
 
-/// Which observations a match run treats as new: those of one entity type
+/// Which records a match run treats as new: those of one entity type
 /// ingested since the last match run of that type that succeeded.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Scope {
     pub entity_type: EntityType,
-    /// Examine every observation of the type again, not only the new ones.
+    /// Examine every record of the type again, not only the new ones.
     /// See [`ResolveOptions::rematch`].
     pub rematch: bool,
 }
 
 impl Scope {
-    /// The observations of a type that are new.
+    /// The records of a type that are new.
     pub fn new(entity_type: EntityType) -> Self {
         Self {
             entity_type,
@@ -115,7 +115,7 @@ impl Scope {
         }
     }
 
-    /// Every observation of a type.
+    /// Every record of a type.
     pub fn rematch(entity_type: EntityType) -> Self {
         Self {
             entity_type,
@@ -134,13 +134,13 @@ pub struct ResolveOptions {
     /// project's user-code strategies. `None` is `rules`. Every type that is
     /// resolved must have it.
     pub strategy: Option<String>,
-    /// Match every observation again, not only the new ones, which is what
+    /// Match every record again, not only the new ones, which is what
     /// a new strategy or a changed rule calls for.
     ///
-    /// A rematch changes nothing about an observation that has an identity:
+    /// A rematch changes nothing about a record that has an identity:
     /// judgements never merge or split existing identities. Where the
     /// strategy disagrees with the identities as they are, the run reports
-    /// it as [`Suggestions`]. Observations without an identity are placed
+    /// it as [`Suggestions`]. Records without an identity are placed
     /// as in any run.
     pub rematch: bool,
 }
@@ -173,7 +173,7 @@ pub struct ApplyReport {
     /// Entity types the store already held with the same declaration.
     pub unchanged: Vec<EntityType>,
     /// Entity types whose declaration changed. Their feature tables were
-    /// computed again from the stored observations.
+    /// computed again from the stored records.
     #[serde(default)]
     pub rebuilt: Vec<EntityType>,
 }
@@ -181,7 +181,7 @@ pub struct ApplyReport {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ResolveReport {
-    /// One entry per entity type that had new observations.
+    /// One entry per entity type that had new records.
     pub resolved: Vec<TypeResolution>,
 }
 
@@ -191,19 +191,19 @@ pub struct TypeResolution {
     pub entity_type: EntityType,
     pub match_run: RunId,
     pub reconcile_run: RunId,
-    /// Observations the run examined: those ingested since the last run, and
+    /// Records the run examined: those ingested since the last run, and
     /// those an earlier run left for review.
-    pub new_observations: u64,
+    pub new_records: u64,
     /// How many of them an earlier run had left for review.
     pub reexamined: u64,
     /// Distinct candidate pairs.
     pub candidates: u64,
     pub judgements: JudgementCounts,
     pub identities_created: u64,
-    pub observations_assigned: u64,
-    /// Examined observations left without an identity. Each is named in
+    pub records_assigned: u64,
+    /// Examined records left without an identity. Each is named in
     /// `review`.
-    pub observations_unassigned: u64,
+    pub records_unassigned: u64,
     /// What the run would not decide. The store keeps these as review items.
     pub review: Vec<ReviewItem>,
     /// The changeset, once it is committed. `None` when there was nothing to
@@ -214,7 +214,7 @@ pub struct TypeResolution {
     #[serde(default)]
     pub draft: Option<ChangesetId>,
     /// Where the strategy disagrees with the identities as they are. Only a
-    /// rematch has these: no other run judges pairs of observations that
+    /// rematch has these: no other run judges pairs of records that
     /// both have an identity.
     #[serde(default)]
     pub suggestions: Option<Suggestions>,
@@ -283,8 +283,8 @@ pub struct SplitReport {
     pub kept: IdentityId,
     /// The new identity.
     pub identity: IdentityId,
-    /// The observations that moved to the new identity, in order.
-    pub moved: Vec<ObservationId>,
+    /// The records that moved to the new identity, in order.
+    pub moved: Vec<RecordId>,
     pub changeset: Changeset,
     pub committed: Committed,
 }
@@ -292,8 +292,8 @@ pub struct SplitReport {
 /// Which constraints to list. The default lists those in force.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ConstraintFilter {
-    /// Only those that name this observation.
-    pub observation: Option<ObservationId>,
+    /// Only those that name this record.
+    pub record: Option<RecordId>,
     /// Only those that name a current member of this identity.
     pub identity: Option<IdentityId>,
     /// Also those that were removed.
@@ -326,7 +326,7 @@ pub struct Engine {
     /// [`extract`](Engine::extract) from start to finish, so that one piece
     /// of user code runs at a time. The writer is let go while user code
     /// runs, and a second resolve that began in that gap would match the
-    /// same observations again, as a second extraction would read the same
+    /// same records again, as a second extraction would read the same
     /// documents again.
     resolving: Mutex<()>,
 }
@@ -402,13 +402,13 @@ struct MatchConfig {
     entity_type: EntityType,
     declaration_version: u32,
     manifest_hash: String,
-    /// New observations are those ingested after this run.
+    /// New records are those ingested after this run.
     after_run: RunId,
-    /// The review items that were open when the run began. Their observations
+    /// The review items that were open when the run began. Their records
     /// are examined again.
     #[serde(default)]
     review_items: Vec<u64>,
-    /// Every observation of the type is examined, not only the new ones.
+    /// Every record of the type is examined, not only the new ones.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     rematch: bool,
     rules: crate::project::RuleSet,
@@ -522,7 +522,7 @@ impl Engine {
     ///
     /// A type whose declaration differs from the one in the store gets a new
     /// declaration version, and its feature table is computed again from the
-    /// stored observations. Identities and the log are not touched. Match
+    /// stored records. Identities and the log are not touched. Match
     /// runs of the type that were waiting for judgements are failed, because
     /// their candidates were generated from the old features.
     pub fn apply(&self, manifest: &Manifest) -> Result<ApplyReport> {
@@ -563,7 +563,7 @@ impl Engine {
         self.read(|conn| schema::meta(conn, "manifest_hash"))
     }
 
-    /// Stores rows from one source as observations of one entity type and
+    /// Stores rows from one source as records of one entity type and
     /// computes their feature rows. A row that is already known, by its
     /// source, key and content, creates nothing.
     pub fn ingest(
@@ -577,7 +577,7 @@ impl Engine {
     }
 
     /// Starts a match run and generates its candidate pairs with the
-    /// project's block rules. The run examines the observations ingested
+    /// project's block rules. The run examines the records ingested
     /// since the last match run of the type that succeeded, and again those
     /// of open review items.
     ///
@@ -604,16 +604,16 @@ impl Engine {
     /// stored. The rows need `left_id`, `right_id` and `verdict`, and may
     /// have `score` and `detail`.
     ///
-    /// The whole submission is refused if a row names an observation the
+    /// The whole submission is refused if a row names a record the
     /// store does not hold as this run's entity type, or a pair in which
-    /// neither observation is new to the run.
+    /// neither record is new to the run.
     pub fn submit_judgements(&self, run: RunId, rows: impl RecordBatchReader) -> Result<u64> {
         self.lock().submit_judgements(run, rows)
     }
 
     /// Turns a match run's judgements into a draft changeset and leaves it
     /// for review. Nothing is committed. What the draft leaves out is stored
-    /// as review items, which stay open until their observations have an
+    /// as review items, which stay open until their records have an
     /// identity.
     ///
     /// The same as [`reconcile_with`](Self::reconcile_with) and
@@ -631,7 +631,7 @@ impl Engine {
     /// A stored draft is named by its changeset ID. The run is `drafted`
     /// until the draft is committed, and only then has it succeeded: what is
     /// new to the next run is counted from the last run that succeeded, so
-    /// the observations of a draft nobody commits are examined again. A run
+    /// the records of a draft nobody commits are examined again. A run
     /// whose draft is empty has succeeded at once.
     ///
     /// Drafting an entity type closes its earlier open drafts as superseded,
@@ -648,7 +648,7 @@ impl Engine {
     }
 
     /// Gives up an open match run. It is recorded as failed, and its
-    /// observations are still new to the next run.
+    /// records are still new to the next run.
     pub fn cancel_run(&self, run: RunId) -> Result<()> {
         self.lock().cancel_run(run)
     }
@@ -688,7 +688,7 @@ impl Engine {
         self.lock().undo(seq, actor, reason, commit)
     }
 
-    /// Splits an identity in two: the named observations on one side, the
+    /// Splits an identity in two: the named records on one side, the
     /// rest of its members on the other. The larger side keeps the ID, the
     /// side that was not named on a tie, and the other side gets a new
     /// identity. With `keep_apart`, a `cannot_link` constraint between the
@@ -702,29 +702,29 @@ impl Engine {
     pub fn split(
         &self,
         identity: IdentityId,
-        observations: &[ObservationId],
+        records: &[RecordId],
         keep_apart: bool,
         base: Option<Seq>,
         actor: Actor,
         reason: Option<String>,
     ) -> Result<SplitReport> {
         self.lock()
-            .split(identity, observations, keep_apart, base, actor, reason)
+            .split(identity, records, keep_apart, base, actor, reason)
     }
 
-    /// Constraints, ordered by their observations.
-    pub fn constraints(&self, filter: &ConstraintFilter) -> Result<Vec<ConstraintRecord>> {
+    /// Constraints, ordered by their records.
+    pub fn constraints(&self, filter: &ConstraintFilter) -> Result<Vec<ConstraintEntry>> {
         self.read(|conn| constraints(conn, filter))
     }
 
-    /// Closes an open review item without giving its observations an
+    /// Closes an open review item without giving its records an
     /// identity. Later runs no longer examine them on its account.
     pub fn dismiss_review(
         &self,
         id: u64,
         actor: &Actor,
         reason: Option<&str>,
-    ) -> Result<ReviewRecord> {
+    ) -> Result<ReviewEntry> {
         let mut inner = self.lock();
         let now = inner.store.clock.now_micros();
         review::dismiss(&inner.store.conn, id, actor, now, reason)
@@ -738,13 +738,13 @@ impl Engine {
     }
 
     /// Closes a stored draft without committing it. Its match run has not
-    /// succeeded, so the next run examines the same observations again.
+    /// succeeded, so the next run examines the same records again.
     pub fn reject_draft(&self, draft: ChangesetId, reason: Option<&str>) -> Result<DraftSummary> {
         self.lock().reject_draft(draft, reason)
     }
 
     /// A stored draft with its changeset.
-    pub fn draft(&self, draft: ChangesetId) -> Result<DraftRecord> {
+    pub fn draft(&self, draft: ChangesetId) -> Result<DraftEntry> {
         self.read(|conn| drafts::get(conn, draft))?
             .ok_or(Error::UnknownDraft(draft))
     }
@@ -754,9 +754,9 @@ impl Engine {
         self.read(|conn| drafts::list(conn, filter))
     }
 
-    /// Matches new observations with a strategy, reconciles with the default
+    /// Matches new records with a strategy, reconciles with the default
     /// policy, and commits or leaves a draft for review. A type is resolved
-    /// when it has newly ingested observations or open review items, and
+    /// when it has newly ingested records or open review items, and
     /// always by a [rematch](ResolveOptions::rematch).
     ///
     /// The strategy is the built-in runner of the project's SQL rules, or
@@ -769,7 +769,7 @@ impl Engine {
     ///
     /// The match run is recorded as succeeded only after the commit. A
     /// resolve that is cut short leaves the run unfinished, and the next
-    /// resolve examines the same observations again.
+    /// resolve examines the same records again.
     pub fn resolve(&self, options: &ResolveOptions) -> Result<ResolveReport> {
         let _turn = lock(&self.resolving);
         let plan = self.lock().plan(options)?;
@@ -845,18 +845,18 @@ impl Engine {
 
     /// A run as the store records it: the task record of whatever started
     /// it.
-    pub fn run(&self, run: RunId) -> Result<RunRecord> {
+    pub fn run(&self, run: RunId) -> Result<RunEntry> {
         self.read(|conn| runs::get(conn, run))?
             .ok_or(Error::UnknownRun(run))
     }
 
     /// Runs, newest first.
-    pub fn runs(&self, filter: &RunFilter) -> Result<Vec<RunRecord>> {
+    pub fn runs(&self, filter: &RunFilter) -> Result<Vec<RunEntry>> {
         self.read(|conn| runs::list(conn, filter))
     }
 
     /// Review items, oldest first.
-    pub fn review_items(&self, filter: &ReviewFilter) -> Result<Vec<ReviewRecord>> {
+    pub fn review_items(&self, filter: &ReviewFilter) -> Result<Vec<ReviewEntry>> {
         self.read(|conn| review::list(conn, filter))
     }
 
@@ -867,14 +867,14 @@ impl Engine {
         self.read(|conn| review::case(conn, id))
     }
 
-    pub fn identity_of(&self, observation: ObservationId) -> Result<Option<IdentityId>> {
-        Ok(self.identities_of(&[observation])?[0])
+    pub fn identity_of(&self, record: RecordId) -> Result<Option<IdentityId>> {
+        Ok(self.identities_of(&[record])?[0])
     }
 
-    /// The identity of each observation, in the order asked. `None` for an
-    /// observation that has no identity or that the store does not hold.
-    pub fn identities_of(&self, observations: &[ObservationId]) -> Result<Vec<Option<IdentityId>>> {
-        self.read(|conn| store::read_assignments(conn, observations))
+    /// The identity of each record, in the order asked. `None` for an
+    /// record that has no identity or that the store does not hold.
+    pub fn identities_of(&self, records: &[RecordId]) -> Result<Vec<Option<IdentityId>>> {
+        self.read(|conn| store::read_assignments(conn, records))
     }
 
     /// The active identity an ID stands for: itself, or the identity it was
@@ -892,7 +892,7 @@ impl Engine {
         }
     }
 
-    /// An identity with the observations that belong to it now.
+    /// An identity with the records that belong to it now.
     pub fn identity(&self, id: IdentityId) -> Result<IdentityView> {
         self.read(|conn| lookup::identity(conn, id))?
             .ok_or(Error::UnknownIdentity(id))
@@ -913,22 +913,22 @@ impl Engine {
         })
     }
 
-    /// An observation as it was ingested, or `None` if the store does not
+    /// A record as it was ingested, or `None` if the store does not
     /// hold it.
-    pub fn observation(&self, id: ObservationId) -> Result<Option<ObservationRecord>> {
-        self.read(|conn| lookup::observation(conn, id))
+    pub fn record(&self, id: RecordId) -> Result<Option<RecordEntry>> {
+        self.read(|conn| lookup::record(conn, id))
     }
 
-    /// Observations, ordered by ID. A caller that knows a row by its source
-    /// and key finds its observation IDs here: only the engine computes them.
-    pub fn observations(&self, filter: &ObservationFilter) -> Result<Vec<ObservationRecord>> {
-        self.read(|conn| lookup::observations(conn, filter))
+    /// Records, ordered by ID. A caller that knows a row by its source
+    /// and key finds its record IDs here: only the engine computes them.
+    pub fn records(&self, filter: &RecordFilter) -> Result<Vec<RecordEntry>> {
+        self.read(|conn| lookup::records(conn, filter))
     }
 
-    /// Why two observations share an identity, or do not: where each is,
+    /// Why two records share an identity, or do not: where each is,
     /// what every run that looked at the pair concluded, and what the
     /// project's rules say about it now.
-    pub fn explain(&self, a: ObservationId, b: ObservationId) -> Result<Explanation> {
+    pub fn explain(&self, a: RecordId, b: RecordId) -> Result<Explanation> {
         // The rules have to be those the feature tables were built for. The
         // manifest is read before the store is, and `apply` can commit
         // another declaration in between, so the read checks that the store
@@ -1025,18 +1025,18 @@ impl Engine {
     }
 
     /// Scores current state against a truth relation with the columns
-    /// `observation_id` and `true_entity`.
+    /// `record_id` and `true_entity`.
     pub fn score(&self, truth: impl RecordBatchReader) -> Result<Metrics> {
         let inner = self.lock();
         let conn = &inner.store.conn;
         conn.execute_batch(&format!(
-            "CREATE OR REPLACE TEMP TABLE {} (observation_id UUID, true_entity VARCHAR)",
+            "CREATE OR REPLACE TEMP TABLE {} (record_id UUID, true_entity VARCHAR)",
             metrics::TRUTH
         ))?;
         for batch in truth {
             conn.execute(
                 &format!(
-                    "INSERT INTO {} SELECT observation_id::UUID, true_entity::VARCHAR FROM arrow(?)",
+                    "INSERT INTO {} SELECT record_id::UUID, true_entity::VARCHAR FROM arrow(?)",
                     metrics::TRUTH
                 ),
                 [&ArrowBatchRegistration::new(batch?)],
@@ -1045,37 +1045,37 @@ impl Engine {
         metrics::score(conn)
     }
 
-    /// Compares each observation's identity at two log positions.
+    /// Compares each record's identity at two log positions.
     pub fn id_stability(&self, before: Seq, after: Seq) -> Result<IdStability> {
         self.read(|conn| metrics::id_stability(conn, before, after))
     }
 
     /// What changed between two log positions, against the number of
-    /// observations that arrived in between.
-    pub fn churn(&self, before: Seq, after: Seq, new_observations: u64) -> Result<Churn> {
-        self.read(|conn| metrics::churn(conn, before, after, new_observations))
+    /// records that arrived in between.
+    pub fn churn(&self, before: Seq, after: Seq, new_records: u64) -> Result<Churn> {
+        self.read(|conn| metrics::churn(conn, before, after, new_records))
     }
 }
 
-fn constraints(conn: &Connection, filter: &ConstraintFilter) -> Result<Vec<ConstraintRecord>> {
+fn constraints(conn: &Connection, filter: &ConstraintFilter) -> Result<Vec<ConstraintEntry>> {
     let mut statement = conn.prepare(
-        "SELECT c.observation_a::VARCHAR, c.observation_b::VARCHAR, c.kind, c.from_seq, c.to_seq
+        "SELECT c.record_a::VARCHAR, c.record_b::VARCHAR, c.kind, c.from_seq, c.to_seq
          FROM spool.constraint_link c
          WHERE ($1::BOOLEAN OR c.to_seq IS NULL)
-           AND ($2::VARCHAR IS NULL OR $2::UUID IN (c.observation_a, c.observation_b))
+           AND ($2::VARCHAR IS NULL OR $2::UUID IN (c.record_a, c.record_b))
            AND ($3::VARCHAR IS NULL OR EXISTS (
                  SELECT 1 FROM spool.membership m
                  WHERE m.to_seq IS NULL AND m.identity_id = $3::UUID
-                   AND m.observation_id IN (c.observation_a, c.observation_b)))",
+                   AND m.record_id IN (c.record_a, c.record_b)))",
     )?;
     let mut rows = statement.query(params![
         filter.include_removed,
-        filter.observation.map(|id| id.to_string()),
+        filter.record.map(|id| id.to_string()),
         filter.identity.map(|id| id.to_string()),
     ])?;
     let mut found = Vec::new();
     while let Some(row) = rows.next()? {
-        found.push(ConstraintRecord {
+        found.push(ConstraintEntry {
             constraint: store::constraint(row, 0)?,
             from: Seq(row.get::<_, i64>(3)? as u64),
             to: row.get::<_, Option<i64>>(4)?.map(|seq| Seq(seq as u64)),
@@ -1108,7 +1108,7 @@ fn feature_columns(conn: &Connection, table: &str) -> Result<Vec<(String, String
     let mut columns = Vec::new();
     while let Some(row) = rows.next()? {
         let name: String = row.get(0)?;
-        if name != "observation_id" && name != "declaration_version" {
+        if name != "record_id" && name != "declaration_version" {
             columns.push((name, row.get(1)?));
         }
     }
@@ -1145,8 +1145,8 @@ fn candidates_query(table: &str, columns: &[(String, String)], run: RunId, file:
     format!(
         "SELECT c.left_id{id} AS left_id, c.right_id{id} AS right_id{left}{right}
          FROM (SELECT DISTINCT left_id, right_id FROM spool.candidate WHERE run_id = {run}) c
-         JOIN {table} l ON l.observation_id = c.left_id
-         JOIN {table} r ON r.observation_id = c.right_id
+         JOIN {table} l ON l.record_id = c.left_id
+         JOIN {table} r ON r.record_id = c.right_id
          ORDER BY c.left_id, c.right_id",
         left = select_features(columns, "l", "left_", file),
         right = select_features(columns, "r", "right_", file),
@@ -1410,7 +1410,7 @@ impl Inner {
                 let clash: Option<String> = {
                     let mut statement = tx.prepare(
                         "SELECT o.entity_type FROM arrow(?) s
-                         JOIN spool.observation o ON o.observation_id = s.observation_id::UUID
+                         JOIN spool.record o ON o.record_id = s.record_id::UUID
                          WHERE o.entity_type <> ? LIMIT 1",
                     )?;
                     let mut found = statement.query(params![
@@ -1442,7 +1442,7 @@ impl Inner {
                 return Err(Error::Ingest(problem));
             }
             let superseded: i64 = tx.query_row(
-                "SELECT count(*) FROM spool.observation
+                "SELECT count(*) FROM spool.record
                  WHERE ingest_run = ? AND supersedes IS NOT NULL",
                 [run.0 as i64],
                 |row| row.get(0),
@@ -1593,23 +1593,23 @@ impl Inner {
                            WHEN try_cast(j.left_id AS UUID) IS NULL OR try_cast(j.right_id AS UUID) IS NULL
                              THEN 'an ID is missing or is not a UUID'
                            WHEN try_cast(j.left_id AS UUID) = try_cast(j.right_id AS UUID)
-                             THEN 'both sides are the same observation'
+                             THEN 'both sides are the same record'
                            WHEN j.verdict IS NULL OR j.verdict NOT IN ('match', 'no_match', 'unsure')
                              THEN 'the verdict must be match, no_match or unsure'
                            WHEN {detail} IS NOT NULL AND NOT json_valid({detail})
                              THEN 'the detail is not valid JSON'
-                           WHEN l.observation_id IS NULL OR r.observation_id IS NULL
-                             THEN 'it names an observation that is not a known {entity_type}'
-                           WHEN ls.observation_id IS NULL AND rs.observation_id IS NULL
-                             THEN 'neither observation is new to this run'
+                           WHEN l.record_id IS NULL OR r.record_id IS NULL
+                             THEN 'it names a record that is not a known {entity_type}'
+                           WHEN ls.record_id IS NULL AND rs.record_id IS NULL
+                             THEN 'neither record is new to this run'
                          END AS problem
                        FROM arrow(?) j
-                       LEFT JOIN spool.observation l
-                         ON l.observation_id = try_cast(j.left_id AS UUID) AND l.entity_type = '{entity_type}'
-                       LEFT JOIN spool.observation r
-                         ON r.observation_id = try_cast(j.right_id AS UUID) AND r.entity_type = '{entity_type}'
-                       LEFT JOIN {scope} ls ON ls.observation_id = l.observation_id
-                       LEFT JOIN {scope} rs ON rs.observation_id = r.observation_id
+                       LEFT JOIN spool.record l
+                         ON l.record_id = try_cast(j.left_id AS UUID) AND l.entity_type = '{entity_type}'
+                       LEFT JOIN spool.record r
+                         ON r.record_id = try_cast(j.right_id AS UUID) AND r.entity_type = '{entity_type}'
+                       LEFT JOIN {scope} ls ON ls.record_id = l.record_id
+                       LEFT JOIN {scope} rs ON rs.record_id = r.record_id
                      ) WHERE problem IS NOT NULL LIMIT 1",
                     scope = rules::SCOPE,
                 ))?;
@@ -1678,7 +1678,7 @@ impl Inner {
     /// is nothing to commit, and not before: what is new to the next run is
     /// counted from the last run that succeeded. If the process stops between
     /// the commit and the line that records it, the next run examines the
-    /// same observations again, and those the commit placed are no longer
+    /// same records again, and those the commit placed are no longer
     /// new.
     fn conclude(
         &mut self,
@@ -1696,10 +1696,10 @@ impl Inner {
         )?;
         let (draft, mut report) = self.in_run(reconcile_run, |inner| {
             let evidence = inner.evidence(run, &config)?;
-            let new_observations = evidence.observations.len() as u64;
+            let new_records = evidence.records.len() as u64;
             let reexamined = inner.count(&format!(
                 "SELECT count(*) FROM {} s
-                 JOIN spool.observation o ON o.observation_id = s.observation_id
+                 JOIN spool.record o ON o.record_id = s.record_id
                  WHERE o.ingest_run <= {}",
                 rules::SCOPE,
                 config.after_run
@@ -1716,11 +1716,11 @@ impl Inner {
                     "SELECT count(*) FROM spool.judgement {run_filter} AND verdict = '{verdict}'"
                 ))
             };
-            let (mut identities_created, mut observations_assigned) = (0, 0);
+            let (mut identities_created, mut records_assigned) = (0, 0);
             for op in &draft.changeset.ops {
                 match op {
                     spool_core::Op::CreateIdentity { .. } => identities_created += 1,
-                    spool_core::Op::Assign { .. } => observations_assigned += 1,
+                    spool_core::Op::Assign { .. } => records_assigned += 1,
                     _ => {}
                 }
             }
@@ -1729,7 +1729,7 @@ impl Inner {
                 entity_type: entity_type.clone(),
                 match_run: run,
                 reconcile_run,
-                new_observations,
+                new_records,
                 reexamined,
                 candidates: inner.count(&format!(
                     "SELECT count(*) FROM (SELECT DISTINCT left_id, right_id FROM spool.candidate {run_filter})"
@@ -1740,8 +1740,8 @@ impl Inner {
                     unsure: judged(inner, "unsure")?,
                 },
                 identities_created,
-                observations_assigned,
-                observations_unassigned: new_observations - observations_assigned,
+                records_assigned,
+                records_unassigned: new_records - records_assigned,
                 review: draft.review.clone(),
                 committed: None,
                 draft: held.then_some(draft.changeset.id),
@@ -1820,11 +1820,11 @@ impl Inner {
             &config.review_items,
             config.rematch,
         )?;
-        // An observation that has an identity is not new: one that got it
+        // A record that has an identity is not new: one that got it
         // since the run began, and in a rematch every one that had it.
         conn.execute_batch(&format!(
-            "DELETE FROM {scope} WHERE observation_id IN (
-               SELECT observation_id FROM spool.membership WHERE to_seq IS NULL)"
+            "DELETE FROM {scope} WHERE record_id IN (
+               SELECT record_id FROM spool.membership WHERE to_seq IS NULL)"
         ))?;
         // What the reconciler goes by is the run's judgements, except where
         // something stronger has spoken for a pair. A constraint is a
@@ -1836,21 +1836,21 @@ impl Inner {
         conn.execute_batch(&format!(
             "CREATE OR REPLACE TEMP TABLE {JUDGED} AS
              WITH spoken AS (
-               SELECT least(c.observation_a, c.observation_b) AS left_id,
-                      greatest(c.observation_a, c.observation_b) AS right_id,
+               SELECT least(c.record_a, c.record_b) AS left_id,
+                      greatest(c.record_a, c.record_b) AS right_id,
                       CASE c.kind WHEN 'must_link' THEN 'match' ELSE 'no_match' END AS verdict,
                       1 AS rank
                FROM spool.constraint_link c
                WHERE c.to_seq IS NULL
-                 AND (c.observation_a IN (SELECT observation_id FROM {scope})
-                   OR c.observation_b IN (SELECT observation_id FROM {scope}))
+                 AND (c.record_a IN (SELECT record_id FROM {scope})
+                   OR c.record_b IN (SELECT record_id FROM {scope}))
                UNION ALL
-               SELECT least(o.observation_id, o.supersedes),
-                      greatest(o.observation_id, o.supersedes), 'match', 2
-               FROM spool.observation o
+               SELECT least(o.record_id, o.supersedes),
+                      greatest(o.record_id, o.supersedes), 'match', 2
+               FROM spool.record o
                WHERE o.supersedes IS NOT NULL AND o.entity_type = '{entity_type}'
-                 AND (o.observation_id IN (SELECT observation_id FROM {scope})
-                   OR o.supersedes IN (SELECT observation_id FROM {scope}))
+                 AND (o.record_id IN (SELECT record_id FROM {scope})
+                   OR o.supersedes IN (SELECT record_id FROM {scope}))
              ), decided AS (
                SELECT left_id, right_id, arg_min(verdict, rank) AS verdict
                FROM spoken GROUP BY left_id, right_id
@@ -1867,12 +1867,12 @@ impl Inner {
         let mut evidence = EvidenceSummary::default();
 
         let mut statement = conn.prepare(&format!(
-            "SELECT observation_id::VARCHAR FROM {scope} ORDER BY observation_id"
+            "SELECT record_id::VARCHAR FROM {scope} ORDER BY record_id"
         ))?;
         let mut rows = statement.query([])?;
         while let Some(row) = rows.next()? {
-            evidence.observations.push(NewObservation {
-                observation: row.get::<_, String>(0)?.parse().map_err(id_error)?,
+            evidence.records.push(NewRecord {
+                record: row.get::<_, String>(0)?.parse().map_err(id_error)?,
                 entity_type: config.entity_type.clone(),
             });
         }
@@ -1880,8 +1880,8 @@ impl Inner {
         let mut statement = conn.prepare(&format!(
             "SELECT left_id::VARCHAR, right_id::VARCHAR, verdict
              FROM {JUDGED}
-             WHERE left_id IN (SELECT observation_id FROM {scope})
-               AND right_id IN (SELECT observation_id FROM {scope})
+             WHERE left_id IN (SELECT record_id FROM {scope})
+               AND right_id IN (SELECT record_id FROM {scope})
              ORDER BY left_id, right_id, verdict"
         ))?;
         let mut rows = statement.query([])?;
@@ -1904,20 +1904,20 @@ impl Inner {
              FROM (
                SELECT left_id AS new_id, right_id AS other_id, verdict, score
                FROM {JUDGED}
-               WHERE left_id IN (SELECT observation_id FROM {scope})
+               WHERE left_id IN (SELECT record_id FROM {scope})
                UNION ALL
                SELECT right_id, left_id, verdict, score
                FROM {JUDGED}
-               WHERE right_id IN (SELECT observation_id FROM {scope})
+               WHERE right_id IN (SELECT record_id FROM {scope})
              ) j
-             JOIN spool.membership m ON m.observation_id = j.other_id AND m.to_seq IS NULL
+             JOIN spool.membership m ON m.record_id = j.other_id AND m.to_seq IS NULL
              GROUP BY j.new_id, m.identity_id
              ORDER BY j.new_id, m.identity_id"
         ))?;
         let mut rows = statement.query([])?;
         while let Some(row) = rows.next()? {
             evidence.links.push(IdentityLink {
-                observation: row.get::<_, String>(0)?.parse().map_err(id_error)?,
+                record: row.get::<_, String>(0)?.parse().map_err(id_error)?,
                 identity: row.get::<_, String>(1)?.parse().map_err(id_error)?,
                 matches: row.get::<_, i64>(2)? as u64,
                 no_matches: row.get::<_, i64>(3)? as u64,
@@ -2004,19 +2004,19 @@ impl Inner {
     fn split(
         &mut self,
         identity: IdentityId,
-        observations: &[ObservationId],
+        records: &[RecordId],
         keep_apart: bool,
         base: Option<Seq>,
         actor: Actor,
         reason: Option<String>,
     ) -> Result<SplitReport> {
         let refuse = |message: String| Error::Split { identity, message };
-        let record = self
+        let entry = self
             .store
             .identities(&[identity])?
             .remove(0)
             .ok_or(Error::UnknownIdentity(identity))?;
-        if let IdentityStatus::MergedInto(survivor) = record.status {
+        if let IdentityStatus::MergedInto(survivor) = entry.status {
             return Err(refuse(format!(
                 "it was merged into {survivor}, which has its members now"
             )));
@@ -2035,25 +2035,23 @@ impl Inner {
                 )));
             }
         }
-        let members: BTreeSet<ObservationId> = self
+        let members: BTreeSet<RecordId> = self
             .store
             .members(&[identity])?
             .into_iter()
-            .map(|(_, observation)| observation)
+            .map(|(_, record)| record)
             .collect();
-        let named: BTreeSet<ObservationId> = observations.iter().copied().collect();
+        let named: BTreeSet<RecordId> = records.iter().copied().collect();
         if named.is_empty() {
-            return Err(refuse("no observations were named".to_owned()));
+            return Err(refuse("no records were named".to_owned()));
         }
         if let Some(stranger) = named.difference(&members).next() {
-            return Err(refuse(format!(
-                "observation {stranger} does not belong to it"
-            )));
+            return Err(refuse(format!("record {stranger} does not belong to it")));
         }
-        let rest: BTreeSet<ObservationId> = members.difference(&named).copied().collect();
+        let rest: BTreeSet<RecordId> = members.difference(&named).copied().collect();
         if rest.is_empty() {
             return Err(refuse(
-                "every member was named, and a split leaves observations on both sides".to_owned(),
+                "every member was named, and a split leaves records on both sides".to_owned(),
             ));
         }
         // The larger side keeps the ID: more of what refers to the identity
@@ -2067,17 +2065,17 @@ impl Inner {
         let new = lock(&self.ids).identity_id();
         let mut ops = vec![Op::CreateIdentity {
             identity: new,
-            entity_type: record.entity_type,
+            entity_type: entry.entity_type,
         }];
-        ops.extend(moved.iter().map(|observation| Op::Assign {
-            observation: *observation,
+        ops.extend(moved.iter().map(|record| Op::Assign {
+            record: *record,
             from: Some(identity),
             to: Some(new),
         }));
         if keep_apart {
             // One constraint between the sides is enough to stop a merge. If
             // one is there already, nothing is added.
-            let moved_list: Vec<ObservationId> = moved.iter().copied().collect();
+            let moved_list: Vec<RecordId> = moved.iter().copied().collect();
             let apart = self.store.constraints_on(&moved_list)?.iter().any(|link| {
                 link.kind == ConstraintKind::CannotLink
                     && (kept.contains(&link.a) || kept.contains(&link.b))
@@ -2102,7 +2100,7 @@ impl Inner {
         })
     }
 
-    fn open_draft(&self, draft: ChangesetId, verb: &str) -> Result<DraftRecord> {
+    fn open_draft(&self, draft: ChangesetId, verb: &str) -> Result<DraftEntry> {
         let record = drafts::get(&self.store.conn, draft)?.ok_or(Error::UnknownDraft(draft))?;
         if record.draft.status != DraftStatus::Open {
             return Err(Error::Draft {
@@ -2161,13 +2159,13 @@ impl Inner {
             .collect()
     }
 
-    /// Whether a type has anything a run would examine: observations
+    /// Whether a type has anything a run would examine: records
     /// ingested since its last match run that succeeded, or open review
     /// items.
     fn has_work(&self, entity_type: &EntityType) -> Result<bool> {
         let after_run = self.last_match_run(entity_type)?;
         let ingested = self.count(&format!(
-            "SELECT count(*) FROM spool.observation
+            "SELECT count(*) FROM spool.record
              WHERE entity_type = '{entity_type}' AND ingest_run > {after_run}
                AND {}",
             rules::NOT_DISMISSED
@@ -2176,7 +2174,7 @@ impl Inner {
     }
 
     /// Writes what a user-code strategy is given: the run's candidate pairs
-    /// with both sides' features, and the feature row of every observation
+    /// with both sides' features, and the feature row of every record
     /// of the type, with whether it is new to the run and the identity it
     /// has.
     fn write_task(
@@ -2218,13 +2216,13 @@ impl Inner {
         )?;
         copy(
             &format!(
-                "SELECT f.observation_id::VARCHAR AS observation_id,
-                        f.observation_id IN (SELECT observation_id FROM {scope}) AS is_new,
+                "SELECT f.record_id::VARCHAR AS record_id,
+                        f.record_id IN (SELECT record_id FROM {scope}) AS is_new,
                         m.identity_id::VARCHAR AS identity_id{features}
                  FROM {table} f
                  LEFT JOIN spool.membership m
-                   ON m.observation_id = f.observation_id AND m.to_seq IS NULL
-                 ORDER BY f.observation_id",
+                   ON m.record_id = f.record_id AND m.to_seq IS NULL
+                 ORDER BY f.record_id",
                 scope = rules::SCOPE,
                 features = select_features(&columns, "f", "", true),
             ),
@@ -2260,13 +2258,13 @@ impl Inner {
                SELECT DISTINCT left_id, right_id, verdict FROM spool.judgement
                WHERE run_id = {run} AND verdict <> 'unsure'
              ) j
-             JOIN spool.membership a ON a.observation_id = j.left_id AND a.to_seq IS NULL
-             JOIN spool.membership b ON b.observation_id = j.right_id AND b.to_seq IS NULL
+             JOIN spool.membership a ON a.record_id = j.left_id AND a.to_seq IS NULL
+             JOIN spool.membership b ON b.record_id = j.right_id AND b.to_seq IS NULL
              WHERE NOT EXISTS (
                SELECT 1 FROM spool.constraint_link c
                WHERE c.to_seq IS NULL
-                 AND least(c.observation_a, c.observation_b) = j.left_id
-                 AND greatest(c.observation_a, c.observation_b) = j.right_id)"
+                 AND least(c.record_a, c.record_b) = j.left_id
+                 AND greatest(c.record_a, c.record_b) = j.right_id)"
         ))?;
         let mut suggestions = Suggestions::default();
 
@@ -2276,8 +2274,8 @@ impl Inner {
             "WITH apart AS (
                SELECT a.identity_id AS one, b.identity_id AS other
                FROM spool.constraint_link c
-               JOIN spool.membership a ON a.observation_id = c.observation_a AND a.to_seq IS NULL
-               JOIN spool.membership b ON b.observation_id = c.observation_b AND b.to_seq IS NULL
+               JOIN spool.membership a ON a.record_id = c.record_a AND a.to_seq IS NULL
+               JOIN spool.membership b ON b.record_id = c.record_b AND b.to_seq IS NULL
                WHERE c.to_seq IS NULL AND c.kind = 'cannot_link'
              )
              SELECT least(left_identity, right_identity)::VARCHAR,
@@ -2342,9 +2340,9 @@ impl Inner {
 
         let mut checks = vec![
             (
-                "observation IDs that occur more than once".to_owned(),
+                "record IDs that occur more than once".to_owned(),
                 "SELECT count(*) FROM (
-                   SELECT observation_id FROM spool.observation GROUP BY 1 HAVING count(*) > 1)"
+                   SELECT record_id FROM spool.record GROUP BY 1 HAVING count(*) > 1)"
                     .to_owned(),
             ),
             (
@@ -2354,24 +2352,24 @@ impl Inner {
                     .to_owned(),
             ),
             (
-                "observations that belong to more than one identity".to_owned(),
+                "records that belong to more than one identity".to_owned(),
                 "SELECT count(*) FROM (
-                   SELECT observation_id FROM spool.membership WHERE to_seq IS NULL
+                   SELECT record_id FROM spool.membership WHERE to_seq IS NULL
                    GROUP BY 1 HAVING count(*) > 1)"
                     .to_owned(),
             ),
             (
-                "memberships of observations the store does not hold".to_owned(),
+                "memberships of records the store does not hold".to_owned(),
                 "SELECT count(*) FROM spool.membership m
                  WHERE NOT EXISTS (
-                   SELECT 1 FROM spool.observation o WHERE o.observation_id = m.observation_id)"
+                   SELECT 1 FROM spool.record o WHERE o.record_id = m.record_id)"
                     .to_owned(),
             ),
             (
                 "current memberships in an identity that is missing, merged, or of another entity type"
                     .to_owned(),
                 "SELECT count(*) FROM spool.membership m
-                 JOIN spool.observation o ON o.observation_id = m.observation_id
+                 JOIN spool.record o ON o.record_id = m.record_id
                  LEFT JOIN spool.identity i ON i.identity_id = m.identity_id
                  WHERE m.to_seq IS NULL
                    AND (i.identity_id IS NULL OR i.merged_into IS NOT NULL
@@ -2379,13 +2377,13 @@ impl Inner {
                     .to_owned(),
             ),
             (
-                "open review items whose observations all have an identity".to_owned(),
+                "open review items whose records all have an identity".to_owned(),
                 "SELECT count(*) FROM spool.review_item i
                  WHERE i.status = 'open' AND NOT EXISTS (
-                   SELECT 1 FROM (SELECT unnest(i.observation_ids) AS observation_id) o
+                   SELECT 1 FROM (SELECT unnest(i.record_ids) AS record_id) o
                    WHERE NOT EXISTS (
                      SELECT 1 FROM spool.membership m
-                     WHERE m.observation_id = o.observation_id AND m.to_seq IS NULL))"
+                     WHERE m.record_id = o.record_id AND m.to_seq IS NULL))"
                     .to_owned(),
             ),
         ];
@@ -2402,23 +2400,23 @@ impl Inner {
             (
                 "constraints in force that current membership breaks".to_owned(),
                 "SELECT count(*) FROM spool.constraint_link c
-                 JOIN spool.membership a ON a.observation_id = c.observation_a AND a.to_seq IS NULL
-                 JOIN spool.membership b ON b.observation_id = c.observation_b AND b.to_seq IS NULL
+                 JOIN spool.membership a ON a.record_id = c.record_a AND a.to_seq IS NULL
+                 JOIN spool.membership b ON b.record_id = c.record_b AND b.to_seq IS NULL
                  WHERE c.to_seq IS NULL
                    AND (a.identity_id = b.identity_id) = (c.kind = 'cannot_link')"
                     .to_owned(),
             ),
             (
-                "pairs of observations with more than one constraint in force".to_owned(),
+                "pairs of records with more than one constraint in force".to_owned(),
                 "SELECT count(*) FROM (
-                   SELECT observation_a, observation_b FROM spool.constraint_link
+                   SELECT record_a, record_b FROM spool.constraint_link
                    WHERE to_seq IS NULL GROUP BY 1, 2 HAVING count(*) > 1)"
                     .to_owned(),
             ),
             (
-                "observations superseded by more than one observation".to_owned(),
+                "records superseded by more than one record".to_owned(),
                 "SELECT count(*) FROM (
-                   SELECT supersedes FROM spool.observation WHERE supersedes IS NOT NULL
+                   SELECT supersedes FROM spool.record WHERE supersedes IS NOT NULL
                    GROUP BY 1 HAVING count(*) > 1)"
                     .to_owned(),
             ),
@@ -2453,10 +2451,10 @@ impl Inner {
         while let Some(row) = rows.next()? {
             let entity_type: String = row.get(0)?;
             checks.push((
-                format!("`{entity_type}` observations with more than one feature row"),
+                format!("`{entity_type}` records with more than one feature row"),
                 format!(
                     "SELECT count(*) FROM (
-                       SELECT observation_id FROM spool.features_{entity_type}
+                       SELECT record_id FROM spool.features_{entity_type}
                        GROUP BY 1 HAVING count(*) > 1)"
                 ),
             ));

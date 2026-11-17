@@ -1,5 +1,5 @@
-//! Turns incoming rows into observations: a canonical payload, a key and a
-//! content-derived ID per row. Only this module computes observation IDs.
+//! Turns incoming rows into records: a canonical payload, a key and a
+//! content-derived ID per row. Only this module computes record IDs.
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -13,7 +13,7 @@ use duckdb::vtab::arrow::ArrowBatchRegistration;
 use duckdb::{Connection, params};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use spool_core::{ObservationId, RunId};
+use spool_core::{RecordId, RunId};
 
 use crate::batch::{Column, batch};
 use crate::error::{Error, Result};
@@ -24,7 +24,7 @@ pub struct IngestOptions {
     /// The column holding each row's key within the source: a row key, or
     /// the locator of an extracted mention. It stays part of the payload.
     pub key_column: Option<String>,
-    /// A column of JSON text saying where in the source each observation was
+    /// A column of JSON text saying where in the source each record was
     /// found. It is stored as `evidence` and is not part of the payload. A
     /// row that has evidence must also have a key.
     pub evidence_column: Option<String>,
@@ -45,24 +45,24 @@ pub struct IngestReport {
     pub run: RunId,
     /// Rows received.
     pub received: u64,
-    /// Observations created.
+    /// Records created.
     pub inserted: u64,
     /// Rows that were already known, or repeated within this call.
     pub duplicates: u64,
-    /// Observations created as a new version of a row the source had sent
+    /// Records created as a new version of a row the source had sent
     /// before under the same key with other content.
     #[serde(default)]
     pub superseded: u64,
 }
 
 /// The rows of one incoming batch that were not seen earlier in this call,
-/// as a batch of `ord`, `observation_id`, `source_key`, `payload` and
+/// as a batch of `ord`, `record_id`, `source_key`, `payload` and
 /// `evidence`. `ord` is the row's position in the call.
 pub(crate) fn stage(
     source: &str,
     incoming: &RecordBatch,
     options: &IngestOptions,
-    seen: &mut HashSet<ObservationId>,
+    seen: &mut HashSet<RecordId>,
     first_row: usize,
 ) -> Result<Option<RecordBatch>> {
     let schema = incoming.schema();
@@ -129,7 +129,7 @@ pub(crate) fn stage(
         }
         if evidence.is_some() && key.is_none() {
             return Err(fail(
-                "the observation has evidence and no key; an extracted mention's key is its locator in the document"
+                "the record has evidence and no key; an extracted mention's key is its locator in the document"
                     .to_owned(),
             ));
         }
@@ -137,7 +137,7 @@ pub(crate) fn stage(
         // A map ordered by key, serialised without whitespace, is the canonical form.
         let payload = serde_json::to_string(&payload)
             .map_err(|error| fail(format!("the payload cannot be encoded: {error}")))?;
-        let id = ObservationId::derive(source, key.as_deref(), &payload);
+        let id = RecordId::derive(source, key.as_deref(), &payload);
         if seen.insert(id) {
             ords.push(row_number as i64);
             ids.push(Some(id.to_string()));
@@ -152,17 +152,17 @@ pub(crate) fn stage(
     }
     Ok(Some(batch(vec![
         ("ord", Column::Integer(ords)),
-        ("observation_id", Column::Text(ids)),
+        ("record_id", Column::Text(ids)),
         ("source_key", Column::Text(keys)),
         ("payload", Column::Text(payloads)),
         ("evidence", Column::Text(evidences)),
     ])?))
 }
 
-/// Stores staged observations of one entity type from one source, and
+/// Stores staged records of one entity type from one source, and
 /// returns how many were new.
 ///
-/// A new observation under a key the source has used before is the next
+/// A new record under a key the source has used before is the next
 /// version of that row or mention. It supersedes the latest version the
 /// store holds, or the one before it in the batch.
 pub(crate) fn insert(
@@ -174,28 +174,28 @@ pub(crate) fn insert(
     staged: RecordBatch,
 ) -> Result<u64> {
     let inserted = conn.execute(
-        "INSERT INTO spool.observation
-         SELECT n.observation_id, $1, $2, n.source_key,
+        "INSERT INTO spool.record
+         SELECT n.record_id, $1, $2, n.source_key,
                 CASE WHEN n.source_key IS NOT NULL THEN coalesce(
-                  lag(n.observation_id) OVER (PARTITION BY n.source_key ORDER BY n.ord),
-                  latest.observation_id) END,
+                  lag(n.record_id) OVER (PARTITION BY n.source_key ORDER BY n.ord),
+                  latest.record_id) END,
                 n.payload::JSON, n.evidence::JSON, NULL, make_timestamptz($3), $4
          FROM (
-           SELECT s.observation_id::UUID AS observation_id, s.source_key,
+           SELECT s.record_id::UUID AS record_id, s.source_key,
                   s.payload, s.evidence, s.ord
            FROM arrow($5) s
            WHERE NOT EXISTS (
-             SELECT 1 FROM spool.observation o
-             WHERE o.observation_id = s.observation_id::UUID)
+             SELECT 1 FROM spool.record o
+             WHERE o.record_id = s.record_id::UUID)
          ) n
          LEFT JOIN (
-           SELECT o.source_key, o.observation_id
-           FROM spool.observation o
+           SELECT o.source_key, o.record_id
+           FROM spool.record o
            WHERE o.entity_type = $1 AND o.source_id = $2
              AND o.source_key IS NOT NULL
              AND NOT EXISTS (
-               SELECT 1 FROM spool.observation later
-               WHERE later.supersedes = o.observation_id)
+               SELECT 1 FROM spool.record later
+               WHERE later.supersedes = o.record_id)
          ) latest ON latest.source_key = n.source_key",
         params![
             entity_type,

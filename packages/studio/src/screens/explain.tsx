@@ -34,8 +34,8 @@ import * as ShelfTable from "../components/ui/table";
 import { CheckIcon } from "../icons.tsx";
 import { colors, radius, spacing, typography } from "../styles/shelf/tokens.stylex";
 import { tones } from "../styles/tones.stylex";
-import { findObservation } from "../find.ts";
-import { observationName, plain } from "../format.ts";
+import { findRecord } from "../find.ts";
+import { recordName, plain } from "../format.ts";
 import { useLabels, useLoad, useStudio } from "../hooks.ts";
 import { href, navigate } from "../router.ts";
 import type { Route } from "../router.ts";
@@ -50,7 +50,7 @@ export function Explain({ route }: { route: Route }) {
   );
 }
 
-/** Takes the two observations, by ID or as `source:key`, and goes to their explanation. */
+/** Takes the two records, by ID or as `source:key`, and goes to their explanation. */
 function Ask({ a, b }: { a?: string; b?: string }) {
   const { client } = useStudio();
   const [problem, setProblem] = useState<string | null>(null);
@@ -69,7 +69,7 @@ function Ask({ a, b }: { a?: string; b?: string }) {
           }
           setBusy(true);
           setProblem(null);
-          Promise.all(references.map((reference) => findObservation(client, reference))).then(
+          Promise.all(references.map((reference) => findRecord(client, reference))).then(
             (found) => {
               setBusy(false);
               const missing = references.find((_, index) => found[index] === null);
@@ -135,7 +135,7 @@ const OUTCOME_TONES: Record<string, Tone> = {
 
 function ExplanationView({ explanation }: { explanation: Explanation }) {
   const { left, right } = explanation;
-  const names = new Map([left, right].map(({ observation }) => [observation.id, observationName(observation)]));
+  const names = new Map([left, right].map(({ record }) => [record.id, recordName(record)]));
   return (
     <>
       <div
@@ -262,8 +262,8 @@ function Constrain({ explanation }: { explanation: Explanation }) {
   const [done, setDone] = useState<ReactNode>(null);
   // Two records of different entity types are never compared, so nothing is said of them.
   if (explanation.outcome === "different_types") return null;
-  const a = explanation.left.observation.id;
-  const b = explanation.right.observation.id;
+  const a = explanation.left.record.id;
+  const b = explanation.right.record.id;
   const inForce = explanation.constraints.filter((record) => record.to === null || record.to === undefined);
   const kinds: ConstraintKind[] =
     explanation.outcome === "same_identity"
@@ -345,25 +345,25 @@ function Constrain({ explanation }: { explanation: Explanation }) {
 }
 
 function Side({ title, letter, explained }: { title: string; letter: string; explained: Explained }) {
-  const { observation, placed } = explained;
-  const labels = useLabels([observation.identity]);
+  const { record, placed } = explained;
+  const labels = useLabels([record.identity]);
   return (
     <div data-part="side" {...stylex.props(styles.side)}>
       <div>
         <div {...stylex.props(styles.sideKind)}>
           {title} ({letter} in a rule)
         </div>
-        <h2 {...stylex.props(styles.sideName)}>{observation.label ?? observationName(observation)}</h2>
+        <h2 {...stylex.props(styles.sideName)}>{record.label ?? recordName(record)}</h2>
       </div>
       <Fields
         rows={[
-          ["Record", <Ref kind="observation" id={observation.id} label={observationName(observation)} />],
-          ["Source", <Source name={observation.source} />],
-          ["ID", <Ref kind="observation" id={observation.id} />],
-          ["Entity type", observation.entity_type],
+          ["Record", <Ref kind="record" id={record.id} label={recordName(record)} />],
+          ["Source", <Source name={record.source} />],
+          ["ID", <Ref kind="record" id={record.id} />],
+          ["Entity type", record.entity_type],
           [
             "Identity",
-            observation.identity ? <Identity id={observation.identity} labels={labels} /> : <Word value="unassigned" />,
+            record.identity ? <Identity id={record.identity} labels={labels} /> : <Word value="unassigned" />,
           ],
           [
             "Assigned",
@@ -495,7 +495,7 @@ function Chain({ path, names }: { path: Link[]; names: Map<string, string> }) {
     <ol data-part="chain" {...stylex.props(styles.chain)}>
       {path.map((link, index) => (
         <li key={index} {...stylex.props(styles.step)}>
-          <Ref kind="observation" id={link.from} label={names.get(link.from)} />
+          <Ref kind="record" id={link.from} label={names.get(link.from)} />
           <span {...stylex.props(styles.joins)}>
             {LINKS[link.kind]}
             {link.kind === "match" && link.run ? (
@@ -505,7 +505,7 @@ function Chain({ path, names }: { path: Link[]; names: Map<string, string> }) {
               </>
             ) : null}
           </span>
-          <Ref kind="observation" id={link.to} label={names.get(link.to)} />
+          <Ref kind="record" id={link.to} label={names.get(link.to)} />
         </li>
       ))}
     </ol>

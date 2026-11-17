@@ -96,7 +96,7 @@ fn person_records_run_through_the_same_binary_as_the_company_fixture() {
         panic!("one step");
     };
     assert_eq!(step.resolve.resolved[0].entity_type.as_str(), "person");
-    assert_eq!(step.metrics.observations, 10);
+    assert_eq!(step.metrics.records, 10);
     assert_eq!(step.metrics.identities, 6);
     assert_eq!(
         (step.metrics.false_merges, step.metrics.false_splits),
@@ -116,7 +116,7 @@ fn fake_1000_runs_through_the_same_binary_as_the_company_fixture() {
     };
     assert_eq!(step.ingest[0].inserted, 1000);
     assert_eq!(step.resolve.resolved[0].entity_type.as_str(), "person");
-    assert_eq!(step.metrics.observations, 1000);
+    assert_eq!(step.metrics.records, 1000);
     assert_eq!(step.metrics.true_entities, 251);
     assert_eq!(step.metrics.false_merges, 0);
     assert!(
@@ -127,10 +127,10 @@ fn fake_1000_runs_through_the_same_binary_as_the_company_fixture() {
     assert_eq!(step.metrics.unassigned, 0);
 }
 
-// Re-sent rows create no observations and no operations.
+// Re-sent rows create no records and no operations.
 
 #[test]
-fn resent_rows_create_no_observations_and_no_operations() {
+fn resent_rows_create_no_records_and_no_operations() {
     let engine = company_engine(0);
     let (report, _) = run_companies(&engine);
 
@@ -143,16 +143,16 @@ fn resent_rows_create_no_observations_and_no_operations() {
         .collect();
     assert_eq!(resent, [(11, 9, 2), (6, 4, 2)]);
     let resolved = &second.resolve.resolved[0];
-    assert_eq!(resolved.new_observations, 13);
+    assert_eq!(resolved.new_records, 13);
     let operations = engine.log().unwrap()[1].changeset.ops.len() as u64;
     assert_eq!(
         operations,
-        resolved.identities_created + resolved.observations_assigned
+        resolved.identities_created + resolved.records_assigned
     );
-    assert_eq!(resolved.observations_assigned, 12);
+    assert_eq!(resolved.records_assigned, 12);
 
     // Sending every file again changes nothing at all.
-    let observations = count(&engine, "SELECT count(*) FROM spool.observation");
+    let records = count(&engine, "SELECT count(*) FROM spool.record");
     let head = engine.head().unwrap();
     for (file, source, key) in [
         ("batch-1-crm.csv", "crm", "id"),
@@ -167,23 +167,17 @@ fn resent_rows_create_no_observations_and_no_operations() {
         assert_eq!(again.inserted, 0, "{file}");
         assert_eq!(again.duplicates, again.received, "{file}");
     }
-    // The one observation that was left for review is looked at again, with
+    // The one record that was left for review is looked at again, with
     // the same outcome. Nothing else is examined, and nothing is committed.
     let report = engine.resolve(&ResolveOptions::default()).unwrap();
     let [again] = &report.resolved[..] else {
         panic!("one entity type had something under review: {report:?}");
     };
-    assert_eq!((again.new_observations, again.reexamined), (1, 1));
-    assert_eq!(
-        (again.identities_created, again.observations_assigned),
-        (0, 0)
-    );
+    assert_eq!((again.new_records, again.reexamined), (1, 1));
+    assert_eq!((again.identities_created, again.records_assigned), (0, 0));
     assert_eq!(again.committed, None);
     assert_eq!(count(&engine, "SELECT count(*) FROM spool.review_item"), 1);
-    assert_eq!(
-        count(&engine, "SELECT count(*) FROM spool.observation"),
-        observations
-    );
+    assert_eq!(count(&engine, "SELECT count(*) FROM spool.record"), records);
     assert_eq!(engine.head().unwrap(), head);
     assert_eq!(engine.log().unwrap().len(), 2);
     assert_eq!(head, Seq(2));
@@ -232,17 +226,17 @@ fn every_identity_from_batch_one_keeps_its_id_and_members_after_batch_two() {
     );
 
     let stability = &report.steps[1].id_stability;
-    assert_eq!((stability.observations, stability.unchanged), (26, 26));
+    assert_eq!((stability.records, stability.unchanged), (26, 26));
     assert_eq!(stability.strict, Some(1.0));
 
     // A record of a known company found its identity: the new domain of
-    // crm:c-104 arrives as a second observation under the same key.
+    // crm:c-104 arrives as a second record under the same key.
     let kestrel = identity(&engine, "registry", "X0000004").unwrap();
     assert_eq!(
         members(&engine, kestrel),
         BTreeSet::from(["registry:X0000004", "crm:c-104", "crm:c-115"].map(str::to_owned))
     );
-    assert_eq!(observations(&engine, "crm", "c-104").len(), 2);
+    assert_eq!(records(&engine, "crm", "c-104").len(), 2);
 }
 
 // A subsidiary with a different registry identifier is not attached to its
@@ -268,8 +262,8 @@ fn a_subsidiary_with_a_different_registry_identifier_is_not_attached_to_its_pare
     let kept_apart = count(
         &engine,
         "SELECT count(*) FROM spool.judgement j
-         JOIN spool.features_company l ON l.observation_id = j.left_id
-         JOIN spool.features_company r ON r.observation_id = j.right_id
+         JOIN spool.features_company l ON l.record_id = j.left_id
+         JOIN spool.features_company r ON r.record_id = j.right_id
          WHERE l.domain = 'halden.example' AND r.domain = 'halden.example'
            AND j.verdict = 'no_match'
            AND j.detail->>'$.no_match[0]' = 'different_registry_id'",
@@ -335,7 +329,7 @@ fn two_records_a_rule_keeps_apart_are_not_attached_to_the_same_identity() {
             "SELECT count(*) FROM (
                SELECT m.identity_id
                FROM spool.membership_current m
-               JOIN spool.features_company f ON f.observation_id = m.observation_id
+               JOIN spool.features_company f ON f.record_id = m.record_id
                GROUP BY m.identity_id
                HAVING count(DISTINCT f.registry_id) > 1)"
         ),
@@ -345,15 +339,15 @@ fn two_records_a_rule_keeps_apart_are_not_attached_to_the_same_identity() {
 
     // Both wait for review, in one item that names the identity.
     let (leeds, bristol) = (
-        observation(&engine, "registry", "X0000009"),
-        observation(&engine, "registry", "X0000010"),
+        record_id(&engine, "registry", "X0000009"),
+        record_id(&engine, "registry", "X0000010"),
     );
     let mut waiting = vec![leeds, bristol];
     waiting.sort();
     assert_eq!(
         report.resolved[0].review,
         [ReviewItem::Conflict {
-            observations: waiting,
+            records: waiting,
             identity: Some(known),
         }]
     );
@@ -361,11 +355,11 @@ fn two_records_a_rule_keeps_apart_are_not_attached_to_the_same_identity() {
     engine.verify().unwrap();
 }
 
-// An observation matching two identities is left unassigned with a review
+// A record matching two identities is left unassigned with a review
 // item.
 
 #[test]
-fn an_observation_matching_two_identities_is_left_unassigned_with_a_review_item() {
+fn an_record_matching_two_identities_is_left_unassigned_with_a_review_item() {
     let engine = company_engine(0);
     let (report, _) = run_companies(&engine);
 
@@ -374,14 +368,14 @@ fn an_observation_matching_two_identities_is_left_unassigned_with_a_review_item(
     let leeds = identity(&engine, "registry", "X0000009").unwrap();
     let bristol = identity(&engine, "registry", "X0000010").unwrap();
     assert_ne!(leeds, bristol);
-    let ambiguous = observation(&engine, "crm", "c-117");
+    let ambiguous = record_id(&engine, "crm", "c-117");
 
     assert_eq!(engine.identity_of(ambiguous).unwrap(), None);
     // The item is in the store, open, for whoever reviews it.
     assert_eq!(
         select(
             &engine,
-            "SELECT kind, array_to_string(observation_ids::VARCHAR[], ','), len(identity_ids)::VARCHAR
+            "SELECT kind, array_to_string(record_ids::VARCHAR[], ','), len(identity_ids)::VARCHAR
              FROM spool.review_open"
         ),
         [[
@@ -391,17 +385,17 @@ fn an_observation_matching_two_identities_is_left_unassigned_with_a_review_item(
         ]]
     );
     let resolved = &report.steps[1].resolve.resolved[0];
-    assert_eq!(resolved.observations_unassigned, 1);
+    assert_eq!(resolved.records_unassigned, 1);
     let [
         ReviewItem::PossibleMerge {
-            observations,
+            records,
             identities,
         },
     ] = &resolved.review[..]
     else {
         panic!("one possible merge is flagged: {:?}", resolved.review);
     };
-    assert_eq!(observations, &[ambiguous]);
+    assert_eq!(records, &[ambiguous]);
     assert_eq!(
         identities.iter().copied().collect::<BTreeSet<_>>(),
         BTreeSet::from([leeds, bristol])
@@ -418,17 +412,17 @@ fn an_observation_matching_two_identities_is_left_unassigned_with_a_review_item(
 }
 
 // A review item is still in the store after the store is reopened, and its
-// observation is examined again by the next run.
+// record is examined again by the next run.
 
 #[test]
-fn a_review_item_survives_a_reopen_and_its_observation_is_examined_again() {
+fn a_review_item_survives_a_reopen_and_its_record_is_examined_again() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("spool.duckdb");
     let read = |engine: &Engine| {
         select(
             engine,
             "SELECT review_id::VARCHAR, run_id::VARCHAR, kind, status,
-                    array_to_string(observation_ids::VARCHAR[], ','),
+                    array_to_string(record_ids::VARCHAR[], ','),
                     array_to_string(identity_ids::VARCHAR[], ',')
              FROM spool.review_item",
         )
@@ -436,7 +430,7 @@ fn a_review_item_survives_a_reopen_and_its_observation_is_examined_again() {
     let (before, ambiguous) = {
         let engine = Engine::open(&path, Options::seeded(0)).unwrap();
         run_companies(&engine);
-        (read(&engine), observation(&engine, "crm", "c-117"))
+        (read(&engine), record_id(&engine, "crm", "c-117"))
     };
     assert_eq!(before.len(), 1);
     assert_eq!(before[0][3].as_deref(), Some("open"));
@@ -448,10 +442,10 @@ fn a_review_item_survives_a_reopen_and_its_observation_is_examined_again() {
     engine.apply(&Manifest::load(companies()).unwrap()).unwrap();
     let report = engine.resolve(&ResolveOptions::default()).unwrap();
     let again = &report.resolved[0];
-    assert_eq!((again.new_observations, again.reexamined), (1, 1));
+    assert_eq!((again.new_records, again.reexamined), (1, 1));
     assert!(matches!(
         &again.review[..],
-        [ReviewItem::PossibleMerge { observations, .. }] if observations == &[ambiguous]
+        [ReviewItem::PossibleMerge { records, .. }] if records == &[ambiguous]
     ));
     // The same conclusion, so the same item: nothing was added or closed.
     assert_eq!(read(&engine), before);

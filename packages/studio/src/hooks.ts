@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 
 import type { Info, Op, SpoolClient } from "./api.ts";
 import { found } from "./find.ts";
-import { identitiesOf, observationName, observationsOf, tail } from "./format.ts";
+import { identitiesOf, recordName, recordsOf, tail } from "./format.ts";
 import { here, onMove, ownLink, navigate, parseAddress } from "./router.ts";
 import type { Route } from "./router.ts";
 
@@ -144,13 +144,13 @@ export function usePages<T>(
   return { loaded, more: next !== null, reading, readMore };
 }
 
-/** The most observations one screen looks up to show their names in place of their IDs. */
+/** The most records one screen looks up to show their names in place of their IDs. */
 const MOST_NAMES = 100;
 
 /**
- * What to call the observations a screen names only by ID, such as those in
+ * What to call the records a screen names only by ID, such as those in
  * the operations of a changeset: the source and key of each. `known` are
- * those the screen has read already. An observation that is not looked up,
+ * those the screen has read already. A record that is not looked up,
  * or not found, is shown by its ID.
  */
 export function useNames(ids: string[], known?: Map<string, string>): Map<string, string> {
@@ -162,9 +162,9 @@ export function useNames(ids: string[], known?: Map<string, string>): Map<string
     let current = true;
     const ids = key === "" ? [] : key.split(",");
     // A name is a convenience: if one cannot be read, the ID stays.
-    Promise.all(ids.map((id) => found(client.observation(id)).catch(() => null))).then((records) => {
+    Promise.all(ids.map((id) => found(client.record(id)).catch(() => null))).then((records) => {
       if (!current) return;
-      setLooked(new Map(records.flatMap((record) => (record ? [[record.id, observationName(record)]] : []))));
+      setLooked(new Map(records.flatMap((record) => (record ? [[record.id, recordName(record)]] : []))));
     });
     return () => {
       current = false;
@@ -210,12 +210,12 @@ export function useLabels(ids: Array<string | null | undefined>): Map<string, st
 }
 
 /**
- * What the observations and the identities that operations name are called,
+ * What the records and the identities that operations name are called,
  * by ID. Two identities may be called the same, so each has the end of its
  * ID after its label.
  */
 export function useOpNames(ops: Op[], known?: Map<string, string>): Map<string, string> {
-  const names = useNames(observationsOf(ops), known);
+  const names = useNames(recordsOf(ops), known);
   const labels = useLabels(identitiesOf(ops));
   return useMemo(
     () => new Map([...names, ...[...labels].map(([id, label]) => [id, `${label} (…${tail(id)})`] as const)]),

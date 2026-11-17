@@ -175,9 +175,9 @@ describe("company records a reviewer corrected", () => {
     const sources = store.entity_types[0]!.sources;
     expect(sources.map((source) => source.source)).toEqual(["crm", "registry"]);
     expect(rowsOf(table).map((line) => line.slice(0, 3))).toEqual(
-      sources.map((source) => [source.source, String(source.observations), String(source.unassigned)]),
+      sources.map((source) => [source.source, String(source.records), String(source.unassigned)]),
     );
-    expect(sources.reduce((sum, source) => sum + source.observations, 0)).toBe(39);
+    expect(sources.reduce((sum, source) => sum + source.records, 0)).toBe(39);
     expect(sources.reduce((sum, source) => sum + source.unassigned, 0)).toBe(5);
     // A source leads to its records, and to those of them that have no identity.
     expect(within(table).getByRole("link", { name: "registry" }).getAttribute("href")).toBe(
@@ -218,7 +218,7 @@ describe("company records a reviewer corrected", () => {
     expect(field("Status")).toBe("open");
     expect(field("Runs")).toBe("match run 9, reconcile run 10");
     expect(field("Changes")).toBe("4 records assigned, 1 identity created");
-    // An operation names an observation by its source and key once it is read.
+    // An operation names a record by its source and key once it is read.
     await screen.findByRole("link", { name: "registry:X0000016" });
     // And an identity by what its records call it, with the end of its ID. The one the draft
     // would make has no record yet, so it is named by its ID.
@@ -288,7 +288,7 @@ describe("company records a reviewer corrected", () => {
     await counted("Records", 1);
     expect(parts("id")).toEqual([split.identity!]);
     expect(document.title).toBe("PIONEER SUPPLIES LTD · Spool studio");
-    // The constraint names an observation that another identity holds.
+    // The constraint names a record that another identity holds.
     await screen.findByRole("link", { name: "crm:c-110" });
     const records = rowsOf(screen.getByRole("table", { name: "Records" }));
     // Each record says where it came from, and what put it here.
@@ -405,7 +405,7 @@ describe("company records a reviewer corrected", () => {
     );
   });
 
-  test("the observations no identity holds can be listed, and two of them explained", async () => {
+  test("the records no identity holds can be listed, and two of them explained", async () => {
     open(server, "/records");
     await heading("Records");
     await screen.findByRole("table");
@@ -432,31 +432,29 @@ describe("company records a reviewer corrected", () => {
     expect((await screen.findByText("Not both assigned")).getAttribute("data-part")).toBe("word");
   });
 
-  test("the observations are found by words they hold", async () => {
+  test("the records are found by words they hold", async () => {
     open(server, "/records");
     await heading("Records");
     await screen.findByRole("table");
     fireEvent.change(screen.getByRole("searchbox", { name: "Search" }), { target: { value: "KESTREL" } });
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
     expect(here()).toBe("/records?q=KESTREL");
-    const { observations } = await server.client.observations({ q: "kestrel" });
-    expect(observations).toHaveLength(4);
+    const { records } = await server.client.records({ q: "kestrel" });
+    expect(records).toHaveLength(4);
     await waitFor(() => expect(rowsOf(screen.getByRole("table"))).toHaveLength(4));
     expect(
       rowsOf(screen.getByRole("table"))
         .map((line) => line[6])
         .sort(),
-    ).toEqual(
-      observations.map((observation) => texts(`a[title='${observation.id}'][data-kind=observation]`).at(-1)!).sort(),
-    );
+    ).toEqual(records.map((record) => texts(`a[title='${record.id}'][data-kind=record]`).at(-1)!).sort());
     // Each says which identity it belongs to by what that identity is called.
-    const kestrel = await shownFor(server.client, observations[0]!.identity!);
+    const kestrel = await shownFor(server.client, records[0]!.identity!);
     expect(kestrel).toMatch(/^Kestrel Analytics[0-9a-f]{4}$/);
     await waitFor(() =>
       expect(rowsOf(screen.getByRole("table")).map((line) => line[5])).toEqual([kestrel, kestrel, kestrel, kestrel]),
     );
     expect(document.querySelector("[data-part=identity] a")!.getAttribute("href")).toBe(
-      `/identities/${observations[0]!.identity}`,
+      `/identities/${records[0]!.identity}`,
     );
 
     fireEvent.change(screen.getByRole("searchbox", { name: "Search" }), { target: { value: "nothing-holds-this" } });
@@ -464,7 +462,7 @@ describe("company records a reviewer corrected", () => {
     await waitFor(() => expect(parts("empty")).toEqual(["No records match “nothing-holds-this”."]));
   });
 
-  test("the observations can be narrowed to a source and a key", async () => {
+  test("the records can be narrowed to a source and a key", async () => {
     open(server, "/records");
     await heading("Records");
     await screen.findByRole("table");
@@ -476,7 +474,7 @@ describe("company records a reviewer corrected", () => {
     await waitFor(() => expect(rowsOf(screen.getByRole("table"))).toHaveLength(2));
   });
 
-  test("an observation shows what was ingested and the review item it waits in", async () => {
+  test("a record shows what was ingested and the review item it waits in", async () => {
     const waiting = await row(server.client, "crm", "c-117");
     open(server, `/records/${waiting.id}`);
     await heading("Pioneer Supplies");
@@ -601,7 +599,7 @@ describe("company records a reviewer corrected", () => {
     await screen.findByRole("article", { name: "Review item 1" });
   });
 
-  test("an observation is explained with another that is named by its source and key", async () => {
+  test("a record is explained with another that is named by its source and key", async () => {
     const waiting = await row(server.client, "registry", "X0612001");
     const other = await row(server.client, "registry", "X0000009");
     open(server, `/records/${waiting.id}`);
@@ -657,24 +655,24 @@ describe("company records a reviewer corrected", () => {
   });
 
   test("two versions of one row are explained by what joins them", async () => {
-    const { observations } = await server.client.observations({ source: "crm", key: "c-104" });
-    expect(observations).toHaveLength(2);
-    open(server, `/explain?a=${observations[0]!.id}&b=${observations[1]!.id}`);
+    const { records } = await server.client.records({ source: "crm", key: "c-104" });
+    expect(records).toHaveLength(2);
+    open(server, `/explain?a=${records[0]!.id}&b=${records[1]!.id}`);
     await heading("Explain");
     await screen.findByText("Same identity");
     const sides = [...document.querySelectorAll("[data-part=side]")];
     expect(sides.map((side) => field("Record", side))).toEqual(["crm:c-104", "crm:c-104"]);
-    const identity = await shownFor(server.client, observations[0]!.identity!);
+    const identity = await shownFor(server.client, records[0]!.identity!);
     await waitFor(() => expect(sides.map((side) => field("Identity", side))).toEqual([identity, identity]));
-    expect((screen.getByLabelText("Left record") as HTMLInputElement).value).toBe(observations[0]!.id);
+    expect((screen.getByLabelText("Left record") as HTMLInputElement).value).toBe(records[0]!.id);
   });
 
-  test("an observation that is not there is said not to be", async () => {
+  test("a record that is not there is said not to be", async () => {
     const a = await row(server.client, "crm", "c-108");
     open(server, `/explain?a=${a.id}&b=00000000-0000-4000-8000-000000000000`);
     await heading("Explain");
     expect((await screen.findByRole("alert")).textContent).toBe(
-      "there is no observation 00000000-0000-4000-8000-000000000000",
+      "there is no record 00000000-0000-4000-8000-000000000000",
     );
   });
 
@@ -685,7 +683,7 @@ describe("company records a reviewer corrected", () => {
     const table = await screen.findByRole("table");
     const lines = rowsOf(table);
     expect(lines.map((line) => line[0])).toEqual(["1", "2", "3", "4", "5", "6", "7"]);
-    expect(lines[0]).toEqual(["1", "engine", "40", "reconcile run 4", "reconcile new observations"]);
+    expect(lines[0]).toEqual(["1", "engine", "40", "reconcile run 4", "reconcile new records"]);
     expect(lines[3]).toEqual(["4", REVIEWER, "3", "-", "they are two companies after all"]);
 
     follow(within(table).getByRole("link", { name: "4" }));
@@ -879,7 +877,7 @@ describe("news items an extractor read", () => {
       ["NORTHWIND TRADERS LTD", "122 to 143", "company"],
     ]);
     // Each mention says which company it was taken for.
-    const { observations: mentions } = await server.client.observations({ document: record.id });
+    const { records: mentions } = await server.client.records({ document: record.id });
     const taken = new Map<number, string>();
     for (const mention of mentions) {
       taken.set((mention.evidence as { start: number }).start, await shownFor(server.client, mention.identity!));
@@ -892,7 +890,7 @@ describe("news items an extractor read", () => {
       ]),
     );
 
-    // A mention is an observation: its screen shows where it was found.
+    // A mention is a record: its screen shows where it was found.
     follow(document.querySelectorAll("[data-part=mention]")[1]!);
     await heading("Orchard Ltd");
     await screen.findByText("Mention");
@@ -941,7 +939,7 @@ describe("news items an extractor read", () => {
     const largest = identities.reduce((most, identity) => (identity.members > most.members ? identity : most));
     expect(largest.members).toBeGreaterThan(1);
     const view = await server.client.identity(largest.id);
-    const first = await server.client.observation(view.members[0]!.observation);
+    const first = await server.client.record(view.members[0]!.record);
     const found = first.evidence as { key: string; start: number; end: number };
     const name = `news:${found.key}[${found.start}-${found.end}]`;
 
@@ -958,7 +956,7 @@ describe("news items an extractor read", () => {
     expect(members.every((member) => member[2] === "news")).toBe(true);
   });
 
-  test("the mentions of one document can be listed as observations", async () => {
+  test("the mentions of one document can be listed as records", async () => {
     const { documents } = await server.client.documents({ source: "news", key: "09-falcon-watch.txt" });
     open(server, `/records?document=${documents[0]!.id}`);
     await heading("Records");

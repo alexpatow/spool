@@ -57,7 +57,7 @@ fn ingest_stores_each_row_once() {
         (3, 0, 3)
     );
 
-    assert_eq!(count(&engine, "SELECT count(*) FROM spool.observation"), 2);
+    assert_eq!(count(&engine, "SELECT count(*) FROM spool.record"), 2);
     assert_eq!(
         count(&engine, "SELECT count(*) FROM spool.features_thing"),
         2
@@ -66,7 +66,7 @@ fn ingest_stores_each_row_once() {
 }
 
 #[test]
-fn an_observation_id_ignores_column_order_and_empty_columns() {
+fn an_record_id_ignores_column_order_and_empty_columns() {
     let engine = engine();
     ingest(&engine, "shop", &[("1", Some("anvil"), Some("A"))]);
 
@@ -82,13 +82,13 @@ fn an_observation_id_ignores_column_order_and_empty_columns() {
 }
 
 #[test]
-fn a_changed_row_or_another_source_is_another_observation() {
+fn a_changed_row_or_another_source_is_another_record() {
     let engine = engine();
     ingest(&engine, "shop", &[("1", Some("anvil"), Some("A"))]);
 
     let changed = ingest(&engine, "shop", &[("1", Some("anvil, large"), Some("A"))]);
     assert_eq!(changed.inserted, 1);
-    assert_eq!(observations(&engine, "shop", "1").len(), 2);
+    assert_eq!(records(&engine, "shop", "1").len(), 2);
 
     let elsewhere = ingest(&engine, "depot", &[("1", Some("anvil"), Some("A"))]);
     assert_eq!(elsewhere.inserted, 1);
@@ -131,7 +131,7 @@ fn evidence_is_stored_beside_the_payload_and_needs_a_key() {
         matches!(&error, Error::Ingest(message) if message.contains("evidence")),
         "{error}"
     );
-    assert_eq!(count(&engine, "SELECT count(*) FROM spool.observation"), 0);
+    assert_eq!(count(&engine, "SELECT count(*) FROM spool.record"), 0);
     assert_eq!(
         select(
             &engine,
@@ -151,7 +151,7 @@ fn evidence_is_stored_beside_the_payload_and_needs_a_key() {
     assert_eq!(
         select(
             &engine,
-            "SELECT source_key, payload::VARCHAR, evidence->>'page' FROM spool.observation"
+            "SELECT source_key, payload::VARCHAR, evidence->>'page' FROM spool.record"
         ),
         [[
             Some("p3:120-125".to_owned()),
@@ -160,7 +160,7 @@ fn evidence_is_stored_beside_the_payload_and_needs_a_key() {
         ]]
     );
 
-    // The same words at another place in the document are another observation.
+    // The same words at another place in the document are another record.
     let report = engine
         .ingest("report.pdf", "thing", mentions(Some("p9:14-19")), &options)
         .unwrap();
@@ -192,13 +192,13 @@ fn a_known_row_cannot_arrive_as_another_entity_type() {
 }
 
 #[test]
-fn a_features_query_that_repeats_an_observation_fails_the_ingest() {
+fn a_features_query_that_repeats_an_record_fails_the_ingest() {
     let engine = Engine::open_in_memory(Options::seeded(1)).unwrap();
     let doubled = EntityTypeSource {
         features: SqlFile::new(
             "features",
-            "SELECT observation_id, 1 AS n FROM observation
-             UNION ALL SELECT observation_id, 2 FROM observation",
+            "SELECT record_id, 1 AS n FROM record
+             UNION ALL SELECT record_id, 2 FROM record",
         ),
         block: Vec::new(),
         no_match: Vec::new(),
@@ -216,10 +216,10 @@ fn a_features_query_that_repeats_an_observation_fails_the_ingest() {
         )
         .unwrap_err();
     assert!(
-        matches!(&error, Error::Ingest(message) if message.contains("one row per observation")),
+        matches!(&error, Error::Ingest(message) if message.contains("one row per record")),
         "{error}"
     );
-    assert_eq!(count(&engine, "SELECT count(*) FROM spool.observation"), 0);
+    assert_eq!(count(&engine, "SELECT count(*) FROM spool.record"), 0);
     assert_eq!(
         count(&engine, "SELECT count(*) FROM spool.features_thing"),
         0
@@ -229,7 +229,7 @@ fn a_features_query_that_repeats_an_observation_fails_the_ingest() {
 // Resolve
 
 #[test]
-fn resolve_gives_matching_observations_one_identity() {
+fn resolve_gives_matching_records_one_identity() {
     let engine = engine();
     ingest(
         &engine,
@@ -245,12 +245,12 @@ fn resolve_gives_matching_observations_one_identity() {
     let [resolved] = &report.resolved[..] else {
         panic!("one entity type was resolved: {report:?}");
     };
-    assert_eq!(resolved.new_observations, 3);
+    assert_eq!(resolved.new_records, 3);
     assert_eq!(resolved.candidates, 1);
     assert_eq!(resolved.judgements.match_, 1);
     assert_eq!(resolved.identities_created, 2);
-    assert_eq!(resolved.observations_assigned, 3);
-    assert_eq!(resolved.observations_unassigned, 0);
+    assert_eq!(resolved.records_assigned, 3);
+    assert_eq!(resolved.records_unassigned, 0);
     assert_eq!(resolved.committed.as_ref().unwrap().seq, Seq(1));
 
     let anvil = identity(&engine, "shop", "1").unwrap();
@@ -282,7 +282,7 @@ fn resolve_gives_matching_observations_one_identity() {
 }
 
 #[test]
-fn resent_rows_create_no_observations_and_no_operations() {
+fn resent_rows_create_no_records_and_no_operations() {
     let engine = engine();
     let batch = [("1", Some("anvil"), None), ("2", Some("anvil"), None)];
     ingest(&engine, "shop", &batch);
@@ -341,12 +341,12 @@ fn identities_keep_their_ids_and_gain_members() {
     assert_eq!(after.identities.len(), 3);
 
     let stability = engine.id_stability(before.head, after.head).unwrap();
-    assert_eq!((stability.observations, stability.unchanged), (2, 2));
+    assert_eq!((stability.records, stability.unchanged), (2, 2));
     assert_eq!(stability.strict, Some(1.0));
 }
 
 #[test]
-fn an_observation_matching_two_identities_is_left_for_review() {
+fn an_record_matching_two_identities_is_left_for_review() {
     let engine = engine();
     ingest(
         &engine,
@@ -364,19 +364,19 @@ fn an_observation_matching_two_identities_is_left_for_review() {
     let report = resolve(&engine);
 
     let resolved = &report.resolved[0];
-    let both = observation(&engine, "depot", "9");
-    assert_eq!(resolved.observations_unassigned, 1);
+    let both = record_id(&engine, "depot", "9");
+    assert_eq!(resolved.records_unassigned, 1);
     assert_eq!(resolved.committed, None);
     let [
         ReviewItem::PossibleMerge {
-            observations,
+            records,
             identities,
         },
     ] = &resolved.review[..]
     else {
         panic!("one possible merge is flagged: {:?}", resolved.review);
     };
-    assert_eq!(observations, &[both]);
+    assert_eq!(records, &[both]);
     assert_eq!(
         identities.iter().collect::<BTreeSet<_>>(),
         BTreeSet::from([&by_name, &by_code])
@@ -386,7 +386,7 @@ fn an_observation_matching_two_identities_is_left_for_review() {
 }
 
 #[test]
-fn a_no_match_keeps_an_observation_out_of_an_identity() {
+fn a_no_match_keeps_an_record_out_of_an_identity() {
     let engine = engine();
     ingest(&engine, "shop", &[("1", Some("anvil"), Some("A"))]);
     resolve(&engine);
@@ -420,7 +420,7 @@ fn contradictory_evidence_about_one_identity_is_left_for_review() {
     assert_eq!(
         report.resolved[0].review,
         [ReviewItem::Conflict {
-            observations: vec![observation(&engine, "depot", "9")],
+            records: vec![record_id(&engine, "depot", "9")],
             identity: Some(anvil),
         }]
     );
@@ -592,7 +592,7 @@ fn a_run_records_the_project_version_it_read() {
 }
 
 #[test]
-fn judgements_must_name_known_observations_and_a_new_one() {
+fn judgements_must_name_known_records_and_a_new_one() {
     let engine = engine();
     ingest(
         &engine,
@@ -603,7 +603,7 @@ fn judgements_must_name_known_observations_and_a_new_one() {
     ingest(&engine, "depot", &[("9", Some("anvil"), None)]);
     let run = engine.begin_run(&by_hand(), &thing_scope()).unwrap();
 
-    let id = |source: &str, key: &str| observation(&engine, source, key).to_string();
+    let id = |source: &str, key: &str| record_id(&engine, source, key).to_string();
     let (old_1, old_2, new) = (id("shop", "1"), id("shop", "2"), id("depot", "9"));
     let unknown = "00000000-0000-4000-8000-000000000000".to_owned();
 
@@ -620,7 +620,7 @@ fn judgements_must_name_known_observations_and_a_new_one() {
     );
     rejected(
         judgements(&[(old_1.clone(), old_2, "match")]),
-        "neither observation is new",
+        "neither record is new",
     );
     rejected(
         judgements(&[(new.clone(), old_1.clone(), "maybe")]),
@@ -628,7 +628,7 @@ fn judgements_must_name_known_observations_and_a_new_one() {
     );
     rejected(
         judgements(&[(new.clone(), new.clone(), "match")]),
-        "same observation",
+        "same record",
     );
     rejected(
         judgements(&[(new.clone(), "not-an-id".to_owned(), "match")]),
@@ -667,7 +667,7 @@ fn judgements_must_name_known_observations_and_a_new_one() {
     .unwrap();
     assert_eq!(engine.submit_judgements(run, scored).unwrap(), 1);
 
-    // `unsure` decides nothing, so the new observation stands alone.
+    // `unsure` decides nothing, so the new record stands alone.
     let draft = engine.reconcile(run, &Policy::default()).unwrap();
     engine.commit(draft.changeset).unwrap();
     assert_ne!(
@@ -689,13 +689,13 @@ fn a_stale_draft_is_rejected_and_names_the_operation() {
     let run = engine
         .begin_run(&StrategyRef::rules(), &thing_scope())
         .unwrap();
-    let new = observation(&engine, "depot", "9");
+    let new = record_id(&engine, "depot", "9");
     engine
         .submit_judgements(
             run,
             judgements(&[(
                 new.to_string(),
-                observation(&engine, "shop", "1").to_string(),
+                record_id(&engine, "shop", "1").to_string(),
                 "match",
             )]),
         )
@@ -704,13 +704,13 @@ fn a_stale_draft_is_rejected_and_names_the_operation() {
     assert_eq!(
         draft.changeset.ops,
         [Op::Assign {
-            observation: new,
+            record: new,
             from: None,
             to: Some(anvil)
         }]
     );
 
-    // While the draft waits, someone puts the observation elsewhere.
+    // While the draft waits, someone puts the record elsewhere.
     let mut ids = SeededIds::new(99);
     let elsewhere = ids.identity_id();
     let correction = Changeset {
@@ -725,7 +725,7 @@ fn a_stale_draft_is_rejected_and_names_the_operation() {
                 entity_type: EntityType::new("thing").unwrap(),
             },
             Op::Assign {
-                observation: new,
+                record: new,
                 from: None,
                 to: Some(elsewhere),
             },
@@ -744,7 +744,7 @@ fn a_stale_draft_is_rejected_and_names_the_operation() {
     assert_eq!(
         rejections[0].reason,
         Reason::StaleAssignment {
-            observation: new,
+            record: new,
             expected: None,
             actual: Some(elsewhere)
         }
@@ -876,8 +876,8 @@ fn state_survives_reopening_and_a_changed_declaration() {
     let changed = EntityTypeSource {
         features: SqlFile::new(
             "features",
-            "SELECT observation_id, upper(payload->>'name') AS name, payload->>'code' AS code
-             FROM observation",
+            "SELECT record_id, upper(payload->>'name') AS name, payload->>'code' AS code
+             FROM record",
         ),
         ..thing()
     };
@@ -918,7 +918,7 @@ fn state_survives_reopening_and_a_changed_declaration() {
     }
     assert_eq!(
         count(&engine, "SELECT count(*) FROM spool.features_thing"),
-        count(&engine, "SELECT count(*) FROM spool.observation")
+        count(&engine, "SELECT count(*) FROM spool.record")
     );
     assert_eq!(engine.snapshot().unwrap(), snapshot);
     assert_eq!(identity(&engine, "shop", "1"), anvil);
@@ -963,15 +963,15 @@ fn query_runs_selects_only() {
     ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
 
     for statement in [
-        "DELETE FROM spool.observation",
-        "DROP TABLE spool.observation",
-        "SELECT 1; DELETE FROM spool.observation",
+        "DELETE FROM spool.record",
+        "DROP TABLE spool.record",
+        "SELECT 1; DELETE FROM spool.record",
         "",
     ] {
         let error = engine.query(statement).unwrap_err();
         assert!(matches!(error, Error::Query(_)), "{statement:?}: {error}");
     }
-    assert_eq!(count(&engine, "SELECT count(*) FROM spool.observation"), 1);
+    assert_eq!(count(&engine, "SELECT count(*) FROM spool.record"), 1);
     // One trailing semicolon is tolerated.
     assert!(
         engine

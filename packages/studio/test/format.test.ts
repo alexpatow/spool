@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
 
-import type { ObservationRecord, Op } from "../src/api.ts";
+import type { RecordEntry, Op } from "../src/api.ts";
 import {
   count,
   describeOp,
   excerpt,
   mentionOf,
-  observationName,
-  observationsOf,
+  recordName,
+  recordsOf,
   plain,
   segments,
   short,
@@ -21,7 +21,7 @@ const B = "42a8e89a-91a6-6c9c-2295-010d61b8803a";
 const X = "01a1e95d-fb10-7069-8e60-0a0cc1a955db";
 const Y = "01a1e95d-fb10-7069-8e60-0a0cc1a9e882";
 
-function observation(fields: Partial<ObservationRecord>): ObservationRecord {
+function record(fields: Partial<RecordEntry>): RecordEntry {
   return {
     id: A,
     entity_type: "company",
@@ -31,7 +31,7 @@ function observation(fields: Partial<ObservationRecord>): ObservationRecord {
     ingested_at: "2026-11-17T11:53:18Z",
     ingest_run: 1,
     ...fields,
-  } as ObservationRecord;
+  } as RecordEntry;
 }
 
 describe("what is shown", () => {
@@ -54,9 +54,9 @@ describe("what is shown", () => {
     expect(short("crm:c-1")).toBe("crm:c-1");
   });
 
-  test("an observation is named by its source and key, and a mention by its document and span", () => {
-    expect(observationName(observation({}))).toBe("crm:c-1");
-    const mention = observation({
+  test("a record is named by its source and key, and a mention by its document and span", () => {
+    expect(recordName(record({}))).toBe("crm:c-1");
+    const mention = record({
       source: "news",
       key: `${X}#company:4-13`,
       evidence: {
@@ -70,8 +70,8 @@ describe("what is shown", () => {
       },
     });
     expect(mentionOf(mention)).toMatchObject({ document: X, key: "01.txt", start: 4, end: 13 });
-    expect(observationName(mention)).toBe("news:01.txt[4-13]");
-    expect(mentionOf(observation({ evidence: { note: "typed in" } }))).toBeNull();
+    expect(recordName(mention)).toBe("news:01.txt[4-13]");
+    expect(mentionOf(record({ evidence: { note: "typed in" } }))).toBeNull();
   });
 
   test("a value of a payload is shown as it would be written", () => {
@@ -84,9 +84,9 @@ describe("what is shown", () => {
   test("every kind of operation is put in words, with the things it names", () => {
     const ops: Op[] = [
       { op: "create_identity", identity: X, entity_type: "company" },
-      { op: "assign", observation: A, to: X },
-      { op: "assign", observation: A, from: X, to: Y },
-      { op: "assign", observation: A, from: Y },
+      { op: "assign", record: A, to: X },
+      { op: "assign", record: A, from: X, to: Y },
+      { op: "assign", record: A, from: Y },
       { op: "merge", from: X, into: Y },
       { op: "reinstate", identity: X },
       { op: "constrain", kind: "must_link", a: A, b: B },
@@ -99,15 +99,15 @@ describe("what is shown", () => {
     );
     expect(said).toEqual([
       "create company identity <identity 01a1e95d…55db>",
-      "assign record <observation 2060cadc…4ee7> to <identity 01a1e95d…55db>",
-      "move record <observation 2060cadc…4ee7> from <identity 01a1e95d…55db> to <identity 01a1e95d…e882>",
-      "unassign record <observation 2060cadc…4ee7> from <identity 01a1e95d…e882>",
+      "assign record <record 2060cadc…4ee7> to <identity 01a1e95d…55db>",
+      "move record <record 2060cadc…4ee7> from <identity 01a1e95d…55db> to <identity 01a1e95d…e882>",
+      "unassign record <record 2060cadc…4ee7> from <identity 01a1e95d…e882>",
       "merge <identity 01a1e95d…55db> into <identity 01a1e95d…e882>",
       "reinstate identity <identity 01a1e95d…55db>",
-      "constrain <observation 2060cadc…4ee7> and <observation 42a8e89a…803a>: must_link",
-      "remove cannot_link between <observation 2060cadc…4ee7> and <observation 42a8e89a…803a>",
+      "constrain <record 2060cadc…4ee7> and <record 42a8e89a…803a>: must_link",
+      "remove cannot_link between <record 2060cadc…4ee7> and <record 42a8e89a…803a>",
     ]);
-    expect(observationsOf(ops)).toEqual([A, B]);
+    expect(recordsOf(ops)).toEqual([A, B]);
   });
 });
 

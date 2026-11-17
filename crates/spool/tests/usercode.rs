@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use common::{benchmarks, identity, ingest, members, observation};
+use common::{benchmarks, identity, ingest, members, record_id};
 use spool::core::{Actor, EntityType, Op};
 use spool::{
     Engine, Error, Manifest, Options, ResolveOptions, RunFilter, RunStatus, Scenario, UserCode,
@@ -82,8 +82,8 @@ impl Things {
         };
         things.write(
             "features.sql",
-            "SELECT observation_id, payload->>'name' AS name, payload->>'code' AS code
-             FROM observation",
+            "SELECT record_id, payload->>'name' AS name, payload->>'code' AS code
+             FROM record",
         );
         things.write("rules/block/same_name.sql", "l.name = r.name");
         things.write("rules/block/same_code.sql", "l.code = r.code");
@@ -281,10 +281,10 @@ def judge(candidates):
     assert_eq!(described["run"], run.run.0);
 
     // Once the strategy is put right, the next run examines the same
-    // observations.
+    // records.
     things.strategy("model.py", SAME_NAME);
     let report = things.resolve("model").unwrap();
-    assert_eq!(report.resolved[0].new_observations, 3);
+    assert_eq!(report.resolved[0].new_records, 3);
     assert_eq!(report.resolved[0].identities_created, 2);
     engine.verify().unwrap();
 }
@@ -335,7 +335,7 @@ fn judgements_from_user_code_are_checked_like_a_callers() {
     let cases = [
         (
             r#"[{"left_id": pair["left_id"], "right_id": "00000000-0000-0000-0000-000000000000", "verdict": "match"} for pair in candidates.to_pylist()]"#,
-            "it names an observation that is not a known thing",
+            "it names a record that is not a known thing",
         ),
         (
             r#"[{"left_id": pair["left_id"], "right_id": pair["right_id"], "verdict": "probably"} for pair in candidates.to_pylist()]"#,
@@ -374,7 +374,7 @@ fn judgements_from_user_code_are_checked_like_a_callers() {
 
 #[test]
 #[ignore = "runs uv"]
-fn a_strategy_cannot_judge_two_observations_that_are_not_new() {
+fn a_strategy_cannot_judge_two_records_that_are_not_new() {
     let things = Things::new();
     things.strategy("model.py", SAME_NAME);
     two_anvils_and_a_hammer(&things.engine);
@@ -388,7 +388,7 @@ from spool import strategy
 
 @strategy
 def judge(features):
-    ids = features.column("observation_id").to_pylist()
+    ids = features.column("record_id").to_pylist()
     return [
         {"left_id": a, "right_id": b, "verdict": "match"}
         for a in ids for b in ids if a < b
@@ -399,7 +399,7 @@ def judge(features):
     match things.resolve("everything") {
         Err(Error::Strategy { message, .. }) => {
             assert!(
-                message.contains("neither observation is new to this run"),
+                message.contains("neither record is new to this run"),
                 "{message}"
             );
         }
@@ -430,7 +430,7 @@ fn a_strategy_that_writes_nothing_fails() {
     );
 
     // A strategy that has nothing to say returns nothing, which is not the
-    // same thing: every observation gets an identity of its own.
+    // same thing: every record gets an identity of its own.
     things.strategy(
         "model.py",
         "from spool import strategy\n\n@strategy\ndef judge(candidates):\n    return None\n",
@@ -499,7 +499,7 @@ fn a_strategy_that_changes_while_another_runs_is_not_started() {
     for entity_type in ["first", "second"] {
         write(
             &format!("{entity_type}/features.sql"),
-            "SELECT observation_id, payload->>'name' AS name FROM observation",
+            "SELECT record_id, payload->>'name' AS name FROM record",
         );
         write(
             &format!("{entity_type}/rules/block/same_name.sql"),
@@ -583,7 +583,7 @@ def judge(candidates):
 
 #[test]
 #[ignore = "runs uv"]
-fn a_strategy_that_finds_its_own_pairs_is_given_every_observation() {
+fn a_strategy_that_finds_its_own_pairs_is_given_every_record() {
     let things = Things::new();
     // No block rules: the engine finds no candidates for this type.
     fs::remove_dir_all(things.project().join("entities/thing/rules")).unwrap();
@@ -603,11 +603,11 @@ def judge(features, candidates, task):
                               "rematch": task.rematch, "type": task.entity_type}}) + "\n")
     new = [row for row in rows if row["is_new"]]
     return [
-        {{"left_id": a["observation_id"], "right_id": b["observation_id"],
+        {{"left_id": a["record_id"], "right_id": b["record_id"],
           "verdict": "match", "score": 1.0, "detail": {{"name": a["name"]}}}}
         for a in new for b in rows
-        if a["observation_id"] != b["observation_id"] and a["name"] == b["name"]
-        and (not b["is_new"] or a["observation_id"] < b["observation_id"])
+        if a["record_id"] != b["record_id"] and a["name"] == b["name"]
+        and (not b["is_new"] or a["record_id"] < b["record_id"])
     ]
 "#
         ),
@@ -650,9 +650,9 @@ def judge(features, candidates, task):
     let rows = second["rows"].as_array().unwrap();
     assert_eq!(rows.len(), 5);
     let row = |source: &str, key: &str| {
-        let id = observation(engine, source, key).to_string();
+        let id = record_id(engine, source, key).to_string();
         rows.iter()
-            .find(|row| row["observation_id"] == id.as_str())
+            .find(|row| row["record_id"] == id.as_str())
             .unwrap()
             .clone()
     };
@@ -740,7 +740,7 @@ def judge(candidates):
     // its own, and another batch arrives.
     let thing = EntityType::new("thing").unwrap();
     let own = engine.mint_ids(1, 0).identities[0];
-    let third = observation(&engine, "shop", "3");
+    let third = record_id(&engine, "shop", "3");
     engine
         .author(
             Actor::User("reviewer".to_owned()),
@@ -751,7 +751,7 @@ def judge(candidates):
                     entity_type: thing,
                 },
                 Op::Assign {
-                    observation: third,
+                    record: third,
                     from: None,
                     to: Some(own),
                 },
@@ -777,14 +777,14 @@ def judge(candidates):
         ]
         .into()
     );
-    assert_eq!(report.resolved[0].new_observations, 3);
+    assert_eq!(report.resolved[0].new_records, 3);
     // The batch that arrived meanwhile was not the run's, and is the next
     // run's.
     assert_eq!(identity(&engine, "depot", "9"), None);
     let report = engine
         .resolve(&ResolveOptions::with_strategy("model"))
         .unwrap();
-    assert_eq!(report.resolved[0].new_observations, 1);
+    assert_eq!(report.resolved[0].new_records, 1);
     assert_eq!(
         identity(&engine, "depot", "9"),
         identity(&engine, "shop", "4")
@@ -875,9 +875,9 @@ await strategy(async (task) => {{
     let rows = second["rows"].as_array().unwrap();
     assert_eq!(rows.len(), 4);
     let row = |source: &str, key: &str| {
-        let id = observation(engine, source, key).to_string();
+        let id = record_id(engine, source, key).to_string();
         rows.iter()
-            .find(|row| row["observation_id"] == id.as_str())
+            .find(|row| row["record_id"] == id.as_str())
             .unwrap()
             .clone()
     };
@@ -976,7 +976,7 @@ fn an_engine_that_was_not_told_where_the_project_is_runs_no_user_code() {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, contents).unwrap();
     };
-    write("features.sql", "SELECT observation_id FROM observation");
+    write("features.sql", "SELECT record_id FROM record");
     write("strategies/model.py", SAME_NAME);
     let engine = Engine::open_in_memory(Options::seeded(1)).unwrap();
     engine.apply(&Manifest::load(dir.path()).unwrap()).unwrap();

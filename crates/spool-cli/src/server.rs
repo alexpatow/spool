@@ -42,7 +42,7 @@ use serde::de::DeserializeOwned;
 use spool::core::{Changeset, DocumentId, EntityType, Policy, RunId, Seq};
 use spool::{
     ConstraintFilter, Disposition, DocumentFilter, DraftFilter, DraftStatus, Engine,
-    ExtractOptions, IdentityFilter, IngestOptions, ObservationFilter, ResolveOptions, ReviewFilter,
+    ExtractOptions, IdentityFilter, IngestOptions, RecordFilter, ResolveOptions, ReviewFilter,
     ReviewStatus, Rows, RunFilter, RunKind, RunStatus, Scope, StrategyRef, watch_runs,
 };
 use tokio::net::TcpListener;
@@ -53,7 +53,7 @@ use crate::api::{
     DismissRequest, DocumentList, DocumentsRequest, DraftList, ErrorBody, ErrorCode, ErrorResponse,
     ExtractRequest, History, IdentitiesOfRequest, IdentitiesOfResponse, IdentityList, Info,
     IngestParams, IngestRequest, JudgementsRequest, JudgementsResponse, MintRequest,
-    ObservationList, ReconcileRequest, RejectDraftRequest, ReviewList, RunList, RunResponse,
+    ReconcileRequest, RecordList, RejectDraftRequest, ReviewList, RunList, RunResponse,
     SplitRequest, StartRunRequest, UndoRequest,
 };
 use crate::studio;
@@ -126,9 +126,9 @@ pub fn router(engine: Arc<Engine>, options: &ServerOptions) -> Router {
         .route("/identities/{identity}/history", get(identity_history))
         .route("/identities/{identity}/split", post(split))
         .route("/constraints", get(list_constraints))
-        .route("/observations", get(list_observations))
-        .route("/observations/identities", post(identities_of))
-        .route("/observations/{observation}", get(read_observation))
+        .route("/records", get(list_records))
+        .route("/records/identities", post(identities_of))
+        .route("/records/{record}", get(read_record))
         .route("/explain", get(explain))
         .route("/review", get(list_review))
         .route("/review/{item}", get(read_review))
@@ -228,7 +228,7 @@ impl From<spool::Error> for ApiError {
             | Error::UnknownDraft(_)
             | Error::UnknownIdentity(_)
             | Error::UnknownDocument(_)
-            | Error::UnknownObservation(_)
+            | Error::UnknownRecord(_)
             | Error::UnknownChangeset(_)
             | Error::UnknownReviewItem(_) => Self::not_found(message),
             Error::Run { .. }
@@ -246,7 +246,7 @@ impl From<spool::Error> for ApiError {
             | Error::Arrow(_)
             | Error::InvalidEntityType(_)
             | Error::UndeclaredType(_)
-            | Error::SameObservation(_)
+            | Error::SameRecord(_)
             | Error::UnknownStrategy { .. } => Self::invalid(message),
             Error::Strategy { .. } => Self::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -879,7 +879,7 @@ async fn split(State(app): State<App>, Path(identity): Path<String>, body: Bytes
     ok(engine(&app, move |engine| {
         engine.split(
             identity,
-            &request.observations,
+            &request.records,
             request.keep_apart.unwrap_or(true),
             request.base,
             request.actor,
@@ -892,7 +892,7 @@ async fn split(State(app): State<App>, Path(identity): Path<String>, body: Bytes
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ConstraintsQuery {
-    observation: Option<String>,
+    record: Option<String>,
     identity: Option<String>,
     removed: Option<bool>,
 }
@@ -903,10 +903,10 @@ async fn list_constraints(
 ) -> ApiResult {
     let params = query(params)?;
     let filter = ConstraintFilter {
-        observation: params
-            .observation
+        record: params
+            .record
             .as_deref()
-            .map(|observation| id(observation, "an observation ID"))
+            .map(|record| id(record, "a record ID"))
             .transpose()?,
         identity: params
             .identity
@@ -1018,7 +1018,7 @@ async fn identity_history(State(app): State<App>, Path(identity): Path<String>) 
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ObservationsQuery {
+struct RecordsQuery {
     entity_type: Option<EntityType>,
     source: Option<String>,
     key: Option<String>,
@@ -1030,13 +1030,13 @@ struct ObservationsQuery {
     limit: Option<u64>,
 }
 
-async fn list_observations(
+async fn list_records(
     State(app): State<App>,
-    params: Result<Query<ObservationsQuery>, QueryRejection>,
+    params: Result<Query<RecordsQuery>, QueryRejection>,
 ) -> ApiResult {
     let params = query(params)?;
     let limit = page(params.limit);
-    let filter = ObservationFilter {
+    let filter = RecordFilter {
         entity_type: params.entity_type,
         source: params.source,
         key: params.key,
@@ -1055,22 +1055,22 @@ async fn list_observations(
         after: params
             .after
             .as_deref()
-            .map(|after| id(after, "an observation ID"))
+            .map(|after| id(after, "a record ID"))
             .transpose()?,
         limit,
     };
-    let observations = engine(&app, move |engine| engine.observations(&filter)).await?;
-    let next = (observations.len() as u64 == limit)
-        .then(|| observations.last().map(|observation| observation.id))
+    let records = engine(&app, move |engine| engine.records(&filter)).await?;
+    let next = (records.len() as u64 == limit)
+        .then(|| records.last().map(|record| record.id))
         .flatten();
-    ok(ObservationList { observations, next })
+    ok(RecordList { records, next })
 }
 
-async fn read_observation(State(app): State<App>, Path(observation): Path<String>) -> ApiResult {
-    let observation = id(&observation, "an observation ID")?;
-    match engine(&app, move |engine| engine.observation(observation)).await? {
+async fn read_record(State(app): State<App>, Path(record): Path<String>) -> ApiResult {
+    let record = id(&record, "a record ID")?;
+    match engine(&app, move |engine| engine.record(record)).await? {
         Some(record) => ok(record),
-        None => Err(spool::Error::UnknownObservation(observation).into()),
+        None => Err(spool::Error::UnknownRecord(record).into()),
     }
 }
 
@@ -1081,24 +1081,21 @@ struct ExplainQuery {
     b: String,
 }
 
-/// Why two observations share an identity, or do not. The order in which
+/// Why two records share an identity, or do not. The order in which
 /// the two are named does not matter.
 async fn explain(
     State(app): State<App>,
     params: Result<Query<ExplainQuery>, QueryRejection>,
 ) -> ApiResult {
     let params = query(params)?;
-    let a = id(&params.a, "an observation ID")?;
-    let b = id(&params.b, "an observation ID")?;
+    let a = id(&params.a, "a record ID")?;
+    let b = id(&params.b, "a record ID")?;
     ok(engine(&app, move |engine| engine.explain(a, b)).await?)
 }
 
 async fn identities_of(State(app): State<App>, body: Bytes) -> ApiResult {
     let request: IdentitiesOfRequest = json_body(&body)?;
-    let identities = engine(&app, move |engine| {
-        engine.identities_of(&request.observations)
-    })
-    .await?;
+    let identities = engine(&app, move |engine| engine.identities_of(&request.records)).await?;
     ok(IdentitiesOfResponse { identities })
 }
 
@@ -1107,7 +1104,7 @@ async fn identities_of(State(app): State<App>, body: Bytes) -> ApiResult {
 struct ReviewQuery {
     status: Option<ReviewStatus>,
     entity_type: Option<EntityType>,
-    observation: Option<String>,
+    record: Option<String>,
 }
 
 async fn list_review(
@@ -1119,10 +1116,10 @@ async fn list_review(
         status: params.status,
         entity_type: params.entity_type,
         id: None,
-        observation: params
-            .observation
+        record: params
+            .record
             .as_deref()
-            .map(|observation| id(observation, "an observation ID"))
+            .map(|record| id(record, "a record ID"))
             .transpose()?,
     };
     let items = engine(&app, move |engine| engine.review_items(&filter)).await?;

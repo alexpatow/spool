@@ -21,8 +21,8 @@ use std::time::Duration;
 
 use common::{benchmarks, select};
 use spool::{
-    BenchReport, DocumentFilter, Engine, ExtractOptions, Manifest, NewDocument, ObservationFilter,
-    Options, Scenario, UserCode,
+    BenchReport, DocumentFilter, Engine, ExtractOptions, Manifest, NewDocument, Options,
+    RecordFilter, Scenario, UserCode,
 };
 
 fn news() -> PathBuf {
@@ -56,7 +56,7 @@ fn mentions(engine: &Engine) -> BTreeSet<(String, u64, String)> {
         "SELECT json_extract_string(evidence, '$.key'),
                 json_extract_string(evidence, '$.start'),
                 json_extract_string(evidence, '$.text')
-         FROM spool.observation",
+         FROM spool.record",
     )
     .into_iter()
     .map(|row| {
@@ -68,14 +68,11 @@ fn mentions(engine: &Engine) -> BTreeSet<(String, u64, String)> {
     .collect()
 }
 
-fn observation_ids(engine: &Engine) -> BTreeSet<String> {
-    select(
-        engine,
-        "SELECT observation_id::VARCHAR FROM spool.observation",
-    )
-    .into_iter()
-    .map(|row| row[0].clone().unwrap())
-    .collect()
+fn record_ids(engine: &Engine) -> BTreeSet<String> {
+    select(engine, "SELECT record_id::VARCHAR FROM spool.record")
+        .into_iter()
+        .map(|row| row[0].clone().unwrap())
+        .collect()
 }
 
 fn rounded(value: Option<f64>) -> Option<f64> {
@@ -142,7 +139,7 @@ fn extraction_and_resolution_are_measured_apart() {
     // Resolution is scored over the eighteen mentions that are labelled.
     // The made-up mentions have no true entity and are left out; the two
     // companies that share a name are the one false merge.
-    assert_eq!(last.metrics.observations, 18);
+    assert_eq!(last.metrics.records, 18);
     assert_eq!(
         (last.metrics.true_entities, last.metrics.identities),
         (10, 9)
@@ -157,7 +154,7 @@ fn extraction_and_resolution_are_measured_apart() {
     // Mentions found in the second batch joined identities made from the
     // first, and none of those changed.
     assert_eq!(last.id_stability.strict, Some(1.0));
-    assert_eq!(last.churn.new_observations, 10);
+    assert_eq!(last.churn.new_records, 10);
     let order = report.order_sensitivity.as_ref().unwrap();
     assert_eq!(order.agreement, Some(1.0));
 
@@ -177,7 +174,7 @@ fn extraction_and_resolution_are_measured_apart() {
         (25, 25, 25)
     );
     assert_eq!(extraction.f1, Some(1.0));
-    assert_eq!(last.metrics.observations, 25);
+    assert_eq!(last.metrics.records, 25);
     assert_eq!(
         (last.metrics.true_entities, last.metrics.identities),
         (10, 10)
@@ -196,11 +193,11 @@ fn the_typescript_extractor_finds_what_the_python_one_finds() {
     let (python, python_report) = run("scenario.toml");
     let (typescript, typescript_report) = run("typescript.toml");
 
-    // The same mentions make the same observations: an observation's ID
+    // The same mentions make the same records: a record's ID
     // comes from its document, its place and its attributes, and not from
     // which extractor found it.
-    assert_eq!(observation_ids(&typescript), observation_ids(&python));
-    assert_eq!(observation_ids(&python).len(), 21);
+    assert_eq!(record_ids(&typescript), record_ids(&python));
+    assert_eq!(record_ids(&python).len(), 21);
     for (typescript, python) in typescript_report.steps.iter().zip(&python_report.steps) {
         assert_eq!(typescript.extraction, python.extraction);
         assert_eq!(typescript.metrics, python.metrics);
@@ -327,18 +324,18 @@ fn the_example_that_asks_a_language_model_places_what_the_model_quotes() {
     // Inc". These are the document's labelled mentions.
     let document = engine.documents(&DocumentFilter::default()).unwrap()[0].id;
     let mut found: Vec<(u64, u64, serde_json::Value)> = engine
-        .observations(&ObservationFilter {
+        .records(&RecordFilter {
             document: Some(document),
-            ..ObservationFilter::default()
+            ..RecordFilter::default()
         })
         .unwrap()
         .into_iter()
-        .map(|observation| {
-            let evidence = observation.evidence.unwrap();
+        .map(|record| {
+            let evidence = record.evidence.unwrap();
             (
                 evidence["start"].as_u64().unwrap(),
                 evidence["end"].as_u64().unwrap(),
-                observation.payload,
+                record.payload,
             )
         })
         .collect();
@@ -346,7 +343,7 @@ fn the_example_that_asks_a_language_model_places_what_the_model_quotes() {
     assert_eq!(
         found,
         vec![
-            // An attribute that is a list is not one an observation can
+            // An attribute that is a list is not one a record can
             // have, and is left out.
             (
                 12,

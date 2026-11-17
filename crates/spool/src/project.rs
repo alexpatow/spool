@@ -215,7 +215,7 @@ pub struct RuleSet {
 }
 
 /// A named SQL predicate over a left row `l` and a right row `r` of the
-/// entity type's feature table. `l` is the row with the smaller observation
+/// entity type's feature table. `l` is the row with the smaller record
 /// ID, so a predicate should not depend on which side is which.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Rule {

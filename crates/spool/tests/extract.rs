@@ -20,8 +20,8 @@ use common::members;
 use spool::core::{DocumentId, EntityType, IdentityId, Policy};
 use spool::{
     Disposition, DocumentFilter, Engine, Error, ExtractOptions, ExtractReport, Manifest,
-    NewDocument, ObservationFilter, ObservationRecord, Options, ResolveOptions, RunFilter, RunKind,
-    RunStatus, Scope, StrategyRef, UserCode, locator,
+    NewDocument, Options, RecordEntry, RecordFilter, ResolveOptions, RunFilter, RunKind, RunStatus,
+    Scope, StrategyRef, UserCode, locator,
 };
 
 /// A project on disk that declares a `company` by its name, and the
@@ -82,7 +82,7 @@ impl News {
         };
         news.write(
             "entities/company/features.sql",
-            "SELECT observation_id, lower(payload->>'name') AS name FROM observation",
+            "SELECT record_id, lower(payload->>'name') AS name FROM record",
         );
         news.write(
             "entities/company/rules/block/same_name.sql",
@@ -146,16 +146,16 @@ impl News {
             .collect()
     }
 
-    /// The observations found in a document, in the order they appear.
-    fn mentions(&self, document: DocumentId) -> Vec<ObservationRecord> {
+    /// The records found in a document, in the order they appear.
+    fn mentions(&self, document: DocumentId) -> Vec<RecordEntry> {
         let mut found = self
             .engine
-            .observations(&ObservationFilter {
+            .records(&RecordFilter {
                 document: Some(document),
-                ..ObservationFilter::default()
+                ..RecordFilter::default()
             })
             .unwrap();
-        found.sort_by_key(|observation| observation.evidence.as_ref().unwrap()["start"].as_u64());
+        found.sort_by_key(|record| record.evidence.as_ref().unwrap()["start"].as_u64());
         found
     }
 
@@ -163,12 +163,12 @@ impl News {
     fn identity(&self, document: DocumentId, start: u64, end: u64) -> Option<IdentityId> {
         let found = self
             .engine
-            .observations(&ObservationFilter::keyed(
+            .records(&RecordFilter::keyed(
                 "news",
                 locator(document, "company", start, end),
             ))
             .unwrap();
-        found.last().and_then(|observation| observation.identity)
+        found.last().and_then(|record| record.identity)
     }
 }
 
@@ -197,7 +197,7 @@ fn extractor_error(result: spool::Result<ExtractReport>) -> String {
     }
 }
 
-fn runs(engine: &Engine, kind: RunKind) -> Vec<spool::RunRecord> {
+fn runs(engine: &Engine, kind: RunKind) -> Vec<spool::RunEntry> {
     engine
         .runs(&RunFilter {
             kind: Some(kind),
@@ -377,7 +377,7 @@ fn an_extractor_is_one_the_project_has_and_needs_the_projects_files() {
 
 #[test]
 #[ignore = "runs uv"]
-fn what_an_extractor_finds_is_observations_and_resolves_like_rows() {
+fn what_an_extractor_finds_is_records_and_resolves_like_rows() {
     let news = News::new();
     news.write(
         "entities/company/extract.md",
@@ -400,7 +400,7 @@ fn what_an_extractor_finds_is_observations_and_resolves_like_rows() {
         (2, 4, 4, 0, 0)
     );
 
-    // Each mention is an observation of the document's source, keyed by
+    // Each mention is a record of the document's source, keyed by
     // where it was found. Positions count characters, not bytes: the rocket
     // before Acme is one.
     let found = news.mentions(first);
@@ -441,7 +441,7 @@ fn what_an_extractor_finds_is_observations_and_resolves_like_rows() {
     assert_eq!(other[0].identity, None);
 
     // The extract run names the extractor and the hash of the file that
-    // ran, and the observations were stored by an ingest run of their own.
+    // ran, and the records were stored by an ingest run of their own.
     let run = engine.run(report.run).unwrap();
     assert_eq!(run.kind, RunKind::Extract);
     assert_eq!(run.status, RunStatus::Succeeded);
@@ -477,7 +477,7 @@ fn what_an_extractor_finds_is_observations_and_resolves_like_rows() {
     // two mentions of Acme are one company.
     assert_eq!(engine.head().unwrap().0, 0);
     let resolved = engine.resolve(&ResolveOptions::default()).unwrap();
-    assert_eq!(resolved.resolved[0].new_observations, 4);
+    assert_eq!(resolved.resolved[0].new_records, 4);
     assert_eq!(resolved.resolved[0].identities_created, 3);
     let acme = news.identity(first, 2, 10).unwrap();
     assert_eq!(news.identity(second, 19, 27), Some(acme));
@@ -516,11 +516,11 @@ fn what_an_extractor_finds_is_observations_and_resolves_like_rows() {
             .unwrap()
             .resolved
             .iter()
-            .any(|resolved| resolved.new_observations > 0)
+            .any(|resolved| resolved.new_records > 0)
     );
 
     // An extractor that says more about a mention it found before makes
-    // the next version of that observation, which stays the same company.
+    // the next version of that record, which stays the same company.
     news.extractor(
         "names.py",
         &NAMES.replace(
@@ -544,7 +544,7 @@ fn what_an_extractor_finds_is_observations_and_resolves_like_rows() {
         (2, 4, 4, 4)
     );
     let versions = engine
-        .observations(&ObservationFilter::keyed(
+        .records(&RecordFilter::keyed(
             "news",
             locator(first, "company", 2, 10),
         ))
@@ -640,12 +640,7 @@ def find(documents):
     assert_eq!(run.status, RunStatus::Failed);
     assert!(run.error.as_deref().unwrap().contains("ValueError"));
     assert_eq!(run.extractor.as_ref().unwrap().name, "names");
-    assert!(
-        engine
-            .observations(&ObservationFilter::default())
-            .unwrap()
-            .is_empty()
-    );
+    assert!(engine.records(&RecordFilter::default()).unwrap().is_empty());
     assert!(
         engine
             .document(id("a", FIRST))
@@ -701,12 +696,7 @@ fn a_mention_the_engine_refuses_refuses_them_all() {
         assert!(message.contains("its mentions were refused"), "{message}");
         assert!(message.contains(expected), "{message}");
         assert!(message.contains("Its task is kept in"), "{message}");
-        assert!(
-            engine
-                .observations(&ObservationFilter::default())
-                .unwrap()
-                .is_empty()
-        );
+        assert!(engine.records(&RecordFilter::default()).unwrap().is_empty());
         assert!(
             engine
                 .document(id("a", FIRST))
@@ -796,7 +786,7 @@ from spool import extractor
 @extractor
 def find(documents, task):
     assert task.extractor == "names"
-    assert [column["name"] for column in task.features("company")] == ["observation_id", "name"]
+    assert [column["name"] for column in task.features("company")] == ["record_id", "name"]
     assert [document.key for document in documents] == ["a", "b"]
     assert documents[0].uri == "https://news.test/a" and documents[0].source == "news"
     for document in documents:
@@ -880,7 +870,7 @@ def find(documents):
 
     // What the extractor found is new to the next resolve.
     let resolved = engine.resolve(&ResolveOptions::default()).unwrap();
-    assert_eq!(resolved.resolved[0].new_observations, 1);
+    assert_eq!(resolved.resolved[0].new_records, 1);
     assert!(news.identity(id("a", FIRST), 2, 10).is_some());
     // The document that arrived meanwhile is the next extraction's.
     assert_eq!(news.extract("names").unwrap().documents, 1);
@@ -926,15 +916,15 @@ await extractor(async (task) => {
         );
         let ids: BTreeSet<_> = news
             .engine
-            .observations(&ObservationFilter::default())
+            .records(&RecordFilter::default())
             .unwrap()
             .iter()
-            .map(|observation| observation.id)
+            .map(|record| record.id)
             .collect();
         found.push(ids);
         assert!(news.tasks().is_empty(), "{:?}", news.tasks());
     }
-    // The same mentions with the same attributes are the same observations,
+    // The same mentions with the same attributes are the same records,
     // whichever language found them.
     assert_eq!(found[0], found[1]);
 

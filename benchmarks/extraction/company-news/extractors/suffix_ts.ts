@@ -1,5 +1,5 @@
 // Finds company names by their legal form: `suffix.py` in TypeScript. The two
-// find the same mentions, and so make the same observations.
+// find the same mentions, and so make the same records.
 
 import { extractor } from "spool-strategy";
 

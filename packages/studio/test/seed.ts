@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { readCsv, repository } from "../../client/test/server.ts";
-import type { ObservationRecord, SpoolClient } from "../src/api.ts";
+import type { RecordEntry, SpoolClient } from "../src/api.ts";
 
 export const companies = join(repository, "benchmarks/identity/companies-small");
 export const news = join(repository, "benchmarks/extraction/company-news");
@@ -30,9 +30,9 @@ async function ingest(client: SpoolClient, file: string, source: string, key: st
   if (run.status !== "succeeded") throw new Error(`ingesting ${file} ${run.status}: ${run.error ?? ""}`);
 }
 
-export async function row(client: SpoolClient, source: string, key: string): Promise<ObservationRecord> {
-  const { observations } = await client.observations({ source, key });
-  const latest = observations.find((observation) => !observation.superseded_by);
+export async function row(client: SpoolClient, source: string, key: string): Promise<RecordEntry> {
+  const { records } = await client.records({ source, key });
+  const latest = records.find((record) => !record.superseded_by);
   if (latest === undefined) throw new Error(`there is no ${source}:${key}`);
   return latest;
 }
@@ -76,7 +76,7 @@ export async function seedCompanies(client: SpoolClient): Promise<void> {
   await client.split(await identityOf(client, "registry", "X0000010"), {
     actor: REVIEWER,
     reason: "the Bristol company is another company",
-    observations: [(await row(client, "registry", "X0000010")).id],
+    records: [(await row(client, "registry", "X0000010")).id],
   });
   await client.commit({
     actor: REVIEWER,

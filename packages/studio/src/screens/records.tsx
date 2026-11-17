@@ -3,7 +3,7 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 
 import { Act, At, Done, Mistake } from "../act.tsx";
-import type { DocumentRecord, ObservationRecord, Op, ReviewRecord } from "../api.ts";
+import type { DocumentEntry, RecordEntry, Op, ReviewEntry } from "../api.ts";
 import {
   Code,
   Fields,
@@ -29,8 +29,8 @@ import {
 } from "../components.tsx";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
-import { findIdentity, findObservation, found } from "../find.ts";
-import { excerpt, mentionOf, named, observationName } from "../format.ts";
+import { findIdentity, findRecord, found } from "../find.ts";
+import { excerpt, mentionOf, named, recordName } from "../format.ts";
 import type { Excerpt, Mention } from "../format.ts";
 import { useLabels, useLoad, usePages, useStudio } from "../hooks.ts";
 import { RecordIcon } from "../icons.tsx";
@@ -40,16 +40,16 @@ import { colors, radius, spacing, typography } from "../styles/shelf/tokens.styl
 import { tones } from "../styles/tones.stylex";
 
 /** What a record is known by in its source: its key, or where in a document it was found. */
-function keyOf(record: ObservationRecord): string {
-  const name = observationName(record);
+function keyOf(record: RecordEntry): string {
+  const name = recordName(record);
   return name.startsWith(`${record.source}:`) ? name.slice(record.source.length + 1) : name;
 }
 
-export function Observations({ route, types }: { route: Route; types: string[] }) {
+export function RecordsPage({ route, types }: { route: Route; types: string[] }) {
   const { type, source, key, document, unassigned, q } = route.query;
   const pair = usePair();
   const pages = usePages(async (client, after) => {
-    const page = await client.observations({
+    const page = await client.records({
       entity_type: type,
       source,
       key,
@@ -58,11 +58,9 @@ export function Observations({ route, types }: { route: Route; types: string[] }
       unassigned: unassigned === "true" ? true : undefined,
       after: after as string | undefined,
     });
-    return { items: page.observations, next: page.next };
+    return { items: page.records, next: page.next };
   });
-  const labels = useLabels(
-    pages.loaded.status === "ready" ? pages.loaded.data.map((observation) => observation.identity) : [],
-  );
+  const labels = useLabels(pages.loaded.status === "ready" ? pages.loaded.data.map((record) => record.identity) : []);
   return (
     <Page
       title="Records"
@@ -89,32 +87,28 @@ export function Observations({ route, types }: { route: Route; types: string[] }
         pages={pages}
         label="Records"
         columns={[
-          { title: "", cell: (observation) => pair.tick(observation.id) },
+          { title: "", cell: (record) => pair.tick(record.id) },
           {
             title: "Record",
-            cell: (observation) => (
+            cell: (record) => (
               <span {...stylex.props(styles.name)}>
-                <Ref kind="observation" id={observation.id} label={observation.label ?? observationName(observation)} />
-                {observation.superseded_by ? <Word value="replaced" label="superseded" /> : null}
+                <Ref kind="record" id={record.id} label={record.label ?? recordName(record)} />
+                {record.superseded_by ? <Word value="replaced" label="superseded" /> : null}
               </span>
             ),
             wrap: true,
           },
-          { title: "Source", cell: (observation) => <Source name={observation.source} /> },
-          { title: "Key", cell: (observation) => <Code>{keyOf(observation)}</Code> },
-          { title: "Entity type", cell: (observation) => observation.entity_type },
+          { title: "Source", cell: (record) => <Source name={record.source} /> },
+          { title: "Key", cell: (record) => <Code>{keyOf(record)}</Code> },
+          { title: "Entity type", cell: (record) => record.entity_type },
           {
             title: "Identity",
-            cell: (observation) =>
-              observation.identity ? (
-                <Identity id={observation.identity} labels={labels} />
-              ) : (
-                <Word value="unassigned" />
-              ),
+            cell: (record) =>
+              record.identity ? <Identity id={record.identity} labels={labels} /> : <Word value="unassigned" />,
           },
-          { title: "ID", cell: (observation) => <Ref kind="observation" id={observation.id} /> },
+          { title: "ID", cell: (record) => <Ref kind="record" id={record.id} /> },
         ]}
-        rowKey={(observation) => observation.id}
+        rowKey={(record) => record.id}
         empty={q ? `No records match “${q}”.` : "No records."}
       />
       {pair.explain}
@@ -123,23 +117,23 @@ export function Observations({ route, types }: { route: Route; types: string[] }
 }
 
 interface Loaded {
-  observation: ObservationRecord;
-  review: ReviewRecord[];
+  record: RecordEntry;
+  review: ReviewEntry[];
   /** The document a mention was found in, if the store still has it. */
-  document: DocumentRecord | null;
+  document: DocumentEntry | null;
 }
 
-export function Observation({ id }: { id: string }) {
+export function RecordPage({ id }: { id: string }) {
   const loaded = useLoad(async (client): Promise<Loaded> => {
-    const [observation, review] = await Promise.all([client.observation(id), client.reviewItems({ observation: id })]);
-    const mention = mentionOf(observation);
+    const [record, review] = await Promise.all([client.record(id), client.reviewItems({ record: id })]);
+    const mention = mentionOf(record);
     const document = mention ? await found(client.document(mention.document)) : null;
-    return { observation, review, document };
+    return { record, review, document };
   });
-  const record = loaded.status === "ready" ? loaded.data.observation : null;
+  const record = loaded.status === "ready" ? loaded.data.record : null;
   return (
     <Page
-      title={record ? (record.label ?? observationName(record)) : "Record"}
+      title={record ? (record.label ?? recordName(record)) : "Record"}
       kind={
         <>
           <RecordIcon /> Record{record ? ` · ${record.entity_type}` : ""}
@@ -147,22 +141,22 @@ export function Observation({ id }: { id: string }) {
       }
       about={<Id value={id} />}
     >
-      <Load state={loaded}>{(loaded) => <ObservationScreen {...loaded} />}</Load>
+      <Load state={loaded}>{(loaded) => <RecordScreen {...loaded} />}</Load>
     </Page>
   );
 }
 
-function ObservationScreen({ observation, review, document }: Loaded) {
-  const mention = mentionOf(observation);
+function RecordScreen({ record, review, document }: Loaded) {
+  const mention = mentionOf(record);
   const around = mention && document?.text ? excerpt(document.text, mention.start, mention.end) : null;
   const waits = review.filter((item) => item.status === "open");
-  const labels = useLabels([observation.identity]);
+  const labels = useLabels([record.identity]);
   return (
     <>
-      {observation.superseded_by ? (
+      {record.superseded_by ? (
         <Notice tone="waits">
           <span>
-            Superseded by <Ref kind="observation" id={observation.superseded_by} />.
+            Superseded by <Ref kind="record" id={record.superseded_by} />.
           </span>
         </Notice>
       ) : null}
@@ -182,25 +176,22 @@ function ObservationScreen({ observation, review, document }: Loaded) {
       ) : null}
       <Fields
         rows={[
-          ["Entity type", observation.entity_type],
-          ["Source", <Source name={observation.source} />],
-          ["Key", observation.key ? <Code>{observation.key}</Code> : null],
+          ["Entity type", record.entity_type],
+          ["Source", <Source name={record.source} />],
+          ["Key", record.key ? <Code>{record.key}</Code> : null],
           [
             "Ingested",
             <>
-              <When at={observation.ingested_at} /> by{" "}
-              <Ref kind="run" id={observation.ingest_run} label={`run ${observation.ingest_run}`} />
+              <When at={record.ingested_at} /> by{" "}
+              <Ref kind="run" id={record.ingest_run} label={`run ${record.ingest_run}`} />
             </>,
           ],
           [
             "Identity",
-            observation.identity ? <Identity id={observation.identity} labels={labels} /> : <Word value="unassigned" />,
+            record.identity ? <Identity id={record.identity} labels={labels} /> : <Word value="unassigned" />,
           ],
-          ["Supersedes", observation.supersedes ? <Ref kind="observation" id={observation.supersedes} /> : null],
-          [
-            "Superseded by",
-            observation.superseded_by ? <Ref kind="observation" id={observation.superseded_by} /> : null,
-          ],
+          ["Supersedes", record.supersedes ? <Ref kind="record" id={record.supersedes} /> : null],
+          ["Superseded by", record.superseded_by ? <Ref kind="record" id={record.superseded_by} /> : null],
           [
             "Review",
             review.length > 0 ? (
@@ -218,26 +209,26 @@ function ObservationScreen({ observation, review, document }: Loaded) {
       />
       {mention && document ? <Found mention={mention} document={document} excerpt={around} /> : null}
       <Section title="Payload">
-        <Json value={observation.payload} />
+        <Json value={record.payload} />
       </Section>
-      {observation.evidence !== undefined && observation.evidence !== null ? (
+      {record.evidence !== undefined && record.evidence !== null ? (
         <Section title="Evidence">
-          <Json value={observation.evidence} />
+          <Json value={record.evidence} />
         </Section>
       ) : null}
       <Section title="Explain">
-        <ExplainWith observation={observation} />
+        <ExplainWith record={record} />
       </Section>
-      <Move observation={observation} />
+      <Move record={record} />
     </>
   );
 }
 
-/** Puts the observation in another identity, in a new one, or in none. */
-function Move({ observation }: { observation: ObservationRecord }) {
+/** Puts the record in another identity, in a new one, or in none. */
+function Move({ record }: { record: RecordEntry }) {
   const [done, setDone] = useState<ReactNode>(null);
   const [chosen, setWhere] = useState("identity");
-  const from = observation.identity ?? null;
+  const from = record.identity ?? null;
   // Once it is out of its identity, it cannot be taken out again.
   const where = chosen === "none" && from === null ? "identity" : chosen;
   return (
@@ -246,7 +237,7 @@ function Move({ observation }: { observation: ObservationRecord }) {
       <div>
         <Act
           label={from ? "Move" : "Assign"}
-          title={`${from ? "Move" : "Assign"} ${observation.label ?? observationName(observation)}`}
+          title={`${from ? "Move" : "Assign"} ${record.label ?? recordName(record)}`}
           who
           why="Reason"
           act={async (client, { actor, reason, entered }) => {
@@ -254,7 +245,7 @@ function Move({ observation }: { observation: ObservationRecord }) {
             let to: string | null = null;
             if (where === "new") {
               to = (await client.mintIds({ identities: 1 })).identities[0]!;
-              ops.push({ op: "create_identity", entity_type: observation.entity_type, identity: to });
+              ops.push({ op: "create_identity", entity_type: record.entity_type, identity: to });
             } else if (where === "identity") {
               const reference = String(entered.get("identity") ?? "").trim();
               if (reference === "") throw new Mistake("Enter an identity.");
@@ -264,7 +255,7 @@ function Move({ observation }: { observation: ObservationRecord }) {
             }
             // Where it is now is what the reviewer saw: if that has changed
             // since, the engine rejects the move.
-            ops.push({ op: "assign", observation: observation.id, from, to });
+            ops.push({ op: "assign", record: record.id, from, to });
             const committed = await client.commit({ actor, reason, ops });
             return (
               <>
@@ -301,15 +292,7 @@ function Move({ observation }: { observation: ObservationRecord }) {
   );
 }
 
-function Found({
-  mention,
-  document,
-  excerpt,
-}: {
-  mention: Mention;
-  document: DocumentRecord;
-  excerpt: Excerpt | null;
-}) {
+function Found({ mention, document, excerpt }: { mention: Mention; document: DocumentEntry; excerpt: Excerpt | null }) {
   return (
     <Section title="Mention">
       <Text>
@@ -332,8 +315,8 @@ function Found({
   );
 }
 
-/** Asks for the other observation of a pair, and goes to the explanation of the two. */
-function ExplainWith({ observation }: { observation: ObservationRecord }) {
+/** Asks for the other record of a pair, and goes to the explanation of the two. */
+function ExplainWith({ record }: { record: RecordEntry }) {
   const { client } = useStudio();
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -347,11 +330,11 @@ function ExplainWith({ observation }: { observation: ObservationRecord }) {
           if (reference === "") return;
           setBusy(true);
           setProblem(null);
-          findObservation(client, reference).then(
+          findRecord(client, reference).then(
             (other) => {
               setBusy(false);
               if (other === null) setProblem(`No record found for ${reference}.`);
-              else navigate(href(["explain"], { a: observation.id, b: other.id }));
+              else navigate(href(["explain"], { a: record.id, b: other.id }));
             },
             (error: unknown) => {
               setBusy(false);

@@ -7,14 +7,14 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-/// Identifies an observation. Derived from the observation's source, its key
+/// Identifies a record. Derived from the record's source, its key
 /// within that source and its content, so ingesting the same thing twice
 /// yields the same ID.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(from = "Uuid", into = "Uuid")]
-pub struct ObservationId(u128);
+pub struct RecordId(u128);
 
-impl ObservationId {
+impl RecordId {
     /// The first 128 bits of a SHA-256 over the three parts. Each part is
     /// length-prefixed, so no two different inputs share an encoding.
     pub fn derive(source_id: &str, source_key: Option<&str>, canonical_payload: &str) -> Self {
@@ -48,31 +48,31 @@ fn put_str(hasher: &mut Sha256, value: &str) {
     hasher.update(value.as_bytes());
 }
 
-impl From<Uuid> for ObservationId {
+impl From<Uuid> for RecordId {
     fn from(value: Uuid) -> Self {
         Self(value.as_u128())
     }
 }
 
-impl From<ObservationId> for Uuid {
-    fn from(value: ObservationId) -> Self {
+impl From<RecordId> for Uuid {
+    fn from(value: RecordId) -> Self {
         Uuid::from_u128(value.0)
     }
 }
 
-impl fmt::Display for ObservationId {
+impl fmt::Display for RecordId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         Uuid::from_u128(self.0).fmt(f)
     }
 }
 
-impl fmt::Debug for ObservationId {
+impl fmt::Debug for RecordId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "ObservationId({self})")
+        write!(f, "RecordId({self})")
     }
 }
 
-impl FromStr for ObservationId {
+impl FromStr for RecordId {
     type Err = uuid::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -140,7 +140,7 @@ uuid_id!(
 impl DocumentId {
     /// The first 128 bits of a SHA-256 over the three parts, each
     /// length-prefixed. The input begins with eight bytes that no
-    /// observation's does, so a document never shares an observation's ID.
+    /// record's does, so a document never shares a record's ID.
     pub fn derive(source_id: &str, source_key: &str, text: &str) -> Self {
         let mut hasher = Sha256::new();
         hasher.update([0xff; 8]);
@@ -301,7 +301,7 @@ mod schema {
 
     use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 
-    use super::{Actor, ChangesetId, DocumentId, EntityType, IdentityId, ObservationId};
+    use super::{Actor, ChangesetId, DocumentId, EntityType, IdentityId, RecordId};
 
     macro_rules! text_schema {
         ($type:ty, $name:literal, $schema:tt) => {
@@ -317,8 +317,8 @@ mod schema {
         };
     }
 
-    text_schema!(ObservationId, "ObservationId", {
-        "description": "Identifies an observation. Derived by the engine from the observation's source, key and content.",
+    text_schema!(RecordId, "RecordId", {
+        "description": "Identifies a record. Derived by the engine from the record's source, key and content.",
         "type": "string",
         "format": "uuid"
     });
@@ -354,7 +354,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn document_id_depends_on_every_part_and_is_no_observations() {
+    fn document_id_depends_on_every_part_and_is_no_records() {
         let base = DocumentId::derive("news", "a", "Acme opened an office.");
         assert_eq!(
             base,
@@ -372,52 +372,49 @@ mod tests {
             base,
             DocumentId::derive("news", "a", "Acme closed an office.")
         );
-        // The same three texts as an observation's parts are another ID.
-        let observation = ObservationId::derive("news", Some("a"), "Acme opened an office.");
-        assert_ne!(base.to_string(), observation.to_string());
+        // The same three texts as a record's parts are another ID.
+        let record = RecordId::derive("news", Some("a"), "Acme opened an office.");
+        assert_ne!(base.to_string(), record.to_string());
     }
 
     #[test]
-    fn observation_id_depends_on_every_part() {
-        let base = ObservationId::derive("crm", Some("1"), r#"{"name":"Acme"}"#);
+    fn record_id_depends_on_every_part() {
+        let base = RecordId::derive("crm", Some("1"), r#"{"name":"Acme"}"#);
         assert_eq!(
             base,
-            ObservationId::derive("crm", Some("1"), r#"{"name":"Acme"}"#)
+            RecordId::derive("crm", Some("1"), r#"{"name":"Acme"}"#)
         );
         assert_ne!(
             base,
-            ObservationId::derive("registry", Some("1"), r#"{"name":"Acme"}"#)
+            RecordId::derive("registry", Some("1"), r#"{"name":"Acme"}"#)
         );
         assert_ne!(
             base,
-            ObservationId::derive("crm", Some("2"), r#"{"name":"Acme"}"#)
+            RecordId::derive("crm", Some("2"), r#"{"name":"Acme"}"#)
         );
+        assert_ne!(base, RecordId::derive("crm", None, r#"{"name":"Acme"}"#));
         assert_ne!(
             base,
-            ObservationId::derive("crm", None, r#"{"name":"Acme"}"#)
-        );
-        assert_ne!(
-            base,
-            ObservationId::derive("crm", Some("1"), r#"{"name":"Acme Ltd"}"#)
+            RecordId::derive("crm", Some("1"), r#"{"name":"Acme Ltd"}"#)
         );
     }
 
     #[test]
-    fn observation_id_parts_do_not_run_together() {
+    fn record_id_parts_do_not_run_together() {
         assert_ne!(
-            ObservationId::derive("ab", Some("c"), "{}"),
-            ObservationId::derive("a", Some("bc"), "{}")
+            RecordId::derive("ab", Some("c"), "{}"),
+            RecordId::derive("a", Some("bc"), "{}")
         );
         assert_ne!(
-            ObservationId::derive("a", Some(""), "{}"),
-            ObservationId::derive("a", None, "{}")
+            RecordId::derive("a", Some(""), "{}"),
+            RecordId::derive("a", None, "{}")
         );
     }
 
     #[test]
-    fn observation_id_round_trips_as_a_uuid_string() {
-        let id = ObservationId::derive("crm", Some("1"), "{}");
-        assert_eq!(id.to_string().parse::<ObservationId>().unwrap(), id);
+    fn record_id_round_trips_as_a_uuid_string() {
+        let id = RecordId::derive("crm", Some("1"), "{}");
+        assert_eq!(id.to_string().parse::<RecordId>().unwrap(), id);
         assert_eq!(id.to_string().len(), 36);
     }
 

@@ -1,9 +1,9 @@
 //! Documents, and the mentions an extractor finds in them.
 //!
 //! A document is text a source holds under a key. The store keeps it so
-//! that an observation extracted from it can show where it was found, and
+//! that a record extracted from it can show where it was found, and
 //! so that an extractor can be run again without the source being asked
-//! again. A mention becomes an observation whose key is its locator:
+//! again. A mention becomes a record whose key is its locator:
 //!
 //! ```text
 //! <document id>#<entity type>:<start>-<end>
@@ -19,7 +19,7 @@ use duckdb::arrow::record_batch::RecordBatch;
 use duckdb::{Connection, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use spool_core::{DocumentId, ObservationId, RunId};
+use spool_core::{DocumentId, RecordId, RunId};
 
 use crate::batch::{Column, batch, id_list};
 use crate::error::{Error, Result};
@@ -45,7 +45,7 @@ pub struct NewDocument {
 /// One version of a document as the store holds it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct DocumentRecord {
+pub struct DocumentEntry {
     pub id: DocumentId,
     pub source: String,
     pub key: String,
@@ -153,15 +153,15 @@ pub struct ExtractReport {
     pub documents: u64,
     /// Mentions it found.
     pub mentions: u64,
-    /// Observations created.
+    /// Records created.
     pub inserted: u64,
     /// Mentions that were already known: the same place in the same
     /// document, with the same attributes.
     pub duplicates: u64,
-    /// Observations created as a new version of a mention that was known
+    /// Records created as a new version of a mention that was known
     /// with other attributes.
     pub superseded: u64,
-    /// The ingest run the observations were stored under. There is none
+    /// The ingest run the records were stored under. There is none
     /// when nothing was found.
     pub ingest_run: Option<RunId>,
 }
@@ -266,14 +266,14 @@ const DOCUMENT: &str = "
     FROM spool.document d
     LEFT JOIN spool.document later ON later.supersedes = d.document_id";
 
-fn record(row: &duckdb::Row<'_>) -> Result<DocumentRecord> {
+fn entry(row: &duckdb::Row<'_>) -> Result<DocumentEntry> {
     let id = |at: usize| -> Result<Option<DocumentId>> {
         row.get::<_, Option<String>>(at)?
             .as_deref()
             .map(parse)
             .transpose()
     };
-    Ok(DocumentRecord {
+    Ok(DocumentEntry {
         id: parse(&row.get::<_, String>(0)?)?,
         source: row.get(1)?,
         key: row.get(2)?,
@@ -289,7 +289,7 @@ fn record(row: &duckdb::Row<'_>) -> Result<DocumentRecord> {
 }
 
 /// Fills in which extractors have read each of the documents.
-fn add_extractions(conn: &Connection, documents: &mut [DocumentRecord]) -> Result<()> {
+fn add_extractions(conn: &Connection, documents: &mut [DocumentEntry]) -> Result<()> {
     if documents.is_empty() {
         return Ok(());
     }
@@ -314,12 +314,12 @@ fn add_extractions(conn: &Connection, documents: &mut [DocumentRecord]) -> Resul
 }
 
 /// One document with its text, or `None` if the store holds none by that ID.
-pub(crate) fn get(conn: &Connection, id: DocumentId) -> Result<Option<DocumentRecord>> {
+pub(crate) fn get(conn: &Connection, id: DocumentId) -> Result<Option<DocumentEntry>> {
     let mut found = {
         let mut statement = conn.prepare(&format!("{DOCUMENT} WHERE d.document_id = ?::UUID"))?;
         let mut rows = statement.query([id.to_string()])?;
         match rows.next()? {
-            Some(row) => record(row)?,
+            Some(row) => entry(row)?,
             None => return Ok(None),
         }
     };
@@ -333,7 +333,7 @@ pub(crate) fn get(conn: &Connection, id: DocumentId) -> Result<Option<DocumentRe
 }
 
 /// Documents without their text, ordered by ID.
-pub(crate) fn list(conn: &Connection, filter: &DocumentFilter) -> Result<Vec<DocumentRecord>> {
+pub(crate) fn list(conn: &Connection, filter: &DocumentFilter) -> Result<Vec<DocumentEntry>> {
     let mut found = Vec::new();
     {
         let mut statement = conn.prepare(&format!(
@@ -353,7 +353,7 @@ pub(crate) fn list(conn: &Connection, filter: &DocumentFilter) -> Result<Vec<Doc
             filter.limit.min(i64::MAX as u64) as i64,
         ])?;
         while let Some(row) = rows.next()? {
-            found.push(record(row)?);
+            found.push(entry(row)?);
         }
     }
     add_extractions(conn, &mut found)?;
@@ -385,13 +385,13 @@ pub(crate) struct RawMention {
     pub attributes: Option<String>,
 }
 
-/// A mention that passed every check, as the observation it becomes.
+/// A mention that passed every check, as the record it becomes.
 #[derive(Debug)]
 pub(crate) struct Mention {
     pub document: DocumentId,
     pub entity_type: String,
     pub source: String,
-    pub observation: ObservationId,
+    pub record: RecordId,
     /// The locator.
     pub key: String,
     /// The attributes in canonical form.
@@ -399,13 +399,13 @@ pub(crate) struct Mention {
     pub evidence: String,
 }
 
-/// The key of the observation a mention becomes.
+/// The key of the record a mention becomes.
 pub fn locator(document: DocumentId, entity_type: &str, start: u64, end: u64) -> String {
     format!("{document}#{entity_type}:{start}-{end}")
 }
 
 /// Checks what an extractor wrote against the documents it was given, and
-/// turns each mention into an observation. One mention that is wrong
+/// turns each mention into a record. One mention that is wrong
 /// refuses them all: an extractor that points outside its document, or
 /// names a type the project does not declare, is not to be half believed.
 pub(crate) fn stage_mentions(
@@ -491,7 +491,7 @@ pub(crate) fn stage_mentions(
             document: id,
             entity_type: entity_type.to_owned(),
             source: document.source.clone(),
-            observation: ObservationId::derive(&document.source, Some(&key), &payload),
+            record: RecordId::derive(&document.source, Some(&key), &payload),
             key,
             payload,
             evidence: evidence.to_string(),
@@ -619,8 +619,8 @@ mod tests {
             })
         );
         assert_eq!(
-            mention.observation,
-            ObservationId::derive("news", Some(&mention.key), &mention.payload)
+            mention.record,
+            RecordId::derive("news", Some(&mention.key), &mention.payload)
         );
         // The whole text is a span, and its end is the text's length.
         let length = text.chars().count() as i64;
@@ -684,7 +684,7 @@ mod tests {
             r#"{"employees":12,"listed":true,"name":"Acme","ratio":0.5}"#
         );
         // The order of the names and the spelling of a whole number do not
-        // change the observation.
+        // change the record.
         assert_eq!(
             payload(r#"{"employees": 12, "name": "Acme"}"#),
             payload(r#"{"name": "Acme", "employees": 1.2e1}"#)

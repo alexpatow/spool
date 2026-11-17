@@ -1,5 +1,5 @@
 //! `spool show` and `spool explain`: what a running server holds, and why
-//! two observations share an identity or do not.
+//! two records share an identity or do not.
 //!
 //! Both read through the server's API and print what it answered. With
 //! `--json` they print the answer itself. Nothing here decides anything: a
@@ -8,13 +8,13 @@
 use serde::Serialize;
 use serde_json::{Value, json};
 use spool::core::{
-    ChangesetId, ConstraintRecord, DocumentId, IdentityId, LogEntry, ObservationId, Op, ReviewItem,
+    ChangesetId, ConstraintEntry, DocumentId, IdentityId, LogEntry, Op, RecordId, ReviewItem,
 };
 use spool::{
-    DocumentRecord, DraftRecord, DraftSummary, Explanation, HistoryEntry, IdentitySummary,
-    IdentityView, ObservationRecord, ReviewRecord, RuleResult, RunRecord,
+    DocumentEntry, DraftEntry, DraftSummary, Explanation, HistoryEntry, IdentitySummary,
+    IdentityView, RecordEntry, ReviewEntry, RuleResult, RunEntry,
 };
-use spool_cli::api::{Info, ObservationList};
+use spool_cli::api::{Info, RecordList};
 
 use super::remote::{self, Remote, print_json, typed};
 use crate::Failure;
@@ -29,26 +29,26 @@ much there is of each.
   runs [<run>]                   the latest runs, or one run and what it reported
   identities [<identity>]        identities, or one with its members, the
                                  constraints on them and its history
-  observations [<observation>]   observations, or one with its payload, its
+  records [<record>]   records, or one with its payload, its
                                  evidence and, for a mention, the place in the
                                  document it was found in
   documents [<document>]         documents, or one with its text
-  review [<item>]                review items, or one with its observations
+  review [<item>]                review items, or one with its records
   drafts [<draft>]               drafts, or one with the changeset it would commit
   log                            the changeset log
 
-An observation is named by its ID or as <source>:<key>, which names the
+A record is named by its ID or as <source>:<key>, which names the
 latest version of that row.
 
 Options:
-  --type <name>      only this entity type (runs, identities, observations,
+  --type <name>      only this entity type (runs, identities, records,
                      review, drafts)
   --status <status>  only this status (runs, review, drafts)
   --kind <kind>      only runs of this kind: ingest, extract, match, reconcile
-  --source <name>    only this source (observations, documents)
-  --key <key>        only this key within its source (observations, documents)
-  --document <id>    only the mentions found in this document (observations)
-  --unassigned       only observations without an identity
+  --source <name>    only this source (records, documents)
+  --key <key>        only this key within its source (records, documents)
+  --document <id>    only the mentions found in this document (records)
+  --unassigned       only records without an identity
   --latest           only the version of each document that nothing replaced
   --after <id>       continue a list after this ID, or the log after this
                      position
@@ -59,14 +59,14 @@ Options:
 ";
 
 pub const EXPLAIN_USAGE: &str = "\
-Usage: spool explain <observation> <observation> [options]
+Usage: spool explain <record> <record> [options]
 
-Says why two observations share an identity, or why they do not: where each
+Says why two records share an identity, or why they do not: where each
 is and what placed it there, what each run that compared them concluded, the
 constraints and review items that name them, and what the project's rules
 say about the pair as it is now.
 
-An observation is named by its ID or as <source>:<key>, which names the
+A record is named by its ID or as <source>:<key>, which names the
 latest version of that row.
 
 Options:
@@ -128,8 +128,8 @@ pub fn show(arguments: &[String]) -> Result<(), Failure> {
         (Some("run" | "runs"), Some(id)) => view.run(id),
         (Some("identity" | "identities"), None) => view.identities(),
         (Some("identity" | "identities"), Some(id)) => view.identity(id),
-        (Some("observation" | "observations"), None) => view.observations(),
-        (Some("observation" | "observations"), Some(id)) => view.observation(id),
+        (Some("record" | "records"), None) => view.records(),
+        (Some("record" | "records"), Some(id)) => view.record(id),
         (Some("document" | "documents"), None) => view.documents(),
         (Some("document" | "documents"), Some(id)) => view.document(id),
         (Some("review" | "reviews"), None) => view.review_items(),
@@ -154,13 +154,11 @@ pub fn explain(arguments: &[String]) -> Result<(), Failure> {
         },
     )?;
     let [a, b] = &arguments.positional[..] else {
-        return Err(Failure::Usage(
-            "`explain` needs two observations".to_owned(),
-        ));
+        return Err(Failure::Usage("`explain` needs two records".to_owned()));
     };
     let remote = Remote::new(&arguments);
-    let a = find_observation(&remote, a)?;
-    let b = find_observation(&remote, b)?;
+    let a = find_record(&remote, a)?;
+    let b = find_record(&remote, b)?;
     let answer = remote.list(
         "/explain",
         &[("a", a.id.to_string()), ("b", b.id.to_string())],
@@ -173,18 +171,18 @@ pub fn explain(arguments: &[String]) -> Result<(), Failure> {
     Ok(())
 }
 
-/// The observation a reference names: an ID, or `<source>:<key>`, which
+/// The record a reference names: an ID, or `<source>:<key>`, which
 /// names the version of the row that nothing has replaced.
-fn find_observation(remote: &Remote, reference: &str) -> Result<ObservationRecord, Failure> {
-    if reference.parse::<ObservationId>().is_ok() {
-        let found = remote.get(&format!("/observations/{reference}"), &[], || {
-            format!("there is no observation {reference}")
+fn find_record(remote: &Remote, reference: &str) -> Result<RecordEntry, Failure> {
+    if reference.parse::<RecordId>().is_ok() {
+        let found = remote.get(&format!("/records/{reference}"), &[], || {
+            format!("there is no record {reference}")
         })?;
         return typed(&found);
     }
     let Some((source, key)) = reference.split_once(':') else {
         return Err(Failure::Usage(format!(
-            "`{reference}` does not name an observation: give its ID, or <source>:<key>"
+            "`{reference}` does not name a record: give its ID, or <source>:<key>"
         )));
     };
     // Versions are listed by ID, in pages, and the latest can be on any of
@@ -192,9 +190,9 @@ fn find_observation(remote: &Remote, reference: &str) -> Result<ObservationRecor
     let mut query = vec![("source", source.to_owned()), ("key", key.to_owned())];
     let mut last = None;
     loop {
-        let found = remote.list("/observations", &query)?;
-        let page: ObservationList = typed(&found)?;
-        for version in page.observations {
+        let found = remote.list("/records", &query)?;
+        let page: RecordList = typed(&found)?;
+        for version in page.records {
             if version.superseded_by.is_none() {
                 return Ok(version);
             }
@@ -210,7 +208,7 @@ fn find_observation(remote: &Remote, reference: &str) -> Result<ObservationRecor
     }
     last.ok_or_else(|| {
         Failure::Failed(format!(
-            "there is no observation with key `{key}` from source `{source}`"
+            "there is no record with key `{key}` from source `{source}`"
         ))
     })
 }
@@ -280,10 +278,10 @@ impl View<'_> {
             println!("\nentity type `{}`", entity_type.name);
             let mut rows = vec![
                 (
-                    "observations",
+                    "records",
                     format!(
                         "{}, {} without an identity",
-                        entity_type.observations, entity_type.unassigned
+                        entity_type.records, entity_type.unassigned
                     ),
                 ),
                 ("identities", entity_type.identities.to_string()),
@@ -327,7 +325,7 @@ impl View<'_> {
             print_json(&answer);
             return Ok(());
         }
-        let runs: Vec<RunRecord> = typed(&answer["runs"])?;
+        let runs: Vec<RunEntry> = typed(&answer["runs"])?;
         table(
             "runs",
             &["run", "kind", "status", "about", "started"],
@@ -365,7 +363,7 @@ impl View<'_> {
             print_json(&answer);
             return Ok(());
         }
-        let run: RunRecord = typed(&answer["run"])?;
+        let run: RunEntry = typed(&answer["run"])?;
         let mut rows = vec![
             ("run", run.run.to_string()),
             ("kind", word(&run.kind)),
@@ -421,7 +419,7 @@ impl View<'_> {
                 "examined",
                 format!(
                     "{}, {} of them left for review before",
-                    count(report.new_observations, "observation"),
+                    count(report.new_records, "record"),
                     report.reexamined
                 ),
             ));
@@ -437,7 +435,7 @@ impl View<'_> {
                 "placed",
                 format!(
                     "{}, {} created",
-                    count(report.observations_assigned, "observation"),
+                    count(report.records_assigned, "record"),
                     count(report.identities_created, "identity")
                 ),
             ));
@@ -445,7 +443,7 @@ impl View<'_> {
                 "left out",
                 format!(
                     "{} in {}",
-                    count(report.observations_unassigned, "observation"),
+                    count(report.records_unassigned, "record"),
                     count(report.review.len() as u64, "review item")
                 ),
             ));
@@ -464,16 +462,16 @@ impl View<'_> {
             for item in &report.review {
                 suggestions.push(match item {
                     ReviewItem::PossibleMerge {
-                        observations,
+                        records,
                         identities,
                     } => format!(
                         "review: {} matched {}, which may be one",
-                        count(observations.len() as u64, "observation"),
+                        count(records.len() as u64, "record"),
                         count(identities.len() as u64, "identity"),
                     ),
-                    ReviewItem::Conflict { observations, .. } => format!(
+                    ReviewItem::Conflict { records, .. } => format!(
                         "review: the evidence about {} contradicts itself",
-                        count(observations.len() as u64, "observation"),
+                        count(records.len() as u64, "record"),
                     ),
                 });
             }
@@ -555,7 +553,7 @@ impl View<'_> {
         }
         let view: IdentityView = typed(&view)?;
         let history: Vec<HistoryEntry> = typed(&history["history"])?;
-        let constraints: Vec<ConstraintRecord> = typed(&constraints["constraints"])?;
+        let constraints: Vec<ConstraintEntry> = typed(&constraints["constraints"])?;
 
         let mut rows = vec![("identity", view.id.to_string())];
         if view.current != view.id {
@@ -568,12 +566,12 @@ impl View<'_> {
         println!();
         table(
             "members",
-            &["observation", "source and key", "since"],
+            &["record", "source and key", "since"],
             view.members
                 .iter()
                 .map(|member| {
                     vec![
-                        member.observation.to_string(),
+                        member.record.to_string(),
                         named(&member.source, member.key.as_deref()),
                         format!("log position {}", member.since),
                     ]
@@ -620,9 +618,9 @@ impl View<'_> {
         Ok(())
     }
 
-    fn observations(&self) -> Result<(), Failure> {
+    fn records(&self) -> Result<(), Failure> {
         let query = self.query(
-            "observations",
+            "records",
             &[
                 "--type",
                 "--source",
@@ -633,23 +631,23 @@ impl View<'_> {
                 "--limit",
             ],
         )?;
-        let answer = self.remote.list("/observations", &query)?;
+        let answer = self.remote.list("/records", &query)?;
         if self.json {
             print_json(&answer);
             return Ok(());
         }
-        let observations: Vec<ObservationRecord> = typed(&answer["observations"])?;
+        let records: Vec<RecordEntry> = typed(&answer["records"])?;
         table(
-            "observations",
-            &["observation", "type", "source and key", "identity"],
-            observations
+            "records",
+            &["record", "type", "source and key", "identity"],
+            records
                 .iter()
-                .map(|observation| {
+                .map(|record| {
                     vec![
-                        observation.id.to_string(),
-                        observation.entity_type.to_string(),
-                        named(&observation.source, observation.key.as_deref()),
-                        observation
+                        record.id.to_string(),
+                        record.entity_type.to_string(),
+                        named(&record.source, record.key.as_deref()),
+                        record
                             .identity
                             .map_or_else(|| "-".to_owned(), |identity| identity.to_string()),
                     ]
@@ -660,49 +658,45 @@ impl View<'_> {
         Ok(())
     }
 
-    fn observation(&self, reference: &str) -> Result<(), Failure> {
-        self.one("an observation")?;
-        let observation = find_observation(self.remote, reference)?;
+    fn record(&self, reference: &str) -> Result<(), Failure> {
+        self.one("a record")?;
+        let record = find_record(self.remote, reference)?;
         let review = self
             .remote
-            .list("/review", &[("observation", observation.id.to_string())])?;
-        let mention = self.mention(&observation)?;
+            .list("/review", &[("record", record.id.to_string())])?;
+        let mention = self.mention(&record)?;
         if self.json {
             print_json(&json!({
-                "observation": observation,
+                "record": record,
                 "mention": mention,
                 "review_items": review["items"],
             }));
             return Ok(());
         }
-        let review: Vec<ReviewRecord> = typed(&review["items"])?;
+        let review: Vec<ReviewEntry> = typed(&review["items"])?;
 
         let mut rows = vec![
-            ("observation", observation.id.to_string()),
-            ("type", observation.entity_type.to_string()),
-            ("source", observation.source.clone()),
+            ("record", record.id.to_string()),
+            ("type", record.entity_type.to_string()),
+            ("source", record.source.clone()),
         ];
-        if let Some(key) = &observation.key {
+        if let Some(key) = &record.key {
             rows.push(("key", key.clone()));
         }
         rows.push((
             "ingested",
-            format!(
-                "{} by run {}",
-                when(&observation.ingested_at),
-                observation.ingest_run
-            ),
+            format!("{} by run {}", when(&record.ingested_at), record.ingest_run),
         ));
         rows.push((
             "identity",
-            observation
+            record
                 .identity
                 .map_or_else(|| "none".to_owned(), |identity| identity.to_string()),
         ));
-        if let Some(earlier) = observation.supersedes {
+        if let Some(earlier) = record.supersedes {
             rows.push(("replaces", earlier.to_string()));
         }
-        if let Some(later) = observation.superseded_by {
+        if let Some(later) = record.superseded_by {
             rows.push(("replaced by", later.to_string()));
         }
         for item in &review {
@@ -719,8 +713,8 @@ impl View<'_> {
         fields(&rows);
 
         println!("\npayload");
-        object(&observation.payload);
-        if let Some(evidence) = &observation.evidence {
+        object(&record.payload);
+        if let Some(evidence) = &record.evidence {
             println!("\nevidence");
             object(evidence);
         }
@@ -744,9 +738,9 @@ impl View<'_> {
     }
 
     /// Where a mention was found: the text around it in its document. `None`
-    /// for an observation that is not a mention.
-    fn mention(&self, observation: &ObservationRecord) -> Result<Option<Mention>, Failure> {
-        let Some(evidence) = &observation.evidence else {
+    /// for a record that is not a mention.
+    fn mention(&self, record: &RecordEntry) -> Result<Option<Mention>, Failure> {
+        let Some(evidence) = &record.evidence else {
             return Ok(None);
         };
         let (Some(document), Some(start), Some(end)) = (
@@ -761,8 +755,8 @@ impl View<'_> {
         let Some(found) = self.remote.find(&format!("/documents/{document}"), &[])? else {
             return Ok(None);
         };
-        let record: DocumentRecord = typed(&found)?;
-        let text: Vec<char> = record.text.unwrap_or_default().chars().collect();
+        let entry: DocumentEntry = typed(&found)?;
+        let text: Vec<char> = entry.text.unwrap_or_default().chars().collect();
         let (start, end) = (start as usize, end as usize);
         if start > end || end > text.len() {
             return Ok(None);
@@ -780,8 +774,8 @@ impl View<'_> {
         };
         Ok(Some(Mention {
             document,
-            source: record.source,
-            key: record.key,
+            source: entry.source,
+            key: entry.key,
             start: start as u64,
             end: end as u64,
             before: line(&text[from..start]),
@@ -802,7 +796,7 @@ impl View<'_> {
             print_json(&answer);
             return Ok(());
         }
-        let documents: Vec<DocumentRecord> = typed(&answer["documents"])?;
+        let documents: Vec<DocumentEntry> = typed(&answer["documents"])?;
         table(
             "documents",
             &["document", "source and key", "characters", "read by"],
@@ -836,7 +830,7 @@ impl View<'_> {
             print_json(&answer);
             return Ok(());
         }
-        let document: DocumentRecord = typed(&answer)?;
+        let document: DocumentEntry = typed(&answer)?;
         let mut rows = vec![
             ("document", document.id.to_string()),
             ("source", document.source.clone()),
@@ -873,7 +867,7 @@ impl View<'_> {
             print_json(&answer);
             return Ok(());
         }
-        let items: Vec<ReviewRecord> = typed(&answer["items"])?;
+        let items: Vec<ReviewEntry> = typed(&answer["items"])?;
         table(
             "review items",
             &[
@@ -893,7 +887,7 @@ impl View<'_> {
                         word(&item.kind),
                         word(&item.status),
                         item.entity_type.to_string(),
-                        count(item.observations.len() as u64, "observation"),
+                        count(item.records.len() as u64, "record"),
                         count(item.identities.len() as u64, "identity"),
                         format!("run {}", item.run),
                     ]
@@ -911,18 +905,18 @@ impl View<'_> {
         let answer = self.remote.get(&format!("/review/{item}"), &[], || {
             format!("there is no review item {item}")
         })?;
-        let item: ReviewRecord = typed(&answer)?;
-        let mut observations = Vec::new();
-        for id in &item.observations {
-            if let Some(found) = self.remote.find(&format!("/observations/{id}"), &[])? {
-                observations.push(found);
+        let item: ReviewEntry = typed(&answer)?;
+        let mut records = Vec::new();
+        for id in &item.records {
+            if let Some(found) = self.remote.find(&format!("/records/{id}"), &[])? {
+                records.push(found);
             }
         }
         if self.json {
-            print_json(&json!({ "item": answer, "observations": observations }));
+            print_json(&json!({ "item": answer, "records": records }));
             return Ok(());
         }
-        let observations: Vec<ObservationRecord> = typed(&Value::Array(observations))?;
+        let records: Vec<RecordEntry> = typed(&Value::Array(records))?;
 
         let mut rows = vec![
             ("review item", item.id.to_string()),
@@ -947,14 +941,14 @@ impl View<'_> {
         fields(&rows);
         println!();
         table(
-            "observations left without an identity",
-            &["observation", "source and key"],
-            observations
+            "records left without an identity",
+            &["record", "source and key"],
+            records
                 .iter()
-                .map(|observation| {
+                .map(|record| {
                     vec![
-                        observation.id.to_string(),
-                        named(&observation.source, observation.key.as_deref()),
+                        record.id.to_string(),
+                        named(&record.source, record.key.as_deref()),
                     ]
                 })
                 .collect(),
@@ -1007,8 +1001,8 @@ impl View<'_> {
             print_json(&answer);
             return Ok(());
         }
-        let record: DraftRecord = typed(&answer)?;
-        let draft = &record.draft;
+        let entry: DraftEntry = typed(&answer)?;
+        let draft = &entry.draft;
         let mut rows = vec![
             ("draft", draft.id.to_string()),
             ("type", draft.entity_type.to_string()),
@@ -1025,7 +1019,7 @@ impl View<'_> {
                 "would place",
                 format!(
                     "{}, {} created",
-                    count(draft.observations_assigned, "observation"),
+                    count(draft.records_assigned, "record"),
                     count(draft.identities_created, "identity")
                 ),
             ),
@@ -1045,7 +1039,7 @@ impl View<'_> {
         }
         fields(&rows);
         println!("\noperations");
-        for op in &record.changeset.ops {
+        for op in &entry.changeset.ops {
             println!("  {}", describe(op));
         }
         Ok(())
@@ -1113,12 +1107,12 @@ fn print_explanation(explanation: &Explanation) {
     let rows: Vec<Vec<String>> = sides
         .iter()
         .map(|(side, explained)| {
-            let observation = &explained.observation;
+            let record = &explained.record;
             vec![
                 (*side).to_owned(),
-                observation.id.to_string(),
-                observation.name(),
-                observation.identity.map_or_else(
+                record.id.to_string(),
+                record.name(),
+                record.identity.map_or_else(
                     || "no identity".to_owned(),
                     |identity| format!("identity {identity}"),
                 ),
@@ -1274,25 +1268,25 @@ fn describe(op: &Op) -> String {
             entity_type,
         } => format!("create {entity_type} identity {identity}"),
         Op::Assign {
-            observation,
+            record,
             from: None,
             to: Some(to),
-        } => format!("place observation {observation} in {to}"),
+        } => format!("place record {record} in {to}"),
         Op::Assign {
-            observation,
+            record,
             from: Some(from),
             to: Some(to),
-        } => format!("move observation {observation} from {from} to {to}"),
+        } => format!("move record {record} from {from} to {to}"),
         Op::Assign {
-            observation,
+            record,
             from: Some(from),
             to: None,
-        } => format!("take observation {observation} out of {from}"),
+        } => format!("take record {record} out of {from}"),
         Op::Assign {
-            observation,
+            record,
             from: None,
             to: None,
-        } => format!("leave observation {observation} without an identity"),
+        } => format!("leave record {record} without an identity"),
         Op::Merge { from, into } => format!("merge {from} into {into}"),
         Op::Constrain { kind, a, b } => format!("constrain {a} and {b}: {}", word(kind)),
         Op::Unconstrain { kind, a, b } => {
@@ -1343,7 +1337,7 @@ fn versioned(name: &str, version: Option<&str>) -> String {
     }
 }
 
-fn read_by(document: &DocumentRecord) -> String {
+fn read_by(document: &DocumentEntry) -> String {
     match document.extractions.is_empty() {
         true => "no extractor".to_owned(),
         false => document

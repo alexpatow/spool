@@ -1,15 +1,15 @@
 //! The suite every [`IdentityStore`] must pass.
 //!
 //! Each case takes a function that builds an empty store holding the given
-//! observations. [`conformance_tests!`](crate::conformance_tests) turns the
+//! records. [`conformance_tests!`](crate::conformance_tests) turns the
 //! cases into `#[test]` functions:
 //!
 //! ```
-//! # use spool_core::{conformance_tests, EntityType, MemoryState, ObservationId};
-//! fn store(observations: &[(ObservationId, EntityType)]) -> MemoryState {
+//! # use spool_core::{conformance_tests, EntityType, MemoryState, RecordId};
+//! fn store(records: &[(RecordId, EntityType)]) -> MemoryState {
 //!     let mut state = MemoryState::new();
-//!     for (id, entity_type) in observations {
-//!         state.observe(*id, entity_type.clone());
+//!     for (id, entity_type) in records {
+//!         state.add_record(*id, entity_type.clone());
 //!     }
 //!     state
 //! }
@@ -19,29 +19,29 @@
 
 use crate::changeset::{Changeset, ConstraintKind, Op};
 use crate::generate::{IdGenerator, SeededIds};
-use crate::ids::{Actor, EntityType, IdentityId, ObservationId, Seq};
+use crate::ids::{Actor, EntityType, IdentityId, RecordId, Seq};
 use crate::memory::MemoryState;
 use crate::state::{
-    Constraint, ConstraintRecord, IdentityRecord, IdentityStatus, IdentityStore, Membership, Merged,
+    Constraint, ConstraintEntry, IdentityEntry, IdentityStatus, IdentityStore, Membership, Merged,
 };
 use crate::undo::inverse;
 use crate::validate::{Reason, Rejection, validate};
 
 /// Generates one `#[test]` per conformance case for the store that `$make`
-/// builds. `$make` is called as `$make(&[(ObservationId, EntityType)])`.
+/// builds. `$make` is called as `$make(&[(RecordId, EntityType)])`.
 #[macro_export]
 macro_rules! conformance_tests {
     ($make:expr) => {
         $crate::conformance_tests!(@cases $make;
             starts_empty,
-            creates_an_identity_and_attaches_observations,
+            creates_an_identity_and_attaches_records,
             moves_and_detaches_keeping_history,
             rejects_a_stale_precondition_and_names_the_operation,
             rejects_a_reused_identity_id,
-            rejects_an_unknown_observation,
+            rejects_an_unknown_record,
             rejects_an_unknown_identity,
             rejects_an_entity_type_mismatch,
-            rejects_assigning_an_observation_twice_in_one_changeset,
+            rejects_assigning_an_record_twice_in_one_changeset,
             rejects_an_empty_changeset,
             rejects_a_base_ahead_of_the_log,
             rejects_a_changeset_committed_twice,
@@ -49,7 +49,7 @@ macro_rules! conformance_tests {
             a_chain_of_merges_points_at_the_active_identity,
             rejects_merges_that_cannot_be_made,
             rejects_a_merge_whose_members_changed,
-            rejects_moving_an_observation_twice_through_a_merge,
+            rejects_moving_an_record_twice_through_a_merge,
             reinstates_a_merged_identity,
             records_and_removes_constraints,
             rejects_constraints_that_cannot_be_recorded,
@@ -81,12 +81,12 @@ fn gadget() -> EntityType {
     EntityType::new("gadget").unwrap()
 }
 
-fn obs(n: u128) -> ObservationId {
-    ObservationId::from_u128(n)
+fn obs(n: u128) -> RecordId {
+    RecordId::from_u128(n)
 }
 
 /// Five widgets (1 to 5) and one gadget (6).
-fn observations() -> Vec<(ObservationId, EntityType)> {
+fn records() -> Vec<(RecordId, EntityType)> {
     let mut all: Vec<_> = (1..=5).map(|n| (obs(n), widget())).collect();
     all.push((obs(6), gadget()));
     all
@@ -126,9 +126,9 @@ fn create(identity: IdentityId, entity_type: EntityType) -> Op {
     }
 }
 
-fn assign(observation: u128, from: Option<IdentityId>, to: Option<IdentityId>) -> Op {
+fn assign(record: u128, from: Option<IdentityId>, to: Option<IdentityId>) -> Op {
     Op::Assign {
-        observation: obs(observation),
+        record: obs(record),
         from,
         to,
     }
@@ -157,23 +157,23 @@ fn only_reason<S: IdentityStore>(store: &S, changeset: Changeset) -> (Option<usi
     (rejection.op_index, rejection.reason)
 }
 
-pub fn starts_empty<S: IdentityStore>(make: impl FnOnce(&[(ObservationId, EntityType)]) -> S) {
-    let store = make(&observations());
+pub fn starts_empty<S: IdentityStore>(make: impl FnOnce(&[(RecordId, EntityType)]) -> S) {
+    let store = make(&records());
     assert_eq!(store.head().unwrap(), Seq::ZERO);
     assert!(store.log().unwrap().is_empty());
     let snapshot = store.snapshot().unwrap();
     assert!(snapshot.identities.is_empty() && snapshot.memberships.is_empty());
     assert_eq!(store.assignments(&[obs(1)]).unwrap(), vec![None]);
     assert_eq!(
-        store.observation_types(&[obs(6), obs(99), obs(1)]).unwrap(),
+        store.record_types(&[obs(6), obs(99), obs(1)]).unwrap(),
         vec![Some(gadget()), None, Some(widget())]
     );
 }
 
-pub fn creates_an_identity_and_attaches_observations<S: IdentityStore>(
-    make: impl FnOnce(&[(ObservationId, EntityType)]) -> S,
+pub fn creates_an_identity_and_attaches_records<S: IdentityStore>(
+    make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&observations());
+    let mut store = make(&records());
     let mut author = Author::new();
     let (a, b, unused) = (author.identity(), author.identity(), author.identity());
 
@@ -200,7 +200,7 @@ pub fn creates_an_identity_and_attaches_observations<S: IdentityStore>(
     assert_eq!(
         store.identities(&[b, unused, a]).unwrap(),
         vec![
-            Some(IdentityRecord {
+            Some(IdentityEntry {
                 id: b,
                 entity_type: gadget(),
                 created: Seq(1),
@@ -208,7 +208,7 @@ pub fn creates_an_identity_and_attaches_observations<S: IdentityStore>(
                 merged: None,
             }),
             None,
-            Some(IdentityRecord {
+            Some(IdentityEntry {
                 id: a,
                 entity_type: widget(),
                 created: Seq(1),
@@ -231,9 +231,9 @@ pub fn creates_an_identity_and_attaches_observations<S: IdentityStore>(
 }
 
 pub fn moves_and_detaches_keeping_history<S: IdentityStore>(
-    make: impl FnOnce(&[(ObservationId, EntityType)]) -> S,
+    make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&observations());
+    let mut store = make(&records());
     let mut author = Author::new();
     let (a, b) = (author.identity(), author.identity());
 
@@ -259,8 +259,8 @@ pub fn moves_and_detaches_keeping_history<S: IdentityStore>(
         vec![Some(b), Some(b)]
     );
     assert_eq!(store.members(&[a]).unwrap(), vec![]);
-    let interval = |observation, identity, from, to: Option<u64>| Membership {
-        observation: obs(observation),
+    let interval = |record, identity, from, to: Option<u64>| Membership {
+        record: obs(record),
         identity,
         from: Seq(from),
         to: to.map(Seq),
@@ -284,9 +284,9 @@ pub fn moves_and_detaches_keeping_history<S: IdentityStore>(
 }
 
 pub fn rejects_a_stale_precondition_and_names_the_operation<S: IdentityStore>(
-    make: impl FnOnce(&[(ObservationId, EntityType)]) -> S,
+    make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&observations());
+    let mut store = make(&records());
     let mut author = Author::new();
     let (a, b) = (author.identity(), author.identity());
     commit(
@@ -311,7 +311,7 @@ pub fn rejects_a_stale_precondition_and_names_the_operation<S: IdentityStore>(
             op_index: Some(1),
             op: Some(assign(1, None, Some(b))),
             reason: Reason::StaleAssignment {
-                observation: obs(1),
+                record: obs(1),
                 expected: None,
                 actual: Some(a)
             },
@@ -322,9 +322,9 @@ pub fn rejects_a_stale_precondition_and_names_the_operation<S: IdentityStore>(
 }
 
 pub fn rejects_a_reused_identity_id<S: IdentityStore>(
-    make: impl FnOnce(&[(ObservationId, EntityType)]) -> S,
+    make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&observations());
+    let mut store = make(&records());
     let mut author = Author::new();
     let (a, b) = (author.identity(), author.identity());
     commit(&mut store, &mut author, vec![create(a, widget())]);
@@ -341,10 +341,10 @@ pub fn rejects_a_reused_identity_id<S: IdentityStore>(
     );
 }
 
-pub fn rejects_an_unknown_observation<S: IdentityStore>(
-    make: impl FnOnce(&[(ObservationId, EntityType)]) -> S,
+pub fn rejects_an_unknown_record<S: IdentityStore>(
+    make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let store = make(&observations());
+    let store = make(&records());
     let mut author = Author::new();
     let a = author.identity();
     let changeset = author.changeset(
@@ -353,19 +353,14 @@ pub fn rejects_an_unknown_observation<S: IdentityStore>(
     );
     assert_eq!(
         only_reason(&store, changeset),
-        (
-            Some(1),
-            Reason::UnknownObservation {
-                observation: obs(99)
-            }
-        )
+        (Some(1), Reason::UnknownRecord { record: obs(99) })
     );
 }
 
 pub fn rejects_an_unknown_identity<S: IdentityStore>(
-    make: impl FnOnce(&[(ObservationId, EntityType)]) -> S,
+    make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let store = make(&observations());
+    let store = make(&records());
     let mut author = Author::new();
     let missing = author.identity();
     let changeset = author.changeset(Seq::ZERO, vec![assign(1, None, Some(missing))]);
@@ -376,9 +371,9 @@ pub fn rejects_an_unknown_identity<S: IdentityStore>(
 }
 
 pub fn rejects_an_entity_type_mismatch<S: IdentityStore>(
-    make: impl FnOnce(&[(ObservationId, EntityType)]) -> S,
+    make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&observations());
+    let mut store = make(&records());
     let mut author = Author::new();
     let a = author.identity();
     commit(&mut store, &mut author, vec![create(a, widget())]);
@@ -389,8 +384,8 @@ pub fn rejects_an_entity_type_mismatch<S: IdentityStore>(
         (
             Some(0),
             Reason::EntityTypeMismatch {
-                observation: obs(6),
-                observation_type: gadget(),
+                record: obs(6),
+                record_type: gadget(),
                 identity: a,
                 identity_type: widget(),
             }
@@ -398,10 +393,10 @@ pub fn rejects_an_entity_type_mismatch<S: IdentityStore>(
     );
 }
 
-pub fn rejects_assigning_an_observation_twice_in_one_changeset<S: IdentityStore>(
-    make: impl FnOnce(&[(ObservationId, EntityType)]) -> S,
+pub fn rejects_assigning_an_record_twice_in_one_changeset<S: IdentityStore>(
+    make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let store = make(&observations());
+    let store = make(&records());
     let mut author = Author::new();
     let (a, b) = (author.identity(), author.identity());
     let changeset = author.changeset(
@@ -417,8 +412,8 @@ pub fn rejects_assigning_an_observation_twice_in_one_changeset<S: IdentityStore>
         only_reason(&store, changeset),
         (
             Some(3),
-            Reason::ObservationAssignedTwice {
-                observation: obs(1),
+            Reason::RecordAssignedTwice {
+                record: obs(1),
                 first_op: 2
             }
         )
@@ -426,9 +421,9 @@ pub fn rejects_assigning_an_observation_twice_in_one_changeset<S: IdentityStore>
 }
 
 pub fn rejects_an_empty_changeset<S: IdentityStore>(
-    make: impl FnOnce(&[(ObservationId, EntityType)]) -> S,
+    make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let store = make(&observations());
+    let store = make(&records());
     let changeset = Author::new().changeset(Seq::ZERO, vec![]);
     assert_eq!(
         only_reason(&store, changeset),
@@ -437,9 +432,9 @@ pub fn rejects_an_empty_changeset<S: IdentityStore>(
 }
 
 pub fn rejects_a_base_ahead_of_the_log<S: IdentityStore>(
-    make: impl FnOnce(&[(ObservationId, EntityType)]) -> S,
+    make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let store = make(&observations());
+    let store = make(&records());
     let mut author = Author::new();
     let a = author.identity();
     let changeset = author.changeset(Seq(3), vec![create(a, widget())]);
@@ -456,9 +451,9 @@ pub fn rejects_a_base_ahead_of_the_log<S: IdentityStore>(
 }
 
 pub fn rejects_a_changeset_committed_twice<S: IdentityStore>(
-    make: impl FnOnce(&[(ObservationId, EntityType)]) -> S,
+    make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&observations());
+    let mut store = make(&records());
     let mut author = Author::new();
     let a = author.identity();
     let changeset = author.changeset(Seq::ZERO, vec![create(a, widget())]);
@@ -515,7 +510,7 @@ fn status<S: IdentityStore>(store: &S, identity: IdentityId) -> (IdentityStatus,
 }
 
 /// Three widget identities: `a` holds 1 and 2, `b` holds 3, `c` holds 4.
-/// Observation 5 has no identity. Committed at position 1.
+/// Record 5 has no identity. Committed at position 1.
 fn three_widgets<S: IdentityStore>(
     store: &mut S,
     author: &mut Author,
@@ -544,9 +539,9 @@ fn assert_replays<S: IdentityStore>(store: &S) {
 }
 
 pub fn merges_identities_and_keeps_the_merged_id<S: IdentityStore>(
-    make: impl FnOnce(&[(ObservationId, EntityType)]) -> S,
+    make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&observations());
+    let mut store = make(&records());
     let mut author = Author::new();
     let (a, b, c) = three_widgets(&mut store, &mut author);
 
@@ -583,19 +578,19 @@ pub fn merges_identities_and_keeps_the_merged_id<S: IdentityStore>(
         .unwrap()
         .memberships
         .into_iter()
-        .filter(|row| row.observation == obs(1))
+        .filter(|row| row.record == obs(1))
         .collect();
     assert_eq!(
         history,
         vec![
             Membership {
-                observation: obs(1),
+                record: obs(1),
                 identity: a,
                 from: Seq(1),
                 to: Some(Seq(2))
             },
             Membership {
-                observation: obs(1),
+                record: obs(1),
                 identity: b,
                 from: Seq(2),
                 to: None
@@ -617,9 +612,9 @@ pub fn merges_identities_and_keeps_the_merged_id<S: IdentityStore>(
 }
 
 pub fn a_chain_of_merges_points_at_the_active_identity<S: IdentityStore>(
-    make: impl FnOnce(&[(ObservationId, EntityType)]) -> S,
+    make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&observations());
+    let mut store = make(&records());
     let mut author = Author::new();
     let (a, b, c) = three_widgets(&mut store, &mut author);
 
@@ -662,9 +657,9 @@ pub fn a_chain_of_merges_points_at_the_active_identity<S: IdentityStore>(
 }
 
 pub fn rejects_merges_that_cannot_be_made<S: IdentityStore>(
-    make: impl FnOnce(&[(ObservationId, EntityType)]) -> S,
+    make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&observations());
+    let mut store = make(&records());
     let mut author = Author::new();
     let (a, b, c) = three_widgets(&mut store, &mut author);
     let (g, unknown) = (author.identity(), author.identity());
@@ -741,9 +736,9 @@ pub fn rejects_merges_that_cannot_be_made<S: IdentityStore>(
 }
 
 pub fn rejects_a_merge_whose_members_changed<S: IdentityStore>(
-    make: impl FnOnce(&[(ObservationId, EntityType)]) -> S,
+    make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&observations());
+    let mut store = make(&records());
     let mut author = Author::new();
     let (a, b, c) = three_widgets(&mut store, &mut author);
 
@@ -772,21 +767,21 @@ pub fn rejects_a_merge_whose_members_changed<S: IdentityStore>(
     assert_eq!(store.assignments(&[obs(3)]).unwrap(), vec![Some(c)]);
 }
 
-pub fn rejects_moving_an_observation_twice_through_a_merge<S: IdentityStore>(
-    make: impl FnOnce(&[(ObservationId, EntityType)]) -> S,
+pub fn rejects_moving_an_record_twice_through_a_merge<S: IdentityStore>(
+    make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&observations());
+    let mut store = make(&records());
     let mut author = Author::new();
     let (a, b, c) = three_widgets(&mut store, &mut author);
 
-    // The merge moved observation 1 to `b`. Moving it on is a second move.
+    // The merge moved record 1 to `b`. Moving it on is a second move.
     let onward = author.changeset(Seq(1), vec![merge(a, b), assign(1, Some(b), Some(c))]);
     assert_eq!(
         only_reason(&store, onward),
         (
             Some(1),
-            Reason::ObservationAssignedTwice {
-                observation: obs(1),
+            Reason::RecordAssignedTwice {
+                record: obs(1),
                 first_op: 0
             }
         )
@@ -797,13 +792,13 @@ pub fn rejects_moving_an_observation_twice_through_a_merge<S: IdentityStore>(
         (
             Some(1),
             Reason::StaleAssignment {
-                observation: obs(1),
+                record: obs(1),
                 expected: Some(a),
                 actual: Some(b)
             }
         )
     );
-    // An observation that joins an identity cannot be merged away with it.
+    // A record that joins an identity cannot be merged away with it.
     let joined = author.changeset(Seq(1), vec![assign(5, None, Some(a)), merge(a, b)]);
     assert_eq!(
         only_reason(&store, joined),
@@ -818,9 +813,9 @@ pub fn rejects_moving_an_observation_twice_through_a_merge<S: IdentityStore>(
 }
 
 pub fn reinstates_a_merged_identity<S: IdentityStore>(
-    make: impl FnOnce(&[(ObservationId, EntityType)]) -> S,
+    make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&observations());
+    let mut store = make(&records());
     let mut author = Author::new();
     let (a, b, _) = three_widgets(&mut store, &mut author);
     let unknown = author.identity();
@@ -875,9 +870,9 @@ pub fn reinstates_a_merged_identity<S: IdentityStore>(
 }
 
 pub fn records_and_removes_constraints<S: IdentityStore>(
-    make: impl FnOnce(&[(ObservationId, EntityType)]) -> S,
+    make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&observations());
+    let mut store = make(&records());
     let mut author = Author::new();
     let (a, _, _) = three_widgets(&mut store, &mut author);
 
@@ -915,17 +910,17 @@ pub fn records_and_removes_constraints<S: IdentityStore>(
     assert_eq!(
         store.snapshot().unwrap().constraints,
         vec![
-            ConstraintRecord {
+            ConstraintEntry {
                 constraint: together,
                 from: Seq(2),
                 to: None
             },
-            ConstraintRecord {
+            ConstraintEntry {
                 constraint: apart,
                 from: Seq(2),
                 to: Some(Seq(3))
             },
-            ConstraintRecord {
+            ConstraintEntry {
                 constraint: apart,
                 from: Seq(4),
                 to: None
@@ -936,9 +931,9 @@ pub fn records_and_removes_constraints<S: IdentityStore>(
 }
 
 pub fn rejects_constraints_that_cannot_be_recorded<S: IdentityStore>(
-    make: impl FnOnce(&[(ObservationId, EntityType)]) -> S,
+    make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&observations());
+    let mut store = make(&records());
     let mut author = Author::new();
     three_widgets(&mut store, &mut author);
     commit(&mut store, &mut author, vec![cannot_link(1, 3)]);
@@ -948,16 +943,12 @@ pub fn rejects_constraints_that_cannot_be_recorded<S: IdentityStore>(
         (
             vec![cannot_link(1, 1)],
             0,
-            Reason::SameObservation {
-                observation: obs(1),
-            },
+            Reason::SameRecord { record: obs(1) },
         ),
         (
             vec![cannot_link(1, 99)],
             0,
-            Reason::UnknownObservation {
-                observation: obs(99),
-            },
+            Reason::UnknownRecord { record: obs(99) },
         ),
         (
             vec![must_link(1, 6)],
@@ -1024,9 +1015,9 @@ pub fn rejects_constraints_that_cannot_be_recorded<S: IdentityStore>(
 }
 
 pub fn rejects_a_state_that_breaks_a_constraint<S: IdentityStore>(
-    make: impl FnOnce(&[(ObservationId, EntityType)]) -> S,
+    make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&observations());
+    let mut store = make(&records());
     let mut author = Author::new();
     let (a, b, c) = three_widgets(&mut store, &mut author);
     // 1 (in `a`) and 3 (in `b`) are different things. 4 (in `c`) and 5 (no
@@ -1077,7 +1068,7 @@ pub fn rejects_a_state_that_breaks_a_constraint<S: IdentityStore>(
     }
 
     // What the constraints allow commits: 5 joins 4, and 4 can leave its
-    // identity, because an observation with no identity breaks nothing.
+    // identity, because a record with no identity breaks nothing.
     commit(&mut store, &mut author, vec![assign(5, None, Some(c))]);
     commit(&mut store, &mut author, vec![assign(4, Some(c), None)]);
     // Once the constraint is removed, so is what it forbade, in one changeset.
@@ -1094,9 +1085,9 @@ pub fn rejects_a_state_that_breaks_a_constraint<S: IdentityStore>(
 }
 
 pub fn splits_with_a_constraint_in_one_changeset<S: IdentityStore>(
-    make: impl FnOnce(&[(ObservationId, EntityType)]) -> S,
+    make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&observations());
+    let mut store = make(&records());
     let mut author = Author::new();
     let (a, _, _) = three_widgets(&mut store, &mut author);
 
@@ -1126,9 +1117,9 @@ pub fn splits_with_a_constraint_in_one_changeset<S: IdentityStore>(
 }
 
 pub fn applies_mixed_operations_as_written<S: IdentityStore>(
-    make: impl FnOnce(&[(ObservationId, EntityType)]) -> S,
+    make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&observations());
+    let mut store = make(&records());
     let mut author = Author::new();
     let (a, b, c) = three_widgets(&mut store, &mut author);
     commit(&mut store, &mut author, vec![merge(a, b)]);
@@ -1192,9 +1183,9 @@ fn undo<S: IdentityStore>(store: &mut S, author: &mut Author, seq: Seq) -> Vec<O
 }
 
 pub fn undoes_assignments_and_constraints<S: IdentityStore>(
-    make: impl FnOnce(&[(ObservationId, EntityType)]) -> S,
+    make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&observations());
+    let mut store = make(&records());
     let mut author = Author::new();
     let (a, b, _) = three_widgets(&mut store, &mut author);
     commit(&mut store, &mut author, vec![cannot_link(1, 4)]);
@@ -1255,9 +1246,9 @@ pub fn undoes_assignments_and_constraints<S: IdentityStore>(
 }
 
 pub fn undoes_a_merge_and_the_undo<S: IdentityStore>(
-    make: impl FnOnce(&[(ObservationId, EntityType)]) -> S,
+    make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&observations());
+    let mut store = make(&records());
     let mut author = Author::new();
     let (a, b, c) = three_widgets(&mut store, &mut author);
 
@@ -1273,7 +1264,7 @@ pub fn undoes_a_merge_and_the_undo<S: IdentityStore>(
     );
 
     // Undoing it reinstates `a` and gives it back what the merge took and
-    // what the assignment took. Observation 3 was in `b` all along.
+    // what the assignment took. Record 3 was in `b` all along.
     let ops = undo(&mut store, &mut author, merged);
     assert_eq!(
         ops,
@@ -1306,7 +1297,7 @@ pub fn undoes_a_merge_and_the_undo<S: IdentityStore>(
         vec![(b, obs(1)), (b, obs(3)), (c, obs(2)), (c, obs(4))]
     );
 
-    // An observation that has left the surviving identity since the merge is
+    // A record that has left the surviving identity since the merge is
     // left where it is.
     let undone = store.head().unwrap();
     undo(&mut store, &mut author, undone);
@@ -1327,9 +1318,9 @@ pub fn undoes_a_merge_and_the_undo<S: IdentityStore>(
 }
 
 pub fn accepts_a_stale_base_when_preconditions_hold<S: IdentityStore>(
-    make: impl FnOnce(&[(ObservationId, EntityType)]) -> S,
+    make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&observations());
+    let mut store = make(&records());
     let mut author = Author::new();
     let (a, b) = (author.identity(), author.identity());
 
@@ -1354,9 +1345,9 @@ pub fn accepts_a_stale_base_when_preconditions_hold<S: IdentityStore>(
 }
 
 pub fn a_rejected_changeset_changes_nothing<S: IdentityStore>(
-    make: impl FnOnce(&[(ObservationId, EntityType)]) -> S,
+    make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&observations());
+    let mut store = make(&records());
     let mut author = Author::new();
     let (a, b) = (author.identity(), author.identity());
     commit(
@@ -1382,9 +1373,9 @@ pub fn a_rejected_changeset_changes_nothing<S: IdentityStore>(
 }
 
 pub fn replaying_the_log_reproduces_the_state<S: IdentityStore>(
-    make: impl FnOnce(&[(ObservationId, EntityType)]) -> S,
+    make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&observations());
+    let mut store = make(&records());
     let mut author = Author::new();
     let (a, b, c) = (author.identity(), author.identity(), author.identity());
     commit(

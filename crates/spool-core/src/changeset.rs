@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::ids::{Actor, ChangesetId, EntityType, IdentityId, ObservationId, RunId, Seq};
+use crate::ids::{Actor, ChangesetId, EntityType, IdentityId, RecordId, RunId, Seq};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -26,7 +26,7 @@ impl ConstraintKind {
 /// which is checked against the state the changeset is committed to.
 ///
 /// There is no operation that splits an identity. A split is a
-/// `CreateIdentity` and the `Assign` operations that move observations to it,
+/// `CreateIdentity` and the `Assign` operations that move records to it,
 /// usually with a `cannot_link` constraint, in one changeset.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
@@ -38,9 +38,9 @@ pub enum Op {
         entity_type: EntityType,
     },
     /// Attach (`from` is `None`), move, or detach (`to` is `None`).
-    /// Precondition: `from` is the observation's current identity.
+    /// Precondition: `from` is the record's current identity.
     Assign {
-        observation: ObservationId,
+        record: RecordId,
         from: Option<IdentityId>,
         to: Option<IdentityId>,
     },
@@ -50,19 +50,19 @@ pub enum Op {
     /// the members of either. A merge moves every member, and its author saw
     /// only the members there were then.
     Merge { from: IdentityId, into: IdentityId },
-    /// Records that two observations must share an identity, or must not.
+    /// Records that two records must share an identity, or must not.
     /// Precondition: the pair has no constraint yet, and the state the
     /// changeset leaves behind satisfies this one.
     Constrain {
         kind: ConstraintKind,
-        a: ObservationId,
-        b: ObservationId,
+        a: RecordId,
+        b: RecordId,
     },
     /// Precondition: the constraint is in force.
     Unconstrain {
         kind: ConstraintKind,
-        a: ObservationId,
-        b: ObservationId,
+        a: RecordId,
+        b: RecordId,
     },
     /// Makes a merged identity active again, with no members. It is how a
     /// merge is undone: the changeset that reinstates an identity usually
@@ -87,7 +87,7 @@ impl Op {
         fn identity(out: &mut Sha256, id: IdentityId) {
             out.update(id.as_uuid().as_bytes());
         }
-        fn observation(out: &mut Sha256, id: ObservationId) {
+        fn record(out: &mut Sha256, id: RecordId) {
             out.update(id.as_u128().to_be_bytes());
         }
         fn optional(out: &mut Sha256, id: Option<IdentityId>) {
@@ -116,12 +116,12 @@ impl Op {
                 out.update(entity_type.as_str().as_bytes());
             }
             Op::Assign {
-                observation: obs,
+                record: obs,
                 from,
                 to,
             } => {
                 out.update([2]);
-                observation(out, *obs);
+                record(out, *obs);
                 optional(out, *from);
                 optional(out, *to);
             }
@@ -133,14 +133,14 @@ impl Op {
             Op::Constrain { kind, a, b } => {
                 out.update([4]);
                 constraint(out, *kind);
-                observation(out, *a);
-                observation(out, *b);
+                record(out, *a);
+                record(out, *b);
             }
             Op::Unconstrain { kind, a, b } => {
                 out.update([5]);
                 constraint(out, *kind);
-                observation(out, *a);
-                observation(out, *b);
+                record(out, *a);
+                record(out, *b);
             }
             Op::Reinstate { identity: id } => {
                 out.update([6]);
@@ -223,13 +223,13 @@ mod tests {
     fn content_hash_covers_operations_and_their_order() {
         let mut ids = SeededIds::new(1);
         let (x, y) = (ids.identity_id(), ids.identity_id());
-        let obs = ObservationId::from_u128(9);
+        let obs = RecordId::from_u128(9);
         let create = |identity| Op::CreateIdentity {
             identity,
             entity_type: company(),
         };
         let attach = |to| Op::Assign {
-            observation: obs,
+            record: obs,
             from: None,
             to: Some(to),
         };
@@ -242,7 +242,7 @@ mod tests {
         assert_ne!(hash, ContentHash::of(&[create(x)]));
         assert_ne!(
             ContentHash::of(&[Op::Assign {
-                observation: obs,
+                record: obs,
                 from: Some(x),
                 to: None
             }]),

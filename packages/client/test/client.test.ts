@@ -5,7 +5,7 @@ import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 import { SpoolClient, SpoolError } from "../src/index.ts";
-import type { Changeset, ObservationRecord, RunRecord } from "../src/index.ts";
+import type { Changeset, RecordEntry, RunEntry } from "../src/index.ts";
 import {
   TOKEN,
   companies,
@@ -38,7 +38,7 @@ async function thingsServer(seed: number): Promise<Server> {
   return server;
 }
 
-async function ingestThings(client: SpoolClient, rows: Array<Record<string, string>>): Promise<RunRecord> {
+async function ingestThings(client: SpoolClient, rows: Array<Record<string, string>>): Promise<RunEntry> {
   const run = await client.ingest({ source: "shop", entity_type: "thing", key: "id", rows });
   expect(run.status).toBe("succeeded");
   return run;
@@ -109,17 +109,17 @@ describe("the company scenario", () => {
     expect(log.changesets.map((entry) => entry.content_hash)).toEqual(expected);
   });
 
-  test("an observation is found by its key and leads to its identity", async () => {
+  test("a record is found by its key and leads to its identity", async () => {
     const { client } = server;
-    const found = await client.observations({ source: "crm", key: "c-101" });
-    expect(found.observations).toHaveLength(1);
-    const observation = found.observations[0]!;
-    expect(observation.payload).toMatchObject({ id: "c-101" });
-    expect(await client.observation(observation.id)).toEqual(observation);
+    const found = await client.records({ source: "crm", key: "c-101" });
+    expect(found.records).toHaveLength(1);
+    const record = found.records[0]!;
+    expect(record.payload).toMatchObject({ id: "c-101" });
+    expect(await client.record(record.id)).toEqual(record);
 
-    const identity = await client.identity(observation.identity!);
+    const identity = await client.identity(record.identity!);
     expect(identity.current).toBe(identity.id);
-    expect(identity.members.map((member) => member.observation)).toContain(observation.id);
+    expect(identity.members.map((member) => member.record)).toContain(record.id);
     expect(identity.members.length).toBeGreaterThan(1);
 
     const history = await client.identityHistory(identity.id);
@@ -127,7 +127,7 @@ describe("the company scenario", () => {
     expect(history[0]!.ops[0]).toMatchObject({ op: "create_identity", identity: identity.id });
 
     const unknown = "00000000-0000-7000-8000-000000000000";
-    expect(await client.identitiesOf([observation.id, unknown])).toEqual([identity.id, null]);
+    expect(await client.identitiesOf([record.id, unknown])).toEqual([identity.id, null]);
     expect((await failureOf(client.identity(unknown))).code).toBe("not_found");
   });
 
@@ -158,10 +158,10 @@ describe("the company scenario", () => {
     expect(item.entity_type).toBe("company");
     expect(item.identities).toHaveLength(2);
 
-    const stuck = await client.observations({ unassigned: true });
-    expect(stuck.observations.map((observation) => observation.id)).toEqual(item.observations);
-    expect(stuck.observations[0]!.key).toBe("c-117");
-    expect(stuck.observations[0]!.identity).toBeNull();
+    const stuck = await client.records({ unassigned: true });
+    expect(stuck.records.map((record) => record.id)).toEqual(item.records);
+    expect(stuck.records[0]!.key).toBe("c-117");
+    expect(stuck.records[0]!.identity).toBeNull();
   });
 });
 
@@ -188,19 +188,19 @@ describe("drafts", () => {
     expect((await failureOf(client.approveDraft(id))).code).toBe("conflict");
   });
 
-  test("a rejected draft does not strand its observations", async () => {
+  test("a rejected draft does not strand its records", async () => {
     const { client } = await thingsServer(2);
     await ingestThings(client, twoAnvilsAndAHammer);
 
     const first = await client.startRun({ entity_type: "thing", commit: false });
     const rejected = await client.rejectDraft(first!.resolution!.draft!, "not yet");
     expect(rejected).toMatchObject({ status: "rejected", rejected_reason: "not yet" });
-    expect((await client.observations({ unassigned: true })).observations).toHaveLength(3);
+    expect((await client.records({ unassigned: true })).records).toHaveLength(3);
 
     const second = await client.startRun({ entity_type: "thing" });
     expect(second?.status).toBe("succeeded");
-    expect(second?.resolution?.observations_assigned).toBe(3);
-    expect((await client.observations({ unassigned: true })).observations).toEqual([]);
+    expect(second?.resolution?.records_assigned).toBe(3);
+    expect((await client.records({ unassigned: true })).records).toEqual([]);
     expect(await client.startRun({ entity_type: "thing" })).toBeNull();
   });
 
@@ -234,9 +234,9 @@ describe("a reviewer", () => {
   const actor = "user:reviewer";
 
   async function thing(client: SpoolClient, key: string) {
-    const { observations } = await client.observations({ source: "shop", key });
-    expect(observations).toHaveLength(1);
-    return observations[0]!;
+    const { records } = await client.records({ source: "shop", key });
+    expect(records).toHaveLength(1);
+    return records[0]!;
   }
 
   async function keys(client: SpoolClient, identity: string): Promise<string[]> {
@@ -300,7 +300,7 @@ describe("a reviewer", () => {
     const read = (await client.info()).store.head;
     const grown = await client.commit({ actor, ops: [{ op: "merge", from: hammer.identity!, into: anvils }] });
 
-    const stale = await failureOf(client.split(anvils, { observations: [first.id, second.id], base: read, actor }));
+    const stale = await failureOf(client.split(anvils, { records: [first.id, second.id], base: read, actor }));
     expect(stale.status).toBe(409);
     expect(stale.code).toBe("conflict");
     expect(stale.message).toBe(
@@ -308,7 +308,7 @@ describe("a reviewer", () => {
     );
     expect(await keys(client, anvils)).toEqual(["1", "2", "3", "4"]);
 
-    const split = await client.split(anvils, { observations: [first.id, second.id], base: grown.seq, actor });
+    const split = await client.split(anvils, { records: [first.id, second.id], base: grown.seq, actor });
     expect([...split.moved].sort()).toEqual([first.id, second.id].sort());
     expect(await keys(client, anvils)).toEqual(["3", "4"]);
   });
@@ -324,7 +324,7 @@ describe("a reviewer", () => {
     const third = await thing(client, "3");
     const anvils = third.identity!;
 
-    const split = await client.split(anvils, { observations: [third.id], actor, reason: "another anvil" });
+    const split = await client.split(anvils, { records: [third.id], actor, reason: "another anvil" });
     expect(split).toMatchObject({ kept: anvils, moved: [third.id] });
     expect(await keys(client, anvils)).toEqual(["1", "2"]);
     expect(await keys(client, split.identity)).toEqual(["3"]);
@@ -333,7 +333,7 @@ describe("a reviewer", () => {
     expect(constraints).toHaveLength(1);
     expect(constraints[0]).toMatchObject({ kind: "cannot_link", from: split.committed.seq });
     expect([constraints[0]!.a, constraints[0]!.b]).toContain(third.id);
-    expect(await client.constraints({ observation: third.id })).toEqual(constraints);
+    expect(await client.constraints({ record: third.id })).toEqual(constraints);
     expect(await client.constraints({ identity: split.identity })).toEqual(constraints);
 
     // Merging the sides again would break the constraint.
@@ -350,14 +350,14 @@ describe("a reviewer", () => {
     expect(item!.kind).toBe("possible_merge");
     expect(await client.reviewItem(item!.id)).toEqual(item!);
     const fourth = await thing(client, "4");
-    expect(await client.reviewItems({ observation: fourth.id })).toEqual([item!]);
-    expect(await client.reviewItems({ observation: third.id })).toEqual([]);
+    expect(await client.reviewItems({ record: fourth.id })).toEqual([item!]);
+    expect(await client.reviewItems({ record: third.id })).toEqual([]);
 
     // The item is read with the records it is about: the one that waits,
     // the two identities it matched, and the judgements that say so.
     const reviewCase = await client.reviewCase(item!.id);
     expect(reviewCase.item).toEqual(item!);
-    expect(reviewCase.observations).toEqual([fourth]);
+    expect(reviewCase.records).toEqual([fourth]);
     expect(reviewCase.candidates.map((candidate) => candidate.identity.id).sort()).toEqual(
       [anvils, split.identity].sort(),
     );
@@ -374,7 +374,7 @@ describe("a reviewer", () => {
         identities: held!.a === third.id ? [split.identity, anvils] : [anvils, split.identity],
       },
     ]);
-    expect(reviewCase.judgements.every((judged) => judged.observation === fourth.id && judged.verdict === "match")).toBe(
+    expect(reviewCase.judgements.every((judged) => judged.record === fourth.id && judged.verdict === "match")).toBe(
       true,
     );
     // Each judgement names the identity it is about: two against the anvils, one against the other.
@@ -383,16 +383,16 @@ describe("a reviewer", () => {
     );
     expect((await failureOf(client.reviewCase(999))).code).toBe("not_found");
 
-    // The members of an identity are read as observations, and things are
+    // The members of an identity are read as records, and things are
     // found by a word they hold.
-    const members = await client.observations({ identity: anvils });
-    expect(members.observations.map((member) => member.key).sort()).toEqual(["1", "2"]);
+    const members = await client.records({ identity: anvils });
+    expect(members.records.map((member) => member.key).sort()).toEqual(["1", "2"]);
     const found = await client.identities({ q: "ANVIL" });
     expect(found.identities.map((identity) => identity.id).sort()).toEqual([anvils, split.identity].sort());
     expect(found.identities.find((identity) => identity.id === anvils)!.sources).toEqual([
-      { source: "shop", observations: 2 },
+      { source: "shop", records: 2 },
     ]);
-    expect((await client.observations({ q: "anvil 4" })).observations).toEqual([fourth]);
+    expect((await client.records({ q: "anvil 4" })).records).toEqual([fourth]);
     expect((await client.identities({ q: "hammer" })).identities).toEqual([]);
     // And read by their IDs, as the list gives them.
     expect((await client.identities({ ids: [split.identity, anvils] })).identities).toEqual(
@@ -417,7 +417,7 @@ describe("a reviewer", () => {
     expect(apart.constraints).toEqual(
       constraints.filter((constraint) => [constraint.a, constraint.b].includes(first.id)),
     );
-    expect([apart.left.observation.id, apart.right.observation.id].sort()).toEqual([first.id, third.id].sort());
+    expect([apart.left.record.id, apart.right.record.id].sort()).toEqual([first.id, third.id].sort());
     expect(apart.left.placed?.reason ?? apart.right.placed?.reason).toBeDefined();
 
     const waiting = await client.explain(fourth.id, third.id);
@@ -453,11 +453,11 @@ describe("a reviewer", () => {
     expect(run.ingest?.superseded).toBe(1);
     await client.startRun({ entity_type: "thing" });
 
-    const { observations } = await client.observations({ source: "shop", key: "1" });
-    expect(observations).toHaveLength(2);
-    const second = observations.find((observation) => observation.id !== first.id)!;
+    const { records } = await client.records({ source: "shop", key: "1" });
+    expect(records).toHaveLength(2);
+    const second = records.find((record) => record.id !== first.id)!;
     expect(second.supersedes).toBe(first.id);
-    expect((await client.observation(first.id)).superseded_by).toBe(second.id);
+    expect((await client.record(first.id)).superseded_by).toBe(second.id);
     expect(second.identity).toBe(first.identity!);
   });
 });
@@ -520,10 +520,10 @@ from spool import strategy
 
 @strategy
 def judge(features):
-    ids = sorted(features.column("observation_id").to_pylist())
+    ids = sorted(features.column("record_id").to_pylist())
     new = {
-        row["observation_id"]
-        for row in features.select(["observation_id", "is_new"]).to_pylist()
+        row["record_id"]
+        for row in features.select(["record_id", "is_new"]).to_pylist()
         if row["is_new"]
     }
     return [
@@ -697,21 +697,21 @@ def find(document):
     expect(run.extractor).toEqual({ name: "words", version: extractors[1]!.hash });
     expect(run.extraction).toMatchObject({ documents: 2, mentions: 3, inserted: 3 });
 
-    // A mention is an observation that says where it was found.
+    // A mention is a record that says where it was found.
     const a = (await client.documents({ key: "a" })).documents[0]!;
     expect(a.extractions).toEqual([{ extractor: "words", version: extractors[1]!.hash, run: run.run, mentions: 2 }]);
-    const { observations } = await client.observations({ document: a.id });
-    const code = (observation: ObservationRecord) => (observation.payload as { code: string }).code;
-    expect(observations.map(code).sort()).toEqual(["anvil", "hammer"]);
-    const anvil = observations.find((observation) => code(observation) === "anvil")!;
+    const { records } = await client.records({ document: a.id });
+    const code = (record: RecordEntry) => (record.payload as { code: string }).code;
+    expect(records.map(code).sort()).toEqual(["anvil", "hammer"]);
+    const anvil = records.find((record) => code(record) === "anvil")!;
     expect(anvil.key).toBe(`${a.id}#thing:2-7`);
     expect(anvil.evidence).toMatchObject({ document: a.id, key: "a", start: 2, end: 7, text: "Anvil" });
 
     // Matching treats mentions as it treats rows: the two hammers are one thing.
     const resolved = await client.startRun({ entity_type: "thing" });
     expect(resolved?.resolution?.identities_created).toBe(2);
-    const hammers = (await client.observations({ entity_type: "thing" })).observations.filter(
-      (observation) => code(observation) === "hammer",
+    const hammers = (await client.records({ entity_type: "thing" })).records.filter(
+      (record) => code(record) === "hammer",
     );
     expect(hammers).toHaveLength(2);
     expect(hammers[0]!.identity).toBe(hammers[1]!.identity!);
@@ -784,13 +784,13 @@ describe("failures", () => {
         actor: "user:test",
         ops: [
           { op: "create_identity", identity: minted.identities[0]!, entity_type: "thing" },
-          { op: "assign", observation: "00000000-0000-7000-8000-000000000002", to: minted.identities[0]! },
+          { op: "assign", record: "00000000-0000-7000-8000-000000000002", to: minted.identities[0]! },
         ],
       }),
     );
     expect(rejected.code).toBe("rejected");
     expect(rejected.rejections).toHaveLength(1);
-    expect(rejected.rejections[0]).toMatchObject({ op_index: 1, reason: { reason: "unknown_observation" } });
+    expect(rejected.rejections[0]).toMatchObject({ op_index: 1, reason: { reason: "unknown_record" } });
   });
 
   test("no server at all is not healthy", async () => {

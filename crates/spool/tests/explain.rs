@@ -1,4 +1,4 @@
-//! Explanations: why two observations share an identity, or do not.
+//! Explanations: why two records share an identity, or do not.
 
 mod common;
 
@@ -21,7 +21,7 @@ fn resolve(engine: &Engine) {
 
 fn explain(engine: &Engine, a: (&str, &str), b: (&str, &str)) -> Explanation {
     engine
-        .explain(observation(engine, a.0, a.1), observation(engine, b.0, b.1))
+        .explain(record_id(engine, a.0, a.1), record_id(engine, b.0, b.1))
         .unwrap()
 }
 
@@ -55,8 +55,8 @@ fn a_match_is_explained_by_the_run_that_judged_it_and_the_rules_that_held() {
     );
     resolve(&engine);
     let (first, second) = (
-        observation(&engine, "shop", "1"),
-        observation(&engine, "shop", "2"),
+        record_id(&engine, "shop", "1"),
+        record_id(&engine, "shop", "2"),
     );
     let identity = identity(&engine, "shop", "1").unwrap();
 
@@ -64,11 +64,11 @@ fn a_match_is_explained_by_the_run_that_judged_it_and_the_rules_that_held() {
     assert_eq!(explanation.outcome, Outcome::SameIdentity);
     // Whichever is named first, `left` is the one a rule calls `l`.
     assert_eq!(engine.explain(second, first).unwrap(), explanation);
-    assert_eq!(explanation.left.observation.id, first.min(second));
-    assert_eq!(explanation.right.observation.id, first.max(second));
+    assert_eq!(explanation.left.record.id, first.min(second));
+    assert_eq!(explanation.right.record.id, first.max(second));
 
     for side in [&explanation.left, &explanation.right] {
-        assert_eq!(side.observation.identity, Some(identity));
+        assert_eq!(side.record.identity, Some(identity));
         assert_eq!(
             json!(side.features),
             json!({ "name": "anvil", "code": null })
@@ -139,7 +139,7 @@ fn a_match_is_explained_by_the_run_that_judged_it_and_the_rules_that_held() {
             format!("`shop:{l}` and `shop:{r}` belong to the same identity, {identity}."),
             "Run 2 (strategy `rules`) judged them `match` (match rule `same_name` held)."
                 .to_owned(),
-            "Both were placed at log position 1 by `engine` (reconcile run 3, \"reconcile new observations\")."
+            "Both were placed at log position 1 by `engine` (reconcile run 3, \"reconcile new records\")."
                 .to_owned(),
             "By the rules as they are now, block rule `same_name` makes them a candidate pair and match rule `same_name` holds, so they would be judged `match`."
                 .to_owned(),
@@ -160,15 +160,12 @@ fn two_members_that_were_never_compared_are_joined_through_others() {
         ],
     );
     resolve(&engine);
-    let middle = observation(&engine, "shop", "2");
+    let middle = record_id(&engine, "shop", "2");
 
     let explanation = explain(&engine, ("shop", "1"), ("shop", "3"));
     assert_eq!(explanation.outcome, Outcome::SameIdentity);
     assert!(explanation.comparisons.is_empty());
-    let (left, right) = (
-        explanation.left.observation.id,
-        explanation.right.observation.id,
-    );
+    let (left, right) = (explanation.left.record.id, explanation.right.record.id);
     assert_eq!(
         explanation
             .path
@@ -317,7 +314,7 @@ fn what_a_reviewer_did_by_hand_is_told_apart_from_what_a_run_did() {
     ));
     assert!(says(
         &explanation,
-        "`shop:1` was placed at log position 1 by `engine` (reconcile run 3, \"reconcile new observations\")."
+        "`shop:1` was placed at log position 1 by `engine` (reconcile run 3, \"reconcile new records\")."
     ));
     assert!(says(&explanation, "No run takes an identity apart."));
 
@@ -325,7 +322,7 @@ fn what_a_reviewer_did_by_hand_is_told_apart_from_what_a_run_did() {
     engine
         .split(
             kept,
-            &[observation(&engine, "shop", "2")],
+            &[record_id(&engine, "shop", "2")],
             true,
             None,
             reviewer(),
@@ -350,8 +347,8 @@ fn what_a_reviewer_did_by_hand_is_told_apart_from_what_a_run_did() {
             None,
             vec![Op::Unconstrain {
                 kind: ConstraintKind::CannotLink,
-                a: explanation.left.observation.id,
-                b: explanation.right.observation.id,
+                a: explanation.left.record.id,
+                b: explanation.right.record.id,
             }],
         )
         .unwrap();
@@ -363,7 +360,7 @@ fn what_a_reviewer_did_by_hand_is_told_apart_from_what_a_run_did() {
 }
 
 #[test]
-fn an_observation_left_for_review_is_explained_by_its_review_item() {
+fn an_record_left_for_review_is_explained_by_its_review_item() {
     let engine = engine();
     ingest(
         &engine,
@@ -373,14 +370,14 @@ fn an_observation_left_for_review_is_explained_by_its_review_item() {
     resolve(&engine);
     ingest(&engine, "depot", &[("9", Some("anvil"), Some("H1"))]);
     resolve(&engine);
-    let waiting = observation(&engine, "depot", "9");
+    let waiting = record_id(&engine, "depot", "9");
 
     let explanation = explain(&engine, ("depot", "9"), ("shop", "1"));
     assert_eq!(explanation.outcome, Outcome::Unassigned);
     let [item] = &explanation.review_items[..] else {
         panic!("one review item");
     };
-    assert_eq!(item.observations, [waiting]);
+    assert_eq!(item.records, [waiting]);
     assert_eq!(item.status, ReviewStatus::Open);
     assert!(says(
         &explanation,
@@ -390,23 +387,23 @@ fn an_observation_left_for_review_is_explained_by_its_review_item() {
         &explanation,
         "Review item 1 (`possible_merge`) is open and names `depot:9`: what it matched belongs to more than one identity"
     ));
-    let unplaced = match explanation.left.observation.id == waiting {
+    let unplaced = match explanation.left.record.id == waiting {
         true => &explanation.left,
         false => &explanation.right,
     };
     assert_eq!(unplaced.placed, None);
 
-    // Review items can be listed by the observation they name.
+    // Review items can be listed by the record they name.
     let named = |id| {
         engine
             .review_items(&ReviewFilter {
-                observation: Some(id),
+                record: Some(id),
                 ..ReviewFilter::default()
             })
             .unwrap()
     };
     assert_eq!(named(waiting), std::slice::from_ref(item));
-    assert_eq!(named(observation(&engine, "shop", "1")), []);
+    assert_eq!(named(record_id(&engine, "shop", "1")), []);
 
     engine
         .dismiss_review(item.id, &reviewer(), Some("neither"))
@@ -425,7 +422,7 @@ fn a_later_version_of_a_row_is_linked_to_the_one_before() {
     resolve(&engine);
     ingest(&engine, "shop", &[("1", Some("anvil, large"), None)]);
     resolve(&engine);
-    let [earlier, later] = observations(&engine, "shop", "1")[..] else {
+    let [earlier, later] = records(&engine, "shop", "1")[..] else {
         panic!("two versions");
     };
 
@@ -665,19 +662,18 @@ fn a_constraint_that_was_removed_leaves_two_together_with_nothing_between_them()
     // Nothing about these tongs resembles the anvil.
     ingest(&engine, "depot", &[("9", Some("tongs"), None)]);
     let (anvil, tongs) = (
-        observation(&engine, "shop", "1"),
-        observation(&engine, "depot", "9"),
+        record_id(&engine, "shop", "1"),
+        record_id(&engine, "depot", "9"),
     );
-    let must_link =
-        |op: fn(ConstraintKind, spool::core::ObservationId, spool::core::ObservationId) -> Op| {
-            engine
-                .author(
-                    reviewer(),
-                    None,
-                    vec![op(ConstraintKind::MustLink, anvil, tongs)],
-                )
-                .unwrap();
-        };
+    let must_link = |op: fn(ConstraintKind, spool::core::RecordId, spool::core::RecordId) -> Op| {
+        engine
+            .author(
+                reviewer(),
+                None,
+                vec![op(ConstraintKind::MustLink, anvil, tongs)],
+            )
+            .unwrap();
+    };
     must_link(|kind, a, b| Op::Constrain { kind, a, b });
     resolve(&engine);
     must_link(|kind, a, b| Op::Unconstrain { kind, a, b });
@@ -727,8 +723,8 @@ fn a_strategy_of_the_callers_own_is_explained_by_what_it_stored() {
         )
         .unwrap();
     let (first, second) = (
-        observation(&engine, "shop", "1").to_string(),
-        observation(&engine, "shop", "2").to_string(),
+        record_id(&engine, "shop", "1").to_string(),
+        record_id(&engine, "shop", "2").to_string(),
     );
     let rows = Rows::from_json(
         &serde_json::from_value::<Vec<serde_json::Map<String, serde_json::Value>>>(json!([{
@@ -781,14 +777,14 @@ fn a_strategy_of_the_callers_own_is_explained_by_what_it_stored() {
 }
 
 #[test]
-fn observations_of_different_types_are_never_compared() {
+fn records_of_different_types_are_never_compared() {
     let engine = Engine::open_in_memory(Options::seeded(1)).unwrap();
     let mut widget = thing();
     widget.name = "widget".to_owned();
     widget.features = SqlFile::new(
         "features",
-        "SELECT observation_id, payload->>'name' AS name, payload->>'code' AS code
-         FROM observation",
+        "SELECT record_id, payload->>'name' AS name, payload->>'code' AS code
+         FROM record",
     );
     engine.apply(&manifest_of(vec![thing(), widget])).unwrap();
     ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
@@ -808,8 +804,7 @@ fn observations_of_different_types_are_never_compared() {
     assert!(explanation.comparisons.is_empty());
     assert!(explanation.path.is_empty());
     assert!(
-        explanation.summary[0]
-            .ends_with("Observations of different entity types are never compared."),
+        explanation.summary[0].ends_with("Records of different entity types are never compared."),
         "{:?}",
         explanation.summary
     );
@@ -817,10 +812,10 @@ fn observations_of_different_types_are_never_compared() {
 }
 
 #[test]
-fn a_type_whose_features_are_only_the_observation_is_explained() {
+fn a_type_whose_features_are_only_the_record_is_explained() {
     // A strategy that reads payloads itself needs no feature columns.
     let mut bare = thing();
-    bare.features = SqlFile::new("features", "SELECT observation_id FROM observation");
+    bare.features = SqlFile::new("features", "SELECT record_id FROM record");
     bare.block.clear();
     bare.no_match.clear();
     bare.match_.clear();
@@ -858,8 +853,8 @@ fn an_explanation_reads_the_rules_of_the_declaration_its_features_were_built_fro
     );
     resolve(&engine);
     let (one, two) = (
-        observation(&engine, "shop", "1"),
-        observation(&engine, "shop", "2"),
+        record_id(&engine, "shop", "1"),
+        record_id(&engine, "shop", "2"),
     );
 
     // The same type with its feature columns under other names, as a
@@ -867,8 +862,8 @@ fn an_explanation_reads_the_rules_of_the_declaration_its_features_were_built_fro
     let mut renamed = thing();
     renamed.features = SqlFile::new(
         "features",
-        "SELECT observation_id, payload->>'name' AS label, payload->>'code' AS number
-         FROM observation",
+        "SELECT record_id, payload->>'name' AS label, payload->>'code' AS number
+         FROM record",
     );
     renamed.block = vec![SqlFile::new("same_name", "l.label = r.label")];
     renamed.no_match = vec![SqlFile::new("different_code", "l.number <> r.number")];
@@ -910,24 +905,21 @@ fn an_explanation_reads_the_rules_of_the_declaration_its_features_were_built_fro
 }
 
 #[test]
-fn an_explanation_is_about_two_observations_the_store_holds() {
+fn an_explanation_is_about_two_records_the_store_holds() {
     let engine = engine();
     ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
-    let known = observation(&engine, "shop", "1");
-    let unknown: spool::core::ObservationId =
+    let known = record_id(&engine, "shop", "1");
+    let unknown: spool::core::RecordId =
         SeededIds::new(9).identity_id().to_string().parse().unwrap();
 
     for (a, b) in [(known, unknown), (unknown, known)] {
         let error = engine.explain(a, b).unwrap_err();
         assert!(
-            matches!(error, Error::UnknownObservation(id) if id == unknown),
+            matches!(error, Error::UnknownRecord(id) if id == unknown),
             "{error}"
         );
-        assert_eq!(
-            error.to_string(),
-            format!("there is no observation {unknown}")
-        );
+        assert_eq!(error.to_string(), format!("there is no record {unknown}"));
     }
     let error = engine.explain(known, known).unwrap_err();
-    assert!(matches!(error, Error::SameObservation(id) if id == known));
+    assert!(matches!(error, Error::SameRecord(id) if id == known));
 }

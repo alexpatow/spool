@@ -10,12 +10,12 @@ import type {
   ChangesetList,
   CommitRequest,
   Committed,
-  ConstraintRecord,
+  ConstraintEntry,
   DismissRequest,
   DocumentId,
   DocumentList,
-  DocumentRecord,
-  DraftRecord,
+  DocumentEntry,
+  DraftEntry,
   DraftStatus,
   DraftSummary,
   EntityType,
@@ -31,16 +31,16 @@ import type {
   Judgement,
   MintedIds,
   NewDocument,
-  ObservationId,
-  ObservationList,
-  ObservationRecord,
+  RecordId,
+  RecordList,
+  RecordEntry,
   Rejection,
   ReviewCase,
-  ReviewRecord,
+  ReviewEntry,
   ReviewStatus,
   RunId,
   RunKind,
-  RunRecord,
+  RunEntry,
   RunStatus,
   Seq,
   SplitReport,
@@ -112,13 +112,13 @@ export interface DraftFilter {
 export interface ReviewFilter {
   status?: ReviewStatus;
   entity_type?: EntityType;
-  /** Only items that name this observation. */
-  observation?: ObservationId;
+  /** Only items that name this record. */
+  record?: RecordId;
 }
 
 export interface ConstraintFilter {
-  /** Only constraints that name this observation. */
-  observation?: ObservationId;
+  /** Only constraints that name this record. */
+  record?: RecordId;
   /** Only constraints that name a member of this identity. */
   identity?: IdentityId;
   /** Also constraints that were removed. Default: only those in force. */
@@ -153,7 +153,7 @@ export interface DocumentFilter {
   limit?: number;
 }
 
-export interface ObservationFilter {
+export interface RecordFilter {
   entity_type?: EntityType;
   source?: string;
   key?: string;
@@ -162,15 +162,15 @@ export interface ObservationFilter {
   /** Only the members this identity has now. */
   identity?: IdentityId;
   /**
-   * Only observations that hold every word of this text: in a value of the
+   * Only records that hold every word of this text: in a value of the
    * payload, in the name of the source or in the key, whatever the case and
    * the accents of the letters.
    */
   q?: string;
-  /** Only observations that have no identity. */
+  /** Only records that have no identity. */
   unassigned?: boolean;
   /** The `next` of the page before. */
-  after?: ObservationId;
+  after?: RecordId;
   limit?: number;
 }
 
@@ -224,20 +224,20 @@ export class SpoolClient {
   // Ingest
 
   /**
-   * Adds rows as observations. A row that was ingested before, with the same
+   * Adds rows as records. A row that was ingested before, with the same
    * source, key and contents, is not added again.
    *
    * The run that comes back may still be `running` if the server's wait ran
    * out first: pass it to `waitForRun`.
    */
-  async ingest(request: IngestRequest): Promise<RunRecord> {
-    const { run } = await this.json<{ run: RunRecord }>("POST", "/v1/ingest", { json: request });
+  async ingest(request: IngestRequest): Promise<RunEntry> {
+    const { run } = await this.json<{ run: RunEntry }>("POST", "/v1/ingest", { json: request });
     return run;
   }
 
   /** As `ingest`, with the rows as an Arrow IPC stream. */
-  async ingestArrow(options: IngestArrowOptions, rows: ArrowBody): Promise<RunRecord> {
-    const { run } = await this.json<{ run: RunRecord }>("POST", "/v1/ingest", {
+  async ingestArrow(options: IngestArrowOptions, rows: ArrowBody): Promise<RunEntry> {
+    const { run } = await this.json<{ run: RunEntry }>("POST", "/v1/ingest", {
       query: { ...options },
       arrow: rows,
     });
@@ -252,8 +252,8 @@ export class SpoolClient {
    * stored again, and a changed text under the same key is the document's
    * next version. The run that comes back is an ingest run.
    */
-  async addDocuments(source: string, documents: NewDocument[], options: { wait_ms?: number } = {}): Promise<RunRecord> {
-    const { run } = await this.json<{ run: RunRecord }>("POST", "/v1/documents", {
+  async addDocuments(source: string, documents: NewDocument[], options: { wait_ms?: number } = {}): Promise<RunEntry> {
+    const { run } = await this.json<{ run: RunEntry }>("POST", "/v1/documents", {
       json: { source, documents, ...options },
     });
     return run;
@@ -265,22 +265,22 @@ export class SpoolClient {
   }
 
   /** One version of a document, with its text and each time an extractor read it. */
-  document(document: DocumentId): Promise<DocumentRecord> {
+  document(document: DocumentId): Promise<DocumentEntry> {
     return this.json("GET", `/v1/documents/${document}`);
   }
 
   /**
    * Runs one of the project's extractors, which `info` lists, over the
    * latest version of every document it has not read. What it finds is
-   * stored as observations, which `startRun` then matches like any other;
+   * stored as records, which `startRun` then matches like any other;
    * `extraction` on the run that comes back counts them.
    *
    * The run may still be `running` if the server's wait ran out first: pass
    * it to `waitForRun`. If the extractor fails, the call throws a
    * `SpoolError` with the code `extractor_failed`, and nothing is stored.
    */
-  async extract(extractor: string, options: Omit<ExtractRequest, "extractor"> = {}): Promise<RunRecord> {
-    const { run } = await this.json<{ run: RunRecord }>("POST", "/v1/extractions", {
+  async extract(extractor: string, options: Omit<ExtractRequest, "extractor"> = {}): Promise<RunEntry> {
+    const { run } = await this.json<{ run: RunEntry }>("POST", "/v1/extractions", {
       json: { extractor, ...options },
     });
     return run;
@@ -289,7 +289,7 @@ export class SpoolClient {
   // Runs
 
   /**
-   * Matches the new observations of an entity type.
+   * Matches the new records of an entity type.
    *
    * With no strategy, the server runs the project's rules and reconciles:
    * the run comes back `succeeded`, or `drafted` if `commit` is `false`, or
@@ -298,7 +298,7 @@ export class SpoolClient {
    * which `info` lists for each entity type, runs that instead; if it fails,
    * the call throws a `SpoolError` with the code `strategy_failed`.
    *
-   * With `rematch`, every observation is matched again. Identities are left
+   * With `rematch`, every record is matched again. Identities are left
    * as they are, and `resolution.suggestions` lists the merges and splits
    * the strategy would make of them.
    *
@@ -306,19 +306,19 @@ export class SpoolClient {
    * candidates, submit judgements, and reconcile it. The server runs no
    * code a caller sends.
    */
-  async startRun(request: StartRunRequest): Promise<RunRecord | null> {
-    const { run } = await this.json<{ run: RunRecord | null }>("POST", "/v1/runs", { json: request });
+  async startRun(request: StartRunRequest): Promise<RunEntry | null> {
+    const { run } = await this.json<{ run: RunEntry | null }>("POST", "/v1/runs", { json: request });
     return run;
   }
 
-  async run(run: RunId): Promise<RunRecord> {
-    const response = await this.json<{ run: RunRecord }>("GET", `/v1/runs/${run}`);
+  async run(run: RunId): Promise<RunEntry> {
+    const response = await this.json<{ run: RunEntry }>("GET", `/v1/runs/${run}`);
     return response.run;
   }
 
   /** Runs, newest first. */
-  async runs(filter: RunFilter = {}): Promise<RunRecord[]> {
-    const { runs } = await this.json<{ runs: RunRecord[] }>("GET", "/v1/runs", { query: { ...filter } });
+  async runs(filter: RunFilter = {}): Promise<RunEntry[]> {
+    const { runs } = await this.json<{ runs: RunEntry[] }>("GET", "/v1/runs", { query: { ...filter } });
     return runs;
   }
 
@@ -326,15 +326,15 @@ export class SpoolClient {
    * Waits until the server has stopped working on a run, and returns it. With
    * a timeout, returns the run as it is when the time is up.
    */
-  async waitForRun(run: RunId, options: WaitOptions = {}): Promise<RunRecord> {
+  async waitForRun(run: RunId, options: WaitOptions = {}): Promise<RunEntry> {
     const deadline = options.timeoutMs === undefined ? undefined : Date.now() + options.timeoutMs;
     for (;;) {
       const left = deadline === undefined ? POLL_MS : Math.max(0, deadline - Date.now());
-      const { run: record } = await this.json<{ run: RunRecord }>("GET", `/v1/runs/${run}`, {
+      const { run: entry } = await this.json<{ run: RunEntry }>("GET", `/v1/runs/${run}`, {
         query: { wait_ms: Math.min(left, POLL_MS) },
       });
-      if (record.status !== "running" || (deadline !== undefined && Date.now() >= deadline)) {
-        return record;
+      if (entry.status !== "running" || (deadline !== undefined && Date.now() >= deadline)) {
+        return entry;
       }
     }
   }
@@ -386,9 +386,9 @@ export class SpoolClient {
     return this.json("POST", `/v1/runs/${run}/reconcile`, { json: options });
   }
 
-  /** Gives up an open run. Its observations are still new to the next one. */
-  async cancelRun(run: RunId): Promise<RunRecord> {
-    const response = await this.json<{ run: RunRecord }>("POST", `/v1/runs/${run}/cancel`);
+  /** Gives up an open run. Its records are still new to the next one. */
+  async cancelRun(run: RunId): Promise<RunEntry> {
+    const response = await this.json<{ run: RunEntry }>("POST", `/v1/runs/${run}/cancel`);
     return response.run;
   }
 
@@ -400,7 +400,7 @@ export class SpoolClient {
   }
 
   /** A draft with its changeset. */
-  draft(draft: ChangesetId): Promise<DraftRecord> {
+  draft(draft: ChangesetId): Promise<DraftEntry> {
     return this.json("GET", `/v1/drafts/${draft}`);
   }
 
@@ -429,7 +429,7 @@ export class SpoolClient {
    * Validates a changeset against current state and commits it. A changeset
    * that breaks a rule throws a `SpoolError` with the code `rejected`.
    *
-   * Merging two identities, moving an observation and recording or removing
+   * Merging two identities, moving a record and recording or removing
    * a constraint are each a changeset of one operation. Without an `id` the
    * server mints one, and without a `base` the changeset is taken to have
    * been written against the head of the log.
@@ -457,9 +457,9 @@ export class SpoolClient {
     return this.json("POST", `/v1/identities/${identity}/split`, { json: request });
   }
 
-  /** The constraints in force: pairs of observations that must or must not share an identity. */
-  async constraints(filter: ConstraintFilter = {}): Promise<ConstraintRecord[]> {
-    const { constraints } = await this.json<{ constraints: ConstraintRecord[] }>("GET", "/v1/constraints", {
+  /** The constraints in force: pairs of records that must or must not share an identity. */
+  async constraints(filter: ConstraintFilter = {}): Promise<ConstraintEntry[]> {
+    const { constraints } = await this.json<{ constraints: ConstraintEntry[] }>("GET", "/v1/constraints", {
       query: { ...filter },
     });
     return constraints;
@@ -488,50 +488,50 @@ export class SpoolClient {
     return history;
   }
 
-  /** A page of observations. Pass `next` as `after` for the page after. */
-  observations(filter: ObservationFilter = {}): Promise<ObservationList> {
-    return this.json("GET", "/v1/observations", { query: { ...filter } });
+  /** A page of records. Pass `next` as `after` for the page after. */
+  records(filter: RecordFilter = {}): Promise<RecordList> {
+    return this.json("GET", "/v1/records", { query: { ...filter } });
   }
 
-  observation(observation: ObservationId): Promise<ObservationRecord> {
-    return this.json("GET", `/v1/observations/${observation}`);
+  record(record: RecordId): Promise<RecordEntry> {
+    return this.json("GET", `/v1/records/${record}`);
   }
 
   /**
-   * The identity of each observation, in the order asked. `null` for an
-   * observation that has none or is not known.
+   * The identity of each record, in the order asked. `null` for an
+   * record that has none or is not known.
    */
-  async identitiesOf(observations: ObservationId[]): Promise<Array<IdentityId | null>> {
+  async identitiesOf(records: RecordId[]): Promise<Array<IdentityId | null>> {
     const { identities } = await this.json<{ identities: Array<IdentityId | null> }>(
       "POST",
-      "/v1/observations/identities",
-      { json: { observations } },
+      "/v1/records/identities",
+      { json: { records } },
     );
     return identities;
   }
 
   /**
-   * Why two observations share an identity, or why they do not: where each
+   * Why two records share an identity, or why they do not: where each
    * is and what placed it there, what each run that compared them concluded,
    * the constraints and review items that name them, and what the project's
    * rules say about the pair as it is now. `summary` says it in sentences.
    */
-  explain(a: ObservationId, b: ObservationId): Promise<Explanation> {
+  explain(a: RecordId, b: RecordId): Promise<Explanation> {
     return this.json("GET", "/v1/explain", { query: { a, b } });
   }
 
   /** What reconciling would not decide. */
-  async reviewItems(filter: ReviewFilter = {}): Promise<ReviewRecord[]> {
-    const { items } = await this.json<{ items: ReviewRecord[] }>("GET", "/v1/review", { query: { ...filter } });
+  async reviewItems(filter: ReviewFilter = {}): Promise<ReviewEntry[]> {
+    const { items } = await this.json<{ items: ReviewEntry[] }>("GET", "/v1/review", { query: { ...filter } });
     return items;
   }
 
-  reviewItem(item: number): Promise<ReviewRecord> {
+  reviewItem(item: number): Promise<ReviewEntry> {
     return this.json("GET", `/v1/review/${item}`);
   }
 
   /**
-   * A review item with what a reviewer reads to decide it: the observations
+   * A review item with what a reviewer reads to decide it: the records
    * it holds back, the identities they matched with their members, and what
    * was judged between them.
    */
@@ -540,10 +540,10 @@ export class SpoolClient {
   }
 
   /**
-   * Closes a review item without giving its observations an identity. Later
+   * Closes a review item without giving its records an identity. Later
    * runs leave them alone.
    */
-  dismissReview(item: number, request: DismissRequest): Promise<ReviewRecord> {
+  dismissReview(item: number, request: DismissRequest): Promise<ReviewEntry> {
     return this.json("POST", `/v1/review/${item}/dismiss`, { json: request });
   }
 
