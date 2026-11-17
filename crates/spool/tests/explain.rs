@@ -633,6 +633,38 @@ fn observations_of_different_types_are_never_compared() {
 }
 
 #[test]
+fn a_type_whose_features_are_only_the_observation_is_explained() {
+    // A strategy that reads payloads itself needs no feature columns.
+    let mut bare = thing();
+    bare.features = SqlFile::new("features", "SELECT observation_id FROM observation");
+    bare.block.clear();
+    bare.no_match.clear();
+    bare.match_.clear();
+    let engine = Engine::open_in_memory(Options::seeded(1)).unwrap();
+    engine.apply(&manifest_of(vec![bare])).unwrap();
+    ingest(
+        &engine,
+        "shop",
+        &[("1", Some("anvil"), None), ("2", Some("anvil"), None)],
+    );
+    resolve(&engine);
+
+    let explanation = explain(&engine, ("shop", "1"), ("shop", "2"));
+    assert_eq!(explanation.outcome, Outcome::DifferentIdentities);
+    // Each has a feature row, with nothing in it.
+    for side in [&explanation.left, &explanation.right] {
+        assert_eq!(side.features, Some(serde_json::Map::new()));
+    }
+    let rules = explanation.rules.as_ref().expect("a reading of the rules");
+    assert!(rules.block.is_empty() && !rules.candidate);
+    assert_eq!(rules.verdict, None);
+    assert!(says(
+        &explanation,
+        "The entity type has no block rule, so a run of the rules would not compare them."
+    ));
+}
+
+#[test]
 fn an_explanation_is_about_two_observations_the_store_holds() {
     let engine = engine();
     ingest(&engine, "shop", &[("1", Some("anvil"), None)]);

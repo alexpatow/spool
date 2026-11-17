@@ -612,6 +612,88 @@ fn a_mention_is_shown_in_its_document() {
 }
 
 #[test]
+fn a_source_and_key_name_the_latest_version_however_many_there_were() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("project");
+    write_things(&project);
+    let server = Server::serve(&project, dir.path(), 1);
+
+    // More versions of one row than a page of observations holds. They are
+    // listed by ID, which says nothing of their order in time.
+    let versions = 250;
+    for version in 1..=versions {
+        let code = format!("anvil-{version}");
+        ingest(
+            &server,
+            "shop",
+            "thing",
+            "id",
+            rows(&[&["id", "code"], &["1", &code]]),
+        );
+    }
+    ingest(
+        &server,
+        "shop",
+        "thing",
+        "id",
+        rows(&[&["id", "code"], &["2", "anvil-250"]]),
+    );
+    let first = server.read("/v1/observations?source=shop&key=1");
+    assert_eq!(first["observations"].as_array().unwrap().len(), 100);
+    assert!(
+        first["observations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|version| !version["superseded_by"].is_null()),
+        "the latest version is not on the first page, or this tests nothing"
+    );
+
+    let latest = answered(&server, &["show", "observation", "shop:1"]);
+    assert_eq!(latest["observation"]["payload"]["code"], "anvil-250");
+    assert_eq!(latest["observation"]["superseded_by"], Value::Null);
+
+    resolve(&server, "thing");
+    let explanation = answered(&server, &["explain", "shop:1", "shop:2"]);
+    assert_eq!(explanation["outcome"], "same_identity");
+    let sides = [&explanation["left"], &explanation["right"]];
+    assert!(
+        sides
+            .iter()
+            .all(|side| side["observation"]["payload"]["code"] == "anvil-250"),
+        "{explanation}"
+    );
+}
+
+#[test]
+fn a_type_with_no_feature_columns_and_no_rules_is_explained() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("project");
+    let features = project.join("entities/thing/features.sql");
+    std::fs::create_dir_all(features.parent().unwrap()).unwrap();
+    std::fs::write(features, "SELECT observation_id FROM observation\n").unwrap();
+    let server = Server::serve(&project, dir.path(), 1);
+    ingest(
+        &server,
+        "shop",
+        "thing",
+        "id",
+        rows(&[&["id", "code"], &["1", "anvil"], &["2", "anvil"]]),
+    );
+
+    let explanation = shown(&server, &["explain", "shop:1", "shop:2"]);
+    has(
+        &explanation,
+        "The entity type has no block rule, so a run of the rules would not compare them.",
+    );
+    has(&explanation, "rules as they are now");
+    has(&explanation, "  the entity type has none");
+    assert!(!explanation.contains("\nfeatures\n"), "{explanation}");
+    let answer = answered(&server, &["explain", "shop:1", "shop:2"]);
+    assert_eq!(answer["left"]["features"], json!({}));
+}
+
+#[test]
 fn a_mistake_or_a_server_that_does_not_answer_is_said_plainly() {
     let dir = tempfile::tempdir().unwrap();
     let server = workshop(dir.path());

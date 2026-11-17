@@ -251,15 +251,19 @@ pub(crate) fn explain(
 fn explained(conn: &Connection, observation: ObservationRecord) -> Result<Explained> {
     let table = features::table(&observation.entity_type);
     let features = if has_table(conn, &table)? {
+        // The whole row, without the two columns the engine adds: a table
+        // may have no others, and a query has to select something.
         let mut statement = conn.prepare(&format!(
-            "SELECT to_json(f)::VARCHAR
-             FROM (SELECT * EXCLUDE (observation_id, declaration_version) FROM {table}
-                   WHERE observation_id = ?::UUID) f"
+            "SELECT to_json(f)::VARCHAR FROM {table} f WHERE f.observation_id = ?::UUID"
         ))?;
         let mut rows = statement.query([observation.id.to_string()])?;
         match rows.next()? {
             Some(row) => {
-                Some(serde_json::from_str(&row.get::<_, String>(0)?).map_err(StateError::new)?)
+                let mut features: serde_json::Map<String, serde_json::Value> =
+                    serde_json::from_str(&row.get::<_, String>(0)?).map_err(StateError::new)?;
+                features.remove("observation_id");
+                features.remove("declaration_version");
+                Some(features)
             }
             None => None,
         }
@@ -862,6 +866,10 @@ fn read_otherwise(comparisons: &[Comparison], rules: &RuleReading) -> Option<Run
 
 fn read(rules: &RuleReading) -> String {
     let block = holding(&rules.block);
+    if rules.block.is_empty() {
+        return "The entity type has no block rule, so a run of the rules would not compare them."
+            .to_owned();
+    }
     if block.is_empty() {
         let undecided: Vec<&str> = rules
             .block

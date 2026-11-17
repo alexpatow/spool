@@ -14,7 +14,7 @@ use spool::{
     DocumentRecord, DraftRecord, DraftSummary, Explanation, HistoryEntry, IdentitySummary,
     IdentityView, ObservationRecord, ReviewRecord, RuleResult, RunRecord,
 };
-use spool_cli::api::Info;
+use spool_cli::api::{Info, ObservationList};
 
 use super::remote::{self, Remote, print_json, typed};
 use crate::Failure;
@@ -187,22 +187,32 @@ fn find_observation(remote: &Remote, reference: &str) -> Result<ObservationRecor
             "`{reference}` does not name an observation: give its ID, or <source>:<key>"
         )));
     };
-    let found = remote.list(
-        "/observations",
-        &[("source", source.to_owned()), ("key", key.to_owned())],
-    )?;
-    let versions: Vec<ObservationRecord> = typed(&found["observations"])?;
-    let last = versions.len().saturating_sub(1);
-    versions
-        .into_iter()
-        .enumerate()
-        .find(|(index, version)| version.superseded_by.is_none() || *index == last)
-        .map(|(_, version)| version)
-        .ok_or_else(|| {
-            Failure::Failed(format!(
-                "there is no observation with key `{key}` from source `{source}`"
-            ))
-        })
+    // Versions are listed by ID, in pages, and the latest can be on any of
+    // them: it is the one no other replaced.
+    let mut query = vec![("source", source.to_owned()), ("key", key.to_owned())];
+    let mut last = None;
+    loop {
+        let found = remote.list("/observations", &query)?;
+        let page: ObservationList = typed(&found)?;
+        for version in page.observations {
+            if version.superseded_by.is_none() {
+                return Ok(version);
+            }
+            last = Some(version);
+        }
+        match page.next {
+            Some(next) => {
+                query.truncate(2);
+                query.push(("after", next.to_string()));
+            }
+            None => break,
+        }
+    }
+    last.ok_or_else(|| {
+        Failure::Failed(format!(
+            "there is no observation with key `{key}` from source `{source}`"
+        ))
+    })
 }
 
 struct View<'a> {
@@ -1163,6 +1173,9 @@ fn print_explanation(explanation: &Explanation) {
                     .to_owned(),
                 ]);
             }
+        }
+        if rows.is_empty() {
+            println!("  the entity type has none");
         }
         aligned(&rows, "  ");
     }
