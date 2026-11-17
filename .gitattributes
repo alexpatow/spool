@@ -1,2 +1,5 @@
 crates/spool/src/usercode/spool.js linguist-generated=true
 packages/client/src/types.ts linguist-generated=true
+crates/spool-cli/src/studio/index.html linguist-generated=true
+crates/spool-cli/src/studio/studio.css linguist-generated=true
+crates/spool-cli/src/studio/studio.js linguist-generated=true

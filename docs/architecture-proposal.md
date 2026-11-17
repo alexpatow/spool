@@ -498,7 +498,7 @@ Why one server, and not an engine in each caller:
 - **A DuckDB file has one owner.** While the engine has the file open, no other process can open it, even read-only (tested). One server that owns the file fits that.
 - **One writer has nothing to synchronise.** Sync transport, conflict policy, and two copies each creating an identity for the same new entity all disappear.
 
-Every path is under `/v1` and needs the bearer token, except `GET /healthz`. Small values are JSON. `spool schema` prints one JSON Schema for all of them, a copy is committed at `schema/spool-api.v1.schema.json`, and a test fails when the two differ.
+Every path of the API is under `/v1` and needs the bearer token. `GET /healthz` needs none, and neither do the three files of the studio, which the Inspection part below describes. Small values are JSON. `spool schema` prints one JSON Schema for all of them, a copy is committed at `schema/spool-api.v1.schema.json`, and a test fails when the two differ.
 
 | Call | What it does | Response |
 | --- | --- | --- |
@@ -546,11 +546,19 @@ A person who asks why two records are one company, or why they are not, should n
 - **What the rules say now.** Each block, `no_match` and `match` rule of the type applied to the two feature rows as they are, with the feature rows themselves. This is the present reading, and it can differ from what a run recorded: the rules or the features may have changed since. The explanation says so when they differ. A run applies `no_match` and `match` rules only to the pairs a block rule found, and the explanation applies them to any pair, so such a rule may meet values it was never written for. When SQL refuses one, as it refuses the cast of a value that does not convert, the explanation reports that those rules cannot be applied to the pair, with what SQL said, and is otherwise complete. The rules read are those the feature tables were built for: the explanation checks, in the transaction it reads in, that the store was applied with the manifest whose rules it has, and begins again when `spool dev` applied another in between.
 - **What joins them.** When the two share an identity without having been compared, the shortest chain of members between them. A link is a `must_link` constraint, a later version of the same row, or a `match` judgement of a run that finished, preferred in that order, which is the order a reconcile run listens to them in. No chain means that what joined them was removed since, as a constraint can be, or that a changeset placed one of them directly. The explanation says who placed each.
 
-The answer is data, with a `summary` that says the same in sentences. The engine writes the sentences, so the command, a client and a later studio say the same thing, and a test of the engine covers the wording. A sentence names an observation as its source and key, and a mention as its document and the span it was found at.
+The answer is data, with a `summary` that says the same in sentences. The engine writes the sentences, so the command, a client and the studio say the same thing, and a test of the engine covers the wording. A sentence names an observation as its source and key, and a mention as its document and the span it was found at.
 
 The explanation is about what was recorded. It does not run a strategy again, so for user code it reports the verdict, score and detail the strategy stored and cannot say what the strategy would judge now.
 
 `spool show` and `spool explain` are the same API from a terminal. They are a client: they take `--url` and `--token`, by default those of `spool dev`, and never open a store, so they work against a development server and a deployed one alike. `show` lists runs, identities, observations, documents, review items, drafts and the log, and shows one of each: an identity with its members, the constraints on them and its history; an observation with its payload, its evidence and, for a mention, the text around it in its document; a draft with the operations it would commit. `--json` prints what the server answered. The commands speak HTTP with `ureq`, a crate the build of the DuckDB library already used, so the lock file gained no package.
+
+The studio is the same API in a browser. The server answers `GET /` with a page, and the page reads through `/v1` with the TypeScript client, like any other caller. It has a screen for each thing `show` shows and one for `explain`: an overview of the store, runs, identities, observations, documents with each mention marked in the text, review items, drafts and the log. A value that names something else is a link to it, and two observations ticked in any list lead to their explanation. This first version only reads. Approving a draft, merging, splitting and dismissing a review item from the studio come next.
+
+- **It is three files compiled into the binary.** `packages/studio` is a React application that Vite builds to a page, one script and one style sheet, with fixed names. The built files are committed under `crates/spool-cli/src/studio`, so building the binary needs neither `bun` nor the network, and a test fails if they are not what the package builds. The script carries the licence text of the packages in it.
+- **The files need no token, and what they show does.** The files are the same for every server and say nothing about its store. The page asks for the token and keeps it for as long as the tab is open, in the tab's session storage. Before it asks, it tries `dev`, which is the token of `spool dev`, so a development server opens with no question.
+- **The page can load and call nothing but its server.** It is served with a content security policy that allows its own script and style sheet and calls to the server it came from, and no inline script, no other origin and no frame. The server sends no CORS headers, so a page from another origin still cannot read the API.
+- **The screen is named after the `#` of the address.** The server has one page to serve, and a link to a screen, with its filters, can be copied. A browser asks for the files each time and is told when the copy it has is still the one, so a new binary's studio is shown without a hard reload.
+- **`spool serve --no-studio` leaves it out**, for a deployment that wants the API alone. `spool dev` always serves it.
 
 A client is a small package that speaks this API. The first is TypeScript, and a Python client is the same amount of work. No client contains engine code, so there are no native packages to build per platform. An agent built with a framework such as eve reaches Spool the same way: a tool in the agent calls the client.
 
@@ -921,7 +929,16 @@ Milestone 6 begins with inspection: `crates/spool/src/explain.rs` and the comman
 - `spool show` lists and shows runs, identities with their members, constraints and history, observations with their evidence and the place in their document, documents, review items, drafts and the log, as text and as the server's JSON (`crates/spool-cli/tests/show.rs`).
 - A mistake in a command is a usage error, and a server that refuses or does not answer is reported in a sentence.
 
-Out of scope after this part of Milestone 6: the studio, explaining what a user-code strategy would judge now, explaining a pair as of an earlier log position, LLM matching, an extractor built into the engine, documents that are not text, relationships between entities, canonical attribute views, applying a rematch's suggestions automatically.
+Milestone 6 continues with the studio: `packages/studio`, `crates/spool-cli/src/studio.rs` and the built files beside it. Its exit criteria, each a test:
+
+- The server answers a browser with the studio and asks no token for its three files, while `/v1` still does. Every other path is still nothing, and `serve --no-studio` serves no studio (`crates/spool-cli/tests/studio.rs`).
+- The studio is served with a policy that lets it load only itself and call only its server, and a browser is told when the files it has are still the ones.
+- The files compiled into the binary are what `packages/studio` builds (run with `--include-ignored`, as are the tests of the screens).
+- Each screen shows what the server holds, against a real server with the company and the news scenarios: the overview, runs, identities with their members, constraints and history, observations, a document with its mentions in the text, review items, drafts, the log, and an explanation with the engine's sentences (`packages/studio/test`).
+- The studio asks for the token when the one of `spool dev` is refused, keeps the one that works, and forgets it when asked.
+- The studio makes no call that changes anything.
+
+Out of scope after this part of Milestone 6: changing anything from the studio, a studio that follows a running server without being asked to read again, explaining what a user-code strategy would judge now, explaining a pair as of an earlier log position, LLM matching, an extractor built into the engine, documents that are not text, relationships between entities, canonical attribute views, applying a rematch's suggestions automatically.
 
 Proposed roadmap:
 
@@ -930,7 +947,7 @@ Proposed roadmap:
 3. **Identity lifecycle.** Merge, split, constraints, undo and superseding observations, plus the identity benchmark.
 4. **User code.** The child-process protocol, Python first and then TypeScript, with Splink as the second strategy.
 5. **Extraction.** Observations from unstructured documents.
-6. **Developer tooling.** Inspection and a studio, both through the API. Inspection is built; the studio is not.
+6. **Developer tooling.** Inspection and a studio, both through the API. Inspection is built, and so is a studio that reads. A studio that also approves, merges, splits and dismisses is next.
 
 Milestones 2 and 3 do not depend on each other. Sandbox synchronisation, initial Milestone 6, is not in this roadmap.
 
@@ -951,6 +968,7 @@ Milestones 2 and 3 do not depend on each other. Sandbox synchronisation, initial
 | Operation set: create, assign, merge, constrain, unconstrain, reinstate; split and undo as changesets the engine writes | Constraints that choose between identities during a run; operations on more than two observations |
 | Default policy never merges or splits existing identities automatically; a rematch suggests and does not change | Policy plug-ins; automatic merges above a threshold; applying suggestions in bulk |
 | JSON and Arrow as the only wire forms; the run ID as the task handle; drafts stored on the server | Streaming run progress; an ad hoc SQL endpoint |
-| Inspection through the API only; an explanation computed from what the store holds, with sentences the engine writes | The studio; running a strategy again to explain; explaining a pair as of an earlier log position |
+| Inspection through the API only; an explanation computed from what the store holds, with sentences the engine writes | Running a strategy again to explain; explaining a pair as of an earlier log position |
+| A studio served by the server as three files compiled into the binary, built from `packages/studio` and committed; the files without a token and the API with one; a policy that lets the page call only its server | Changing identities from the studio; live updates; a studio published apart from the binary |
 | Scenario-based benchmark with identity metrics and a CI baseline; extraction scored by exact span, apart from resolution | GLEIF scenario generator; a public extraction dataset; partial credit for overlapping spans; one end-to-end score |
 | Two library crates and one for the command and server; injected ID generator and clock; format version in the file; the prebuilt DuckDB library found by run path | Further crate splits; a statically linked DuckDB; indexes and keys |

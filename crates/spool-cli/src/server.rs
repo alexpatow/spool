@@ -1,7 +1,8 @@
 //! The HTTP API: a thin wrapper around one [`Engine`].
 //!
 //! The server is the only process that has the store open. Every path under
-//! `/v1` needs the bearer token. Small values are JSON; candidates, judgements
+//! `/v1` needs the bearer token. The studio at `/` does not: it is a page
+//! that holds nothing, and reads through `/v1` with the token it is given. Small values are JSON; candidates, judgements
 //! and rows to ingest can also cross as Arrow IPC streams.
 //!
 //! The engine does its work on blocking threads. A call that only reads
@@ -55,6 +56,7 @@ use crate::api::{
     ObservationList, ReconcileRequest, RejectDraftRequest, ReviewList, RunList, RunResponse,
     SplitRequest, StartRunRequest, UndoRequest,
 };
+use crate::studio;
 
 /// How long a call that starts work waits when it does not say.
 pub const DEFAULT_WAIT_MS: u64 = 30_000;
@@ -74,6 +76,8 @@ pub struct ServerOptions {
     /// The bearer token every call under `/v1` must carry.
     pub token: String,
     pub max_body_bytes: usize,
+    /// Whether the server answers a browser at `/` with the studio.
+    pub studio: bool,
 }
 
 impl ServerOptions {
@@ -81,6 +85,7 @@ impl ServerOptions {
         Self {
             token: token.into(),
             max_body_bytes: DEFAULT_MAX_BODY_BYTES,
+            studio: true,
         }
     }
 }
@@ -130,9 +135,13 @@ pub fn router(engine: Arc<Engine>, options: &ServerOptions) -> Router {
         .route("/review/{item}/dismiss", post(dismiss_review))
         .fallback(not_found)
         .layer(middleware::from_fn_with_state(app.clone(), authorize));
-    Router::new()
+    let mut router = Router::new()
         .route("/healthz", get(health))
-        .nest(&format!("/{}", api::VERSION), v1)
+        .nest(&format!("/{}", api::VERSION), v1);
+    if options.studio {
+        router = router.merge(studio::routes());
+    }
+    router
         .fallback(not_found)
         .layer(DefaultBodyLimit::max(options.max_body_bytes))
         .layer(middleware::map_response(describe_failure))

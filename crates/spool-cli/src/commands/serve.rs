@@ -24,6 +24,9 @@ bearer token in SPOOL_TOKEN, which every call must carry.
 An empty store is set up from the manifest. A store that was applied with
 another manifest is refused: run `spool apply` on it first.
 
+The server answers a browser at its address with the studio, which shows what
+the store holds once it is given the token.
+
 Options:
   --manifest <path>   the manifest to run on (default: .spool/manifest.json)
   --store <path>      the store's database file (default: $SPOOL_STORE)
@@ -35,6 +38,7 @@ Options:
                       in seconds (default: 600)
   --tasks <dir>       where the task directories of user code are made
                       (default: spool-tasks in the temporary directory)
+  --no-studio         do not serve the studio
 
 Strategies and extractors that are `.py` files run with `uv`, and `.ts` files
 with `bun`. SPOOL_UV and SPOOL_BUN name the commands if they are not on the
@@ -49,6 +53,9 @@ Runs the server on localhost from a project directory, against a development
 store under .spool/. A change to the project's files is applied as it is
 saved; a change that does not compile is reported and the last version that
 did keeps running.
+
+Open the address it listens on in a browser for the studio, which shows what
+the store holds.
 
   <dir>               the project directory (default: the current directory)
 
@@ -113,7 +120,7 @@ pub fn serve(arguments: &[String]) -> Result<(), Failure> {
                 "--task-timeout",
                 "--tasks",
             ],
-            flags: &[],
+            flags: &["--no-studio"],
             positional: 0,
         },
     )?;
@@ -157,7 +164,9 @@ pub fn serve(arguments: &[String]) -> Result<(), Failure> {
         }
     }
     say!("manifest  {}", manifest.hash);
-    run(Arc::new(engine), listen, ServerOptions::new(token))
+    let mut options = ServerOptions::new(token);
+    options.studio = !arguments.flag("--no-studio");
+    run(Arc::new(engine), listen, options)
 }
 
 pub fn dev(arguments: &[String]) -> Result<(), Failure> {
@@ -308,6 +317,9 @@ fn run(engine: Arc<Engine>, listen: SocketAddr, options: ServerOptions) -> Resul
             .map_err(|error| failed(error.to_string()))?;
         // Tests listen on port 0 and read the port from this line.
         say!("listening on http://{address}");
+        if options.studio {
+            say!("studio    http://{address}/");
+        }
         server::serve(listener, engine, &options, shutdown())
             .await
             .map_err(|error| failed(format!("the server stopped: {error}")))
