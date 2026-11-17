@@ -1225,6 +1225,13 @@ export interface SplitReport {
 export interface SplitRequest {
   actor: Actor;
   /**
+   * The log position the identity was read at. With it, the split is
+   * refused if the identity's members changed after that: which side
+   * moves depends on all of them. Without it, the split is made of the
+   * members the identity has now.
+   */
+  base?: Seq | null;
+  /**
    * Record a `cannot_link` constraint between the two sides (the
    * default), so that nothing puts them back together unnoticed.
    */

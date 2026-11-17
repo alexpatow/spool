@@ -880,6 +880,7 @@ async fn split(State(app): State<App>, Path(identity): Path<String>, body: Bytes
             identity,
             &request.observations,
             request.keep_apart.unwrap_or(true),
+            request.base,
             request.actor,
             request.reason,
         )

@@ -480,6 +480,43 @@ describe("an identity", () => {
     expect((await server.client.observation(other.id)).identity).not.toBe(orchard.identity!);
   });
 
+  test("is not split when its members changed after the screen was read", async () => {
+    const orchard = await row(server.client, "crm", "c-111");
+    const registered = await row(server.client, "registry", "X0000011");
+    const other = await row(server.client, "crm", "c-122");
+    const added = await row(server.client, "registry", "X0000010");
+    open(server, `#/identities/${orchard.identity}`);
+    await heading("Identity");
+    await screen.findByText("Members (3)");
+    await idle();
+    fireEvent.click(screen.getByRole("checkbox", { name: `Choose observation ${orchard.id}` }));
+    fireEvent.click(screen.getByRole("checkbox", { name: `Choose observation ${registered.id}` }));
+    screen.getByText(/^The 2 ticked are the larger side, so they stay here/);
+
+    // Someone gives it a fourth member, and the ticked are no longer the
+    // larger side: the engine would move them, and not the other one.
+    await server.client.commit({
+      actor: REVIEWER,
+      ops: [{ op: "assign", observation: added.id, from: added.identity!, to: orchard.identity! }],
+    });
+
+    make("Split the 2 ticked from the rest", ada);
+    expect(await refused()).toBe(
+      `identity ${orchard.identity} cannot be split: its members changed at log position 8, after log position 7 that the split is based on`,
+    );
+    expect(await head()).toBe(8);
+    expect((await server.client.identity(orchard.identity!)).members).toHaveLength(4);
+
+    // Read again, it says what a split of what it holds now would do.
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await screen.findByText("Members (4)");
+    screen.getByText("The 2 ticked move to a new identity. The other 2 stay here, under this ID.");
+    make("Split the 2 ticked from the rest", ada);
+    expect(await said()).toMatch(/^Split at log position 9: 2 observations moved to the new identity 0\S+\.$/);
+    expect((await server.client.observation(other.id)).identity).toBe(orchard.identity!);
+    expect((await server.client.observation(orchard.id)).identity).not.toBe(orchard.identity!);
+  });
+
   test("does not take in members the reviewer has not seen", async () => {
     const atlas = await row(server.client, "crm", "c-108");
     const other = await row(server.client, "crm", "c-109");

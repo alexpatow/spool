@@ -147,7 +147,7 @@ function IdentityScreen({ head, view, constraints, history }: Loaded) {
         />
         {view.members.length > 1 ? <ExplainTicked chosen={chosen} /> : null}
       </Section>
-      {stands && view.members.length > 1 ? <Split view={view} chosen={chosen} /> : null}
+      {stands && view.members.length > 1 ? <Split view={view} head={head} chosen={chosen} /> : null}
       {stands ? <Merge view={view} head={head} /> : null}
       {constraints.length > 0 ? (
         <Section title="Constraints on its members">
@@ -181,10 +181,12 @@ function IdentityScreen({ head, view, constraints, history }: Loaded) {
  * Divides the identity in two: the members that are ticked, and the rest.
  * The engine leaves the larger side under this ID, and the side that was
  * not ticked when they are equal, so the screen says which side that is
- * before the reviewer asks for it. What moved is told from the engine's
- * answer afterwards.
+ * before the reviewer asks for it. That depends on every member, so the
+ * split is based on where the log ended when this screen was read, and the
+ * engine refuses it if the members changed after that. What moved is told
+ * from the engine's answer afterwards.
  */
-function Split({ view, chosen }: { view: IdentityView; chosen: string[] }) {
+function Split({ view, head, chosen }: { view: IdentityView; head: number; chosen: string[] }) {
   const [done, setDone] = useState<ReactNode>(null);
   // A member that was ticked and has left since is no longer one to split off.
   const ticked = chosen.filter((id) => view.members.some((member) => member.observation === id));
@@ -216,6 +218,7 @@ function Split({ view, chosen }: { view: IdentityView; chosen: string[] }) {
               const report = await client.split(view.id, {
                 actor,
                 reason,
+                base: head,
                 observations: ticked,
                 keep_apart: entered.get("keep_apart") !== null,
               });

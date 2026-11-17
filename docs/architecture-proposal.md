@@ -517,7 +517,7 @@ Every path of the API is under `/v1` and needs the bearer token. `GET /healthz` 
 | `POST /v1/drafts/{draft}/approve`, `.../reject` | Commits a draft, or closes it | The commit, or the operations that were rejected; the draft |
 | `GET /v1/changesets`, `POST /v1/changesets` | Reads the log in pages; commits a changeset the caller wrote. A merge, a move and a constraint are each a changeset of one operation. The server mints the changeset's ID if the caller sends none, and takes the head of the log as its base | The log; the commit, or the operations that were rejected |
 | `POST /v1/changesets/{seq}/undo` | Takes back the changeset at a log position with a new one, or with `commit: false` only returns it | The undo and its commit, or the operations that were rejected |
-| `POST /v1/identities/{id}/split` | Divides an identity in two, given the observations of one side | The two identities, what moved, and the commit |
+| `POST /v1/identities/{id}/split` | Divides an identity in two, given the observations of one side. With a `base`, refused if the identity's members changed after that log position | The two identities, what moved, and the commit |
 | `GET /v1/constraints` | The constraints in force, or with `removed=true` their history, for one observation or one identity's members | JSON |
 | `POST /v1/ids` | Mints identity and changeset IDs for a caller that writes its own changeset | JSON |
 | `GET /v1/identities`, `GET /v1/identities/{id}`, `.../history` | Lists identities in pages; reads one with its members, following redirects; the changesets that touched it | JSON |
@@ -558,7 +558,7 @@ A reviewer also makes changes from it, each on the screen of the thing it change
 
 - **A change is one call of the API, and the engine decides whether it holds.** The studio keeps no rule of its own. A changeset the engine rejects is shown in the engine's words, with the operations it names, and nothing is changed. Operations are counted from 0 everywhere, as the engine counts them.
 - **A change is written against what the reviewer saw.** A move names the identity the observation was in when the screen was read, and a merge is committed with the log position the screen was read at as its base. If either changed since, the engine rejects the change and the reviewer reads again. Before a merge, the other identity is looked up and its members shown. Reading the screen again moves the merge's base on, so what was looked up before that is taken away and is looked up again: a merge never takes in members the reviewer was not shown.
-- **A split says which side stays before it is made.** The engine leaves the larger side under the identity's ID, whichever side was ticked, and the screen says which side that is.
+- **A split says which side stays before it is made.** The engine leaves the larger side under the identity's ID, whichever side was ticked, and the screen says which side that is. Which side is larger depends on every member, so the split carries the log position the screen was read at as its `base`, and the engine refuses it if the identity's members changed after that.
 - **A change is recorded under a name the reviewer gives**, as `user:<name>`, with a reason if they give one. The name is kept in the browser's local storage, which outlives the tab: it is no secret, and the token still is not kept there. Approving or rejecting a draft takes no name, because the API takes none.
 - **An undo can be seen before it is made.** The engine writes the changeset that would take another back, and checks it, without committing it.
 
@@ -948,7 +948,7 @@ Milestone 6 continues with the studio: `packages/studio`, `crates/spool-cli/src/
 - Each change is made on its screen and is then what the server holds: a draft approved and rejected, a review item's observation placed in an identity it matched and in a new one, an item dismissed, an observation moved to another identity, to a new one and out of any, an identity split with and without keeping the sides apart, an identity merged into another, a constraint recorded and removed, and a changeset undone after the undo was shown (`packages/studio/test/changes.test.tsx`).
 - A change the engine rejects changes nothing and is shown with the operations it names: a draft whose observation was placed elsewhere, a move and a merge of something that changed after the screen was read, a split that a `must_link` constraint forbids, and an undo of what was undone before.
 - An identity that was looked up for a merge is not merged after the screen was read again, until it is looked up again and shows the member it gained meanwhile.
-- A split of the larger side says that side stays, and it does.
+- A split of the larger side says that side stays, and it does. A split is refused when the identity gained a member after the screen was read, and is made after the screen is read again (also `a_split_based_on_a_log_position_is_refused_when_the_members_changed_after_it` in `crates/spool/tests/lifecycle.rs`, and over HTTP in `packages/client/test/client.test.ts`).
 - A change that needs a name is not sent without one, and the name is kept for the next.
 - `bun run demo` fills only the server it started, and stops when another server already listens at its address.
 

@@ -285,6 +285,34 @@ describe("a reviewer", () => {
     expect(stale.rejections[0]).toMatchObject({ op_index: 0, reason: { reason: "stale_merge" } });
   });
 
+  test("refuses a split that is based on a log position the identity changed after", async () => {
+    const { client } = await thingsServer(22);
+    await ingestThings(client, [
+      { id: "1", code: "anvil" },
+      { id: "2", code: "anvil" },
+      { id: "3", code: "anvil" },
+      { id: "4", code: "hammer" },
+    ]);
+    await client.startRun({ entity_type: "thing" });
+    const [first, second, hammer] = [await thing(client, "1"), await thing(client, "2"), await thing(client, "4")];
+    const anvils = first.identity!;
+    // Read now, the two named are the larger side and would keep the ID.
+    const read = (await client.info()).store.head;
+    const grown = await client.commit({ actor, ops: [{ op: "merge", from: hammer.identity!, into: anvils }] });
+
+    const stale = await failureOf(client.split(anvils, { observations: [first.id, second.id], base: read, actor }));
+    expect(stale.status).toBe(409);
+    expect(stale.code).toBe("conflict");
+    expect(stale.message).toBe(
+      `identity ${anvils} cannot be split: its members changed at log position ${grown.seq}, after log position ${read} that the split is based on`,
+    );
+    expect(await keys(client, anvils)).toEqual(["1", "2", "3", "4"]);
+
+    const split = await client.split(anvils, { observations: [first.id, second.id], base: grown.seq, actor });
+    expect([...split.moved].sort()).toEqual([first.id, second.id].sort());
+    expect(await keys(client, anvils)).toEqual(["3", "4"]);
+  });
+
   test("splits an identity, and the constraint keeps the sides apart", async () => {
     const { client } = await thingsServer(10);
     await ingestThings(client, [

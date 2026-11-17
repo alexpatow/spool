@@ -73,6 +73,7 @@ fn a_rematch_suggests_and_does_not_change() {
             tongs,
             &[observation(&engine, "shop", "6")],
             false,
+            None,
             reviewer(),
             None,
         )
@@ -146,6 +147,7 @@ fn a_rematch_does_not_suggest_what_a_reviewer_ruled_out() {
             anvils,
             &[observation(&engine, "shop", "2")],
             true,
+            None,
             reviewer(),
             None,
         )

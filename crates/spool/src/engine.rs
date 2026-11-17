@@ -694,16 +694,22 @@ impl Engine {
     /// identity. With `keep_apart`, a `cannot_link` constraint between the
     /// two sides is recorded in the same changeset, so that nothing puts
     /// them back together unnoticed.
+    ///
+    /// Which side moves depends on every member, also on those that were
+    /// not named. A caller that chose the sides from what it read gives the
+    /// log position it read at as `base`, and the split is refused if the
+    /// identity's members changed after that.
     pub fn split(
         &self,
         identity: IdentityId,
         observations: &[ObservationId],
         keep_apart: bool,
+        base: Option<Seq>,
         actor: Actor,
         reason: Option<String>,
     ) -> Result<SplitReport> {
         self.lock()
-            .split(identity, observations, keep_apart, actor, reason)
+            .split(identity, observations, keep_apart, base, actor, reason)
     }
 
     /// Constraints, ordered by their observations.
@@ -1993,6 +1999,7 @@ impl Inner {
         identity: IdentityId,
         observations: &[ObservationId],
         keep_apart: bool,
+        base: Option<Seq>,
         actor: Actor,
         reason: Option<String>,
     ) -> Result<SplitReport> {
@@ -2006,6 +2013,20 @@ impl Inner {
             return Err(refuse(format!(
                 "it was merged into {survivor}, which has its members now"
             )));
+        }
+        if let Some(base) = base {
+            let head = self.store.head()?;
+            if base > head {
+                return Err(refuse(format!(
+                    "the split is based on log position {base}, and the log ends at {head}"
+                )));
+            }
+            let changed = self.store.membership_changed(&[identity])?[0];
+            if changed > base {
+                return Err(refuse(format!(
+                    "its members changed at log position {changed}, after log position {base} that the split is based on"
+                )));
+            }
         }
         let members: BTreeSet<ObservationId> = self
             .store
