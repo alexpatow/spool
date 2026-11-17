@@ -76,16 +76,16 @@ fn the_server_answers_a_browser_with_the_studio_and_asks_no_token_for_it() {
         assert!(response.body == built(file), "{at} is not {file}");
     }
 
-    // The page names its script and its style sheet beside itself, so it
-    // works wherever the server is reached, and it has nothing inline that
-    // its policy would have to allow.
+    // The page names its script and its style sheet from the root, so it
+    // finds them at the address of any screen, and it has nothing inline
+    // that its policy would have to allow.
     let page = text(&built("index.html"));
-    assert!(page.contains(r#"src="./studio.js""#), "{page}");
-    assert!(page.contains(r#"href="./studio.css""#), "{page}");
+    assert!(page.contains(r#"src="/studio.js""#), "{page}");
+    assert!(page.contains(r#"href="/studio.css""#), "{page}");
     assert!(!page.contains("<style"), "{page}");
     assert_eq!(page.matches("<script").count(), 1, "{page}");
 
-    // The style sheet names its fonts beside itself too, and names no file
+    // The style sheet names its fonts from the root too, and names no file
     // the server does not have.
     let style = text(&built("studio.css"));
     let mut named: Vec<&str> = style
@@ -97,7 +97,7 @@ fn the_server_answers_a_browser_with_the_studio_and_asks_no_token_for_it() {
     let mut fonts: Vec<String> = FILES
         .iter()
         .filter(|(_, _, media_type)| *media_type == "font/woff2")
-        .map(|(at, _, _)| format!(".{at}"))
+        .map(|(at, _, _)| (*at).to_owned())
         .collect();
     fonts.sort_unstable();
     assert_eq!(named, fonts);
@@ -205,19 +205,21 @@ fn the_studio_is_its_own_paths_and_takes_only_reads() {
         assert_eq!(head.status, 200, "{at}");
         assert!(head.body.is_empty(), "{at}");
     }
-    // Its screens are named after the `#` of the one address, which the
-    // server never sees: every other path is still nothing.
+    // Every other path is still nothing.
     for at in [
         "/index.html",
         "/studio",
         "/studio.js.map",
         "/geist-latin-wght-normal.woff",
         "/fonts/geist-latin-wght-normal.woff2",
-        "/runs",
+        "/observations",
+        "/runs/",
+        "/runsheet",
         "/favicon.ico",
         "/v1",
         "/v1/",
         "/v1/studio.js",
+        "/healthz/runs",
         "//studio.js",
         "/../studio.js",
     ] {
@@ -229,6 +231,51 @@ fn the_studio_is_its_own_paths_and_takes_only_reads() {
     let asked = server.request("GET", "/?token=nothing-reads-this").send();
     assert_eq!(asked.status, 200);
     assert!(asked.body == built("index.html"));
+}
+
+#[test]
+fn the_address_of_a_screen_is_answered_with_the_page() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = serve_things(dir.path(), &[]);
+    let page = server.request("GET", "/").without("Authorization").send();
+
+    for at in [
+        "/review",
+        "/review/7",
+        "/drafts/3",
+        "/identities",
+        "/identities/0190a5c8-0000-7000-8000-000000000000",
+        "/identities?q=halden+energy",
+        "/records/0190a5c8-0000-7000-8000-000000000000",
+        "/records?source=crm&key=c-104",
+        "/documents/reports%2F2024.txt",
+        "/documents/a/b.txt",
+        "/explain?a=1&b=2",
+        "/runs",
+        "/runs/9",
+        "/log",
+    ] {
+        // A browser that opens the address has no token to send.
+        let response = server.request("GET", at).without("Authorization").send();
+        assert_eq!(response.status, 200, "{at}");
+        assert!(response.body == built("index.html"), "{at}");
+        for header in ["content-type", "etag", "content-security-policy"] {
+            assert_eq!(response.header(header), page.header(header), "{at}");
+        }
+        assert_eq!(server.request("HEAD", at).send().status, 200, "{at}");
+        server
+            .request("POST", at)
+            .body(b"{}")
+            .send()
+            .error(405, "invalid");
+    }
+
+    // The names belong to the studio: without it they are nothing.
+    let bare = tempfile::tempdir().unwrap();
+    let server = serve_things(bare.path(), &["--no-studio"]);
+    for at in ["/runs", "/identities/1"] {
+        server.get(at).error(404, "not_found");
+    }
 }
 
 #[test]

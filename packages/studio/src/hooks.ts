@@ -5,7 +5,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { Info, Op, SpoolClient } from "./api.ts";
 import { found } from "./find.ts";
 import { identitiesOf, observationName, observationsOf, tail } from "./format.ts";
-import { parseHash } from "./router.ts";
+import { here, onMove, ownLink, navigate, parseAddress } from "./router.ts";
 import type { Route } from "./router.ts";
 
 export interface Studio {
@@ -30,11 +30,21 @@ export function useStudio(): Studio {
 }
 
 export function useRoute(): Route {
-  const [route, setRoute] = useState(() => parseHash(window.location.hash));
+  const [route, setRoute] = useState(() => parseAddress(here()));
   useEffect(() => {
-    const changed = () => setRoute(parseHash(window.location.hash));
-    window.addEventListener("hashchange", changed);
-    return () => window.removeEventListener("hashchange", changed);
+    // A link to a screen changes the address without loading the page again.
+    const clicked = (event: MouseEvent) => {
+      const address = ownLink(event);
+      if (address === null) return;
+      event.preventDefault();
+      navigate(address);
+    };
+    document.addEventListener("click", clicked);
+    const stop = onMove(() => setRoute(parseAddress(here())));
+    return () => {
+      document.removeEventListener("click", clicked);
+      stop();
+    };
   }, []);
   return route;
 }

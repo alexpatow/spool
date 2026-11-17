@@ -165,10 +165,9 @@ pub enum Reason {
         first_op: usize,
     },
     #[error(
-        "observations {a} and {b} have a {} constraint, and would belong to identities {} and {}",
+        "observations {a} and {b} have a {} constraint, and would {}",
         .kind.as_str(),
-        display_identity(.identity_a),
-        display_identity(.identity_b)
+        display_identities(.identity_a, .identity_b)
     )]
     ConstraintViolated {
         kind: ConstraintKind,
@@ -183,6 +182,18 @@ fn display_identity(identity: &Option<IdentityId>) -> String {
     match identity {
         Some(identity) => identity.to_string(),
         None => "no identity".to_owned(),
+    }
+}
+
+/// Where the two observations of a broken constraint would be. A
+/// cannot_link is broken by one identity holding both, which is named once.
+fn display_identities(a: &Option<IdentityId>, b: &Option<IdentityId>) -> String {
+    match (a, b) {
+        (Some(a), Some(b)) if a == b => format!("both belong to identity {a}"),
+        (Some(a), Some(b)) => format!("belong to identities {a} and {b}"),
+        (Some(a), None) => format!("belong to identity {a} and no identity"),
+        (None, Some(b)) => format!("belong to no identity and identity {b}"),
+        (None, None) => "both belong to no identity".to_owned(),
     }
 }
 
@@ -743,5 +754,51 @@ pub fn validate<S: IdentityState + ?Sized>(
         })
     } else {
         Err(ValidationError::Rejected(rejections))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_broken_constraint_names_one_identity_once() {
+        let (a, b) = (ObservationId::from_u128(1), ObservationId::from_u128(2));
+        let (x, y) = (
+            "00000000-0000-7000-8000-000000000003"
+                .parse::<IdentityId>()
+                .unwrap(),
+            "00000000-0000-7000-8000-000000000004"
+                .parse::<IdentityId>()
+                .unwrap(),
+        );
+        let broken = |kind, identity_a, identity_b| {
+            Reason::ConstraintViolated {
+                kind,
+                a,
+                b,
+                identity_a,
+                identity_b,
+            }
+            .to_string()
+        };
+        assert_eq!(
+            broken(ConstraintKind::CannotLink, Some(x), Some(x)),
+            format!(
+                "observations {a} and {b} have a cannot_link constraint, and would both belong to identity {x}"
+            )
+        );
+        assert_eq!(
+            broken(ConstraintKind::MustLink, Some(x), Some(y)),
+            format!(
+                "observations {a} and {b} have a must_link constraint, and would belong to identities {x} and {y}"
+            )
+        );
+        assert_eq!(
+            broken(ConstraintKind::MustLink, Some(x), None),
+            format!(
+                "observations {a} and {b} have a must_link constraint, and would belong to identity {x} and no identity"
+            )
+        );
     }
 }

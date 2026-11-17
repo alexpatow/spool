@@ -15,7 +15,7 @@ export function Drafts({ route, types }: { route: Route; types: string[] }) {
   const { status, type } = route.query;
   const drafts = useLoad((client) => client.drafts({ status: status as DraftStatus | undefined, entity_type: type }));
   return (
-    <Page title="Drafts" about="Changesets a run left for review, with what became of each.">
+    <Page title="Drafts">
       <Filters
         path={["drafts"]}
         query={route.query}
@@ -33,7 +33,7 @@ export function Drafts({ route, types }: { route: Route; types: string[] }) {
               { title: "Status", cell: (draft) => <Word value={draft.status} /> },
               { title: "Operations", cell: (draft) => draft.operations, number: true },
               {
-                title: "From",
+                title: "Run",
                 cell: (draft) => <Ref kind="run" id={draft.match_run} label={`match run ${draft.match_run}`} />,
               },
             ]}
@@ -74,16 +74,16 @@ function DraftScreen({ record }: { record: DraftRecord }) {
           ["Entity type", draft.entity_type],
           ["Status", <Word value={draft.status} />],
           [
-            "From",
+            "Runs",
             <>
               <Ref kind="run" id={draft.match_run} label={`match run ${draft.match_run}`} />,{" "}
               <Ref kind="run" id={draft.reconcile_run} label={`reconcile run ${draft.reconcile_run}`} />
             </>,
           ],
-          ["Written against", `log position ${draft.base}`],
+          ["Base", `log position ${draft.base}`],
           [
-            "Would place",
-            `${count(draft.observations_assigned, "observation")}, ${count(draft.identities_created, "identity")} created`,
+            "Changes",
+            `${count(draft.observations_assigned, "record")} assigned, ${count(draft.identities_created, "identity")} created`,
           ],
           [
             "Committed at",
@@ -114,7 +114,7 @@ function DraftScreen({ record }: { record: DraftRecord }) {
         ]}
       />
       <Decide draft={draft} />
-      <Section title="Operations" count={changeset.ops.length} about="What approving it would commit, in order.">
+      <Section title="Operations" count={changeset.ops.length}>
         <Ops ops={changeset.ops} names={names} />
       </Section>
     </>
@@ -127,25 +127,20 @@ function Decide({ draft }: { draft: DraftSummary }) {
   const open = draft.status === "open";
   if (!open && done === null) return null;
   return (
-    <Section
-      title="Decide"
-      about={
-        open ? "Approving commits its operations as they are. The engine refuses if they no longer hold." : undefined
-      }
-    >
+    <Section title="Decision">
       <Done>{done}</Done>
       {open ? (
         <Row>
           <Act
-            label="Approve and commit"
+            label="Approve"
             icon={<CheckIcon />}
             variant="default"
-            about={`${count(draft.observations_assigned, "observation")} placed, ${count(draft.identities_created, "identity")} created. The changeset goes into the log, where it can be undone.`}
+            about={`Commits ${count(draft.operations, "operation")}: ${count(draft.observations_assigned, "record")} assigned, ${count(draft.identities_created, "identity")} created.`}
             act={async (client) => {
               const committed = await client.approveDraft(draft.id);
               return (
                 <>
-                  The draft was committed at <At committed={committed} />.
+                  Committed at <At committed={committed} />.
                 </>
               );
             }}
@@ -153,11 +148,11 @@ function Decide({ draft }: { draft: DraftSummary }) {
           />
           <Act
             label="Reject"
-            about="The draft is closed and nothing is committed. The next run examines its observations again."
-            why="Why it is rejected"
+            about="Nothing is committed. The next run examines its records again."
+            why="Reason"
             act={async (client, { reason }) => {
               await client.rejectDraft(draft.id, reason);
-              return "The draft was rejected. The next run examines its observations again.";
+              return "Rejected.";
             }}
             done={setDone}
           />

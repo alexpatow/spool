@@ -17,7 +17,7 @@ import { describeOp, plain, short, tail, when } from "./format.ts";
 import type { Part } from "./format.ts";
 import type { Loaded, Pages } from "./hooks.ts";
 import { ArrowRightIcon, CircleAlertIcon, CircleCheckIcon, InfoIcon } from "./icons.tsx";
-import { href } from "./router.ts";
+import { href, navigate } from "./router.ts";
 import type { QueryValue } from "./router.ts";
 import { colors, radius, spacing, typography } from "./styles/shelf/tokens.stylex";
 import { tones } from "./styles/tones.stylex";
@@ -93,7 +93,7 @@ export function Load<T>({ state, children }: { state: Loaded<T>; children: (data
   if (state.status === "loading") {
     return (
       <p {...stylex.props(styles.quiet, styles.reading)}>
-        <Spinner role="presentation" aria-label={undefined} aria-hidden /> Reading…
+        <Spinner role="presentation" aria-label={undefined} aria-hidden /> Loading…
       </p>
     );
   }
@@ -306,7 +306,7 @@ export function More({ pages }: { pages: Pick<Pages<unknown>, "more" | "reading"
   return (
     <div {...stylex.props(styles.more)}>
       <Button variant="outline" size="sm" onClick={pages.readMore} disabled={pages.reading}>
-        {pages.reading ? "Reading…" : "Show more"}
+        {pages.reading ? "Loading…" : "Show more"}
       </Button>
     </div>
   );
@@ -403,7 +403,7 @@ export function Sources({ sources }: { sources: Array<{ source: string; observat
 export type Kind = "observation" | "identity" | "document" | "draft" | "run" | "review" | "log";
 
 const SCREENS: Record<Kind, string> = {
-  observation: "observations",
+  observation: "records",
   identity: "identities",
   document: "documents",
   draft: "drafts",
@@ -453,7 +453,7 @@ export function Id({ value }: { value: string }) {
       <code data-part="id" {...stylex.props(styles.code)}>
         {value}
       </code>
-      <CopyButton text={value} label="Copy the ID" size="icon-xs" />
+      <CopyButton text={value} label="Copy ID" size="icon-xs" />
     </span>
   );
 }
@@ -646,7 +646,7 @@ export function Filters({
   flags?: Array<{ name: string; label: string }>;
 }) {
   const go = (name: string, value: QueryValue) => {
-    window.location.hash = href(path, { ...query, [name]: value });
+    navigate(href(path, { ...query, [name]: value }));
   };
   const typed = [...(search ? [search] : []), ...texts];
   return (
@@ -658,7 +658,7 @@ export function Filters({
         const entered = new FormData(event.currentTarget);
         const values: Record<string, QueryValue> = {};
         for (const { name } of typed) values[name] = String(entered.get(name) ?? "").trim();
-        window.location.hash = href(path, { ...query, ...values });
+        navigate(href(path, { ...query, ...values }));
       }}
     >
       {search ? (
@@ -714,11 +714,7 @@ export function useTicks(most?: number): {
   return {
     chosen,
     tick: (id) => (
-      <Checkbox
-        aria-label={`Choose observation ${id}`}
-        checked={chosen.includes(id)}
-        onCheckedChange={() => toggle(id)}
-      />
+      <Checkbox aria-label={`Select record ${id}`} checked={chosen.includes(id)} onCheckedChange={() => toggle(id)} />
     ),
   };
 }
@@ -727,10 +723,10 @@ export function useTicks(most?: number): {
 export function ExplainTicked({ chosen }: { chosen: string[] }) {
   return chosen.length === 2 ? (
     <Onward path={["explain"]} query={{ a: chosen[0], b: chosen[1] }}>
-      Explain the two that are ticked
+      Explain selected
     </Onward>
   ) : (
-    <Quiet>Tick two to ask why they share an identity, or why they do not.</Quiet>
+    <Quiet>Select two to explain.</Quiet>
   );
 }
 

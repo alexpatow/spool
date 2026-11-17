@@ -49,7 +49,7 @@ export function Documents({ route }: { route: Route }) {
     return { items: page.documents, next: page.next };
   });
   return (
-    <Page title="Documents" about="The texts extractors read. Each version of a document is listed.">
+    <Page title="Documents">
       <Filters
         path={["documents"]}
         query={route.query}
@@ -57,7 +57,7 @@ export function Documents({ route }: { route: Route }) {
           { name: "source", label: "Source" },
           { name: "key", label: "Key" },
         ]}
-        flags={[{ name: "latest", label: "Only the latest version of each" }]}
+        flags={[{ name: "latest", label: "Latest versions only" }]}
       />
       <PagedTable
         pages={pages}
@@ -67,13 +67,13 @@ export function Documents({ route }: { route: Route }) {
             cell: (document) => (
               <span {...stylex.props(styles.name)}>
                 <Ref kind="document" id={document.id} label={named(document.source, document.key)} />
-                {document.superseded_by ? <Word value="replaced" label="earlier version" /> : null}
+                {document.superseded_by ? <Word value="replaced" label="superseded" /> : null}
               </span>
             ),
           },
           { title: "Source", cell: (document) => <Source name={document.source} /> },
           { title: "Characters", cell: (document) => document.length, number: true },
-          { title: "Read by", cell: readBy, wrap: true },
+          { title: "Extracted by", cell: readBy, wrap: true },
           { title: "ID", cell: (document) => <Ref kind="document" id={document.id} /> },
         ]}
         rowKey={(document) => document.id}
@@ -155,12 +155,12 @@ function DocumentScreen({ document, found, cut, at }: Loaded & { at: number | nu
               <Ref kind="run" id={document.ingest_run} label={`run ${document.ingest_run}`} />
             </>,
           ],
-          ["Replaces", document.supersedes ? <Ref kind="document" id={document.supersedes} /> : null],
-          ["Replaced by", document.superseded_by ? <Ref kind="document" id={document.superseded_by} /> : null],
+          ["Supersedes", document.supersedes ? <Ref kind="document" id={document.supersedes} /> : null],
+          ["Superseded by", document.superseded_by ? <Ref kind="document" id={document.superseded_by} /> : null],
           [
-            "Read by",
+            "Extracted by",
             document.extractions.length === 0
-              ? "no extractor"
+              ? "none"
               : document.extractions.map((extraction, index) => (
                   <span key={extraction.run}>
                     {index > 0 ? ", " : ""}
@@ -172,29 +172,25 @@ function DocumentScreen({ document, found, cut, at }: Loaded & { at: number | nu
           ],
         ]}
       />
-      <Section title="Text" about="Each mention an extractor found is marked, and leads to its record.">
+      <Section title="Text">
         <Marked points={points} found={found} at={at} />
         {cut ? (
           <Quiet>
-            Only the first {found.length} mentions are marked.{" "}
-            <LinkTo path={["observations"]} query={{ document: document.id }}>
-              List them all
+            First {found.length} mentions marked.{" "}
+            <LinkTo path={["records"]} query={{ document: document.id }}>
+              All mentions
             </LinkTo>
           </Quiet>
         ) : null}
       </Section>
-      <Section
-        title={cut ? "Mentions, the first of them" : "Mentions"}
-        count={found.length}
-        actions={found.length > 1 ? pair.explain : null}
-      >
+      <Section title="Mentions" count={found.length} actions={found.length > 1 ? pair.explain : null}>
         <Table
           columns={[
             { title: "", cell: ({ observation }) => pair.tick(observation.id) },
             {
               title: "Mention",
               cell: ({ observation, mention }) => (
-                <a href={href(["observations", observation.id])} {...stylex.props(styles.link)}>
+                <a href={href(["records", observation.id])} {...stylex.props(styles.link)}>
                   {points.slice(mention.start, mention.end).join("")}
                 </a>
               ),
@@ -207,13 +203,13 @@ function DocumentScreen({ document, found, cut, at }: Loaded & { at: number | nu
                 observation.identity ? (
                   <Identity id={observation.identity} labels={labels} />
                 ) : (
-                  <Word value="unassigned" label="none" />
+                  <Word value="unassigned" />
                 ),
             },
           ]}
           rows={found}
           rowKey={({ observation }) => observation.id}
-          empty="No extractor found a mention in this version of the document."
+          empty="No mentions."
         />
       </Section>
     </>
@@ -252,7 +248,7 @@ function Marked({ points, found, at }: { points: string[]; found: Found[]; at: n
             data-part="mention"
             data-here={here ? "" : undefined}
             {...stylex.props(styles.mention, here && styles.here)}
-            href={href(["observations", first.observation.id])}
+            href={href(["records", first.observation.id])}
             title={piece.covered.map(({ observation }) => `${observation.entity_type} ${observation.id}`).join("\n")}
           >
             {piece.text}

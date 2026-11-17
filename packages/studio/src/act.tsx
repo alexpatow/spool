@@ -82,7 +82,7 @@ export function Act({
     const entered = new FormData(form);
     const name = String(entered.get("reviewer") ?? "").trim();
     if (who) {
-      if (name === "") throw new Mistake("Say who you are: the change is recorded under your name.");
+      if (name === "") throw new Mistake("Enter your name.");
       remember(name);
     }
     const reason = String(entered.get("reason") ?? "").trim();
@@ -155,13 +155,13 @@ export function Act({
           </Dialog.Header>
           {children}
           {who ? (
-            <Labelled label="Your name" hint="The change is recorded as made by user: and this name">
+            <Labelled label="Your name">
               <Input key={reviewer} name="reviewer" defaultValue={reviewer} spellCheck={false} autoComplete="off" />
             </Labelled>
           ) : null}
           {why ? (
             <Labelled label={why}>
-              <Input name="reason" autoComplete="off" placeholder="Optional. It is kept with the change." />
+              <Input name="reason" autoComplete="off" placeholder="Optional" />
             </Labelled>
           ) : null}
           {problem !== null ? <Refusal error={problem} /> : null}

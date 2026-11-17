@@ -59,18 +59,11 @@ export function Identities({ route, types }: { route: Route; types: string[] }) 
     .filter((entity) => type === undefined || entity.name === type)
     .reduce((sum, entity) => sum + entity.identities, 0);
   return (
-    <Page
-      title="Identities"
-      about={
-        q
-          ? `The identities one of whose records holds every word of “${q}”.`
-          : `${count(total, "identity")} that ${total === 1 ? "stands" : "stand"} now, each called what most of its records call it. One that was merged away is found by its ID.`
-      }
-    >
+    <Page title="Identities" about={q ? undefined : count(total, "identity")}>
       <Filters
         path={["identities"]}
         query={route.query}
-        search={{ name: "q", label: "Find", placeholder: "Words in any of its records" }}
+        search={{ name: "q", label: "Search", placeholder: "Any value in its records" }}
         selects={[{ name: "type", label: "Entity type", choices: types.map((value) => ({ value })) }]}
       />
       <PagedTable
@@ -90,11 +83,11 @@ export function Identities({ route, types }: { route: Route; types: string[] }) 
           },
           { title: "Entity type", cell: (identity) => identity.entity_type },
           { title: "Records", cell: (identity) => identity.members, number: true },
-          { title: "From", cell: (identity) => <Sources sources={identity.sources} />, wrap: true },
+          { title: "Sources", cell: (identity) => <Sources sources={identity.sources} />, wrap: true },
           { title: "ID", cell: (identity) => <Ref kind="identity" id={identity.id} /> },
         ]}
         rowKey={(identity) => identity.id}
-        empty={q ? `No identity has a record that holds “${q}”.` : "No identities."}
+        empty={q ? `No identities match “${q}”.` : "No identities."}
       />
     </Page>
   );
@@ -171,8 +164,7 @@ function IdentityScreen({ head, view, records, constraints, history }: Loaded) {
       {!stands ? (
         <Notice tone="waits">
           <span>
-            This identity was merged into <Ref kind="identity" id={view.current} />, which stands for it now. The
-            records below are that one's.
+            Merged into <Ref kind="identity" id={view.current} />. Showing its records.
           </span>
         </Notice>
       ) : null}
@@ -186,24 +178,23 @@ function IdentityScreen({ head, view, records, constraints, history }: Loaded) {
         </Quiet>
       </Row>
       <Section
-        title="What its records say"
+        title="Fields"
         about={
           current.length < records.length
-            ? `Each value, and the records that hold it. ${count(records.length - current.length, "earlier version")} of a row ${records.length - current.length === 1 ? "is" : "are"} left out.`
-            : "Each value, and the records that hold it."
+            ? `${count(records.length - current.length, "superseded version")} not counted.`
+            : undefined
         }
       >
         <Facts facts={facts(current)} of={current.length} />
         {view.members.length > records.length ? (
           <Quiet>
-            This is what the first {records.length} of its {view.members.length} records say.
+            From the first {records.length} of {view.members.length} records.
           </Quiet>
         ) : null}
       </Section>
       <Section
         title="Records"
         count={view.members.length}
-        about="Where each came from, and what put it here."
         actions={view.members.length > 1 ? <ExplainTicked chosen={chosen} /> : null}
       >
         <Table
@@ -221,7 +212,7 @@ function IdentityScreen({ head, view, records, constraints, history }: Loaded) {
                       id={member.observation}
                       label={record?.label ?? names.get(member.observation)}
                     />
-                    {record?.superseded_by ? <Word value="replaced" label="earlier version" /> : null}
+                    {record?.superseded_by ? <Word value="replaced" label="superseded" /> : null}
                   </span>
                 );
               },
@@ -248,7 +239,7 @@ function IdentityScreen({ head, view, records, constraints, history }: Loaded) {
               },
             },
             {
-              title: "Placed here",
+              title: "Assigned",
               cell: (member) => <Placed since={member.since} entry={placed.get(member.since)} />,
               wrap: true,
             },
@@ -261,10 +252,7 @@ function IdentityScreen({ head, view, records, constraints, history }: Loaded) {
       {stands && view.members.length > 1 ? <Split view={view} head={head} chosen={chosen} /> : null}
       {stands ? <Merge view={view} head={head} /> : null}
       {constraints.length > 0 ? (
-        <Section
-          title="Constraints on its records"
-          about="What a reviewer said of two of them, which every run keeps to."
-        >
+        <Section title="Constraints">
           <Table
             columns={[
               { title: "Constraint", cell: (record) => <Word value={record.kind} /> },
@@ -284,7 +272,7 @@ function IdentityScreen({ head, view, records, constraints, history }: Loaded) {
           />
         </Section>
       ) : null}
-      <Section title="History" about="Every changeset that touched it, the latest last.">
+      <Section title="History">
         <History history={history} names={called} />
       </Section>
     </>
@@ -328,16 +316,16 @@ const MOST_SAYING = 3;
  */
 export function Facts({ facts, of }: { facts: Fact[]; of: number }) {
   if (facts.length === 0) {
-    return <Quiet>Its records hold no fields.</Quiet>;
+    return <Quiet>No fields.</Quiet>;
   }
   return (
     <Panel flush>
-      <ShelfTable.Root aria-label="What its records say">
+      <ShelfTable.Root aria-label="Fields">
         <ShelfTable.Header>
           <ShelfTable.Row style={styles.headRow}>
             <ShelfTable.Head style={styles.head}>Field</ShelfTable.Head>
             <ShelfTable.Head style={styles.head}>Value</ShelfTable.Head>
-            <ShelfTable.Head style={styles.head}>Held by</ShelfTable.Head>
+            <ShelfTable.Head style={styles.head}>Records</ShelfTable.Head>
           </ShelfTable.Row>
         </ShelfTable.Header>
         <ShelfTable.Body>
@@ -407,27 +395,24 @@ function Split({ view, head, chosen }: { view: IdentityView; head: number; chose
   // A member that was ticked and has left since is no longer one to split off.
   const ticked = chosen.filter((id) => view.members.some((member) => member.observation === id));
   const rest = view.members.length - ticked.length;
+  const moves = (n: number) => (n === 1 ? "moves" : "move");
+  const keeps = (n: number) => (n === 1 ? "keeps" : "keep");
+  const others = rest === 1 ? "The other record" : `The other ${rest}`;
+  // The engine leaves the larger side under this ID.
   const would =
     ticked.length > rest
-      ? `The ${ticked.length} ticked are the larger side, so they stay here, under this ID. ${
-          rest === 1 ? "The other record moves" : `The other ${rest} move`
-        } to a new identity.`
-      : `${ticked.length === 1 ? "The ticked record moves" : `The ${ticked.length} ticked move`} to a new identity. ${
-          rest === 1 ? "The other record stays" : `The other ${rest} stay`
-        } here, under this ID.`;
+      ? `${count(ticked.length, "selected record")} ${keeps(ticked.length)} this ID. ${others} ${moves(rest)} to a new identity.`
+      : `${count(ticked.length, "selected record")} ${moves(ticked.length)} to a new identity. ${others} ${keeps(rest)} this ID.`;
   return (
-    <Section title="Split it" about="When some of its records are something else.">
+    <Section title="Split">
       <Done>{done}</Done>
       {ticked.length === 0 || rest === 0 ? (
-        <Quiet>
-          Tick some of the records above, and not all of them, to part them from the rest. The larger side stays here,
-          and the other side moves to an identity of its own.
-        </Quiet>
+        <Quiet>Select some of the records above to split them off.</Quiet>
       ) : (
         <Row>
           <Text>{would}</Text>
           <Act
-            label={`Split the ${ticked.length} ticked from the rest`}
+            label="Split"
             icon={<SplitIcon />}
             about={would}
             who
@@ -442,14 +427,14 @@ function Split({ view, head, chosen }: { view: IdentityView; head: number; chose
               });
               return (
                 <>
-                  Split at <At committed={report.committed} />: {count(report.moved.length, "observation")} moved to the
-                  new identity <Ref kind="identity" id={report.identity} />.
+                  Split at <At committed={report.committed} />: {count(report.moved.length, "record")} moved to{" "}
+                  <Ref kind="identity" id={report.identity} />.
                 </>
               );
             }}
             done={setDone}
           >
-            <Flag label="Keep the two sides apart from now on" checked={apart} onChange={setApart} />
+            <Flag label="Keep the two sides apart in later runs" checked={apart} onChange={setApart} />
           </Act>
         </Row>
       )}
@@ -485,7 +470,7 @@ function Merge({ view, head }: { view: IdentityView; head: number }) {
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   return (
-    <Section title="Merge another identity into it" about="When another identity is the same thing as this one.">
+    <Section title="Merge">
       <Done>{done}</Done>
       <form
         {...stylex.props(styles.lookup)}
@@ -499,7 +484,7 @@ function Merge({ view, head }: { view: IdentityView; head: number }) {
           findIdentity(client, reference).then(
             (found) => {
               setBusy(false);
-              if (found === null) setProblem(`No identity is named ${reference}.`);
+              if (found === null) setProblem(`No identity found for ${reference}.`);
               else if (found.id === view.id) setProblem("That is this identity.");
               else setOther({ view: found, head });
             },
@@ -510,17 +495,17 @@ function Merge({ view, head }: { view: IdentityView; head: number }) {
           );
         }}
       >
-        <Labelled label="The other identity">
+        <Labelled label="Identity to merge into this one">
           <Input
             name="other"
-            placeholder="its ID, or a record of it as source:key"
+            placeholder="ID, or source:key of one of its records"
             spellCheck={false}
             autoComplete="off"
             style={styles.lookupBox}
           />
         </Labelled>
         <Button type="submit" variant="outline" disabled={busy}>
-          Look it up
+          Find
         </Button>
       </form>
       {problem ? (
@@ -528,27 +513,25 @@ function Merge({ view, head }: { view: IdentityView; head: number }) {
           {problem}
         </Notice>
       ) : null}
-      {looked && !other ? (
-        <Notice tone="waits">The log moved on after that identity was looked up. Look it up again.</Notice>
-      ) : null}
+      {looked && !other ? <Notice tone="waits">The store changed since. Find it again.</Notice> : null}
       {other ? (
         <Panel>
           <div {...stylex.props(styles.other)}>
             <Text>
-              <Ref kind="identity" id={other.id} label={identityName(other)} /> is a {other.entity_type} with{" "}
+              <Ref kind="identity" id={other.id} label={identityName(other)} /> ·{" "}
               {count(other.members.length, "record")}:{" "}
               {other.members
                 .slice(0, MOST_NAMED)
                 .map((member) => (member.key ? `${member.source}:${member.key}` : member.source))
                 .join(", ")}
-              {other.members.length > MOST_NAMED ? ` and ${other.members.length - MOST_NAMED} more` : ""}. Merging moves
-              them here, and this identity stands for that one from then on.
+              {other.members.length > MOST_NAMED ? ` and ${other.members.length - MOST_NAMED} more` : ""}
             </Text>
             <Act
-              label="Merge it into this one"
+              label="Merge"
               icon={<MergeIcon />}
               variant="default"
-              about={`The ${count(other.members.length, "record")} of ${identityName(other)} ${other.members.length === 1 ? "moves" : "move"} here. Undoing the changeset in the log takes it back.`}
+              title={`Merge ${identityName(other)} into this identity`}
+              about={`${count(other.members.length, "record")} ${other.members.length === 1 ? "moves" : "move"} here.`}
               who
               why="Reason"
               act={async (client, { actor, reason }) => {
@@ -579,7 +562,7 @@ function Merge({ view, head }: { view: IdentityView; head: number }) {
 }
 
 export function History({ history, names }: { history: HistoryEntry[]; names: Map<string, string> }) {
-  if (history.length === 0) return <Quiet>No changeset names it.</Quiet>;
+  if (history.length === 0) return <Quiet>No history.</Quiet>;
   return (
     <ol data-part="history" {...stylex.props(styles.history)}>
       {history.map((entry) => (

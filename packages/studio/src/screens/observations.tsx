@@ -34,7 +34,7 @@ import { excerpt, mentionOf, named, observationName } from "../format.ts";
 import type { Excerpt, Mention } from "../format.ts";
 import { useLabels, useLoad, usePages, useStudio } from "../hooks.ts";
 import { RecordIcon } from "../icons.tsx";
-import { href } from "../router.ts";
+import { href, navigate } from "../router.ts";
 import type { Route } from "../router.ts";
 import { colors, radius, spacing, typography } from "../styles/shelf/tokens.stylex";
 import { tones } from "../styles/tones.stylex";
@@ -69,23 +69,21 @@ export function Observations({ route, types }: { route: Route; types: string[] }
       about={
         document ? (
           <>
-            The mentions an extractor found in document <Ref kind="document" id={document} />.
+            Mentions in document <Ref kind="document" id={document} />
           </>
-        ) : (
-          "The observations the store holds: rows as they were ingested and mentions an extractor found, with the identity each belongs to now."
-        )
+        ) : undefined
       }
     >
       <Filters
-        path={["observations"]}
+        path={["records"]}
         query={route.query}
-        search={{ name: "q", label: "Find", placeholder: "Words in a value, the source or the key" }}
+        search={{ name: "q", label: "Search", placeholder: "Value, source or key" }}
         selects={[{ name: "type", label: "Entity type", choices: types.map((value) => ({ value })) }]}
         texts={[
           { name: "source", label: "Source" },
           { name: "key", label: "Key" },
         ]}
-        flags={[{ name: "unassigned", label: "Without an identity" }]}
+        flags={[{ name: "unassigned", label: "Unassigned" }]}
       />
       <PagedTable
         pages={pages}
@@ -97,7 +95,7 @@ export function Observations({ route, types }: { route: Route; types: string[] }
             cell: (observation) => (
               <span {...stylex.props(styles.name)}>
                 <Ref kind="observation" id={observation.id} label={observation.label ?? observationName(observation)} />
-                {observation.superseded_by ? <Word value="replaced" label="earlier version" /> : null}
+                {observation.superseded_by ? <Word value="replaced" label="superseded" /> : null}
               </span>
             ),
             wrap: true,
@@ -111,13 +109,13 @@ export function Observations({ route, types }: { route: Route; types: string[] }
               observation.identity ? (
                 <Identity id={observation.identity} labels={labels} />
               ) : (
-                <Word value="unassigned" label="none" />
+                <Word value="unassigned" />
               ),
           },
           { title: "ID", cell: (observation) => <Ref kind="observation" id={observation.id} /> },
         ]}
         rowKey={(observation) => observation.id}
-        empty={q ? `No record holds “${q}”.` : "No records."}
+        empty={q ? `No records match “${q}”.` : "No records."}
       />
       {pair.explain}
     </Page>
@@ -164,14 +162,14 @@ function ObservationScreen({ observation, review, document }: Loaded) {
       {observation.superseded_by ? (
         <Notice tone="waits">
           <span>
-            A later version of this row replaced it: <Ref kind="observation" id={observation.superseded_by} />.
+            Superseded by <Ref kind="observation" id={observation.superseded_by} />.
           </span>
         </Notice>
       ) : null}
       {waits.length > 0 ? (
         <Notice tone="waits">
           <span>
-            It has no identity until someone decides{" "}
+            Unassigned, pending{" "}
             {waits.map((item, index) => (
               <span key={item.id}>
                 {index > 0 ? ", " : ""}
@@ -196,14 +194,13 @@ function ObservationScreen({ observation, review, document }: Loaded) {
           ],
           [
             "Identity",
-            observation.identity ? (
-              <Identity id={observation.identity} labels={labels} />
-            ) : (
-              <Word value="unassigned" label="none" />
-            ),
+            observation.identity ? <Identity id={observation.identity} labels={labels} /> : <Word value="unassigned" />,
           ],
-          ["Replaces", observation.supersedes ? <Ref kind="observation" id={observation.supersedes} /> : null],
-          ["Replaced by", observation.superseded_by ? <Ref kind="observation" id={observation.superseded_by} /> : null],
+          ["Supersedes", observation.supersedes ? <Ref kind="observation" id={observation.supersedes} /> : null],
+          [
+            "Superseded by",
+            observation.superseded_by ? <Ref kind="observation" id={observation.superseded_by} /> : null,
+          ],
           [
             "Review",
             review.length > 0 ? (
@@ -220,15 +217,15 @@ function ObservationScreen({ observation, review, document }: Loaded) {
         ]}
       />
       {mention && document ? <Found mention={mention} document={document} excerpt={around} /> : null}
-      <Section title="What it says" about="Its payload, as it was ingested.">
+      <Section title="Payload">
         <Json value={observation.payload} />
       </Section>
       {observation.evidence !== undefined && observation.evidence !== null ? (
-        <Section title="Evidence" about="What the source gave with it, to say where it came from.">
+        <Section title="Evidence">
           <Json value={observation.evidence} />
         </Section>
       ) : null}
-      <Section title="Explain" about="Why it is with another record, or apart from it.">
+      <Section title="Explain">
         <ExplainWith observation={observation} />
       </Section>
       <Move observation={observation} />
@@ -244,20 +241,12 @@ function Move({ observation }: { observation: ObservationRecord }) {
   // Once it is out of its identity, it cannot be taken out again.
   const where = chosen === "none" && from === null ? "identity" : chosen;
   return (
-    <Section
-      title={from ? "Move it" : "Place it"}
-      about={
-        from
-          ? "When it belongs to another identity, to one of its own, or to none."
-          : "It has no identity. A reviewer can give it one."
-      }
-    >
+    <Section title={from ? "Move" : "Assign"}>
       <Done>{done}</Done>
       <div>
         <Act
-          label={from ? "Move" : "Place"}
-          title={`${from ? "Move" : "Place"} ${observation.label ?? observationName(observation)}`}
-          about="The move is refused if the record is no longer where this screen shows it."
+          label={from ? "Move" : "Assign"}
+          title={`${from ? "Move" : "Assign"} ${observation.label ?? observationName(observation)}`}
           who
           why="Reason"
           act={async (client, { actor, reason, entered }) => {
@@ -268,9 +257,9 @@ function Move({ observation }: { observation: ObservationRecord }) {
               ops.push({ op: "create_identity", entity_type: observation.entity_type, identity: to });
             } else if (where === "identity") {
               const reference = String(entered.get("identity") ?? "").trim();
-              if (reference === "") throw new Mistake("Name the identity it goes to.");
+              if (reference === "") throw new Mistake("Enter an identity.");
               const identity = await findIdentity(client, reference);
-              if (identity === null) throw new Mistake(`No identity is named ${reference}.`);
+              if (identity === null) throw new Mistake(`No identity found for ${reference}.`);
               to = identity.id;
             }
             // Where it is now is what the reviewer saw: if that has changed
@@ -279,28 +268,28 @@ function Move({ observation }: { observation: ObservationRecord }) {
             const committed = await client.commit({ actor, reason, ops });
             return (
               <>
-                {to === null ? "Taken out of its identity" : from ? "Moved" : "Placed"} at <At committed={committed} />.
+                {to === null ? "Unassigned" : from ? "Moved" : "Assigned"} at <At committed={committed} />.
               </>
             );
           }}
           done={setDone}
         >
-          <Labelled label="Where to">
+          <Labelled label="To">
             <Select
               value={where}
               onChange={setWhere}
               choices={[
-                { value: "identity", label: "an identity there is" },
-                { value: "new", label: "a new identity of its own" },
-                ...(from ? [{ value: "none", label: "no identity" }] : []),
+                { value: "identity", label: "Existing identity" },
+                { value: "new", label: "New identity" },
+                ...(from ? [{ value: "none", label: "No identity (unassign)" }] : []),
               ]}
             />
           </Labelled>
           {where === "identity" ? (
-            <Labelled label="That identity">
+            <Labelled label="Identity">
               <Input
                 name="identity"
-                placeholder="its ID, or a record of it as source:key"
+                placeholder="ID, or source:key of one of its records"
                 spellCheck={false}
                 autoComplete="off"
               />
@@ -322,7 +311,7 @@ function Found({
   excerpt: Excerpt | null;
 }) {
   return (
-    <Section title="Where it was found">
+    <Section title="Mention">
       <Text>
         In document{" "}
         <a href={href(["documents", document.id], { at: mention.start })} {...stylex.props(styles.link)}>
@@ -361,8 +350,8 @@ function ExplainWith({ observation }: { observation: ObservationRecord }) {
           findObservation(client, reference).then(
             (other) => {
               setBusy(false);
-              if (other === null) setProblem(`No observation is named ${reference}.`);
-              else window.location.hash = href(["explain"], { a: observation.id, b: other.id });
+              if (other === null) setProblem(`No record found for ${reference}.`);
+              else navigate(href(["explain"], { a: observation.id, b: other.id }));
             },
             (error: unknown) => {
               setBusy(false);
@@ -371,14 +360,8 @@ function ExplainWith({ observation }: { observation: ObservationRecord }) {
           );
         }}
       >
-        <Labelled label="The other record">
-          <Input
-            name="other"
-            placeholder="an ID, or source:key"
-            spellCheck={false}
-            autoComplete="off"
-            style={styles.box}
-          />
+        <Labelled label="Compare with">
+          <Input name="other" placeholder="ID or source:key" spellCheck={false} autoComplete="off" style={styles.box} />
         </Labelled>
         <Button type="submit" variant="outline" disabled={busy}>
           Explain

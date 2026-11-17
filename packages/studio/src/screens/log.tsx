@@ -14,7 +14,7 @@ export function Log() {
     return { items: page.changesets, next: last !== undefined && last.seq < page.head ? last.seq : null };
   });
   return (
-    <Page title="Log" about="Every committed changeset, oldest first. Identity state is what the log adds up to.">
+    <Page title="Log">
       <PagedTable
         pages={pages}
         columns={[
@@ -22,7 +22,7 @@ export function Log() {
           { title: "Actor", cell: (entry) => <Code>{entry.changeset.actor}</Code> },
           { title: "Operations", cell: (entry) => entry.changeset.ops.length, number: true },
           {
-            title: "From",
+            title: "Run",
             cell: (entry) =>
               entry.changeset.run ? (
                 <Ref kind="run" id={entry.changeset.run} label={`reconcile run ${entry.changeset.run}`} />
@@ -33,7 +33,7 @@ export function Log() {
           { title: "Reason", cell: (entry) => entry.changeset.reason ?? "-", wrap: true },
         ]}
         rowKey={(entry) => entry.seq}
-        empty="No changeset has been committed."
+        empty="No changesets."
       />
     </Page>
   );
@@ -49,12 +49,12 @@ function Entry({ entry }: { entry: LogEntry }) {
           ["Actor", <Code>{entry.changeset.actor}</Code>],
           ["Reason", entry.changeset.reason ? <Reason>{entry.changeset.reason}</Reason> : null],
           [
-            "Drafted by",
+            "Run",
             entry.changeset.run ? (
               <Ref kind="run" id={entry.changeset.run} label={`reconcile run ${entry.changeset.run}`} />
             ) : null,
           ],
-          ["Written against", `log position ${entry.changeset.base}`],
+          ["Base", `log position ${entry.changeset.base}`],
           ["Content hash", <Code>{entry.content_hash}</Code>],
         ]}
       />
@@ -73,23 +73,22 @@ function Entry({ entry }: { entry: LogEntry }) {
 function Undo({ seq }: { seq: number }) {
   const [done, setDone] = useState<ReactNode>(null);
   return (
-    <Section title="Undo it" about="Takes the changeset back with a new one. Nothing is removed from the log.">
+    <Section title="Undo" about="Commits a new changeset that reverses this one.">
       <Done>{done}</Done>
       <div>
         <Act
-          label="Undo it"
+          label="Undo"
           icon={<UndoIcon />}
           title={`Undo log position ${seq}`}
-          about="The engine writes the changeset that takes this one back, and refuses it if it no longer holds."
           who
           why="Reason"
           look={{
-            label: "Show what undoing it would do",
+            label: "Preview",
             act: async (client, { actor, reason }) => {
               const { changeset } = await client.undo(seq, { actor, reason, commit: false });
               return (
                 <>
-                  <Text>Undoing it would make this changeset, which holds as the store is now:</Text>
+                  <Text>Would commit:</Text>
                   <Would ops={changeset.ops} />
                 </>
               );
@@ -132,7 +131,7 @@ export function Changeset({ id }: { id: string }) {
         {(entry) =>
           entry === null ? (
             <Notice tone="bad" role="alert">
-              The log has no position {id}.
+              No log position {id}.
             </Notice>
           ) : (
             <Entry entry={entry} />
