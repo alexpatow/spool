@@ -311,6 +311,7 @@ fn a_split_gives_the_smaller_side_a_new_identity_and_keeps_the_sides_apart() {
             anvils,
             &[one],
             true,
+            None,
             reviewer(),
             Some("not ours".to_owned()),
         )
@@ -367,7 +368,7 @@ fn the_larger_side_of_a_split_keeps_the_id_whichever_side_was_named() {
     );
 
     let split = engine
-        .split(anvils, &[three, two], false, reviewer(), None)
+        .split(anvils, &[three, two], false, None, reviewer(), None)
         .unwrap();
 
     assert_eq!(split.moved, [observation(&engine, "shop", "1")]);
@@ -393,7 +394,7 @@ fn a_split_that_cannot_be_made_says_why() {
         .map(|key| observation(&engine, "shop", key))
         .collect();
     let refused = |identity, observations: &[ObservationId]| -> String {
-        match engine.split(identity, observations, true, reviewer(), None) {
+        match engine.split(identity, observations, true, None, reviewer(), None) {
             Err(error @ Error::Split { .. }) => error.to_string(),
             other => panic!("expected the split to be refused: {other:?}"),
         }
@@ -408,9 +409,79 @@ fn a_split_that_cannot_be_made_says_why() {
     assert!(refused(hammer, &all[..1]).contains("was merged into"));
     let unknown = engine.mint_ids(1, 0).identities[0];
     assert!(matches!(
-        engine.split(unknown, &all[..1], true, reviewer(), None),
+        engine.split(unknown, &all[..1], true, None, reviewer(), None),
         Err(Error::UnknownIdentity(_))
     ));
+}
+
+#[test]
+fn a_split_based_on_a_log_position_is_refused_when_the_members_changed_after_it() {
+    let engine = engine();
+    let anvils = three_anvils(&engine);
+    let (two, three) = (
+        observation(&engine, "shop", "2"),
+        observation(&engine, "shop", "3"),
+    );
+    // Whoever asks for the split read three members: the two they name are
+    // the larger side, and would keep the ID.
+    let read = engine.head().unwrap();
+    ingest(&engine, "depot", &[("9", Some("hammer"), None)]);
+    resolve(&engine);
+    let hammer = identity(&engine, "depot", "9").unwrap();
+    let elsewhere = engine.head().unwrap();
+    let refused = |base| -> String {
+        match engine.split(anvils, &[two, three], true, Some(base), reviewer(), None) {
+            Err(error @ Error::Split { .. }) => error.to_string(),
+            other => panic!("expected the split to be refused: {other:?}"),
+        }
+    };
+
+    // A fourth member arrives. The two named are now half, and would move.
+    let grown = author(&engine, vec![merge(hammer, anvils)]).seq;
+    assert_eq!(
+        refused(read),
+        format!(
+            "identity {anvils} cannot be split: its members changed at log position {grown}, after log position {read} that the split is based on"
+        )
+    );
+    // So is one based on any later position before the member arrived.
+    assert!(refused(elsewhere).contains(&format!("changed at log position {grown}")));
+    assert!(refused(Seq(grown.0 + 1)).contains(&format!(
+        "the split is based on log position {}, and the log ends at {grown}",
+        grown.0 + 1
+    )));
+    assert_eq!(engine.head().unwrap(), grown);
+    assert_eq!(members(&engine, anvils).len(), 4);
+
+    // Based on what the identity holds now, the split is made.
+    let split = engine
+        .split(anvils, &[two, three], true, Some(grown), reviewer(), None)
+        .unwrap();
+    assert_eq!(split.moved, [two, three]);
+    engine.verify().unwrap();
+}
+
+#[test]
+fn a_split_based_on_a_log_position_is_made_when_only_other_identities_changed_after_it() {
+    let engine = engine();
+    let anvils = three_anvils(&engine);
+    let read = engine.head().unwrap();
+    ingest(&engine, "depot", &[("9", Some("hammer"), None)]);
+    resolve(&engine);
+    assert!(engine.head().unwrap() > read);
+
+    let split = engine
+        .split(
+            anvils,
+            &[observation(&engine, "shop", "1")],
+            false,
+            Some(read),
+            reviewer(),
+            None,
+        )
+        .unwrap();
+    assert_eq!(split.moved, [observation(&engine, "shop", "1")]);
+    engine.verify().unwrap();
 }
 
 // Constraints and the runs that follow
@@ -780,7 +851,7 @@ fn every_kind_of_change_survives_a_rebuild_and_a_reopen() {
         assert_eq!(engine.current_id(hammer).unwrap(), tongs);
         let one = observation(&engine, "shop", "1");
         engine
-            .split(anvils, &[one], true, reviewer(), None)
+            .split(anvils, &[one], true, None, reviewer(), None)
             .unwrap();
         let pair = (
             observation(&engine, "depot", "8"),

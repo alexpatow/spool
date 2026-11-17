@@ -952,8 +952,14 @@ fn correct(
                 .iter()
                 .map(|reference| observation(engine, reference).map(|found| found.id))
                 .collect::<Result<Vec<_>>>()?;
-            let report =
-                engine.split(identity, &observations, true, actor.clone(), reason.clone())?;
+            let report = engine.split(
+                identity,
+                &observations,
+                true,
+                None,
+                actor.clone(),
+                reason.clone(),
+            )?;
             tracked.splits.push(Some([
                 members(engine, report.kept)?,
                 members(engine, report.identity)?,

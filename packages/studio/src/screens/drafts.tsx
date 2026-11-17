@@ -1,4 +1,8 @@
-import type { DraftRecord, DraftStatus } from "../api.ts";
+import { useState } from "react";
+import type { ReactNode } from "react";
+
+import { Act, At, Done } from "../act.tsx";
+import type { DraftRecord, DraftStatus, DraftSummary } from "../api.ts";
 import { Fields, Filters, Id, Load, Ops, Page, Ref, Section, Table, When, Word } from "../components.tsx";
 import { count, observationsOf } from "../format.ts";
 import { useLoad, useNames } from "../hooks.ts";
@@ -95,9 +99,47 @@ function DraftScreen({ record }: { record: DraftRecord }) {
           ],
         ]}
       />
+      <Decide draft={draft} />
       <Section title={`Operations (${changeset.ops.length})`}>
         <Ops ops={changeset.ops} names={names} />
       </Section>
     </>
+  );
+}
+
+/** Commits a draft that waits, or closes it. */
+function Decide({ draft }: { draft: DraftSummary }) {
+  const [done, setDone] = useState<ReactNode>(null);
+  const open = draft.status === "open";
+  if (!open && done === null) return null;
+  return (
+    <Section title="Decide">
+      <Done>{done}</Done>
+      {open ? (
+        <>
+          <Act
+            label="Approve and commit"
+            act={async (client) => {
+              const committed = await client.approveDraft(draft.id);
+              return (
+                <>
+                  The draft was committed at <At committed={committed} />.
+                </>
+              );
+            }}
+            done={setDone}
+          />
+          <Act
+            label="Reject"
+            why="Why it is rejected"
+            act={async (client, { reason }) => {
+              await client.rejectDraft(draft.id, reason);
+              return "The draft was rejected. The next run examines its observations again.";
+            }}
+            done={setDone}
+          />
+        </>
+      ) : null}
+    </Section>
   );
 }

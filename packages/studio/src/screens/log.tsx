@@ -1,3 +1,7 @@
+import { useState } from "react";
+import type { ReactNode } from "react";
+
+import { Act, At, Done, Would } from "../act.tsx";
 import type { LogEntry } from "../api.ts";
 import { Fields, Load, Ops, Page, PagedTable, Ref, Section } from "../components.tsx";
 import { observationsOf } from "../format.ts";
@@ -57,7 +61,49 @@ function Entry({ entry }: { entry: LogEntry }) {
       <Section title={`Operations (${entry.changeset.ops.length})`}>
         <Ops ops={entry.changeset.ops} names={names} />
       </Section>
+      <Undo seq={entry.seq} />
     </>
+  );
+}
+
+/**
+ * Takes the changeset back with a new one. The engine writes it and checks
+ * it against what the store holds now, and can be asked to show it first.
+ */
+function Undo({ seq }: { seq: number }) {
+  const [done, setDone] = useState<ReactNode>(null);
+  return (
+    <Section title="Undo it">
+      <Done>{done}</Done>
+      <Act
+        label="Undo it"
+        who
+        why="Reason"
+        look={{
+          label: "Show what undoing it would do",
+          act: async (client, { actor, reason }) => {
+            const { changeset } = await client.undo(seq, { actor, reason, commit: false });
+            return (
+              <>
+                <p>Undoing it would make this changeset, which holds as the store is now:</p>
+                <Would ops={changeset.ops} />
+              </>
+            );
+          },
+        }}
+        act={async (client, { actor, reason }) => {
+          const { committed } = await client.undo(seq, { actor, reason });
+          return committed ? (
+            <>
+              Undone at <At committed={committed} />.
+            </>
+          ) : (
+            "Undone."
+          );
+        }}
+        done={setDone}
+      />
+    </Section>
   );
 }
 

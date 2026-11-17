@@ -1,6 +1,8 @@
 import { useState } from "react";
+import type { ReactNode } from "react";
 
-import type { Comparison, Explained, Explanation, Link, RuleReading, RuleResult } from "../api.ts";
+import { Act, At, Done } from "../act.tsx";
+import type { Comparison, ConstraintKind, Explained, Explanation, Link, RuleReading, RuleResult } from "../api.ts";
 import { Fields, Load, Page, Ref, Section, Sentence, Table, When, Word, message } from "../components.tsx";
 import { findObservation } from "../find.ts";
 import { observationName, plain } from "../format.ts";
@@ -195,6 +197,7 @@ function ExplanationView({ explanation }: { explanation: Explanation }) {
           </ul>
         </Section>
       ) : null}
+      <Constrain explanation={explanation} />
       {explanation.review_items.length > 0 ? (
         <Section title="Review items that name them">
           <ul className="plain">
@@ -213,6 +216,85 @@ function ExplanationView({ explanation }: { explanation: Explanation }) {
         </Section>
       ) : null}
     </>
+  );
+}
+
+const KINDS: Record<ConstraintKind, string> = {
+  must_link: "must share an identity",
+  cannot_link: "must not share an identity",
+};
+
+/**
+ * Records what a person knows about the two, or takes it back. A pair has
+ * one constraint at a time, and one that where they are now would break is
+ * not offered.
+ */
+function Constrain({ explanation }: { explanation: Explanation }) {
+  const [done, setDone] = useState<ReactNode>(null);
+  if (explanation.outcome === "different_types") return null;
+  const a = explanation.left.observation.id;
+  const b = explanation.right.observation.id;
+  const inForce = explanation.constraints.filter((record) => record.to === null || record.to === undefined);
+  const kinds: ConstraintKind[] =
+    explanation.outcome === "same_identity"
+      ? ["must_link"]
+      : explanation.outcome === "different_identities"
+        ? ["cannot_link"]
+        : ["must_link", "cannot_link"];
+  return (
+    <Section title="Constrain them">
+      <Done>{done}</Done>
+      {inForce.map((record) => (
+        <Act
+          key={record.kind}
+          label={`Remove the ${record.kind} constraint`}
+          who
+          why="Reason"
+          act={async (client, { actor, reason }) => {
+            const committed = await client.commit({
+              actor,
+              reason,
+              ops: [{ op: "unconstrain", kind: record.kind, a: record.a, b: record.b }],
+            });
+            return (
+              <>
+                The {record.kind} constraint was removed at <At committed={committed} />.
+              </>
+            );
+          }}
+          done={setDone}
+        />
+      ))}
+      {inForce.length === 0 ? (
+        <Act
+          label="Record it"
+          who
+          why="Reason"
+          act={async (client, { actor, reason, entered }) => {
+            const kind = String(entered.get("kind")) as ConstraintKind;
+            const committed = await client.commit({ actor, reason, ops: [{ op: "constrain", kind, a, b }] });
+            return (
+              <>
+                The {kind} constraint was recorded at <At committed={committed} />.
+              </>
+            );
+          }}
+          done={setDone}
+        >
+          <label>
+            The two
+            <select name="kind" defaultValue={kinds[0]}>
+              {kinds.map((kind) => (
+                <option key={kind} value={kind}>
+                  {KINDS[kind]} ({kind})
+                </option>
+              ))}
+            </select>
+          </label>
+        </Act>
+      ) : null}
+      <p className="quiet">A constraint holds whatever a run judges: no run joins or parts the two against it.</p>
+    </Section>
   );
 }
 

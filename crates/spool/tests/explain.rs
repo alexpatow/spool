@@ -327,6 +327,7 @@ fn what_a_reviewer_did_by_hand_is_told_apart_from_what_a_run_did() {
             kept,
             &[observation(&engine, "shop", "2")],
             true,
+            None,
             reviewer(),
             None,
         )

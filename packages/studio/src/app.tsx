@@ -1,7 +1,8 @@
-// The studio: what a running server holds, read through its API.
+// The studio: what a running server holds, read through its API, and the
+// changes a reviewer makes to it.
 //
-// It changes nothing. Every screen is one or a few calls a client could
-// make, shown; the address after `#` says which screen.
+// Every screen is one or a few calls a client could make, shown, and every
+// change is one more; the address after `#` says which screen.
 
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
@@ -29,13 +30,20 @@ export const TOKEN_KEY = "spool.token";
 /** The token of `spool dev`, which is tried when none was entered. */
 export const DEV_TOKEN = "dev";
 
+/** Where the reviewer's name is kept. It is no secret, so it outlives the tab. */
+export const REVIEWER_KEY = "spool.reviewer";
+
+type Kept = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+
 export interface AppProps {
   /** Where the server is. Default: where the page came from. */
   url?: string;
   /** The `fetch` to call with. Default: the browser's. */
   fetch?: Fetch;
   /** Where the token is kept. Default: the tab's session storage. */
-  storage?: Pick<Storage, "getItem" | "setItem" | "removeItem">;
+  storage?: Kept;
+  /** Where the reviewer's name is kept. Default: the browser's local storage. */
+  names?: Kept;
 }
 
 type Connection =
@@ -45,8 +53,14 @@ type Connection =
   | { status: "refused" }
   | { status: "failed"; error: unknown };
 
-export function App({ url = window.location.origin, fetch, storage = window.sessionStorage }: AppProps) {
+export function App({
+  url = window.location.origin,
+  fetch,
+  storage = window.sessionStorage,
+  names = window.localStorage,
+}: AppProps) {
   const [token, setToken] = useState(() => storage.getItem(TOKEN_KEY) ?? DEV_TOKEN);
+  const [reviewer, setReviewer] = useState(() => names.getItem(REVIEWER_KEY) ?? "");
   const [version, setVersion] = useState(0);
   const [connection, setConnection] = useState<Connection>({ status: "checking" });
   const client = useMemo(() => new SpoolClient({ url, token, fetch }), [url, token, fetch]);
@@ -99,12 +113,17 @@ export function App({ url = window.location.origin, fetch, storage = window.sess
       </Door>
     );
   }
+  const refresh = () => setVersion((before) => before + 1);
+  const remember = (name: string) => {
+    names.setItem(REVIEWER_KEY, name);
+    setReviewer(name);
+  };
   return (
-    <StudioContext.Provider value={{ client, version }}>
+    <StudioContext.Provider value={{ client, version, refresh, reviewer, remember }}>
       <Shell
         url={url}
         info={connection.info}
-        refresh={() => setVersion((before) => before + 1)}
+        refresh={refresh}
         forget={() => {
           storage.removeItem(TOKEN_KEY);
           setConnection({ status: "refused" });

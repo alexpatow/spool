@@ -2978,6 +2978,18 @@
         "actor": {
           "$ref": "#/$defs/Actor"
         },
+        "base": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Seq"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The log position the identity was read at. With it, the split is\nrefused if the identity's members changed after that: which side\nmoves depends on all of them. Without it, the split is made of the\nmembers the identity has now."
+        },
         "keep_apart": {
           "default": null,
           "description": "Record a `cannot_link` constraint between the two sides (the\ndefault), so that nothing puts them back together unnoticed.",

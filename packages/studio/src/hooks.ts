@@ -10,8 +10,13 @@ import type { Route } from "./router.ts";
 
 export interface Studio {
   client: SpoolClient;
-  /** Counts the times the reader asked to read again. */
+  /** Counts the times what is shown was read again. */
   version: number;
+  /** Reads what is shown again, as after a change. */
+  refresh(): void;
+  /** The name the reviewer last made a change under. Empty before the first. */
+  reviewer: string;
+  remember(reviewer: string): void;
 }
 
 export const StudioContext = createContext<Studio | null>(null);
