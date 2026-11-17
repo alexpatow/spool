@@ -16,7 +16,7 @@ import type { SpoolClient } from "../../client/src/index.ts";
 
 import { generate, random } from "./generate.ts";
 import type { Generated, Row } from "./generate.ts";
-import { filled, finished, ingest } from "./scale.ts";
+import { filled, ingest, match } from "./scale.ts";
 import { scratch, serve, timed, verify } from "./server.ts";
 import type { Running } from "./server.ts";
 import { faults, groups, read } from "./state.ts";
@@ -39,7 +39,7 @@ export interface CrashResult {
   faults: string[];
 }
 
-interface Step {
+export interface Step {
   name: string;
   /** Starts the work and does not wait for it. */
   start(client: SpoolClient): void;
@@ -47,28 +47,28 @@ interface Step {
   finish(client: SpoolClient): Promise<void>;
 }
 
-function steps(generated: Generated): Step[] {
+/** The work of loading a generated set, one step at a time. */
+export function steps(generated: Generated): Step[] {
   const load = (name: string, source: string, key: string, rows: Row[]): Step => ({
     name,
     start: (client) =>
       void client.ingest({ source, entity_type: "company", key, rows: rows.map(filled), wait_ms: 0 }).catch(() => {}),
     finish: async (client) => void (await ingest(client, source, key, rows)),
   });
-  const match = (name: string, rematch: boolean): Step => ({
+  const run = (name: string, rematch: boolean): Step => ({
     name,
     start: (client) => void client.startRun({ entity_type: "company", rematch, wait_ms: 0 }).catch(() => {}),
-    finish: async (client) => {
-      const run = await finished(client, await client.startRun({ entity_type: "company", rematch }));
-      if (run?.status !== "succeeded") throw new Error(`${name}: the run ${run?.status}: ${run?.error ?? ""}`);
-    },
+    // An attempt that was killed may have done all of the work, and then
+    // there is nothing left to match.
+    finish: async (client) => void (await match(client, rematch)),
   });
   const all: Step[] = [];
   for (const [index, batch] of generated.batches.entries()) {
     all.push(load(`batch ${index + 1}: ingest crm`, "crm", "id", batch.crm));
     all.push(load(`batch ${index + 1}: ingest registry`, "registry", "number", batch.registry));
-    all.push(match(`batch ${index + 1}: match`, false));
+    all.push(run(`batch ${index + 1}: match`, false));
   }
-  all.push(match("rematch", true));
+  all.push(run("rematch", true));
   return all;
 }
 

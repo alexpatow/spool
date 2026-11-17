@@ -55,6 +55,17 @@ export async function finished(client: SpoolClient, run: RunRecord | null): Prom
   return await client.waitForRun(run.run);
 }
 
+/**
+ * Matches the companies and waits for the run. Null when the server had
+ * nothing to match and started no run: nothing is new since the last run,
+ * and nothing waits for review.
+ */
+export async function match(client: SpoolClient, rematch = false): Promise<RunRecord | null> {
+  const run = await finished(client, await client.startRun({ entity_type: "company", rematch }));
+  if (run !== null && run.status !== "succeeded") throw new Error(`the match run ${run.status}: ${run.error ?? ""}`);
+  return run;
+}
+
 /** A row as the engine reads it from a CSV file: an empty field is left out. */
 export function filled(row: Row): Row {
   return Object.fromEntries(Object.entries(row).filter(([, value]) => value !== ""));
@@ -132,27 +143,23 @@ export async function scale(
       await record(`${name}: ingest crm`, crmSeconds, `${batch.crm.length} rows: ${crm}`);
       const [registry, registrySeconds] = await timed(() => ingest(client, "registry", "number", batch.registry));
       await record(`${name}: ingest registry`, registrySeconds, `${batch.registry.length} rows: ${registry}`);
-      const [run, seconds] = await timed(async () =>
-        finished(client, await client.startRun({ entity_type: "company" })),
-      );
-      if (run?.status !== "succeeded") throw new Error(`${name}: the match run ${run?.status}: ${run?.error ?? ""}`);
-      const resolution = run.resolution!;
+      const [run, seconds] = await timed(() => match(client));
+      const resolution = run?.resolution;
       await record(
         `${name}: match`,
         seconds,
-        `${resolution.candidates} candidates, ${resolution.identities_created} identities created, ${resolution.observations_assigned} assigned`,
+        resolution == null
+          ? "nothing to match"
+          : `${resolution.candidates} candidates, ${resolution.identities_created} identities created, ${resolution.observations_assigned} assigned`,
       );
     }
 
-    const [rematch, rematchSeconds] = await timed(async () =>
-      finished(client, await client.startRun({ entity_type: "company", rematch: true })),
-    );
-    if (rematch?.status !== "succeeded") throw new Error(`the rematch ${rematch?.status}: ${rematch?.error ?? ""}`);
-    const suggestions = rematch.resolution?.suggestions;
+    const [rematch, rematchSeconds] = await timed(() => match(client, true));
+    const suggestions = rematch?.resolution?.suggestions;
     await record(
       "rematch",
       rematchSeconds,
-      `${rematch.resolution?.candidates} candidates, ${suggestions?.merges.length ?? 0} merges and ${suggestions?.splits.length ?? 0} splits suggested`,
+      `${rematch?.resolution?.candidates ?? 0} candidates, ${suggestions?.merges.length ?? 0} merges and ${suggestions?.splits.length ?? 0} splits suggested`,
     );
 
     const reads = await readCalls(client, generated.batches[0]!.crm);
@@ -190,7 +197,7 @@ async function readCalls(client: SpoolClient, rows: Row[]): Promise<Reads> {
     };
   };
   // Rows spread over the batch, so that they are not all neighbours.
-  const sample = Array.from({ length: 20 }, (_, index) => rows[Math.floor((index * rows.length) / 20)]!);
+  const sample = [...new Set(Array.from({ length: 20 }, (_, index) => rows[Math.floor((index * rows.length) / 20)]!))];
   const found: Array<{ id: string; identity: string | null }> = [];
   await time("info", 5, () => client.info());
   await time("observation by source and key", sample.length, async (index) => {

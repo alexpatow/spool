@@ -4,11 +4,16 @@
 
 import { expect, test } from "bun:test";
 
-import { crash } from "../src/crash.ts";
+import { rmSync } from "node:fs";
+import { join } from "node:path";
+
+import { crash, steps } from "../src/crash.ts";
 import { generate, records } from "../src/generate.ts";
 import { hostile } from "../src/hostile.ts";
 import { reviewer } from "../src/reviewer.ts";
 import { scale } from "../src/scale.ts";
+import { scratch, serve } from "../src/server.ts";
+import { writeProject } from "../src/write.ts";
 
 const MINUTES = 60_000;
 
@@ -85,4 +90,35 @@ test(
     expect(result.head).toBeGreaterThan(50);
   },
   10 * MINUTES,
+);
+
+test(
+  "a step that was finished before the server was killed is finished again without a fault",
+  async () => {
+    // A set small enough to leave nothing for review, so that a second match has no work at all.
+    const dir = scratch("twice");
+    const generated = generate({ companies: 4, seed: 2, batches: 2 });
+    writeProject(dir, generated);
+    const server = await serve({ project: dir, store: join(dir, "store.duckdb") });
+    try {
+      for (const step of steps(generated)) {
+        await step.finish(server.client);
+        expect(await server.client.reviewItems({ status: "open" })).toEqual([]);
+        await step.finish(server.client);
+      }
+    } finally {
+      await server.kill();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+  5 * MINUTES,
+);
+
+test(
+  "a set with a batch that brings nothing new is still loaded and verified",
+  async () => {
+    const result = await scale(2, 3, 3, () => {});
+    expect(result.verified).toStartWith("verified ");
+  },
+  5 * MINUTES,
 );
