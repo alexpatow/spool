@@ -82,6 +82,19 @@ export function follow(link: Element) {
 
 export const heading = (name: string | RegExp) => screen.findByRole("heading", { level: 1, name });
 
+/** The list of the studio's screens, beside whichever of them is shown. */
+export const screens = () => within(screen.getByRole("navigation", { name: "Screens" }));
+
+/** Waits until a section of the screen says how many things it holds. */
+export async function counted(title: string, count: number): Promise<void> {
+  await waitFor(() => {
+    const found = [...document.querySelectorAll("h2")].find((heading) => heading.firstChild?.textContent === title);
+    if (found === undefined) throw new Error(`no section is called ${title}`);
+    const said = found.querySelector("[data-part=count]")?.textContent;
+    if (said !== String(count)) throw new Error(`${title} holds ${said}, not ${count}`);
+  });
+}
+
 /** The rows of a table, each as the text of its cells. */
 export function rowsOf(table: HTMLElement): string[][] {
   return within(table)
@@ -100,8 +113,11 @@ export function field(label: string, within: ParentNode = document): string | nu
   return term?.nextElementSibling?.textContent ?? null;
 }
 
-export const texts = (selector: string) =>
-  [...document.querySelectorAll(selector)].map((found) => found.textContent ?? "");
+export const texts = (selector: string, within: ParentNode = document) =>
+  [...within.querySelectorAll(selector)].map((found) => found.textContent ?? "");
+
+/** The texts of the parts of the screen that are marked as one kind of thing, such as `ops`. */
+export const parts = (name: string, within: ParentNode = document) => texts(`[data-part=${name}]`, within);
 
 const servers: Server[] = [];
 const projects: string[] = [];

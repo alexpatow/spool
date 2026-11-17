@@ -1,0 +1,12 @@
+{
+  "$schema": "./node_modules/@shelfui/cli/schema.json",
+  "registry": "https://registry.shelfui.dev",
+  "paths": {
+    "components": "src/components/ui",
+    "patterns": "src/components/patterns",
+    "blocks": "src/components/blocks",
+    "templates": "src/components/templates",
+    "foundations": "src/styles/shelf",
+    "lib": "src/lib/shelf"
+  }
+}

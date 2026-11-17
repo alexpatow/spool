@@ -3,9 +3,9 @@ import type { ReactNode } from "react";
 
 import { Act, At, Done, Would } from "../act.tsx";
 import type { LogEntry } from "../api.ts";
-import { Fields, Load, Ops, Page, PagedTable, Ref, Section } from "../components.tsx";
-import { observationsOf } from "../format.ts";
-import { useLoad, useNames, usePages } from "../hooks.ts";
+import { Code, Fields, Id, Load, Notice, Ops, Page, PagedTable, Reason, Ref, Section, Text } from "../components.tsx";
+import { LogIcon, UndoIcon } from "../icons.tsx";
+import { useLoad, useOpNames, usePages } from "../hooks.ts";
 
 export function Log() {
   const pages = usePages(async (client, after) => {
@@ -19,7 +19,7 @@ export function Log() {
         pages={pages}
         columns={[
           { title: "Position", cell: (entry) => <Ref kind="log" id={entry.seq} /> },
-          { title: "Actor", cell: (entry) => <code>{entry.changeset.actor}</code> },
+          { title: "Actor", cell: (entry) => <Code>{entry.changeset.actor}</Code> },
           { title: "Operations", cell: (entry) => entry.changeset.ops.length, number: true },
           {
             title: "From",
@@ -30,7 +30,7 @@ export function Log() {
                 "-"
               ),
           },
-          { title: "Reason", cell: (entry) => entry.changeset.reason ?? "-" },
+          { title: "Reason", cell: (entry) => entry.changeset.reason ?? "-", wrap: true },
         ]}
         rowKey={(entry) => entry.seq}
         empty="No changeset has been committed."
@@ -40,14 +40,14 @@ export function Log() {
 }
 
 function Entry({ entry }: { entry: LogEntry }) {
-  const names = useNames(observationsOf(entry.changeset.ops));
+  const names = useOpNames(entry.changeset.ops);
   return (
     <>
       <Fields
         rows={[
-          ["Changeset", <code className="id whole">{entry.changeset.id}</code>],
-          ["Actor", <code>{entry.changeset.actor}</code>],
-          ["Reason", entry.changeset.reason ? <span className="reason">“{entry.changeset.reason}”</span> : null],
+          ["Changeset", <Id value={entry.changeset.id} />],
+          ["Actor", <Code>{entry.changeset.actor}</Code>],
+          ["Reason", entry.changeset.reason ? <Reason>{entry.changeset.reason}</Reason> : null],
           [
             "Drafted by",
             entry.changeset.run ? (
@@ -55,10 +55,10 @@ function Entry({ entry }: { entry: LogEntry }) {
             ) : null,
           ],
           ["Written against", `log position ${entry.changeset.base}`],
-          ["Content hash", <code>{entry.content_hash}</code>],
+          ["Content hash", <Code>{entry.content_hash}</Code>],
         ]}
       />
-      <Section title={`Operations (${entry.changeset.ops.length})`}>
+      <Section title="Operations" count={entry.changeset.ops.length}>
         <Ops ops={entry.changeset.ops} names={names} />
       </Section>
       <Undo seq={entry.seq} />
@@ -73,36 +73,41 @@ function Entry({ entry }: { entry: LogEntry }) {
 function Undo({ seq }: { seq: number }) {
   const [done, setDone] = useState<ReactNode>(null);
   return (
-    <Section title="Undo it">
+    <Section title="Undo it" about="Takes the changeset back with a new one. Nothing is removed from the log.">
       <Done>{done}</Done>
-      <Act
-        label="Undo it"
-        who
-        why="Reason"
-        look={{
-          label: "Show what undoing it would do",
-          act: async (client, { actor, reason }) => {
-            const { changeset } = await client.undo(seq, { actor, reason, commit: false });
-            return (
+      <div>
+        <Act
+          label="Undo it"
+          icon={<UndoIcon />}
+          title={`Undo log position ${seq}`}
+          about="The engine writes the changeset that takes this one back, and refuses it if it no longer holds."
+          who
+          why="Reason"
+          look={{
+            label: "Show what undoing it would do",
+            act: async (client, { actor, reason }) => {
+              const { changeset } = await client.undo(seq, { actor, reason, commit: false });
+              return (
+                <>
+                  <Text>Undoing it would make this changeset, which holds as the store is now:</Text>
+                  <Would ops={changeset.ops} />
+                </>
+              );
+            },
+          }}
+          act={async (client, { actor, reason }) => {
+            const { committed } = await client.undo(seq, { actor, reason });
+            return committed ? (
               <>
-                <p>Undoing it would make this changeset, which holds as the store is now:</p>
-                <Would ops={changeset.ops} />
+                Undone at <At committed={committed} />.
               </>
+            ) : (
+              "Undone."
             );
-          },
-        }}
-        act={async (client, { actor, reason }) => {
-          const { committed } = await client.undo(seq, { actor, reason });
-          return committed ? (
-            <>
-              Undone at <At committed={committed} />.
-            </>
-          ) : (
-            "Undone."
-          );
-        }}
-        done={setDone}
-      />
+          }}
+          done={setDone}
+        />
+      </div>
     </Section>
   );
 }
@@ -115,13 +120,20 @@ export function Changeset({ id }: { id: string }) {
     return changesets[0]?.seq === seq ? changesets[0] : null;
   });
   return (
-    <Page title={`Log position ${id}`}>
+    <Page
+      title={`Log position ${id}`}
+      kind={
+        <>
+          <LogIcon /> Changeset
+        </>
+      }
+    >
       <Load state={entry}>
         {(entry) =>
           entry === null ? (
-            <p className="notice failure" role="alert">
+            <Notice tone="bad" role="alert">
               The log has no position {id}.
-            </p>
+            </Notice>
           ) : (
             <Entry entry={entry} />
           )

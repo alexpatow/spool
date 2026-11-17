@@ -1,7 +1,24 @@
 import type { RunRecord, RunKind, RunStatus } from "../api.ts";
-import { Fields, Filters, LinkTo, Load, Page, Ref, Section, Table, When, Word } from "../components.tsx";
+import {
+  Code,
+  Fields,
+  Filters,
+  Identity,
+  Lines,
+  Load,
+  Notice,
+  Onward,
+  Page,
+  Quiet,
+  Ref,
+  Section,
+  Table,
+  When,
+  Word,
+} from "../components.tsx";
+import { RunIcon } from "../icons.tsx";
 import { count } from "../format.ts";
-import { useLoad } from "../hooks.ts";
+import { useLabels, useLoad } from "../hooks.ts";
 import type { Route } from "../router.ts";
 
 const KINDS: RunKind[] = ["ingest", "extract", "match", "reconcile"];
@@ -35,7 +52,7 @@ export function Runs({ route, types }: { route: Route; types: string[] }) {
           <>
             <Table
               columns={[
-                { title: "Run", cell: (run) => <Ref kind="run" id={run.run} /> },
+                { title: "Run", cell: (run) => <Ref kind="run" id={run.run} label={`Run ${run.run}`} /> },
                 { title: "Kind", cell: (run) => run.kind },
                 { title: "Status", cell: (run) => <Word value={run.status} /> },
                 {
@@ -50,11 +67,9 @@ export function Runs({ route, types }: { route: Route; types: string[] }) {
               empty="No runs."
             />
             {runs.length >= limit && limit < 1000 ? (
-              <p>
-                <LinkTo path={["runs"]} query={{ ...route.query, limit: Math.min(1000, limit + STEP) }}>
-                  Show more
-                </LinkTo>
-              </p>
+              <Onward path={["runs"]} query={{ ...route.query, limit: Math.min(1000, limit + STEP) }}>
+                Show more
+              </Onward>
             ) : null}
           </>
         )}
@@ -66,7 +81,14 @@ export function Runs({ route, types }: { route: Route; types: string[] }) {
 export function Run({ id }: { id: string }) {
   const run = useLoad((client) => client.run(Number(id)));
   return (
-    <Page title={`Run ${id}`}>
+    <Page
+      title={`Run ${id}`}
+      kind={
+        <>
+          <RunIcon /> Run
+        </>
+      }
+    >
       <Load state={run}>{(run) => <RunView run={run} />}</Load>
     </Page>
   );
@@ -74,6 +96,11 @@ export function Run({ id }: { id: string }) {
 
 function RunView({ run }: { run: RunRecord }) {
   const { ingest, extraction, resolution } = run;
+  // The identities a strategy would merge or split are named by ID.
+  const labels = useLabels([
+    ...(resolution?.suggestions?.merges.flatMap((merge) => merge.identities) ?? []),
+    ...(resolution?.suggestions?.splits.map((split) => split.identity) ?? []),
+  ]);
   return (
     <>
       <Fields
@@ -85,8 +112,8 @@ function RunView({ run }: { run: RunRecord }) {
             "Strategy",
             run.strategy ? (
               <>
-                <code>{run.strategy.name}</code>
-                {run.strategy.version ? <span className="quiet"> version {run.strategy.version}</span> : null}
+                <Code>{run.strategy.name}</Code>
+                {run.strategy.version ? ` version ${run.strategy.version}` : null}
               </>
             ) : null,
           ],
@@ -94,16 +121,19 @@ function RunView({ run }: { run: RunRecord }) {
             "Extractor",
             run.extractor ? (
               <>
-                <code>{run.extractor.name}</code>
-                <span className="quiet"> version {run.extractor.version}</span>
+                <Code>{run.extractor.name}</Code> version {run.extractor.version}
               </>
             ) : null,
           ],
           ["Started", <When at={run.started_at} />],
           ["Finished", run.finished_at ? <When at={run.finished_at} /> : null],
-          ["Error", run.error ? <span className="failure">{run.error}</span> : null],
         ]}
       />
+      {run.error ? (
+        <Notice tone="bad" role="alert">
+          {run.error}
+        </Notice>
+      ) : null}
       {ingest ? (
         <Section title="What it stored">
           <Fields
@@ -178,7 +208,7 @@ function RunView({ run }: { run: RunRecord }) {
           </Section>
           {resolution.review.length > 0 ? (
             <Section title="What it would not decide">
-              <ul className="plain">
+              <Lines>
                 {resolution.review.map((item, index) => (
                   <li key={index}>
                     {item.kind === "possible_merge"
@@ -192,27 +222,27 @@ function RunView({ run }: { run: RunRecord }) {
                     ))}
                   </li>
                 ))}
-              </ul>
+              </Lines>
             </Section>
           ) : null}
           {resolution.suggestions && resolution.suggestions.merges.length + resolution.suggestions.splits.length > 0 ? (
             <Section title="Where the strategy disagrees with the identities as they are">
-              <ul className="plain">
+              <Lines>
                 {resolution.suggestions.merges.map((merge) => (
                   <li key={merge.identities.join()}>
-                    merge <Ref kind="identity" id={merge.identities[0]} /> and{" "}
-                    <Ref kind="identity" id={merge.identities[1]} />: {merge.matches} match, {merge.no_matches} no_match
-                    between their members
+                    merge <Identity id={merge.identities[0]} labels={labels} /> and{" "}
+                    <Identity id={merge.identities[1]} labels={labels} />: {merge.matches} match, {merge.no_matches}{" "}
+                    no_match between their members
                   </li>
                 ))}
                 {resolution.suggestions.splits.map((split) => (
                   <li key={split.identity}>
-                    split <Ref kind="identity" id={split.identity} />: {split.no_matches} no_match, {split.matches}{" "}
+                    split <Identity id={split.identity} labels={labels} />: {split.no_matches} no_match, {split.matches}{" "}
                     match between its members
                   </li>
                 ))}
-              </ul>
-              <p className="quiet">Nothing here was applied.</p>
+              </Lines>
+              <Quiet>Nothing here was applied.</Quiet>
             </Section>
           ) : null}
         </>

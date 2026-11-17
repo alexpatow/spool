@@ -2,14 +2,20 @@
 // API, and the engine decides whether it holds: the studio sends what was
 // asked for and shows what the engine answered.
 
+import * as stylex from "@stylexjs/stylex";
 import { useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import { SpoolError } from "./api.ts";
 import type { Committed, Op, SpoolClient } from "./api.ts";
-import { Failure, Ops, Parts, Ref } from "./components.tsx";
-import { describeOp, observationsOf } from "./format.ts";
-import { useNames, useStudio } from "./hooks.ts";
+import { Failure, Labelled, Lines, Notice, Ops, Parts, Ref } from "./components.tsx";
+import { Button } from "./components/ui/button";
+import type { ButtonSize, ButtonVariant } from "./components/ui/button";
+import * as Dialog from "./components/ui/dialog";
+import { Input } from "./components/ui/input";
+import { describeOp } from "./format.ts";
+import { useOpNames, useStudio } from "./hooks.ts";
+import { colors, radius, spacing, typography } from "./styles/shelf/tokens.stylex";
 
 /** Something the reviewer left out, which the studio can say without asking the server. */
 export class Mistake extends Error {}
@@ -27,13 +33,19 @@ export interface Said {
 export type Change = (client: SpoolClient, said: Said) => Promise<ReactNode>;
 
 /**
- * A change the reviewer can make: its fields and the button that makes it.
+ * A change the reviewer can make: the button that proposes it, and the
+ * dialog that says what it would do, takes what it needs and makes it.
  * `act` makes the call and answers with what to say once it is made. What
- * is shown is then read again, which may take this form away, so the screen
- * keeps what was said and is told through `done`.
+ * is shown is then read again, which may take the button away, so the
+ * screen keeps what was said and is told through `done`.
  */
 export function Act({
   label,
+  title,
+  about,
+  variant = "outline",
+  size = "default",
+  icon,
   who = false,
   why,
   look,
@@ -42,11 +54,18 @@ export function Act({
   done,
 }: {
   label: string;
+  /** What the dialog is called. Default: the label. */
+  title?: string;
+  /** What the change would do, said before it is made. */
+  about?: ReactNode;
+  variant?: ButtonVariant;
+  size?: ButtonSize;
+  icon?: ReactNode;
   /** Whether the change is recorded under the reviewer's name. */
   who?: boolean;
   /** The label of the field for a reason. Without one, no reason is asked for. */
   why?: string;
-  /** A second button that changes nothing, and shows what it answers under the form. */
+  /** A second button that changes nothing, and shows what it answers in the dialog. */
   look?: { label: string; act: Change };
   /** The fields that are the change's own. */
   children?: ReactNode;
@@ -54,6 +73,7 @@ export function Act({
   done: (said: ReactNode) => void;
 }) {
   const { client, refresh, reviewer, remember } = useStudio();
+  const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<unknown>(null);
   const [looked, setLooked] = useState<ReactNode>(null);
@@ -103,51 +123,73 @@ export function Act({
   };
 
   return (
-    <form
-      className="filters act"
-      onSubmit={(event) => {
-        event.preventDefault();
-        start(event.currentTarget, act, (answer) => {
-          done(answer);
-          refresh();
-        });
+    <Dialog.Root
+      open={open}
+      onOpenChange={(next) => {
+        // A dialog that closed with a change under way would hide what came of it.
+        if (running.current) return;
+        setOpen(next);
+        setProblem(null);
+        setLooked(null);
       }}
     >
-      {children}
-      {who ? (
-        <label title="The change is recorded as made by user: and this name">
-          Your name
-          <input
-            key={reviewer}
-            name="reviewer"
-            defaultValue={reviewer}
-            spellCheck={false}
-            autoComplete="off"
-            size={14}
-          />
-        </label>
-      ) : null}
-      {why ? (
-        <label>
-          {why}
-          <input name="reason" autoComplete="off" size={32} />
-        </label>
-      ) : null}
-      {look ? (
-        <button
-          type="button"
-          disabled={busy}
-          onClick={(event) => start(event.currentTarget.form!, look.act, setLooked)}
-        >
-          {look.label}
-        </button>
-      ) : null}
-      <button type="submit" disabled={busy}>
+      <Dialog.Trigger render={<Button variant={variant} size={size} />}>
+        {icon}
         {label}
-      </button>
-      {problem !== null ? <Refusal error={problem} /> : null}
-      {looked !== null ? <div className="looked">{looked}</div> : null}
-    </form>
+      </Dialog.Trigger>
+      <Dialog.Content style={styles.dialog}>
+        <form
+          {...stylex.props(styles.form)}
+          onSubmit={(event) => {
+            event.preventDefault();
+            start(event.currentTarget, act, (answer) => {
+              setOpen(false);
+              done(answer);
+              refresh();
+            });
+          }}
+        >
+          <Dialog.Header>
+            <Dialog.Title>{title ?? label}</Dialog.Title>
+            {about ? <Dialog.Description render={<div />}>{about}</Dialog.Description> : null}
+          </Dialog.Header>
+          {children}
+          {who ? (
+            <Labelled label="Your name" hint="The change is recorded as made by user: and this name">
+              <Input key={reviewer} name="reviewer" defaultValue={reviewer} spellCheck={false} autoComplete="off" />
+            </Labelled>
+          ) : null}
+          {why ? (
+            <Labelled label={why}>
+              <Input name="reason" autoComplete="off" placeholder="Optional. It is kept with the change." />
+            </Labelled>
+          ) : null}
+          {problem !== null ? <Refusal error={problem} /> : null}
+          {looked !== null ? (
+            <div data-part="looked" {...stylex.props(styles.looked)}>
+              {looked}
+            </div>
+          ) : null}
+          <Dialog.Footer>
+            <Dialog.Close render={<Button variant="ghost" />} disabled={busy}>
+              Cancel
+            </Dialog.Close>
+            {look ? (
+              <Button
+                variant="outline"
+                disabled={busy}
+                onClick={(event) => start(event.currentTarget.form!, look.act, setLooked)}
+              >
+                {look.label}
+              </Button>
+            ) : null}
+            <Button type="submit" variant={variant === "destructive" ? "destructive" : "default"} disabled={busy}>
+              {label}
+            </Button>
+          </Dialog.Footer>
+        </form>
+      </Dialog.Content>
+    </Dialog.Root>
   );
 }
 
@@ -155,27 +197,27 @@ export function Act({
 export function Refusal({ error }: { error: unknown }) {
   if (error instanceof Mistake) {
     return (
-      <p className="notice failure" role="alert">
+      <Notice tone="bad" role="alert">
         {error.message}
-      </p>
+      </Notice>
     );
   }
   if (!(error instanceof SpoolError) || error.code !== "rejected") return <Failure error={error} />;
   const named = error.rejections.filter((rejection) => rejection.op);
   return (
-    <div className="notice failure" role="alert">
-      <p>{error.message}</p>
-      <p>Nothing was changed.</p>
+    <Notice tone="bad" role="alert">
+      <span>{error.message}</span>
+      <span>Nothing was changed.</span>
       {named.length > 0 ? (
-        <ul className="plain">
+        <Lines>
           {named.map((rejection, index) => (
             <li key={index}>
               Operation {rejection.op_index}: <Parts parts={describeOp(rejection.op!)} />
             </li>
           ))}
-        </ul>
+        </Lines>
       ) : null}
-    </div>
+    </Notice>
   );
 }
 
@@ -183,9 +225,9 @@ export function Refusal({ error }: { error: unknown }) {
 export function Done({ children }: { children: ReactNode }) {
   if (children === null || children === undefined) return null;
   return (
-    <p className="notice done" role="status">
+    <Notice tone="good" role="status">
       {children}
-    </p>
+    </Notice>
   );
 }
 
@@ -196,6 +238,33 @@ export function At({ committed }: { committed: Committed }) {
 
 /** The operations of a changeset that was not committed, with observations by their names. */
 export function Would({ ops }: { ops: Op[] }) {
-  const names = useNames(observationsOf(ops));
+  const names = useOpNames(ops);
   return <Ops ops={ops} names={names} />;
 }
+
+const styles = stylex.create({
+  dialog: {
+    maxWidth: "34rem",
+  },
+  form: {
+    gap: spacing["4"],
+    display: "flex",
+    flexDirection: "column",
+    fontSize: typography.fontSizeSm,
+    lineHeight: typography.lineHeightSm,
+    minWidth: 0,
+  },
+  looked: {
+    borderColor: colors.border,
+    borderRadius: radius.lg,
+    borderStyle: "solid",
+    borderWidth: 1,
+    gap: spacing["2"],
+    padding: spacing["3"],
+    backgroundColor: colors.card,
+    display: "flex",
+    flexDirection: "column",
+    maxHeight: "16rem",
+    overflowY: "auto",
+  },
+});

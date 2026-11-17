@@ -1,24 +1,32 @@
+import * as stylex from "@stylexjs/stylex";
 import { useEffect, useMemo, useRef } from "react";
 
 import type { DocumentRecord, ObservationRecord, SpoolClient } from "../api.ts";
 import {
+  Code,
   Fields,
   Filters,
   Id,
+  Identity,
   LinkTo,
   Load,
   Page,
   PagedTable,
+  Quiet,
   Ref,
   Section,
+  Source,
   Table,
+  usePair,
   When,
   Word,
-  usePair,
 } from "../components.tsx";
+import { FileTextIcon } from "../icons.tsx";
+import { colors, radius, spacing, typography } from "../styles/shelf/tokens.stylex";
+import { tones } from "../styles/tones.stylex";
 import { codePoints, count, mentionOf, named, segments } from "../format.ts";
 import type { Mention } from "../format.ts";
-import { useLoad, usePages } from "../hooks.ts";
+import { useLabels, useLoad, usePages } from "../hooks.ts";
 import { href } from "../router.ts";
 import type { Route } from "../router.ts";
 
@@ -56,11 +64,17 @@ export function Documents({ route }: { route: Route }) {
         columns={[
           {
             title: "Document",
-            cell: (document) => <Ref kind="document" id={document.id} label={named(document.source, document.key)} />,
+            cell: (document) => (
+              <span {...stylex.props(styles.name)}>
+                <Ref kind="document" id={document.id} label={named(document.source, document.key)} />
+                {document.superseded_by ? <Word value="replaced" label="earlier version" /> : null}
+              </span>
+            ),
           },
-          { title: "ID", cell: (document) => <Ref kind="document" id={document.id} /> },
+          { title: "Source", cell: (document) => <Source name={document.source} /> },
           { title: "Characters", cell: (document) => document.length, number: true },
-          { title: "Read by", cell: readBy },
+          { title: "Read by", cell: readBy, wrap: true },
+          { title: "ID", cell: (document) => <Ref kind="document" id={document.id} /> },
         ]}
         rowKey={(document) => document.id}
         empty="No documents."
@@ -107,13 +121,22 @@ export function Document({ id, route }: { id: string; route: Route }) {
   });
   const at = route.query.at === undefined ? null : Number(route.query.at);
   return (
-    <Page title="Document" about={<Id value={id} />}>
+    <Page
+      title={loaded.status === "ready" ? named(loaded.data.document.source, loaded.data.document.key) : "Document"}
+      kind={
+        <>
+          <FileTextIcon /> Document
+        </>
+      }
+      about={<Id value={id} />}
+    >
       <Load state={loaded}>{(loaded) => <DocumentScreen {...loaded} at={at} />}</Load>
     </Page>
   );
 }
 
 function DocumentScreen({ document, found, cut, at }: Loaded & { at: number | null }) {
+  const labels = useLabels(found.map(({ observation }) => observation.identity));
   const pair = usePair();
   // Taken apart once: the marked text and every label of the table read it.
   const points = useMemo(() => codePoints(document.text ?? ""), [document.text]);
@@ -121,8 +144,8 @@ function DocumentScreen({ document, found, cut, at }: Loaded & { at: number | nu
     <>
       <Fields
         rows={[
-          ["Source", document.source],
-          ["Key", <code>{document.key}</code>],
+          ["Source", <Source name={document.source} />],
+          ["Key", <Code>{document.key}</Code>],
           ["URI", document.uri],
           ["Characters", document.length],
           [
@@ -141,7 +164,7 @@ function DocumentScreen({ document, found, cut, at }: Loaded & { at: number | nu
               : document.extractions.map((extraction, index) => (
                   <span key={extraction.run}>
                     {index > 0 ? ", " : ""}
-                    <code>{extraction.extractor}</code> in{" "}
+                    <Code>{extraction.extractor}</Code> in{" "}
                     <Ref kind="run" id={extraction.run} label={`run ${extraction.run}`} /> (
                     {count(extraction.mentions, "mention")})
                   </span>
@@ -149,25 +172,31 @@ function DocumentScreen({ document, found, cut, at }: Loaded & { at: number | nu
           ],
         ]}
       />
-      <Section title="Text">
-        <Text points={points} found={found} at={at} />
+      <Section title="Text" about="Each mention an extractor found is marked, and leads to its record.">
+        <Marked points={points} found={found} at={at} />
         {cut ? (
-          <p className="quiet">
+          <Quiet>
             Only the first {found.length} mentions are marked.{" "}
             <LinkTo path={["observations"]} query={{ document: document.id }}>
               List them all
             </LinkTo>
-          </p>
+          </Quiet>
         ) : null}
       </Section>
-      <Section title={`Mentions (${found.length}${cut ? " and more" : ""})`}>
+      <Section
+        title={cut ? "Mentions, the first of them" : "Mentions"}
+        count={found.length}
+        actions={found.length > 1 ? pair.explain : null}
+      >
         <Table
           columns={[
             { title: "", cell: ({ observation }) => pair.tick(observation.id) },
             {
               title: "Mention",
               cell: ({ observation, mention }) => (
-                <a href={href(["observations", observation.id])}>{points.slice(mention.start, mention.end).join("")}</a>
+                <a href={href(["observations", observation.id])} {...stylex.props(styles.link)}>
+                  {points.slice(mention.start, mention.end).join("")}
+                </a>
               ),
             },
             { title: "Characters", cell: ({ mention }) => `${mention.start} to ${mention.end}` },
@@ -176,7 +205,7 @@ function DocumentScreen({ document, found, cut, at }: Loaded & { at: number | nu
               title: "Identity",
               cell: ({ observation }) =>
                 observation.identity ? (
-                  <Ref kind="identity" id={observation.identity} />
+                  <Identity id={observation.identity} labels={labels} />
                 ) : (
                   <Word value="unassigned" label="none" />
                 ),
@@ -186,14 +215,13 @@ function DocumentScreen({ document, found, cut, at }: Loaded & { at: number | nu
           rowKey={({ observation }) => observation.id}
           empty="No extractor found a mention in this version of the document."
         />
-        {found.length > 1 ? pair.explain : null}
       </Section>
     </>
   );
 }
 
 /** The text with each mention marked. A marked stretch leads to its observation. */
-function Text({ points, found, at }: { points: string[]; found: Found[]; at: number | null }) {
+function Marked({ points, found, at }: { points: string[]; found: Found[]; at: number | null }) {
   const target = useRef<HTMLAnchorElement | null>(null);
   useEffect(() => {
     target.current?.scrollIntoView?.({ block: "center" });
@@ -212,7 +240,7 @@ function Text({ points, found, at }: { points: string[]; found: Found[]; at: num
     [points, found],
   );
   return (
-    <pre className="document">
+    <pre data-part="document" {...stylex.props(styles.document)}>
       {pieces.map((piece) => {
         const first = piece.covered[0];
         if (first === undefined) return <span key={piece.start}>{piece.text}</span>;
@@ -221,7 +249,9 @@ function Text({ points, found, at }: { points: string[]; found: Found[]; at: num
           <a
             key={piece.start}
             ref={here ? target : undefined}
-            className={`mention ${here ? "here" : ""}`}
+            data-part="mention"
+            data-here={here ? "" : undefined}
+            {...stylex.props(styles.mention, here && styles.here)}
             href={href(["observations", first.observation.id])}
             title={piece.covered.map(({ observation }) => `${observation.entity_type} ${observation.id}`).join("\n")}
           >
@@ -232,3 +262,47 @@ function Text({ points, found, at }: { points: string[]; found: Found[]; at: num
     </pre>
   );
 }
+
+const styles = stylex.create({
+  name: {
+    gap: spacing["2"],
+    alignItems: "center",
+    display: "inline-flex",
+    flexWrap: "wrap",
+    fontWeight: typography.fontWeightMedium,
+  },
+  link: {
+    color: tones.link,
+    fontWeight: typography.fontWeightMedium,
+    textDecorationLine: { default: "none", ":hover": "underline" },
+  },
+  document: {
+    margin: 0,
+    borderColor: colors.border,
+    borderRadius: radius.lg,
+    borderStyle: "solid",
+    borderWidth: 1,
+    padding: spacing["4"],
+    backgroundColor: colors.card,
+    fontFamily: typography.fontFamily,
+    fontSize: typography.fontSizeSm,
+    lineHeight: "1.6",
+    maxHeight: "32rem",
+    overflowWrap: "anywhere",
+    overflowY: "auto",
+    whiteSpace: "pre-wrap",
+  },
+  mention: {
+    borderRadius: radius.sm,
+    paddingBlock: "0.0625rem",
+    backgroundColor: { default: tones.waitsSurface, ":hover": tones.waitsMark },
+    color: { default: tones.waits, ":hover": colors.background },
+    textDecorationLine: "none",
+  },
+  here: {
+    outlineColor: tones.waitsMark,
+    outlineOffset: 1,
+    outlineStyle: "solid",
+    outlineWidth: 2,
+  },
+});

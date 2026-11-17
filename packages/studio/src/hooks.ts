@@ -2,9 +2,9 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
-import type { SpoolClient } from "./api.ts";
+import type { Info, Op, SpoolClient } from "./api.ts";
 import { found } from "./find.ts";
-import { observationName } from "./format.ts";
+import { identitiesOf, observationName, observationsOf, tail } from "./format.ts";
 import { parseHash } from "./router.ts";
 import type { Route } from "./router.ts";
 
@@ -17,6 +17,8 @@ export interface Studio {
   /** The name the reviewer last made a change under. Empty before the first. */
   reviewer: string;
   remember(reviewer: string): void;
+  /** What the store held when it was last asked: its entity types, and how much of each. */
+  info: Info;
 }
 
 export const StudioContext = createContext<Studio | null>(null);
@@ -159,4 +161,54 @@ export function useNames(ids: string[], known?: Map<string, string>): Map<string
     };
   }, [client, key]);
   return useMemo(() => new Map([...looked, ...(known ?? [])]), [looked, known]);
+}
+
+/** The most identities one screen looks up to show what they are called. */
+const MOST_LABELS = 500;
+
+/**
+ * What the identities a screen names only by ID are called: the label of
+ * each that has one, read in one call. An identity that is not looked up,
+ * that was merged away or that no record names is shown by its ID.
+ */
+export function useLabels(ids: Array<string | null | undefined>): Map<string, string> {
+  const { client } = useStudio();
+  const [looked, setLooked] = useState<Map<string, string>>(new Map());
+  const wanted = [...new Set(ids.filter((id): id is string => typeof id === "string" && id !== ""))]
+    .sort()
+    .slice(0, MOST_LABELS);
+  const key = wanted.join();
+  useEffect(() => {
+    if (key === "") return;
+    let current = true;
+    const ids = key.split(",");
+    // A label is a convenience: if it cannot be read, the ID stays.
+    client.identities({ ids, limit: ids.length }).then(
+      (page) => {
+        if (!current) return;
+        setLooked(
+          new Map(page.identities.flatMap((identity) => (identity.label ? [[identity.id, identity.label]] : []))),
+        );
+      },
+      () => {},
+    );
+    return () => {
+      current = false;
+    };
+  }, [client, key]);
+  return looked;
+}
+
+/**
+ * What the observations and the identities that operations name are called,
+ * by ID. Two identities may be called the same, so each has the end of its
+ * ID after its label.
+ */
+export function useOpNames(ops: Op[], known?: Map<string, string>): Map<string, string> {
+  const names = useNames(observationsOf(ops), known);
+  const labels = useLabels(identitiesOf(ops));
+  return useMemo(
+    () => new Map([...names, ...[...labels].map(([id, label]) => [id, `${label} (…${tail(id)})`] as const)]),
+    [names, labels],
+  );
 }

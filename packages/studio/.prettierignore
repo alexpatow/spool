@@ -1,0 +1,4 @@
+# Shelf UI components are kept as Shelf ships them, so that an update is a clean diff.
+src/components/ui
+src/lib/shelf
+src/styles/shelf

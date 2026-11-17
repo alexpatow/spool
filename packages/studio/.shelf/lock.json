@@ -1,0 +1,371 @@
+{
+  "items": {
+    "button": {
+      "dependencies": {
+        "@base-ui/react": "^1.9.0",
+        "@stylexjs/stylex": "^0.19.1"
+      },
+      "files": {
+        "src/components/ui/button.tsx": {
+          "baseHash": "2010f996bc2f7f0f269a432d54b1f0968b55a9b8dbcf7ed2e4eb03d3679be9db",
+          "source": "button.tsx"
+        }
+      },
+      "installedAt": "2026-11-17T15:14:49.397Z",
+      "path": "components/button",
+      "registry": "https://registry.shelfui.dev",
+      "revision": "e5149872c2daf3316d765d299d5631d3ccc8fa68171b57bf88ec7d707c2f9ff0",
+      "shelfDependencies": [
+        "foundations",
+        "utils"
+      ],
+      "type": "component"
+    },
+    "checkbox": {
+      "dependencies": {
+        "@base-ui/react": "^1.9.0",
+        "@stylexjs/stylex": "^0.19.1"
+      },
+      "files": {
+        "src/components/ui/checkbox.tsx": {
+          "baseHash": "2411ada297435c79b397bede0f13751e61edb0ec6873998ad5dd662fd5ab6d61",
+          "source": "checkbox.tsx"
+        }
+      },
+      "installedAt": "2026-11-17T15:14:49.397Z",
+      "path": "components/checkbox",
+      "registry": "https://registry.shelfui.dev",
+      "revision": "0b1cb10b0088d229d631e7568f574eaf051fb0c75a538572a63a0c4883046cd9",
+      "shelfDependencies": [
+        "foundations",
+        "icons",
+        "utils"
+      ],
+      "type": "component"
+    },
+    "command": {
+      "dependencies": {
+        "@base-ui/react": "^1.9.0",
+        "@stylexjs/stylex": "^0.19.1"
+      },
+      "files": {
+        "src/components/ui/command.tsx": {
+          "baseHash": "fe08f41e70343f9c30bbbe28abfac65a754bd6bec92ed8e26991f46fc48ac0f3",
+          "source": "command.tsx"
+        }
+      },
+      "installedAt": "2026-11-17T15:14:49.397Z",
+      "path": "components/command",
+      "registry": "https://registry.shelfui.dev",
+      "revision": "4e197d1c49eab44560fde5752788125e7bde247b573a3bc9c10abaa23113425e",
+      "shelfDependencies": [
+        "dialog",
+        "foundations",
+        "icons",
+        "kbd",
+        "utils"
+      ],
+      "type": "component"
+    },
+    "copy-button": {
+      "dependencies": {},
+      "files": {
+        "src/components/ui/copy-button.tsx": {
+          "baseHash": "d81fc64c9fadb141008286e2d0d2f9110ebf25708c8ef9bcf127f7157fb365d1",
+          "source": "copy-button.tsx"
+        }
+      },
+      "installedAt": "2026-11-17T15:14:49.397Z",
+      "path": "components/copy-button",
+      "registry": "https://registry.shelfui.dev",
+      "revision": "54aa64bd551ae7bba45fd0421a09536c1b095d849e2ef43abb8ffe6ff5607601",
+      "shelfDependencies": [
+        "button",
+        "icons",
+        "utils"
+      ],
+      "type": "component"
+    },
+    "dialog": {
+      "dependencies": {
+        "@base-ui/react": "^1.9.0",
+        "@stylexjs/stylex": "^0.19.1"
+      },
+      "files": {
+        "src/components/ui/dialog.tsx": {
+          "baseHash": "429b2d6a79eb27d6f2766b9b02fe5bf008a4f892e553a544b8ca95a36915d8ca",
+          "source": "dialog.tsx"
+        }
+      },
+      "installedAt": "2026-11-17T15:14:49.397Z",
+      "path": "components/dialog",
+      "registry": "https://registry.shelfui.dev",
+      "revision": "50067e481908d78c560eacc59a279351eed93a26816855b625d1d3c9c9322e28",
+      "shelfDependencies": [
+        "button",
+        "foundations",
+        "icons",
+        "utils"
+      ],
+      "type": "component"
+    },
+    "drawer": {
+      "dependencies": {
+        "@base-ui/react": "^1.9.0",
+        "@stylexjs/stylex": "^0.19.1"
+      },
+      "files": {
+        "src/components/ui/drawer.tsx": {
+          "baseHash": "a956e51c42b5aca8b7500ab47dcb4329c903caf945f86b8ccbe667679e018d6a",
+          "source": "drawer.tsx"
+        }
+      },
+      "installedAt": "2026-11-17T15:14:49.397Z",
+      "path": "components/drawer",
+      "registry": "https://registry.shelfui.dev",
+      "revision": "afcd40c622d258d05cfc1dfb53a1b10e5fe1e4fb28c742d406eb7bc84d296ccb",
+      "shelfDependencies": [
+        "foundations",
+        "utils"
+      ],
+      "type": "component"
+    },
+    "foundations": {
+      "dependencies": {
+        "@fontsource-variable/geist": "^5.3.0",
+        "@fontsource-variable/geist-mono": "^5.3.0",
+        "@stylexjs/stylex": "^0.19.1"
+      },
+      "files": {
+        "src/styles/shelf/conditions.stylex.ts": {
+          "baseHash": "9652f85bc72e72565a38883f67155e88fd141600edf4b984572018b0bd7bb03b",
+          "source": "conditions.stylex.ts"
+        },
+        "src/styles/shelf/fonts.css": {
+          "baseHash": "8cf7c3eb4e5ea937bb6e8ad8f67f988214698af24626ebb52c78caee6f1f3bcc",
+          "source": "fonts.css"
+        },
+        "src/styles/shelf/themes.ts": {
+          "baseHash": "ff7c59f833af97b54c014220e36e653239ff2efb15912b0b3cad3223598ca5f5",
+          "source": "themes.ts"
+        },
+        "src/styles/shelf/tokens.stylex.ts": {
+          "baseHash": "bdf207e22944194fea4b313c571e6841ad4f1c5b4fc4cd240b1372ebcb297b87",
+          "source": "tokens.stylex.ts"
+        }
+      },
+      "installedAt": "2026-11-17T15:55:27.581Z",
+      "path": "foundations",
+      "registry": "https://registry.shelfui.dev",
+      "revision": "403f780ae7d4b968fcab1a19dada3e01a88ef47934fa759de38494d7e31a0f1e",
+      "shelfDependencies": [],
+      "type": "foundation"
+    },
+    "icons": {
+      "dependencies": {
+        "lucide-react": "^1.65.0"
+      },
+      "files": {
+        "src/components/ui/icons.tsx": {
+          "baseHash": "1a7c9e65b47b62bca848a86f46ccc22141b22d3cc1cf276289b86ccc19be5206",
+          "source": "icons.tsx"
+        }
+      },
+      "installedAt": "2026-11-17T15:14:49.397Z",
+      "path": "components/icons",
+      "registry": "https://registry.shelfui.dev",
+      "revision": "6b9507e71a7a63290f95b2982a768342fc6440802475d3b5d78a8e51a91b7200",
+      "shelfDependencies": [],
+      "type": "component"
+    },
+    "input": {
+      "dependencies": {
+        "@base-ui/react": "^1.9.0",
+        "@stylexjs/stylex": "^0.19.1"
+      },
+      "files": {
+        "src/components/ui/input.tsx": {
+          "baseHash": "688376a811cc4dc0dd24939162783f011de065b03057f686926eaafa472ee3fd",
+          "source": "input.tsx"
+        }
+      },
+      "installedAt": "2026-11-17T15:14:49.397Z",
+      "path": "components/input",
+      "registry": "https://registry.shelfui.dev",
+      "revision": "7aa18387a5d52c43e29de8ae09b79abcf20b4bbb318ba434cf9b27ad9a02eb3b",
+      "shelfDependencies": [
+        "foundations",
+        "utils"
+      ],
+      "type": "component"
+    },
+    "kbd": {
+      "dependencies": {
+        "@stylexjs/stylex": "^0.19.1"
+      },
+      "files": {
+        "src/components/ui/kbd.tsx": {
+          "baseHash": "14eda4917e53fa304295624364e20d0b84a8234f0a97f3dce965ec935b7bd766",
+          "source": "kbd.tsx"
+        }
+      },
+      "installedAt": "2026-11-17T15:14:49.397Z",
+      "path": "components/kbd",
+      "registry": "https://registry.shelfui.dev",
+      "revision": "fe70d554abaf548eb7ae9ddbeb5a379da94d33aa8f1168388cb55c0917e423da",
+      "shelfDependencies": [
+        "foundations",
+        "utils"
+      ],
+      "type": "component"
+    },
+    "native-select": {
+      "dependencies": {
+        "@stylexjs/stylex": "^0.19.1"
+      },
+      "files": {
+        "src/components/ui/native-select.tsx": {
+          "baseHash": "391b6530518bf1428abef729567bc07d6fd64d2e9ab4337dd14d5750c9b61b0e",
+          "source": "native-select.tsx"
+        }
+      },
+      "installedAt": "2026-11-17T15:30:28.240Z",
+      "path": "components/native-select",
+      "registry": "https://registry.shelfui.dev",
+      "revision": "5ed82cdb18196fdaf5eb9ed6521edaec2047112e90291eb86ac6d87086487694",
+      "shelfDependencies": [
+        "foundations",
+        "icons",
+        "utils"
+      ],
+      "type": "component"
+    },
+    "separator": {
+      "dependencies": {
+        "@base-ui/react": "^1.9.0",
+        "@stylexjs/stylex": "^0.19.1"
+      },
+      "files": {
+        "src/components/ui/separator.tsx": {
+          "baseHash": "7b9e427093fc4420755f96bd19f470188c8a029660ab159c3bdf3df6782fdcc2",
+          "source": "separator.tsx"
+        }
+      },
+      "installedAt": "2026-11-17T15:14:49.397Z",
+      "path": "components/separator",
+      "registry": "https://registry.shelfui.dev",
+      "revision": "e477787992fa58303bcb051b494cd44f0f5c69482d3838773d9e4c5e7e1b73a8",
+      "shelfDependencies": [
+        "foundations",
+        "utils"
+      ],
+      "type": "component"
+    },
+    "sidebar": {
+      "dependencies": {
+        "@base-ui/react": "^1.9.0",
+        "@stylexjs/stylex": "^0.19.1"
+      },
+      "files": {
+        "src/components/ui/sidebar.tsx": {
+          "baseHash": "cefea9fd94ccafd8cc7792f4239e2818175b043b4b0bd1e3349b21f12b42541e",
+          "source": "sidebar.tsx"
+        }
+      },
+      "installedAt": "2026-11-17T15:14:49.397Z",
+      "path": "components/sidebar",
+      "registry": "https://registry.shelfui.dev",
+      "revision": "c87b99cb7af076fe2e2eb4b7d2f4ff886c51aa8797553dc5b7e075481e0e4b61",
+      "shelfDependencies": [
+        "button",
+        "drawer",
+        "foundations",
+        "icons",
+        "separator",
+        "tooltip",
+        "utils"
+      ],
+      "type": "component"
+    },
+    "spinner": {
+      "dependencies": {
+        "@stylexjs/stylex": "^0.19.1"
+      },
+      "files": {
+        "src/components/ui/spinner.tsx": {
+          "baseHash": "65f19edac7d107c18f134a5afe430bcb422ad23de193709bb10cc881b06e5806",
+          "source": "spinner.tsx"
+        }
+      },
+      "installedAt": "2026-11-17T15:14:49.397Z",
+      "path": "components/spinner",
+      "registry": "https://registry.shelfui.dev",
+      "revision": "0c715bcd6a75ed3f352adae0dca121826f88bff160cb543963b234fcd787b915",
+      "shelfDependencies": [
+        "foundations",
+        "icons",
+        "utils"
+      ],
+      "type": "component"
+    },
+    "table": {
+      "dependencies": {
+        "@stylexjs/stylex": "^0.19.1"
+      },
+      "files": {
+        "src/components/ui/table.tsx": {
+          "baseHash": "ced0e5b3bbf215dc8d8340018d1d86f523c8ad9a18c5bce877d86eab9d708e40",
+          "source": "table.tsx"
+        }
+      },
+      "installedAt": "2026-11-17T15:14:49.397Z",
+      "path": "components/table",
+      "registry": "https://registry.shelfui.dev",
+      "revision": "e75bd7500cb6876acb1ce65ae610c0a2e2ff5434cd924c4cad04d489dbd536f3",
+      "shelfDependencies": [
+        "foundations",
+        "utils"
+      ],
+      "type": "component"
+    },
+    "tooltip": {
+      "dependencies": {
+        "@base-ui/react": "^1.9.0",
+        "@stylexjs/stylex": "^0.19.1"
+      },
+      "files": {
+        "src/components/ui/tooltip.tsx": {
+          "baseHash": "6c1f05e2bcd116993db6c950de7a5ed619332417b8429fc2035aa21b3e19a86d",
+          "source": "tooltip.tsx"
+        }
+      },
+      "installedAt": "2026-11-17T15:14:49.397Z",
+      "path": "components/tooltip",
+      "registry": "https://registry.shelfui.dev",
+      "revision": "0bd0ee79c48dcbd2451ce908daf306bab1651a4c179ca6059c9fa7206026b81c",
+      "shelfDependencies": [
+        "foundations",
+        "utils"
+      ],
+      "type": "component"
+    },
+    "utils": {
+      "dependencies": {
+        "@stylexjs/stylex": "^0.19.1"
+      },
+      "files": {
+        "src/lib/shelf/utils.ts": {
+          "baseHash": "4bb9c0753c54c9bab04d418ee02365a3f2441afe2e3cdcf82432aacf3fe1be36",
+          "source": "utils.ts"
+        }
+      },
+      "installedAt": "2026-11-17T15:14:49.397Z",
+      "path": "lib",
+      "registry": "https://registry.shelfui.dev",
+      "revision": "94fd4082ca5a351bdb14336497347dcc0a227c48331cf9f69911ef20705ae625",
+      "shelfDependencies": [],
+      "type": "lib"
+    }
+  },
+  "version": 1
+}

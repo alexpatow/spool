@@ -14,13 +14,25 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@base-ui/react": "1.9.0",
+    "@fontsource-variable/geist": "5.3.0",
+    "@fontsource-variable/geist-mono": "5.3.0",
+    "@stylexjs/stylex": "0.19.2",
+    "lucide-react": "1.74.0",
     "react": "19.3.1",
     "react-dom": "19.3.1"
   },
   "devDependencies": {
+    "@babel/core": "8.1.2",
+    "@babel/plugin-syntax-jsx": "8.0.1",
+    "@babel/plugin-syntax-typescript": "8.0.3",
     "@happy-dom/global-registrator": "21.0.4",
+    "@shelfui/cli": "0.1.0",
+    "@stylexjs/babel-plugin": "0.19.2",
+    "@stylexjs/unplugin": "0.19.2",
     "@testing-library/dom": "10.4.2",
     "@testing-library/react": "16.3.3",
+    "@types/babel__core": "7.20.5",
     "@types/bun": "^1.2.0",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",

@@ -3,9 +3,10 @@ import type { ReactNode } from "react";
 
 import { Act, At, Done } from "../act.tsx";
 import type { DraftRecord, DraftStatus, DraftSummary } from "../api.ts";
-import { Fields, Filters, Id, Load, Ops, Page, Ref, Section, Table, When, Word } from "../components.tsx";
-import { count, observationsOf } from "../format.ts";
-import { useLoad, useNames } from "../hooks.ts";
+import { Fields, Filters, Id, Load, Ops, Page, Reason, Ref, Row, Section, Table, When, Word } from "../components.tsx";
+import { CheckIcon, DraftIcon } from "../icons.tsx";
+import { count } from "../format.ts";
+import { useLoad, useOpNames } from "../hooks.ts";
 import type { Route } from "../router.ts";
 
 const STATUSES: DraftStatus[] = ["open", "committed", "rejected", "superseded"];
@@ -49,7 +50,15 @@ export function Drafts({ route, types }: { route: Route; types: string[] }) {
 export function Draft({ id }: { id: string }) {
   const draft = useLoad((client) => client.draft(id));
   return (
-    <Page title="Draft" about={<Id value={id} />}>
+    <Page
+      title="Draft"
+      kind={
+        <>
+          <DraftIcon /> Draft
+        </>
+      }
+      about={<Id value={id} />}
+    >
       <Load state={draft}>{(record) => <DraftScreen record={record} />}</Load>
     </Page>
   );
@@ -57,7 +66,7 @@ export function Draft({ id }: { id: string }) {
 
 function DraftScreen({ record }: { record: DraftRecord }) {
   const { draft, changeset } = record;
-  const names = useNames(observationsOf(changeset.ops));
+  const names = useOpNames(changeset.ops);
   return (
     <>
       <Fields
@@ -93,14 +102,19 @@ function DraftScreen({ record }: { record: DraftRecord }) {
             draft.rejected_at ? (
               <>
                 <When at={draft.rejected_at} />
-                {draft.rejected_reason ? <span className="reason"> “{draft.rejected_reason}”</span> : null}
+                {draft.rejected_reason ? (
+                  <>
+                    {" "}
+                    <Reason>{draft.rejected_reason}</Reason>
+                  </>
+                ) : null}
               </>
             ) : null,
           ],
         ]}
       />
       <Decide draft={draft} />
-      <Section title={`Operations (${changeset.ops.length})`}>
+      <Section title="Operations" count={changeset.ops.length} about="What approving it would commit, in order.">
         <Ops ops={changeset.ops} names={names} />
       </Section>
     </>
@@ -113,12 +127,20 @@ function Decide({ draft }: { draft: DraftSummary }) {
   const open = draft.status === "open";
   if (!open && done === null) return null;
   return (
-    <Section title="Decide">
+    <Section
+      title="Decide"
+      about={
+        open ? "Approving commits its operations as they are. The engine refuses if they no longer hold." : undefined
+      }
+    >
       <Done>{done}</Done>
       {open ? (
-        <>
+        <Row>
           <Act
             label="Approve and commit"
+            icon={<CheckIcon />}
+            variant="default"
+            about={`${count(draft.observations_assigned, "observation")} placed, ${count(draft.identities_created, "identity")} created. The changeset goes into the log, where it can be undone.`}
             act={async (client) => {
               const committed = await client.approveDraft(draft.id);
               return (
@@ -131,6 +153,7 @@ function Decide({ draft }: { draft: DraftSummary }) {
           />
           <Act
             label="Reject"
+            about="The draft is closed and nothing is committed. The next run examines its observations again."
             why="Why it is rejected"
             act={async (client, { reason }) => {
               await client.rejectDraft(draft.id, reason);
@@ -138,7 +161,7 @@ function Decide({ draft }: { draft: DraftSummary }) {
             }}
             done={setDone}
           />
-        </>
+        </Row>
       ) : null}
     </Section>
   );
