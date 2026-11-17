@@ -377,6 +377,12 @@ pub(crate) fn read_log(conn: &Connection) -> Result<Vec<LogEntry>> {
 /// At most `limit` committed changesets after a log position, in log order.
 pub(crate) fn read_log_after(conn: &Connection, after: Seq, limit: u64) -> Result<Vec<LogEntry>> {
     let mut entries = Vec::new();
+    // The database counts positions in signed 64 bits, so no log reaches a
+    // position past those, and nothing is after one. Cast, such a position
+    // would be a negative one that the whole log is after.
+    if i64::try_from(after.0).is_err() {
+        return Ok(entries);
+    }
     let mut statement = conn.prepare(
         "SELECT seq, changeset_id::VARCHAR, base_seq, actor, reason, run_id, content_hash
          FROM spool.changeset WHERE seq > ? ORDER BY seq LIMIT ?",
