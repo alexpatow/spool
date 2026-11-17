@@ -212,7 +212,7 @@ fn the_studio_is_its_own_paths_and_takes_only_reads() {
         "/studio.js.map",
         "/geist-latin-wght-normal.woff",
         "/fonts/geist-latin-wght-normal.woff2",
-        "/observations",
+        "/record",
         "/runs/",
         "/runsheet",
         "/favicon.ico",

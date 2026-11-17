@@ -53,9 +53,12 @@ fn refused(server: &Server, arguments: &[&str]) -> (Option<i32>, String) {
     (output.status.code(), text(&output.stderr))
 }
 
+/// A line of what was printed, whatever the widths of its columns.
 fn has(printed: &str, line: &str) {
     assert!(
-        printed.lines().any(|printed| printed == line),
+        printed
+            .lines()
+            .any(|printed| printed.split_whitespace().eq(line.split_whitespace())),
         "no line `{line}` in:\n{printed}"
     );
 }
@@ -78,7 +81,7 @@ fn resolve(server: &Server, entity_type: &str) -> Value {
 }
 
 fn id_of(server: &Server, source: &str, key: &str) -> String {
-    server.read(&format!("/v1/observations?source={source}&key={key}"))["observations"][0]["id"]
+    server.read(&format!("/v1/records?source={source}&key={key}"))["records"][0]["id"]
         .as_str()
         .unwrap()
         .to_owned()
@@ -116,9 +119,9 @@ fn show_lists_what_a_server_holds() {
     has(&overview, &format!("server     http://{}", server.address));
     has(&overview, "head       log position 1");
     has(&overview, "entity type `thing`");
-    has(&overview, "  observations  4, 0 without an identity");
-    has(&overview, "  identities    3");
-    has(&overview, "  review        0 items open");
+    has(&overview, "  records     4, 0 without an identity");
+    has(&overview, "  identities  3");
+    has(&overview, "  review      0 items open");
     assert_eq!(answered(&server, &["show"]), server.read("/v1/info"));
 
     let runs = shown(&server, &["show", "runs"]);
@@ -149,12 +152,12 @@ fn show_lists_what_a_server_holds() {
     has(&run, "strategy       rules, version 0.1.0");
     has(
         &run,
-        "examined       4 observations, 0 of them left for review before",
+        "examined       4 records, 0 of them left for review before",
     );
     has(&run, "candidates     3 pairs");
     has(&run, "judgements     1 match, 2 no_match, 0 unsure");
-    has(&run, "placed         4 observations, 3 identities created");
-    has(&run, "left out       0 observations in 0 review items");
+    has(&run, "placed         4 records, 3 identities created");
+    has(&run, "left out       0 records in 0 review items");
     assert!(
         run.contains("\ncommitted      log position 1, changeset "),
         "{run}"
@@ -189,7 +192,7 @@ fn show_lists_what_a_server_holds() {
     assert!(!rest.contains(first));
 
     let (one, two) = (id_of(&server, "shop", "1"), id_of(&server, "shop", "2"));
-    let anvils = server.read(&format!("/v1/observations/{one}"))["identity"]
+    let anvils = server.read(&format!("/v1/records/{one}"))["identity"]
         .as_str()
         .unwrap()
         .to_owned();
@@ -198,18 +201,15 @@ fn show_lists_what_a_server_holds() {
     has(&identity, "created at  log position 1");
     has(
         &identity,
-        "observation                           source and key  since",
+        "record                                source and key  since",
     );
     for (id, name) in [(&one, "shop:1"), (&two, "shop:2")] {
         has(&identity, &format!("{id}  {name}          log position 1"));
-        has(
-            &identity,
-            &format!("      place observation {id} in {anvils}"),
-        );
+        has(&identity, &format!("      place record {id} in {anvils}"));
     }
     has(&identity, &format!("      create thing identity {anvils}"));
     assert!(
-        identity.contains("  engine  reconcile run 3  \"reconcile new observations\"\n"),
+        identity.contains("  engine  reconcile run 3  \"reconcile new records\"\n"),
         "{identity}"
     );
     let bundle = answered(&server, &["show", "identities", &anvils]);
@@ -223,31 +223,25 @@ fn show_lists_what_a_server_holds() {
     );
     assert_eq!(bundle["constraints"], json!([]));
 
-    let observations = shown(&server, &["show", "observations", "--source", "shop"]);
-    assert_eq!(observations.lines().count(), 5, "{observations}");
-    has(
-        &observations,
-        &format!("{one}  thing  shop:1          {anvils}"),
-    );
-    let none = shown(&server, &["show", "observations", "--unassigned"]);
-    assert_eq!(none, "no observations\n");
+    let records = shown(&server, &["show", "records", "--source", "shop"]);
+    assert_eq!(records.lines().count(), 5, "{records}");
+    has(&records, &format!("{one}  thing  shop:1          {anvils}"));
+    let none = shown(&server, &["show", "records", "--unassigned"]);
+    assert_eq!(none, "no records\n");
 
-    // An observation is named by its ID or by its source and key.
-    let observation = shown(&server, &["show", "observation", "shop:1"]);
-    assert_eq!(observation, shown(&server, &["show", "observations", &one]));
-    has(&observation, &format!("observation  {one}"));
-    has(&observation, "source       shop");
-    has(&observation, "key          1");
-    has(&observation, &format!("identity     {anvils}"));
-    has(&observation, "payload");
-    has(&observation, "  code    anvil");
-    has(&observation, "  colour  black");
-    assert!(observation.contains(" by run 1\n"), "{observation}");
-    let bundle = answered(&server, &["show", "observation", "shop:1"]);
-    assert_eq!(
-        bundle["observation"],
-        server.read(&format!("/v1/observations/{one}"))
-    );
+    // A record is named by its ID or by its source and key.
+    let record = shown(&server, &["show", "record", "shop:1"]);
+    assert_eq!(record, shown(&server, &["show", "records", &one]));
+    has(&record, &format!("record  {one}"));
+    has(&record, "source       shop");
+    has(&record, "key          1");
+    has(&record, &format!("identity     {anvils}"));
+    has(&record, "payload");
+    has(&record, "  code    anvil");
+    has(&record, "  colour  black");
+    assert!(record.contains(" by run 1\n"), "{record}");
+    let bundle = answered(&server, &["show", "record", "shop:1"]);
+    assert_eq!(bundle["record"], server.read(&format!("/v1/records/{one}")));
     assert_eq!(bundle["mention"], Value::Null);
     assert_eq!(bundle["review_items"], json!([]));
 
@@ -258,7 +252,7 @@ fn show_lists_what_a_server_holds() {
     );
     has(
         &log,
-        "1         engine  7           reconcile run 3  reconcile new observations",
+        "1         engine  7           reconcile run 3  reconcile new records",
     );
     assert_eq!(
         shown(&server, &["show", "log", "--after", "1"]),
@@ -270,7 +264,7 @@ fn show_lists_what_a_server_holds() {
 }
 
 #[test]
-fn explain_says_why_two_observations_are_together_or_apart() {
+fn explain_says_why_two_records_are_together_or_apart() {
     let dir = tempfile::tempdir().unwrap();
     let server = workshop(dir.path());
     let (one, two, red) = (
@@ -302,7 +296,7 @@ fn explain_says_why_two_observations_are_together_or_apart() {
         &together,
         "  run 2  rules  succeeded  block: same_code  match",
     );
-    // Either way of naming an observation will do, in either order.
+    // Either way of naming a record will do, in either order.
     assert_eq!(shown(&server, &["explain", &two, "shop:1"]), together);
 
     let apart = shown(&server, &["explain", "shop:1", &red]);
@@ -330,10 +324,10 @@ fn explain_says_why_two_observations_are_together_or_apart() {
     assert_eq!(answer["outcome"], "same_identity");
 
     // A reviewer's decisions are part of the explanation.
-    let identity = answer["left"]["observation"]["identity"].as_str().unwrap();
+    let identity = answer["left"]["record"]["identity"].as_str().unwrap();
     server.call(
         &format!("/v1/identities/{identity}/split"),
-        json!({ "observations": [two], "actor": "user:reviewer", "reason": "a replica" }),
+        json!({ "records": [two], "actor": "user:reviewer", "reason": "a replica" }),
     );
     let split = shown(&server, &["explain", "shop:1", "shop:2"]);
     has(
@@ -357,27 +351,27 @@ fn explain_says_why_two_observations_are_together_or_apart() {
         "{identity}"
     );
     assert!(
-        identity.contains(&format!("      move observation {two} from ")),
+        identity.contains(&format!("      move record {two} from ")),
         "{identity}"
     );
 
     let (code, complaint) = refused(&server, &["explain", "shop:1"]);
     assert_eq!(code, Some(2));
     assert!(
-        complaint.contains("`explain` needs two observations"),
+        complaint.contains("`explain` needs two records"),
         "{complaint}"
     );
     let (code, complaint) = refused(&server, &["explain", "shop:1", "anvil"]);
     assert_eq!(code, Some(2));
     assert!(
-        complaint.contains("`anvil` does not name an observation"),
+        complaint.contains("`anvil` does not name a record"),
         "{complaint}"
     );
     let (code, complaint) = refused(&server, &["explain", "shop:1", "shop:9"]);
     assert_eq!(code, Some(1));
     assert_eq!(
         complaint,
-        "spool: there is no observation with key `9` from source `shop`\n"
+        "spool: there is no record with key `9` from source `shop`\n"
     );
     let (code, complaint) = refused(&server, &["explain", "shop:1", "shop:1"]);
     assert_eq!(code, Some(1));
@@ -385,10 +379,7 @@ fn explain_says_why_two_observations_are_together_or_apart() {
     let unknown = "00000000-0000-7000-8000-000000000000";
     let (code, complaint) = refused(&server, &["explain", "shop:1", unknown]);
     assert_eq!(code, Some(1));
-    assert_eq!(
-        complaint,
-        format!("spool: there is no observation {unknown}\n")
-    );
+    assert_eq!(complaint, format!("spool: there is no record {unknown}\n"));
 }
 
 #[test]
@@ -429,7 +420,7 @@ fn drafts_and_review_items_are_shown_with_what_they_hold() {
     let overview = shown(&server, &["show"]);
     has(
         &overview,
-        &format!("  draft         {draft} waits for a decision"),
+        &format!("  draft       {draft} waits for a decision"),
     );
     let waiting = shown(&server, &["show", "run", &run["run"].to_string()]);
     has(&waiting, "status         drafted");
@@ -441,7 +432,7 @@ fn drafts_and_review_items_are_shown_with_what_they_hold() {
     has(&one, "written against  log position 0");
     has(&one, "operations");
     assert!(one.contains("\n  create company identity "), "{one}");
-    assert!(one.contains("\n  place observation "), "{one}");
+    assert!(one.contains("\n  place record "), "{one}");
     assert_eq!(
         answered(&server, &["show", "draft", draft]),
         server.read(&format!("/v1/drafts/{draft}"))
@@ -462,11 +453,10 @@ fn drafts_and_review_items_are_shown_with_what_they_hold() {
     let review = shown(&server, &["show", "review", "--status", "open"]);
     has(
         &review,
-        "item  kind            status  type     holds          matched       raised by",
+        "item  kind            status  type     holds     matched       raised by",
     );
     assert!(
-        review
-            .contains("\n1     possible_merge  open    company  1 observation  2 identities  run "),
+        review.contains("\n1     possible_merge  open    company  1 record  2 identities  run "),
         "{review}"
     );
     assert_eq!(
@@ -481,19 +471,19 @@ fn drafts_and_review_items_are_shown_with_what_they_hold() {
     has(&item, "identities they matched");
     let bundle = answered(&server, &["show", "review", "1"]);
     assert_eq!(bundle["item"], server.read("/v1/review/1"));
-    assert_eq!(bundle["observations"][0]["id"], stuck.as_str());
+    assert_eq!(bundle["records"][0]["id"], stuck.as_str());
 
-    // The observation says it is under review, and an explanation says why.
-    let observation = shown(&server, &["show", "observation", "crm:c-117"]);
-    has(&observation, "identity     none");
-    has(&observation, "review       item 1 (possible_merge, open)");
-    let unassigned = shown(&server, &["show", "observations", "--unassigned"]);
+    // The record says it is under review, and an explanation says why.
+    let record = shown(&server, &["show", "record", "crm:c-117"]);
+    has(&record, "identity     none");
+    has(&record, "review       item 1 (possible_merge, open)");
+    let unassigned = shown(&server, &["show", "records", "--unassigned"]);
     assert_eq!(unassigned.lines().count(), 2, "{unassigned}");
     let matched = server.read("/v1/review/1")["identities"][0]
         .as_str()
         .unwrap()
         .to_owned();
-    let member = server.read(&format!("/v1/identities/{matched}"))["members"][0]["observation"]
+    let member = server.read(&format!("/v1/identities/{matched}"))["members"][0]["record"]
         .as_str()
         .unwrap()
         .to_owned();
@@ -564,27 +554,24 @@ fn a_mention_is_shown_in_its_document() {
     has(&one, "uri         file:///notes/a.txt");
     assert!(one.ends_with(&format!("\n\n{note}\n")), "{one}");
 
-    let observation = shown(&server, &["show", "observation", "notes:m1"]);
-    has(&observation, "evidence");
-    has(&observation, &format!("  document  {document}"));
-    has(
-        &observation,
-        "in document notes:a.txt, characters 105 to 110",
-    );
+    let record = shown(&server, &["show", "record", "notes:m1"]);
+    has(&record, "evidence");
+    has(&record, &format!("  document  {document}"));
+    has(&record, "in document notes:a.txt, characters 105 to 110");
     // Eighty characters either side, on one line, with the mention marked.
     has(
-        &observation,
+        &record,
         &format!(
             "  …{} The [Anvil] is black, as anvils are. {}…",
             "x".repeat(75),
             "x".repeat(54)
         ),
     );
-    let bundle = answered(&server, &["show", "observation", "notes:m1"]);
+    let bundle = answered(&server, &["show", "record", "notes:m1"]);
     assert_eq!(bundle["mention"]["text"], "Anvil");
     assert_eq!(bundle["mention"]["document"], document);
     assert_eq!(bundle["mention"]["cut_before"], true);
-    let found = shown(&server, &["show", "observations", "--document", document]);
+    let found = shown(&server, &["show", "records", "--document", document]);
     assert_eq!(found.lines().count(), 2, "{found}");
 
     // Evidence that points outside the document is shown as it is.
@@ -599,9 +586,9 @@ fn a_mention_is_shown_in_its_document() {
             "rows": [{ "id": "m2", "code": "tongs", "where": evidence.to_string() }],
         }),
     );
-    let observation = shown(&server, &["show", "observation", "notes:m2"]);
-    has(&observation, "  end       5000");
-    assert!(!observation.contains("in document"), "{observation}");
+    let record = shown(&server, &["show", "record", "notes:m2"]);
+    has(&record, "  end       5000");
+    assert!(!record.contains("in document"), "{record}");
 
     // A mention is named by its document and its place in it, when its
     // evidence says both.
@@ -618,7 +605,7 @@ fn a_source_and_key_name_the_latest_version_however_many_there_were() {
     write_things(&project);
     let server = Server::serve(&project, dir.path(), 1);
 
-    // More versions of one row than a page of observations holds. They are
+    // More versions of one row than a page of records holds. They are
     // listed by ID, which says nothing of their order in time.
     let versions = 250;
     for version in 1..=versions {
@@ -638,10 +625,10 @@ fn a_source_and_key_name_the_latest_version_however_many_there_were() {
         "id",
         rows(&[&["id", "code"], &["2", "anvil-250"]]),
     );
-    let first = server.read("/v1/observations?source=shop&key=1");
-    assert_eq!(first["observations"].as_array().unwrap().len(), 100);
+    let first = server.read("/v1/records?source=shop&key=1");
+    assert_eq!(first["records"].as_array().unwrap().len(), 100);
     assert!(
-        first["observations"]
+        first["records"]
             .as_array()
             .unwrap()
             .iter()
@@ -649,9 +636,9 @@ fn a_source_and_key_name_the_latest_version_however_many_there_were() {
         "the latest version is not on the first page, or this tests nothing"
     );
 
-    let latest = answered(&server, &["show", "observation", "shop:1"]);
-    assert_eq!(latest["observation"]["payload"]["code"], "anvil-250");
-    assert_eq!(latest["observation"]["superseded_by"], Value::Null);
+    let latest = answered(&server, &["show", "record", "shop:1"]);
+    assert_eq!(latest["record"]["payload"]["code"], "anvil-250");
+    assert_eq!(latest["record"]["superseded_by"], Value::Null);
 
     resolve(&server, "thing");
     let explanation = answered(&server, &["explain", "shop:1", "shop:2"]);
@@ -660,7 +647,7 @@ fn a_source_and_key_name_the_latest_version_however_many_there_were() {
     assert!(
         sides
             .iter()
-            .all(|side| side["observation"]["payload"]["code"] == "anvil-250"),
+            .all(|side| side["record"]["payload"]["code"] == "anvil-250"),
         "{explanation}"
     );
 }
@@ -674,8 +661,8 @@ fn a_merged_identity_is_shown_with_the_constraints_of_the_one_it_became() {
         id_of(&server, "shop", "2"),
         id_of(&server, "shop", "4"),
     );
-    let identity_of = |observation: &str| {
-        server.read(&format!("/v1/observations/{observation}"))["identity"]
+    let identity_of = |record: &str| {
+        server.read(&format!("/v1/records/{record}"))["identity"]
             .as_str()
             .unwrap()
             .to_owned()
@@ -718,7 +705,7 @@ fn a_type_with_no_feature_columns_and_no_rules_is_explained() {
     let project = dir.path().join("project");
     let features = project.join("entities/thing/features.sql");
     std::fs::create_dir_all(features.parent().unwrap()).unwrap();
-    std::fs::write(features, "SELECT observation_id FROM observation\n").unwrap();
+    std::fs::write(features, "SELECT record_id FROM record\n").unwrap();
     let server = Server::serve(&project, dir.path(), 1);
     ingest(
         &server,
@@ -779,7 +766,7 @@ fn a_rule_that_sql_refuses_on_a_pair_is_shown_as_one_that_cannot_be_applied() {
         "  applying the `no_match` and `match` rules failed: Conversion Error: Could not convert string 'anvil' to INT32 when casting from source column code",
     );
     // The server answers the next call.
-    has(&shown(&server, &["show"]), "  identities    2");
+    has(&shown(&server, &["show"]), "  identities  2");
 }
 
 #[test]
@@ -807,8 +794,8 @@ fn a_mistake_or_a_server_that_does_not_answer_is_said_plainly() {
             "`first` is not a review item ID",
         ),
         (
-            &["show", "observation", "anvil"],
-            "`anvil` does not name an observation",
+            &["show", "record", "anvil"],
+            "`anvil` does not name a record",
         ),
         (
             &["show", "runs", "--source", "shop"],
@@ -847,8 +834,8 @@ fn a_mistake_or_a_server_that_does_not_answer_is_said_plainly() {
             "spool: there is no identity 00000000-0000-7000-8000-000000000000\n".to_owned(),
         ),
         (
-            &["show", "observation", "shop:9"],
-            "spool: there is no observation with key `9` from source `shop`\n".to_owned(),
+            &["show", "record", "shop:9"],
+            "spool: there is no record with key `9` from source `shop`\n".to_owned(),
         ),
         (
             &["show", "document", "00000000-0000-7000-8000-000000000000"],
@@ -941,7 +928,7 @@ fn the_defaults_are_those_of_spool_dev() {
     has(&text(&overview.stdout), "entity type `thing`");
     has(
         &text(&overview.stdout),
-        "  observations  0, 0 without an identity",
+        "  records     0, 0 without an identity",
     );
 }
 
@@ -1011,19 +998,15 @@ fn what_an_extractor_found_is_shown_and_explained() {
         "{documents}"
     );
 
-    let mentions = server.read("/v1/observations?source=notes");
-    let [first, second] = &mentions["observations"].as_array().unwrap()[..] else {
+    let mentions = server.read("/v1/records?source=notes");
+    let [first, second] = &mentions["records"].as_array().unwrap()[..] else {
         panic!("two mentions: {mentions}");
     };
-    let observation = shown(
-        &server,
-        &["show", "observation", first["id"].as_str().unwrap()],
-    );
-    has(&observation, "  extractor  words");
+    let record = shown(&server, &["show", "record", first["id"].as_str().unwrap()]);
+    has(&record, "  extractor  words");
     assert!(
-        observation.contains("\n  the [Anvil] rang\n")
-            || observation.contains("\n  an [Anvil], again\n"),
-        "{observation}"
+        record.contains("\n  the [Anvil] rang\n") || record.contains("\n  an [Anvil], again\n"),
+        "{record}"
     );
 
     // A mention is named by its document and its place in it.

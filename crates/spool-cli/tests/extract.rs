@@ -266,7 +266,7 @@ fn the_server_runs_the_projects_extractors_and_resolves_what_they_find() {
         ]),
     );
 
-    // The call is an extract run, and what it found is observations.
+    // The call is an extract run, and what it found is records.
     let run = server.call("/v1/extractions", json!({ "extractor": "words" }))["run"].clone();
     assert_eq!(run["kind"], "extract", "{run}");
     assert_eq!(run["status"], "succeeded", "{run}");
@@ -299,31 +299,31 @@ fn the_server_runs_the_projects_extractors_and_resolves_what_they_find() {
     assert_eq!(a["extractions"][0]["run"], run["run"]);
     assert_eq!(a["extractions"][0]["mentions"], 2);
     let id = a["id"].as_str().unwrap();
-    let found = server.read(&format!("/v1/observations?document={id}"))["observations"].clone();
+    let found = server.read(&format!("/v1/records?document={id}"))["records"].clone();
     let found = found.as_array().unwrap();
     assert_eq!(found.len(), 2);
     let anvil = found
         .iter()
-        .find(|observation| observation["payload"]["code"] == "anvil")
+        .find(|record| record["payload"]["code"] == "anvil")
         .unwrap();
     assert_eq!(anvil["source"], "notes");
     assert_eq!(anvil["key"], format!("{id}#thing:2-7"));
     assert_eq!(anvil["evidence"]["text"], "Anvil");
     assert_eq!(anvil["evidence"]["key"], "a");
     assert_eq!(anvil["evidence"]["extractor"], "words");
-    // The observations were stored by an ingest run of the extractor's.
+    // The records were stored by an ingest run of the extractor's.
     let stored = server.read(&format!("/v1/runs/{}", report["ingest_run"]))["run"].clone();
     assert_ne!(stored["run"], run["run"]);
     assert_eq!(stored["kind"], "ingest");
     assert_eq!(stored["extractor"]["name"], "words");
 
-    // Matching then treats them as any observation: the two hammers are one.
+    // Matching then treats them as any record: the two hammers are one.
     let resolved = server.call("/v1/runs", json!({ "entity_type": "thing" }))["run"].clone();
     assert_eq!(
         resolved["resolution"]["identities_created"], 2,
         "{resolved}"
     );
-    assert_eq!(resolved["resolution"]["observations_assigned"], 3);
+    assert_eq!(resolved["resolution"]["records_assigned"], 3);
 
     // Documents the extractor has read are not read again unless asked.
     let again = server.call("/v1/extractions", json!({ "extractor": "words" }))["run"].clone();
@@ -346,7 +346,7 @@ fn the_server_runs_the_projects_extractors_and_resolves_what_they_find() {
     assert_eq!(runs.as_array().unwrap().len(), 1, "{runs}");
     assert_eq!(runs[0]["extractor"]["name"], "broken");
     assert_eq!(
-        server.read("/v1/observations")["observations"]
+        server.read("/v1/records")["records"]
             .as_array()
             .unwrap()
             .len(),
@@ -426,7 +426,7 @@ fn bench_scores_extraction_apart_from_resolution() {
         "extraction (25 labelled mentions):",
         "  mentions      21 extracted, 18 of them labelled",
         "  spans         precision 0.8571  recall 0.7200  (F1 0.7826)",
-        "against the truth (18 observations):",
+        "against the truth (18 records):",
         // A mention is named by its document and its place in it.
         "news:02-brightwave-funding.txt[12-26], news:08-kestrel-bericht.txt[48-62]",
     ] {

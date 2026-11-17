@@ -1,11 +1,11 @@
 //! The in-memory state passes the conformance suite.
 
-use spool_core::{EntityType, MemoryState, ObservationId, conformance_tests};
+use spool_core::{EntityType, MemoryState, RecordId, conformance_tests};
 
-fn store(observations: &[(ObservationId, EntityType)]) -> MemoryState {
+fn store(records: &[(RecordId, EntityType)]) -> MemoryState {
     let mut state = MemoryState::new();
-    for (id, entity_type) in observations {
-        state.observe(*id, entity_type.clone());
+    for (id, entity_type) in records {
+        state.add_record(*id, entity_type.clone());
     }
     state
 }

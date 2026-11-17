@@ -1,9 +1,9 @@
-//! Rematching: a run that examines every observation again, and reports
+//! Rematching: a run that examines every record again, and reports
 //! where its strategy disagrees with the identities as they are.
 
 mod common;
 
-use common::{engine, identity, ingest, members, observation};
+use common::{engine, identity, ingest, members, record_id};
 use spool::core::{Actor, EntityType, Op, Policy};
 use spool::{
     Disposition, Engine, ResolveOptions, Rows, RunStatus, Scope, StrategyRef, SuggestedMerge,
@@ -39,7 +39,7 @@ fn workshop() -> Engine {
     );
     let report = engine.resolve(&ResolveOptions::default()).unwrap();
     assert_eq!(report.resolved[0].identities_created, 4);
-    // Only a rematch judges pairs of observations that both have an identity.
+    // Only a rematch judges pairs of records that both have an identity.
     assert_eq!(report.resolved[0].suggestions, None);
     engine
 }
@@ -71,7 +71,7 @@ fn a_rematch_suggests_and_does_not_change() {
     let split = engine
         .split(
             tongs,
-            &[observation(&engine, "shop", "6")],
+            &[record_id(&engine, "shop", "6")],
             false,
             None,
             reviewer(),
@@ -105,7 +105,7 @@ fn a_rematch_suggests_and_does_not_change() {
 
     // It examined every pair again and changed nothing.
     assert_eq!(resolved.candidates, 3);
-    assert_eq!(resolved.new_observations, 0);
+    assert_eq!(resolved.new_records, 0);
     assert_eq!(resolved.committed, None);
     assert_eq!(engine.head().unwrap(), head);
     assert_eq!(engine.snapshot().unwrap(), before);
@@ -145,7 +145,7 @@ fn a_rematch_does_not_suggest_what_a_reviewer_ruled_out() {
     engine
         .split(
             anvils,
-            &[observation(&engine, "shop", "2")],
+            &[record_id(&engine, "shop", "2")],
             true,
             None,
             reviewer(),
@@ -164,8 +164,8 @@ fn a_rematch_does_not_suggest_what_a_reviewer_ruled_out() {
                 },
                 Op::Constrain {
                     kind: spool::core::ConstraintKind::MustLink,
-                    a: observation(&engine, "shop", "3"),
-                    b: observation(&engine, "shop", "4"),
+                    a: record_id(&engine, "shop", "3"),
+                    b: record_id(&engine, "shop", "4"),
                 },
             ],
         )
@@ -176,16 +176,16 @@ fn a_rematch_does_not_suggest_what_a_reviewer_ruled_out() {
 }
 
 #[test]
-fn a_rematch_places_an_observation_that_has_no_identity() {
+fn a_rematch_places_an_record_that_has_no_identity() {
     let engine = workshop();
     let tongs = identity(&engine, "shop", "5").unwrap();
-    let loose = observation(&engine, "shop", "6");
+    let loose = record_id(&engine, "shop", "6");
     engine
         .author(
             reviewer(),
             None,
             vec![Op::Assign {
-                observation: loose,
+                record: loose,
                 from: Some(tongs),
                 to: None,
             }],
@@ -204,8 +204,8 @@ fn a_rematch_places_an_observation_that_has_no_identity() {
 
     // A rematch looks at everything.
     let report = engine.resolve(&rematch()).unwrap();
-    assert_eq!(report.resolved[0].new_observations, 1);
-    assert_eq!(report.resolved[0].observations_assigned, 1);
+    assert_eq!(report.resolved[0].new_records, 1);
+    assert_eq!(report.resolved[0].records_assigned, 1);
     assert_eq!(engine.identity_of(loose).unwrap(), Some(tongs));
     engine.verify().unwrap();
 }
@@ -216,8 +216,8 @@ fn a_caller_can_rematch_with_its_own_judgements() {
     let thing = EntityType::new("thing").unwrap();
     let anvils = identity(&engine, "shop", "1").unwrap();
     let (first, second) = (
-        observation(&engine, "shop", "1"),
-        observation(&engine, "shop", "2"),
+        record_id(&engine, "shop", "1"),
+        record_id(&engine, "shop", "2"),
     );
     let judgement = |verdict: &str| {
         Rows::from_text(
@@ -231,7 +231,7 @@ fn a_caller_can_rematch_with_its_own_judgements() {
         .unwrap()
     };
 
-    // In a run of what is new, a pair of observations that both have an
+    // In a run of what is new, a pair of records that both have an
     // identity is not the run's to judge.
     let run = engine
         .begin_run(
@@ -242,7 +242,7 @@ fn a_caller_can_rematch_with_its_own_judgements() {
     let error = engine
         .submit_judgements(run, judgement("no_match"))
         .unwrap_err();
-    assert!(error.to_string().contains("neither observation is new"));
+    assert!(error.to_string().contains("neither record is new"));
     engine.cancel_run(run).unwrap();
 
     let run = engine
@@ -306,5 +306,5 @@ fn a_strategy_the_project_does_not_have_starts_nothing() {
     let report = engine
         .resolve(&ResolveOptions::with_strategy("rules"))
         .unwrap();
-    assert_eq!(report.resolved[0].observations_assigned, 1);
+    assert_eq!(report.resolved[0].records_assigned, 1);
 }

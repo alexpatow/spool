@@ -5,7 +5,7 @@
 // each as a process of its own, hands it a directory of Parquet files, and
 // reads what it leaves there. This module hides the files.
 //
-// A strategy says which pairs of observations are the same thing:
+// A strategy says which pairs of records are the same thing:
 //
 //   import { strategy } from "spool-strategy";
 //
@@ -32,7 +32,7 @@
 //     );
 //   });
 //
-// Each mention becomes an observation of its entity type, whose source is the
+// Each mention becomes a record of its entity type, whose source is the
 // document's. An extractor says what a document mentions. It cannot say that
 // two mentions are the same thing: the type's rules and strategies decide
 // that.
@@ -55,7 +55,7 @@ export const PROTOCOL = 1;
 
 export type Verdict = "match" | "no_match" | "unsure";
 
-/** What a strategy says about two observations. */
+/** What a strategy says about two records. */
 export interface Judgement {
   left_id: string;
   right_id: string;
@@ -82,14 +82,14 @@ export interface CandidatePair extends Row {
 }
 
 /**
- * One observation of the entity type with its feature columns. A strategy
+ * One record of the entity type with its feature columns. A strategy
  * that finds its own pairs starts here.
  */
 export interface FeatureRow extends Row {
-  observation_id: string;
-  /** Whether the run is to place the observation. */
+  record_id: string;
+  /** Whether the run is to place the record. */
   is_new: boolean;
-  /** `null` for an observation that has no identity. */
+  /** `null` for a record that has no identity. */
   identity_id: string | null;
 }
 
@@ -118,7 +118,7 @@ export class Task {
   /** The strategy's name: the file's name without `.ts`. */
   readonly strategy: string;
   /**
-   * True when the run examines every observation again, not only those that
+   * True when the run examines every record again, not only those that
    * are new.
    */
   readonly rematch: boolean;
@@ -152,7 +152,7 @@ export class Task {
     return this.read("candidates") as Promise<CandidatePair[]>;
   }
 
-  /** Every observation of the entity type with its features. */
+  /** Every record of the entity type with its features. */
   features(): Promise<FeatureRow[]> {
     return this.read("features") as Promise<FeatureRow[]>;
   }

@@ -6,11 +6,11 @@ mod common;
 
 use common::*;
 use spool::core::{
-    Actor, Changeset, Committed, ConstraintKind, IdGenerator, IdentityId, ObservationId, Op,
-    Reason, ReviewItem, SeededIds, Seq,
+    Actor, Changeset, Committed, ConstraintKind, IdGenerator, IdentityId, Op, Reason, RecordId,
+    ReviewItem, SeededIds, Seq,
 };
 use spool::{
-    ConstraintFilter, Engine, Error, ObservationFilter, Options, ResolveOptions, ResolveReport,
+    ConstraintFilter, Engine, Error, Options, RecordFilter, ResolveOptions, ResolveReport,
     ReviewFilter, ReviewKind, ReviewStatus,
 };
 
@@ -34,7 +34,7 @@ fn merge(from: IdentityId, into: IdentityId) -> Op {
     Op::Merge { from, into }
 }
 
-fn constrain(kind: ConstraintKind, a: ObservationId, b: ObservationId) -> Op {
+fn constrain(kind: ConstraintKind, a: RecordId, b: RecordId) -> Op {
     Op::Constrain { kind, a, b }
 }
 
@@ -94,13 +94,13 @@ fn a_merge_moves_the_members_and_the_merged_id_still_answers() {
 
     // Nothing joins a merged identity.
     ingest(&engine, "depot", &[("9", Some("tongs"), None)]);
-    let tongs = observation(&engine, "depot", "9");
+    let tongs = record_id(&engine, "depot", "9");
     let error = engine
         .author(
             reviewer(),
             None,
             vec![Op::Assign {
-                observation: tongs,
+                record: tongs,
                 from: None,
                 to: Some(anvil),
             }],
@@ -116,9 +116,9 @@ fn a_merge_moves_the_members_and_the_merged_id_still_answers() {
 }
 
 #[test]
-fn merging_the_identities_of_a_review_item_lets_the_next_run_place_its_observation() {
+fn merging_the_identities_of_a_review_item_lets_the_next_run_place_its_record() {
     let engine = engine();
-    // An anvil known by name, a thing known by code, and an observation that
+    // An anvil known by name, a thing known by code, and a record that
     // has the name of one and the code of the other.
     ingest(
         &engine,
@@ -138,10 +138,10 @@ fn merging_the_identities_of_a_review_item_lets_the_next_run_place_its_observati
     ));
 
     // The reviewer decides they are one thing. The merge is the whole
-    // decision: the observation is placed by the run that looks at it next.
+    // decision: the record is placed by the run that looks at it next.
     author(&engine, vec![merge(by_name, by_code)]);
     let report = resolve(&engine);
-    assert_eq!(report.resolved[0].observations_assigned, 1);
+    assert_eq!(report.resolved[0].records_assigned, 1);
     assert_eq!(
         members(&engine, by_code),
         set(&["shop:1", "shop:2", "depot:9"])
@@ -213,7 +213,7 @@ fn undoing_a_merge_brings_the_identity_back_with_the_members_it_had() {
         [
             Op::Reinstate { identity: anvil },
             Op::Assign {
-                observation: observation(&engine, "shop", "1"),
+                record: record_id(&engine, "shop", "1"),
                 from: Some(hammer),
                 to: Some(anvil)
             }
@@ -304,7 +304,7 @@ fn three_anvils(engine: &Engine) -> IdentityId {
 fn a_split_gives_the_smaller_side_a_new_identity_and_keeps_the_sides_apart() {
     let engine = engine();
     let anvils = three_anvils(&engine);
-    let one = observation(&engine, "shop", "1");
+    let one = record_id(&engine, "shop", "1");
 
     let split = engine
         .split(
@@ -350,7 +350,7 @@ fn a_split_gives_the_smaller_side_a_new_identity_and_keeps_the_sides_apart() {
     // left for review.
     ingest(&engine, "depot", &[("9", Some("anvil"), None)]);
     let report = resolve(&engine);
-    assert_eq!(report.resolved[0].observations_assigned, 0);
+    assert_eq!(report.resolved[0].records_assigned, 0);
     assert!(matches!(
         report.resolved[0].review[..],
         [ReviewItem::PossibleMerge { .. }]
@@ -363,15 +363,15 @@ fn the_larger_side_of_a_split_keeps_the_id_whichever_side_was_named() {
     let engine = engine();
     let anvils = three_anvils(&engine);
     let (two, three) = (
-        observation(&engine, "shop", "2"),
-        observation(&engine, "shop", "3"),
+        record_id(&engine, "shop", "2"),
+        record_id(&engine, "shop", "3"),
     );
 
     let split = engine
         .split(anvils, &[three, two], false, None, reviewer(), None)
         .unwrap();
 
-    assert_eq!(split.moved, [observation(&engine, "shop", "1")]);
+    assert_eq!(split.moved, [record_id(&engine, "shop", "1")]);
     assert_eq!(members(&engine, anvils), set(&["shop:2", "shop:3"]));
     assert_eq!(members(&engine, split.identity), set(&["shop:1"]));
     // Nothing was asked to keep them apart.
@@ -391,20 +391,18 @@ fn a_split_that_cannot_be_made_says_why() {
     let hammer = identity(&engine, "depot", "9").unwrap();
     let all: Vec<_> = ["1", "2", "3"]
         .iter()
-        .map(|key| observation(&engine, "shop", key))
+        .map(|key| record_id(&engine, "shop", key))
         .collect();
-    let refused = |identity, observations: &[ObservationId]| -> String {
-        match engine.split(identity, observations, true, None, reviewer(), None) {
+    let refused = |identity, records: &[RecordId]| -> String {
+        match engine.split(identity, records, true, None, reviewer(), None) {
             Err(error @ Error::Split { .. }) => error.to_string(),
             other => panic!("expected the split to be refused: {other:?}"),
         }
     };
 
     assert!(refused(anvils, &all).contains("every member was named"));
-    assert!(refused(anvils, &[]).contains("no observations were named"));
-    assert!(
-        refused(anvils, &[observation(&engine, "depot", "9")]).contains("does not belong to it")
-    );
+    assert!(refused(anvils, &[]).contains("no records were named"));
+    assert!(refused(anvils, &[record_id(&engine, "depot", "9")]).contains("does not belong to it"));
     author(&engine, vec![merge(hammer, anvils)]);
     assert!(refused(hammer, &all[..1]).contains("was merged into"));
     let unknown = engine.mint_ids(1, 0).identities[0];
@@ -419,8 +417,8 @@ fn a_split_based_on_a_log_position_is_refused_when_the_members_changed_after_it(
     let engine = engine();
     let anvils = three_anvils(&engine);
     let (two, three) = (
-        observation(&engine, "shop", "2"),
-        observation(&engine, "shop", "3"),
+        record_id(&engine, "shop", "2"),
+        record_id(&engine, "shop", "3"),
     );
     // Whoever asks for the split read three members: the two they name are
     // the larger side, and would keep the ID.
@@ -473,21 +471,21 @@ fn a_split_based_on_a_log_position_is_made_when_only_other_identities_changed_af
     let split = engine
         .split(
             anvils,
-            &[observation(&engine, "shop", "1")],
+            &[record_id(&engine, "shop", "1")],
             false,
             Some(read),
             reviewer(),
             None,
         )
         .unwrap();
-    assert_eq!(split.moved, [observation(&engine, "shop", "1")]);
+    assert_eq!(split.moved, [record_id(&engine, "shop", "1")]);
     engine.verify().unwrap();
 }
 
 // Constraints and the runs that follow
 
 #[test]
-fn a_cannot_link_keeps_a_new_observation_out_of_the_identity_the_rules_chose() {
+fn a_cannot_link_keeps_a_new_record_out_of_the_identity_the_rules_chose() {
     let engine = engine();
     ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
     resolve(&engine);
@@ -500,8 +498,8 @@ fn a_cannot_link_keeps_a_new_observation_out_of_the_identity_the_rules_chose() {
         &engine,
         vec![constrain(
             ConstraintKind::CannotLink,
-            observation(&engine, "depot", "9"),
-            observation(&engine, "shop", "1"),
+            record_id(&engine, "depot", "9"),
+            record_id(&engine, "shop", "1"),
         )],
     );
 
@@ -529,14 +527,14 @@ fn a_cannot_link_against_one_member_of_a_matched_identity_is_left_for_review() {
         &engine,
         vec![constrain(
             ConstraintKind::CannotLink,
-            observation(&engine, "shop", "1"),
-            observation(&engine, "depot", "9"),
+            record_id(&engine, "shop", "1"),
+            record_id(&engine, "depot", "9"),
         )],
     );
 
     // It matches the other member, so the evidence contradicts itself.
     let report = resolve(&engine);
-    assert_eq!(report.resolved[0].observations_assigned, 0);
+    assert_eq!(report.resolved[0].records_assigned, 0);
     let items = engine.review_items(&ReviewFilter::open()).unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].kind, ReviewKind::Conflict);
@@ -545,24 +543,24 @@ fn a_cannot_link_against_one_member_of_a_matched_identity_is_left_for_review() {
 }
 
 #[test]
-fn a_must_link_places_a_new_observation_the_rules_would_not() {
+fn a_must_link_places_a_new_record_the_rules_would_not() {
     let engine = engine();
     let (anvil, hammer) = anvil_and_hammer(&engine);
     // Nothing about these tongs resembles the anvil.
     ingest(&engine, "depot", &[("9", Some("tongs"), None)]);
-    let tongs = observation(&engine, "depot", "9");
+    let tongs = record_id(&engine, "depot", "9");
     author(
         &engine,
         vec![constrain(
             ConstraintKind::MustLink,
             tongs,
-            observation(&engine, "shop", "1"),
+            record_id(&engine, "shop", "1"),
         )],
     );
 
     let report = resolve(&engine);
     assert_eq!(report.resolved[0].candidates, 0);
-    assert_eq!(report.resolved[0].observations_assigned, 1);
+    assert_eq!(report.resolved[0].records_assigned, 1);
     assert_eq!(identity(&engine, "depot", "9"), Some(anvil));
 
     // From then on the constraint holds the two together.
@@ -571,7 +569,7 @@ fn a_must_link_places_a_new_observation_the_rules_would_not() {
             reviewer(),
             None,
             vec![Op::Assign {
-                observation: tongs,
+                record: tongs,
                 from: Some(anvil),
                 to: Some(hammer),
             }],
@@ -591,10 +589,10 @@ fn a_must_link_places_a_new_observation_the_rules_would_not() {
             Op::Unconstrain {
                 kind: ConstraintKind::MustLink,
                 a: tongs,
-                b: observation(&engine, "shop", "1"),
+                b: record_id(&engine, "shop", "1"),
             },
             Op::Assign {
-                observation: tongs,
+                record: tongs,
                 from: Some(anvil),
                 to: Some(hammer),
             },
@@ -606,7 +604,7 @@ fn a_must_link_places_a_new_observation_the_rules_would_not() {
     );
     let removed = engine
         .constraints(&ConstraintFilter {
-            observation: Some(tongs),
+            record: Some(tongs),
             include_removed: true,
             ..Default::default()
         })
@@ -624,7 +622,7 @@ fn a_changed_row_supersedes_the_one_before_and_keeps_its_identity() {
     ingest(&engine, "shop", &[("1", Some("anvil"), Some("K1"))]);
     resolve(&engine);
     let anvil = identity(&engine, "shop", "1").unwrap();
-    let first = observation(&engine, "shop", "1");
+    let first = record_id(&engine, "shop", "1");
 
     // The shop renames the row and gives it another code. No rule connects
     // the new version with the old one: the row's key does.
@@ -634,19 +632,17 @@ fn a_changed_row_supersedes_the_one_before_and_keeps_its_identity() {
     assert_eq!(report.resolved[0].candidates, 0);
     assert_eq!(report.resolved[0].identities_created, 0);
 
-    let versions = engine
-        .observations(&ObservationFilter::keyed("shop", "1"))
-        .unwrap();
+    let versions = engine.records(&RecordFilter::keyed("shop", "1")).unwrap();
     assert_eq!(versions.len(), 2);
     let second = versions.iter().find(|version| version.id != first).unwrap();
     assert_eq!(second.supersedes, Some(first));
     assert_eq!(second.identity, Some(anvil));
-    let old = engine.observation(first).unwrap().unwrap();
+    let old = engine.record(first).unwrap().unwrap();
     assert_eq!((old.supersedes, old.superseded_by), (None, Some(second.id)));
     // Both versions are evidence about the identity, and both stay.
     assert_eq!(engine.identity(anvil).unwrap().members.len(), 2);
 
-    // The same content again is the same observation, and nothing new.
+    // The same content again is the same record, and nothing new.
     let report = ingest(&engine, "shop", &[("1", Some("hammer"), Some("K2"))]);
     assert_eq!((report.inserted, report.superseded), (0, 0));
     engine.verify().unwrap();
@@ -673,8 +669,8 @@ fn versions_sent_in_one_call_follow_each_other_in_row_order() {
     let chain = select(
         &engine,
         "SELECT o.payload->>'name', p.payload->>'name'
-         FROM spool.observation o
-         LEFT JOIN spool.observation p ON p.observation_id = o.supersedes
+         FROM spool.record o
+         LEFT JOIN spool.record p ON p.record_id = o.supersedes
          ORDER BY o.source_id, o.source_key, o.payload->>'name'",
     );
     let chain: Vec<(&str, Option<&str>)> = chain
@@ -694,7 +690,7 @@ fn versions_sent_in_one_call_follow_each_other_in_row_order() {
 
     // All three versions were new to the run, and they are one thing.
     resolve(&engine);
-    let versions = observations(&engine, "shop", "1");
+    let versions = records(&engine, "shop", "1");
     let identities = engine.identities_of(&versions).unwrap();
     assert!(identities[0].is_some());
     assert!(identities.iter().all(|found| *found == identities[0]));
@@ -719,7 +715,7 @@ fn a_new_version_that_matches_another_identity_is_left_for_review() {
     // rules say it is the hammer, and deciding would merge the two.
     ingest(&engine, "shop", &[("1", Some("hammer"), None)]);
     let report = resolve(&engine);
-    assert_eq!(report.resolved[0].observations_assigned, 0);
+    assert_eq!(report.resolved[0].records_assigned, 0);
     let items = engine.review_items(&ReviewFilter::open()).unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].kind, ReviewKind::PossibleMerge);
@@ -741,7 +737,7 @@ fn a_dismissed_review_item_is_closed_and_not_examined_again() {
     resolve(&engine);
     ingest(&engine, "depot", &[("9", Some("anvil"), Some("K7"))]);
     resolve(&engine);
-    let waiting = observation(&engine, "depot", "9");
+    let waiting = record_id(&engine, "depot", "9");
     let item = engine
         .review_items(&ReviewFilter::open())
         .unwrap()
@@ -757,7 +753,7 @@ fn a_dismissed_review_item_is_closed_and_not_examined_again() {
     assert_eq!(decision.by, reviewer());
     assert_eq!(decision.reason.as_deref(), Some("a test record"));
     assert!(decision.at.starts_with("2026-01-01T"));
-    // Nothing was committed: the observation has no identity, by decision.
+    // Nothing was committed: the record has no identity, by decision.
     assert_eq!(engine.head().unwrap(), head);
     assert_eq!(engine.identity_of(waiting).unwrap(), None);
     assert_eq!(engine.review_items(&ReviewFilter::open()).unwrap(), []);
@@ -813,7 +809,7 @@ fn a_dismissed_review_item_stays_closed_when_its_run_never_committed() {
     // The next run places the new record and does not ask again about the
     // one the reviewer dismissed.
     let report = resolve(&engine);
-    assert_eq!(report.resolved[0].new_observations, 1);
+    assert_eq!(report.resolved[0].new_records, 1);
     assert_eq!(report.resolved[0].review, []);
     assert!(identity(&engine, "depot", "10").is_some());
     assert_eq!(identity(&engine, "depot", "9"), None);
@@ -849,13 +845,13 @@ fn every_kind_of_change_survives_a_rebuild_and_a_reopen() {
         assert_eq!(engine.current_id(hammer).unwrap(), anvils);
         engine.undo(merged, reviewer(), None, true).unwrap();
         assert_eq!(engine.current_id(hammer).unwrap(), tongs);
-        let one = observation(&engine, "shop", "1");
+        let one = record_id(&engine, "shop", "1");
         engine
             .split(anvils, &[one], true, None, reviewer(), None)
             .unwrap();
         let pair = (
-            observation(&engine, "depot", "8"),
-            observation(&engine, "depot", "9"),
+            record_id(&engine, "depot", "8"),
+            record_id(&engine, "depot", "9"),
         );
         author(
             &engine,

@@ -40,7 +40,7 @@ fn a_draft_left_for_review_is_stored_and_approving_it_commits_it() {
     let id = resolution.draft.expect("a draft was stored");
     assert_eq!(resolution.committed, None);
     assert_eq!(resolution.identities_created, 2);
-    assert_eq!(resolution.observations_assigned, 3);
+    assert_eq!(resolution.records_assigned, 3);
 
     // Nothing is committed, and the run waits on its draft.
     assert_eq!(engine.head().unwrap().0, 0);
@@ -61,7 +61,7 @@ fn a_draft_left_for_review_is_stored_and_approving_it_commits_it() {
         (
             summary.operations,
             summary.identities_created,
-            summary.observations_assigned
+            summary.records_assigned
         ),
         (5, 2, 3)
     );
@@ -128,7 +128,7 @@ fn an_approved_draft_has_the_hash_of_a_direct_commit() {
 }
 
 #[test]
-fn a_draft_nobody_commits_does_not_strand_its_observations() {
+fn a_draft_nobody_commits_does_not_strand_its_records() {
     let engine = engine();
     two_anvils_and_a_hammer(&engine);
     let abandoned = engine.resolve(&leave_for_review()).unwrap().resolved[0]
@@ -139,8 +139,8 @@ fn a_draft_nobody_commits_does_not_strand_its_observations() {
     ingest(&engine, "depot", &[("9", Some("anvil"), None)]);
     let report = engine.resolve(&ResolveOptions::default()).unwrap();
     let resolution = &report.resolved[0];
-    assert_eq!(resolution.new_observations, 4);
-    assert_eq!(resolution.observations_assigned, 4);
+    assert_eq!(resolution.new_records, 4);
+    assert_eq!(resolution.records_assigned, 4);
     assert!(resolution.committed.is_some());
     assert_eq!(
         identity(&engine, "shop", "1"),
@@ -150,9 +150,9 @@ fn a_draft_nobody_commits_does_not_strand_its_observations() {
     assert_eq!(
         count(
             &engine,
-            "SELECT count(*) FROM spool.observation o
+            "SELECT count(*) FROM spool.record o
              WHERE NOT EXISTS (SELECT 1 FROM spool.membership_current m
-                               WHERE m.observation_id = o.observation_id)"
+                               WHERE m.record_id = o.record_id)"
         ),
         0
     );
@@ -185,7 +185,7 @@ fn a_type_has_at_most_one_open_draft() {
     let second = &second.resolved[0];
 
     // The second draft covers everything the first did.
-    assert_eq!(second.new_observations, 4);
+    assert_eq!(second.new_records, 4);
     let open = engine.drafts(&DraftFilter::open()).unwrap();
     assert_eq!(open.len(), 1);
     assert_eq!(Some(open[0].id), second.draft);
@@ -206,7 +206,7 @@ fn a_type_has_at_most_one_open_draft() {
 }
 
 #[test]
-fn a_rejected_draft_leaves_its_observations_for_the_next_run() {
+fn a_rejected_draft_leaves_its_records_for_the_next_run() {
     let engine = engine();
     two_anvils_and_a_hammer(&engine);
     let first = engine.resolve(&leave_for_review()).unwrap();
@@ -227,8 +227,8 @@ fn a_rejected_draft_leaves_its_observations_for_the_next_run() {
     engine.verify().unwrap();
 
     let again = engine.resolve(&ResolveOptions::default()).unwrap();
-    assert_eq!(again.resolved[0].new_observations, 3);
-    assert_eq!(again.resolved[0].observations_assigned, 3);
+    assert_eq!(again.resolved[0].new_records, 3);
+    assert_eq!(again.resolved[0].records_assigned, 3);
     engine.verify().unwrap();
 }
 
@@ -239,8 +239,8 @@ fn a_stale_draft_stays_open_and_names_the_operation() {
     let report = engine.resolve(&leave_for_review()).unwrap();
     let draft = report.resolved[0].draft.unwrap();
 
-    // While the draft waits, someone places one of its observations.
-    let hammer = observation(&engine, "shop", "3");
+    // While the draft waits, someone places one of its records.
+    let hammer = record_id(&engine, "shop", "3");
     let mut ids = SeededIds::new(99);
     let elsewhere = ids.identity_id();
     engine
@@ -256,7 +256,7 @@ fn a_stale_draft_stays_open_and_names_the_operation() {
                     entity_type: EntityType::new("thing").unwrap(),
                 },
                 Op::Assign {
-                    observation: hammer,
+                    record: hammer,
                     from: None,
                     to: Some(elsewhere),
                 },
@@ -270,7 +270,7 @@ fn a_stale_draft_stays_open_and_names_the_operation() {
     };
     let ops = engine.draft(draft).unwrap().changeset.ops;
     assert!(rejections.iter().any(|rejection| {
-        matches!(&rejection.reason, Reason::StaleAssignment { observation, .. } if *observation == hammer)
+        matches!(&rejection.reason, Reason::StaleAssignment { record, .. } if *record == hammer)
             && rejection.op_index.map(|index| &ops[index]) == rejection.op.as_ref()
     }));
 
@@ -282,7 +282,7 @@ fn a_stale_draft_stays_open_and_names_the_operation() {
 
     // The next run places what is left.
     let again = engine.resolve(&ResolveOptions::default()).unwrap();
-    assert_eq!(again.resolved[0].new_observations, 2);
+    assert_eq!(again.resolved[0].new_records, 2);
     assert_eq!(
         engine.draft(draft).unwrap().draft.status,
         DraftStatus::Superseded
@@ -368,7 +368,7 @@ fn a_run_can_be_reconciled_and_committed_in_one_call() {
     let report = engine
         .reconcile_with(run, &Policy::default(), Disposition::Commit)
         .unwrap();
-    // No judgements, so every observation stands alone.
+    // No judgements, so every record stands alone.
     assert_eq!(report.identities_created, 3);
     assert_eq!(report.draft, None);
     assert!(report.committed.is_some());

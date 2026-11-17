@@ -1,7 +1,7 @@
 //! Resolution quality, measured on committed state against a truth relation
-//! of `(observation_id, true_entity)`.
+//! of `(record_id, true_entity)`.
 //!
-//! Only observations named in the truth relation are measured. An observation
+//! Only records named in the truth relation are measured. A record
 //! without an identity counts as a group of its own, so abstaining costs
 //! recall and never precision.
 
@@ -16,12 +16,12 @@ pub(crate) const TRUTH: &str = "spool_truth";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Metrics {
-    /// Observations that have a true entity.
-    pub observations: u64,
+    /// Records that have a true entity.
+    pub records: u64,
     pub true_entities: u64,
-    /// Identities that hold at least one of those observations.
+    /// Identities that hold at least one of those records.
     pub identities: u64,
-    /// Observations left without an identity, and their share of the total.
+    /// Records left without an identity, and their share of the total.
     pub unassigned: u64,
     pub unassigned_share: Option<f64>,
     pub pairs: PairMetrics,
@@ -32,7 +32,7 @@ pub struct Metrics {
     pub false_splits: u64,
 }
 
-/// Pairs of observations placed in the same identity, against pairs that
+/// Pairs of records placed in the same identity, against pairs that
 /// share a true entity. A ratio is `None` when its denominator is zero:
 /// precision when no pair was predicted, recall when the truth has no pair,
 /// and F1, which is `2 * true_positives / (predicted + actual)`, only when
@@ -83,20 +83,20 @@ impl ExtractionMetrics {
     }
 }
 
-/// B-cubed precision and recall: for each observation, the share of its
+/// B-cubed precision and recall: for each record, the share of its
 /// identity that shares its true entity, and the share of its true entity
-/// that shares its identity, averaged over observations.
+/// that shares its identity, averaged over records.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BCubed {
     pub precision: Option<f64>,
     pub recall: Option<f64>,
 }
 
-/// How many observations kept their identity between two log positions.
+/// How many records kept their identity between two log positions.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct IdStability {
-    /// Observations that had an identity at the earlier position.
-    pub observations: u64,
+    /// Records that had an identity at the earlier position.
+    pub records: u64,
     /// Those whose identity ID is the same at the later position.
     pub unchanged: u64,
     /// Those whose identity is the same once merged IDs are followed to the
@@ -111,18 +111,18 @@ pub struct IdStability {
 /// what was committed after the later one.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Churn {
-    /// Observations ingested between the two positions.
-    pub new_observations: u64,
+    /// Records ingested between the two positions.
+    pub new_records: u64,
     pub identities_created: u64,
     /// Identities that are merged at the later position by a merge made after
     /// the earlier one. One that was merged and reinstated in between is not
     /// counted.
     pub identities_merged: u64,
-    /// Observations that had an identity at the earlier position and have
+    /// Records that had an identity at the earlier position and have
     /// another, or none, at the later one. A merge reassigns the members it
     /// moves.
-    pub observations_reassigned: u64,
-    /// The three counts per thousand new observations. `None` when nothing
+    pub records_reassigned: u64,
+    /// The three counts per thousand new records. `None` when nothing
     /// was ingested.
     pub created_per_thousand: Option<f64>,
     pub merged_per_thousand: Option<f64>,
@@ -140,7 +140,7 @@ pub struct SplitRecovery {
 
 /// Whether the constraints a scenario recorded are still honoured. A
 /// constraint is honoured while it is in force and state agrees with it: the
-/// two observations of a `must_link` share an identity, and those of a
+/// two records of a `must_link` share an identity, and those of a
 /// `cannot_link` do not.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct OverridePersistence {
@@ -151,15 +151,15 @@ pub struct OverridePersistence {
 
 /// How far the result depends on the order the batches arrived in: the
 /// steps as written against the same steps in reverse, without the
-/// scenario's corrections. An observation without an identity is a group of
+/// scenario's corrections. A record without an identity is a group of
 /// its own.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct OrderSensitivity {
-    pub observations: u64,
-    /// Observations grouped with the same observations in both orders.
+    pub records: u64,
+    /// Records grouped with the same records in both orders.
     pub same_group: u64,
     pub agreement: Option<f64>,
-    /// Pairs of observations that share an identity in both orders, and in
+    /// Pairs of records that share an identity in both orders, and in
     /// at least one.
     pub pairs_in_both: u64,
     pub pairs_in_either: u64,
@@ -168,14 +168,14 @@ pub struct OrderSensitivity {
 
 /// What matching everything again with a strategy did to the identities
 /// that existed. This is the cost of changing strategy: how many
-/// observations kept their identity ID, and how much of what the strategy
+/// records kept their identity ID, and how much of what the strategy
 /// would change was only suggested.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct UpgradeStability {
-    /// The strategy that judged every observation again.
+    /// The strategy that judged every record again.
     pub strategy: String,
-    /// Observations that had an identity before the rematch.
-    pub observations: u64,
+    /// Records that had an identity before the rematch.
+    pub records: u64,
     /// Those whose identity ID is the same after it.
     pub retained: u64,
     pub share: Option<f64>,
@@ -184,7 +184,7 @@ pub struct UpgradeStability {
     pub suggested_merges: u64,
     pub suggested_splits: u64,
     /// Changes to existing identities that were committed during the step:
-    /// identities merged and observations moved.
+    /// identities merged and records moved.
     pub applied_changes: u64,
 }
 
@@ -198,12 +198,12 @@ impl UpgradeStability {
     ) -> Self {
         Self {
             strategy: strategy.to_owned(),
-            observations: stability.observations,
+            records: stability.records,
             retained: stability.unchanged,
             share: stability.strict,
             suggested_merges,
             suggested_splits,
-            applied_changes: churn.identities_merged + churn.observations_reassigned,
+            applied_changes: churn.identities_merged + churn.records_reassigned,
         }
     }
 }
@@ -229,15 +229,15 @@ impl OverridePersistence {
 }
 
 impl OrderSensitivity {
-    /// Compares two groupings of the same observations, each a list of
-    /// `(observation, group)`.
+    /// Compares two groupings of the same records, each a list of
+    /// `(record, group)`.
     pub(crate) fn between(first: &[(String, String)], second: &[(String, String)]) -> Self {
         use std::collections::{BTreeSet, HashMap};
 
         fn groups(partition: &[(String, String)]) -> HashMap<&str, BTreeSet<&str>> {
             let mut groups: HashMap<&str, BTreeSet<&str>> = HashMap::new();
-            for (observation, group) in partition {
-                groups.entry(group).or_default().insert(observation);
+            for (record, group) in partition {
+                groups.entry(group).or_default().insert(record);
             }
             groups
         }
@@ -246,13 +246,13 @@ impl OrderSensitivity {
         let (first_groups, second_groups) = (groups(first), groups(second));
         let second_of: HashMap<&str, &str> = second
             .iter()
-            .map(|(observation, group)| (observation.as_str(), group.as_str()))
+            .map(|(record, group)| (record.as_str(), group.as_str()))
             .collect();
 
         let mut same_group = 0;
         let mut cells: HashMap<(&str, &str), usize> = HashMap::new();
-        for (observation, group) in first {
-            let Some(other) = second_of.get(observation.as_str()) else {
+        for (record, group) in first {
+            let Some(other) = second_of.get(record.as_str()) else {
                 continue;
             };
             *cells.entry((group, other)).or_default() += 1;
@@ -264,11 +264,11 @@ impl OrderSensitivity {
         let in_first: u64 = first_groups.values().map(|group| pairs(group.len())).sum();
         let in_second: u64 = second_groups.values().map(|group| pairs(group.len())).sum();
         let in_either = in_first + in_second - in_both;
-        let observations = first.len() as u64;
+        let records = first.len() as u64;
         Self {
-            observations,
+            records,
             same_group,
-            agreement: ratio(same_group as f64, observations as f64),
+            agreement: ratio(same_group as f64, records as f64),
             pairs_in_both: in_both,
             pairs_in_either: in_either,
             pair_agreement: ratio(in_both as f64, in_either as f64),
@@ -286,9 +286,9 @@ pub(crate) fn score(conn: &Connection) -> Result<Metrics> {
         "WITH labelled AS (
            SELECT t.true_entity,
                   m.identity_id IS NULL AS unassigned,
-                  coalesce(m.identity_id::VARCHAR, 'unassigned:' || t.observation_id::VARCHAR) AS cluster
+                  coalesce(m.identity_id::VARCHAR, 'unassigned:' || t.record_id::VARCHAR) AS cluster
            FROM {TRUTH} t
-           LEFT JOIN spool.membership m ON m.observation_id = t.observation_id AND m.to_seq IS NULL
+           LEFT JOIN spool.membership m ON m.record_id = t.record_id AND m.to_seq IS NULL
          ),
          cell AS (
            SELECT cluster, true_entity, any_value(unassigned) AS unassigned, count(*) AS n
@@ -341,18 +341,18 @@ pub(crate) fn score(conn: &Connection) -> Result<Metrics> {
     );
     conn.query_row(&sql, [], |row| {
         let count = |index| row.get::<_, i64>(index).map(|value| value as u64);
-        let observations = count(0)?;
+        let records = count(0)?;
         let unassigned = count(3)?;
         let (true_positives, predicted, actual) = (count(4)?, count(5)?, count(6)?);
 
-        let total = observations as f64;
+        let total = records as f64;
         let precision = ratio(true_positives as f64, predicted as f64);
         let recall = ratio(true_positives as f64, actual as f64);
         // From the counts, not from precision and recall: when no predicted
         // pair is right both of those are zero, and F1 is zero, not undefined.
         let f1 = ratio(2.0 * true_positives as f64, (predicted + actual) as f64);
         Ok(Metrics {
-            observations,
+            records,
             true_entities: count(1)?,
             identities: count(2)?,
             unassigned,
@@ -405,7 +405,7 @@ fn merged_at(seq: Seq) -> String {
 pub(crate) fn id_stability(conn: &Connection, before: Seq, after: Seq) -> Result<IdStability> {
     let at = |seq: Seq| {
         format!(
-            "SELECT m.observation_id, m.identity_id, coalesce(s.survivor, m.identity_id) AS survivor
+            "SELECT m.record_id, m.identity_id, coalesce(s.survivor, m.identity_id) AS survivor
              FROM spool.membership m
              LEFT JOIN survivor s ON s.identity_id = m.identity_id
              WHERE m.from_seq <= {seq} AND (m.to_seq IS NULL OR m.to_seq > {seq})"
@@ -426,36 +426,31 @@ pub(crate) fn id_stability(conn: &Connection, before: Seq, after: Seq) -> Result
          SELECT count(*)::BIGINT,
                 count(*) FILTER (WHERE a.identity_id = b.identity_id)::BIGINT,
                 count(*) FILTER (WHERE a.survivor = b.survivor)::BIGINT
-         FROM ({}) b LEFT JOIN ({}) a ON a.observation_id = b.observation_id",
+         FROM ({}) b LEFT JOIN ({}) a ON a.record_id = b.record_id",
         merged_at(after),
         at(before),
         at(after)
     );
     conn.query_row(&sql, [], |row| {
-        let observations = row.get::<_, i64>(0)? as u64;
+        let records = row.get::<_, i64>(0)? as u64;
         let unchanged = row.get::<_, i64>(1)? as u64;
         let following = row.get::<_, i64>(2)? as u64;
         Ok(IdStability {
-            observations,
+            records,
             unchanged,
             unchanged_following_redirects: following,
-            strict: ratio(unchanged as f64, observations as f64),
-            following_redirects: ratio(following as f64, observations as f64),
+            strict: ratio(unchanged as f64, records as f64),
+            following_redirects: ratio(following as f64, records as f64),
         })
     })
     .map_err(Into::into)
 }
 
 /// Counts what changed between two log positions.
-pub(crate) fn churn(
-    conn: &Connection,
-    before: Seq,
-    after: Seq,
-    new_observations: u64,
-) -> Result<Churn> {
+pub(crate) fn churn(conn: &Connection, before: Seq, after: Seq, new_records: u64) -> Result<Churn> {
     let at = |seq: Seq| {
         format!(
-            "SELECT observation_id, identity_id FROM spool.membership
+            "SELECT record_id, identity_id FROM spool.membership
              WHERE from_seq <= {seq} AND (to_seq IS NULL OR to_seq > {seq})"
         )
     };
@@ -464,7 +459,7 @@ pub(crate) fn churn(
            (SELECT count(*) FROM spool.identity
             WHERE created_seq > {before} AND created_seq <= {after})::BIGINT,
            (SELECT count(*) FROM ({}) WHERE seq > {before})::BIGINT,
-           (SELECT count(*) FROM ({}) b LEFT JOIN ({}) a ON a.observation_id = b.observation_id
+           (SELECT count(*) FROM ({}) b LEFT JOIN ({}) a ON a.record_id = b.record_id
             WHERE a.identity_id IS DISTINCT FROM b.identity_id)::BIGINT",
         merged_at(after),
         at(before),
@@ -473,12 +468,12 @@ pub(crate) fn churn(
     conn.query_row(&sql, [], |row| {
         let count = |index| row.get::<_, i64>(index).map(|value| value as u64);
         let (created, merged, reassigned) = (count(0)?, count(1)?, count(2)?);
-        let per_thousand = |count: u64| ratio(count as f64 * 1000.0, new_observations as f64);
+        let per_thousand = |count: u64| ratio(count as f64 * 1000.0, new_records as f64);
         Ok(Churn {
-            new_observations,
+            new_records,
             identities_created: created,
             identities_merged: merged,
-            observations_reassigned: reassigned,
+            records_reassigned: reassigned,
             created_per_thousand: per_thousand(created),
             merged_per_thousand: per_thousand(merged),
             reassigned_per_thousand: per_thousand(reassigned),
@@ -508,19 +503,19 @@ mod tests {
         let first = grouping(&[&["a", "b", "c"], &["d"], &["e", "f"]]);
         let second = grouping(&[&["f", "e"], &["c", "a", "b"], &["d"]]);
         let order = OrderSensitivity::between(&first, &second);
-        assert_eq!((order.observations, order.same_group), (6, 6));
+        assert_eq!((order.records, order.same_group), (6, 6));
         assert_eq!((order.pairs_in_both, order.pairs_in_either), (4, 4));
         assert_eq!(order.agreement, Some(1.0));
         assert_eq!(order.pair_agreement, Some(1.0));
     }
 
     #[test]
-    fn an_observation_that_moved_changes_both_groups_it_touched() {
+    fn an_record_that_moved_changes_both_groups_it_touched() {
         // `c` is with `a` and `b` in one order and with `d` in the other.
         let first = grouping(&[&["a", "b", "c"], &["d"], &["e", "f"]]);
         let second = grouping(&[&["a", "b"], &["c", "d"], &["e", "f"]]);
         let order = OrderSensitivity::between(&first, &second);
-        assert_eq!((order.observations, order.same_group), (6, 2));
+        assert_eq!((order.records, order.same_group), (6, 2));
         // Together in both: a-b and e-f. In either: those, a-c, b-c and c-d.
         assert_eq!((order.pairs_in_both, order.pairs_in_either), (2, 5));
         assert_eq!(order.pair_agreement, Some(0.4));

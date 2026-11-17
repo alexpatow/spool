@@ -1,7 +1,7 @@
-//! Why two observations share an identity, or do not.
+//! Why two records share an identity, or do not.
 //!
 //! An explanation gathers what the store holds about a pair: where each
-//! observation is and which changeset put it there, what every run that
+//! record is and which changeset put it there, what every run that
 //! looked at the pair concluded, the constraints and review items that name
 //! them, and what the project's rules say about the pair as it stands. It
 //! decides nothing and changes nothing.
@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, VecDeque};
 use duckdb::{Connection, params};
 use serde::{Deserialize, Serialize};
 use spool_core::{
-    Actor, ChangesetId, ConstraintKind, ConstraintRecord, IdentityId, ObservationId, RunId, Seq,
+    Actor, ChangesetId, ConstraintEntry, ConstraintKind, IdentityId, RecordId, RunId, Seq,
     StateError, Verdict,
 };
 
@@ -25,21 +25,21 @@ use crate::drafts::DraftStatus;
 use crate::engine::StrategyRef;
 use crate::error::{Error, Result};
 use crate::features;
-use crate::lookup::{self, ObservationRecord};
+use crate::lookup::{self, RecordEntry};
 use crate::project::{Manifest, Rule, RuleSet};
-use crate::review::{self, ReviewFilter, ReviewKind, ReviewRecord, ReviewStatus};
+use crate::review::{self, ReviewEntry, ReviewFilter, ReviewKind, ReviewStatus};
 use crate::runs::RunStatus;
 use crate::store::{self, parse};
 use crate::time::rfc3339;
 
-/// What the store knows about a pair of observations, and what follows
+/// What the store knows about a pair of records, and what follows
 /// from it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Explanation {
-    /// The observation with the smaller ID. It is `l` in a rule.
+    /// The record with the smaller ID. It is `l` in a rule.
     pub left: Explained,
-    /// The observation with the larger ID. It is `r` in a rule.
+    /// The record with the larger ID. It is `r` in a rule.
     pub right: Explained,
     pub outcome: Outcome,
     /// The explanation in sentences, the outcome first.
@@ -52,9 +52,9 @@ pub struct Explanation {
     pub comparisons: Vec<Comparison>,
     /// The constraints between the two, oldest first, with those that were
     /// removed.
-    pub constraints: Vec<ConstraintRecord>,
+    pub constraints: Vec<ConstraintEntry>,
     /// The review items that name either of the two, oldest first.
-    pub review_items: Vec<ReviewRecord>,
+    pub review_items: Vec<ReviewEntry>,
     /// When the two share an identity: the shortest chain of links from
     /// `left` to `right` through members of that identity. Empty when they
     /// do not share one, and when no chain joins them as things are now:
@@ -63,7 +63,7 @@ pub struct Explanation {
     pub path: Vec<Link>,
 }
 
-/// Where the two observations are in relation to each other.
+/// Where the two records are in relation to each other.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
@@ -80,7 +80,7 @@ pub enum Outcome {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Explained {
-    pub observation: ObservationRecord,
+    pub record: RecordEntry,
     /// Its row in the feature table of its entity type, by column name:
     /// what rules and strategies see of it. `null` when it has no row.
     pub features: Option<serde_json::Map<String, serde_json::Value>>,
@@ -89,7 +89,7 @@ pub struct Explained {
     pub placed: Option<Placement>,
 }
 
-/// The changeset that put an observation where it is.
+/// The changeset that put a record where it is.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Placement {
@@ -174,14 +174,14 @@ pub struct RecordedJudgement {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Link {
-    pub from: ObservationId,
-    pub to: ObservationId,
+    pub from: RecordId,
+    pub to: RecordId,
     pub kind: LinkKind,
     /// With `match`: the latest run that judged so.
     pub run: Option<RunId>,
 }
 
-/// What joins two observations of one identity directly.
+/// What joins two records of one identity directly.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
@@ -198,14 +198,14 @@ pub enum LinkKind {
 pub(crate) fn explain(
     conn: &Connection,
     manifest: Option<&Manifest>,
-    a: ObservationId,
-    b: ObservationId,
+    a: RecordId,
+    b: RecordId,
 ) -> Result<Explanation> {
     if a == b {
-        return Err(Error::SameObservation(a));
+        return Err(Error::SameRecord(a));
     }
     let (left, right) = if a < b { (a, b) } else { (b, a) };
-    let find = |id| lookup::observation(conn, id)?.ok_or(Error::UnknownObservation(id));
+    let find = |id| lookup::record(conn, id)?.ok_or(Error::UnknownRecord(id));
     let (left, right) = (find(left)?, find(right)?);
 
     let same_type = left.entity_type == right.entity_type;
@@ -224,7 +224,7 @@ pub(crate) fn explain(
         review_items.extend(review::list(
             conn,
             &ReviewFilter {
-                observation: Some(id),
+                record: Some(id),
                 ..ReviewFilter::default()
             },
         )?);
@@ -243,8 +243,8 @@ pub(crate) fn explain(
             conn,
             &table,
             &declared.rules,
-            left.observation.id,
-            right.observation.id,
+            left.record.id,
+            right.record.id,
         )?,
         _ => None,
     };
@@ -264,20 +264,20 @@ pub(crate) fn explain(
     Ok(explanation)
 }
 
-fn explained(conn: &Connection, observation: ObservationRecord) -> Result<Explained> {
-    let table = features::table(&observation.entity_type);
+fn explained(conn: &Connection, record: RecordEntry) -> Result<Explained> {
+    let table = features::table(&record.entity_type);
     let features = if has_table(conn, &table)? {
         // The whole row, without the two columns the engine adds: a table
         // may have no others, and a query has to select something.
         let mut statement = conn.prepare(&format!(
-            "SELECT to_json(f)::VARCHAR FROM {table} f WHERE f.observation_id = ?::UUID"
+            "SELECT to_json(f)::VARCHAR FROM {table} f WHERE f.record_id = ?::UUID"
         ))?;
-        let mut rows = statement.query([observation.id.to_string()])?;
+        let mut rows = statement.query([record.id.to_string()])?;
         match rows.next()? {
             Some(row) => {
                 let mut features: serde_json::Map<String, serde_json::Value> =
                     serde_json::from_str(&row.get::<_, String>(0)?).map_err(StateError::new)?;
-                features.remove("observation_id");
+                features.remove("record_id");
                 features.remove("declaration_version");
                 Some(features)
             }
@@ -292,9 +292,9 @@ fn explained(conn: &Connection, observation: ObservationRecord) -> Result<Explai
                 epoch_us(c.committed_at)
          FROM spool.membership m
          JOIN spool.changeset c ON c.seq = m.from_seq
-         WHERE m.to_seq IS NULL AND m.observation_id = ?::UUID",
+         WHERE m.to_seq IS NULL AND m.record_id = ?::UUID",
     )?;
-    let mut rows = statement.query([observation.id.to_string()])?;
+    let mut rows = statement.query([record.id.to_string()])?;
     let placed = match rows.next()? {
         Some(row) => Some(Placement {
             seq: Seq(row.get::<_, i64>(0)? as u64),
@@ -307,14 +307,14 @@ fn explained(conn: &Connection, observation: ObservationRecord) -> Result<Explai
         None => None,
     };
     Ok(Explained {
-        observation,
+        record,
         features,
         placed,
     })
 }
 
 /// Whether a feature table exists. A store read without its manifest can
-/// hold observations of a type whose table is not there.
+/// hold records of a type whose table is not there.
 fn has_table(conn: &Connection, table: &str) -> Result<bool> {
     let name = table.rsplit('.').next().unwrap_or(table);
     let found: i64 = conn.query_row(
@@ -338,8 +338,8 @@ fn read_rules(
     conn: &Connection,
     table: &str,
     rules: &RuleSet,
-    left: ObservationId,
-    right: ObservationId,
+    left: RecordId,
+    right: RecordId,
 ) -> Result<Option<RuleReading>> {
     if !has_table(conn, table)? {
         return Ok(None);
@@ -352,7 +352,7 @@ fn read_rules(
         let mut statement = conn.prepare(&format!(
             "SELECT 1{predicates}
              FROM {table} l, {table} r
-             WHERE l.observation_id = ?::UUID AND r.observation_id = ?::UUID"
+             WHERE l.record_id = ?::UUID AND r.record_id = ?::UUID"
         ))?;
         let mut rows = statement.query(params![left.to_string(), right.to_string()])?;
         let Some(row) = rows.next()? else {
@@ -414,11 +414,7 @@ fn read_rules(
     }))
 }
 
-fn comparisons(
-    conn: &Connection,
-    left: ObservationId,
-    right: ObservationId,
-) -> Result<Vec<Comparison>> {
+fn comparisons(conn: &Connection, left: RecordId, right: RecordId) -> Result<Vec<Comparison>> {
     let pair = params![left.to_string(), right.to_string()];
     let mut found: BTreeMap<RunId, Comparison> = BTreeMap::new();
 
@@ -492,21 +488,17 @@ fn comparisons(
     Ok(found.into_values().collect())
 }
 
-fn constraints(
-    conn: &Connection,
-    left: ObservationId,
-    right: ObservationId,
-) -> Result<Vec<ConstraintRecord>> {
+fn constraints(conn: &Connection, left: RecordId, right: RecordId) -> Result<Vec<ConstraintEntry>> {
     let mut statement = conn.prepare(
-        "SELECT observation_a::VARCHAR, observation_b::VARCHAR, kind, from_seq, to_seq
+        "SELECT record_a::VARCHAR, record_b::VARCHAR, kind, from_seq, to_seq
          FROM spool.constraint_link
-         WHERE observation_a = ?::UUID AND observation_b = ?::UUID
+         WHERE record_a = ?::UUID AND record_b = ?::UUID
          ORDER BY from_seq",
     )?;
     let mut rows = statement.query(params![left.to_string(), right.to_string()])?;
     let mut found = Vec::new();
     while let Some(row) = rows.next()? {
-        found.push(ConstraintRecord {
+        found.push(ConstraintEntry {
             constraint: store::constraint(row, 0)?,
             from: Seq(row.get::<_, i64>(3)? as u64),
             to: row.get::<_, Option<i64>>(4)?.map(|seq| Seq(seq as u64)),
@@ -516,47 +508,46 @@ fn constraints(
 }
 
 /// The shortest chain of links between two members of an identity. Between
-/// two observations, a constraint is preferred to a version and a version
+/// two records, a constraint is preferred to a version and a version
 /// to a judgement, which is the order in which a reconcile run listens to
 /// them.
 fn path(
     conn: &Connection,
     identity: IdentityId,
-    left: ObservationId,
-    right: ObservationId,
+    left: RecordId,
+    right: RecordId,
 ) -> Result<Vec<Link>> {
     let mut statement = conn.prepare(
         "WITH member AS (
-           SELECT observation_id FROM spool.membership
+           SELECT record_id FROM spool.membership
            WHERE to_seq IS NULL AND identity_id = $1::UUID)
-         SELECT c.observation_a::VARCHAR, c.observation_b::VARCHAR, 0 AS kind, NULL AS run
+         SELECT c.record_a::VARCHAR, c.record_b::VARCHAR, 0 AS kind, NULL AS run
          FROM spool.constraint_link c
          WHERE c.to_seq IS NULL AND c.kind = 'must_link'
-           AND c.observation_a IN (SELECT observation_id FROM member)
-           AND c.observation_b IN (SELECT observation_id FROM member)
+           AND c.record_a IN (SELECT record_id FROM member)
+           AND c.record_b IN (SELECT record_id FROM member)
          UNION ALL
-         SELECT o.supersedes::VARCHAR, o.observation_id::VARCHAR, 1, NULL
-         FROM spool.observation o
-         WHERE o.supersedes IN (SELECT observation_id FROM member)
-           AND o.observation_id IN (SELECT observation_id FROM member)
+         SELECT o.supersedes::VARCHAR, o.record_id::VARCHAR, 1, NULL
+         FROM spool.record o
+         WHERE o.supersedes IN (SELECT record_id FROM member)
+           AND o.record_id IN (SELECT record_id FROM member)
          UNION ALL
          SELECT j.left_id::VARCHAR, j.right_id::VARCHAR, 2, max(j.run_id)
          FROM spool.judgement j
          JOIN spool.run r ON r.run_id = j.run_id AND r.status = 'succeeded'
          WHERE j.verdict = 'match'
-           AND j.left_id IN (SELECT observation_id FROM member)
-           AND j.right_id IN (SELECT observation_id FROM member)
+           AND j.left_id IN (SELECT record_id FROM member)
+           AND j.right_id IN (SELECT record_id FROM member)
          GROUP BY j.left_id, j.right_id
          ORDER BY 3, 1, 2",
     )?;
     let mut rows = statement.query([identity.to_string()])?;
-    // For each observation, what it is linked to, the strongest link of a
+    // For each record, what it is linked to, the strongest link of a
     // pair first and only that one.
-    let mut links: BTreeMap<ObservationId, Vec<(ObservationId, LinkKind, Option<RunId>)>> =
-        BTreeMap::new();
+    let mut links: BTreeMap<RecordId, Vec<(RecordId, LinkKind, Option<RunId>)>> = BTreeMap::new();
     while let Some(row) = rows.next()? {
-        let one: ObservationId = parse(&row.get::<_, String>(0)?)?;
-        let other: ObservationId = parse(&row.get::<_, String>(1)?)?;
+        let one: RecordId = parse(&row.get::<_, String>(0)?)?;
+        let other: RecordId = parse(&row.get::<_, String>(1)?)?;
         let kind = match row.get::<_, i32>(2)? {
             0 => LinkKind::MustLink,
             1 => LinkKind::Version,
@@ -571,7 +562,7 @@ fn path(
         }
     }
 
-    let mut reached: BTreeMap<ObservationId, Link> = BTreeMap::new();
+    let mut reached: BTreeMap<RecordId, Link> = BTreeMap::new();
     let mut queue = VecDeque::from([left]);
     while let Some(from) = queue.pop_front() {
         if from == right {
@@ -623,22 +614,19 @@ fn rule_or_rules(names: &[&str]) -> &'static str {
 }
 
 fn summary(explanation: &Explanation) -> Vec<String> {
-    let (left, right) = (
-        &explanation.left.observation,
-        &explanation.right.observation,
-    );
+    let (left, right) = (&explanation.left.record, &explanation.right.record);
     // Two versions of one row have the same source and key.
     let (l, r) = match (left.name(), right.name()) {
         (l, r) if l == r => (left.id.to_string(), right.id.to_string()),
         names => names,
     };
-    let name_of = |id: ObservationId| if id == left.id { &l } else { &r };
+    let name_of = |id: RecordId| if id == left.id { &l } else { &r };
     let mut said = Vec::new();
 
     match (explanation.outcome, left.identity, right.identity) {
         (Outcome::DifferentTypes, _, _) => {
             said.push(format!(
-                "`{l}` is a `{}` and `{r}` is a `{}`. Observations of different entity types are never compared.",
+                "`{l}` is a `{}` and `{r}` is a `{}`. Records of different entity types are never compared.",
                 left.entity_type, right.entity_type
             ));
         }
@@ -751,7 +739,7 @@ fn summary(explanation: &Explanation) -> Vec<String> {
     for item in &explanation.review_items {
         let named: Vec<&str> = [left.id, right.id]
             .into_iter()
-            .filter(|id| item.observations.contains(id))
+            .filter(|id| item.records.contains(id))
             .map(|id| name_of(id).as_str())
             .collect();
         let named = listed(named);
@@ -771,7 +759,7 @@ fn summary(explanation: &Explanation) -> Vec<String> {
                 }
             )),
             (ReviewStatus::Dismissed, Some(dismissal)) => said.push(format!(
-                "Review item {} (`{kind}`), which names {named}, was dismissed by `{}`. No run looks at a dismissed item's observations again.",
+                "Review item {} (`{kind}`), which names {named}, was dismissed by `{}`. No run looks at a dismissed item's records again.",
                 item.id, dismissal.by
             )),
             _ => {}

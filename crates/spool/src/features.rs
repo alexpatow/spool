@@ -1,6 +1,6 @@
 //! Feature tables: one per declared entity type, generated from the type's
 //! features query. Nothing here names a feature column other than
-//! `observation_id` and `declaration_version`.
+//! `record_id` and `declaration_version`.
 
 use duckdb::Connection;
 use spool_core::{EntityType, RunId};
@@ -14,12 +14,12 @@ pub(crate) fn table(entity_type: &EntityType) -> String {
     format!("spool.features_{entity_type}")
 }
 
-/// The features query, reading from the observations that `scope` selects.
-/// Inside the query, `observation` is the engine's view of the type's
-/// observations.
+/// The features query, reading from the records that `scope` selects.
+/// Inside the query, `record` is the engine's view of the type's
+/// records.
 fn select(query: &str, scope: &str) -> String {
     format!(
-        "WITH observation AS (SELECT * FROM spool.observation WHERE {scope})
+        "WITH record AS (SELECT * FROM spool.record WHERE {scope})
          SELECT * FROM (\n{query}\n) AS features"
     )
 }
@@ -38,7 +38,7 @@ pub(crate) fn describe(conn: &Connection, query: &str) -> Result<Vec<FeatureColu
     Ok(columns)
 }
 
-/// A features query must return `observation_id`, and must leave to the
+/// A features query must return `record_id`, and must leave to the
 /// engine the columns it adds: `declaration_version` in the feature table,
 /// `identity_id` in the entity view, and `identity_id` and `is_new` in the
 /// feature rows a user-code strategy is given.
@@ -48,11 +48,11 @@ pub(crate) fn check_columns(columns: &[FeatureColumn]) -> Result<(), String> {
             .iter()
             .find(|column| column.name.eq_ignore_ascii_case(name))
     };
-    match find("observation_id") {
-        None => return Err("the query must return an `observation_id` column".to_owned()),
+    match find("record_id") {
+        None => return Err("the query must return a `record_id` column".to_owned()),
         Some(column) if column.data_type != "UUID" => {
             return Err(format!(
-                "`observation_id` must be the observation's own ID, a UUID, and the query returns {}",
+                "`record_id` must be the record's own ID, a UUID, and the query returns {}",
                 column.data_type
             ));
         }
@@ -84,7 +84,7 @@ pub(crate) fn create_table(
          CREATE VIEW spool.entity_{entity_type} AS
          SELECT m.identity_id, f.* EXCLUDE (declaration_version)
          FROM spool.membership_current m
-         JOIN {table} f ON f.observation_id = m.observation_id;",
+         JOIN {table} f ON f.record_id = m.record_id;",
         select(&declaration.features, "false")
     ))?;
     Ok(())
@@ -101,20 +101,20 @@ pub(crate) fn drop_table(conn: &Connection, entity_type: &EntityType) -> Result<
     Ok(())
 }
 
-/// The observations of one ingest run, as a filter on `spool.observation`.
+/// The records of one ingest run, as a filter on `spool.record`.
 pub(crate) fn of_run(entity_type: &EntityType, ingest_run: RunId) -> String {
     format!("entity_type = '{entity_type}' AND ingest_run = {ingest_run}")
 }
 
-/// Every observation of an entity type, as a filter on `spool.observation`.
+/// Every record of an entity type, as a filter on `spool.record`.
 pub(crate) fn of_type(entity_type: &EntityType) -> String {
     format!("entity_type = '{entity_type}'")
 }
 
-/// Computes feature rows for the observations that `scope` selects and
+/// Computes feature rows for the records that `scope` selects and
 /// appends them. Returns what is wrong if the query returns a row that does
-/// not belong to one of those observations, or more than one row for an
-/// observation; nothing is appended then.
+/// not belong to one of those records, or more than one row for an
+/// record; nothing is appended then.
 pub(crate) fn fill(
     conn: &Connection,
     entity_type: &EntityType,
@@ -134,22 +134,22 @@ pub(crate) fn fill(
             "SELECT
                (SELECT count(*) FROM spool_new_features f
                 WHERE NOT EXISTS (
-                  SELECT 1 FROM spool.observation o
-                  WHERE o.observation_id = f.observation_id AND {scope})),
+                  SELECT 1 FROM spool.record o
+                  WHERE o.record_id = f.record_id AND {scope})),
                (SELECT count(*) FROM (
-                  SELECT observation_id FROM spool_new_features
-                  GROUP BY observation_id HAVING count(*) > 1))"
+                  SELECT record_id FROM spool_new_features
+                  GROUP BY record_id HAVING count(*) > 1))"
         ),
         [],
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
     let problem = if stray > 0 {
         Some(format!(
-            "it returned {stray} rows whose `observation_id` is not one of the observations it was given"
+            "it returned {stray} rows whose `record_id` is not one of the records it was given"
         ))
     } else if repeated > 0 {
         Some(format!(
-            "it returned more than one row for {repeated} observations"
+            "it returned more than one row for {repeated} records"
         ))
     } else {
         None
@@ -157,7 +157,7 @@ pub(crate) fn fill(
     if let Some(problem) = problem {
         conn.execute_batch("DROP TABLE spool_new_features")?;
         return Ok(Some(format!(
-            "the features query of `{entity_type}` must return at most one row per observation, and {problem}"
+            "the features query of `{entity_type}` must return at most one row per record, and {problem}"
         )));
     }
 

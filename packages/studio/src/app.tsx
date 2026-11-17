@@ -54,7 +54,7 @@ import { Draft, Drafts } from "./screens/drafts.tsx";
 import { Explain } from "./screens/explain.tsx";
 import { Identities, Identity } from "./screens/identities.tsx";
 import { Changeset, Log } from "./screens/log.tsx";
-import { Observation, Observations } from "./screens/observations.tsx";
+import { RecordPage, RecordsPage } from "./screens/records.tsx";
 import { Overview } from "./screens/overview.tsx";
 import { ReviewItem, ReviewItems } from "./screens/review.tsx";
 import { Run, Runs } from "./screens/runs.tsx";
@@ -446,7 +446,7 @@ function Screen({ route, types }: { route: Route; types: string[] }) {
     case "identities":
       return id === undefined ? <Identities route={route} types={types} /> : <Identity id={id} />;
     case "records":
-      return id === undefined ? <Observations route={route} types={types} /> : <Observation id={id} />;
+      return id === undefined ? <RecordsPage route={route} types={types} /> : <RecordPage id={id} />;
     case "documents":
       return id === undefined ? <Documents route={route} /> : <Document id={id} route={route} />;
     case "review":

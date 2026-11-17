@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 
 import { Act, At, Done } from "../act.tsx";
-import type { DraftRecord, DraftStatus, DraftSummary } from "../api.ts";
+import type { DraftEntry, DraftStatus, DraftSummary } from "../api.ts";
 import { Fields, Filters, Id, Load, Ops, Page, Reason, Ref, Row, Section, Table, When, Word } from "../components.tsx";
 import { CheckIcon, DraftIcon } from "../icons.tsx";
 import { count } from "../format.ts";
@@ -59,13 +59,13 @@ export function Draft({ id }: { id: string }) {
       }
       about={<Id value={id} />}
     >
-      <Load state={draft}>{(record) => <DraftScreen record={record} />}</Load>
+      <Load state={draft}>{(entry) => <DraftScreen entry={entry} />}</Load>
     </Page>
   );
 }
 
-function DraftScreen({ record }: { record: DraftRecord }) {
-  const { draft, changeset } = record;
+function DraftScreen({ entry }: { entry: DraftEntry }) {
+  const { draft, changeset } = entry;
   const names = useOpNames(changeset.ops);
   return (
     <>
@@ -83,7 +83,7 @@ function DraftScreen({ record }: { record: DraftRecord }) {
           ["Base", `log position ${draft.base}`],
           [
             "Changes",
-            `${count(draft.observations_assigned, "record")} assigned, ${count(draft.identities_created, "identity")} created`,
+            `${count(draft.records_assigned, "record")} assigned, ${count(draft.identities_created, "identity")} created`,
           ],
           [
             "Committed at",
@@ -135,7 +135,7 @@ function Decide({ draft }: { draft: DraftSummary }) {
             label="Approve"
             icon={<CheckIcon />}
             variant="default"
-            about={`Commits ${count(draft.operations, "operation")}: ${count(draft.observations_assigned, "record")} assigned, ${count(draft.identities_created, "identity")} created.`}
+            about={`Commits ${count(draft.operations, "operation")}: ${count(draft.records_assigned, "record")} assigned, ${count(draft.identities_created, "identity")} created.`}
             act={async (client) => {
               const committed = await client.approveDraft(draft.id);
               return (

@@ -25,7 +25,7 @@ test(
 
     expect(printed).toContain("Address already in use");
     const { store } = await server.client.info();
-    expect(store.entity_types.map((type) => type.observations)).toEqual([0]);
+    expect(store.entity_types.map((type) => type.records)).toEqual([0]);
     expect(store.head).toBe(0);
     expect(await server.client.runs()).toEqual([]);
     expect(code).not.toBe(0);

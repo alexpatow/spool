@@ -44,7 +44,7 @@ function all(): Case[] {
   const ingest = (name: string, status: number, body: unknown) =>
     cases.push({ name: `ingest: ${name}`, status, method: "POST", path: "/v1/ingest", body });
   const ok = { source: "crm", entity_type: "company", key: "id" };
-  const sql = `x'; DROP TABLE spool.observation; --`;
+  const sql = `x'; DROP TABLE spool.record; --`;
   const long = "a".repeat(1_000_000);
 
   ingest("ok row", 200, { ...ok, rows: [{ id: "1", name: "Acme Ltd", country: "GB" }] });
@@ -240,9 +240,9 @@ function all(): Case[] {
     [
       200,
       [
-        "/v1/observations?source=crm&key=%00",
-        `/v1/observations?source=${encodeURIComponent(sql)}`,
-        "/v1/observations?limit=0",
+        "/v1/records?source=crm&key=%00",
+        `/v1/records?source=${encodeURIComponent(sql)}`,
+        "/v1/records?limit=0",
         "/v1/changesets?limit=0",
         "/v1/documents?source=%00",
         "/v1/../healthz",
@@ -269,14 +269,14 @@ function all(): Case[] {
       [
         "/v1/identities/not-a-uuid",
         `/v1/identities/${encodeURIComponent(sql)}`,
-        "/v1/observations/not-a-uuid",
-        "/v1/observations/%00",
-        "/v1/observations?limit=-1",
-        "/v1/observations?limit=1e99",
-        "/v1/observations?limit=99999999999999999999",
-        "/v1/observations?after=garbage",
-        "/v1/observations?nope=1",
-        "/v1/observations?source=crm&source=registry",
+        "/v1/records/not-a-uuid",
+        "/v1/records/%00",
+        "/v1/records?limit=-1",
+        "/v1/records?limit=1e99",
+        "/v1/records?limit=99999999999999999999",
+        "/v1/records?after=garbage",
+        "/v1/records?nope=1",
+        "/v1/records?source=crm&source=registry",
         "/v1/identities?entity_type=Company",
         `/v1/identities?entity_type=${encodeURIComponent(sql)}`,
         "/v1/identities?after=zzz",
@@ -292,7 +292,7 @@ function all(): Case[] {
         "/v1/documents/not-a-uuid",
         "/v1/explain?a=x&b=y",
         "/v1/explain",
-        "/v1/constraints?observation=x",
+        "/v1/constraints?record=x",
         "/v1/constraints?identity=x",
         "/v1/constraints?removed=maybe",
       ],
@@ -336,9 +336,9 @@ function all(): Case[] {
     actor,
     ops: [{ op: "merge", from: "11111111-1111-7111-8111-111111111111", into: "22222222-2222-7222-8222-222222222222" }],
   });
-  change("commit: assign unknown observation", 409, "/v1/changesets", {
+  change("commit: assign unknown record", 409, "/v1/changesets", {
     actor,
-    ops: [{ op: "assign", observation: nil, from: null, to: nil }],
+    ops: [{ op: "assign", record: nil, from: null, to: nil }],
   });
   change("commit: create identity unknown type", ANY, "/v1/changesets", {
     actor,
@@ -439,10 +439,10 @@ function all(): Case[] {
   for (const after of ["9223372036854775808", "18446744073709551615"]) {
     cases.push({ name: `GET /v1/changesets?after=${after}`, status: 200, path: `/v1/changesets?after=${after}` });
   }
-  change("split: unknown identity", 409, `/v1/identities/${nil}/split`, { actor, observations: [nil] });
-  change("split: no observations", 409, `/v1/identities/66666666-6666-7666-8666-666666666666/split`, {
+  change("split: unknown identity", 409, `/v1/identities/${nil}/split`, { actor, records: [nil] });
+  change("split: no records", 409, `/v1/identities/66666666-6666-7666-8666-666666666666/split`, {
     actor,
-    observations: [],
+    records: [],
   });
   change("mint: too many", 400, "/v1/ids", { identities: 10_001 });
   change("mint: negative", 400, "/v1/ids", { identities: -1 });

@@ -81,8 +81,8 @@ def judge(features):
     )
     judged = " UNION ALL ".join(
         f"""
-        SELECT observation_id_l AS left_id,
-               observation_id_r AS right_id,
+        SELECT record_id_l AS left_id,
+               record_id_r AS right_id,
                CASE WHEN match_probability >= {MATCH} THEN 'match' ELSE 'unsure' END AS verdict,
                match_probability AS score,
                to_json(struct_pack(match_weight := match_weight,

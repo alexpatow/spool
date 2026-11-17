@@ -5,7 +5,7 @@ import type { SpoolClient } from "../../client/src/index.ts";
 
 export interface State {
   head: number;
-  /** The identity of each observation, by observation ID. Null: it has none. */
+  /** The identity of each record, by record ID. Null: it has none. */
   placed: Map<string, string | null>;
   /** How many members each identity is listed with. */
   identities: Map<string, number>;
@@ -13,12 +13,12 @@ export interface State {
 
 const PAGE = 1000;
 
-/** Reads every observation and identity. Nothing else may write meanwhile. */
+/** Reads every record and identity. Nothing else may write meanwhile. */
 export async function read(client: SpoolClient): Promise<State> {
   const placed = new Map<string, string | null>();
   for (let after: string | undefined; ;) {
-    const page = await client.observations({ after, limit: PAGE });
-    for (const observation of page.observations) placed.set(observation.id, observation.identity ?? null);
+    const page = await client.records({ after, limit: PAGE });
+    for (const record of page.records) placed.set(record.id, record.identity ?? null);
     if (page.next == null) break;
     after = page.next;
   }
@@ -34,15 +34,15 @@ export async function read(client: SpoolClient): Promise<State> {
 
 /**
  * Who is with whom, without the identities' IDs: one line for each identity
- * that has members, and one for each observation that has none. Two stores
- * that hold the same observations agree on who is who when these are equal.
+ * that has members, and one for each record that has none. Two stores
+ * that hold the same records agree on who is who when these are equal.
  */
 export function groups(state: State): string[] {
   const members = new Map<string, string[]>();
   const lines: string[] = [];
-  for (const [observation, identity] of state.placed) {
-    if (identity === null) lines.push(`alone ${observation}`);
-    else members.set(identity, [...(members.get(identity) ?? []), observation]);
+  for (const [record, identity] of state.placed) {
+    if (identity === null) lines.push(`alone ${record}`);
+    else members.set(identity, [...(members.get(identity) ?? []), record]);
   }
   for (const group of members.values()) lines.push(group.sort().join(" "));
   return lines.sort();
@@ -56,35 +56,34 @@ export function groups(state: State): string[] {
 export async function faults(client: SpoolClient, state: State, sample = 40): Promise<string[]> {
   const found: string[] = [];
   const counted = new Map<string, number>();
-  for (const [observation, identity] of state.placed) {
+  for (const [record, identity] of state.placed) {
     if (identity === null) continue;
-    if (!state.identities.has(identity))
-      found.push(`observation ${observation} is in ${identity}, which is not listed`);
+    if (!state.identities.has(identity)) found.push(`record ${record} is in ${identity}, which is not listed`);
     counted.set(identity, (counted.get(identity) ?? 0) + 1);
   }
   for (const [identity, members] of state.identities) {
     const pointing = counted.get(identity) ?? 0;
     if (pointing !== members) {
-      found.push(`identity ${identity} is listed with ${members} members, and ${pointing} observations name it`);
+      found.push(`identity ${identity} is listed with ${members} members, and ${pointing} records name it`);
     }
   }
 
   const info = await client.info();
-  const totals = { observations: 0, identities: 0, unassigned: 0 };
+  const totals = { records: 0, identities: 0, unassigned: 0 };
   for (const type of info.store.entity_types) {
-    totals.observations += type.observations;
+    totals.records += type.records;
     totals.identities += type.identities;
     totals.unassigned += type.unassigned;
   }
   const unassigned = [...state.placed.values()].filter((identity) => identity === null).length;
-  if (totals.observations !== state.placed.size) {
-    found.push(`info counts ${totals.observations} observations, and ${state.placed.size} are listed`);
+  if (totals.records !== state.placed.size) {
+    found.push(`info counts ${totals.records} records, and ${state.placed.size} are listed`);
   }
   if (totals.identities !== state.identities.size) {
     found.push(`info counts ${totals.identities} identities, and ${state.identities.size} are listed`);
   }
   if (totals.unassigned !== unassigned) {
-    found.push(`info counts ${totals.unassigned} observations without an identity, and ${unassigned} are listed`);
+    found.push(`info counts ${totals.unassigned} records without an identity, and ${unassigned} are listed`);
   }
 
   // The log has every position up to its head, once each.
@@ -107,10 +106,10 @@ export async function faults(client: SpoolClient, state: State, sample = 40): Pr
     const id = ids[index]!;
     const view = await client.identity(id);
     if (view.current !== id) found.push(`identity ${id} is listed, and stands for ${view.current}`);
-    const named = view.members.map((member) => member.observation).sort();
-    const pointing = [...state.placed].filter(([, identity]) => identity === id).map(([observation]) => observation);
+    const named = view.members.map((member) => member.record).sort();
+    const pointing = [...state.placed].filter(([, identity]) => identity === id).map(([record]) => record);
     if (named.join() !== pointing.sort().join()) {
-      found.push(`identity ${id} names ${named.length} members, and ${pointing.length} observations name it`);
+      found.push(`identity ${id} names ${named.length} members, and ${pointing.length} records name it`);
     }
   }
 

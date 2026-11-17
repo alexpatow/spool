@@ -1,5 +1,5 @@
 //! Documents and extraction: storing text, running an extractor over it,
-//! and storing the mentions it finds as observations.
+//! and storing the mentions it finds as records.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
@@ -12,7 +12,7 @@ use spool_core::{DocumentId, EntityType, RunId};
 use super::{Engine, Inner, lock};
 use crate::batch::{Column, batch};
 use crate::documents::{
-    self, DocumentFilter, DocumentRecord, ExtractOptions, ExtractReport, ExtractorRef, Mention,
+    self, DocumentEntry, DocumentFilter, ExtractOptions, ExtractReport, ExtractorRef, Mention,
     NewDocument, RawMention, TaskDocument,
 };
 use crate::error::{Error, Result};
@@ -51,26 +51,26 @@ impl Engine {
     }
 
     /// A document with its text and the extractors that have read it.
-    pub fn document(&self, id: DocumentId) -> Result<DocumentRecord> {
+    pub fn document(&self, id: DocumentId) -> Result<DocumentEntry> {
         self.read(|conn| documents::get(conn, id))?
             .ok_or(Error::UnknownDocument(id))
     }
 
     /// Documents without their text, ordered by ID.
-    pub fn documents(&self, filter: &DocumentFilter) -> Result<Vec<DocumentRecord>> {
+    pub fn documents(&self, filter: &DocumentFilter) -> Result<Vec<DocumentEntry>> {
         self.read(|conn| documents::list(conn, filter))
     }
 
     /// Runs one of the project's extractors over the documents it has not
-    /// read, and stores each mention it finds as an observation of the
+    /// read, and stores each mention it finds as a record of the
     /// entity type the mention names. Only the latest version of a document
     /// is read.
     ///
-    /// An observation's source is its document's, its key is the mention's
+    /// A record's source is its document's, its key is the mention's
     /// [locator](documents::locator), its payload is the attributes the
     /// extractor gave, and its evidence says where in which document it
     /// was found and quotes the text there. Nothing is matched: the
-    /// observations are new to the next [`resolve`](Self::resolve) like
+    /// records are new to the next [`resolve`](Self::resolve) like
     /// rows that were ingested.
     ///
     /// The extractor is user code and runs as a process of its own. While
@@ -256,7 +256,7 @@ impl Inner {
     }
 
     /// Reads the mentions an extractor wrote, checks them against the
-    /// documents it was given, and stores them as observations.
+    /// documents it was given, and stores them as records.
     fn take_mentions(
         &mut self,
         run: RunId,
@@ -289,11 +289,11 @@ impl Inner {
             *found.entry(mention.document).or_default() += 1;
         }
 
-        // The observations are stored under a run of their own, which
+        // The records are stored under a run of their own, which
         // begins now. A match run that began while the extractor worked
         // has a later ID than the extract run, and takes as new only what
         // was ingested before it: under the extract run's ID these
-        // observations would be new to no run at all.
+        // records would be new to no run at all.
         let reference = ExtractorRef::from(extractor);
         let ingest_run = match staged.is_empty() {
             true => None,
@@ -345,7 +345,7 @@ impl Inner {
 
             let superseded: i64 = match ingest_run {
                 Some(ingest_run) => tx.query_row(
-                    "SELECT count(*) FROM spool.observation
+                    "SELECT count(*) FROM spool.record
                      WHERE ingest_run = ? AND supersedes IS NOT NULL",
                     [ingest_run.0 as i64],
                     |row| row.get(0),
@@ -505,10 +505,7 @@ fn grouped(
                     "ord",
                     Column::Integer(mentions.iter().map(|(ord, _)| *ord as i64).collect()),
                 ),
-                (
-                    "observation_id",
-                    text(|mention| mention.observation.to_string()),
-                ),
+                ("record_id", text(|mention| mention.record.to_string())),
                 ("source_key", text(|mention| mention.key.clone())),
                 ("payload", text(|mention| mention.payload.clone())),
                 ("evidence", text(|mention| mention.evidence.clone())),

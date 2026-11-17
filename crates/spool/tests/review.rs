@@ -16,7 +16,7 @@ struct Stored {
     review_id: String,
     run_id: String,
     kind: String,
-    observations: String,
+    records: String,
     identities: String,
     status: String,
     closed_seq: Option<String>,
@@ -27,7 +27,7 @@ fn stored(engine: &Engine) -> Vec<Stored> {
     select(
         engine,
         "SELECT review_id::VARCHAR, run_id::VARCHAR, kind,
-                array_to_string(observation_ids::VARCHAR[], ','),
+                array_to_string(record_ids::VARCHAR[], ','),
                 array_to_string(identity_ids::VARCHAR[], ','),
                 status, closed_seq::VARCHAR, closed_run::VARCHAR
          FROM spool.review_item ORDER BY review_id",
@@ -38,7 +38,7 @@ fn stored(engine: &Engine) -> Vec<Stored> {
         closed_seq: row.pop().unwrap(),
         status: row.pop().unwrap().unwrap(),
         identities: row.pop().unwrap().unwrap(),
-        observations: row.pop().unwrap().unwrap(),
+        records: row.pop().unwrap().unwrap(),
         kind: row.pop().unwrap().unwrap(),
         run_id: row.pop().unwrap().unwrap(),
         review_id: row.pop().unwrap().unwrap(),
@@ -55,7 +55,7 @@ fn joined(mut ids: Vec<String>) -> String {
     ids.join(",")
 }
 
-/// Two identities, `by_name` and `by_code`, and an observation `depot:9`
+/// Two identities, `by_name` and `by_code`, and a record `depot:9`
 /// that matches both and is left for review.
 fn ambiguous(engine: &Engine) -> (IdentityId, IdentityId) {
     ingest(
@@ -100,10 +100,7 @@ fn a_review_item_is_stored_and_survives_reopening() {
         };
         assert_eq!(item.review_id, "1");
         assert_eq!(item.kind, "possible_merge");
-        assert_eq!(
-            item.observations,
-            observation(&engine, "depot", "9").to_string()
-        );
+        assert_eq!(item.records, record_id(&engine, "depot", "9").to_string());
         assert_eq!(
             item.identities,
             joined(vec![by_name.to_string(), by_code.to_string()])
@@ -125,7 +122,7 @@ fn a_review_item_is_stored_and_survives_reopening() {
     assert_eq!(stored(&engine), expected);
     assert_eq!(open_reviews(&engine), 1);
 
-    // It is still acted on: the next run looks at the observation again.
+    // It is still acted on: the next run looks at the record again.
     engine.apply(&things()).unwrap();
     let report = resolve(&engine);
     assert_eq!(report.resolved[0].reexamined, 1);
@@ -134,10 +131,10 @@ fn a_review_item_is_stored_and_survives_reopening() {
 }
 
 #[test]
-fn an_observation_left_for_review_is_examined_again_by_later_runs() {
+fn an_record_left_for_review_is_examined_again_by_later_runs() {
     let engine = engine();
     let (by_name, by_code) = ambiguous(&engine);
-    let waiting = observation(&engine, "depot", "9");
+    let waiting = record_id(&engine, "depot", "9");
     let first = stored(&engine);
 
     // A later batch has nothing to say about it. The run reaches the same
@@ -145,23 +142,23 @@ fn an_observation_left_for_review_is_examined_again_by_later_runs() {
     ingest(&engine, "shop", &[("3", Some("chisel"), None)]);
     let report = resolve(&engine);
     let resolved = &report.resolved[0];
-    assert_eq!((resolved.new_observations, resolved.reexamined), (2, 1));
+    assert_eq!((resolved.new_records, resolved.reexamined), (2, 1));
     assert_eq!(resolved.identities_created, 1);
-    assert_eq!(resolved.observations_unassigned, 1);
+    assert_eq!(resolved.records_unassigned, 1);
     assert!(matches!(
         &resolved.review[..],
-        [ReviewItem::PossibleMerge { observations, .. }] if observations == &[waiting]
+        [ReviewItem::PossibleMerge { records, .. }] if records == &[waiting]
     ));
     assert_eq!(stored(&engine), first);
 
     // A reviewer decides the two identities are one thing and moves the
-    // member of one into the other. The item stays open: the observation it
+    // member of one into the other. The item stays open: the record it
     // names still has no identity.
     commit(
         &engine,
         50,
         vec![Op::Assign {
-            observation: observation(&engine, "shop", "2"),
+            record: record_id(&engine, "shop", "2"),
             from: Some(by_code),
             to: Some(by_name),
         }],
@@ -172,8 +169,8 @@ fn an_observation_left_for_review_is_examined_again_by_later_runs() {
     // matches one identity, so it is assigned and the item is resolved.
     let report = resolve(&engine);
     let resolved = &report.resolved[0];
-    assert_eq!((resolved.new_observations, resolved.reexamined), (1, 1));
-    assert_eq!(resolved.observations_assigned, 1);
+    assert_eq!((resolved.new_records, resolved.reexamined), (1, 1));
+    assert_eq!(resolved.records_assigned, 1);
     assert!(resolved.review.is_empty());
     assert_eq!(engine.identity_of(waiting).unwrap(), Some(by_name));
 
@@ -192,16 +189,16 @@ fn an_observation_left_for_review_is_examined_again_by_later_runs() {
 }
 
 #[test]
-fn a_changeset_that_places_the_observation_resolves_its_review_item() {
+fn a_changeset_that_places_the_record_resolves_its_review_item() {
     let engine = engine();
     let (by_name, _) = ambiguous(&engine);
-    let waiting = observation(&engine, "depot", "9");
+    let waiting = record_id(&engine, "depot", "9");
 
     commit(
         &engine,
         50,
         vec![Op::Assign {
-            observation: waiting,
+            record: waiting,
             from: None,
             to: Some(by_name),
         }],
@@ -231,13 +228,13 @@ fn a_changeset_that_places_the_observation_resolves_its_review_item() {
 fn an_item_raised_again_in_another_form_supersedes_the_old_one() {
     let engine = engine();
     ambiguous(&engine);
-    let waiting = observation(&engine, "depot", "9");
+    let waiting = record_id(&engine, "depot", "9");
 
     // A second record that matches the first, and the same two identities.
     ingest(&engine, "yard", &[("4", Some("anvil"), Some("K7"))]);
     let report = resolve(&engine);
-    let also_waiting = observation(&engine, "yard", "4");
-    assert_eq!(report.resolved[0].observations_unassigned, 2);
+    let also_waiting = record_id(&engine, "yard", "4");
+    assert_eq!(report.resolved[0].records_unassigned, 2);
 
     let items = stored(&engine);
     let [old, new] = &items[..] else {
@@ -249,7 +246,7 @@ fn an_item_raised_again_in_another_form_supersedes_the_old_one() {
     assert_eq!(new.status, "open");
     assert_eq!(new.kind, "possible_merge");
     assert_eq!(
-        new.observations,
+        new.records,
         joined(vec![waiting.to_string(), also_waiting.to_string()])
     );
     assert_eq!(new.identities, old.identities);
@@ -261,7 +258,7 @@ fn an_item_raised_again_in_another_form_supersedes_the_old_one() {
         &engine,
         50,
         vec![Op::Assign {
-            observation: waiting,
+            record: waiting,
             from: None,
             to: Some(identity(&engine, "shop", "1").unwrap()),
         }],
@@ -276,12 +273,12 @@ fn an_item_raised_again_in_another_form_supersedes_the_old_one() {
             .collect::<Vec<_>>(),
         ["superseded", "superseded", "open"]
     );
-    assert_eq!(items[2].observations, also_waiting.to_string());
+    assert_eq!(items[2].records, also_waiting.to_string());
     engine.verify().unwrap();
 }
 
 #[test]
-fn two_new_observations_a_rule_keeps_apart_do_not_join_the_same_identity() {
+fn two_new_records_a_rule_keeps_apart_do_not_join_the_same_identity() {
     let engine = engine();
     ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
     resolve(&engine);
@@ -299,8 +296,8 @@ fn two_new_observations_a_rule_keeps_apart_do_not_join_the_same_identity() {
     );
     let report = resolve(&engine);
     let (first, second) = (
-        observation(&engine, "depot", "1"),
-        observation(&engine, "depot", "2"),
+        record_id(&engine, "depot", "1"),
+        record_id(&engine, "depot", "2"),
     );
     assert_eq!(
         count(
@@ -320,15 +317,15 @@ fn two_new_observations_a_rule_keeps_apart_do_not_join_the_same_identity() {
     assert_eq!(engine.identity_of(first).unwrap(), None);
     assert_eq!(engine.identity_of(second).unwrap(), None);
     let resolved = &report.resolved[0];
-    assert_eq!(resolved.observations_assigned, 0);
-    assert_eq!(resolved.observations_unassigned, 2);
+    assert_eq!(resolved.records_assigned, 0);
+    assert_eq!(resolved.records_unassigned, 2);
     let items = stored(&engine);
     let [item] = &items[..] else {
         panic!("one review item is stored: {items:?}");
     };
     assert_eq!(item.kind, "conflict");
     assert_eq!(
-        item.observations,
+        item.records,
         joined(vec![first.to_string(), second.to_string()])
     );
     assert_eq!(item.identities, anvil.to_string());
@@ -339,7 +336,7 @@ fn two_new_observations_a_rule_keeps_apart_do_not_join_the_same_identity() {
         &engine,
         50,
         vec![Op::Assign {
-            observation: first,
+            record: first,
             from: None,
             to: Some(anvil),
         }],
@@ -355,7 +352,7 @@ fn two_new_observations_a_rule_keeps_apart_do_not_join_the_same_identity() {
         ["superseded", "open"]
     );
     assert_eq!(items[1].kind, "conflict");
-    assert_eq!(items[1].observations, second.to_string());
+    assert_eq!(items[1].records, second.to_string());
     assert_eq!(items[1].identities, anvil.to_string());
     engine.verify().unwrap();
 }
@@ -377,8 +374,8 @@ fn a_conflict_is_stored_with_the_identity_it_concerns() {
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].kind, "conflict");
     assert_eq!(
-        items[0].observations,
-        observation(&engine, "depot", "9").to_string()
+        items[0].records,
+        record_id(&engine, "depot", "9").to_string()
     );
     assert_eq!(
         items[0].identities,
@@ -401,7 +398,7 @@ fn a_draft_that_is_not_committed_still_records_what_it_left_out() {
     let run = engine
         .begin_run(&spool::StrategyRef::rules(), &scope)
         .unwrap();
-    let id = |source: &str, key: &str| observation(&engine, source, key).to_string();
+    let id = |source: &str, key: &str| record_id(&engine, source, key).to_string();
     let rows: Vec<Vec<Option<String>>> = [("shop", "1"), ("shop", "2")]
         .iter()
         .map(|(source, key)| {

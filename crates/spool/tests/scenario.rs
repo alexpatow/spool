@@ -29,7 +29,7 @@ fn project(root: &Path) {
     write(
         root,
         "bench/entities/paper/features.sql",
-        "SELECT observation_id, lower(payload->>'title') AS title FROM observation",
+        "SELECT record_id, lower(payload->>'title') AS title FROM record",
     );
     write(
         root,
@@ -113,7 +113,7 @@ fn truth_can_be_a_column_of_the_ingested_file() {
     let step = &report.steps[0];
     assert_eq!(step.ingest[0].inserted, 4);
     // The truth column is not an attribute, and a row without truth is not scored.
-    assert_eq!(step.metrics.observations, 3);
+    assert_eq!(step.metrics.records, 3);
     assert_eq!(step.metrics.true_entities, 2);
     assert_eq!(step.metrics.pairs.recall, Some(1.0));
     assert_eq!(step.resolve.resolved[0].identities_created, 3);
@@ -327,7 +327,7 @@ fn corrections_are_applied_as_a_reviewer_would_and_measured_after_each_step() {
     };
 
     assert_eq!(first.corrections, []);
-    assert_eq!(first.churn.new_observations, 4);
+    assert_eq!(first.churn.new_records, 4);
     assert_eq!(first.churn.identities_created, 3);
     assert_eq!(first.churn.created_per_thousand, Some(750.0));
     assert_eq!(first.split_recovery.splits, 0);
@@ -348,7 +348,7 @@ fn corrections_are_applied_as_a_reviewer_would_and_measured_after_each_step() {
     let stability = &mistake.id_stability;
     assert_eq!(
         (
-            stability.observations,
+            stability.records,
             stability.unchanged,
             stability.unchanged_following_redirects
         ),
@@ -359,7 +359,7 @@ fn corrections_are_applied_as_a_reviewer_would_and_measured_after_each_step() {
         (
             churn.identities_created,
             churn.identities_merged,
-            churn.observations_reassigned
+            churn.records_reassigned
         ),
         (0, 1, 1)
     );
@@ -375,7 +375,7 @@ fn corrections_are_applied_as_a_reviewer_would_and_measured_after_each_step() {
         (
             churn.identities_created,
             churn.identities_merged,
-            churn.observations_reassigned
+            churn.records_reassigned
         ),
         (1, 0, 2)
     );
@@ -395,7 +395,7 @@ fn corrections_are_applied_as_a_reviewer_would_and_measured_after_each_step() {
     assert_eq!(second.id_stability.strict, Some(1.0));
     // The row that changed went where its earlier version is, though the
     // titles no longer match.
-    assert_eq!(second.metrics.observations, 7);
+    assert_eq!(second.metrics.records, 7);
     assert_eq!(second.metrics.false_splits, 1);
 
     // The reviewer places it, and a run has nothing left to do.
@@ -405,9 +405,9 @@ fn corrections_are_applied_as_a_reviewer_would_and_measured_after_each_step() {
     assert_eq!(review.split_recovery.share, Some(1.0));
 
     // Without the corrections, these batches give the same groups in either
-    // order: seven observations in three identities.
+    // order: seven records in three identities.
     let order = report.order_sensitivity.as_ref().unwrap();
-    assert_eq!((order.observations, order.same_group), (7, 7));
+    assert_eq!((order.records, order.same_group), (7, 7));
     assert_eq!((order.pairs_in_both, order.pairs_in_either), (5, 5));
     assert_eq!(order.pair_agreement, Some(1.0));
 
@@ -420,7 +420,7 @@ fn a_correction_that_cannot_be_made_names_its_step() {
     let cases = [
         (
             "merge = [\"library:3\", \"library:9\"]",
-            "no observation is `library:9`",
+            "no record is `library:9`",
         ),
         // The two are one identity already.
         (
@@ -457,11 +457,8 @@ fn corrections_are_checked_when_the_scenario_is_loaded() {
             "exactly one of",
         ),
         ("reason = \"none\"", "exactly one of"),
-        ("split = []", "a split needs observations"),
-        (
-            "merge = [\"a:1\", \"2\"]",
-            "`2` does not name an observation",
-        ),
+        ("split = []", "a split needs records"),
+        ("merge = [\"a:1\", \"2\"]", "`2` does not name a record"),
         ("merge = [\"a:1\"]", "scenario.toml"),
         ("undo = \"later\"", "no earlier correction is named `later`"),
         (
@@ -540,8 +537,8 @@ fn documents_are_stored_and_their_labelled_mentions_are_what_an_extractor_should
     assert_eq!(extraction.precision, None);
     assert_eq!(extraction.recall, Some(0.0));
     assert_eq!(extraction.f1, Some(0.0));
-    // And there is no observation for resolution to be scored on.
-    assert_eq!(step.metrics.observations, 0);
+    // And there is no record for resolution to be scored on.
+    assert_eq!(step.metrics.records, 0);
 
     // A scenario without labelled mentions does not report extraction.
     let rows = tempfile::tempdir().unwrap();

@@ -6,11 +6,11 @@ import { Act, At, Done, Mistake } from "../act.tsx";
 import type {
   Candidate,
   CaseConstraint,
-  ObservationRecord,
+  RecordEntry,
   Op,
   PairJudgement,
   ReviewCase,
-  ReviewRecord,
+  ReviewEntry,
   ReviewStatus,
 } from "../api.ts";
 import {
@@ -34,7 +34,7 @@ import {
 import { Button } from "../components/ui/button";
 import * as ShelfTable from "../components/ui/table";
 import { facts, fieldsOf, latest, same, valueOf } from "../facts.ts";
-import { count, observationName, short } from "../format.ts";
+import { count, recordName, short } from "../format.ts";
 import { useLoad, useNames, useStudio } from "../hooks.ts";
 import { CheckIcon, InboxIcon, MergeIcon, PlusIcon } from "../icons.tsx";
 import { href } from "../router.ts";
@@ -158,7 +158,7 @@ function Case({
   );
 }
 
-function Details({ item }: { item: ReviewRecord }) {
+function Details({ item }: { item: ReviewEntry }) {
   return (
     <Fields
       rows={[
@@ -198,8 +198,8 @@ function Details({ item }: { item: ReviewRecord }) {
 }
 
 /** What to call a record where a person reads it: what its payload calls it, or its source and key. */
-function recordName(record: ObservationRecord): string {
-  return record.label ?? observationName(record);
+function labelOf(record: RecordEntry): string {
+  return record.label ?? recordName(record);
 }
 
 /**
@@ -208,31 +208,31 @@ function recordName(record: ObservationRecord): string {
  */
 interface Ruled {
   /** Whether a record may not be placed in an identity: a member of it must not share an identity with it. */
-  barred: (observation: string, identity: string) => boolean;
+  barred: (record: string, identity: string) => boolean;
   /** Whether the identities cannot be merged with the records that wait placed in the one that stands. */
   apart: boolean;
 }
 
-function ruled({ candidates, constraints }: ReviewCase, waiting: ObservationRecord[]): Ruled {
+function ruled({ candidates, constraints }: ReviewCase, waiting: RecordEntry[]): Ruled {
   const matched = new Set(candidates.map((candidate) => candidate.identity.id));
-  const waits = new Set(waiting.map((observation) => observation.id));
+  const waits = new Set(waiting.map((record) => record.id));
   const kept = constraints.filter((constraint) => constraint.kind === "cannot_link");
   // After the merge, a record is in the one identity if it waits or belongs to one that was matched.
-  const joined = (observation: string, identity: string | null) =>
-    waits.has(observation) || (identity !== null && matched.has(identity));
+  const joined = (record: string, identity: string | null) =>
+    waits.has(record) || (identity !== null && matched.has(identity));
   return {
-    barred: (observation, identity) =>
+    barred: (record, identity) =>
       kept.some(
         ({ a, b, identities }) =>
-          (a === observation && identities[1] === identity) || (b === observation && identities[0] === identity),
+          (a === record && identities[1] === identity) || (b === record && identities[0] === identity),
       ),
     apart: kept.some(({ a, b, identities }) => joined(a, identities[0]) && joined(b, identities[1])),
   };
 }
 
 /** What the item is about, in a line. */
-function asked({ item, observations, candidates }: ReviewCase): string {
-  const what = observations.length === 1 ? recordName(observations[0]!) : count(observations.length, "record");
+function asked({ item, records, candidates }: ReviewCase): string {
+  const what = records.length === 1 ? labelOf(records[0]!) : count(records.length, "record");
   return item.kind === "possible_merge"
     ? `${what} matched ${count(candidates.length, "identity")}`
     : `Conflicting evidence about ${what}`;
@@ -250,9 +250,9 @@ function CaseCard({
   linked: boolean;
   done: (said: ReactNode) => void;
 }) {
-  const { item, observations, candidates } = found;
+  const { item, records, candidates } = found;
   const open = item.status === "open";
-  const waiting = observations.filter((observation) => !observation.identity);
+  const waiting = records.filter((record) => !record.identity);
   const rules = ruled(found, waiting);
   return (
     <article aria-label={`Review item ${item.id}`} {...stylex.props(styles.card)}>
@@ -301,7 +301,7 @@ function CaseCard({
 }
 
 /** What became of an item that is no longer open. */
-function Outcome({ item }: { item: ReviewRecord }) {
+function Outcome({ item }: { item: ReviewEntry }) {
   if (item.status === "resolved") {
     return (
       <Quiet>
@@ -350,7 +350,7 @@ function Outcome({ item }: { item: ReviewRecord }) {
   );
 }
 
-/** In a new identity, as a choice of where an observation goes. */
+/** In a new identity, as a choice of where a record goes. */
 const NEW = "new";
 
 /** The most values of one field that a card writes out for an identity. The identity's own screen has them all. */
@@ -370,18 +370,18 @@ function Compare({
 }: {
   found: ReviewCase;
   open: boolean;
-  waiting: ObservationRecord[];
+  waiting: RecordEntry[];
   rules: Ruled;
   done: (said: ReactNode) => void;
 }) {
-  const { observations, candidates, judgements, constraints } = found;
-  const fields = fieldsOf([...observations, ...candidates.flatMap((candidate) => candidate.members)]);
+  const { records, candidates, judgements, constraints } = found;
+  const fields = fieldsOf([...records, ...candidates.flatMap((candidate) => candidate.members)]);
   // What a candidate is compared with: the first record the item names.
-  const first = observations[0];
+  const first = records[0];
   const named = new Map(
-    [...observations, ...candidates.flatMap((candidate) => candidate.members)].map((record) => [
+    [...records, ...candidates.flatMap((candidate) => candidate.members)].map((record) => [
       record.id,
-      observationName(record),
+      recordName(record),
     ]),
   );
   const said = candidates.map((candidate) => facts(latest(candidate.members)));
@@ -397,17 +397,15 @@ function Compare({
         <ShelfTable.Header>
           <ShelfTable.Row style={styles.row}>
             <ShelfTable.Head style={[styles.cell, styles.corner]} />
-            {observations.map((observation) => (
-              <ShelfTable.Head key={observation.id} scope="col" style={[styles.cell, styles.column, styles.waits]}>
-                <span {...stylex.props(styles.columnKind)}>
-                  {observation.identity ? "Record" : "Unassigned record"}
-                </span>
+            {records.map((record) => (
+              <ShelfTable.Head key={record.id} scope="col" style={[styles.cell, styles.column, styles.waits]}>
+                <span {...stylex.props(styles.columnKind)}>{record.identity ? "Record" : "Unassigned record"}</span>
                 <span {...stylex.props(styles.columnName)}>
-                  <Ref kind="observation" id={observation.id} label={recordName(observation)} />
+                  <Ref kind="record" id={record.id} label={labelOf(record)} />
                 </span>
                 <span {...stylex.props(styles.columnMeta)}>
-                  <Source name={observation.source} />
-                  <Code>{named.get(observation.id)}</Code>
+                  <Source name={record.source} />
+                  <Code>{named.get(record.id)}</Code>
                 </span>
               </ShelfTable.Head>
             ))}
@@ -435,9 +433,9 @@ function Compare({
               <ShelfTable.Head scope="row" style={[styles.cell, styles.fieldName]}>
                 {field}
               </ShelfTable.Head>
-              {observations.map((observation) => (
-                <ShelfTable.Cell key={observation.id} style={[styles.cell, styles.value, styles.waits]}>
-                  <Value value={valueOf(observation, field)} />
+              {records.map((record) => (
+                <ShelfTable.Cell key={record.id} style={[styles.cell, styles.value, styles.waits]}>
+                  <Value value={valueOf(record, field)} />
                 </ShelfTable.Cell>
               ))}
               {candidates.map((candidate, index) => {
@@ -476,13 +474,12 @@ function Compare({
             <ShelfTable.Head scope="row" style={[styles.cell, styles.rowName]}>
               Judgements
             </ShelfTable.Head>
-            {observations.map((observation) => (
-              <ShelfTable.Cell key={observation.id} style={[styles.cell, styles.value, styles.waits]}>
+            {records.map((record) => (
+              <ShelfTable.Cell key={record.id} style={[styles.cell, styles.value, styles.waits]}>
                 <Judgements
                   judgements={judgements.filter(
                     (judgement) =>
-                      judgement.observation === observation.id &&
-                      observations.some((other) => other.id === judgement.other),
+                      judgement.record === record.id && records.some((other) => other.id === judgement.other),
                   )}
                   named={named}
                 />
@@ -495,7 +492,7 @@ function Compare({
                   judgements={judgements.filter(
                     (judgement) =>
                       judgement.identity === candidate.identity.id &&
-                      !observations.some((other) => other.id === judgement.other),
+                      !records.some((other) => other.id === judgement.other),
                   )}
                   named={named}
                 />
@@ -507,13 +504,13 @@ function Compare({
               <ShelfTable.Head scope="row" style={[styles.cell, styles.rowName]}>
                 Constraints
               </ShelfTable.Head>
-              {observations.map((observation) => (
-                <ShelfTable.Cell key={observation.id} style={[styles.cell, styles.value, styles.waits]}>
+              {records.map((record) => (
+                <ShelfTable.Cell key={record.id} style={[styles.cell, styles.value, styles.waits]}>
                   {/* Under a record: what was decided about it and a record of none of the identities. */}
                   <Constraints
                     constraints={constraints.filter(
                       ({ a, b, identities }) =>
-                        (a === observation.id || b === observation.id) &&
+                        (a === record.id || b === record.id) &&
                         !identities.some((identity) => identity !== null && matched.has(identity)),
                     )}
                     names={names}
@@ -535,7 +532,7 @@ function Compare({
               <ShelfTable.Head scope="row" style={[styles.cell, styles.rowName]}>
                 Assign
               </ShelfTable.Head>
-              <ShelfTable.Cell colSpan={observations.length} style={[styles.cell, styles.waits]}>
+              <ShelfTable.Cell colSpan={records.length} style={[styles.cell, styles.waits]}>
                 <Place
                   found={found}
                   waiting={waiting}
@@ -548,7 +545,7 @@ function Compare({
               </ShelfTable.Cell>
               {candidates.map((candidate) => (
                 <ShelfTable.Cell key={candidate.identity.id} style={styles.cell}>
-                  {waiting.every((observation) => rules.barred(observation.id, candidate.identity.id)) ? (
+                  {waiting.every((record) => rules.barred(record.id, candidate.identity.id)) ? (
                     <span {...stylex.props(styles.none)}>Blocked by a constraint</span>
                   ) : (
                     <Place
@@ -604,8 +601,8 @@ function Constraints({ constraints, names }: { constraints: CaseConstraint[]; na
         >
           <Word value={constraint.kind} />
           <span>
-            <Ref kind="observation" id={constraint.a} label={names.get(constraint.a)} /> and{" "}
-            <Ref kind="observation" id={constraint.b} label={names.get(constraint.b)} />, since{" "}
+            <Ref kind="record" id={constraint.a} label={names.get(constraint.a)} /> and{" "}
+            <Ref kind="record" id={constraint.b} label={names.get(constraint.b)} />, since{" "}
             <Ref kind="log" id={constraint.from} label={`log position ${constraint.from}`} />
           </span>
           <Onward path={["explain"]} query={{ a: constraint.a, b: constraint.b }}>
@@ -651,17 +648,17 @@ function Judgements({ judgements, named }: { judgements: PairJudgement[]; named:
         const by = rulesOf(judgement.detail, judgement.verdict);
         return (
           <span
-            key={`${judgement.observation}-${judgement.other}`}
+            key={`${judgement.record}-${judgement.other}`}
             data-part="judgement"
             {...stylex.props(styles.judgement)}
           >
             <Word value={judgement.verdict} />
             <span>
-              with <Ref kind="observation" id={judgement.other} label={names.get(judgement.other)} />
+              with <Ref kind="record" id={judgement.other} label={names.get(judgement.other)} />
               {by.length > 0 ? ` by ${by.join(", ")}` : ""}
               {judgement.score !== null && judgement.score !== undefined ? `, score ${judgement.score}` : ""}
             </span>
-            <Onward path={["explain"]} query={{ a: judgement.observation, b: judgement.other }}>
+            <Onward path={["explain"]} query={{ a: judgement.record, b: judgement.other }}>
               explain
             </Onward>
           </span>
@@ -696,7 +693,7 @@ function Place({
   done,
 }: {
   found: ReviewCase;
-  waiting: ObservationRecord[];
+  waiting: RecordEntry[];
   rules: Ruled;
   /** Where the dialog proposes to put them: an identity, or `NEW`. */
   to: string;
@@ -712,13 +709,13 @@ function Place({
       icon={icon}
       size="sm"
       variant={primary ? "default" : "outline"}
-      title={waiting.length === 1 ? `Assign ${recordName(waiting[0]!)}` : `Assign ${count(waiting.length, "record")}`}
+      title={waiting.length === 1 ? `Assign ${labelOf(waiting[0]!)}` : `Assign ${count(waiting.length, "record")}`}
       who
       why="Reason"
       act={async (client, { actor, reason, entered }) => {
-        const chosen = waiting.flatMap((observation) => {
-          const where = String(entered.get(`to-${observation.id}`) ?? "");
-          return where === "" ? [] : [{ observation: observation.id, to: where }];
+        const chosen = waiting.flatMap((record) => {
+          const where = String(entered.get(`to-${record.id}`) ?? "");
+          return where === "" ? [] : [{ record: record.id, to: where }];
         });
         if (chosen.length === 0) throw new Mistake("Choose an identity for at least one record.");
         const created = chosen.filter((choice) => choice.to === NEW).length;
@@ -730,7 +727,7 @@ function Place({
             identity = minted.shift()!;
             ops.push({ op: "create_identity", entity_type: item.entity_type, identity });
           }
-          ops.push({ op: "assign", observation: choice.observation, from: null, to: identity });
+          ops.push({ op: "assign", record: choice.record, from: null, to: identity });
         }
         const committed = await client.commit({ actor, reason, ops });
         return (
@@ -741,16 +738,16 @@ function Place({
       }}
       done={done}
     >
-      {waiting.map((observation) => (
-        <Labelled key={observation.id} label={observationName(observation)}>
+      {waiting.map((record) => (
+        <Labelled key={record.id} label={recordName(record)}>
           {/* An identity the record is kept apart from is not a choice, and is not proposed. */}
           <Select
-            name={`to-${observation.id}`}
-            defaultValue={rules.barred(observation.id, to) ? "" : to}
+            name={`to-${record.id}`}
+            defaultValue={rules.barred(record.id, to) ? "" : to}
             any="Leave unassigned"
             choices={[
               ...candidates
-                .filter(({ identity }) => !rules.barred(observation.id, identity.id))
+                .filter(({ identity }) => !rules.barred(record.id, identity.id))
                 .map(({ identity }) => ({
                   value: identity.id,
                   label: `${identityName(identity)} (${short(identity.id)})`,
@@ -779,7 +776,7 @@ function MergeAndPlace({
 }: {
   found: ReviewCase;
   head: number;
-  waiting: ObservationRecord[];
+  waiting: RecordEntry[];
   done: (said: ReactNode) => void;
 }) {
   const [into, ...others] = [...found.candidates].sort(
@@ -801,9 +798,9 @@ function MergeAndPlace({
           base: head,
           ops: [
             ...others.map(({ identity }): Op => ({ op: "merge", from: identity.id, into: into.identity.id })),
-            ...waiting.map((observation): Op => ({
+            ...waiting.map((record): Op => ({
               op: "assign",
-              observation: observation.id,
+              record: record.id,
               from: null,
               to: into.identity.id,
             })),

@@ -41,7 +41,7 @@ fn hashes(engine: &Engine) -> Vec<String> {
         .collect()
 }
 
-/// The keys of the observations that share an identity with `key`.
+/// The keys of the records that share an identity with `key`.
 fn group(engine: &Engine, key: &str) -> BTreeSet<String> {
     members(engine, identity(engine, "sample", key).unwrap())
 }
@@ -101,7 +101,7 @@ fn splink_resolves_people_as_they_arrive_and_the_engine_decides_the_identities()
     assert_eq!(group(&engine, "p-12"), keys(&["p-06", "p-07", "p-12"]));
     assert_eq!(group(&engine, "p-15"), keys(&["p-15", "p-16"]));
     assert_eq!(second.id_stability.unchanged, 10);
-    assert_eq!(second.id_stability.observations, 10);
+    assert_eq!(second.id_stability.records, 10);
 
     // Splink scores Wen Zhao's new record as a match with both Wen Zhao and
     // Lin Zhao, who share a surname, a city and most of an e-mail address.
@@ -176,7 +176,7 @@ fn changing_to_splink_suggests_merges_and_moves_nothing() {
 
     let stability = upgrade.upgrade_stability.as_ref().unwrap();
     assert_eq!(stability.strategy, "splink");
-    assert_eq!((stability.observations, stability.retained), (16, 16));
+    assert_eq!((stability.records, stability.retained), (16, 16));
     assert_eq!(stability.share, Some(1.0));
     assert_eq!(
         (stability.suggested_merges, stability.suggested_splits),
@@ -194,7 +194,7 @@ fn splink_finds_more_of_fake_1000_than_the_rules_and_merges_nobody_wrongly() {
     let (_, rules) = run("fake-1000.toml", None, 0);
     let (engine, splink) = run("fake-1000.toml", Some("splink"), 0);
     let (rules, splink) = (&rules.steps[0].metrics, &splink.steps[0].metrics);
-    assert_eq!(splink.observations, 1000);
+    assert_eq!(splink.records, 1000);
     assert_eq!(splink.unassigned, 0);
     assert_eq!(splink.false_merges, 0);
     assert!(
@@ -220,7 +220,7 @@ fn changing_to_splink_on_fake_1000_keeps_every_identity() {
     assert_eq!(upgrade.head, rules.head);
     assert_eq!(upgrade.metrics, rules.metrics);
     let stability = upgrade.upgrade_stability.as_ref().unwrap();
-    assert_eq!((stability.observations, stability.retained), (1000, 1000));
+    assert_eq!((stability.records, stability.retained), (1000, 1000));
     assert_eq!(stability.applied_changes, 0);
     assert_eq!(stability.suggested_splits, 0);
     // Each suggested merge is of two identities the rules kept apart.

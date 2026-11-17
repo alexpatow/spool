@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use spool::arrow::array::{Array, AsArray};
 use spool::arrow::record_batch::RecordBatch;
-use spool::core::{IdentityId, ObservationId};
+use spool::core::{IdentityId, RecordId};
 use spool::{
     Engine, EntityTypeSource, IngestOptions, IngestReport, Manifest, Options, Project, Rows,
     SqlFile,
@@ -24,8 +24,8 @@ pub fn thing() -> EntityTypeSource {
         name: "thing".to_owned(),
         features: SqlFile::new(
             "features",
-            "SELECT observation_id, payload->>'name' AS name, payload->>'code' AS code
-             FROM observation",
+            "SELECT record_id, payload->>'name' AS name, payload->>'code' AS code
+             FROM record",
         ),
         block: vec![
             SqlFile::new("same_name", "l.name = r.name"),
@@ -115,13 +115,13 @@ pub fn count(engine: &Engine, sql: &str) -> u64 {
         .unwrap()
 }
 
-/// The observations a source holds under a key. There is more than one when
+/// The records a source holds under a key. There is more than one when
 /// the row changed between ingests.
-pub fn observations(engine: &Engine, source: &str, key: &str) -> Vec<ObservationId> {
+pub fn records(engine: &Engine, source: &str, key: &str) -> Vec<RecordId> {
     select(
         engine,
         &format!(
-            "SELECT observation_id::VARCHAR FROM spool.observation
+            "SELECT record_id::VARCHAR FROM spool.record
              WHERE source_id = '{source}' AND source_key = '{key}' ORDER BY ingest_run"
         ),
     )
@@ -130,18 +130,16 @@ pub fn observations(engine: &Engine, source: &str, key: &str) -> Vec<Observation
     .collect()
 }
 
-/// The one observation a source holds under a key.
-pub fn observation(engine: &Engine, source: &str, key: &str) -> ObservationId {
-    let found = observations(engine, source, key);
-    assert_eq!(found.len(), 1, "observations of {source}:{key}");
+/// The one record a source holds under a key.
+pub fn record_id(engine: &Engine, source: &str, key: &str) -> RecordId {
+    let found = records(engine, source, key);
+    assert_eq!(found.len(), 1, "records of {source}:{key}");
     found[0]
 }
 
-/// The identity of the one observation a source holds under a key.
+/// The identity of the one record a source holds under a key.
 pub fn identity(engine: &Engine, source: &str, key: &str) -> Option<IdentityId> {
-    engine
-        .identity_of(observation(engine, source, key))
-        .unwrap()
+    engine.identity_of(record_id(engine, source, key)).unwrap()
 }
 
 /// The members of an identity as `source:key`.
@@ -151,7 +149,7 @@ pub fn members(engine: &Engine, identity: IdentityId) -> BTreeSet<String> {
         &format!(
             "SELECT o.source_id || ':' || o.source_key
              FROM spool.membership_current m
-             JOIN spool.observation o ON o.observation_id = m.observation_id
+             JOIN spool.record o ON o.record_id = m.record_id
              WHERE m.identity_id = '{identity}'"
         ),
     )

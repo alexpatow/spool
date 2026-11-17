@@ -2,7 +2,7 @@
 
 This is no extractor anyone would deploy: it reads the answers. It exists so
 that resolution can be measured on its own. With it, every labelled mention
-becomes an observation and nothing else does, so what the scenario then
+becomes a record and nothing else does, so what the scenario then
 reports about identities is what the type's rules make of perfect extraction.
 """
 

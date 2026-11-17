@@ -68,13 +68,13 @@ Options:
 ";
 
 const FEATURES: &str = "\
--- The features of this entity type: one row per observation, and whatever
--- columns the rules need. `observation` holds this type's observations, and
+-- The features of this entity type: one row per record, and whatever
+-- columns the rules need. `record` holds this type's records, and
 -- `payload` holds each one's attributes exactly as they were ingested.
 SELECT
-  observation_id,
+  record_id,
   lower(trim(payload->>'name')) AS name
-FROM observation
+FROM record
 ";
 
 const BLOCK_RULE: &str = "\
@@ -241,7 +241,7 @@ pub fn init(arguments: &[String]) -> Result<(), Failure> {
     Manifest::load(&dir)?;
     println!("created   {}", entity_dir.display());
     println!(
-        "\nThe entity type `{entity}` matches observations whose `name` is the same.\n\
+        "\nThe entity type `{entity}` matches records whose `name` is the same.\n\
          Edit features.sql and the rules to say what makes two of yours the same thing.\n\n  \
          spool info    lists what the project declares\n  \
          spool dev     runs the server on localhost and applies your changes as you save"
@@ -270,7 +270,7 @@ pub fn info(arguments: &[String]) -> Result<(), Failure> {
         if entity_type.rules.block.is_empty() {
             warnings.push(if entity_type.strategies.is_empty() {
                 format!(
-                    "`{}` has no block rules, so no two observations are ever compared",
+                    "`{}` has no block rules, so no two records are ever compared",
                     entity_type.name
                 )
             } else {

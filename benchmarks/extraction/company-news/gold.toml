@@ -1,6 +1,6 @@
 # The news items of `scenario.toml`, with an extractor that reads the labels.
 #
-# Every labelled mention becomes an observation and nothing else does, so
+# Every labelled mention becomes a record and nothing else does, so
 # extraction scores 1 by construction, and the rest of the report is what the
 # company rules make of perfectly extracted mentions: resolution on its own.
 

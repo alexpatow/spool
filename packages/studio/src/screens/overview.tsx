@@ -1,7 +1,7 @@
 import * as stylex from "@stylexjs/stylex";
 import type { ReactNode } from "react";
 
-import type { Info, RunRecord, TypeInfo } from "../api.ts";
+import type { Info, RunEntry, TypeInfo } from "../api.ts";
 import {
   Code,
   Fields,
@@ -39,7 +39,7 @@ export function Overview() {
   );
 }
 
-function Store({ info, runs }: { info: Info; runs: RunRecord[] }) {
+function Store({ info, runs }: { info: Info; runs: RunEntry[] }) {
   const { store } = info;
   return (
     <>
@@ -54,8 +54,8 @@ function Store({ info, runs }: { info: Info; runs: RunRecord[] }) {
               address={href(["identities"], { type: type.name })}
             />
             <Stat
-              number={type.observations}
-              label={type.observations === 1 ? "record" : "records"}
+              number={type.records}
+              label={type.records === 1 ? "record" : "records"}
               address={href(["records"], { type: type.name })}
             />
             <Stat
@@ -85,7 +85,7 @@ function Store({ info, runs }: { info: Info; runs: RunRecord[] }) {
                   </a>
                 ),
               },
-              { title: "Records", cell: (source) => source.observations, number: true },
+              { title: "Records", cell: (source) => source.records, number: true },
               {
                 title: "Unassigned",
                 cell: (source) =>

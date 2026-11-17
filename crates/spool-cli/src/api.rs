@@ -8,13 +8,13 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use spool::core::{
-    Actor, Changeset, ChangesetId, Committed, ConstraintRecord, DocumentId, EntityType, IdentityId,
-    LogEntry, ObservationId, Op, Rejection, RunId, Seq, Verdict,
+    Actor, Changeset, ChangesetId, Committed, ConstraintEntry, DocumentId, EntityType, IdentityId,
+    LogEntry, Op, RecordId, Rejection, RunId, Seq, Verdict,
 };
 use spool::{
-    Authored, DocumentRecord, DraftRecord, DraftSummary, Explanation, HistoryEntry,
-    IdentitySummary, IdentityView, MintedIds, NewDocument, ObservationRecord, ReviewCase,
-    ReviewRecord, RunRecord, SplitReport, StoreInfo, StrategyRef, TypeResolution,
+    Authored, DocumentEntry, DraftEntry, DraftSummary, Explanation, HistoryEntry, IdentitySummary,
+    IdentityView, MintedIds, NewDocument, RecordEntry, ReviewCase, ReviewEntry, RunEntry,
+    SplitReport, StoreInfo, StrategyRef, TypeResolution,
 };
 
 /// The version of the API, which is the first segment of every path.
@@ -62,7 +62,7 @@ pub struct IngestParams {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DocumentsRequest {
-    /// The name of the source the documents come from. The observations
+    /// The name of the source the documents come from. The records
     /// extracted from them have the same source.
     pub source: String,
     pub documents: Vec<NewDocument>,
@@ -73,14 +73,14 @@ pub struct DocumentsRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct DocumentList {
     /// Documents without their text.
-    pub documents: Vec<DocumentRecord>,
+    pub documents: Vec<DocumentEntry>,
     /// Pass as `after` for the next page. `null` on the last page.
     pub next: Option<DocumentId>,
 }
 
 /// `POST /v1/extractions`: run one of the project's extractors over the
 /// documents it has not read. The response is the extract run. What it
-/// found is observations, which `POST /v1/runs` then matches.
+/// found is records, which `POST /v1/runs` then matches.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ExtractRequest {
@@ -103,7 +103,7 @@ pub struct ExtractRequest {
     pub wait_ms: Option<u64>,
 }
 
-/// `POST /v1/runs`: match the new observations of one entity type.
+/// `POST /v1/runs`: match the new records of one entity type.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct StartRunRequest {
@@ -124,8 +124,8 @@ pub struct StartRunRequest {
     /// when it is reconciled.
     #[serde(default)]
     pub commit: Option<bool>,
-    /// Match every observation of the type again, not only the new ones.
-    /// Observations that have an identity keep it: where the strategy
+    /// Match every record of the type again, not only the new ones.
+    /// Records that have an identity keep it: where the strategy
     /// disagrees with the identities as they are, the run's `resolution`
     /// lists `suggestions`.
     #[serde(default)]
@@ -141,12 +141,12 @@ pub struct StartRunRequest {
 /// `null` when there was nothing to do, so no run was started.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RunResponse {
-    pub run: Option<RunRecord>,
+    pub run: Option<RunEntry>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RunList {
-    pub runs: Vec<RunRecord>,
+    pub runs: Vec<RunEntry>,
 }
 
 /// `POST /v1/runs/{run}/judgements` with a JSON body.
@@ -159,8 +159,8 @@ pub struct JudgementsRequest {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Judgement {
-    pub left_id: ObservationId,
-    pub right_id: ObservationId,
+    pub left_id: RecordId,
+    pub right_id: RecordId,
     pub verdict: Verdict,
     /// On the strategy's own scale. Scores are never compared across
     /// strategies.
@@ -247,10 +247,10 @@ pub struct UndoRequest {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SplitRequest {
-    /// The observations on one side. The rest of the identity's members are
+    /// The records on one side. The rest of the identity's members are
     /// the other side. The larger side keeps the ID, the side not named here
     /// on a tie.
-    pub observations: Vec<ObservationId>,
+    pub records: Vec<RecordId>,
     /// Record a `cannot_link` constraint between the two sides (the
     /// default), so that nothing puts them back together unnoticed.
     #[serde(default)]
@@ -268,11 +268,11 @@ pub struct SplitRequest {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ConstraintList {
-    pub constraints: Vec<ConstraintRecord>,
+    pub constraints: Vec<ConstraintEntry>,
 }
 
 /// `POST /v1/review/{id}/dismiss`: close a review item without placing its
-/// observations.
+/// records.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DismissRequest {
@@ -312,30 +312,30 @@ pub struct History {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ObservationList {
-    pub observations: Vec<ObservationRecord>,
+pub struct RecordList {
+    pub records: Vec<RecordEntry>,
     /// Pass as `after` for the next page. `null` on the last page.
-    pub next: Option<ObservationId>,
+    pub next: Option<RecordId>,
 }
 
-/// `POST /v1/observations/identities`: the identities of many observations
+/// `POST /v1/records/identities`: the identities of many records
 /// in one call.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IdentitiesOfRequest {
-    pub observations: Vec<ObservationId>,
+    pub records: Vec<RecordId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct IdentitiesOfResponse {
-    /// One entry per observation asked about, in the same order. `null` for
-    /// an observation that has no identity or is not known.
+    /// One entry per record asked about, in the same order. `null` for
+    /// a record that has no identity or is not known.
     pub identities: Vec<Option<IdentityId>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ReviewList {
-    pub items: Vec<ReviewRecord>,
+    pub items: Vec<ReviewEntry>,
 }
 
 /// `GET /v1/info`.
@@ -369,7 +369,7 @@ pub enum ErrorCode {
     /// 400: the request cannot be read, or names something that is not
     /// declared.
     Invalid,
-    /// 404: there is no such run, draft, changeset, identity, observation,
+    /// 404: there is no such run, draft, changeset, identity, record,
     /// document, review item or path.
     NotFound,
     /// 409: the thing exists and is not in a state that allows this.
@@ -397,7 +397,7 @@ struct Wire {
     ingest_request: IngestRequest,
     documents_request: DocumentsRequest,
     document_list: DocumentList,
-    document_record: DocumentRecord,
+    document_entry: DocumentEntry,
     extract_request: ExtractRequest,
     start_run_request: StartRunRequest,
     run_response: RunResponse,
@@ -408,7 +408,7 @@ struct Wire {
     type_resolution: TypeResolution,
     candidate_list: CandidateList,
     draft_list: DraftList,
-    draft_record: DraftRecord,
+    draft_entry: DraftEntry,
     reject_draft_request: RejectDraftRequest,
     changeset: Changeset,
     commit_request: CommitRequest,
@@ -419,7 +419,7 @@ struct Wire {
     split_report: SplitReport,
     constraint_list: ConstraintList,
     dismiss_request: DismissRequest,
-    review_record: ReviewRecord,
+    review_entry: ReviewEntry,
     review_case: ReviewCase,
     changeset_list: ChangesetList,
     mint_request: MintRequest,
@@ -427,8 +427,8 @@ struct Wire {
     identity_list: IdentityList,
     identity_view: IdentityView,
     history: History,
-    observation_list: ObservationList,
-    observation_record: ObservationRecord,
+    record_list: RecordList,
+    record_from_row: RecordEntry,
     identities_of_request: IdentitiesOfRequest,
     identities_of_response: IdentitiesOfResponse,
     review_list: ReviewList,

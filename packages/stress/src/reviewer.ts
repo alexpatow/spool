@@ -104,7 +104,7 @@ export async function reviewer({
     return done;
   };
   const members = (state: State, identity: string) =>
-    [...state.placed].filter(([, placed]) => placed === identity).map(([observation]) => observation);
+    [...state.placed].filter(([, placed]) => placed === identity).map(([record]) => record);
   const reopen = async (how: "stop" | "kill") => {
     const before = how === "stop" ? groups(await read(client)) : undefined;
     if (how === "stop") {
@@ -199,47 +199,47 @@ export async function reviewer({
         const identity = pick([...state.identities].filter(([, count]) => count > 1).map(([id]) => id));
         if (identity === undefined) return;
         const all = members(state, identity);
-        const observations = all.filter(() => below(2) === 0);
+        const records = all.filter(() => below(2) === 0);
         await client.split(identity, {
           actor: ACTOR,
-          observations: observations.length > 0 ? observations : all.slice(0, 1),
+          records: records.length > 0 ? records : all.slice(0, 1),
           keep_apart: below(2) === 0,
           ...(below(2) === 0 ? { base: state.head } : {}),
         });
       },
     ],
     [
-      "move an observation",
+      "move a record",
       6,
       async (state) => {
-        const [observation, from] = pick([...state.placed]) ?? [];
+        const [record, from] = pick([...state.placed]) ?? [];
         const to = pick([...state.identities.keys()]);
-        if (observation === undefined || to === undefined) return;
-        await client.commit({ actor: ACTOR, ops: [{ op: "assign", observation, from, to }] });
+        if (record === undefined || to === undefined) return;
+        await client.commit({ actor: ACTOR, ops: [{ op: "assign", record, from, to }] });
       },
     ],
     [
-      "take an observation out",
+      "take a record out",
       3,
       async (state) => {
-        const [observation, from] = pick([...state.placed].filter(([, identity]) => identity !== null)) ?? [];
-        if (observation === undefined) return;
-        await client.commit({ actor: ACTOR, ops: [{ op: "assign", observation, from, to: null }] });
+        const [record, from] = pick([...state.placed].filter(([, identity]) => identity !== null)) ?? [];
+        if (record === undefined) return;
+        await client.commit({ actor: ACTOR, ops: [{ op: "assign", record, from, to: null }] });
       },
     ],
     [
-      "place an observation in a new identity",
+      "place a record in a new identity",
       4,
       async (state) => {
-        const [observation] = pick([...state.placed].filter(([, identity]) => identity === null)) ?? [];
-        if (observation === undefined) return;
+        const [record] = pick([...state.placed].filter(([, identity]) => identity === null)) ?? [];
+        if (record === undefined) return;
         const identity = (await client.mintIds({ identities: 1 })).identities[0]!;
         await client.commit({
           actor: ACTOR,
           base: state.head,
           ops: [
             { op: "create_identity", identity, entity_type: "company" },
-            { op: "assign", observation, from: null, to: identity },
+            { op: "assign", record, from: null, to: identity },
           ],
         });
       },
@@ -248,9 +248,9 @@ export async function reviewer({
       "constrain",
       8,
       async (state) => {
-        const observations = [...state.placed.keys()];
-        const a = pick(observations);
-        const b = pick(observations);
+        const records = [...state.placed.keys()];
+        const a = pick(records);
+        const b = pick(records);
         if (a === undefined || b === undefined) return;
         const kind = below(2) === 0 ? "cannot_link" : "must_link";
         await client.commit({ actor: ACTOR, ops: [{ op: "constrain", a, b, kind }] });
@@ -288,13 +288,13 @@ export async function reviewer({
       4,
       async (state) => {
         const real = pick([...state.identities.keys()]) ?? NOBODY;
-        const observation = pick([...state.placed.keys()]) ?? NOBODY;
+        const record = pick([...state.placed.keys()]) ?? NOBODY;
         const ops = pick<Op[]>([
           [{ op: "merge", from: NOBODY, into: real }],
           [{ op: "merge", from: real, into: real }],
-          [{ op: "assign", observation: NOBODY, from: null, to: real }],
-          [{ op: "assign", observation, from: NOBODY, to: real }],
-          [{ op: "constrain", a: observation, b: observation, kind: "cannot_link" }],
+          [{ op: "assign", record: NOBODY, from: null, to: real }],
+          [{ op: "assign", record, from: NOBODY, to: real }],
+          [{ op: "constrain", a: record, b: record, kind: "cannot_link" }],
           [{ op: "create_identity", identity: real, entity_type: "company" }],
           [],
         ])!;

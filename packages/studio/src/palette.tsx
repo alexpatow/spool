@@ -6,11 +6,11 @@ import * as stylex from "@stylexjs/stylex";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
-import type { IdentitySummary, ObservationRecord } from "./api.ts";
+import type { IdentitySummary, RecordEntry } from "./api.ts";
 import { Source, Sources, message } from "./components.tsx";
 import * as Command from "./components/ui/command";
 import { findScreen, isReference } from "./find.ts";
-import { count, observationName, short } from "./format.ts";
+import { count, recordName, short } from "./format.ts";
 import { useStudio } from "./hooks.ts";
 import { ArrowRightIcon, IdentityIcon, RecordIcon, SearchIcon } from "./icons.tsx";
 import { href, navigate } from "./router.ts";
@@ -45,7 +45,7 @@ const PAUSE_MS = 160;
 interface Results {
   words: string;
   identities: IdentitySummary[];
-  observations: ObservationRecord[];
+  records: RecordEntry[];
 }
 
 export function Palette({
@@ -84,11 +84,11 @@ export function Palette({
     }
     setBusy(true);
     const timer = setTimeout(() => {
-      Promise.all([client.identities({ q: words, limit: MOST }), client.observations({ q: words, limit: MOST })]).then(
-        ([identities, observations]) => {
+      Promise.all([client.identities({ q: words, limit: MOST }), client.records({ q: words, limit: MOST })]).then(
+        ([identities, records]) => {
           if (asked.current !== mine) return;
           setBusy(false);
-          setResults({ words, identities: identities.identities, observations: observations.observations });
+          setResults({ words, identities: identities.identities, records: records.records });
         },
         (error: unknown) => {
           if (asked.current !== mine) return;
@@ -177,27 +177,27 @@ export function Palette({
           ],
         });
       }
-      if (results.observations.length > 0) {
+      if (results.records.length > 0) {
         list.push({
           value: "Records",
           items: [
-            ...results.observations.map((observation) => ({
-              value: `observation:${observation.id}`,
+            ...results.records.map((record) => ({
+              value: `record:${record.id}`,
               label: words,
               line: (
                 <>
                   <RecordIcon />
-                  <span {...stylex.props(styles.name)}>{observation.label ?? observationName(observation)}</span>
-                  <span {...stylex.props(styles.aside)}>{observation.key ?? short(observation.id)}</span>
-                  <Source name={observation.source} />
+                  <span {...stylex.props(styles.name)}>{record.label ?? recordName(record)}</span>
+                  <span {...stylex.props(styles.aside)}>{record.key ?? short(record.id)}</span>
+                  <Source name={record.source} />
                 </>
               ),
-              go: go(href(["records", observation.id])),
+              go: go(href(["records", record.id])),
             })),
-            ...(results.observations.length === MOST
+            ...(results.records.length === MOST
               ? [
                   {
-                    value: "observations:all",
+                    value: "records:all",
                     label: words,
                     line: (
                       <>

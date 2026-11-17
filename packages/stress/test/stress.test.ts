@@ -38,9 +38,9 @@ test(
     expect(result.verified).toStartWith("verified ");
     const last = result.steps.at(-1)!;
     expect(last.step).toBe("rematch");
-    // A record that was sent again unchanged is not a new observation.
-    expect(last.observations).toBeLessThanOrEqual(result.records);
-    expect(last.observations).toBeGreaterThan(result.records * 0.9);
+    // A record that was sent again unchanged is not a new record.
+    expect(last.records).toBeLessThanOrEqual(result.records);
+    expect(last.records).toBeGreaterThan(result.records * 0.9);
     // Most records find their company: there are fewer identities than
     // records, and more than half as many as companies.
     expect(last.identities).toBeLessThan(result.records);

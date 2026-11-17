@@ -36,7 +36,7 @@ fn metrics_match_a_hand_scored_partition() {
         .map(|name| (*name, Some(*name), None))
         .collect();
     ingest(&engine, "shop", &things);
-    let o = |name: &str| observation(&engine, "shop", name);
+    let o = |name: &str| record_id(&engine, "shop", name);
 
     // Identities:    i1 {o1 o2}   i2 {o3}   i3 {o4 o5}   and o6 has none
     // True entities: A  {o1 o2 o3}          B {o4}  C {o5 o6}
@@ -48,7 +48,7 @@ fn metrics_match_a_hand_scored_partition() {
         entity_type: thing.clone(),
     };
     let assign = |name: &str, from, to| Op::Assign {
-        observation: o(name),
+        record: o(name),
         from,
         to,
     };
@@ -74,11 +74,11 @@ fn metrics_match_a_hand_scored_partition() {
             .zip(["A", "A", "A", "B", "C", "C"])
             .map(|(id, entity)| vec![Some(id.as_str()), Some(entity)])
             .collect();
-        Rows::from_text(&["observation_id", "true_entity"], &rows).unwrap()
+        Rows::from_text(&["record_id", "true_entity"], &rows).unwrap()
     };
     let metrics = engine.score(truth()).unwrap();
 
-    assert_eq!(metrics.observations, 6);
+    assert_eq!(metrics.records, 6);
     assert_eq!(metrics.true_entities, 3);
     assert_eq!(metrics.identities, 3);
     assert_eq!(metrics.unassigned, 1);
@@ -93,7 +93,7 @@ fn metrics_match_a_hand_scored_partition() {
     close(metrics.pairs.recall, 0.25);
     close(metrics.pairs.f1, 1.0 / 3.0);
 
-    // Per observation, precision: 1, 1, 1, 1/2, 1/2, 1. Recall: 2/3, 2/3, 1/3, 1, 1/2, 1/2.
+    // Per record, precision: 1, 1, 1, 1/2, 1/2, 1. Recall: 2/3, 2/3, 1/3, 1, 1/2, 1/2.
     close(metrics.b_cubed.precision, 5.0 / 6.0);
     close(metrics.b_cubed.recall, 11.0 / 18.0);
 
@@ -112,7 +112,7 @@ fn metrics_match_a_hand_scored_partition() {
         ],
     );
     let stability = engine.id_stability(before, engine.head().unwrap()).unwrap();
-    assert_eq!(stability.observations, 5);
+    assert_eq!(stability.records, 5);
     assert_eq!(stability.unchanged, 4);
     close(stability.strict, 0.8);
     close(stability.following_redirects, 0.8);
@@ -143,7 +143,7 @@ fn scored(groups: &[&[&str]], truth: &[(&str, &str)]) -> spool::Metrics {
             entity_type: EntityType::new("thing").unwrap(),
         });
         ops.extend(group.iter().map(|name| Op::Assign {
-            observation: observation(&engine, "shop", name),
+            record: record_id(&engine, "shop", name),
             from: None,
             to: Some(identity),
         }));
@@ -152,17 +152,17 @@ fn scored(groups: &[&[&str]], truth: &[(&str, &str)]) -> spool::Metrics {
         commit(&engine, &mut ids, ops);
     }
 
-    let observation_ids: Vec<String> = truth
+    let record_ids: Vec<String> = truth
         .iter()
-        .map(|(name, _)| observation(&engine, "shop", name).to_string())
+        .map(|(name, _)| record_id(&engine, "shop", name).to_string())
         .collect();
-    let rows: Vec<Vec<Option<&str>>> = observation_ids
+    let rows: Vec<Vec<Option<&str>>> = record_ids
         .iter()
         .zip(truth)
         .map(|(id, (_, entity))| vec![Some(id.as_str()), Some(*entity)])
         .collect();
     engine
-        .score(Rows::from_text(&["observation_id", "true_entity"], &rows).unwrap())
+        .score(Rows::from_text(&["record_id", "true_entity"], &rows).unwrap())
         .unwrap()
 }
 
@@ -215,9 +215,9 @@ fn f1_is_undefined_only_when_neither_side_has_pairs() {
 #[test]
 fn an_empty_truth_has_no_ratios() {
     let engine = engine();
-    let truth = Rows::from_text(&["observation_id", "true_entity"], &[]).unwrap();
+    let truth = Rows::from_text(&["record_id", "true_entity"], &[]).unwrap();
     let metrics = engine.score(truth).unwrap();
-    assert_eq!(metrics.observations, 0);
+    assert_eq!(metrics.records, 0);
     assert_eq!(metrics.pairs.precision, None);
     assert_eq!(metrics.b_cubed.recall, None);
     assert_eq!(metrics.unassigned_share, None);
@@ -295,7 +295,7 @@ fn id_stability_follows_the_redirects_of_the_later_position() {
         let stability = engine.id_stability(Seq(1), Seq(2)).unwrap();
         assert_eq!(
             (
-                stability.observations,
+                stability.records,
                 stability.unchanged,
                 stability.unchanged_following_redirects
             ),

@@ -7,7 +7,7 @@ reads what it leaves there. This module hides the files.
 
 # Strategies
 
-A strategy says which pairs of observations are the same thing:
+A strategy says which pairs of records are the same thing:
 
     from spool import strategy
 
@@ -25,9 +25,9 @@ above it. It is given what its parameters ask for by name:
     candidates  the pairs the project's block rules found, as a pyarrow
                 Table: `left_id`, `right_id`, and every feature column of
                 both sides as `left_<name>` and `right_<name>`
-    features    one row per observation of the entity type, as a pyarrow
-                Table: `observation_id`, `is_new`, `identity_id` (empty for
-                an observation that has no identity) and the feature
+    features    one row per record of the entity type, as a pyarrow
+                Table: `record_id`, `is_new`, `identity_id` (empty for
+                a record that has no identity) and the feature
                 columns. A strategy that finds its own pairs starts here.
     task        the `Task`, for anything else
 
@@ -70,7 +70,7 @@ last character, so `document.text[start:end]` is the text of the mention.
 knows what it found and not where. An attribute is text, a boolean or a
 number.
 
-Each mention becomes an observation of its entity type, whose source is the
+Each mention becomes a record of its entity type, whose source is the
 document's. An extractor says what a document mentions. It cannot say that
 two mentions are the same thing: the type's rules and strategies decide that.
 
@@ -144,7 +144,7 @@ class Task:
         self.entity_type = self.info["entity_type"]
         #: The strategy's name: this file's name without `.py`.
         self.strategy = self.info["strategy"]["name"]
-        #: True when the run examines every observation again, not only
+        #: True when the run examines every record again, not only
         #: those that are new.
         self.rematch = bool(self.info.get("rematch", False))
         self._tables = {}
@@ -162,7 +162,7 @@ class Task:
 
     @property
     def features(self):
-        """Every observation of the entity type with its features, as a pyarrow Table."""
+        """Every record of the entity type with its features, as a pyarrow Table."""
         return self._read("features")
 
     def write(self, judgements):

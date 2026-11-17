@@ -29,7 +29,7 @@
       "type": "object"
     },
     "Candidate": {
-      "description": "An identity that the observations of a review item matched.",
+      "description": "An identity that the records of a review item matched.",
       "properties": {
         "identity": {
           "$ref": "#/$defs/IdentitySummary"
@@ -37,7 +37,7 @@
         "members": {
           "description": "Its members: those a judgement of the case names before the others,\nand at most [`CASE_MEMBERS`] of them. `identity.members` says how\nmany there are.",
           "items": {
-            "$ref": "#/$defs/ObservationRecord"
+            "$ref": "#/$defs/RecordEntry"
           },
           "type": "array"
         }
@@ -65,20 +65,20 @@
       "type": "object"
     },
     "CaseConstraint": {
-      "description": "A constraint in force, with where its two observations are.",
+      "description": "A constraint in force, with where its two records are.",
       "properties": {
         "a": {
-          "$ref": "#/$defs/ObservationId"
+          "$ref": "#/$defs/RecordId"
         },
         "b": {
-          "$ref": "#/$defs/ObservationId"
+          "$ref": "#/$defs/RecordId"
         },
         "from": {
           "$ref": "#/$defs/Seq",
           "description": "The log position of the changeset that made it."
         },
         "identities": {
-          "description": "The identities its observations belong to now, that of `a` first.\n`None` for one that has no identity.",
+          "description": "The identities its records belong to now, that of `a` first.\n`None` for one that has no identity.",
           "items": {
             "anyOf": [
               {
@@ -315,35 +315,14 @@
       ],
       "type": "object"
     },
-    "ConstraintKind": {
-      "enum": [
-        "must_link",
-        "cannot_link"
-      ],
-      "type": "string"
-    },
-    "ConstraintList": {
-      "properties": {
-        "constraints": {
-          "items": {
-            "$ref": "#/$defs/ConstraintRecord"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "constraints"
-      ],
-      "type": "object"
-    },
-    "ConstraintRecord": {
+    "ConstraintEntry": {
       "description": "One interval of a constraint. `to` is `None` while it is in force.",
       "properties": {
         "a": {
-          "$ref": "#/$defs/ObservationId"
+          "$ref": "#/$defs/RecordId"
         },
         "b": {
-          "$ref": "#/$defs/ObservationId"
+          "$ref": "#/$defs/RecordId"
         },
         "from": {
           "$ref": "#/$defs/Seq"
@@ -370,13 +349,34 @@
       ],
       "type": "object"
     },
+    "ConstraintKind": {
+      "enum": [
+        "must_link",
+        "cannot_link"
+      ],
+      "type": "string"
+    },
+    "ConstraintList": {
+      "properties": {
+        "constraints": {
+          "items": {
+            "$ref": "#/$defs/ConstraintEntry"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "constraints"
+      ],
+      "type": "object"
+    },
     "ContentHash": {
       "description": "SHA-256 of the canonical encoding of a list of operations, as lowercase hex.",
       "type": "string"
     },
     "DismissRequest": {
       "additionalProperties": false,
-      "description": "`POST /v1/review/{id}/dismiss`: close a review item without placing its\nobservations.",
+      "description": "`POST /v1/review/{id}/dismiss`: close a review item without placing its\nrecords.",
       "properties": {
         "actor": {
           "$ref": "#/$defs/Actor"
@@ -395,7 +395,7 @@
       "type": "object"
     },
     "Dismissal": {
-      "description": "A reviewer's decision to close a review item without placing its\nobservations.",
+      "description": "A reviewer's decision to close a review item without placing its\nrecords.",
       "properties": {
         "at": {
           "type": "string"
@@ -416,67 +416,7 @@
       ],
       "type": "object"
     },
-    "DocumentExtraction": {
-      "description": "One reading of a document by an extractor.",
-      "properties": {
-        "extractor": {
-          "type": "string"
-        },
-        "mentions": {
-          "description": "How many mentions it found in the document.",
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "run": {
-          "$ref": "#/$defs/RunId",
-          "description": "The extract run."
-        },
-        "version": {
-          "description": "The hash of the extractor's files when it ran.",
-          "type": "string"
-        }
-      },
-      "required": [
-        "extractor",
-        "version",
-        "run",
-        "mentions"
-      ],
-      "type": "object"
-    },
-    "DocumentId": {
-      "description": "Identifies one version of a document. Derived by the engine from the document's source, key and text.",
-      "format": "uuid",
-      "type": "string"
-    },
-    "DocumentList": {
-      "properties": {
-        "documents": {
-          "description": "Documents without their text.",
-          "items": {
-            "$ref": "#/$defs/DocumentRecord"
-          },
-          "type": "array"
-        },
-        "next": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/DocumentId"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Pass as `after` for the next page. `null` on the last page."
-        }
-      },
-      "required": [
-        "documents"
-      ],
-      "type": "object"
-    },
-    "DocumentRecord": {
+    "DocumentEntry": {
       "description": "One version of a document as the store holds it.",
       "properties": {
         "extractions": {
@@ -554,6 +494,66 @@
       ],
       "type": "object"
     },
+    "DocumentExtraction": {
+      "description": "One reading of a document by an extractor.",
+      "properties": {
+        "extractor": {
+          "type": "string"
+        },
+        "mentions": {
+          "description": "How many mentions it found in the document.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "run": {
+          "$ref": "#/$defs/RunId",
+          "description": "The extract run."
+        },
+        "version": {
+          "description": "The hash of the extractor's files when it ran.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "extractor",
+        "version",
+        "run",
+        "mentions"
+      ],
+      "type": "object"
+    },
+    "DocumentId": {
+      "description": "Identifies one version of a document. Derived by the engine from the document's source, key and text.",
+      "format": "uuid",
+      "type": "string"
+    },
+    "DocumentList": {
+      "properties": {
+        "documents": {
+          "description": "Documents without their text.",
+          "items": {
+            "$ref": "#/$defs/DocumentEntry"
+          },
+          "type": "array"
+        },
+        "next": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DocumentId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Pass as `after` for the next page. `null` on the last page."
+        }
+      },
+      "required": [
+        "documents"
+      ],
+      "type": "object"
+    },
     "DocumentsRequest": {
       "additionalProperties": false,
       "description": "`POST /v1/documents`: store documents from one source, to be read by an\nextractor. The response is the ingest run that stored them.",
@@ -565,7 +565,7 @@
           "type": "array"
         },
         "source": {
-          "description": "The name of the source the documents come from. The observations\nextracted from them have the same source.",
+          "description": "The name of the source the documents come from. The records\nextracted from them have the same source.",
           "type": "string"
         },
         "wait_ms": {
@@ -584,21 +584,7 @@
       ],
       "type": "object"
     },
-    "DraftList": {
-      "properties": {
-        "drafts": {
-          "items": {
-            "$ref": "#/$defs/DraftSummary"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "drafts"
-      ],
-      "type": "object"
-    },
-    "DraftRecord": {
+    "DraftEntry": {
       "description": "A draft with the changeset it would commit.",
       "properties": {
         "changeset": {
@@ -611,6 +597,20 @@
       "required": [
         "draft",
         "changeset"
+      ],
+      "type": "object"
+    },
+    "DraftList": {
+      "properties": {
+        "drafts": {
+          "items": {
+            "$ref": "#/$defs/DraftSummary"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "drafts"
       ],
       "type": "object"
     },
@@ -657,11 +657,6 @@
           "$ref": "#/$defs/RunId",
           "description": "The match run whose judgements the draft rests on."
         },
-        "observations_assigned": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
         "operations": {
           "format": "uint64",
           "minimum": 0,
@@ -670,6 +665,11 @@
         "reconcile_run": {
           "$ref": "#/$defs/RunId",
           "description": "The reconcile run that drafted it."
+        },
+        "records_assigned": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
         },
         "rejected_at": {
           "description": "Rejected: when.",
@@ -709,7 +709,7 @@
         "status",
         "operations",
         "identities_created",
-        "observations_assigned"
+        "records_assigned"
       ],
       "type": "object"
     },
@@ -757,7 +757,7 @@
         },
         {
           "const": "not_found",
-          "description": "404: there is no such run, draft, changeset, identity, observation,\ndocument, review item or path.",
+          "description": "404: there is no such run, draft, changeset, identity, record,\ndocument, review item or path.",
           "type": "string"
         },
         {
@@ -815,9 +815,6 @@
             "null"
           ]
         },
-        "observation": {
-          "$ref": "#/$defs/ObservationRecord"
-        },
         "placed": {
           "anyOf": [
             {
@@ -828,15 +825,18 @@
             }
           ],
           "description": "The changeset that put it in the identity it has. `null` while it has\nnone."
+        },
+        "record": {
+          "$ref": "#/$defs/RecordEntry"
         }
       },
       "required": [
-        "observation"
+        "record"
       ],
       "type": "object"
     },
     "Explanation": {
-      "description": "What the store knows about a pair of observations, and what follows\nfrom it.",
+      "description": "What the store knows about a pair of records, and what follows\nfrom it.",
       "properties": {
         "comparisons": {
           "description": "The match runs that looked at the pair, oldest first.",
@@ -848,13 +848,13 @@
         "constraints": {
           "description": "The constraints between the two, oldest first, with those that were\nremoved.",
           "items": {
-            "$ref": "#/$defs/ConstraintRecord"
+            "$ref": "#/$defs/ConstraintEntry"
           },
           "type": "array"
         },
         "left": {
           "$ref": "#/$defs/Explained",
-          "description": "The observation with the smaller ID. It is `l` in a rule."
+          "description": "The record with the smaller ID. It is `l` in a rule."
         },
         "outcome": {
           "$ref": "#/$defs/Outcome"
@@ -869,13 +869,13 @@
         "review_items": {
           "description": "The review items that name either of the two, oldest first.",
           "items": {
-            "$ref": "#/$defs/ReviewRecord"
+            "$ref": "#/$defs/ReviewEntry"
           },
           "type": "array"
         },
         "right": {
           "$ref": "#/$defs/Explained",
-          "description": "The observation with the larger ID. It is `r` in a rule."
+          "description": "The record with the larger ID. It is `r` in a rule."
         },
         "rules": {
           "anyOf": [
@@ -931,10 +931,10 @@
               "type": "null"
             }
           ],
-          "description": "The ingest run the observations were stored under. There is none\nwhen nothing was found."
+          "description": "The ingest run the records were stored under. There is none\nwhen nothing was found."
         },
         "inserted": {
-          "description": "Observations created.",
+          "description": "Records created.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -949,7 +949,7 @@
           "$ref": "#/$defs/RunId"
         },
         "superseded": {
-          "description": "Observations created as a new version of a mention that was known\nwith other attributes.",
+          "description": "Records created as a new version of a mention that was known\nwith other attributes.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -967,7 +967,7 @@
     },
     "ExtractRequest": {
       "additionalProperties": false,
-      "description": "`POST /v1/extractions`: run one of the project's extractors over the\ndocuments it has not read. The response is the extract run. What it\nfound is observations, which `POST /v1/runs` then matches.",
+      "description": "`POST /v1/extractions`: run one of the project's extractors over the\ndocuments it has not read. The response is the extract run. What it\nfound is records, which `POST /v1/runs` then matches.",
       "properties": {
         "again": {
           "default": null,
@@ -1138,24 +1138,24 @@
     },
     "IdentitiesOfRequest": {
       "additionalProperties": false,
-      "description": "`POST /v1/observations/identities`: the identities of many observations\nin one call.",
+      "description": "`POST /v1/records/identities`: the identities of many records\nin one call.",
       "properties": {
-        "observations": {
+        "records": {
           "items": {
-            "$ref": "#/$defs/ObservationId"
+            "$ref": "#/$defs/RecordId"
           },
           "type": "array"
         }
       },
       "required": [
-        "observations"
+        "records"
       ],
       "type": "object"
     },
     "IdentitiesOfResponse": {
       "properties": {
         "identities": {
-          "description": "One entry per observation asked about, in the same order. `null` for\nan observation that has no identity or is not known.",
+          "description": "One entry per record asked about, in the same order. `null` for\na record that has no identity or is not known.",
           "items": {
             "anyOf": [
               {
@@ -1247,7 +1247,7 @@
       "type": "object"
     },
     "IdentityView": {
-      "description": "An identity and the observations that belong to it now.",
+      "description": "An identity and the records that belong to it now.",
       "properties": {
         "created": {
           "$ref": "#/$defs/Seq",
@@ -1273,7 +1273,7 @@
           ]
         },
         "members": {
-          "description": "The members of the current identity, ordered by observation ID.",
+          "description": "The members of the current identity, ordered by record ID.",
           "items": {
             "$ref": "#/$defs/Member"
           },
@@ -1315,7 +1315,7 @@
           "type": "integer"
         },
         "inserted": {
-          "description": "Observations created.",
+          "description": "Records created.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -1331,7 +1331,7 @@
         },
         "superseded": {
           "default": 0,
-          "description": "Observations created as a new version of a row the source had sent\nbefore under the same key with other content.",
+          "description": "Records created as a new version of a row the source had sent\nbefore under the same key with other content.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -1405,10 +1405,10 @@
           "description": "Anything the strategy wants kept with the judgement."
         },
         "left_id": {
-          "$ref": "#/$defs/ObservationId"
+          "$ref": "#/$defs/RecordId"
         },
         "right_id": {
-          "$ref": "#/$defs/ObservationId"
+          "$ref": "#/$defs/RecordId"
         },
         "score": {
           "default": null,
@@ -1488,7 +1488,7 @@
       "description": "One step in the chain that joins two members of an identity.",
       "properties": {
         "from": {
-          "$ref": "#/$defs/ObservationId"
+          "$ref": "#/$defs/RecordId"
         },
         "kind": {
           "$ref": "#/$defs/LinkKind"
@@ -1505,7 +1505,7 @@
           "description": "With `match`: the latest run that judged so."
         },
         "to": {
-          "$ref": "#/$defs/ObservationId"
+          "$ref": "#/$defs/RecordId"
         }
       },
       "required": [
@@ -1516,7 +1516,7 @@
       "type": "object"
     },
     "LinkKind": {
-      "description": "What joins two observations of one identity directly.",
+      "description": "What joins two records of one identity directly.",
       "oneOf": [
         {
           "const": "must_link",
@@ -1563,8 +1563,8 @@
             "null"
           ]
         },
-        "observation": {
-          "$ref": "#/$defs/ObservationId"
+        "record": {
+          "$ref": "#/$defs/RecordId"
         },
         "since": {
           "$ref": "#/$defs/Seq",
@@ -1575,7 +1575,7 @@
         }
       },
       "required": [
-        "observation",
+        "record",
         "source",
         "since"
       ],
@@ -1647,123 +1647,8 @@
       ],
       "type": "object"
     },
-    "ObservationId": {
-      "description": "Identifies an observation. Derived by the engine from the observation's source, key and content.",
-      "format": "uuid",
-      "type": "string"
-    },
-    "ObservationList": {
-      "properties": {
-        "next": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ObservationId"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Pass as `after` for the next page. `null` on the last page."
-        },
-        "observations": {
-          "items": {
-            "$ref": "#/$defs/ObservationRecord"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "observations"
-      ],
-      "type": "object"
-    },
-    "ObservationRecord": {
-      "description": "An observation as it was ingested, and the identity it belongs to now.",
-      "properties": {
-        "entity_type": {
-          "$ref": "#/$defs/EntityType"
-        },
-        "evidence": {
-          "description": "Where in the source the observation was found, if the source said."
-        },
-        "id": {
-          "$ref": "#/$defs/ObservationId"
-        },
-        "identity": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/IdentityId"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "`None` while no changeset has placed it."
-        },
-        "ingest_run": {
-          "$ref": "#/$defs/RunId"
-        },
-        "ingested_at": {
-          "type": "string"
-        },
-        "key": {
-          "description": "The row's key within its source, if it had one.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "label": {
-          "default": null,
-          "description": "What a person would call it: the name the payload gives, as\n[`label_of`] finds it. `None` when the payload has none.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "payload": {
-          "description": "The attributes exactly as received."
-        },
-        "source": {
-          "type": "string"
-        },
-        "superseded_by": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ObservationId"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "The version that replaced this one, if the source has sent the row\nagain with other content."
-        },
-        "supersedes": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ObservationId"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "The version of the row this one replaced: what the source held under\nthe same key before."
-        }
-      },
-      "required": [
-        "id",
-        "entity_type",
-        "source",
-        "payload",
-        "ingested_at",
-        "ingest_run"
-      ],
-      "type": "object"
-    },
     "Op": {
-      "description": "One change to identity state. Each operation carries its own precondition,\nwhich is checked against the state the changeset is committed to.\n\nThere is no operation that splits an identity. A split is a\n`CreateIdentity` and the `Assign` operations that move observations to it,\nusually with a `cannot_link` constraint, in one changeset.",
+      "description": "One change to identity state. Each operation carries its own precondition,\nwhich is checked against the state the changeset is committed to.\n\nThere is no operation that splits an identity. A split is a\n`CreateIdentity` and the `Assign` operations that move records to it,\nusually with a `cannot_link` constraint, in one changeset.",
       "oneOf": [
         {
           "description": "Precondition: the ID has never been used.",
@@ -1787,7 +1672,7 @@
           "type": "object"
         },
         {
-          "description": "Attach (`from` is `None`), move, or detach (`to` is `None`).\nPrecondition: `from` is the observation's current identity.",
+          "description": "Attach (`from` is `None`), move, or detach (`to` is `None`).\nPrecondition: `from` is the record's current identity.",
           "properties": {
             "from": {
               "anyOf": [
@@ -1799,12 +1684,12 @@
                 }
               ]
             },
-            "observation": {
-              "$ref": "#/$defs/ObservationId"
-            },
             "op": {
               "const": "assign",
               "type": "string"
+            },
+            "record": {
+              "$ref": "#/$defs/RecordId"
             },
             "to": {
               "anyOf": [
@@ -1819,7 +1704,7 @@
           },
           "required": [
             "op",
-            "observation"
+            "record"
           ],
           "type": "object"
         },
@@ -1845,13 +1730,13 @@
           "type": "object"
         },
         {
-          "description": "Records that two observations must share an identity, or must not.\nPrecondition: the pair has no constraint yet, and the state the\nchangeset leaves behind satisfies this one.",
+          "description": "Records that two records must share an identity, or must not.\nPrecondition: the pair has no constraint yet, and the state the\nchangeset leaves behind satisfies this one.",
           "properties": {
             "a": {
-              "$ref": "#/$defs/ObservationId"
+              "$ref": "#/$defs/RecordId"
             },
             "b": {
-              "$ref": "#/$defs/ObservationId"
+              "$ref": "#/$defs/RecordId"
             },
             "kind": {
               "$ref": "#/$defs/ConstraintKind"
@@ -1873,10 +1758,10 @@
           "description": "Precondition: the constraint is in force.",
           "properties": {
             "a": {
-              "$ref": "#/$defs/ObservationId"
+              "$ref": "#/$defs/RecordId"
             },
             "b": {
-              "$ref": "#/$defs/ObservationId"
+              "$ref": "#/$defs/RecordId"
             },
             "kind": {
               "$ref": "#/$defs/ConstraintKind"
@@ -1914,7 +1799,7 @@
       ]
     },
     "Outcome": {
-      "description": "Where the two observations are in relation to each other.",
+      "description": "Where the two records are in relation to each other.",
       "oneOf": [
         {
           "enum": [
@@ -1936,7 +1821,7 @@
       ]
     },
     "PairJudgement": {
-      "description": "What a run judged about one of a review item's observations and another\nobservation.",
+      "description": "What a run judged about one of a review item's records and another\nrecord.",
       "properties": {
         "detail": {
           "description": "What the strategy kept with the judgement. The built-in `rules`\nkeeps the names of the rules that held."
@@ -1950,15 +1835,15 @@
               "type": "null"
             }
           ],
-          "description": "The identity `other` belongs to now: one of the candidates, unless\n`other` is another of the item's observations. A candidate's members\nare not all in the case, so this, not the members, says which\ncandidate a judgement is about."
-        },
-        "observation": {
-          "$ref": "#/$defs/ObservationId",
-          "description": "One of the item's observations."
+          "description": "The identity `other` belongs to now: one of the candidates, unless\n`other` is another of the item's records. A candidate's members\nare not all in the case, so this, not the members, says which\ncandidate a judgement is about."
         },
         "other": {
-          "$ref": "#/$defs/ObservationId",
+          "$ref": "#/$defs/RecordId",
           "description": "What it was compared with."
+        },
+        "record": {
+          "$ref": "#/$defs/RecordId",
+          "description": "One of the item's records."
         },
         "run": {
           "$ref": "#/$defs/RunId",
@@ -1977,7 +1862,7 @@
         }
       },
       "required": [
-        "observation",
+        "record",
         "other",
         "run",
         "verdict"
@@ -1985,7 +1870,7 @@
       "type": "object"
     },
     "Placement": {
-      "description": "The changeset that put an observation where it is.",
+      "description": "The changeset that put a record where it is.",
       "properties": {
         "actor": {
           "$ref": "#/$defs/Actor"
@@ -2093,17 +1978,17 @@
         },
         {
           "properties": {
-            "observation": {
-              "$ref": "#/$defs/ObservationId"
-            },
             "reason": {
-              "const": "unknown_observation",
+              "const": "unknown_record",
               "type": "string"
+            },
+            "record": {
+              "$ref": "#/$defs/RecordId"
             }
           },
           "required": [
             "reason",
-            "observation"
+            "record"
           ],
           "type": "object"
         },
@@ -2165,33 +2050,33 @@
                 }
               ]
             },
-            "observation": {
-              "$ref": "#/$defs/ObservationId"
-            },
             "reason": {
               "const": "stale_assignment",
               "type": "string"
+            },
+            "record": {
+              "$ref": "#/$defs/RecordId"
             }
           },
           "required": [
             "reason",
-            "observation"
+            "record"
           ],
           "type": "object"
         },
         {
           "properties": {
-            "observation": {
-              "$ref": "#/$defs/ObservationId"
-            },
             "reason": {
               "const": "no_change",
               "type": "string"
+            },
+            "record": {
+              "$ref": "#/$defs/RecordId"
             }
           },
           "required": [
             "reason",
-            "observation"
+            "record"
           ],
           "type": "object"
         },
@@ -2203,21 +2088,21 @@
             "identity_type": {
               "$ref": "#/$defs/EntityType"
             },
-            "observation": {
-              "$ref": "#/$defs/ObservationId"
-            },
-            "observation_type": {
-              "$ref": "#/$defs/EntityType"
-            },
             "reason": {
               "const": "entity_type_mismatch",
               "type": "string"
+            },
+            "record": {
+              "$ref": "#/$defs/RecordId"
+            },
+            "record_type": {
+              "$ref": "#/$defs/EntityType"
             }
           },
           "required": [
             "reason",
-            "observation",
-            "observation_type",
+            "record",
+            "record_type",
             "identity",
             "identity_type"
           ],
@@ -2230,17 +2115,17 @@
               "minimum": 0,
               "type": "integer"
             },
-            "observation": {
-              "$ref": "#/$defs/ObservationId"
-            },
             "reason": {
-              "const": "observation_assigned_twice",
+              "const": "record_assigned_twice",
               "type": "string"
+            },
+            "record": {
+              "$ref": "#/$defs/RecordId"
             }
           },
           "required": [
             "reason",
-            "observation",
+            "record",
             "first_op"
           ],
           "type": "object"
@@ -2375,30 +2260,30 @@
         },
         {
           "properties": {
-            "observation": {
-              "$ref": "#/$defs/ObservationId"
-            },
             "reason": {
-              "const": "same_observation",
+              "const": "same_record",
               "type": "string"
+            },
+            "record": {
+              "$ref": "#/$defs/RecordId"
             }
           },
           "required": [
             "reason",
-            "observation"
+            "record"
           ],
           "type": "object"
         },
         {
           "properties": {
             "a": {
-              "$ref": "#/$defs/ObservationId"
+              "$ref": "#/$defs/RecordId"
             },
             "a_type": {
               "$ref": "#/$defs/EntityType"
             },
             "b": {
-              "$ref": "#/$defs/ObservationId"
+              "$ref": "#/$defs/RecordId"
             },
             "b_type": {
               "$ref": "#/$defs/EntityType"
@@ -2420,10 +2305,10 @@
         {
           "properties": {
             "a": {
-              "$ref": "#/$defs/ObservationId"
+              "$ref": "#/$defs/RecordId"
             },
             "b": {
-              "$ref": "#/$defs/ObservationId"
+              "$ref": "#/$defs/RecordId"
             },
             "kind": {
               "$ref": "#/$defs/ConstraintKind"
@@ -2444,10 +2329,10 @@
         {
           "properties": {
             "a": {
-              "$ref": "#/$defs/ObservationId"
+              "$ref": "#/$defs/RecordId"
             },
             "b": {
-              "$ref": "#/$defs/ObservationId"
+              "$ref": "#/$defs/RecordId"
             },
             "kind": {
               "$ref": "#/$defs/ConstraintKind"
@@ -2468,10 +2353,10 @@
         {
           "properties": {
             "a": {
-              "$ref": "#/$defs/ObservationId"
+              "$ref": "#/$defs/RecordId"
             },
             "b": {
-              "$ref": "#/$defs/ObservationId"
+              "$ref": "#/$defs/RecordId"
             },
             "first_op": {
               "format": "uint",
@@ -2498,10 +2383,10 @@
         {
           "properties": {
             "a": {
-              "$ref": "#/$defs/ObservationId"
+              "$ref": "#/$defs/RecordId"
             },
             "b": {
-              "$ref": "#/$defs/ObservationId"
+              "$ref": "#/$defs/RecordId"
             },
             "identity_a": {
               "anyOf": [
@@ -2554,6 +2439,121 @@
           ]
         }
       },
+      "type": "object"
+    },
+    "RecordEntry": {
+      "description": "A record as it was ingested, and the identity it belongs to now.",
+      "properties": {
+        "entity_type": {
+          "$ref": "#/$defs/EntityType"
+        },
+        "evidence": {
+          "description": "Where in the source the record was found, if the source said."
+        },
+        "id": {
+          "$ref": "#/$defs/RecordId"
+        },
+        "identity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IdentityId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "`None` while no changeset has placed it."
+        },
+        "ingest_run": {
+          "$ref": "#/$defs/RunId"
+        },
+        "ingested_at": {
+          "type": "string"
+        },
+        "key": {
+          "description": "The row's key within its source, if it had one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "label": {
+          "default": null,
+          "description": "What a person would call it: the name the payload gives, as\n[`label_of`] finds it. `None` when the payload has none.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "payload": {
+          "description": "The attributes exactly as received."
+        },
+        "source": {
+          "type": "string"
+        },
+        "superseded_by": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RecordId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The version that replaced this one, if the source has sent the row\nagain with other content."
+        },
+        "supersedes": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RecordId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The version of the row this one replaced: what the source held under\nthe same key before."
+        }
+      },
+      "required": [
+        "id",
+        "entity_type",
+        "source",
+        "payload",
+        "ingested_at",
+        "ingest_run"
+      ],
+      "type": "object"
+    },
+    "RecordId": {
+      "description": "Identifies a record. Derived by the engine from the record's source, key and content.",
+      "format": "uuid",
+      "type": "string"
+    },
+    "RecordList": {
+      "properties": {
+        "next": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RecordId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Pass as `after` for the next page. `null` on the last page."
+        },
+        "records": {
+          "items": {
+            "$ref": "#/$defs/RecordEntry"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "records"
+      ],
       "type": "object"
     },
     "RecordedJudgement": {
@@ -2624,7 +2624,7 @@
       "type": "object"
     },
     "ReviewCase": {
-      "description": "A review item with what a reviewer reads to decide it: the observations\nit holds back, the identities they matched, what was judged between\nthem, and what was already decided about them.",
+      "description": "A review item with what a reviewer reads to decide it: the records\nit holds back, the identities they matched, what was judged between\nthem, and what was already decided about them.",
       "properties": {
         "candidates": {
           "description": "The identities the item names, as they stand now, ordered by ID. One\nthat was merged away since is shown as the identity that stands for\nit, so there may be fewer than the item names.",
@@ -2634,130 +2634,40 @@
           "type": "array"
         },
         "constraints": {
-          "description": "The constraints in force that bear on the decision, oldest first:\nthose that name one of the item's observations, and those between\nmembers of two of the candidates. A changeset that would break one\nis refused, so a `cannot_link` between two candidates means they\ncannot be merged, and one between an observation and a member of a\ncandidate means it cannot be placed there.",
+          "description": "The constraints in force that bear on the decision, oldest first:\nthose that name one of the item's records, and those between\nmembers of two of the candidates. A changeset that would break one\nis refused, so a `cannot_link` between two candidates means they\ncannot be merged, and one between a record and a member of a\ncandidate means it cannot be placed there.",
           "items": {
             "$ref": "#/$defs/CaseConstraint"
           },
           "type": "array"
         },
         "item": {
-          "$ref": "#/$defs/ReviewRecord"
+          "$ref": "#/$defs/ReviewEntry"
         },
         "judgements": {
-          "description": "What the latest run to judge each pair made of it, for every pair of\none of the item's observations with another of them or with a member\nof a candidate. Only runs that were reconciled count.",
+          "description": "What the latest run to judge each pair made of it, for every pair of\none of the item's records with another of them or with a member\nof a candidate. Only runs that were reconciled count.",
           "items": {
             "$ref": "#/$defs/PairJudgement"
           },
           "type": "array"
         },
-        "observations": {
-          "description": "The observations the item names, as they are now, in the item's\norder.",
+        "records": {
+          "description": "The records the item names, as they are now, in the item's\norder.",
           "items": {
-            "$ref": "#/$defs/ObservationRecord"
+            "$ref": "#/$defs/RecordEntry"
           },
           "type": "array"
         }
       },
       "required": [
         "item",
-        "observations",
+        "records",
         "candidates",
         "judgements",
         "constraints"
       ],
       "type": "object"
     },
-    "ReviewItem": {
-      "description": "Something the reconciler would not decide. The observations named are left\nwithout an identity.",
-      "oneOf": [
-        {
-          "description": "The observations match members of more than one identity. Those\nidentities may be the same real thing, which only a reviewer can say.",
-          "properties": {
-            "identities": {
-              "items": {
-                "$ref": "#/$defs/IdentityId"
-              },
-              "type": "array"
-            },
-            "kind": {
-              "const": "possible_merge",
-              "type": "string"
-            },
-            "observations": {
-              "items": {
-                "$ref": "#/$defs/ObservationId"
-              },
-              "type": "array"
-            }
-          },
-          "required": [
-            "kind",
-            "observations",
-            "identities"
-          ],
-          "type": "object"
-        },
-        {
-          "description": "The evidence contradicts itself: the observations match each other or\n`identity`, and a `no_match` judgement says some of them do not belong\ntogether, or do not belong with a member of `identity`.",
-          "properties": {
-            "identity": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/IdentityId"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "kind": {
-              "const": "conflict",
-              "type": "string"
-            },
-            "observations": {
-              "items": {
-                "$ref": "#/$defs/ObservationId"
-              },
-              "type": "array"
-            }
-          },
-          "required": [
-            "kind",
-            "observations"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "ReviewKind": {
-      "oneOf": [
-        {
-          "const": "possible_merge",
-          "description": "The observations match more than one identity, so placing them would\nmerge identities.",
-          "type": "string"
-        },
-        {
-          "const": "conflict",
-          "description": "The evidence about the observations contradicts itself.",
-          "type": "string"
-        }
-      ]
-    },
-    "ReviewList": {
-      "properties": {
-        "items": {
-          "items": {
-            "$ref": "#/$defs/ReviewRecord"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "items"
-      ],
-      "type": "object"
-    },
-    "ReviewRecord": {
+    "ReviewEntry": {
       "description": "A review item as the store keeps it.",
       "properties": {
         "dismissed": {
@@ -2781,7 +2691,7 @@
           "type": "integer"
         },
         "identities": {
-          "description": "The identities they matched. Empty when the conflict is among the\nobservations themselves.",
+          "description": "The identities they matched. Empty when the conflict is among the\nrecords themselves.",
           "items": {
             "$ref": "#/$defs/IdentityId"
           },
@@ -2790,10 +2700,10 @@
         "kind": {
           "$ref": "#/$defs/ReviewKind"
         },
-        "observations": {
-          "description": "The observations left without an identity.",
+        "records": {
+          "description": "The records left without an identity.",
           "items": {
-            "$ref": "#/$defs/ObservationId"
+            "$ref": "#/$defs/RecordId"
           },
           "type": "array"
         },
@@ -2806,7 +2716,7 @@
               "type": "null"
             }
           ],
-          "description": "Resolved: the changeset after which every observation had an identity."
+          "description": "Resolved: the changeset after which every record had an identity."
         },
         "run": {
           "$ref": "#/$defs/RunId",
@@ -2832,9 +2742,99 @@
         "run",
         "entity_type",
         "kind",
-        "observations",
+        "records",
         "identities",
         "status"
+      ],
+      "type": "object"
+    },
+    "ReviewItem": {
+      "description": "Something the reconciler would not decide. The records named are left\nwithout an identity.",
+      "oneOf": [
+        {
+          "description": "The records match members of more than one identity. Those\nidentities may be the same real thing, which only a reviewer can say.",
+          "properties": {
+            "identities": {
+              "items": {
+                "$ref": "#/$defs/IdentityId"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "const": "possible_merge",
+              "type": "string"
+            },
+            "records": {
+              "items": {
+                "$ref": "#/$defs/RecordId"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "records",
+            "identities"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The evidence contradicts itself: the records match each other or\n`identity`, and a `no_match` judgement says some of them do not belong\ntogether, or do not belong with a member of `identity`.",
+          "properties": {
+            "identity": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/IdentityId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "kind": {
+              "const": "conflict",
+              "type": "string"
+            },
+            "records": {
+              "items": {
+                "$ref": "#/$defs/RecordId"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "records"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ReviewKind": {
+      "oneOf": [
+        {
+          "const": "possible_merge",
+          "description": "The records match more than one identity, so placing them would\nmerge identities.",
+          "type": "string"
+        },
+        {
+          "const": "conflict",
+          "description": "The evidence about the records contradicts itself.",
+          "type": "string"
+        }
+      ]
+    },
+    "ReviewList": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/ReviewEntry"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
       ],
       "type": "object"
     },
@@ -2923,36 +2923,7 @@
       ],
       "type": "object"
     },
-    "RunId": {
-      "description": "Identifies a run of the engine: an ingest, a match or a reconcile.",
-      "format": "uint64",
-      "minimum": 0,
-      "type": "integer"
-    },
-    "RunKind": {
-      "enum": [
-        "ingest",
-        "extract",
-        "match",
-        "reconcile"
-      ],
-      "type": "string"
-    },
-    "RunList": {
-      "properties": {
-        "runs": {
-          "items": {
-            "$ref": "#/$defs/RunRecord"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "runs"
-      ],
-      "type": "object"
-    },
-    "RunRecord": {
+    "RunEntry": {
       "description": "A run as a caller sees it.",
       "properties": {
         "entity_type": {
@@ -3057,13 +3028,42 @@
       ],
       "type": "object"
     },
+    "RunId": {
+      "description": "Identifies a run of the engine: an ingest, a match or a reconcile.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "RunKind": {
+      "enum": [
+        "ingest",
+        "extract",
+        "match",
+        "reconcile"
+      ],
+      "type": "string"
+    },
+    "RunList": {
+      "properties": {
+        "runs": {
+          "items": {
+            "$ref": "#/$defs/RunEntry"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "runs"
+      ],
+      "type": "object"
+    },
     "RunResponse": {
       "description": "A run, as the response of a call that started one or read one. `run` is\n`null` when there was nothing to do, so no run was started.",
       "properties": {
         "run": {
           "anyOf": [
             {
-              "$ref": "#/$defs/RunRecord"
+              "$ref": "#/$defs/RunEntry"
             },
             {
               "type": "null"
@@ -3125,9 +3125,9 @@
       "type": "integer"
     },
     "SourceCount": {
-      "description": "How many observations a source gave.",
+      "description": "How many records a source gave.",
       "properties": {
-        "observations": {
+        "records": {
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -3138,7 +3138,7 @@
       },
       "required": [
         "source",
-        "observations"
+        "records"
       ],
       "type": "object"
     },
@@ -3149,7 +3149,7 @@
           "description": "When the latest of them was ingested.",
           "type": "string"
         },
-        "observations": {
+        "records": {
           "description": "Counting each version of a row.",
           "format": "uint64",
           "minimum": 0,
@@ -3167,7 +3167,7 @@
       },
       "required": [
         "source",
-        "observations",
+        "records",
         "unassigned",
         "last_ingested_at"
       ],
@@ -3191,9 +3191,9 @@
           "description": "The identity that was split. It keeps its ID and the larger side."
         },
         "moved": {
-          "description": "The observations that moved to the new identity, in order.",
+          "description": "The records that moved to the new identity, in order.",
           "items": {
-            "$ref": "#/$defs/ObservationId"
+            "$ref": "#/$defs/RecordId"
           },
           "type": "array"
         }
@@ -3234,30 +3234,30 @@
             "null"
           ]
         },
-        "observations": {
-          "description": "The observations on one side. The rest of the identity's members are\nthe other side. The larger side keeps the ID, the side not named here\non a tie.",
-          "items": {
-            "$ref": "#/$defs/ObservationId"
-          },
-          "type": "array"
-        },
         "reason": {
           "default": null,
           "type": [
             "string",
             "null"
           ]
+        },
+        "records": {
+          "description": "The records on one side. The rest of the identity's members are\nthe other side. The larger side keeps the ID, the side not named here\non a tie.",
+          "items": {
+            "$ref": "#/$defs/RecordId"
+          },
+          "type": "array"
         }
       },
       "required": [
-        "observations",
+        "records",
         "actor"
       ],
       "type": "object"
     },
     "StartRunRequest": {
       "additionalProperties": false,
-      "description": "`POST /v1/runs`: match the new observations of one entity type.",
+      "description": "`POST /v1/runs`: match the new records of one entity type.",
       "properties": {
         "commit": {
           "default": null,
@@ -3272,7 +3272,7 @@
         },
         "rematch": {
           "default": null,
-          "description": "Match every observation of the type again, not only the new ones.\nObservations that have an identity keep it: where the strategy\ndisagrees with the identities as they are, the run's `resolution`\nlists `suggestions`.",
+          "description": "Match every record of the type again, not only the new ones.\nRecords that have an identity keep it: where the strategy\ndisagrees with the identities as they are, the run's `resolution`\nlists `suggestions`.",
           "type": [
             "boolean",
             "null"
@@ -3503,11 +3503,6 @@
         "name": {
           "$ref": "#/$defs/EntityType"
         },
-        "observations": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
         "open_draft": {
           "anyOf": [
             {
@@ -3524,8 +3519,13 @@
           "minimum": 0,
           "type": "integer"
         },
+        "records": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "sources": {
-          "description": "The sources the observations came from, by name.",
+          "description": "The sources the records came from, by name.",
           "items": {
             "$ref": "#/$defs/SourceInfo"
           },
@@ -3540,7 +3540,7 @@
           "type": "array"
         },
         "unassigned": {
-          "description": "Observations no changeset has placed.",
+          "description": "Records no changeset has placed.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -3550,7 +3550,7 @@
         "name",
         "declaration_version",
         "features",
-        "observations",
+        "records",
         "unassigned",
         "sources",
         "identities",
@@ -3603,25 +3603,25 @@
         "match_run": {
           "$ref": "#/$defs/RunId"
         },
-        "new_observations": {
-          "description": "Observations the run examined: those ingested since the last run, and\nthose an earlier run left for review.",
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "observations_assigned": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "observations_unassigned": {
-          "description": "Examined observations left without an identity. Each is named in\n`review`.",
+        "new_records": {
+          "description": "Records the run examined: those ingested since the last run, and\nthose an earlier run left for review.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "reconcile_run": {
           "$ref": "#/$defs/RunId"
+        },
+        "records_assigned": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "records_unassigned": {
+          "description": "Examined records left without an identity. Each is named in\n`review`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
         },
         "reexamined": {
           "description": "How many of them an earlier run had left for review.",
@@ -3646,20 +3646,20 @@
             }
           ],
           "default": null,
-          "description": "Where the strategy disagrees with the identities as they are. Only a\nrematch has these: no other run judges pairs of observations that\nboth have an identity."
+          "description": "Where the strategy disagrees with the identities as they are. Only a\nrematch has these: no other run judges pairs of records that\nboth have an identity."
         }
       },
       "required": [
         "entity_type",
         "match_run",
         "reconcile_run",
-        "new_observations",
+        "new_records",
         "reexamined",
         "candidates",
         "judgements",
         "identities_created",
-        "observations_assigned",
-        "observations_unassigned",
+        "records_assigned",
+        "records_unassigned",
         "review"
       ],
       "type": "object"

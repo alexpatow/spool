@@ -11,8 +11,8 @@ use spool::core::{
     Actor, Changeset, Constraint, ConstraintKind, IdGenerator, IdentityId, Op, SeededIds, Verdict,
 };
 use spool::{
-    CaseConstraint, Engine, Error, IdentityFilter, IngestOptions, ObservationFilter,
-    ResolveOptions, ReviewFilter, Rows, label_of,
+    CaseConstraint, Engine, Error, IdentityFilter, IngestOptions, RecordFilter, ResolveOptions,
+    ReviewFilter, Rows, label_of,
 };
 
 fn resolve(engine: &Engine) {
@@ -27,9 +27,9 @@ fn json_rows(rows: serde_json::Value) -> Rows {
 
 fn search(engine: &Engine, q: &str) -> Vec<String> {
     let mut found: Vec<String> = engine
-        .observations(&ObservationFilter {
+        .records(&RecordFilter {
             q: Some(q.to_owned()),
-            ..ObservationFilter::default()
+            ..RecordFilter::default()
         })
         .unwrap()
         .iter()
@@ -101,7 +101,7 @@ fn an_identity_is_called_what_most_of_its_members_are_and_says_where_they_came_f
     let nameless = identity(&engine, "depot", "10").unwrap();
 
     let record = engine
-        .observation(observation(&engine, "depot", "8"))
+        .record(record_id(&engine, "depot", "8"))
         .unwrap()
         .unwrap();
     assert_eq!(record.label.as_deref(), Some("Anvil, forged"));
@@ -114,7 +114,7 @@ fn an_identity_is_called_what_most_of_its_members_are_and_says_where_they_came_f
     let sources: Vec<(&str, u64)> = found(anvil)
         .sources
         .iter()
-        .map(|source| (source.source.as_str(), source.observations))
+        .map(|source| (source.source.as_str(), source.records))
         .collect();
     assert_eq!(sources, [("depot", 2), ("shop", 1)]);
     assert_eq!(found(nameless).label, None);
@@ -125,12 +125,12 @@ fn an_identity_is_called_what_most_of_its_members_are_and_says_where_they_came_f
     );
     assert_eq!(engine.identity(nameless).unwrap().label, None);
 
-    // The members of one identity are read as observations, with what each
+    // The members of one identity are read as records, with what each
     // says and when it arrived.
     let members = engine
-        .observations(&ObservationFilter {
+        .records(&RecordFilter {
             identity: Some(anvil),
-            ..ObservationFilter::default()
+            ..RecordFilter::default()
         })
         .unwrap();
     let mut names: Vec<String> = members.iter().map(|member| member.name()).collect();
@@ -143,19 +143,13 @@ fn an_identity_is_called_what_most_of_its_members_are_and_says_where_they_came_f
     let sources: Vec<(&str, u64, u64)> = info.entity_types[0]
         .sources
         .iter()
-        .map(|source| {
-            (
-                source.source.as_str(),
-                source.observations,
-                source.unassigned,
-            )
-        })
+        .map(|source| (source.source.as_str(), source.records, source.unassigned))
         .collect();
     assert_eq!(sources, [("depot", 3, 0), ("shop", 1, 0)]);
     assert_eq!(
         info.entity_types[0].sources[1].last_ingested_at,
         engine
-            .observation(observation(&engine, "shop", "1"))
+            .record(record_id(&engine, "shop", "1"))
             .unwrap()
             .unwrap()
             .ingested_at
@@ -214,9 +208,9 @@ fn of_labels_that_as_many_members_have_the_first_to_arrive_stands() {
     // It has no members of its own any more.
     assert!(
         engine
-            .observations(&ObservationFilter {
+            .records(&RecordFilter {
                 identity: Some(hammer),
-                ..ObservationFilter::default()
+                ..RecordFilter::default()
             })
             .unwrap()
             .is_empty()
@@ -277,20 +271,20 @@ fn a_search_finds_the_records_that_hold_every_word() {
 
     // With the other filters, and in pages.
     let narrowed = engine
-        .observations(&ObservationFilter {
+        .records(&RecordFilter {
             q: Some("acorn".to_owned()),
             source: Some("crm".to_owned()),
             limit: 1,
-            ..ObservationFilter::default()
+            ..RecordFilter::default()
         })
         .unwrap();
     assert_eq!(narrowed.len(), 1);
     let rest = engine
-        .observations(&ObservationFilter {
+        .records(&RecordFilter {
             q: Some("acorn".to_owned()),
             source: Some("crm".to_owned()),
             after: Some(narrowed[0].id),
-            ..ObservationFilter::default()
+            ..RecordFilter::default()
         })
         .unwrap();
     assert_eq!(rest.len(), 1);
@@ -416,11 +410,11 @@ fn a_review_case_shows_the_records_the_identities_they_matched_and_what_was_judg
 
     let case = engine.review_case(item.id).unwrap();
     assert_eq!(&case.item, item);
-    let waiting = observation(&engine, "depot", "9");
-    assert_eq!(case.observations.len(), 1);
-    assert_eq!(case.observations[0].id, waiting);
-    assert_eq!(case.observations[0].label.as_deref(), Some("anvil"));
-    assert_eq!(case.observations[0].identity, None);
+    let waiting = record_id(&engine, "depot", "9");
+    assert_eq!(case.records.len(), 1);
+    assert_eq!(case.records[0].id, waiting);
+    assert_eq!(case.records[0].label.as_deref(), Some("anvil"));
+    assert_eq!(case.records[0].identity, None);
 
     let anvil = identity(&engine, "shop", "1").unwrap();
     let hammer = identity(&engine, "shop", "3").unwrap();
@@ -456,8 +450,8 @@ fn a_review_case_shows_the_records_the_identities_they_matched_and_what_was_judg
         .judgements
         .iter()
         .map(|judgement| {
-            assert_eq!(judgement.observation, waiting);
-            let other = engine.observation(judgement.other).unwrap().unwrap();
+            assert_eq!(judgement.record, waiting);
+            let other = engine.record(judgement.other).unwrap().unwrap();
             (other.name(), judgement.verdict)
         })
         .collect();
@@ -476,7 +470,7 @@ fn a_review_case_shows_the_records_the_identities_they_matched_and_what_was_judg
     assert_eq!(
         case.judgements
             .iter()
-            .find(|judgement| judgement.other == observation(&engine, "shop", "3"))
+            .find(|judgement| judgement.other == record_id(&engine, "shop", "3"))
             .unwrap()
             .detail,
         Some(json!({ "block": ["same_code"], "match": ["same_code"], "no_match": [] }))
@@ -608,11 +602,11 @@ fn a_case_says_what_reviewers_decided_about_its_records() {
     };
     assert_eq!(engine.review_case(item.id).unwrap().constraints, []);
 
-    let waiting = observation(&engine, "depot", "9");
+    let waiting = record_id(&engine, "depot", "9");
     let anvil = identity(&engine, "shop", "1").unwrap();
     let hammer = identity(&engine, "shop", "3").unwrap();
     let tongs = identity(&engine, "shop", "7").unwrap();
-    let of = |key: &str| observation(&engine, "shop", key);
+    let of = |key: &str| record_id(&engine, "shop", key);
     let mut ids = SeededIds::new(21);
     let mut decide = |ops: Vec<Op>| {
         engine
@@ -662,7 +656,7 @@ fn a_case_says_what_reviewers_decided_about_its_records() {
     // Oldest first, each with where its two records are now.
     let said = |kind, one, other, from| {
         let constraint = Constraint::new(kind, one, other);
-        let place = |observation| engine.observation(observation).unwrap().unwrap().identity;
+        let place = |record| engine.record(record).unwrap().unwrap().identity;
         CaseConstraint {
             constraint,
             from,
@@ -701,7 +695,7 @@ fn a_case_says_what_reviewers_decided_about_its_records() {
 
     // Once the record has an identity the item is resolved, and the case still says what held.
     decide(vec![Op::Assign {
-        observation: waiting,
+        record: waiting,
         from: None,
         to: Some(tongs),
     }]);

@@ -3,13 +3,13 @@
 // value is listed with the records that hold it. A record that holds a field
 // empty, or does not hold it, says nothing about it.
 
-import type { ObservationRecord } from "./api.ts";
+import type { RecordEntry } from "./api.ts";
 import { plain } from "./format.ts";
 
 export interface Said {
   /** The value as text. */
   value: string;
-  records: ObservationRecord[];
+  records: RecordEntry[];
 }
 
 export interface Fact {
@@ -21,7 +21,7 @@ export interface Fact {
 }
 
 /** The value of one field of a record as text, or `null` when it holds none. */
-export function valueOf(record: Pick<ObservationRecord, "payload">, field: string): string | null {
+export function valueOf(record: Pick<RecordEntry, "payload">, field: string): string | null {
   const payload = record.payload;
   if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return null;
   const value = (payload as Record<string, unknown>)[field];
@@ -31,7 +31,7 @@ export function valueOf(record: Pick<ObservationRecord, "payload">, field: strin
 }
 
 /** The fields the records hold, in the order a reader first meets them. */
-export function fieldsOf(records: Array<Pick<ObservationRecord, "payload">>): string[] {
+export function fieldsOf(records: Array<Pick<RecordEntry, "payload">>): string[] {
   const fields: string[] = [];
   for (const record of records) {
     const payload = record.payload;
@@ -50,12 +50,12 @@ export function same(a: string | null, b: string | null): boolean {
  * The versions of rows that nothing has replaced. An earlier version says
  * what a row used to say, which is not what the records say now.
  */
-export function latest(records: ObservationRecord[]): ObservationRecord[] {
+export function latest(records: RecordEntry[]): RecordEntry[] {
   return records.filter((record) => !record.superseded_by);
 }
 
 /** The fields some record holds a value for, with every value held. */
-export function facts(records: ObservationRecord[]): Fact[] {
+export function facts(records: RecordEntry[]): Fact[] {
   const found: Fact[] = [];
   for (const field of fieldsOf(records)) {
     const values: Said[] = [];
@@ -75,12 +75,10 @@ export function facts(records: ObservationRecord[]): Fact[] {
 }
 
 /** How many of the records came from each source, the source of most first. */
-export function sourcesOf(
-  records: Array<Pick<ObservationRecord, "source">>,
-): Array<{ source: string; observations: number }> {
+export function sourcesOf(records: Array<Pick<RecordEntry, "source">>): Array<{ source: string; records: number }> {
   const counts = new Map<string, number>();
   for (const record of records) counts.set(record.source, (counts.get(record.source) ?? 0) + 1);
   return [...counts]
-    .map(([source, observations]) => ({ source, observations }))
-    .sort((a, b) => b.observations - a.observations || a.source.localeCompare(b.source));
+    .map(([source, records]) => ({ source, records }))
+    .sort((a, b) => b.records - a.records || a.source.localeCompare(b.source));
 }

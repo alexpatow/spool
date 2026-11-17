@@ -236,7 +236,7 @@ export function At({ committed }: { committed: Committed }) {
   return <Ref kind="log" id={committed.seq} label={`log position ${committed.seq}`} />;
 }
 
-/** The operations of a changeset that was not committed, with observations by their names. */
+/** The operations of a changeset that was not committed, with records by their names. */
 export function Would({ ops }: { ops: Op[] }) {
   const names = useOpNames(ops);
   return <Ops ops={ops} names={names} />;

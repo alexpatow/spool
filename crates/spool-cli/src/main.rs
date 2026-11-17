@@ -16,7 +16,7 @@ Commands:
   serve    run the server from a manifest and a store
   dev      run the server on localhost and apply file changes as they are saved
   show     show what a running server holds
-  explain  say why two observations share an identity, or why they do not
+  explain  say why two records share an identity, or why they do not
   bench    run a benchmark scenario
   schema   print the JSON Schema of the server's API
 

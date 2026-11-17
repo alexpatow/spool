@@ -100,9 +100,9 @@ fn run(arguments: &Arguments, scenario: Scenario, user_code: UserCode) -> spool:
     if let Some(order) = &report.order_sensitivity {
         println!("\n== the batches in reverse order, without corrections ==");
         println!(
-            "  same group    {} of {} observations ({})",
+            "  same group    {} of {} records ({})",
             order.same_group,
-            order.observations,
+            order.records,
             share(order.agreement)
         );
         println!(
@@ -196,10 +196,10 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
             StrategyRef::RULES => String::new(),
             strategy => format!(" with `{strategy}`"),
         };
-        // A rematch examines every observation, whether it is new or not.
+        // A rematch examines every record, whether it is new or not.
         let examined = match &resolved.suggestions {
-            Some(_) => "every observation again".to_owned(),
-            None => format!("{} observations", resolved.new_observations),
+            Some(_) => "every record again".to_owned(),
+            None => format!("{} records", resolved.new_records),
         };
         println!(
             "resolved  `{}`{with}: {examined}{again}, {} candidate pairs, {} match and {} no-match judgements",
@@ -210,16 +210,16 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
         );
         match &resolved.committed {
             Some(committed) => println!(
-                "committed changeset {} at {}: {} identities created, {} observations assigned, {} left unassigned",
+                "committed changeset {} at {}: {} identities created, {} records assigned, {} left unassigned",
                 committed.changeset,
                 committed.seq,
                 resolved.identities_created,
-                resolved.observations_assigned,
-                resolved.observations_unassigned,
+                resolved.records_assigned,
+                resolved.records_unassigned,
             ),
             None => println!(
-                "committed nothing: {} observations left unassigned",
-                resolved.observations_unassigned
+                "committed nothing: {} records left unassigned",
+                resolved.records_unassigned
             ),
         }
         if let Some(suggestions) = &resolved.suggestions {
@@ -266,40 +266,36 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
         .collect();
     if !review.is_empty() {
         println!("\nfor review:");
-        let keys = observation_keys(engine)?;
-        let name = |id: &spool::core::ObservationId| {
+        let keys = record_keys(engine)?;
+        let name = |id: &spool::core::RecordId| {
             keys.get(&id.to_string())
                 .cloned()
                 .unwrap_or_else(|| id.to_string())
         };
-        let names = |ids: &[spool::core::ObservationId]| {
-            ids.iter().map(&name).collect::<Vec<_>>().join(", ")
-        };
+        let names =
+            |ids: &[spool::core::RecordId]| ids.iter().map(&name).collect::<Vec<_>>().join(", ");
         for item in review {
             match item {
                 ReviewItem::PossibleMerge {
-                    observations,
+                    records,
                     identities,
                 } => println!(
                     "  possible merge: {} matched identities {}",
-                    names(observations),
+                    names(records),
                     identities
                         .iter()
                         .map(ToString::to_string)
                         .collect::<Vec<_>>()
                         .join(" and "),
                 ),
-                ReviewItem::Conflict {
-                    observations,
-                    identity,
-                } => match identity {
+                ReviewItem::Conflict { records, identity } => match identity {
                     Some(identity) => println!(
                         "  conflict: {} both matched and did not match identity {identity}",
-                        names(observations)
+                        names(records)
                     ),
                     None => println!(
                         "  conflict: {} matched each other, with a no-match among them",
-                        names(observations)
+                        names(records)
                     ),
                 },
             }
@@ -321,10 +317,7 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
     }
 
     let metrics = &step.metrics;
-    println!(
-        "\nagainst the truth ({} observations):",
-        metrics.observations
-    );
+    println!("\nagainst the truth ({} records):", metrics.records);
     println!(
         "  identities    {} for {} true entities",
         metrics.identities, metrics.true_entities
@@ -349,9 +342,9 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
     );
     let stability = &step.id_stability;
     println!(
-        "  ID stability  {} of {} observations kept their identity ({})",
+        "  ID stability  {} of {} records kept their identity ({})",
         stability.unchanged,
-        stability.observations,
+        stability.records,
         share(stability.strict)
     );
     if stability.unchanged_following_redirects != stability.unchanged {
@@ -363,11 +356,11 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
     }
     let churn = &step.churn;
     println!(
-        "  churn         {} identities created, {} merged, {} observations reassigned, for {} new observations",
+        "  churn         {} identities created, {} merged, {} records reassigned, for {} new records",
         churn.identities_created,
         churn.identities_merged,
-        churn.observations_reassigned,
-        churn.new_observations
+        churn.records_reassigned,
+        churn.new_records
     );
     let splits = &step.split_recovery;
     if splits.splits > 0 {
@@ -389,11 +382,11 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
     }
     if let Some(upgrade) = &step.upgrade_stability {
         println!(
-            "  upgrade       `{}` matched everything again: {} of {} observations kept their identity ({}); \
+            "  upgrade       `{}` matched everything again: {} of {} records kept their identity ({}); \
              {} merges and {} splits suggested, {} changes applied",
             upgrade.strategy,
             upgrade.retained,
-            upgrade.observations,
+            upgrade.records,
             share(upgrade.share),
             upgrade.suggested_merges,
             upgrade.suggested_splits,
@@ -419,20 +412,20 @@ fn text(batch: &spool::arrow::record_batch::RecordBatch, column: usize, row: usi
     }
 }
 
-/// What to call the observation `o` in messages a person reads: `source:key`,
+/// What to call the record `o` in messages a person reads: `source:key`,
 /// and for a mention `source:document[start-end]`, since its own key names
 /// the document by ID.
-const OBSERVATION_NAME: &str = "o.source_id || ':' || CASE
+const RECORD_NAME: &str = "o.source_id || ':' || CASE
         WHEN json_extract_string(o.evidence, '$.document') IS NULL THEN coalesce(o.source_key, '?')
         ELSE json_extract_string(o.evidence, '$.key')
              || '[' || json_extract_string(o.evidence, '$.start')
              || '-' || json_extract_string(o.evidence, '$.end') || ']'
     END";
 
-/// Observation ID to its name, for messages a person reads.
-fn observation_keys(engine: &Engine) -> spool::Result<std::collections::HashMap<String, String>> {
+/// Record ID to its name, for messages a person reads.
+fn record_keys(engine: &Engine) -> spool::Result<std::collections::HashMap<String, String>> {
     let batches = engine.query(&format!(
-        "SELECT o.observation_id::VARCHAR, {OBSERVATION_NAME} FROM spool.observation o"
+        "SELECT o.record_id::VARCHAR, {RECORD_NAME} FROM spool.record o"
     ))?;
     let mut keys = std::collections::HashMap::new();
     for batch in &batches {
@@ -453,10 +446,10 @@ fn print_identities(engine: &Engine, list: usize) -> spool::Result<()> {
 
     let batches = engine.query(&format!(
         "SELECT m.identity_id::VARCHAR, i.entity_type, count(*)::VARCHAR,
-                string_agg({OBSERVATION_NAME}, ', ' ORDER BY o.source_id, {OBSERVATION_NAME})
+                string_agg({RECORD_NAME}, ', ' ORDER BY o.source_id, {RECORD_NAME})
          FROM spool.membership_current m
          JOIN spool.identity_current i ON i.identity_id = m.identity_id
-         JOIN spool.observation o ON o.observation_id = m.observation_id
+         JOIN spool.record o ON o.record_id = m.record_id
          GROUP BY m.identity_id, i.entity_type
          ORDER BY m.identity_id
          LIMIT {list}"

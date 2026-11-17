@@ -6,7 +6,7 @@ use common::*;
 use serde_json::json;
 use spool::core::{Actor, EntityType, IdGenerator, Op, SeededIds, Seq};
 use spool::{
-    Engine, Error, IdentityFilter, IngestOptions, Manifest, ObservationFilter, ResolveOptions,
+    Engine, Error, IdentityFilter, IngestOptions, Manifest, RecordFilter, ResolveOptions,
     ReviewFilter, ReviewKind, ReviewStatus, Rows,
 };
 
@@ -40,68 +40,66 @@ fn json_rows(rows: serde_json::Value) -> Rows {
 }
 
 #[test]
-fn an_observation_is_found_by_its_id_and_by_its_source_and_key() {
+fn an_record_is_found_by_its_id_and_by_its_source_and_key() {
     let engine = populated();
-    let id = observation(&engine, "shop", "1");
+    let id = record_id(&engine, "shop", "1");
 
-    let record = engine.observation(id).unwrap().unwrap();
-    assert_eq!(record.id, id);
-    assert_eq!(record.entity_type, thing_type());
+    let entry = engine.record(id).unwrap().unwrap();
+    assert_eq!(entry.id, id);
+    assert_eq!(entry.entity_type, thing_type());
     assert_eq!(
-        (record.source.as_str(), record.key.as_deref()),
+        (entry.source.as_str(), entry.key.as_deref()),
         ("shop", Some("1"))
     );
-    assert_eq!(record.payload, json!({ "id": "1", "name": "anvil" }));
-    assert_eq!(record.evidence, None);
-    assert_eq!(record.identity, identity(&engine, "shop", "1"));
-    assert_eq!(record.ingest_run.0, 1);
+    assert_eq!(entry.payload, json!({ "id": "1", "name": "anvil" }));
+    assert_eq!(entry.evidence, None);
+    assert_eq!(entry.identity, identity(&engine, "shop", "1"));
+    assert_eq!(entry.ingest_run.0, 1);
 
     // A caller knows its rows by source and key; the engine knows the ID.
-    let found = engine
-        .observations(&ObservationFilter::keyed("shop", "1"))
-        .unwrap();
-    assert_eq!(found, [record]);
+    let found = engine.records(&RecordFilter::keyed("shop", "1")).unwrap();
+    assert_eq!(found, [entry]);
     assert!(
         engine
-            .observations(&ObservationFilter::keyed("shop", "none"))
+            .records(&RecordFilter::keyed("shop", "none"))
             .unwrap()
             .is_empty()
     );
 
     // The one left for review has no identity.
     let unassigned = engine
-        .observations(&ObservationFilter {
+        .records(&RecordFilter {
             unassigned: true,
-            ..ObservationFilter::default()
+            ..RecordFilter::default()
         })
         .unwrap();
     assert_eq!(unassigned.len(), 1);
-    assert_eq!(unassigned[0].id, observation(&engine, "depot", "9"));
+    assert_eq!(unassigned[0].id, record_id(&engine, "depot", "9"));
     assert_eq!(unassigned[0].identity, None);
 
     // Pages are ordered by ID and continue after the last one seen.
-    let all = engine.observations(&ObservationFilter::default()).unwrap();
+    let all = engine.records(&RecordFilter::default()).unwrap();
     assert_eq!(all.len(), 4);
     assert!(all.windows(2).all(|pair| pair[0].id < pair[1].id));
     let first = engine
-        .observations(&ObservationFilter {
+        .records(&RecordFilter {
             limit: 3,
-            ..ObservationFilter::default()
+            ..RecordFilter::default()
         })
         .unwrap();
     let rest = engine
-        .observations(&ObservationFilter {
+        .records(&RecordFilter {
             after: Some(first[2].id),
-            ..ObservationFilter::default()
+            ..RecordFilter::default()
         })
         .unwrap();
     assert_eq!([first, rest].concat(), all);
 
-    let unknown = spool::core::ObservationId::from_u128(7);
-    assert_eq!(engine.observation(unknown).unwrap(), None);
+    let unknown = spool::core::RecordId::from_u128(7);
+    assert_eq!(engine.record(unknown).unwrap(), None);
     assert_eq!(
         engine
-            .identities_of(&[id, unknown, observation(&engine, "depot", "9")])
+            .identities_of(&[id, unknown, record_id(&engine, "depot", "9")])
             .unwrap(),
         [identity(&engine, "shop", "1"), None, None]
     );
@@ -175,7 +173,7 @@ fn review_items_are_read_as_typed_records() {
     assert_eq!(item.kind, ReviewKind::PossibleMerge);
     assert_eq!(item.status, ReviewStatus::Open);
     assert_eq!(item.entity_type, thing_type());
-    assert_eq!(item.observations, [observation(&engine, "depot", "9")]);
+    assert_eq!(item.records, [record_id(&engine, "depot", "9")]);
     let mut matched = vec![
         identity(&engine, "shop", "1").unwrap(),
         identity(&engine, "shop", "3").unwrap(),
@@ -194,7 +192,7 @@ fn review_items_are_read_as_typed_records() {
             reason: Some("it is the anvil".to_owned()),
             run: None,
             ops: vec![Op::Assign {
-                observation: item.observations[0],
+                record: item.records[0],
                 from: None,
                 to: Some(matched[0]),
             }],
@@ -220,7 +218,7 @@ fn review_items_are_read_as_typed_records() {
     assert_eq!(info.head, committed.seq);
     assert_eq!(info.manifest_hash, Some(things().hash));
     assert_eq!(
-        (thing.observations, thing.unassigned, thing.identities),
+        (thing.records, thing.unassigned, thing.identities),
         (4, 0, 2)
     );
     assert_eq!(thing.open_review_items, 0);
@@ -236,7 +234,7 @@ fn the_log_is_read_in_pages_and_ids_are_minted_for_callers() {
     assert_eq!((minted.identities.len(), minted.changesets.len()), (2, 1));
     assert_ne!(minted.identities[0], minted.identities[1]);
 
-    let unassigned = observation(&engine, "depot", "9");
+    let unassigned = record_id(&engine, "depot", "9");
     engine
         .commit(spool::core::Changeset {
             id: minted.changesets[0],
@@ -250,7 +248,7 @@ fn the_log_is_read_in_pages_and_ids_are_minted_for_callers() {
                     entity_type: thing_type(),
                 },
                 Op::Assign {
-                    observation: unassigned,
+                    record: unassigned,
                     from: None,
                     to: Some(minted.identities[0]),
                 },
@@ -305,7 +303,7 @@ fn rows_given_as_json_keep_their_types() {
 
     let payload = |key: &str| {
         engine
-            .observations(&ObservationFilter::keyed("till", key))
+            .records(&RecordFilter::keyed("till", key))
             .unwrap()
             .remove(0)
             .payload
@@ -320,7 +318,7 @@ fn rows_given_as_json_keep_their_types() {
     );
     assert_eq!(payload("3"), json!({ "id": 3 }));
 
-    // A row is the same observation whatever it arrives with: on its own,
+    // A row is the same record whatever it arrives with: on its own,
     // the price column is whole numbers; above, it was not.
     let report = engine
         .ingest(
@@ -356,7 +354,7 @@ fn a_snapshot_read_while_changesets_commit_is_of_one_log_position() {
     ingest(&engine, "shop", &things);
     let unassigned: Vec<_> = keys
         .iter()
-        .map(|key| observation(&engine, "shop", key))
+        .map(|key| record_id(&engine, "shop", key))
         .collect();
 
     // Every changeset creates one identity and gives it one member, so at
@@ -364,7 +362,7 @@ fn a_snapshot_read_while_changesets_commit_is_of_one_log_position() {
     let done = std::sync::atomic::AtomicBool::new(false);
     std::thread::scope(|scope| {
         scope.spawn(|| {
-            for observation in &unassigned {
+            for record in &unassigned {
                 let minted = engine.mint_ids(1, 1);
                 engine
                     .commit(spool::core::Changeset {
@@ -379,7 +377,7 @@ fn a_snapshot_read_while_changesets_commit_is_of_one_log_position() {
                                 entity_type: thing_type(),
                             },
                             Op::Assign {
-                                observation: *observation,
+                                record: *record,
                                 from: None,
                                 to: Some(minted.identities[0]),
                             },
@@ -418,7 +416,7 @@ fn json_rows_without_a_value_are_rows_all_the_same() {
     assert_eq!(
         (report.received, report.inserted, report.duplicates),
         (2, 1, 1),
-        "two rows that say nothing are one observation, seen twice"
+        "two rows that say nothing are one record, seen twice"
     );
 
     // A column is every key that occurs, with a value or without.
@@ -506,7 +504,7 @@ fn json_integers_are_kept_exactly_or_refused() {
     ]));
     let weight = |key: &str| {
         engine
-            .observations(&ObservationFilter::keyed("scale", key))
+            .records(&RecordFilter::keyed("scale", key))
             .unwrap()
             .remove(0)
             .payload["weight"]

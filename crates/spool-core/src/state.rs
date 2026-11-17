@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::changeset::{Changeset, ConstraintKind, ContentHash};
-use crate::ids::{ChangesetId, EntityType, IdentityId, ObservationId, Seq};
+use crate::ids::{ChangesetId, EntityType, IdentityId, RecordId, Seq};
 use crate::validate::Validated;
 
 /// A failure of the store behind an [`IdentityState`], as opposed to a
@@ -40,9 +40,9 @@ pub struct Merged {
 }
 
 /// An identity has an ID, an entity type and a status. It has no attributes of
-/// its own: what is known about it is the evidence of its member observations.
+/// its own: what is known about it is the evidence of its member records.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct IdentityRecord {
+pub struct IdentityEntry {
     pub id: IdentityId,
     pub entity_type: EntityType,
     pub created: Seq,
@@ -51,34 +51,34 @@ pub struct IdentityRecord {
     pub merged: Option<Merged>,
 }
 
-/// One interval of an observation's membership. `to` is `None` while the
-/// observation is still a member.
+/// One interval of a record's membership. `to` is `None` while the
+/// record is still a member.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Membership {
-    pub observation: ObservationId,
+    pub record: RecordId,
     pub identity: IdentityId,
     pub from: Seq,
     pub to: Option<Seq>,
 }
 
-/// A decision that two observations must share an identity, or must not.
+/// A decision that two records must share an identity, or must not.
 /// The pair has no direction: `a` is the smaller ID.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Constraint {
-    pub a: ObservationId,
-    pub b: ObservationId,
+    pub a: RecordId,
+    pub b: RecordId,
     pub kind: ConstraintKind,
 }
 
 impl Constraint {
-    pub fn new(kind: ConstraintKind, a: ObservationId, b: ObservationId) -> Self {
+    pub fn new(kind: ConstraintKind, a: RecordId, b: RecordId) -> Self {
         let (a, b) = if a <= b { (a, b) } else { (b, a) };
         Self { a, b, kind }
     }
 
-    /// Whether the constraint holds for the identities its two observations
-    /// belong to. An observation without an identity breaks nothing: the
+    /// Whether the constraint holds for the identities its two records
+    /// belong to. A record without an identity breaks nothing: the
     /// constraint decides where it may go later.
     pub fn holds(&self, a: Option<IdentityId>, b: Option<IdentityId>) -> bool {
         match (a, b) {
@@ -94,7 +94,7 @@ impl Constraint {
 /// One interval of a constraint. `to` is `None` while it is in force.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct ConstraintRecord {
+pub struct ConstraintEntry {
     #[serde(flatten)]
     pub constraint: Constraint,
     pub from: Seq,
@@ -124,9 +124,9 @@ pub struct LogEntry {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Snapshot {
     pub head: Seq,
-    pub identities: Vec<IdentityRecord>,
+    pub identities: Vec<IdentityEntry>,
     pub memberships: Vec<Membership>,
-    pub constraints: Vec<ConstraintRecord>,
+    pub constraints: Vec<ConstraintEntry>,
 }
 
 /// Read access the validator and the reconciler need. Every method takes a
@@ -139,32 +139,32 @@ pub trait IdentityState {
     /// The log position of a changeset, if it has been committed.
     fn changeset_seq(&self, id: ChangesetId) -> Result<Option<Seq>>;
 
-    /// The entity type of each observation, or `None` for one the store does
+    /// The entity type of each record, or `None` for one the store does
     /// not hold.
-    fn observation_types(&self, observations: &[ObservationId]) -> Result<Vec<Option<EntityType>>>;
+    fn record_types(&self, records: &[RecordId]) -> Result<Vec<Option<EntityType>>>;
 
-    fn identities(&self, ids: &[IdentityId]) -> Result<Vec<Option<IdentityRecord>>>;
+    fn identities(&self, ids: &[IdentityId]) -> Result<Vec<Option<IdentityEntry>>>;
 
-    /// The identity each observation currently belongs to, if any.
-    fn assignments(&self, observations: &[ObservationId]) -> Result<Vec<Option<IdentityId>>>;
+    /// The identity each record currently belongs to, if any.
+    fn assignments(&self, records: &[RecordId]) -> Result<Vec<Option<IdentityId>>>;
 
     /// The current members of the given identities, sorted.
-    fn members(&self, ids: &[IdentityId]) -> Result<Vec<(IdentityId, ObservationId)>>;
+    fn members(&self, ids: &[IdentityId]) -> Result<Vec<(IdentityId, RecordId)>>;
 
     /// For each identity, the log position that last changed which
-    /// observations belong to it, or position zero if none has.
+    /// records belong to it, or position zero if none has.
     fn membership_changed(&self, ids: &[IdentityId]) -> Result<Vec<Seq>>;
 
-    /// The constraints in force that name any of the observations, sorted.
-    fn constraints_on(&self, observations: &[ObservationId]) -> Result<Vec<Constraint>>;
+    /// The constraints in force that name any of the records, sorted.
+    fn constraints_on(&self, records: &[RecordId]) -> Result<Vec<Constraint>>;
 
     /// The constraints in force that name a current member of any of the
     /// identities, sorted.
     fn constraints_of_members(&self, ids: &[IdentityId]) -> Result<Vec<Constraint>>;
 
-    /// The observations that the changeset at `seq` took out of `identity`,
+    /// The records that the changeset at `seq` took out of `identity`,
     /// sorted.
-    fn left_at(&self, identity: IdentityId, seq: Seq) -> Result<Vec<ObservationId>>;
+    fn left_at(&self, identity: IdentityId, seq: Seq) -> Result<Vec<RecordId>>;
 
     /// The identity that `identity` was last merged into before `seq`, if it
     /// had been merged by then.

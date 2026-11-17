@@ -1,7 +1,7 @@
 import * as stylex from "@stylexjs/stylex";
 import { useEffect, useMemo, useRef } from "react";
 
-import type { DocumentRecord, ObservationRecord, SpoolClient } from "../api.ts";
+import type { DocumentEntry, RecordEntry, SpoolClient } from "../api.ts";
 import {
   Code,
   Fields,
@@ -30,7 +30,7 @@ import { useLabels, useLoad, usePages } from "../hooks.ts";
 import { href } from "../router.ts";
 import type { Route } from "../router.ts";
 
-function readBy(document: DocumentRecord): string {
+function readBy(document: DocumentEntry): string {
   if (document.extractions.length === 0) return "no extractor";
   return document.extractions
     .map((extraction) => `${extraction.extractor} in run ${extraction.run} (${count(extraction.mentions, "mention")})`)
@@ -87,12 +87,12 @@ export function Documents({ route }: { route: Route }) {
 const MOST_MENTIONS = 5_000;
 
 interface Found {
-  observation: ObservationRecord;
+  record: RecordEntry;
   mention: Mention;
 }
 
 interface Loaded {
-  document: DocumentRecord;
+  document: DocumentEntry;
   found: Found[];
   /** Whether the document has more mentions than were read. */
   cut: boolean;
@@ -102,10 +102,10 @@ async function mentions(client: SpoolClient, document: string): Promise<{ found:
   const found: Found[] = [];
   let after: string | undefined;
   for (;;) {
-    const page = await client.observations({ document, after, limit: 1000 });
-    for (const observation of page.observations) {
-      const mention = mentionOf(observation);
-      if (mention !== null) found.push({ observation, mention });
+    const page = await client.records({ document, after, limit: 1000 });
+    for (const record of page.records) {
+      const mention = mentionOf(record);
+      if (mention !== null) found.push({ record, mention });
     }
     if (!page.next) return { found, cut: false };
     if (found.length >= MOST_MENTIONS) return { found, cut: true };
@@ -136,7 +136,7 @@ export function Document({ id, route }: { id: string; route: Route }) {
 }
 
 function DocumentScreen({ document, found, cut, at }: Loaded & { at: number | null }) {
-  const labels = useLabels(found.map(({ observation }) => observation.identity));
+  const labels = useLabels(found.map(({ record }) => record.identity));
   const pair = usePair();
   // Taken apart once: the marked text and every label of the table read it.
   const points = useMemo(() => codePoints(document.text ?? ""), [document.text]);
@@ -186,29 +186,25 @@ function DocumentScreen({ document, found, cut, at }: Loaded & { at: number | nu
       <Section title="Mentions" count={found.length} actions={found.length > 1 ? pair.explain : null}>
         <Table
           columns={[
-            { title: "", cell: ({ observation }) => pair.tick(observation.id) },
+            { title: "", cell: ({ record }) => pair.tick(record.id) },
             {
               title: "Mention",
-              cell: ({ observation, mention }) => (
-                <a href={href(["records", observation.id])} {...stylex.props(styles.link)}>
+              cell: ({ record, mention }) => (
+                <a href={href(["records", record.id])} {...stylex.props(styles.link)}>
                   {points.slice(mention.start, mention.end).join("")}
                 </a>
               ),
             },
             { title: "Characters", cell: ({ mention }) => `${mention.start} to ${mention.end}` },
-            { title: "Entity type", cell: ({ observation }) => observation.entity_type },
+            { title: "Entity type", cell: ({ record }) => record.entity_type },
             {
               title: "Identity",
-              cell: ({ observation }) =>
-                observation.identity ? (
-                  <Identity id={observation.identity} labels={labels} />
-                ) : (
-                  <Word value="unassigned" />
-                ),
+              cell: ({ record }) =>
+                record.identity ? <Identity id={record.identity} labels={labels} /> : <Word value="unassigned" />,
             },
           ]}
           rows={found}
-          rowKey={({ observation }) => observation.id}
+          rowKey={({ record }) => record.id}
           empty="No mentions."
         />
       </Section>
@@ -216,7 +212,7 @@ function DocumentScreen({ document, found, cut, at }: Loaded & { at: number | nu
   );
 }
 
-/** The text with each mention marked. A marked stretch leads to its observation. */
+/** The text with each mention marked. A marked stretch leads to its record. */
 function Marked({ points, found, at }: { points: string[]; found: Found[]; at: number | null }) {
   const target = useRef<HTMLAnchorElement | null>(null);
   useEffect(() => {
@@ -227,10 +223,10 @@ function Marked({ points, found, at }: { points: string[]; found: Found[]; at: n
     () =>
       segments(
         points,
-        found.map(({ observation, mention }) => ({
+        found.map(({ record, mention }) => ({
           start: mention.start,
           end: mention.end,
-          value: { observation, mention },
+          value: { record, mention },
         })),
       ),
     [points, found],
@@ -248,8 +244,8 @@ function Marked({ points, found, at }: { points: string[]; found: Found[]; at: n
             data-part="mention"
             data-here={here ? "" : undefined}
             {...stylex.props(styles.mention, here && styles.here)}
-            href={href(["records", first.observation.id])}
-            title={piece.covered.map(({ observation }) => `${observation.entity_type} ${observation.id}`).join("\n")}
+            href={href(["records", first.record.id])}
+            title={piece.covered.map(({ record }) => `${record.entity_type} ${record.id}`).join("\n")}
           >
             {piece.text}
           </a>

@@ -93,7 +93,7 @@ impl std::fmt::Display for RunStatus {
 /// A run as a caller sees it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct RunRecord {
+pub struct RunEntry {
     pub run: RunId,
     pub kind: RunKind,
     pub status: RunStatus,
@@ -152,7 +152,7 @@ const RECORD: &str = "
     LEFT JOIN spool.draft d ON d.match_run = r.run_id AND d.status = 'committed'
     LEFT JOIN spool.changeset c ON c.seq = d.closed_seq";
 
-fn record(row: &duckdb::Row<'_>) -> Result<RunRecord> {
+fn entry(row: &duckdb::Row<'_>) -> Result<RunEntry> {
     let run = RunId(row.get::<_, i64>(0)? as u64);
     let unreadable = |what: &str| Error::Run {
         run,
@@ -194,7 +194,7 @@ fn record(row: &duckdb::Row<'_>) -> Result<RunRecord> {
             RunKind::Reconcile => {}
         }
     }
-    Ok(RunRecord {
+    Ok(RunEntry {
         run,
         kind,
         status: RunStatus::from_stored(&row.get::<_, String>(2)?)?,
@@ -223,17 +223,17 @@ fn record(row: &duckdb::Row<'_>) -> Result<RunRecord> {
 }
 
 /// One run, or `None` if there is no run by that ID.
-pub(crate) fn get(conn: &Connection, run: RunId) -> Result<Option<RunRecord>> {
+pub(crate) fn get(conn: &Connection, run: RunId) -> Result<Option<RunEntry>> {
     let mut statement = conn.prepare(&format!("{RECORD} WHERE r.run_id = ?"))?;
     let mut rows = statement.query([run.0 as i64])?;
     match rows.next()? {
-        Some(row) => Ok(Some(record(row)?)),
+        Some(row) => Ok(Some(entry(row)?)),
         None => Ok(None),
     }
 }
 
 /// Runs, newest first.
-pub(crate) fn list(conn: &Connection, filter: &RunFilter) -> Result<Vec<RunRecord>> {
+pub(crate) fn list(conn: &Connection, filter: &RunFilter) -> Result<Vec<RunEntry>> {
     let mut statement = conn.prepare(&format!(
         "{RECORD}
          WHERE ($1::VARCHAR IS NULL OR r.kind = $1::VARCHAR)
@@ -251,7 +251,7 @@ pub(crate) fn list(conn: &Connection, filter: &RunFilter) -> Result<Vec<RunRecor
     ])?;
     let mut runs = Vec::new();
     while let Some(row) = rows.next()? {
-        runs.push(record(row)?);
+        runs.push(entry(row)?);
     }
     Ok(runs)
 }

@@ -1,4 +1,4 @@
-//! Turns judgements about new observations into a draft changeset.
+//! Turns judgements about new records into a draft changeset.
 //!
 //! Strategies supply evidence. This module decides what that evidence changes,
 //! and it is the only place where pairwise judgements become groups.
@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::changeset::{Changeset, Op};
 use crate::generate::IdGenerator;
-use crate::ids::{Actor, EntityType, IdentityId, ObservationId};
+use crate::ids::{Actor, EntityType, IdentityId, RecordId};
 use crate::state::{IdentityState, IdentityStatus, Result};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -46,36 +46,36 @@ impl std::str::FromStr for Verdict {
     }
 }
 
-/// What a match run found out about its new observations, already joined
+/// What a match run found out about its new records, already joined
 /// against current membership by the store. It is small: one row per new
-/// observation, per pair of new observations that were judged, and per
-/// identity a new observation was judged against.
+/// record, per pair of new records that were judged, and per
+/// identity a new record was judged against.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct EvidenceSummary {
-    pub observations: Vec<NewObservation>,
+    pub records: Vec<NewRecord>,
     pub pairs: Vec<NewPair>,
     pub links: Vec<IdentityLink>,
 }
 
-/// An observation the run was told is new.
+/// A record the run was told is new.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct NewObservation {
-    pub observation: ObservationId,
+pub struct NewRecord {
+    pub record: RecordId,
     pub entity_type: EntityType,
 }
 
-/// A judgement between two new observations.
+/// A judgement between two new records.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NewPair {
-    pub a: ObservationId,
-    pub b: ObservationId,
+    pub a: RecordId,
+    pub b: RecordId,
     pub verdict: Verdict,
 }
 
-/// The judgements between one new observation and the members of one identity.
+/// The judgements between one new record and the members of one identity.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct IdentityLink {
-    pub observation: ObservationId,
+    pub record: RecordId,
     pub identity: IdentityId,
     pub matches: u64,
     pub no_matches: u64,
@@ -97,47 +97,47 @@ pub struct Draft {
     pub review: Vec<ReviewItem>,
 }
 
-/// Something the reconciler would not decide. The observations named are left
+/// Something the reconciler would not decide. The records named are left
 /// without an identity.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum ReviewItem {
-    /// The observations match members of more than one identity. Those
+    /// The records match members of more than one identity. Those
     /// identities may be the same real thing, which only a reviewer can say.
     PossibleMerge {
-        observations: Vec<ObservationId>,
+        records: Vec<RecordId>,
         identities: Vec<IdentityId>,
     },
-    /// The evidence contradicts itself: the observations match each other or
+    /// The evidence contradicts itself: the records match each other or
     /// `identity`, and a `no_match` judgement says some of them do not belong
     /// together, or do not belong with a member of `identity`.
     Conflict {
-        observations: Vec<ObservationId>,
+        records: Vec<RecordId>,
         identity: Option<IdentityId>,
     },
 }
 
-/// The default policy. New observations that match each other form a group,
+/// The default policy. New records that match each other form a group,
 /// and a group is decided as a whole:
 ///
 /// 1. A group that matches members of exactly one identity joins it.
 /// 2. A group that matches no identity becomes a new identity. A group of one
-///    is the common case: an observation that matched nothing.
+///    is the common case: a record that matched nothing.
 /// 3. A group that matches members of two or more identities is left
 ///    unassigned, with a [`ReviewItem::PossibleMerge`].
 /// 4. A group with a `no_match` judgement inside it, or between it and the
 ///    identity it matches, is left unassigned, with a [`ReviewItem::Conflict`].
 /// 5. Groups that would join the same identity, with a `no_match` judgement
 ///    between them, are left unassigned together, with one
-///    [`ReviewItem::Conflict`]. Joining would put observations that were
+///    [`ReviewItem::Conflict`]. Joining would put records that were
 ///    judged different into one identity.
 ///
-/// Existing identities are never merged or split, and an observation that
+/// Existing identities are never merged or split, and a record that
 /// already has an identity is never moved. `unsure` judgements change nothing.
 ///
 /// The output depends only on the inputs: groups are visited in order of their
-/// smallest observation ID, so the same evidence and the same ID generator
+/// smallest record ID, so the same evidence and the same ID generator
 /// give the same draft.
 pub fn reconcile<S: IdentityState + ?Sized>(
     evidence: &EvidenceSummary,
@@ -147,19 +147,15 @@ pub fn reconcile<S: IdentityState + ?Sized>(
 ) -> Result<Draft> {
     let base = state.head()?;
 
-    // Only observations that still have no identity are new.
-    let candidates: Vec<ObservationId> = evidence
-        .observations
-        .iter()
-        .map(|new| new.observation)
-        .collect();
+    // Only records that still have no identity are new.
+    let candidates: Vec<RecordId> = evidence.records.iter().map(|new| new.record).collect();
     let assigned = state.assignments(&candidates)?;
-    let new: BTreeMap<ObservationId, &EntityType> = evidence
-        .observations
+    let new: BTreeMap<RecordId, &EntityType> = evidence
+        .records
         .iter()
         .zip(assigned)
         .filter(|(_, identity)| identity.is_none())
-        .map(|(new, _)| (new.observation, &new.entity_type))
+        .map(|(new, _)| (new.record, &new.entity_type))
         .collect();
 
     // Only active identities can be joined.
@@ -182,13 +178,13 @@ pub fn reconcile<S: IdentityState + ?Sized>(
         }
     }
 
-    let mut matched: BTreeMap<ObservationId, BTreeSet<IdentityId>> = BTreeMap::new();
-    let mut refused: BTreeMap<ObservationId, BTreeSet<IdentityId>> = BTreeMap::new();
+    let mut matched: BTreeMap<RecordId, BTreeSet<IdentityId>> = BTreeMap::new();
+    let mut refused: BTreeMap<RecordId, BTreeSet<IdentityId>> = BTreeMap::new();
     for link in &evidence.links {
-        if !new.contains_key(&link.observation) || !active.contains(&link.identity) {
+        if !new.contains_key(&link.record) || !active.contains(&link.identity) {
             continue;
         }
-        let root = groups.root(link.observation);
+        let root = groups.root(link.record);
         if link.matches > 0 {
             matched.entry(root).or_default().insert(link.identity);
         }
@@ -196,7 +192,7 @@ pub fn reconcile<S: IdentityState + ?Sized>(
             refused.entry(root).or_default().insert(link.identity);
         }
     }
-    let split_inside: BTreeSet<ObservationId> = evidence
+    let split_inside: BTreeSet<RecordId> = evidence
         .pairs
         .iter()
         .filter(|pair| pair.verdict == Verdict::NoMatch)
@@ -208,7 +204,7 @@ pub fn reconcile<S: IdentityState + ?Sized>(
     // What each group would do if it were the only one.
     let members = groups.members();
     let none = BTreeSet::new();
-    let mut decisions: BTreeMap<ObservationId, Decision> = BTreeMap::new();
+    let mut decisions: BTreeMap<RecordId, Decision> = BTreeMap::new();
     for (root, group) in &members {
         let matched = matched.get(root).unwrap_or(&none);
         let refused = refused.get(root).unwrap_or(&none);
@@ -216,12 +212,12 @@ pub fn reconcile<S: IdentityState + ?Sized>(
         let target = matched_ids.next();
         let decision = if matched_ids.next().is_some() {
             Decision::Review(ReviewItem::PossibleMerge {
-                observations: group.clone(),
+                records: group.clone(),
                 identities: matched.iter().copied().collect(),
             })
         } else if split_inside.contains(root) || target.is_some_and(|id| refused.contains(&id)) {
             Decision::Review(ReviewItem::Conflict {
-                observations: group.clone(),
+                records: group.clone(),
                 identity: target,
             })
         } else {
@@ -275,13 +271,13 @@ pub fn reconcile<S: IdentityState + ?Sized>(
                 // One item for the groups a chain of `no_match` connects,
                 // raised when the first of them is visited.
                 if let Some(roots) = clash_members.remove(&root) {
-                    let mut observations: Vec<ObservationId> = roots
+                    let mut records: Vec<RecordId> = roots
                         .iter()
                         .flat_map(|root| groups.members_of(*root))
                         .collect();
-                    observations.sort_unstable();
+                    records.sort_unstable();
                     review.push(ReviewItem::Conflict {
-                        observations,
+                        records,
                         identity: Some(identity),
                     });
                 }
@@ -297,8 +293,8 @@ pub fn reconcile<S: IdentityState + ?Sized>(
                 identity
             }
         };
-        ops.extend(group.into_iter().map(|observation| Op::Assign {
-            observation,
+        ops.extend(group.into_iter().map(|record| Op::Assign {
+            record,
             from: None,
             to: Some(target),
         }));
@@ -309,7 +305,7 @@ pub fn reconcile<S: IdentityState + ?Sized>(
             id: ids.changeset_id(),
             base,
             actor: Actor::Engine,
-            reason: Some("reconcile new observations".to_owned()),
+            reason: Some("reconcile new records".to_owned()),
             run: None,
             ops,
         },
@@ -317,26 +313,26 @@ pub fn reconcile<S: IdentityState + ?Sized>(
     })
 }
 
-/// What a group of new observations would do, judged alone.
+/// What a group of new records would do, judged alone.
 enum Decision {
     Review(ReviewItem),
     Join(IdentityId),
     Create,
 }
 
-/// Connected components over the new observations.
+/// Connected components over the new records.
 struct Groups {
-    parent: BTreeMap<ObservationId, ObservationId>,
+    parent: BTreeMap<RecordId, RecordId>,
 }
 
 impl Groups {
-    fn new(observations: impl Iterator<Item = ObservationId>) -> Self {
+    fn new(records: impl Iterator<Item = RecordId>) -> Self {
         Self {
-            parent: observations.map(|id| (id, id)).collect(),
+            parent: records.map(|id| (id, id)).collect(),
         }
     }
 
-    fn root(&self, mut id: ObservationId) -> ObservationId {
+    fn root(&self, mut id: RecordId) -> RecordId {
         while self.parent[&id] != id {
             id = self.parent[&id];
         }
@@ -344,15 +340,15 @@ impl Groups {
     }
 
     /// The smaller root wins, so a group's root is its smallest member.
-    fn join(&mut self, a: ObservationId, b: ObservationId) {
+    fn join(&mut self, a: RecordId, b: RecordId) {
         let (a, b) = (self.root(a), self.root(b));
         let (keep, drop) = if a <= b { (a, b) } else { (b, a) };
         self.parent.insert(drop, keep);
     }
 
     /// Each group's root with its members, both in ascending order.
-    fn members(&self) -> BTreeMap<ObservationId, Vec<ObservationId>> {
-        let mut members: BTreeMap<ObservationId, Vec<ObservationId>> = BTreeMap::new();
+    fn members(&self) -> BTreeMap<RecordId, Vec<RecordId>> {
+        let mut members: BTreeMap<RecordId, Vec<RecordId>> = BTreeMap::new();
         for id in self.parent.keys() {
             members.entry(self.root(*id)).or_default().push(*id);
         }
@@ -360,7 +356,7 @@ impl Groups {
     }
 
     /// The members of the group with this root.
-    fn members_of(&self, root: ObservationId) -> impl Iterator<Item = ObservationId> + '_ {
+    fn members_of(&self, root: RecordId) -> impl Iterator<Item = RecordId> + '_ {
         self.parent
             .keys()
             .copied()
@@ -380,14 +376,14 @@ mod tests {
         EntityType::new("widget").unwrap()
     }
 
-    fn obs(n: u128) -> ObservationId {
-        ObservationId::from_u128(n)
+    fn obs(n: u128) -> RecordId {
+        RecordId::from_u128(n)
     }
 
-    fn new(ids: &[u128]) -> Vec<NewObservation> {
+    fn new(ids: &[u128]) -> Vec<NewRecord> {
         ids.iter()
-            .map(|n| NewObservation {
-                observation: obs(*n),
+            .map(|n| NewRecord {
+                record: obs(*n),
                 entity_type: widget(),
             })
             .collect()
@@ -401,14 +397,9 @@ mod tests {
         }
     }
 
-    fn link(
-        observation: u128,
-        identity: IdentityId,
-        matches: u64,
-        no_matches: u64,
-    ) -> IdentityLink {
+    fn link(record: u128, identity: IdentityId, matches: u64, no_matches: u64) -> IdentityLink {
         IdentityLink {
-            observation: obs(observation),
+            record: obs(record),
             identity,
             matches,
             no_matches,
@@ -416,12 +407,12 @@ mod tests {
         }
     }
 
-    /// A state holding observations 1 to 20, where each listed group already
+    /// A state holding records 1 to 20, where each listed group already
     /// is an identity.
     fn state_with(groups: &[&[u128]]) -> (MemoryState, Vec<IdentityId>) {
         let mut state = MemoryState::new();
         for n in 1..=20 {
-            state.observe(obs(n), widget());
+            state.add_record(obs(n), widget());
         }
         let mut ids = SeededIds::new(1000);
         let mut identities = Vec::new();
@@ -432,7 +423,7 @@ mod tests {
                 entity_type: widget(),
             }];
             ops.extend(group.iter().map(|n| Op::Assign {
-                observation: obs(*n),
+                record: obs(*n),
                 from: None,
                 to: Some(identity),
             }));
@@ -454,11 +445,9 @@ mod tests {
         reconcile(evidence, state, &Policy::default(), &mut SeededIds::new(1)).unwrap()
     }
 
-    fn assigned_to(draft: &Draft, observation: u128) -> Option<IdentityId> {
+    fn assigned_to(draft: &Draft, record: u128) -> Option<IdentityId> {
         draft.changeset.ops.iter().find_map(|op| match op {
-            Op::Assign {
-                observation: o, to, ..
-            } if *o == obs(observation) => *to,
+            Op::Assign { record: o, to, .. } if *o == obs(record) => *to,
             _ => None,
         })
     }
@@ -476,10 +465,10 @@ mod tests {
     }
 
     #[test]
-    fn an_observation_that_matches_one_identity_joins_it() {
+    fn an_record_that_matches_one_identity_joins_it() {
         let (state, identities) = state_with(&[&[1, 2]]);
         let evidence = EvidenceSummary {
-            observations: new(&[3]),
+            records: new(&[3]),
             pairs: vec![],
             links: vec![link(3, identities[0], 2, 0)],
         };
@@ -487,7 +476,7 @@ mod tests {
         assert_eq!(
             draft.changeset.ops,
             vec![Op::Assign {
-                observation: obs(3),
+                record: obs(3),
                 from: None,
                 to: Some(identities[0])
             }]
@@ -497,16 +486,16 @@ mod tests {
     }
 
     #[test]
-    fn observations_that_match_only_each_other_form_one_new_identity() {
+    fn records_that_match_only_each_other_form_one_new_identity() {
         let (state, _) = state_with(&[]);
         let evidence = EvidenceSummary {
-            observations: new(&[1, 2, 3, 4]),
+            records: new(&[1, 2, 3, 4]),
             pairs: vec![pair(1, 2, Verdict::Match), pair(2, 3, Verdict::Match)],
             links: vec![],
         };
         let draft = run(&evidence, &state);
         let made = created(&draft);
-        assert_eq!(made.len(), 2, "one for the group and one for observation 4");
+        assert_eq!(made.len(), 2, "one for the group and one for record 4");
         assert_eq!(assigned_to(&draft, 1), assigned_to(&draft, 3));
         assert_eq!(assigned_to(&draft, 1), Some(made[0]));
         assert_eq!(assigned_to(&draft, 4), Some(made[1]));
@@ -518,7 +507,7 @@ mod tests {
     fn a_group_joins_the_identity_one_of_its_members_matched() {
         let (state, identities) = state_with(&[&[1]]);
         let evidence = EvidenceSummary {
-            observations: new(&[2, 3]),
+            records: new(&[2, 3]),
             pairs: vec![pair(2, 3, Verdict::Match)],
             links: vec![link(3, identities[0], 1, 0)],
         };
@@ -529,10 +518,10 @@ mod tests {
     }
 
     #[test]
-    fn an_observation_that_matches_two_identities_is_left_for_review() {
+    fn an_record_that_matches_two_identities_is_left_for_review() {
         let (state, identities) = state_with(&[&[1], &[2]]);
         let evidence = EvidenceSummary {
-            observations: new(&[3, 4]),
+            records: new(&[3, 4]),
             pairs: vec![],
             links: vec![link(3, identities[0], 1, 0), link(3, identities[1], 1, 0)],
         };
@@ -541,7 +530,7 @@ mod tests {
         assert_eq!(
             draft.review,
             vec![ReviewItem::PossibleMerge {
-                observations: vec![obs(3)],
+                records: vec![obs(3)],
                 identities: identities.clone()
             }]
         );
@@ -552,7 +541,7 @@ mod tests {
     fn a_group_with_a_no_match_inside_is_left_for_review() {
         let (state, _) = state_with(&[]);
         let evidence = EvidenceSummary {
-            observations: new(&[1, 2, 3]),
+            records: new(&[1, 2, 3]),
             pairs: vec![
                 pair(1, 2, Verdict::Match),
                 pair(2, 3, Verdict::Match),
@@ -565,7 +554,7 @@ mod tests {
         assert_eq!(
             draft.review,
             vec![ReviewItem::Conflict {
-                observations: vec![obs(1), obs(2), obs(3)],
+                records: vec![obs(1), obs(2), obs(3)],
                 identity: None
             }]
         );
@@ -575,7 +564,7 @@ mod tests {
     fn a_no_match_against_the_matched_identity_blocks_the_assignment() {
         let (state, identities) = state_with(&[&[1, 2]]);
         let evidence = EvidenceSummary {
-            observations: new(&[3]),
+            records: new(&[3]),
             pairs: vec![],
             links: vec![link(3, identities[0], 1, 1)],
         };
@@ -584,7 +573,7 @@ mod tests {
         assert_eq!(
             draft.review,
             vec![ReviewItem::Conflict {
-                observations: vec![obs(3)],
+                records: vec![obs(3)],
                 identity: Some(identities[0])
             }]
         );
@@ -596,7 +585,7 @@ mod tests {
         let target = identities[0];
         // 2, 3 and 4 each match the identity. 2 and 3 are judged different.
         let evidence = EvidenceSummary {
-            observations: new(&[2, 3, 4]),
+            records: new(&[2, 3, 4]),
             pairs: vec![pair(2, 3, Verdict::NoMatch)],
             links: vec![
                 link(2, target, 1, 0),
@@ -608,7 +597,7 @@ mod tests {
         assert_eq!(
             draft.changeset.ops,
             vec![Op::Assign {
-                observation: obs(4),
+                record: obs(4),
                 from: None,
                 to: Some(target)
             }]
@@ -616,7 +605,7 @@ mod tests {
         assert_eq!(
             draft.review,
             vec![ReviewItem::Conflict {
-                observations: vec![obs(2), obs(3)],
+                records: vec![obs(2), obs(3)],
                 identity: Some(target),
             }]
         );
@@ -630,7 +619,7 @@ mod tests {
         // all of them match the first identity. 7 matches the other one, so
         // its no_match with 2 contradicts nothing.
         let evidence = EvidenceSummary {
-            observations: new(&[2, 3, 4, 6, 7]),
+            records: new(&[2, 3, 4, 6, 7]),
             pairs: vec![
                 pair(2, 3, Verdict::Match),
                 pair(2, 4, Verdict::NoMatch),
@@ -648,7 +637,7 @@ mod tests {
         assert_eq!(
             draft.changeset.ops,
             vec![Op::Assign {
-                observation: obs(7),
+                record: obs(7),
                 from: None,
                 to: Some(other)
             }]
@@ -656,7 +645,7 @@ mod tests {
         assert_eq!(
             draft.review,
             vec![ReviewItem::Conflict {
-                observations: vec![obs(2), obs(3), obs(4), obs(6)],
+                records: vec![obs(2), obs(3), obs(4), obs(6)],
                 identity: Some(target),
             }]
         );
@@ -666,7 +655,7 @@ mod tests {
     fn a_no_match_between_groups_that_become_new_identities_changes_nothing() {
         let (state, _) = state_with(&[]);
         let evidence = EvidenceSummary {
-            observations: new(&[1, 2, 3]),
+            records: new(&[1, 2, 3]),
             pairs: vec![pair(1, 2, Verdict::Match), pair(2, 3, Verdict::NoMatch)],
             links: vec![],
         };
@@ -681,7 +670,7 @@ mod tests {
     fn a_no_match_alone_makes_a_separate_identity() {
         let (state, identities) = state_with(&[&[1]]);
         let evidence = EvidenceSummary {
-            observations: new(&[2, 3]),
+            records: new(&[2, 3]),
             pairs: vec![pair(2, 3, Verdict::NoMatch)],
             links: vec![link(2, identities[0], 0, 1)],
         };
@@ -696,7 +685,7 @@ mod tests {
     fn unsure_judgements_change_nothing() {
         let (state, _) = state_with(&[]);
         let evidence = EvidenceSummary {
-            observations: new(&[1, 2]),
+            records: new(&[1, 2]),
             pairs: vec![pair(1, 2, Verdict::Unsure)],
             links: vec![],
         };
@@ -705,16 +694,16 @@ mod tests {
     }
 
     #[test]
-    fn observations_that_already_have_an_identity_are_not_touched() {
+    fn records_that_already_have_an_identity_are_not_touched() {
         let (state, identities) = state_with(&[&[1], &[2]]);
         let evidence = EvidenceSummary {
-            observations: new(&[1, 3]),
+            records: new(&[1, 3]),
             pairs: vec![pair(1, 3, Verdict::Match)],
             links: vec![link(1, identities[1], 5, 0)],
         };
         let draft = run(&evidence, &state);
         assert_eq!(assigned_to(&draft, 1), None);
-        assert_eq!(created(&draft).len(), 1, "observation 3 stands alone");
+        assert_eq!(created(&draft).len(), 1, "record 3 stands alone");
         assert!(draft.review.is_empty());
     }
 
@@ -722,12 +711,12 @@ mod tests {
     fn the_same_evidence_and_seed_give_the_same_draft() {
         let (state, identities) = state_with(&[&[1]]);
         let mut evidence = EvidenceSummary {
-            observations: new(&[5, 2, 4, 3]),
+            records: new(&[5, 2, 4, 3]),
             pairs: vec![pair(5, 4, Verdict::Match)],
             links: vec![link(2, identities[0], 1, 0)],
         };
         let first = run(&evidence, &state);
-        evidence.observations.reverse();
+        evidence.records.reverse();
         let second = run(&evidence, &state);
         assert_eq!(first, second);
         assert_eq!(
@@ -740,7 +729,7 @@ mod tests {
     fn drafts_pass_validation() {
         let (state, identities) = state_with(&[&[1], &[2]]);
         let evidence = EvidenceSummary {
-            observations: new(&[3, 4, 5, 6]),
+            records: new(&[3, 4, 5, 6]),
             pairs: vec![pair(4, 5, Verdict::Match)],
             links: vec![link(3, identities[0], 1, 0), link(6, identities[1], 1, 0)],
         };

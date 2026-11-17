@@ -2,7 +2,7 @@
 //!
 //! Spool turns records about the same real-world thing into one durable
 //! identity. A project declares its entity types as files: a features query
-//! and SQL rules per type. The engine ingests observations, matches new ones
+//! and SQL rules per type. The engine ingests records, matches new ones
 //! against what it holds, and changes identity state only by committing
 //! changesets.
 //!
@@ -56,10 +56,10 @@ pub use bench::{
     StepReport,
 };
 pub use documents::{
-    DocumentExtraction, DocumentFilter, DocumentRecord, ExtractOptions, ExtractReport,
-    ExtractorRef, NewDocument, locator,
+    DocumentEntry, DocumentExtraction, DocumentFilter, ExtractOptions, ExtractReport, ExtractorRef,
+    NewDocument, locator,
 };
-pub use drafts::{DraftFilter, DraftRecord, DraftStatus, DraftSummary};
+pub use drafts::{DraftEntry, DraftFilter, DraftStatus, DraftSummary};
 pub use engine::{
     ApplyReport, Authored, ConstraintFilter, Disposition, Engine, JudgementCounts, MintedIds,
     Options, ResolveOptions, ResolveReport, Scope, SplitReport, StrategyRef, SuggestedMerge,
@@ -72,8 +72,8 @@ pub use explain::{
 };
 pub use ingest::{IngestOptions, IngestReport};
 pub use lookup::{
-    HistoryEntry, IdentityFilter, IdentitySummary, IdentityView, Member, ObservationFilter,
-    ObservationRecord, SourceCount, SourceInfo, StoreInfo, TypeInfo, label_of,
+    HistoryEntry, IdentityFilter, IdentitySummary, IdentityView, Member, RecordEntry, RecordFilter,
+    SourceCount, SourceInfo, StoreInfo, TypeInfo, label_of,
 };
 pub use metrics::{
     BCubed, Churn, ExtractionMetrics, IdStability, Metrics, OrderSensitivity, OverridePersistence,
@@ -84,9 +84,9 @@ pub use project::{
     Rule, RuleSet, Runtime, SqlFile, Strategy, StrategySource,
 };
 pub use review::{
-    CASE_MEMBERS, Candidate, CaseConstraint, Dismissal, PairJudgement, ReviewCase, ReviewFilter,
-    ReviewKind, ReviewRecord, ReviewStatus,
+    CASE_MEMBERS, Candidate, CaseConstraint, Dismissal, PairJudgement, ReviewCase, ReviewEntry,
+    ReviewFilter, ReviewKind, ReviewStatus,
 };
 pub use rows::Rows;
-pub use runs::{RunFilter, RunKind, RunRecord, RunStatus};
+pub use runs::{RunEntry, RunFilter, RunKind, RunStatus};
 pub use usercode::{Code, UserCode};

@@ -1,9 +1,9 @@
 // How the studio words what the server answers. Nothing here decides
 // anything: a sentence that says why comes from the engine.
 
-import type { ObservationRecord, Op } from "./api.ts";
+import type { RecordEntry, Op } from "./api.ts";
 
-/** `3 observations`, `1 identity`. */
+/** `3 records`, `1 identity`. */
 export function count(number: number, what: string): string {
   if (number === 1) return `1 ${what}`;
   return `${number} ${what.endsWith("y") ? `${what.slice(0, -1)}ies` : `${what}s`}`;
@@ -40,7 +40,7 @@ export function named(source: string, key?: string | null): string {
   return key === undefined || key === null ? `${source} (no key)` : `${source}:${key}`;
 }
 
-/** Where an extractor found a mention, if the evidence of an observation says. */
+/** Where an extractor found a mention, if the evidence of a record says. */
 export interface Mention {
   document: string;
   /** The document's key within its source. */
@@ -50,8 +50,8 @@ export interface Mention {
   end: number;
 }
 
-export function mentionOf(observation: Pick<ObservationRecord, "evidence">): Mention | null {
-  const evidence = observation.evidence;
+export function mentionOf(record: Pick<RecordEntry, "evidence">): Mention | null {
+  const evidence = record.evidence;
   if (typeof evidence !== "object" || evidence === null) return null;
   const { document, key, start, end } = evidence as Record<string, unknown>;
   if (typeof document !== "string" || typeof key !== "string") return null;
@@ -60,15 +60,15 @@ export function mentionOf(observation: Pick<ObservationRecord, "evidence">): Men
 }
 
 /**
- * What to call an observation where a person reads it: a mention by its
+ * What to call a record where a person reads it: a mention by its
  * document and span, a row by its source and key. The engine names them the
  * same way in the sentences of an explanation.
  */
-export function observationName(observation: Pick<ObservationRecord, "id" | "source" | "key" | "evidence">): string {
-  const mention = mentionOf(observation);
-  if (mention !== null) return `${observation.source}:${mention.key}[${mention.start}-${mention.end}]`;
-  if (observation.key !== undefined && observation.key !== null) return `${observation.source}:${observation.key}`;
-  return observation.id;
+export function recordName(record: Pick<RecordEntry, "id" | "source" | "key" | "evidence">): string {
+  const mention = mentionOf(record);
+  if (mention !== null) return `${record.source}:${mention.key}[${mention.start}-${mention.end}]`;
+  if (record.key !== undefined && record.key !== null) return `${record.source}:${record.key}`;
+  return record.id;
 }
 
 /** A JSON value on one line, text without its quotes. */
@@ -79,10 +79,10 @@ export function plain(value: unknown): string {
 }
 
 /** What kind of thing an ID in a sentence names, so that it can be a link. */
-export type Named = { kind: "observation" | "identity"; id: string };
+export type Named = { kind: "record" | "identity"; id: string };
 export type Part = string | Named;
 
-const observation = (id: string): Named => ({ kind: "observation", id });
+const record = (id: string): Named => ({ kind: "record", id });
 const identity = (id: string): Named => ({ kind: "identity", id });
 
 /** A changeset operation in words. */
@@ -92,28 +92,27 @@ export function describeOp(op: Op): Part[] {
       return [`create ${op.entity_type} identity `, identity(op.identity)];
     case "assign": {
       const { from, to } = op;
-      if (from && to)
-        return ["move record ", observation(op.observation), " from ", identity(from), " to ", identity(to)];
-      if (to) return ["assign record ", observation(op.observation), " to ", identity(to)];
-      if (from) return ["unassign record ", observation(op.observation), " from ", identity(from)];
-      return ["leave record ", observation(op.observation), " unassigned"];
+      if (from && to) return ["move record ", record(op.record), " from ", identity(from), " to ", identity(to)];
+      if (to) return ["assign record ", record(op.record), " to ", identity(to)];
+      if (from) return ["unassign record ", record(op.record), " from ", identity(from)];
+      return ["leave record ", record(op.record), " unassigned"];
     }
     case "merge":
       return ["merge ", identity(op.from), " into ", identity(op.into)];
     case "constrain":
-      return ["constrain ", observation(op.a), " and ", observation(op.b), `: ${op.kind}`];
+      return ["constrain ", record(op.a), " and ", record(op.b), `: ${op.kind}`];
     case "unconstrain":
-      return [`remove ${op.kind} between `, observation(op.a), " and ", observation(op.b)];
+      return [`remove ${op.kind} between `, record(op.a), " and ", record(op.b)];
     case "reinstate":
       return ["reinstate identity ", identity(op.identity)];
   }
 }
 
-/** The observations a list of operations names, each once. */
-export function observationsOf(ops: Op[]): string[] {
+/** The records a list of operations names, each once. */
+export function recordsOf(ops: Op[]): string[] {
   const ids = ops
     .flatMap(describeOp)
-    .flatMap((part) => (typeof part !== "string" && part.kind === "observation" ? [part.id] : []));
+    .flatMap((part) => (typeof part !== "string" && part.kind === "record" ? [part.id] : []));
   return [...new Set(ids)];
 }
 

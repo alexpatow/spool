@@ -10,10 +10,10 @@ use std::str::FromStr;
 use duckdb::vtab::arrow::{ArrowBatchRegistration, ArrowVTab};
 use duckdb::{Connection, params};
 use spool_core::{
-    Changeset, ChangesetId, Clock, Committed, Constraint, ConstraintKind, ConstraintRecord,
-    ContentHash, EntityType, IdentityId, IdentityRecord, IdentityState, IdentityStatus,
-    IdentityStore, LogEntry, Membership, Merged, ObservationId, Op, RunId, Seq, Snapshot,
-    StateError, Validated,
+    Changeset, ChangesetId, Clock, Committed, Constraint, ConstraintEntry, ConstraintKind,
+    ContentHash, EntityType, IdentityEntry, IdentityId, IdentityState, IdentityStatus,
+    IdentityStore, LogEntry, Membership, Merged, Op, RecordId, RunId, Seq, Snapshot, StateError,
+    Validated,
 };
 
 use crate::batch::{Column, batch, id_list};
@@ -127,8 +127,8 @@ impl DuckStore {
         ])?;
         let memberships = batch(vec![
             (
-                "observation_id",
-                text(snapshot.memberships.iter().map(|row| Some(row.observation))),
+                "record_id",
+                text(snapshot.memberships.iter().map(|row| Some(row.record))),
             ),
             (
                 "identity_id",
@@ -157,11 +157,11 @@ impl DuckStore {
         let links = &snapshot.constraints;
         let constraints = batch(vec![
             (
-                "observation_a",
+                "record_a",
                 text(links.iter().map(|row| Some(row.constraint.a))),
             ),
             (
-                "observation_b",
+                "record_b",
                 text(links.iter().map(|row| Some(row.constraint.b))),
             ),
             (
@@ -191,12 +191,12 @@ impl DuckStore {
         )?;
         tx.execute(
             "INSERT INTO spool.membership
-             SELECT observation_id::UUID, identity_id::UUID, from_seq, to_seq::BIGINT FROM arrow(?)",
+             SELECT record_id::UUID, identity_id::UUID, from_seq, to_seq::BIGINT FROM arrow(?)",
             [&ArrowBatchRegistration::new(memberships)],
         )?;
         tx.execute(
             "INSERT INTO spool.constraint_link
-             SELECT observation_a::UUID, observation_b::UUID, kind, from_seq, to_seq::BIGINT
+             SELECT record_a::UUID, record_b::UUID, kind, from_seq, to_seq::BIGINT
              FROM arrow(?)",
             [&ArrowBatchRegistration::new(constraints)],
         )?;
@@ -231,7 +231,7 @@ impl DuckStore {
         tx.execute(
             "INSERT INTO spool.changeset_op
              SELECT ?, op_index::INTEGER, kind, identity_id::UUID, from_identity_id::UUID,
-                    observation_id::UUID, other_observation_id::UUID, entity_type, constraint_kind
+                    record_id::UUID, other_record_id::UUID, entity_type, constraint_kind
              FROM arrow(?)",
             params![seq, &ArrowBatchRegistration::new(ops)],
         )?;
@@ -239,7 +239,7 @@ impl DuckStore {
         // The projection is derived from the log rows just written, one kind
         // of operation at a time. The validator's rules are what make that
         // equal to applying the operations in the order they were written: a
-        // changeset moves an observation once, changes an identity's status
+        // changeset moves a record once, changes an identity's status
         // once, and merges away no identity that gained members in it.
         let has = |kind: &str| changeset.ops.iter().any(|op| op.kind() == kind);
         tx.execute(
@@ -259,14 +259,14 @@ impl DuckStore {
         }
         tx.execute(
             "UPDATE spool.membership SET to_seq = ?
-             WHERE to_seq IS NULL AND observation_id IN (
-               SELECT observation_id FROM spool.changeset_op
+             WHERE to_seq IS NULL AND record_id IN (
+               SELECT record_id FROM spool.changeset_op
                WHERE seq = ? AND kind = 'assign' AND from_identity_id IS NOT NULL)",
             [seq, seq],
         )?;
         tx.execute(
             "INSERT INTO spool.membership
-             SELECT observation_id, identity_id, seq, NULL
+             SELECT record_id, identity_id, seq, NULL
              FROM spool.changeset_op
              WHERE seq = ? AND kind = 'assign' AND identity_id IS NOT NULL",
             [seq],
@@ -276,7 +276,7 @@ impl DuckStore {
             // is never itself merged away by the same changeset.
             tx.execute(
                 "INSERT INTO spool.membership
-                 SELECT m.observation_id, op.identity_id, op.seq, NULL
+                 SELECT m.record_id, op.identity_id, op.seq, NULL
                  FROM spool.changeset_op op
                  JOIN spool.membership m
                    ON m.identity_id = op.from_identity_id AND m.to_seq IS NULL
@@ -334,16 +334,16 @@ impl DuckStore {
                  FROM spool.changeset_op op
                  WHERE op.seq = ? AND op.kind = 'unconstrain' AND c.to_seq IS NULL
                    AND c.kind = op.constraint_kind
-                   AND c.observation_a = least(op.observation_id, op.other_observation_id)
-                   AND c.observation_b = greatest(op.observation_id, op.other_observation_id)",
+                   AND c.record_a = least(op.record_id, op.other_record_id)
+                   AND c.record_b = greatest(op.record_id, op.other_record_id)",
                 [seq],
             )?;
         }
         if has("constrain") {
             tx.execute(
                 "INSERT INTO spool.constraint_link
-                 SELECT least(observation_id, other_observation_id),
-                        greatest(observation_id, other_observation_id),
+                 SELECT least(record_id, other_record_id),
+                        greatest(record_id, other_record_id),
                         constraint_kind, seq, NULL
                  FROM spool.changeset_op WHERE seq = ? AND kind = 'constrain'",
                 [seq],
@@ -408,7 +408,7 @@ pub(crate) fn read_log_after(conn: &Connection, after: Seq, limit: u64) -> Resul
 
     let mut statement = conn.prepare(
         "SELECT seq, kind, identity_id::VARCHAR, from_identity_id::VARCHAR,
-                observation_id::VARCHAR, other_observation_id::VARCHAR,
+                record_id::VARCHAR, other_record_id::VARCHAR,
                 entity_type, constraint_kind
          FROM spool.changeset_op WHERE seq > ? AND seq <= ? ORDER BY seq, op_index",
     )?;
@@ -419,8 +419,8 @@ pub(crate) fn read_log_after(conn: &Connection, after: Seq, limit: u64) -> Resul
             kind: row.get(1)?,
             identity: row.get(2)?,
             from_identity: row.get(3)?,
-            observation: row.get(4)?,
-            other_observation: row.get(5)?,
+            record: row.get(4)?,
+            other_record: row.get(5)?,
             entity_type: row.get(6)?,
             constraint_kind: row.get(7)?,
         })?;
@@ -451,19 +451,19 @@ pub(crate) fn read_snapshot(conn: &Connection) -> Result<Snapshot> {
     )?;
     let mut rows = statement.query([])?;
     while let Some(row) = rows.next()? {
-        identities.push(identity_record(row, 0)?);
+        identities.push(identity_entry(row, 0)?);
     }
     identities.sort_by_key(|record| record.id);
 
     let mut memberships = Vec::new();
     let mut statement = conn.prepare(
-        "SELECT observation_id::VARCHAR, identity_id::VARCHAR, from_seq, to_seq
+        "SELECT record_id::VARCHAR, identity_id::VARCHAR, from_seq, to_seq
          FROM spool.membership",
     )?;
     let mut rows = statement.query([])?;
     while let Some(row) = rows.next()? {
         memberships.push(Membership {
-            observation: parse(&row.get::<_, String>(0)?)?,
+            record: parse(&row.get::<_, String>(0)?)?,
             identity: parse(&row.get::<_, String>(1)?)?,
             from: Seq(row.get::<_, i64>(2)? as u64),
             to: row.get::<_, Option<i64>>(3)?.map(|seq| Seq(seq as u64)),
@@ -473,12 +473,12 @@ pub(crate) fn read_snapshot(conn: &Connection) -> Result<Snapshot> {
 
     let mut constraints = Vec::new();
     let mut statement = conn.prepare(
-        "SELECT observation_a::VARCHAR, observation_b::VARCHAR, kind, from_seq, to_seq
+        "SELECT record_a::VARCHAR, record_b::VARCHAR, kind, from_seq, to_seq
          FROM spool.constraint_link",
     )?;
     let mut rows = statement.query([])?;
     while let Some(row) = rows.next()? {
-        constraints.push(ConstraintRecord {
+        constraints.push(ConstraintEntry {
             constraint: constraint(row, 0)?,
             from: Seq(row.get::<_, i64>(3)? as u64),
             to: row.get::<_, Option<i64>>(4)?.map(|seq| Seq(seq as u64)),
@@ -513,20 +513,20 @@ pub(crate) fn read_changeset_seq(conn: &Connection, id: ChangesetId) -> Result<O
     })
 }
 
-pub(crate) fn read_observation_types(
+pub(crate) fn read_record_types(
     conn: &Connection,
-    observations: &[ObservationId],
+    records: &[RecordId],
 ) -> Result<Vec<Option<EntityType>>> {
-    if observations.is_empty() {
+    if records.is_empty() {
         return Ok(Vec::new());
     }
     let mut statement = conn.prepare(
         "SELECT o.entity_type
-         FROM arrow(?) a LEFT JOIN spool.observation o ON o.observation_id = a.id::UUID
+         FROM arrow(?) a LEFT JOIN spool.record o ON o.record_id = a.id::UUID
          ORDER BY a.ord",
     )?;
-    let mut rows = statement.query([&id_list(observations)?])?;
-    let mut types = Vec::with_capacity(observations.len());
+    let mut rows = statement.query([&id_list(records)?])?;
+    let mut types = Vec::with_capacity(records.len());
     while let Some(row) = rows.next()? {
         types.push(match row.get::<_, Option<String>>(0)? {
             Some(name) => Some(EntityType::new(name).map_err(StateError::new)?),
@@ -539,7 +539,7 @@ pub(crate) fn read_observation_types(
 pub(crate) fn read_identities(
     conn: &Connection,
     ids: &[IdentityId],
-) -> Result<Vec<Option<IdentityRecord>>> {
+) -> Result<Vec<Option<IdentityEntry>>> {
     if ids.is_empty() {
         return Ok(Vec::new());
     }
@@ -553,7 +553,7 @@ pub(crate) fn read_identities(
     let mut records = Vec::with_capacity(ids.len());
     while let Some(row) = rows.next()? {
         records.push(match row.get::<_, Option<String>>(0)? {
-            Some(_) => Some(identity_record(row, 0)?),
+            Some(_) => Some(identity_entry(row, 0)?),
             None => None,
         });
     }
@@ -562,19 +562,19 @@ pub(crate) fn read_identities(
 
 pub(crate) fn read_assignments(
     conn: &Connection,
-    observations: &[ObservationId],
+    records: &[RecordId],
 ) -> Result<Vec<Option<IdentityId>>> {
-    if observations.is_empty() {
+    if records.is_empty() {
         return Ok(Vec::new());
     }
     let mut statement = conn.prepare(
         "SELECT m.identity_id::VARCHAR
          FROM arrow(?) a
-         LEFT JOIN spool.membership m ON m.observation_id = a.id::UUID AND m.to_seq IS NULL
+         LEFT JOIN spool.membership m ON m.record_id = a.id::UUID AND m.to_seq IS NULL
          ORDER BY a.ord",
     )?;
-    let mut rows = statement.query([&id_list(observations)?])?;
-    let mut assignments = Vec::with_capacity(observations.len());
+    let mut rows = statement.query([&id_list(records)?])?;
+    let mut assignments = Vec::with_capacity(records.len());
     while let Some(row) = rows.next()? {
         assignments.push(match row.get::<_, Option<String>>(0)? {
             Some(id) => Some(parse(&id)?),
@@ -587,12 +587,12 @@ pub(crate) fn read_assignments(
 pub(crate) fn read_members(
     conn: &Connection,
     ids: &[IdentityId],
-) -> Result<Vec<(IdentityId, ObservationId)>> {
+) -> Result<Vec<(IdentityId, RecordId)>> {
     if ids.is_empty() {
         return Ok(Vec::new());
     }
     let mut statement = conn.prepare(
-        "SELECT m.identity_id::VARCHAR, m.observation_id::VARCHAR
+        "SELECT m.identity_id::VARCHAR, m.record_id::VARCHAR
          FROM spool.membership m
          WHERE m.to_seq IS NULL AND m.identity_id IN (SELECT id::UUID FROM arrow(?))",
     )?;
@@ -625,21 +625,21 @@ pub(crate) fn read_membership_changed(conn: &Connection, ids: &[IdentityId]) -> 
     Ok(changed)
 }
 
-/// The constraints in force that name any of the observations, sorted.
+/// The constraints in force that name any of the records, sorted.
 pub(crate) fn read_constraints_on(
     conn: &Connection,
-    observations: &[ObservationId],
+    records: &[RecordId],
 ) -> Result<Vec<Constraint>> {
-    if observations.is_empty() {
+    if records.is_empty() {
         return Ok(Vec::new());
     }
     constraints(
         conn,
-        "SELECT DISTINCT c.observation_a::VARCHAR, c.observation_b::VARCHAR, c.kind
+        "SELECT DISTINCT c.record_a::VARCHAR, c.record_b::VARCHAR, c.kind
          FROM spool.constraint_link c
-         JOIN arrow(?) a ON a.id::UUID IN (c.observation_a, c.observation_b)
+         JOIN arrow(?) a ON a.id::UUID IN (c.record_a, c.record_b)
          WHERE c.to_seq IS NULL",
-        observations,
+        records,
     )
 }
 
@@ -654,10 +654,10 @@ pub(crate) fn read_constraints_of_members(
     }
     constraints(
         conn,
-        "SELECT DISTINCT c.observation_a::VARCHAR, c.observation_b::VARCHAR, c.kind
+        "SELECT DISTINCT c.record_a::VARCHAR, c.record_b::VARCHAR, c.kind
          FROM spool.constraint_link c
          JOIN spool.membership m
-           ON m.to_seq IS NULL AND m.observation_id IN (c.observation_a, c.observation_b)
+           ON m.to_seq IS NULL AND m.record_id IN (c.record_a, c.record_b)
          JOIN arrow(?) a ON a.id::UUID = m.identity_id
          WHERE c.to_seq IS NULL",
         ids,
@@ -675,7 +675,7 @@ fn constraints<T: ToString>(conn: &Connection, sql: &str, ids: &[T]) -> Result<V
     Ok(found)
 }
 
-/// Reads a constraint from three columns: the two observations and the kind.
+/// Reads a constraint from three columns: the two records and the kind.
 pub(crate) fn constraint(row: &duckdb::Row<'_>, at: usize) -> Result<Constraint> {
     Ok(Constraint::new(
         constraint_kind(row.get::<_, Option<String>>(at + 2)?.as_deref())?,
@@ -688,9 +688,9 @@ pub(crate) fn read_left_at(
     conn: &Connection,
     identity: IdentityId,
     seq: Seq,
-) -> Result<Vec<ObservationId>> {
+) -> Result<Vec<RecordId>> {
     let mut statement = conn.prepare(
-        "SELECT observation_id::VARCHAR FROM spool.membership
+        "SELECT record_id::VARCHAR FROM spool.membership
          WHERE identity_id = ?::UUID AND to_seq = ?",
     )?;
     let mut rows = statement.query(params![identity.to_string(), seq.0 as i64])?;
@@ -737,11 +737,11 @@ where
 
 /// Reads an identity from six columns: its ID, entity type and creation, the
 /// identity that stands for it, and the merge that made it inactive.
-fn identity_record(row: &duckdb::Row<'_>, at: usize) -> Result<IdentityRecord> {
+fn identity_entry(row: &duckdb::Row<'_>, at: usize) -> Result<IdentityEntry> {
     let merged_into: Option<String> = row.get(at + 3)?;
     let merged_seq: Option<i64> = row.get(at + 4)?;
     let merge_target: Option<String> = row.get(at + 5)?;
-    Ok(IdentityRecord {
+    Ok(IdentityEntry {
         id: parse(&row.get::<_, String>(at)?)?,
         entity_type: EntityType::new(row.get::<_, String>(at + 1)?).map_err(StateError::new)?,
         created: Seq(row.get::<_, i64>(at + 2)? as u64),
@@ -773,8 +773,8 @@ pub(crate) struct OpRow {
     pub(crate) kind: String,
     pub(crate) identity: Option<String>,
     pub(crate) from_identity: Option<String>,
-    pub(crate) observation: Option<String>,
-    pub(crate) other_observation: Option<String>,
+    pub(crate) record: Option<String>,
+    pub(crate) other_record: Option<String>,
     pub(crate) entity_type: Option<String>,
     pub(crate) constraint_kind: Option<String>,
 }
@@ -794,12 +794,8 @@ fn op_to_row(op: &Op) -> OpRow {
             entity_type: text(entity_type),
             ..row
         },
-        Op::Assign {
-            observation,
-            from,
-            to,
-        } => OpRow {
-            observation: text(observation),
+        Op::Assign { record, from, to } => OpRow {
+            record: text(record),
             from_identity: from.map(|id| id.to_string()),
             identity: to.map(|id| id.to_string()),
             ..row
@@ -810,8 +806,8 @@ fn op_to_row(op: &Op) -> OpRow {
             ..row
         },
         Op::Constrain { kind, a, b } | Op::Unconstrain { kind, a, b } => OpRow {
-            observation: text(a),
-            other_observation: text(b),
+            record: text(a),
+            other_record: text(b),
             constraint_kind: Some(kind.as_str().to_owned()),
             ..row
         },
@@ -849,7 +845,7 @@ pub(crate) fn op_from_row(row: OpRow) -> Result<Op> {
                 .map_err(StateError::new)?,
         },
         "assign" => Op::Assign {
-            observation: required(row.observation, "observation_id")?,
+            record: required(row.record, "record_id")?,
             from: optional(row.from_identity)?,
             to: optional(row.identity)?,
         },
@@ -859,13 +855,13 @@ pub(crate) fn op_from_row(row: OpRow) -> Result<Op> {
         },
         "constrain" => Op::Constrain {
             kind: constraint_kind(row.constraint_kind)?,
-            a: required(row.observation, "observation_id")?,
-            b: required(row.other_observation, "other_observation_id")?,
+            a: required(row.record, "record_id")?,
+            b: required(row.other_record, "other_record_id")?,
         },
         "unconstrain" => Op::Unconstrain {
             kind: constraint_kind(row.constraint_kind)?,
-            a: required(row.observation, "observation_id")?,
-            b: required(row.other_observation, "other_observation_id")?,
+            a: required(row.record, "record_id")?,
+            b: required(row.other_record, "other_record_id")?,
         },
         "reinstate" => Op::Reinstate {
             identity: required(row.identity, "identity_id")?,
@@ -889,11 +885,8 @@ pub(crate) fn op_rows(ops: &[Op]) -> Result<duckdb::arrow::record_batch::RecordB
         ("kind", column(|row| Some(row.kind.clone()))),
         ("identity_id", column(|row| row.identity.clone())),
         ("from_identity_id", column(|row| row.from_identity.clone())),
-        ("observation_id", column(|row| row.observation.clone())),
-        (
-            "other_observation_id",
-            column(|row| row.other_observation.clone()),
-        ),
+        ("record_id", column(|row| row.record.clone())),
+        ("other_record_id", column(|row| row.other_record.clone())),
         ("entity_type", column(|row| row.entity_type.clone())),
         ("constraint_kind", column(|row| row.constraint_kind.clone())),
     ])
@@ -912,25 +905,19 @@ impl IdentityState for DuckStore {
         read_changeset_seq(&self.conn, id).map_err(state_error)
     }
 
-    fn observation_types(
-        &self,
-        observations: &[ObservationId],
-    ) -> Result<Vec<Option<EntityType>>, StateError> {
-        read_observation_types(&self.conn, observations).map_err(state_error)
+    fn record_types(&self, records: &[RecordId]) -> Result<Vec<Option<EntityType>>, StateError> {
+        read_record_types(&self.conn, records).map_err(state_error)
     }
 
-    fn identities(&self, ids: &[IdentityId]) -> Result<Vec<Option<IdentityRecord>>, StateError> {
+    fn identities(&self, ids: &[IdentityId]) -> Result<Vec<Option<IdentityEntry>>, StateError> {
         read_identities(&self.conn, ids).map_err(state_error)
     }
 
-    fn assignments(
-        &self,
-        observations: &[ObservationId],
-    ) -> Result<Vec<Option<IdentityId>>, StateError> {
-        read_assignments(&self.conn, observations).map_err(state_error)
+    fn assignments(&self, records: &[RecordId]) -> Result<Vec<Option<IdentityId>>, StateError> {
+        read_assignments(&self.conn, records).map_err(state_error)
     }
 
-    fn members(&self, ids: &[IdentityId]) -> Result<Vec<(IdentityId, ObservationId)>, StateError> {
+    fn members(&self, ids: &[IdentityId]) -> Result<Vec<(IdentityId, RecordId)>, StateError> {
         read_members(&self.conn, ids).map_err(state_error)
     }
 
@@ -938,18 +925,15 @@ impl IdentityState for DuckStore {
         read_membership_changed(&self.conn, ids).map_err(state_error)
     }
 
-    fn constraints_on(
-        &self,
-        observations: &[ObservationId],
-    ) -> Result<Vec<Constraint>, StateError> {
-        read_constraints_on(&self.conn, observations).map_err(state_error)
+    fn constraints_on(&self, records: &[RecordId]) -> Result<Vec<Constraint>, StateError> {
+        read_constraints_on(&self.conn, records).map_err(state_error)
     }
 
     fn constraints_of_members(&self, ids: &[IdentityId]) -> Result<Vec<Constraint>, StateError> {
         read_constraints_of_members(&self.conn, ids).map_err(state_error)
     }
 
-    fn left_at(&self, identity: IdentityId, seq: Seq) -> Result<Vec<ObservationId>, StateError> {
+    fn left_at(&self, identity: IdentityId, seq: Seq) -> Result<Vec<RecordId>, StateError> {
         read_left_at(&self.conn, identity, seq).map_err(state_error)
     }
 
@@ -983,16 +967,13 @@ impl IdentityStore for DuckStore {
     }
 }
 
-/// Used by tests in this crate to put observations in a store without going
+/// Used by tests in this crate to put records in a store without going
 /// through ingest.
 #[cfg(test)]
-pub(crate) fn insert_observations(
-    conn: &Connection,
-    observations: &[(ObservationId, EntityType)],
-) -> Result<()> {
-    for (id, entity_type) in observations {
+pub(crate) fn insert_records(conn: &Connection, records: &[(RecordId, EntityType)]) -> Result<()> {
+    for (id, entity_type) in records {
         conn.execute(
-            "INSERT INTO spool.observation
+            "INSERT INTO spool.record
              VALUES (?::UUID, ?, 'test', NULL, NULL, '{}', NULL, NULL, make_timestamptz(0), 0)",
             params![id.to_string(), entity_type.as_str()],
         )?;
@@ -1006,9 +987,9 @@ mod tests {
 
     use super::*;
 
-    fn store(observations: &[(ObservationId, EntityType)]) -> DuckStore {
+    fn store(records: &[(RecordId, EntityType)]) -> DuckStore {
         let store = DuckStore::open(None, Box::new(StepClock::new(0, 1_000_000))).unwrap();
-        insert_observations(&store.conn, observations).unwrap();
+        insert_records(&store.conn, records).unwrap();
         store
     }
 
@@ -1019,24 +1000,24 @@ mod tests {
         let mut ids = spool_core::SeededIds::new(5);
         use spool_core::IdGenerator;
         let (x, y) = (ids.identity_id(), ids.identity_id());
-        let (a, b) = (ObservationId::from_u128(1), ObservationId::from_u128(2));
+        let (a, b) = (RecordId::from_u128(1), RecordId::from_u128(2));
         let ops = [
             Op::CreateIdentity {
                 identity: x,
                 entity_type: EntityType::new("widget").unwrap(),
             },
             Op::Assign {
-                observation: a,
+                record: a,
                 from: None,
                 to: Some(x),
             },
             Op::Assign {
-                observation: a,
+                record: a,
                 from: Some(x),
                 to: Some(y),
             },
             Op::Assign {
-                observation: a,
+                record: a,
                 from: Some(y),
                 to: None,
             },
@@ -1075,7 +1056,7 @@ mod tests {
         ];
         for a in &ids {
             for b in &ids {
-                let (a, b) = (ObservationId::from_u128(*a), ObservationId::from_u128(*b));
+                let (a, b) = (RecordId::from_u128(*a), RecordId::from_u128(*b));
                 let smaller: String = store
                     .conn
                     .query_row(
@@ -1095,7 +1076,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("store.duckdb");
         let widget = EntityType::new("widget").unwrap();
-        let observation = ObservationId::from_u128(1);
+        let record = RecordId::from_u128(1);
         let mut ids = spool_core::SeededIds::new(5);
         use spool_core::IdGenerator;
         let identity = ids.identity_id();
@@ -1103,7 +1084,7 @@ mod tests {
         let before = {
             let mut store =
                 DuckStore::open(Some(&path), Box::new(StepClock::new(0, 1_000_000))).unwrap();
-            insert_observations(&store.conn, &[(observation, widget.clone())]).unwrap();
+            insert_records(&store.conn, &[(record, widget.clone())]).unwrap();
             let changeset = Changeset {
                 id: ids.changeset_id(),
                 base: Seq::ZERO,
@@ -1116,7 +1097,7 @@ mod tests {
                         entity_type: widget,
                     },
                     Op::Assign {
-                        observation,
+                        record,
                         from: None,
                         to: Some(identity),
                     },

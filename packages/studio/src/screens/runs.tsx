@@ -1,4 +1,4 @@
-import type { RunRecord, RunKind, RunStatus } from "../api.ts";
+import type { RunEntry, RunKind, RunStatus } from "../api.ts";
 import {
   Code,
   Fields,
@@ -93,7 +93,7 @@ export function Run({ id }: { id: string }) {
   );
 }
 
-function RunView({ run }: { run: RunRecord }) {
+function RunView({ run }: { run: RunEntry }) {
   const { ingest, extraction, resolution } = run;
   // The identities a strategy would merge or split are named by ID.
   const labels = useLabels([
@@ -171,7 +171,7 @@ function RunView({ run }: { run: RunRecord }) {
               rows={[
                 [
                   "Examined",
-                  `${count(resolution.new_observations, "record")}, ${resolution.reexamined} of them from earlier review items`,
+                  `${count(resolution.new_records, "record")}, ${resolution.reexamined} of them from earlier review items`,
                 ],
                 ["Candidates", count(resolution.candidates, "pair")],
                 [
@@ -180,11 +180,11 @@ function RunView({ run }: { run: RunRecord }) {
                 ],
                 [
                   "Assigned",
-                  `${count(resolution.observations_assigned, "record")}, ${count(resolution.identities_created, "identity")} created`,
+                  `${count(resolution.records_assigned, "record")}, ${count(resolution.identities_created, "identity")} created`,
                 ],
                 [
                   "Unassigned",
-                  `${count(resolution.observations_unassigned, "record")} in ${count(resolution.review.length, "review item")}`,
+                  `${count(resolution.records_unassigned, "record")} in ${count(resolution.review.length, "review item")}`,
                 ],
                 [
                   "Reconcile run",
@@ -209,12 +209,12 @@ function RunView({ run }: { run: RunRecord }) {
                 {resolution.review.map((item, index) => (
                   <li key={index}>
                     {item.kind === "possible_merge"
-                      ? `${count(item.observations.length, "record")} matched ${count(item.identities.length, "identity")}: `
-                      : `conflicting evidence about ${count(item.observations.length, "record")}: `}
-                    {item.observations.map((observation, index) => (
-                      <span key={observation}>
+                      ? `${count(item.records.length, "record")} matched ${count(item.identities.length, "identity")}: `
+                      : `conflicting evidence about ${count(item.records.length, "record")}: `}
+                    {item.records.map((record, index) => (
+                      <span key={record}>
                         {index > 0 ? ", " : ""}
-                        <Ref kind="observation" id={observation} />
+                        <Ref kind="record" id={record} />
                       </span>
                     ))}
                   </li>

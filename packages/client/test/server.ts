@@ -38,7 +38,7 @@ export function temporaryDirectory(): string {
 export function writeThings(dir: string): void {
   const entity = join(dir, "entities/thing");
   const files: Record<string, string> = {
-    "features.sql": "SELECT observation_id, payload->>'code' AS code\nFROM observation\n",
+    "features.sql": "SELECT record_id, payload->>'code' AS code\nFROM record\n",
     "rules/block/same_code.sql": "l.code = r.code\n",
     "rules/match/same_code.sql": "l.code = r.code\n",
   };

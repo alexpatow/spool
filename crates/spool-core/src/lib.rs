@@ -7,7 +7,7 @@
 //! - [`Changeset`] and [`Op`]: the only way identity state changes.
 //! - [`validate`]: the rules every changeset must pass. It returns a
 //!   [`Validated`], which is the only thing an [`IdentityStore`] applies.
-//! - [`reconcile`]: turns a strategy's judgements about new observations into
+//! - [`reconcile`]: turns a strategy's judgements about new records into
 //!   a draft changeset.
 //! - [`inverse`]: the operations that undo a committed changeset.
 //! - [`MemoryState`]: an in-memory store, used as the reference model and as
@@ -28,15 +28,15 @@ pub use changeset::{Changeset, ConstraintKind, ContentHash, Op};
 pub use generate::{Clock, IdGenerator, RandomIds, SeededIds, StepClock, SystemClock};
 pub use ids::{
     Actor, ChangesetId, DocumentId, EntityType, IdentityId, InvalidActor, InvalidEntityType,
-    ObservationId, RunId, Seq,
+    RecordId, RunId, Seq,
 };
 pub use memory::{MemoryState, ReplayError};
 pub use reconcile::{
-    Draft, EvidenceSummary, IdentityLink, NewObservation, NewPair, Policy, ReviewItem, Verdict,
+    Draft, EvidenceSummary, IdentityLink, NewPair, NewRecord, Policy, ReviewItem, Verdict,
     reconcile,
 };
 pub use state::{
-    Committed, Constraint, ConstraintRecord, IdentityRecord, IdentityState, IdentityStatus,
+    Committed, Constraint, ConstraintEntry, IdentityEntry, IdentityState, IdentityStatus,
     IdentityStore, LogEntry, Membership, Merged, Snapshot, StateError,
 };
 pub use undo::inverse;

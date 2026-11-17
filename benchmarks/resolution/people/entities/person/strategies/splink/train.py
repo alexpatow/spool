@@ -36,7 +36,7 @@ FEATURES = HERE.parent.parent / "features.sql"
 def settings():
     return SettingsCreator(
         link_type="dedupe_only",
-        unique_id_column_name="observation_id",
+        unique_id_column_name="record_id",
         # Named, so that training again on the same file writes the same model.
         linker_uid="spool-people",
         # No comparison adjusts for how common a value is. Splink would count
@@ -60,12 +60,12 @@ def settings():
 
 def train(csv, out):
     connection = duckdb.connect()
-    # What the engine's `observation` relation looks like to features.sql:
+    # What the engine's `record` relation looks like to features.sql:
     # an ID, and the row as it was ingested. An empty field is left out.
     connection.execute(
         """
-        CREATE TABLE observation AS
-        SELECT row_number() OVER ()::VARCHAR AS observation_id, to_json(csv) AS payload
+        CREATE TABLE record AS
+        SELECT row_number() OVER ()::VARCHAR AS record_id, to_json(csv) AS payload
         FROM read_csv(?, all_varchar = true) AS csv
         """,
         [str(csv)],

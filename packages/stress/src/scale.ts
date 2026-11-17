@@ -12,7 +12,7 @@ import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { SpoolClient } from "../../client/src/index.ts";
-import type { RunRecord } from "../../client/src/types.ts";
+import type { RunEntry } from "../../client/src/types.ts";
 
 import { generate, records } from "./generate.ts";
 import type { Row } from "./generate.ts";
@@ -25,8 +25,8 @@ const CHUNK = 100_000;
 export interface Step {
   step: string;
   seconds: number;
-  /** Observations the store holds after the step. */
-  observations: number;
+  /** Records the store holds after the step. */
+  records: number;
   identities: number;
   unassigned: number;
   review: number;
@@ -50,7 +50,7 @@ export interface ScaleResult {
   peak_memory_mb: number;
 }
 
-export async function finished(client: SpoolClient, run: RunRecord | null): Promise<RunRecord | null> {
+export async function finished(client: SpoolClient, run: RunEntry | null): Promise<RunEntry | null> {
   if (run === null || run.status !== "running") return run;
   return await client.waitForRun(run.run);
 }
@@ -60,7 +60,7 @@ export async function finished(client: SpoolClient, run: RunRecord | null): Prom
  * nothing to match and started no run: nothing is new since the last run,
  * and nothing waits for review.
  */
-export async function match(client: SpoolClient, rematch = false): Promise<RunRecord | null> {
+export async function match(client: SpoolClient, rematch = false): Promise<RunEntry | null> {
   const run = await finished(client, await client.startRun({ entity_type: "company", rematch }));
   if (run !== null && run.status !== "succeeded") throw new Error(`the match run ${run.status}: ${run.error ?? ""}`);
   return run;
@@ -116,7 +116,7 @@ export async function scale(
     const line: Step = {
       step,
       seconds: Math.round(seconds * 100) / 100,
-      observations: type.observations,
+      records: type.records,
       identities: type.identities,
       unassigned: type.unassigned,
       review: type.open_review_items,
@@ -127,7 +127,7 @@ export async function scale(
     };
     steps.push(line);
     log(
-      `  ${step.padEnd(22)} ${line.seconds.toFixed(2).padStart(9)} s  ${String(line.observations).padStart(9)} obs  ${String(
+      `  ${step.padEnd(22)} ${line.seconds.toFixed(2).padStart(9)} s  ${String(line.records).padStart(9)} obs  ${String(
         line.identities,
       ).padStart(
         9,
@@ -150,7 +150,7 @@ export async function scale(
         seconds,
         resolution == null
           ? "nothing to match"
-          : `${resolution.candidates} candidates, ${resolution.identities_created} identities created, ${resolution.observations_assigned} assigned`,
+          : `${resolution.candidates} candidates, ${resolution.identities_created} identities created, ${resolution.records_assigned} assigned`,
       );
     }
 
@@ -200,18 +200,18 @@ async function readCalls(client: SpoolClient, rows: Row[]): Promise<Reads> {
   const sample = [...new Set(Array.from({ length: 20 }, (_, index) => rows[Math.floor((index * rows.length) / 20)]!))];
   const found: Array<{ id: string; identity: string | null }> = [];
   await time("info", 5, () => client.info());
-  await time("observation by source and key", sample.length, async (index) => {
-    const { observations } = await client.observations({ source: "crm", key: sample[index]!.id });
-    const observation = observations[0];
-    if (observation === undefined) throw new Error(`crm:${sample[index]!.id} is not in the store`);
-    found.push({ id: observation.id, identity: observation.identity ?? null });
+  await time("record by source and key", sample.length, async (index) => {
+    const { records } = await client.records({ source: "crm", key: sample[index]!.id });
+    const record = records[0];
+    if (record === undefined) throw new Error(`crm:${sample[index]!.id} is not in the store`);
+    found.push({ id: record.id, identity: record.identity ?? null });
   });
-  const placed = found.filter((observation) => observation.identity !== null);
-  await time("observation by ID", found.length, (index) => client.observation(found[index]!.id));
+  const placed = found.filter((record) => record.identity !== null);
+  await time("record by ID", found.length, (index) => client.record(found[index]!.id));
   await time("identity", placed.length, (index) => client.identity(placed[index]!.identity!));
   await time("identity history", placed.length, (index) => client.identityHistory(placed[index]!.identity!));
   await time("identities, first page", 5, () => client.identities());
-  await time("observations, first page", 5, () => client.observations());
+  await time("records, first page", 5, () => client.records());
   await time("explain a pair", Math.max(0, found.length - 1), (index) =>
     client.explain(found[index]!.id, found[index + 1]!.id),
   );

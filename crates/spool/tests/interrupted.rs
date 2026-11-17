@@ -93,8 +93,8 @@ fn outcome(engine: &Engine) -> Outcome {
     for row in select(
         engine,
         "SELECT o.source_id || ':' || o.source_key, m.identity_id::VARCHAR
-         FROM spool.observation o
-         LEFT JOIN spool.membership_current m ON m.observation_id = o.observation_id",
+         FROM spool.record o
+         LEFT JOIN spool.membership_current m ON m.record_id = o.record_id",
     ) {
         let record = row[0].clone().unwrap();
         match &row[1] {
@@ -109,8 +109,8 @@ fn outcome(engine: &Engine) -> Outcome {
     let under_review = select(
         engine,
         "SELECT DISTINCT o.source_id || ':' || o.source_key
-         FROM (SELECT unnest(observation_ids) AS observation_id FROM spool.review_open) r
-         JOIN spool.observation o ON o.observation_id = r.observation_id",
+         FROM (SELECT unnest(record_ids) AS record_id FROM spool.review_open) r
+         JOIN spool.record o ON o.record_id = r.record_id",
     )
     .into_iter()
     .map(|row| row[0].clone().unwrap())
@@ -172,14 +172,14 @@ fn a_resolve_cut_short_at_any_step_is_completed_by_the_next_one() {
                 .review
                 .iter()
                 .map(|item| match item {
-                    ReviewItem::PossibleMerge { observations, .. }
-                    | ReviewItem::Conflict { observations, .. } => observations.len(),
+                    ReviewItem::PossibleMerge { records, .. }
+                    | ReviewItem::Conflict { records, .. } => records.len(),
                 })
                 .sum();
-            assert_eq!(resolved.observations_unassigned as usize, reviewed);
+            assert_eq!(resolved.records_unassigned as usize, reviewed);
             assert_eq!(
-                resolved.new_observations,
-                resolved.observations_assigned + resolved.observations_unassigned
+                resolved.new_records,
+                resolved.records_assigned + resolved.records_unassigned
             );
         }
         assert_eq!(

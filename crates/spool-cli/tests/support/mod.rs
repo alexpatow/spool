@@ -71,7 +71,7 @@ pub fn write_things(dir: &Path) {
     for (file, sql) in [
         (
             "features.sql",
-            "SELECT observation_id, payload->>'code' AS code, payload->>'colour' AS colour\nFROM observation\n",
+            "SELECT record_id, payload->>'code' AS code, payload->>'colour' AS colour\nFROM record\n",
         ),
         ("rules/block/same_code.sql", "l.code = r.code\n"),
         ("rules/match/same_code.sql", "l.code = r.code\n"),

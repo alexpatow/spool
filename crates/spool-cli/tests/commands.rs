@@ -88,7 +88,7 @@ fn init_scaffolds_a_project_that_info_lists_and_build_compiles() {
     let listing = succeed(&["info", path(&project)]);
     assert!(listing.contains("entity type `customer`"), "{listing}");
     assert!(
-        listing.contains("features  observation_id UUID, name VARCHAR"),
+        listing.contains("features  record_id UUID, name VARCHAR"),
         "{listing}"
     );
     assert!(listing.contains("block     same_name"), "{listing}");
@@ -186,7 +186,7 @@ fn apply_declares_types_and_rebuilds_the_features_of_a_changed_declaration() {
         .unwrap();
     assert!(output.status.success(), "{}", text(&output.stderr));
 
-    // Put two observations in, then change what a thing's code is.
+    // Put two records in, then change what a thing's code is.
     let server = Server::start(&serve_arguments(&manifest, &store, "1"));
     ingest(&server, &[&["id", "code"], &["1", "anvil"]]);
     assert_eq!(
@@ -197,7 +197,7 @@ fn apply_declares_types_and_rebuilds_the_features_of_a_changed_declaration() {
 
     std::fs::write(
         project.join("entities/thing/features.sql"),
-        "SELECT observation_id, lower(payload->>'code') AS code, payload->>'colour' AS colour\nFROM observation\n",
+        "SELECT record_id, lower(payload->>'code') AS code, payload->>'colour' AS colour\nFROM record\n",
     )
     .unwrap();
     build(&project);
@@ -212,7 +212,7 @@ fn apply_declares_types_and_rebuilds_the_features_of_a_changed_declaration() {
     ingest(&server, &[&["id", "code"], &["2", "ANVIL"]]);
     let resolution = resolve(&server)["run"]["resolution"].clone();
     assert_eq!(resolution["identities_created"], 0, "{resolution}");
-    assert_eq!(resolution["observations_assigned"], 1, "{resolution}");
+    assert_eq!(resolution["records_assigned"], 1, "{resolution}");
 
     // A manifest that was edited by hand is not applied.
     let edited = read(&manifest).replace("lower(", "upper(");
@@ -332,7 +332,7 @@ fn a_run_cut_short_by_a_killed_server_is_recorded_as_failed() {
 
     // Nothing of the batch was kept, and the store works as before.
     let info = server.read("/v1/info");
-    assert_eq!(info["store"]["entity_types"][0]["observations"], 1);
+    assert_eq!(info["store"]["entity_types"][0]["records"], 1);
     assert_eq!(
         resolve(&server)["run"]["resolution"]["identities_created"],
         1
@@ -382,7 +382,7 @@ fn dev_serves_a_project_directory_and_applies_changes_as_they_are_saved() {
     ingest(&server, &[&["id", "code"], &["2", "ANVIL"]]);
     let resolution = resolve(&server)["run"]["resolution"].clone();
     assert_eq!(resolution["identities_created"], 0, "{resolution}");
-    assert_eq!(resolution["observations_assigned"], 1, "{resolution}");
+    assert_eq!(resolution["records_assigned"], 1, "{resolution}");
 
     // A change that does not compile is reported, and the server carries on
     // with what it had.
@@ -392,18 +392,18 @@ fn dev_serves_a_project_directory_and_applies_changes_as_they_are_saved() {
     server.complained("still running the last version that compiled");
     assert_eq!(server.read("/v1/info")["store"]["manifest_hash"], second);
 
-    // So is a change that compiles and that the stored observations do not
-    // fit: here, two feature rows for each observation.
+    // So is a change that compiles and that the stored records do not
+    // fit: here, two feature rows for each record.
     std::fs::write(
         &features,
-        "SELECT observation_id, payload->>'code' AS code, payload->>'colour' AS colour\nFROM observation, range(2)\n",
+        "SELECT record_id, payload->>'code' AS code, payload->>'colour' AS colour\nFROM record, range(2)\n",
     )
     .unwrap();
     server.complained("still running the last version that compiled");
     assert_eq!(server.read("/v1/info")["store"]["manifest_hash"], second);
     ingest(&server, &[&["id", "code"], &["3", "Anvil"]]);
     let resolution = resolve(&server)["run"]["resolution"].clone();
-    assert_eq!(resolution["observations_assigned"], 1, "{resolution}");
+    assert_eq!(resolution["records_assigned"], 1, "{resolution}");
     assert_eq!(resolution["identities_created"], 0, "{resolution}");
 
     // A rule is only a rule: adding one rebuilds nothing.

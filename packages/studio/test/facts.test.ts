@@ -2,17 +2,12 @@
 
 import { describe, expect, test } from "bun:test";
 
-import type { ObservationRecord } from "../src/api.ts";
+import type { RecordEntry } from "../src/api.ts";
 import { facts, fieldsOf, latest, same, sourcesOf, valueOf } from "../src/facts.ts";
 
 let made = 0;
 
-function record(
-  source: string,
-  key: string,
-  payload: unknown,
-  more: Partial<ObservationRecord> = {},
-): ObservationRecord {
+function record(source: string, key: string, payload: unknown, more: Partial<RecordEntry> = {}): RecordEntry {
   made++;
   return {
     id: `00000000-0000-7000-8000-${String(made).padStart(12, "0")}`,
@@ -23,7 +18,7 @@ function record(
     ingest_run: 1,
     ingested_at: "2026-01-01T00:00:00Z",
     ...more,
-  } as ObservationRecord;
+  } as RecordEntry;
 }
 
 describe("what records say", () => {
@@ -105,9 +100,9 @@ describe("what records say", () => {
       record("web", "w-1", {}),
     ];
     expect(sourcesOf(rows)).toEqual([
-      { source: "crm", observations: 2 },
-      { source: "registry", observations: 1 },
-      { source: "web", observations: 1 },
+      { source: "crm", records: 2 },
+      { source: "registry", records: 1 },
+      { source: "web", records: 1 },
     ]);
     expect(sourcesOf([])).toEqual([]);
   });

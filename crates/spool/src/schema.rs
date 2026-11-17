@@ -7,7 +7,7 @@ use crate::error::{Error, Result};
 
 /// Written to `spool.meta` when a store is created and checked when one is
 /// opened.
-pub(crate) const FORMAT_VERSION: &str = "5";
+pub(crate) const FORMAT_VERSION: &str = "6";
 
 const TABLES: &str = "
 CREATE SCHEMA spool;
@@ -16,14 +16,14 @@ CREATE TABLE spool.meta (key VARCHAR NOT NULL, value VARCHAR NOT NULL);
 
 -- Evidence
 
-CREATE TABLE spool.observation (
-  observation_id UUID        NOT NULL, -- first 128 bits of sha256(source_id, source_key, canonical payload)
+CREATE TABLE spool.record (
+  record_id      UUID        NOT NULL, -- first 128 bits of sha256(source_id, source_key, canonical payload)
   entity_type    VARCHAR     NOT NULL, -- a declared type
   source_id      VARCHAR     NOT NULL,
   source_key     VARCHAR,              -- key within the source: a row key, or an extracted mention's locator
   supersedes     UUID,                 -- previous version of the same (entity_type, source_id, source_key)
   payload        JSON        NOT NULL, -- attributes exactly as received
-  evidence       JSON,                 -- where in the source the observation was found
+  evidence       JSON,                 -- where in the source the record was found
   observed_at    TIMESTAMPTZ,          -- when the source says it held, if known
   ingested_at    TIMESTAMPTZ NOT NULL,
   ingest_run     BIGINT      NOT NULL
@@ -92,10 +92,10 @@ CREATE TABLE spool.review_item (       -- what a reconcile run would not decide;
   run_id          BIGINT  NOT NULL,    -- reconcile run that raised it
   entity_type     VARCHAR NOT NULL,
   kind            VARCHAR NOT NULL,    -- 'possible_merge' | 'conflict'
-  observation_ids UUID[]  NOT NULL,    -- the observations left without an identity
-  identity_ids    UUID[]  NOT NULL,    -- the identities they matched; empty when the conflict is among the observations
+  record_ids UUID[]  NOT NULL,    -- the records left without an identity
+  identity_ids    UUID[]  NOT NULL,    -- the identities they matched; empty when the conflict is among the records
   status          VARCHAR NOT NULL,    -- 'open' | 'resolved' | 'superseded' | 'dismissed'
-  closed_seq      BIGINT,              -- resolved: the changeset after which every observation had an identity
+  closed_seq      BIGINT,              -- resolved: the changeset after which every record had an identity
   closed_run      BIGINT,              -- superseded: the reconcile run that raised it again in another form
   closed_by       VARCHAR,             -- dismissed: who decided, as an actor
   closed_at       TIMESTAMPTZ,         -- dismissed: when
@@ -123,8 +123,8 @@ CREATE TABLE spool.draft_op (          -- a draft's operations, in the shape of 
   kind                 VARCHAR NOT NULL,
   identity_id          UUID,
   from_identity_id     UUID,
-  observation_id       UUID,
-  other_observation_id UUID,
+  record_id            UUID,
+  other_record_id      UUID,
   entity_type          VARCHAR,
   constraint_kind      VARCHAR
 );
@@ -148,8 +148,8 @@ CREATE TABLE spool.changeset_op (      -- one row per operation, so apply is set
   kind                 VARCHAR NOT NULL, -- 'create_identity' | 'assign' | 'merge' | 'constrain' | 'unconstrain' | 'reinstate'
   identity_id          UUID,             -- created identity / assign target / merge survivor
   from_identity_id     UUID,             -- assign source / merged-away identity
-  observation_id       UUID,
-  other_observation_id UUID,
+  record_id            UUID,
+  other_record_id      UUID,
   entity_type          VARCHAR,
   constraint_kind      VARCHAR           -- 'must_link' | 'cannot_link'
 );
@@ -164,15 +164,15 @@ CREATE TABLE spool.identity (          -- projection
 );
 
 CREATE TABLE spool.membership (        -- projection with history; current rows have to_seq IS NULL
-  observation_id UUID   NOT NULL,
+  record_id      UUID   NOT NULL,
   identity_id    UUID   NOT NULL,
   from_seq       BIGINT NOT NULL,
   to_seq         BIGINT
 );
 
 CREATE TABLE spool.constraint_link (   -- projection with history; in force while to_seq IS NULL
-  observation_a UUID    NOT NULL,      -- observation_a < observation_b
-  observation_b UUID    NOT NULL,
+  record_a      UUID    NOT NULL,      -- record_a < record_b
+  record_b      UUID    NOT NULL,
   kind          VARCHAR NOT NULL,
   from_seq      BIGINT  NOT NULL,
   to_seq        BIGINT
@@ -186,17 +186,17 @@ CREATE VIEW spool.identity_current AS
   WHERE merged_into IS NULL;
 
 CREATE VIEW spool.membership_current AS
-  SELECT observation_id, identity_id, from_seq
+  SELECT record_id, identity_id, from_seq
   FROM spool.membership
   WHERE to_seq IS NULL;
 
 CREATE VIEW spool.constraint_current AS
-  SELECT observation_a, observation_b, kind, from_seq
+  SELECT record_a, record_b, kind, from_seq
   FROM spool.constraint_link
   WHERE to_seq IS NULL;
 
 CREATE VIEW spool.review_open AS
-  SELECT review_id, run_id, entity_type, kind, observation_ids, identity_ids
+  SELECT review_id, run_id, entity_type, kind, record_ids, identity_ids
   FROM spool.review_item
   WHERE status = 'open';
 

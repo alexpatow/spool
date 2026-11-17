@@ -14,7 +14,7 @@
 //!   That run examined everything this draft covers, so this one is stale.
 //!
 //! A match run whose draft is open has not succeeded. What is new to the next
-//! run is counted from the last run that succeeded, so the observations of a
+//! run is counted from the last run that succeeded, so the records of a
 //! draft nobody commits are examined again.
 
 use duckdb::vtab::arrow::ArrowBatchRegistration;
@@ -81,7 +81,7 @@ pub struct DraftSummary {
     pub status: DraftStatus,
     pub operations: u64,
     pub identities_created: u64,
-    pub observations_assigned: u64,
+    pub records_assigned: u64,
     /// Committed: its position in the log.
     pub committed_seq: Option<Seq>,
     /// Superseded: the reconcile run that drafted the entity type again.
@@ -95,7 +95,7 @@ pub struct DraftSummary {
 /// A draft with the changeset it would commit.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct DraftRecord {
+pub struct DraftEntry {
     pub draft: DraftSummary,
     pub changeset: Changeset,
 }
@@ -143,7 +143,7 @@ pub(crate) fn store(
     conn.execute(
         "INSERT INTO spool.draft_op
          SELECT ?::UUID, op_index::INTEGER, kind, identity_id::UUID, from_identity_id::UUID,
-                observation_id::UUID, other_observation_id::UUID, entity_type, constraint_kind
+                record_id::UUID, other_record_id::UUID, entity_type, constraint_kind
          FROM arrow(?)",
         params![
             changeset.id.to_string(),
@@ -222,7 +222,7 @@ fn summary(row: &duckdb::Row<'_>) -> Result<(DraftSummary, String, Option<String
         status: DraftStatus::from_stored(&row.get::<_, String>(5)?)?,
         operations: row.get::<_, i64>(6)? as u64,
         identities_created: row.get::<_, i64>(7)? as u64,
-        observations_assigned: row.get::<_, i64>(8)? as u64,
+        records_assigned: row.get::<_, i64>(8)? as u64,
         committed_seq: seq(row.get(9)?),
         superseded_by: run(row.get(10)?),
         rejected_at: row.get::<_, Option<i64>>(11)?.map(rfc3339),
@@ -251,7 +251,7 @@ pub(crate) fn list(conn: &Connection, filter: &DraftFilter) -> Result<Vec<DraftS
 }
 
 /// One draft with its changeset, or `None` if there is no draft by that ID.
-pub(crate) fn get(conn: &Connection, id: ChangesetId) -> Result<Option<DraftRecord>> {
+pub(crate) fn get(conn: &Connection, id: ChangesetId) -> Result<Option<DraftEntry>> {
     let found = {
         let mut statement = conn.prepare(&format!("{SUMMARY} WHERE d.changeset_id = ?::UUID"))?;
         let mut rows = statement.query([id.to_string()])?;
@@ -267,7 +267,7 @@ pub(crate) fn get(conn: &Connection, id: ChangesetId) -> Result<Option<DraftReco
     let mut ops: Vec<Op> = Vec::new();
     let mut statement = conn.prepare(
         "SELECT kind, identity_id::VARCHAR, from_identity_id::VARCHAR,
-                observation_id::VARCHAR, other_observation_id::VARCHAR,
+                record_id::VARCHAR, other_record_id::VARCHAR,
                 entity_type, constraint_kind
          FROM spool.draft_op WHERE changeset_id = ?::UUID ORDER BY op_index",
     )?;
@@ -277,8 +277,8 @@ pub(crate) fn get(conn: &Connection, id: ChangesetId) -> Result<Option<DraftReco
             kind: row.get(0)?,
             identity: row.get(1)?,
             from_identity: row.get(2)?,
-            observation: row.get(3)?,
-            other_observation: row.get(4)?,
+            record: row.get(3)?,
+            other_record: row.get(4)?,
             entity_type: row.get(5)?,
             constraint_kind: row.get(6)?,
         })?);
@@ -291,5 +291,5 @@ pub(crate) fn get(conn: &Connection, id: ChangesetId) -> Result<Option<DraftReco
         run: Some(draft.reconcile_run),
         ops,
     };
-    Ok(Some(DraftRecord { draft, changeset }))
+    Ok(Some(DraftEntry { draft, changeset }))
 }
