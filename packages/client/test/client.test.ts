@@ -353,6 +353,33 @@ describe("a reviewer", () => {
     expect(await client.reviewItems({ observation: fourth.id })).toEqual([item!]);
     expect(await client.reviewItems({ observation: third.id })).toEqual([]);
 
+    // The item is read with the records it is about: the one that waits,
+    // the two identities it matched, and the judgements that say so.
+    const reviewCase = await client.reviewCase(item!.id);
+    expect(reviewCase.item).toEqual(item!);
+    expect(reviewCase.observations).toEqual([fourth]);
+    expect(reviewCase.candidates.map((candidate) => candidate.identity.id).sort()).toEqual(
+      [anvils, split.identity].sort(),
+    );
+    expect(reviewCase.candidates.map((candidate) => candidate.members.length).sort()).toEqual([1, 2]);
+    expect(reviewCase.judgements).toHaveLength(3);
+    expect(reviewCase.judgements.every((judged) => judged.observation === fourth.id && judged.verdict === "match")).toBe(
+      true,
+    );
+    expect((await failureOf(client.reviewCase(999))).code).toBe("not_found");
+
+    // The members of an identity are read as observations, and things are
+    // found by a word they hold.
+    const members = await client.observations({ identity: anvils });
+    expect(members.observations.map((member) => member.key).sort()).toEqual(["1", "2"]);
+    const found = await client.identities({ q: "ANVIL" });
+    expect(found.identities.map((identity) => identity.id).sort()).toEqual([anvils, split.identity].sort());
+    expect(found.identities.find((identity) => identity.id === anvils)!.sources).toEqual([
+      { source: "shop", observations: 2 },
+    ]);
+    expect((await client.observations({ q: "anvil 4" })).observations).toEqual([fourth]);
+    expect((await client.identities({ q: "hammer" })).identities).toEqual([]);
+
     // Why the first two are together, the third is apart, and the fourth
     // has no identity.
     const first = await thing(client, "1");

@@ -4,6 +4,8 @@
 //! Everything here reads committed state from a connection of its own, so a
 //! lookup does not wait for a run that is in progress.
 
+use std::collections::BTreeMap;
+
 use duckdb::{Connection, params};
 use serde::{Deserialize, Serialize};
 use spool_core::{
@@ -28,6 +30,10 @@ pub struct ObservationRecord {
     pub key: Option<String>,
     /// The attributes exactly as received.
     pub payload: serde_json::Value,
+    /// What a person would call it: the name the payload gives, as
+    /// [`label_of`] finds it. `None` when the payload has none.
+    #[serde(default)]
+    pub label: Option<String>,
     /// Where in the source the observation was found, if the source said.
     pub evidence: Option<serde_json::Value>,
     pub ingested_at: String,
@@ -69,6 +75,64 @@ impl ObservationRecord {
     }
 }
 
+/// The payload fields that name what a row is about, the likeliest first.
+const LABEL_FIELDS: [&str; 6] = [
+    "name",
+    "legal_name",
+    "title",
+    "label",
+    "display_name",
+    "full_name",
+];
+
+/// What a person would call the thing a payload describes.
+///
+/// The engine does not know what a payload's fields mean, so this goes by
+/// their names: the first of `name`, `legal_name`, `title`, `label`,
+/// `display_name` and `full_name` that holds text, and failing those the
+/// first field, in alphabetical order, whose name ends in `name` and that
+/// holds text. A payload with no such field has no label.
+pub fn label_of(payload: &serde_json::Value) -> Option<String> {
+    let fields = payload.as_object()?;
+    let text = |field: &str| {
+        let value = fields.get(field)?.as_str()?.trim();
+        (!value.is_empty()).then(|| value.to_owned())
+    };
+    LABEL_FIELDS
+        .iter()
+        .find_map(|field| text(field))
+        .or_else(|| {
+            let mut named: Vec<&String> = fields
+                .keys()
+                .filter(|field| field.to_ascii_lowercase().ends_with("name"))
+                .collect();
+            named.sort();
+            named.into_iter().find_map(|field| text(field))
+        })
+}
+
+/// The label most of the given payloads have. Of labels that as many have,
+/// the one that comes first: callers give the payloads oldest first, so
+/// that a label does not change because a row arrived that says the same
+/// in other words.
+fn common_label<'a>(payloads: impl Iterator<Item = &'a serde_json::Value>) -> Option<String> {
+    let mut counted: Vec<(String, usize)> = Vec::new();
+    for label in payloads.filter_map(label_of) {
+        match counted.iter_mut().find(|(known, _)| *known == label) {
+            Some((_, count)) => *count += 1,
+            None => counted.push((label, 1)),
+        }
+    }
+    let most = counted.iter().map(|(_, count)| *count).max()?;
+    counted
+        .into_iter()
+        .find(|(_, count)| *count == most)
+        .map(|(label, _)| label)
+}
+
+/// The most members an identity's label is judged from: its oldest.
+const LABEL_MEMBERS: u64 = 100;
+
 /// Which observations to list. Results are ordered by ID.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ObservationFilter {
@@ -77,6 +141,13 @@ pub struct ObservationFilter {
     pub key: Option<String>,
     /// Only the mentions an extractor found in this document.
     pub document: Option<DocumentId>,
+    /// Only the members this identity has now. An identity that was merged
+    /// away has none: its members are those of the one that stands for it.
+    pub identity: Option<IdentityId>,
+    /// Only those that hold every word of this text, in a value of the
+    /// payload, in the source's name or in the key. Letters match whatever
+    /// their case and accents.
+    pub q: Option<String>,
     /// Only those without an identity.
     pub unassigned: bool,
     /// Only those after this ID: the last one of the page before.
@@ -91,6 +162,8 @@ impl Default for ObservationFilter {
             source: None,
             key: None,
             document: None,
+            identity: None,
+            q: None,
             unassigned: false,
             after: None,
             limit: 100,
@@ -120,6 +193,10 @@ pub struct IdentityView {
     /// into.
     pub current: IdentityId,
     pub entity_type: EntityType,
+    /// What a person would call the current identity: the label most of its
+    /// members have. `None` when no member's payload names it.
+    #[serde(default)]
+    pub label: Option<String>,
     /// The log position that created the identity that was asked for.
     pub created: Seq,
     /// The members of the current identity, ordered by observation ID.
@@ -142,14 +219,33 @@ pub struct Member {
 pub struct IdentitySummary {
     pub id: IdentityId,
     pub entity_type: EntityType,
+    /// What a person would call it: the label most of its members have. Of
+    /// labels that as many have, the one that was ingested first. `None`
+    /// when no member's payload names it. An identity with very many
+    /// members is judged by the hundred that were ingested first.
+    #[serde(default)]
+    pub label: Option<String>,
     pub created: Seq,
     pub members: u64,
+    /// The sources its members came from, the one with most members first.
+    pub sources: Vec<SourceCount>,
+}
+
+/// How many observations a source gave.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct SourceCount {
+    pub source: String,
+    pub observations: u64,
 }
 
 /// Which active identities to list. Results are ordered by ID.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IdentityFilter {
     pub entity_type: Option<EntityType>,
+    /// Only those with a member that holds every word of this text, as
+    /// [`ObservationFilter::q`] finds observations.
+    pub q: Option<String>,
     /// Only those after this ID: the last one of the page before.
     pub after: Option<IdentityId>,
     pub limit: u64,
@@ -159,6 +255,7 @@ impl Default for IdentityFilter {
     fn default() -> Self {
         Self {
             entity_type: None,
+            q: None,
             after: None,
             limit: 100,
         }
@@ -216,10 +313,25 @@ pub struct TypeInfo {
     pub observations: u64,
     /// Observations no changeset has placed.
     pub unassigned: u64,
+    /// The sources the observations came from, by name.
+    pub sources: Vec<SourceInfo>,
     pub identities: u64,
     pub open_review_items: u64,
     /// The draft that waits for a decision, if there is one.
     pub open_draft: Option<ChangesetId>,
+}
+
+/// What one source gave of an entity type.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct SourceInfo {
+    pub source: String,
+    /// Counting each version of a row.
+    pub observations: u64,
+    /// Those of them no changeset has placed.
+    pub unassigned: u64,
+    /// When the latest of them was ingested.
+    pub last_ingested_at: String,
 }
 
 fn entity_type(name: String) -> Result<EntityType> {
@@ -249,12 +361,14 @@ fn observation_record(row: &duckdb::Row<'_>) -> Result<ObservationRecord> {
             .map(parse)
             .transpose()
     }
+    let payload = json(row.get(4)?)?;
     Ok(ObservationRecord {
         id: parse(&row.get::<_, String>(0)?)?,
         entity_type: entity_type(row.get(1)?)?,
         source: row.get(2)?,
         key: row.get(3)?,
-        payload: json(row.get(4)?)?,
+        label: label_of(&payload),
+        payload,
         evidence: row.get::<_, Option<String>>(5)?.map(json).transpose()?,
         ingested_at: rfc3339(row.get(6)?),
         ingest_run: RunId(row.get::<_, i64>(7)? as u64),
@@ -276,6 +390,28 @@ pub(crate) fn observation(
     }
 }
 
+/// The words of a search, as the JSON list [`holds_words`] reads. `None`
+/// when the text has no word, which finds everything.
+fn words(q: Option<&str>) -> Option<String> {
+    let words: Vec<&str> = q?.split_whitespace().collect();
+    (!words.is_empty()).then(|| serde_json::json!(words).to_string())
+}
+
+/// SQL for whether the observation `o` holds every word of the JSON list in
+/// the parameter `words`, or the parameter is null. A word is held if it is
+/// in a value of the payload, in the source's name or in the key, whatever
+/// the case and the accents of its letters.
+fn holds_words(words: &str) -> String {
+    format!(
+        "({words}::VARCHAR IS NULL OR len(list_filter(
+            from_json({words}::VARCHAR, '[\"VARCHAR\"]'),
+            lambda word: NOT contains(
+              lower(strip_accents(concat_ws(' ', o.source_id, o.source_key,
+                array_to_string(json_extract_string(o.payload, '$.*'), ' ')))),
+              lower(strip_accents(word))))) = 0)"
+    )
+}
+
 pub(crate) fn observations(
     conn: &Connection,
     filter: &ObservationFilter,
@@ -289,8 +425,11 @@ pub(crate) fn observations(
            AND (NOT $5::BOOLEAN OR m.identity_id IS NULL)
            AND ($7::VARCHAR IS NULL
                 OR json_extract_string(o.evidence, '$.document') = $7::VARCHAR)
+           AND ($8::VARCHAR IS NULL OR m.identity_id = $8::UUID)
+           AND {}
          ORDER BY o.observation_id
-         LIMIT $6"
+         LIMIT $6",
+        holds_words("$9")
     ))?;
     let mut rows = statement.query(params![
         filter.entity_type.as_ref().map(EntityType::as_str),
@@ -300,7 +439,55 @@ pub(crate) fn observations(
         filter.unassigned,
         limit(filter.limit),
         filter.document.map(|id| id.to_string()),
+        filter.identity.map(|id| id.to_string()),
+        words(filter.q.as_deref()),
     ])?;
+    let mut found = Vec::new();
+    while let Some(row) = rows.next()? {
+        found.push(observation_record(row)?);
+    }
+    Ok(found)
+}
+
+/// The observations with the given IDs, in the order they were asked for.
+/// One the store does not hold is left out.
+pub(crate) fn observations_by_id(
+    conn: &Connection,
+    ids: &[ObservationId],
+) -> Result<Vec<ObservationRecord>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut statement = conn.prepare(&format!(
+        "{OBSERVATION} WHERE list_contains({}, o.observation_id)",
+        uuid_list(ids)
+    ))?;
+    let mut rows = statement.query([])?;
+    let mut found = BTreeMap::new();
+    while let Some(row) = rows.next()? {
+        let record = observation_record(row)?;
+        found.insert(record.id, record);
+    }
+    Ok(ids.iter().filter_map(|id| found.remove(id)).collect())
+}
+
+/// At most `most` of the members an identity has now: those among `first`
+/// before the others, and of the others the ones ingested first.
+pub(crate) fn members(
+    conn: &Connection,
+    identity: IdentityId,
+    first: &[ObservationId],
+    most: u64,
+) -> Result<Vec<ObservationRecord>> {
+    let mut statement = conn.prepare(&format!(
+        "{OBSERVATION}
+         WHERE m.identity_id = $1::UUID
+         ORDER BY list_contains({}, o.observation_id) DESC,
+                  o.ingested_at, o.ingest_run, o.observation_id
+         LIMIT $2",
+        uuid_list(first)
+    ))?;
+    let mut rows = statement.query(params![identity.to_string(), limit(most)])?;
     let mut found = Vec::new();
     while let Some(row) = rows.next()? {
         found.push(observation_record(row)?);
@@ -353,40 +540,158 @@ pub(crate) fn identity(conn: &Connection, id: IdentityId) -> Result<Option<Ident
         id,
         current,
         entity_type: entity_type(entity_type_name)?,
+        label: labels(conn, &[current])?.remove(&current),
         created: Seq(created as u64),
         members,
     }))
+}
+
+/// The IDs as a SQL list of UUIDs. An ID is hexadecimal digits and hyphens,
+/// so it is safe to splice.
+pub(crate) fn uuid_list<T: std::fmt::Display>(ids: &[T]) -> String {
+    let quoted: Vec<String> = ids.iter().map(|id| format!("'{id}'")).collect();
+    format!("[{}]::UUID[]", quoted.join(", "))
+}
+
+/// What to call each of the identities: the label most of its members
+/// have, judged from the members that were ingested first. An identity
+/// whose members name nothing is left out.
+fn labels(conn: &Connection, ids: &[IdentityId]) -> Result<BTreeMap<IdentityId, String>> {
+    let mut payloads: BTreeMap<IdentityId, Vec<serde_json::Value>> = BTreeMap::new();
+    if ids.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let mut statement = conn.prepare(&format!(
+        "SELECT identity_id::VARCHAR, payload::VARCHAR FROM (
+           SELECT m.identity_id, o.payload,
+                  row_number() OVER (
+                    PARTITION BY m.identity_id
+                    ORDER BY o.ingested_at, o.ingest_run, o.observation_id) AS nth
+           FROM spool.membership m
+           JOIN spool.observation o ON o.observation_id = m.observation_id
+           WHERE m.to_seq IS NULL AND list_contains({}, m.identity_id))
+         WHERE nth <= {LABEL_MEMBERS}
+         ORDER BY identity_id, nth",
+        uuid_list(ids)
+    ))?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        payloads
+            .entry(parse(&row.get::<_, String>(0)?)?)
+            .or_default()
+            .push(json(row.get(1)?)?);
+    }
+    Ok(payloads
+        .into_iter()
+        .filter_map(|(id, payloads)| Some((id, common_label(payloads.iter())?)))
+        .collect())
+}
+
+/// Fills in what a list of identities says of each beyond its row: its
+/// label and the sources of its members.
+fn describe(conn: &Connection, identities: &mut [IdentitySummary]) -> Result<()> {
+    if identities.is_empty() {
+        return Ok(());
+    }
+    let ids: Vec<IdentityId> = identities.iter().map(|identity| identity.id).collect();
+    let mut labels = labels(conn, &ids)?;
+    let mut sources: BTreeMap<IdentityId, Vec<SourceCount>> = BTreeMap::new();
+    let mut statement = conn.prepare(&format!(
+        "SELECT m.identity_id::VARCHAR, o.source_id, count(*) AS observations
+         FROM spool.membership m
+         JOIN spool.observation o ON o.observation_id = m.observation_id
+         WHERE m.to_seq IS NULL AND list_contains({}, m.identity_id)
+         GROUP BY m.identity_id, o.source_id
+         ORDER BY m.identity_id, observations DESC, o.source_id",
+        uuid_list(&ids)
+    ))?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        sources
+            .entry(parse(&row.get::<_, String>(0)?)?)
+            .or_default()
+            .push(SourceCount {
+                source: row.get(1)?,
+                observations: row.get::<_, i64>(2)? as u64,
+            });
+    }
+    for identity in identities {
+        identity.label = labels.remove(&identity.id);
+        identity.sources = sources.remove(&identity.id).unwrap_or_default();
+    }
+    Ok(())
+}
+
+const IDENTITY: &str = "
+    SELECT i.identity_id::VARCHAR, i.entity_type, i.created_seq,
+           (SELECT count(*) FROM spool.membership m
+            WHERE m.identity_id = i.identity_id AND m.to_seq IS NULL)
+    FROM spool.identity i";
+
+fn identity_summary(row: &duckdb::Row<'_>) -> Result<IdentitySummary> {
+    Ok(IdentitySummary {
+        id: parse(&row.get::<_, String>(0)?)?,
+        entity_type: entity_type(row.get(1)?)?,
+        label: None,
+        created: Seq(row.get::<_, i64>(2)? as u64),
+        members: row.get::<_, i64>(3)? as u64,
+        sources: Vec::new(),
+    })
+}
+
+/// The active identities among `ids`, ordered by ID, as a list of
+/// identities gives them.
+pub(crate) fn identities_by_id(
+    conn: &Connection,
+    ids: &[IdentityId],
+) -> Result<Vec<IdentitySummary>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut statement = conn.prepare(&format!(
+        "{IDENTITY}
+         WHERE i.merged_into IS NULL AND list_contains({}, i.identity_id)
+         ORDER BY i.identity_id",
+        uuid_list(ids)
+    ))?;
+    let mut rows = statement.query([])?;
+    let mut found = Vec::new();
+    while let Some(row) = rows.next()? {
+        found.push(identity_summary(row)?);
+    }
+    describe(conn, &mut found)?;
+    Ok(found)
 }
 
 pub(crate) fn identities(
     conn: &Connection,
     filter: &IdentityFilter,
 ) -> Result<Vec<IdentitySummary>> {
-    let mut statement = conn.prepare(
-        "SELECT i.identity_id::VARCHAR, i.entity_type, i.created_seq,
-                (SELECT count(*) FROM spool.membership m
-                 WHERE m.identity_id = i.identity_id AND m.to_seq IS NULL)
-         FROM spool.identity i
+    let mut statement = conn.prepare(&format!(
+        "{IDENTITY}
          WHERE i.merged_into IS NULL
            AND ($1::VARCHAR IS NULL OR i.entity_type = $1::VARCHAR)
            AND ($2::VARCHAR IS NULL OR i.identity_id > $2::UUID)
+           AND ($4::VARCHAR IS NULL OR i.identity_id IN (
+                 SELECT m.identity_id
+                 FROM spool.membership m
+                 JOIN spool.observation o ON o.observation_id = m.observation_id
+                 WHERE m.to_seq IS NULL AND {}))
          ORDER BY i.identity_id
          LIMIT $3",
-    )?;
+        holds_words("$4")
+    ))?;
     let mut rows = statement.query(params![
         filter.entity_type.as_ref().map(EntityType::as_str),
         filter.after.map(|id| id.to_string()),
         limit(filter.limit),
+        words(filter.q.as_deref()),
     ])?;
     let mut found = Vec::new();
     while let Some(row) = rows.next()? {
-        found.push(IdentitySummary {
-            id: parse(&row.get::<_, String>(0)?)?,
-            entity_type: entity_type(row.get(1)?)?,
-            created: Seq(row.get::<_, i64>(2)? as u64),
-            members: row.get::<_, i64>(3)? as u64,
-        });
+        found.push(identity_summary(row)?);
     }
+    describe(conn, &mut found)?;
     Ok(found)
 }
 
@@ -467,6 +772,7 @@ pub(crate) fn info(conn: &Connection, manifest: Option<&Manifest>) -> Result<Sto
                 .unwrap_or_default(),
             observations: row.get::<_, i64>(2)? as u64,
             unassigned: row.get::<_, i64>(3)? as u64,
+            sources: Vec::new(),
             identities: row.get::<_, i64>(4)? as u64,
             open_review_items: row.get::<_, i64>(5)? as u64,
             open_draft: row
@@ -476,6 +782,29 @@ pub(crate) fn info(conn: &Connection, manifest: Option<&Manifest>) -> Result<Sto
                 .transpose()?,
             name,
         });
+    }
+    let mut statement = conn.prepare(
+        "SELECT o.entity_type, o.source_id, count(*), count(*) - count(m.observation_id),
+                epoch_us(max(o.ingested_at))
+         FROM spool.observation o
+         LEFT JOIN spool.membership m ON m.observation_id = o.observation_id AND m.to_seq IS NULL
+         GROUP BY o.entity_type, o.source_id
+         ORDER BY o.entity_type, o.source_id",
+    )?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(0)?;
+        if let Some(found) = entity_types
+            .iter_mut()
+            .find(|found| found.name.as_str() == name)
+        {
+            found.sources.push(SourceInfo {
+                source: row.get(1)?,
+                observations: row.get::<_, i64>(2)? as u64,
+                unassigned: row.get::<_, i64>(3)? as u64,
+                last_ingested_at: rfc3339(row.get(4)?),
+            });
+        }
     }
     Ok(StoreInfo {
         engine_version: env!("CARGO_PKG_VERSION").to_owned(),

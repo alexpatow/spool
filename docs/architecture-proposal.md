@@ -502,7 +502,7 @@ Every path of the API is under `/v1` and needs the bearer token. `GET /healthz` 
 
 | Call | What it does | Response |
 | --- | --- | --- |
-| `GET /v1/info` | What the store holds: the manifest hash, the head of the log, and counts per entity type | JSON |
+| `GET /v1/info` | What the store holds: the manifest hash, the head of the log, and counts per entity type and per source of each | JSON |
 | `POST /v1/ingest` | Adds rows as observations. The body is JSON with the rows as objects, or an Arrow stream with the other fields in the query string | The ingest run |
 | `POST /v1/documents` | Stores documents of one source as text, for an extractor to read. A changed text under a key is the document's next version | The ingest run |
 | `GET /v1/documents`, `GET /v1/documents/{id}` | Lists documents in pages, without their text; reads one version with its text and each time an extractor read it | JSON |
@@ -520,10 +520,10 @@ Every path of the API is under `/v1` and needs the bearer token. `GET /healthz` 
 | `POST /v1/identities/{id}/split` | Divides an identity in two, given the observations of one side. With a `base`, refused if the identity's members changed after that log position | The two identities, what moved, and the commit |
 | `GET /v1/constraints` | The constraints in force, or with `removed=true` their history, for one observation or one identity's members | JSON |
 | `POST /v1/ids` | Mints identity and changeset IDs for a caller that writes its own changeset | JSON |
-| `GET /v1/identities`, `GET /v1/identities/{id}`, `.../history` | Lists identities in pages; reads one with its members, following redirects; the changesets that touched it | JSON |
-| `GET /v1/observations`, `GET /v1/observations/{id}` | Finds observations by source and key, those found in one document, or those with no identity; reads one | JSON |
+| `GET /v1/identities`, `GET /v1/identities/{id}`, `.../history` | Lists identities in pages, each with its label and how many of its members came from each source, or with `q` those a member of which holds every word; reads one with its members, following redirects; the changesets that touched it | JSON |
+| `GET /v1/observations`, `GET /v1/observations/{id}` | Finds observations by source and key, those found in one document, the members of one identity, those with no identity, or with `q` those that hold every word; reads one | JSON |
 | `POST /v1/observations/identities` | The identities of many observations in one call | JSON |
-| `GET /v1/review`, `GET /v1/review/{id}` | Review items, typed, by status, entity type or an observation they name; one of them | JSON |
+| `GET /v1/review`, `GET /v1/review/{id}`, `.../case` | Review items, typed, by status, entity type or an observation they name; one of them; one with what a reviewer decides it from | JSON |
 | `GET /v1/explain?a=&b=` | Why two observations share an identity, or why they do not | JSON |
 | `POST /v1/review/{id}/dismiss` | Closes a review item without placing its observations | The item |
 
@@ -537,6 +537,12 @@ Every path of the API is under `/v1` and needs the bearer token. `GET /healthz` 
 - **The API is tested by hash.** With a seeded ID generator, the same fixture must produce the same changeset `content_hash` through the library, through the server with Arrow and with JSON bodies, and through the TypeScript client. Only Rust computes observation IDs and content hashes.
 
 ### Inspection
+
+A person reads names, and the store holds IDs. Three things the API answers with are there for whoever reads it, and none of them is stored:
+
+- **A label.** An observation's label is what a person would call it: the first of `name`, `legal_name`, `title`, `label`, `display_name` and `full_name` in its payload that holds text, or failing those the first field, in alphabetical order, whose name ends in `name`. An identity's label is the one most of its members have, and of those as common, the one that was ingested first. It is judged from the hundred members ingested first, so that a very large identity costs no more to list. The label is a guess from the payload: a project cannot yet say which field names its records.
+- **A search.** `q` on `GET /v1/observations` and `GET /v1/identities` finds the records that hold every word of it, in a value of the payload, in the source's name or in the key, whatever the case or the accents. For identities, one member has to hold all the words. It is a scan of the observations by DuckDB, with no index to keep: on a store of 1.1 million observations and 530,000 identities it answers in 0.07 to 0.3 seconds, the more words the longer. It finds what was typed, not what was meant: nothing ranks the answers, and a misspelt word finds nothing.
+- **A case.** `GET /v1/review/{id}/case` is a review item with what a reviewer decides it from: its observations in full, the identities they matched as they are now, each with its label, its sources and up to 25 of its members, those that were judged first, and what the latest run made of each pair of one of its observations with another or with one of those members.
 
 A person who asks why two records are one company, or why they are not, should not have to query the store. `GET /v1/explain` answers for a pair of observations from what the store already holds, and stores nothing of its own:
 
