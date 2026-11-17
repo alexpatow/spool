@@ -15,6 +15,8 @@ Commands:
   apply    apply a manifest to a store
   serve    run the server from a manifest and a store
   dev      run the server on localhost and apply file changes as they are saved
+  show     show what a running server holds
+  explain  say why two observations share an identity, or why they do not
   bench    run a benchmark scenario
   schema   print the JSON Schema of the server's API
 
@@ -61,6 +63,8 @@ fn main() -> ExitCode {
         "apply" => (commands::project::APPLY_USAGE, commands::project::apply),
         "serve" => (commands::serve::SERVE_USAGE, commands::serve::serve),
         "dev" => (commands::serve::DEV_USAGE, commands::serve::dev),
+        "show" => (commands::show::SHOW_USAGE, commands::show::show),
+        "explain" => (commands::show::EXPLAIN_USAGE, commands::show::explain),
         "bench" => (commands::bench::USAGE, commands::bench::bench),
         "schema" => (commands::SCHEMA_USAGE, commands::schema),
         other => {

@@ -124,6 +124,7 @@ pub fn router(engine: Arc<Engine>, options: &ServerOptions) -> Router {
         .route("/observations", get(list_observations))
         .route("/observations/identities", post(identities_of))
         .route("/observations/{observation}", get(read_observation))
+        .route("/explain", get(explain))
         .route("/review", get(list_review))
         .route("/review/{item}", get(read_review))
         .route("/review/{item}/dismiss", post(dismiss_review))
@@ -217,6 +218,7 @@ impl From<spool::Error> for ApiError {
             | Error::UnknownDraft(_)
             | Error::UnknownIdentity(_)
             | Error::UnknownDocument(_)
+            | Error::UnknownObservation(_)
             | Error::UnknownChangeset(_)
             | Error::UnknownReviewItem(_) => Self::not_found(message),
             Error::Run { .. }
@@ -234,6 +236,7 @@ impl From<spool::Error> for ApiError {
             | Error::Arrow(_)
             | Error::InvalidEntityType(_)
             | Error::UndeclaredType(_)
+            | Error::SameObservation(_)
             | Error::UnknownStrategy { .. } => Self::invalid(message),
             Error::Strategy { .. } => Self::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -1028,10 +1031,27 @@ async fn read_observation(State(app): State<App>, Path(observation): Path<String
     let observation = id(&observation, "an observation ID")?;
     match engine(&app, move |engine| engine.observation(observation)).await? {
         Some(record) => ok(record),
-        None => Err(ApiError::not_found(format!(
-            "there is no observation {observation}"
-        ))),
+        None => Err(spool::Error::UnknownObservation(observation).into()),
     }
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExplainQuery {
+    a: String,
+    b: String,
+}
+
+/// Why two observations share an identity, or do not. The order in which
+/// the two are named does not matter.
+async fn explain(
+    State(app): State<App>,
+    params: Result<Query<ExplainQuery>, QueryRejection>,
+) -> ApiResult {
+    let params = query(params)?;
+    let a = id(&params.a, "an observation ID")?;
+    let b = id(&params.b, "an observation ID")?;
+    ok(engine(&app, move |engine| engine.explain(a, b)).await?)
 }
 
 async fn identities_of(State(app): State<App>, body: Bytes) -> ApiResult {
@@ -1048,6 +1068,7 @@ async fn identities_of(State(app): State<App>, body: Bytes) -> ApiResult {
 struct ReviewQuery {
     status: Option<ReviewStatus>,
     entity_type: Option<EntityType>,
+    observation: Option<String>,
 }
 
 async fn list_review(
@@ -1059,6 +1080,11 @@ async fn list_review(
         status: params.status,
         entity_type: params.entity_type,
         id: None,
+        observation: params
+            .observation
+            .as_deref()
+            .map(|observation| id(observation, "an observation ID"))
+            .transpose()?,
     };
     let items = engine(&app, move |engine| engine.review_items(&filter)).await?;
     ok(ReviewList { items })

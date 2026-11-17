@@ -20,6 +20,7 @@ import type {
   DraftSummary,
   EntityType,
   ErrorCode,
+  Explanation,
   ExtractRequest,
   HistoryEntry,
   IdentityId,
@@ -110,6 +111,8 @@ export interface DraftFilter {
 export interface ReviewFilter {
   status?: ReviewStatus;
   entity_type?: EntityType;
+  /** Only items that name this observation. */
+  observation?: ObservationId;
 }
 
 export interface ConstraintFilter {
@@ -485,6 +488,16 @@ export class SpoolClient {
       { json: { observations } },
     );
     return identities;
+  }
+
+  /**
+   * Why two observations share an identity, or why they do not: where each
+   * is and what placed it there, what each run that compared them concluded,
+   * the constraints and review items that name them, and what the project's
+   * rules say about the pair as it is now. `summary` says it in sentences.
+   */
+  explain(a: ObservationId, b: ObservationId): Promise<Explanation> {
+    return this.json("GET", "/v1/explain", { query: { a, b } });
   }
 
   /** What reconciling would not decide. */

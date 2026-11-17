@@ -988,6 +988,90 @@ fn identities_observations_and_review_items_are_looked_up() {
 }
 
 #[test]
+fn a_pair_of_observations_is_explained() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = things_server(dir.path());
+    ingest_things(
+        &server,
+        "shop",
+        &[
+            &["id", "code", "colour"],
+            &["1", "anvil", "black"],
+            &["2", "anvil", "black"],
+            &["3", "anvil", "red"],
+        ],
+    );
+    server.call("/v1/runs", json!({ "entity_type": "thing" }));
+    let id = |key: &str| {
+        server.read(&format!("/v1/observations?source=shop&key={key}"))["observations"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let (first, second, red) = (id("1"), id("2"), id("3"));
+
+    let explanation = server.read(&format!("/v1/explain?a={first}&b={second}"));
+    assert_eq!(explanation["outcome"], "same_identity");
+    assert_eq!(
+        explanation["left"]["features"],
+        json!({ "code": "anvil", "colour": "black" })
+    );
+    assert_eq!(explanation["comparisons"][0]["strategy"]["name"], "rules");
+    assert_eq!(
+        explanation["comparisons"][0]["judgements"][0]["verdict"],
+        "match"
+    );
+    assert_eq!(explanation["rules"]["verdict"], "match");
+    assert_eq!(explanation["path"][0]["kind"], "match");
+    assert!(
+        explanation["summary"][0]
+            .as_str()
+            .unwrap()
+            .contains("belong to the same identity"),
+        "{explanation}"
+    );
+    // The two can be named in either order.
+    assert_eq!(
+        server.read(&format!("/v1/explain?a={second}&b={first}")),
+        explanation
+    );
+
+    let apart = server.read(&format!("/v1/explain?a={first}&b={red}"));
+    assert_eq!(apart["outcome"], "different_identities");
+    assert_eq!(apart["rules"]["verdict"], "no_match");
+    assert_eq!(
+        apart["rules"]["no_match"],
+        json!([{ "name": "other_colour", "predicate": "l.colour <> r.colour", "holds": true }])
+    );
+    assert_eq!(apart["path"], json!([]));
+
+    let unknown = "00000000-0000-7000-8000-000000000000";
+    let message = server
+        .get(&format!("/v1/explain?a={first}&b={unknown}"))
+        .error(404, "not_found");
+    assert_eq!(message, format!("there is no observation {unknown}"));
+    let message = server
+        .get(&format!("/v1/explain?a={first}&b={first}"))
+        .error(400, "invalid");
+    assert!(message.contains("named twice"), "{message}");
+    server
+        .get(&format!("/v1/explain?a={first}"))
+        .error(400, "invalid");
+    server
+        .get(&format!("/v1/explain?a={first}&b=nothing"))
+        .error(400, "invalid");
+
+    // Review items are listed by an observation they name.
+    assert_eq!(
+        server.read(&format!("/v1/review?observation={first}"))["items"],
+        json!([])
+    );
+    server
+        .get("/v1/review?observation=nothing")
+        .error(400, "invalid");
+}
+
+#[test]
 fn calls_made_at_once_are_all_served_and_writes_take_turns() {
     let dir = tempfile::tempdir().unwrap();
     let server = things_server(dir.path());

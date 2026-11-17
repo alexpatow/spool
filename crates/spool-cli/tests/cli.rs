@@ -29,13 +29,13 @@ fn usage_is_printed_on_request_and_on_a_mistake() {
         let stdout = text(&output.stdout);
         assert!(stdout.starts_with("Usage: spool <command>"), "{stdout}");
         for command in [
-            "init", "info", "build", "apply", "serve", "dev", "bench", "schema",
+            "init", "info", "build", "apply", "serve", "dev", "show", "explain", "bench", "schema",
         ] {
             assert!(stdout.contains(&format!("\n  {command} ")), "{command}");
         }
     }
     for command in [
-        "init", "info", "build", "apply", "serve", "dev", "bench", "schema",
+        "init", "info", "build", "apply", "serve", "dev", "show", "explain", "bench", "schema",
     ] {
         for arguments in [&[command, "--help"][..], &[command, "x", "-h"]] {
             let output = spool(arguments);
@@ -68,6 +68,11 @@ fn usage_is_printed_on_request_and_on_a_mistake() {
             "`--listen` needs an address",
         ),
         (&["dev", "--port", "1"], "unknown option `--port`"),
+        (
+            &["show", "weather"],
+            "`weather` is not something `show` shows",
+        ),
+        (&["explain", "a:1"], "`explain` needs two observations"),
     ] {
         let output = spool(arguments);
         assert_eq!(output.status.code(), Some(2), "{arguments:?}");

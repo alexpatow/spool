@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use spool_core::{
-    ChangesetId, DocumentId, IdentityId, Rejection, ReplayError, RunId, Seq, StateError,
-    ValidationError,
+    ChangesetId, DocumentId, IdentityId, ObservationId, Rejection, ReplayError, RunId, Seq,
+    StateError, ValidationError,
 };
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -132,6 +132,13 @@ pub enum Error {
 
     #[error("identity {0} does not exist")]
     UnknownIdentity(IdentityId),
+
+    #[error("there is no observation {0}")]
+    UnknownObservation(ObservationId),
+
+    /// An explanation is about two observations.
+    #[error("{0} was named twice, and an explanation is about two observations")]
+    SameObservation(ObservationId),
 
     #[error("the log has no changeset at position {0}")]
     UnknownChangeset(Seq),

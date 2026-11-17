@@ -33,6 +33,7 @@ pub fn spool() -> Command {
         "LD_LIBRARY_PATH",
         "SPOOL_TOKEN",
         "SPOOL_STORE",
+        "SPOOL_URL",
     ] {
         command.env_remove(name);
     }

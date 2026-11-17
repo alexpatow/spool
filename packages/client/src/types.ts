@@ -97,6 +97,31 @@ export interface Committed {
   seq: Seq;
 }
 
+/**
+ * What one match run made of a pair.
+ */
+export interface Comparison {
+  /**
+   * The block rules that made the pair a candidate in this run. Empty
+   * when a strategy judged a pair no block rule had found.
+   */
+  blocked_by: string[];
+  /**
+   * When the run's draft was left for review: what became of it. Of a
+   * run that was reconciled more than once, the latest draft.
+   */
+  draft?: DraftStatus | null;
+  /**
+   * What the strategy judged. Empty when the pair was a candidate and
+   * got no judgement.
+   */
+  judgements: RecordedJudgement[];
+  run: RunId;
+  started_at: string;
+  status: RunStatus;
+  strategy?: StrategyRef | null;
+}
+
 export type ConstraintKind = "must_link" | "cannot_link";
 
 export interface ConstraintList {
@@ -298,6 +323,70 @@ export type ErrorCode = "unauthorized" | "invalid" | "not_found" | "conflict" | 
  */
 export interface ErrorResponse {
   error: ErrorBody;
+}
+
+/**
+ * One side of an explanation.
+ */
+export interface Explained {
+  /**
+   * Its row in the feature table of its entity type, by column name:
+   * what rules and strategies see of it. `null` when it has no row.
+   */
+  features?: Record<string, unknown> | null;
+  observation: ObservationRecord;
+  /**
+   * The changeset that put it in the identity it has. `null` while it has
+   * none.
+   */
+  placed?: Placement | null;
+}
+
+/**
+ * What the store knows about a pair of observations, and what follows
+ * from it.
+ */
+export interface Explanation {
+  /**
+   * The match runs that looked at the pair, oldest first.
+   */
+  comparisons: Comparison[];
+  /**
+   * The constraints between the two, oldest first, with those that were
+   * removed.
+   */
+  constraints: ConstraintRecord[];
+  /**
+   * The observation with the smaller ID. It is `l` in a rule.
+   */
+  left: Explained;
+  outcome: Outcome;
+  /**
+   * When the two share an identity: the shortest chain of links from
+   * `left` to `right` through members of that identity. Empty when they
+   * do not share one, and when no chain joins them as things are now:
+   * what joined them was removed since, or a changeset placed one of
+   * them directly.
+   */
+  path: Link[];
+  /**
+   * The review items that name either of the two, oldest first.
+   */
+  review_items: ReviewRecord[];
+  /**
+   * The observation with the larger ID. It is `r` in a rule.
+   */
+  right: Explained;
+  /**
+   * What the project's rules say about the pair now. `null` when the two
+   * are of different entity types, when the engine runs without a
+   * manifest, and when either has no feature row.
+   */
+  rules?: RuleReading | null;
+  /**
+   * The explanation in sentences, the outcome first.
+   */
+  summary: string[];
 }
 
 export interface ExtractReport {
@@ -574,6 +663,24 @@ export interface JudgementsResponse {
 }
 
 /**
+ * One step in the chain that joins two members of an identity.
+ */
+export interface Link {
+  from: ObservationId;
+  kind: LinkKind;
+  /**
+   * With `match`: the latest run that judged so.
+   */
+  run?: RunId | null;
+  to: ObservationId;
+}
+
+/**
+ * What joins two observations of one identity directly.
+ */
+export type LinkKind = "must_link" | "version" | "match";
+
+/**
  * A committed changeset as the log holds it.
  */
 export interface LogEntry {
@@ -720,6 +827,26 @@ export type Op =
       op: "reinstate";
     };
 
+/**
+ * Where the two observations are in relation to each other.
+ */
+export type Outcome = "same_identity" | "different_identities" | "unassigned" | "different_types";
+
+/**
+ * The changeset that put an observation where it is.
+ */
+export interface Placement {
+  actor: Actor;
+  changeset: ChangesetId;
+  committed_at: string;
+  reason?: string | null;
+  /**
+   * The reconcile run that drafted the changeset, if one did.
+   */
+  run?: RunId | null;
+  seq: Seq;
+}
+
 export type Reason =
   | {
       reason: "empty_changeset";
@@ -853,6 +980,22 @@ export interface ReconcileRequest {
 }
 
 /**
+ * A judgement as a run stored it.
+ */
+export interface RecordedJudgement {
+  /**
+   * What the strategy kept with the judgement. The built-in `rules`
+   * keeps the names of the rules that held.
+   */
+  detail?: unknown;
+  /**
+   * On the strategy's own scale.
+   */
+  score?: number | null;
+  verdict: Verdict;
+}
+
+/**
  * `POST /v1/drafts/{draft}/reject`. The body may be left out.
  */
 export interface RejectDraftRequest {
@@ -927,6 +1070,52 @@ export interface ReviewRecord {
 }
 
 export type ReviewStatus = "open" | "resolved" | "superseded" | "dismissed";
+
+/**
+ * The project's rules applied to a pair as it is now.
+ */
+export interface RuleReading {
+  block: RuleResult[];
+  /**
+   * Whether a block rule holds, so that a run of the rules would compare
+   * the two.
+   */
+  candidate: boolean;
+  /**
+   * What SQL said when it refused to apply the `no_match` and `match`
+   * rules to the pair, as it refuses the cast of a value that does not
+   * convert. Their `holds` is then `null`. A run applies those rules
+   * only to pairs a block rule found, so a rule may rely on what the
+   * block rules let through and fail on a pair they did not. On a
+   * candidate pair, a run of the rules fails the same way.
+   */
+  failed?: string | null;
+  match: RuleResult[];
+  no_match: RuleResult[];
+  /**
+   * What a run of the rules would judge. `null` when the pair is not a
+   * candidate, and when no `no_match` or `match` rule holds.
+   */
+  verdict?: Verdict | null;
+}
+
+/**
+ * One rule applied to a pair.
+ */
+export interface RuleResult {
+  /**
+   * Whether the predicate holds. `null` when it cannot be decided, which
+   * is what SQL makes of a comparison with a feature that is null, and
+   * for a `no_match` or `match` rule when those `failed`. A rule that
+   * cannot be decided does not hold.
+   */
+  holds?: boolean | null;
+  name: string;
+  /**
+   * The rule's SQL, over the feature rows `l` and `r`.
+   */
+  predicate: string;
+}
 
 /**
  * Identifies a run of the engine: an ingest, a match or a reconcile.

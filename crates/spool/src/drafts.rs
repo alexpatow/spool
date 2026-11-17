@@ -46,7 +46,7 @@ impl DraftStatus {
         }
     }
 
-    fn from_stored(text: &str) -> Result<Self> {
+    pub(crate) fn from_stored(text: &str) -> Result<Self> {
         Ok(match text {
             "open" => DraftStatus::Open,
             "committed" => DraftStatus::Committed,
