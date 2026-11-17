@@ -1,7 +1,7 @@
 // The studio against the real server: each screen is rendered into a
 // document, and what it shows is what the server holds.
 
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { rmSync } from "node:fs";
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -581,6 +581,30 @@ describe("news items an extractor read", () => {
     await heading("Document");
     await screen.findByText("Mentions (3)");
     expect(texts("a.mention.here")).toEqual(["Orchard Ltd"]);
+  });
+
+  test("a document's text is taken apart once, however many mentions it has", async () => {
+    const { documents } = await server.client.documents({ source: "news", key: "09-falcon-watch.txt" });
+    const record = await server.client.document(documents[0]!.id);
+    // Counting a text's characters reads all of it, so a long document with
+    // many mentions must not be read once for each of them.
+    const taken = spyOn(Array, "from");
+    const apart = () => taken.mock.calls.filter(([value]) => value === record.text).length;
+    try {
+      open(server, `#/documents/${record.id}`);
+      await heading("Document");
+      await screen.findByText("Mentions (3)");
+      expect(apart()).toBe(1);
+
+      // Ticking a mention shows the screen again, with the same text.
+      const ticks = screen.getAllByRole("checkbox", { name: /^Choose observation/ });
+      fireEvent.click(ticks[0]!);
+      fireEvent.click(ticks[1]!);
+      await screen.findByRole("link", { name: "Explain the two that are ticked" });
+      expect(apart()).toBe(1);
+    } finally {
+      taken.mockRestore();
+    }
   });
 
   test("the mentions of one company in several documents share an identity", async () => {

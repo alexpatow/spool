@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import type { DocumentRecord, ObservationRecord, SpoolClient } from "../api.ts";
 import {
@@ -16,7 +16,7 @@ import {
   Word,
   usePair,
 } from "../components.tsx";
-import { count, mentionOf, named, segments } from "../format.ts";
+import { codePoints, count, mentionOf, named, segments } from "../format.ts";
 import type { Mention } from "../format.ts";
 import { useLoad, usePages } from "../hooks.ts";
 import { href } from "../router.ts";
@@ -115,6 +115,8 @@ export function Document({ id, route }: { id: string; route: Route }) {
 
 function DocumentScreen({ document, found, cut, at }: Loaded & { at: number | null }) {
   const pair = usePair();
+  // Taken apart once: the marked text and every label of the table read it.
+  const points = useMemo(() => codePoints(document.text ?? ""), [document.text]);
   return (
     <>
       <Fields
@@ -148,7 +150,7 @@ function DocumentScreen({ document, found, cut, at }: Loaded & { at: number | nu
         ]}
       />
       <Section title="Text">
-        <Text text={document.text ?? ""} found={found} at={at} />
+        <Text points={points} found={found} at={at} />
         {cut ? (
           <p className="quiet">
             Only the first {found.length} mentions are marked.{" "}
@@ -165,7 +167,7 @@ function DocumentScreen({ document, found, cut, at }: Loaded & { at: number | nu
             {
               title: "Mention",
               cell: ({ observation, mention }) => (
-                <a href={href(["observations", observation.id])}>{mentionText(document, mention)}</a>
+                <a href={href(["observations", observation.id])}>{points.slice(mention.start, mention.end).join("")}</a>
               ),
             },
             { title: "Characters", cell: ({ mention }) => `${mention.start} to ${mention.end}` },
@@ -190,25 +192,24 @@ function DocumentScreen({ document, found, cut, at }: Loaded & { at: number | nu
   );
 }
 
-function mentionText(document: DocumentRecord, mention: Mention): string {
-  return Array.from(document.text ?? "")
-    .slice(mention.start, mention.end)
-    .join("");
-}
-
 /** The text with each mention marked. A marked stretch leads to its observation. */
-function Text({ text, found, at }: { text: string; found: Found[]; at: number | null }) {
+function Text({ points, found, at }: { points: string[]; found: Found[]; at: number | null }) {
   const target = useRef<HTMLAnchorElement | null>(null);
   useEffect(() => {
     target.current?.scrollIntoView?.({ block: "center" });
   }, [at]);
-  const pieces = segments(
-    text,
-    found.map(({ observation, mention }) => ({
-      start: mention.start,
-      end: mention.end,
-      value: { observation, mention },
-    })),
+  // Ticking a mention shows the screen again, and the text is cut as it was.
+  const pieces = useMemo(
+    () =>
+      segments(
+        points,
+        found.map(({ observation, mention }) => ({
+          start: mention.start,
+          end: mention.end,
+          value: { observation, mention },
+        })),
+      ),
+    [points, found],
   );
   return (
     <pre className="document">

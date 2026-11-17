@@ -127,9 +127,18 @@ export interface Excerpt {
   cutAfter: boolean;
 }
 
+/**
+ * A text as its code points, which is what the engine counts a span in.
+ * Making it reads the whole text, so a screen makes it once for a document
+ * and not once for each of its mentions.
+ */
+export function codePoints(text: string): string[] {
+  return Array.from(text);
+}
+
 /** `start` and `end` count code points, as the engine does. `null` if the span is not in the text. */
 export function excerpt(text: string, start: number, end: number, context = 80): Excerpt | null {
-  const points = Array.from(text);
+  const points = codePoints(text);
   if (start > end || end > points.length) return null;
   const from = Math.max(0, start - context);
   const to = Math.min(points.length, end + context);
@@ -159,10 +168,11 @@ export interface Segment<T> {
 /**
  * Cuts a text where a span begins or ends, so that each piece is covered by
  * the same spans from its first code point to its last. Spans may overlap.
- * One that is not in the text is left out.
+ * One that is not in the text is left out. The text may be given as its
+ * code points, by a caller that has them already.
  */
-export function segments<T>(text: string, spans: Array<Span<T>>): Array<Segment<T>> {
-  const points = Array.from(text);
+export function segments<T>(text: string | string[], spans: Array<Span<T>>): Array<Segment<T>> {
+  const points = typeof text === "string" ? codePoints(text) : text;
   const inside = spans.filter((span) => span.start >= 0 && span.start < span.end && span.end <= points.length);
   const cuts = [...new Set([0, points.length, ...inside.flatMap((span) => [span.start, span.end])])].sort(
     (a, b) => a - b,
