@@ -12,6 +12,7 @@ import {
   calls,
   counted,
   field,
+  follow,
   heading,
   idle,
   memory,
@@ -438,6 +439,91 @@ describe("a review item", () => {
     await make("They are one: merge them", ada);
     expect(await said()).toBe("2 identities merged and 1 observation placed at log position 10.");
     expect((await entry(10)).changeset).toMatchObject({ base: 9 });
+  });
+
+  test("is merged against what its card showed, though the store changed before the card was read", async () => {
+    const waiting = await row(server.client, "crm", "c-117");
+    const moved = await row(server.client, "crm", "c-108");
+    const { into } = await matched();
+    expect(await allow()).toBe(8);
+    // The studio is open, and then someone gives one of the identities another record.
+    open(server, "");
+    await heading("Overview");
+    await idle();
+    await server.client.commit({
+      actor: REVIEWER,
+      ops: [{ op: "assign", observation: moved.id, from: moved.identity!, to: into.id }],
+    });
+
+    // The reviewer goes to the items without reading the studio again. The card shows
+    // the identity as it is now, so the merge is of what they saw.
+    follow(screens().getByRole("link", { name: /^Review/ }));
+    await heading("Review");
+    await screen.findByRole("article", { name: "Review item 1" });
+    await screen.findByText("3 records");
+    await idle();
+    await make("They are one: merge them", ada);
+    expect(await said()).toBe("2 identities merged and 1 observation placed at log position 10.");
+    expect((await entry(10)).changeset).toMatchObject({ base: 9 });
+    expect((await server.client.observation(waiting.id)).identity).toBe(into.id);
+  });
+
+  test("says what the run found against every record of an identity, those it does not show too", async () => {
+    const { into } = await matched();
+    // The identity gains more records than a card shows, each with the name of the one that waits.
+    const rows = Array.from({ length: 30 }, (_, n) => ({
+      id: `c-9${String(n).padStart(2, "0")}`,
+      name: "Pioneer Supplies",
+      country: "GB",
+    }));
+    const ingested = await server.client.ingest({ source: "crm", entity_type: "company", key: "id", rows });
+    expect(ingested.status).toBe("succeeded");
+    const added = await Promise.all(rows.map(({ id }) => row(server.client, "crm", id)));
+    await server.client.commit({
+      actor: REVIEWER,
+      reason: "branches of the Leeds company",
+      ops: added.map((record) => ({ op: "assign", observation: record.id, from: null, to: into.id })),
+    });
+    await server.client.startRun({ entity_type: "company" });
+
+    const found = await server.client.reviewCase(1);
+    expect(found.item.status).toBe("open");
+    const shown = found.candidates.find((candidate) => candidate.identity.id === into.id)!.members;
+    const against = found.judgements.filter((judgement) => judgement.identity === into.id);
+    expect(shown).toHaveLength(25);
+    expect(against).toHaveLength(32);
+
+    open(server, "#/review/1");
+    await item();
+    await screen.findByText("32 records");
+    const column = found.candidates.findIndex((candidate) => candidate.identity.id === into.id);
+    // The card says that it compares some of the identity's records, and how many.
+    expect(parts("sample")).toEqual(["25 of them compared here"]);
+    // A field in which they all differ is not written out value by value.
+    const ids = new Set(shown.flatMap((member) => (member.payload as { id?: string }).id ?? []));
+    expect(ids.size).toBeGreaterThan(20);
+    const held = document.querySelectorAll("tr[data-field=id] td")[found.observations.length + column]!;
+    expect(held.querySelectorAll("[data-agrees]")).toHaveLength(4);
+    expect(parts("more", held)).toEqual([`and ${ids.size - 4} more values`]);
+
+    // Under the identity, the first of them are written out and the rest are counted: none is left out.
+    const cell = () => document.querySelectorAll("tr[data-part=found] td")[found.observations.length + column]!;
+    expect(parts("judgement", cell())).toHaveLength(6);
+    expect(parts("more", cell())).toEqual(["and 26 more against its records: 26 match"]);
+    // Asked for, the rest are written out too, each named though the case did not hold its record.
+    fireEvent.click(within(cell() as HTMLElement).getByRole("button", { name: "Show all 32" }));
+    expect(parts("judgement", cell())).toHaveLength(32);
+    expect(parts("more", cell())).toEqual([]);
+    const beyond = against.filter((judgement) => shown.every((member) => member.id !== judgement.other));
+    expect(beyond).toHaveLength(7);
+    await waitFor(() =>
+      expect(
+        texts("[data-part=judgement] a[data-kind=observation]", cell()).every((name) =>
+          /^crm:c-|^registry:X/.test(name),
+        ),
+      ).toBe(true),
+    );
+    expect(changes()).toEqual([]);
   });
 
   test("is decided from the list of those that wait, and leaves it", async () => {

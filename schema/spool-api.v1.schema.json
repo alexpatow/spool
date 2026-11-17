@@ -1941,6 +1941,17 @@
         "detail": {
           "description": "What the strategy kept with the judgement. The built-in `rules`\nkeeps the names of the rules that held."
         },
+        "identity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IdentityId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The identity `other` belongs to now: one of the candidates, unless\n`other` is another of the item's observations. A candidate's members\nare not all in the case, so this, not the members, says which\ncandidate a judgement is about."
+        },
         "observation": {
           "$ref": "#/$defs/ObservationId",
           "description": "One of the item's observations."

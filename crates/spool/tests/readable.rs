@@ -564,6 +564,26 @@ fn a_case_names_the_members_that_were_judged_before_the_others() {
             .all(|member| judged.contains(&member.id))
     );
     assert_eq!(case.judgements.len(), 42);
+    // Each says which identity the other record belongs to, so one against
+    // a member that is not shown is still known to be against the anvils.
+    let against = |identity| {
+        case.judgements
+            .iter()
+            .filter(|judgement| judgement.identity == Some(identity))
+            .count()
+    };
+    let hammer = identity(&engine, "shop", "h").unwrap();
+    assert_eq!(against(anvil), 41);
+    assert_eq!(against(hammer), 1);
+    assert!(
+        case.judgements
+            .iter()
+            .filter(|judgement| judgement.identity == Some(anvil))
+            .any(|judgement| anvils
+                .members
+                .iter()
+                .all(|member| member.id != judgement.other))
+    );
 }
 
 #[test]

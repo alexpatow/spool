@@ -1147,6 +1147,15 @@ fn what_is_read_says_what_things_are_called_where_they_came_from_and_what_waits(
             .iter()
             .any(|judgement| judgement["verdict"] == "match")
     );
+    // Each names the candidate it is about.
+    for judgement in judgements {
+        assert!(
+            candidates
+                .iter()
+                .any(|candidate| candidate["identity"]["id"] == judgement["identity"]),
+            "{judgement}"
+        );
+    }
     server.get("/v1/review/99/case").error(404, "not_found");
     server.get("/v1/review/x/case").error(400, "invalid");
 }

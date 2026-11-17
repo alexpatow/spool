@@ -377,6 +377,10 @@ describe("a reviewer", () => {
     expect(reviewCase.judgements.every((judged) => judged.observation === fourth.id && judged.verdict === "match")).toBe(
       true,
     );
+    // Each judgement names the identity it is about: two against the anvils, one against the other.
+    expect(reviewCase.judgements.map((judged) => judged.identity).sort()).toEqual(
+      [anvils, anvils, split.identity].sort(),
+    );
     expect((await failureOf(client.reviewCase(999))).code).toBe("not_found");
 
     // The members of an identity are read as observations, and things are

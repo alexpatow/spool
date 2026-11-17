@@ -42,6 +42,7 @@ import { href } from "../router.ts";
 import type { Route } from "../router.ts";
 import { colors, radius, spacing, typography } from "../styles/shelf/tokens.stylex";
 import { tones } from "../styles/tones.stylex";
+import { foremost, tally } from "../verdicts.ts";
 import { identityName } from "./identities.tsx";
 
 const STATUSES: ReviewStatus[] = ["open", "resolved", "dismissed", "superseded"];
@@ -148,13 +149,18 @@ function Case({
   detail?: boolean;
   done: (said: ReactNode) => void;
 }) {
-  const loaded = useLoad((client) => client.reviewCase(id));
+  // Where the log ended is read before the case, so that a merge decided from the card is
+  // written against what the card showed, and the engine refuses it if that changed since.
+  const loaded = useLoad(async (client) => {
+    const { store } = await client.info();
+    return { head: store.head, found: await client.reviewCase(id) };
+  });
   return (
     <Load state={loaded}>
-      {(found) => (
+      {({ head, found }) => (
         <>
           {detail ? <Details item={found.item} /> : null}
-          <CaseCard found={found} linked={linked} done={done} />
+          <CaseCard found={found} head={head} linked={linked} done={done} />
         </>
       )}
     </Load>
@@ -251,7 +257,18 @@ function asked({ item, observations, candidates }: ReviewCase, apart: boolean): 
   };
 }
 
-function CaseCard({ found, linked, done }: { found: ReviewCase; linked: boolean; done: (said: ReactNode) => void }) {
+function CaseCard({
+  found,
+  head,
+  linked,
+  done,
+}: {
+  found: ReviewCase;
+  /** Where the log ended before the case was read. */
+  head: number;
+  linked: boolean;
+  done: (said: ReactNode) => void;
+}) {
   const { item, observations, candidates } = found;
   const open = item.status === "open";
   const waiting = observations.filter((observation) => !observation.identity);
@@ -281,7 +298,7 @@ function CaseCard({ found, linked, done }: { found: ReviewCase; linked: boolean;
                 A constraint keeps these apart, so they cannot be merged into one.
               </span>
             ) : (
-              <MergeAndPlace found={found} waiting={waiting} done={done} />
+              <MergeAndPlace found={found} head={head} waiting={waiting} done={done} />
             )
           ) : null}
           <Act
@@ -356,6 +373,9 @@ function Outcome({ item }: { item: ReviewRecord }) {
 /** In a new identity, as a choice of where an observation goes. */
 const NEW = "new";
 
+/** The most values of one field that a card writes out for an identity. The identity's own screen has them all. */
+const MOST_VALUES = 4;
+
 /**
  * The records an item names beside the identities they matched, a field to
  * a row, so that what agrees and what does not is read across. Under each
@@ -420,6 +440,10 @@ function Compare({
                 <span {...stylex.props(styles.columnMeta)}>
                   {count(candidate.identity.members, "record")}
                   <Sources sources={candidate.identity.sources} />
+                  {/* The case holds some of the records of a large identity: what is compared below is theirs. */}
+                  {candidate.members.length < candidate.identity.members ? (
+                    <span data-part="sample">{candidate.members.length} of them compared here</span>
+                  ) : null}
                 </span>
               </ShelfTable.Head>
             ))}
@@ -439,26 +463,36 @@ function Compare({
               {candidates.map((candidate, index) => {
                 const held = said[index]!.find((fact) => fact.field === field)?.values ?? [];
                 const baseline = first ? valueOf(first, field) : null;
+                // A value the record that waits holds too comes first, so that it is among those written out.
+                const agreeing = held.filter((value) => baseline !== null && same(value.value, baseline));
+                const ordered = [...agreeing, ...held.filter((value) => !agreeing.includes(value))];
                 return (
                   <ShelfTable.Cell key={candidate.identity.id} style={[styles.cell, styles.value]}>
                     {held.length === 0 ? (
                       <Value value={null} />
                     ) : (
-                      held.map((value) => (
-                        <Value
-                          key={value.value}
-                          value={value.value}
-                          agrees={baseline === null ? undefined : same(value.value, baseline)}
-                          times={held.length > 1 ? value.records.length : undefined}
-                        />
-                      ))
+                      ordered
+                        .slice(0, MOST_VALUES)
+                        .map((value) => (
+                          <Value
+                            key={value.value}
+                            value={value.value}
+                            agrees={baseline === null ? undefined : agreeing.includes(value)}
+                            times={held.length > 1 ? value.records.length : undefined}
+                          />
+                        ))
                     )}
+                    {ordered.length > MOST_VALUES ? (
+                      <span data-part="more" {...stylex.props(styles.none)}>
+                        and {ordered.length - MOST_VALUES} more values
+                      </span>
+                    ) : null}
                   </ShelfTable.Cell>
                 );
               })}
             </ShelfTable.Row>
           ))}
-          <ShelfTable.Row style={styles.row}>
+          <ShelfTable.Row data-part="found" style={styles.row}>
             <ShelfTable.Head scope="row" style={[styles.cell, styles.rowName]}>
               The run found
             </ShelfTable.Head>
@@ -476,11 +510,15 @@ function Compare({
             ))}
             {candidates.map((candidate) => (
               <ShelfTable.Cell key={candidate.identity.id} style={[styles.cell, styles.value]}>
+                {/* Against any of its records: the case does not hold them all, so the judgement says whose it is. */}
                 <Judgements
-                  judgements={judgements.filter((judgement) =>
-                    candidate.members.some((member) => member.id === judgement.other),
+                  judgements={judgements.filter(
+                    (judgement) =>
+                      judgement.identity === candidate.identity.id &&
+                      !observations.some((other) => other.id === judgement.other),
                   )}
                   named={named}
+                  rest="against its records"
                 />
               </ShelfTable.Cell>
             ))}
@@ -611,17 +649,48 @@ function rulesOf(detail: unknown, verdict: string): string[] {
 }
 
 /** What the latest run made of some pairs: its verdict on each, and the rule or the score behind it. */
-function Judgements({ judgements, named }: { judgements: PairJudgement[]; named: Map<string, string> }) {
+/** The most judgements a cell writes out before it is asked for the rest. */
+const MOST_JUDGEMENTS = 6;
+
+/**
+ * What the run found for some pairs. Those that speak against a match come
+ * first. When there are many, the first are written out and the rest are
+ * counted by verdict, with a button that writes them out: none is left out
+ * unsaid.
+ */
+function Judgements({
+  judgements,
+  named,
+  rest = "",
+}: {
+  judgements: PairJudgement[];
+  named: Map<string, string>;
+  /** What the judgements that are not written out are said to be, after "and 3 more". */
+  rest?: string;
+}) {
+  const [all, setAll] = useState(false);
+  const ordered = foremost(judgements);
+  const shown = all ? ordered : ordered.slice(0, MOST_JUDGEMENTS);
+  const more = ordered.slice(shown.length);
+  // One that is against a record the case does not hold is named by looking the record up.
+  const names = useNames(
+    shown.map((judgement) => judgement.other),
+    named,
+  );
   if (judgements.length === 0) return <span {...stylex.props(styles.none)}>no verdict</span>;
   return (
     <span {...stylex.props(styles.judgements)}>
-      {judgements.map((judgement) => {
+      {shown.map((judgement) => {
         const by = rulesOf(judgement.detail, judgement.verdict);
         return (
-          <span key={`${judgement.observation}-${judgement.other}`} {...stylex.props(styles.judgement)}>
+          <span
+            key={`${judgement.observation}-${judgement.other}`}
+            data-part="judgement"
+            {...stylex.props(styles.judgement)}
+          >
             <Word value={judgement.verdict} />
             <span>
-              with <Ref kind="observation" id={judgement.other} label={named.get(judgement.other)} />
+              with <Ref kind="observation" id={judgement.other} label={names.get(judgement.other)} />
               {by.length > 0 ? ` by ${by.join(", ")}` : ""}
               {judgement.score !== null && judgement.score !== undefined ? `, score ${judgement.score}` : ""}
             </span>
@@ -631,6 +700,16 @@ function Judgements({ judgements, named }: { judgements: PairJudgement[]; named:
           </span>
         );
       })}
+      {more.length > 0 ? (
+        <span {...stylex.props(styles.judgement)}>
+          <span data-part="more" {...stylex.props(styles.none)}>
+            and {more.length} more{rest ? ` ${rest}` : ""}: {tally(more)}
+          </span>
+          <Button variant="ghost" size="sm" onClick={() => setAll(true)}>
+            Show all {ordered.length}
+          </Button>
+        </span>
+      ) : null}
     </span>
   );
 }
@@ -722,20 +801,21 @@ function Place({
 /**
  * Says that the identities the records matched are one: merges them into
  * the one with the most records, and places the records that wait in it,
- * as one changeset. It is written against where the log ended when the
- * store was last read, so the engine refuses it if those identities
- * changed since.
+ * as one changeset. It is written against where the log ended before the
+ * case was read, so the engine refuses it if those identities changed
+ * since.
  */
 function MergeAndPlace({
   found,
+  head,
   waiting,
   done,
 }: {
   found: ReviewCase;
+  head: number;
   waiting: ObservationRecord[];
   done: (said: ReactNode) => void;
 }) {
-  const { info } = useStudio();
   const [into, ...others] = [...found.candidates].sort(
     (a: Candidate, b: Candidate) => b.identity.members - a.identity.members,
   );
@@ -752,7 +832,7 @@ function MergeAndPlace({
         const committed = await client.commit({
           actor,
           reason,
-          base: info.store.head,
+          base: head,
           ops: [
             ...others.map(({ identity }): Op => ({ op: "merge", from: identity.id, into: into.identity.id })),
             ...waiting.map((observation): Op => ({

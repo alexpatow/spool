@@ -895,6 +895,13 @@ export interface PairJudgement {
    */
   detail?: unknown;
   /**
+   * The identity `other` belongs to now: one of the candidates, unless
+   * `other` is another of the item's observations. A candidate's members
+   * are not all in the case, so this, not the members, says which
+   * candidate a judgement is about.
+   */
+  identity?: IdentityId | null;
+  /**
    * One of the item's observations.
    */
   observation: ObservationId;

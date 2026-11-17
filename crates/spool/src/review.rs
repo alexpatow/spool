@@ -160,6 +160,11 @@ pub struct PairJudgement {
     pub observation: ObservationId,
     /// What it was compared with.
     pub other: ObservationId,
+    /// The identity `other` belongs to now: one of the candidates, unless
+    /// `other` is another of the item's observations. A candidate's members
+    /// are not all in the case, so this, not the members, says which
+    /// candidate a judgement is about.
+    pub identity: Option<IdentityId>,
     /// The match run that judged.
     pub run: RunId,
     pub verdict: Verdict,
@@ -363,8 +368,11 @@ pub(crate) fn case(conn: &Connection, id: u64) -> Result<ReviewCase> {
                     QUALIFY j.run_id = max(j.run_id) OVER (PARTITION BY j.left_id, j.right_id))
              SELECT (CASE WHEN left_held THEN left_id ELSE right_id END)::VARCHAR,
                     (CASE WHEN left_held THEN right_id ELSE left_id END)::VARCHAR,
-                    run_id, verdict, score, detail::VARCHAR
+                    run_id, verdict, score, detail::VARCHAR, m.identity_id::VARCHAR
              FROM judged
+             LEFT JOIN spool.membership m
+               ON m.observation_id = (CASE WHEN left_held THEN right_id ELSE left_id END)
+              AND m.to_seq IS NULL
              ORDER BY 1, 2, verdict, score",
             held = lookup::uuid_list(&item.observations),
             candidates = lookup::uuid_list(&current),
@@ -374,6 +382,10 @@ pub(crate) fn case(conn: &Connection, id: u64) -> Result<ReviewCase> {
             judgements.push(PairJudgement {
                 observation: parse(&row.get::<_, String>(0)?)?,
                 other: parse(&row.get::<_, String>(1)?)?,
+                identity: row
+                    .get::<_, Option<String>>(6)?
+                    .map(|identity| parse(&identity))
+                    .transpose()?,
                 run: RunId(row.get::<_, i64>(2)? as u64),
                 verdict: row
                     .get::<_, String>(3)?
