@@ -36,7 +36,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   cleanup();
-  window.location.hash = "";
+  window.history.replaceState(null, "", "/");
   await stopAll();
 });
 
@@ -113,7 +113,7 @@ const ada = { "Your name": "ada" };
 describe("a draft", () => {
   test("is approved from its screen, and is in the log", async () => {
     const [draft] = await server.client.drafts({ status: "open" });
-    open(server, `#/drafts/${draft!.id}`);
+    open(server, `/drafts/${draft!.id}`);
     await heading("Draft");
     await counted("Operations", 5);
     await idle();
@@ -149,7 +149,7 @@ describe("a draft", () => {
     const placed = changeset.ops.find((op) => op.op === "assign");
     if (placed?.op !== "assign") throw new Error("the draft places nothing");
     const name = (await server.client.observation(placed.observation)).key;
-    open(server, `#/drafts/${draft!.id}`);
+    open(server, `/drafts/${draft!.id}`);
     await heading("Draft");
     await counted("Operations", 5);
     await idle();
@@ -189,7 +189,7 @@ describe("a draft", () => {
 
   test("is rejected with the reason the reviewer gave", async () => {
     const [draft] = await server.client.drafts({ status: "open" });
-    open(server, `#/drafts/${draft!.id}`);
+    open(server, `/drafts/${draft!.id}`);
     await heading("Draft");
     await counted("Operations", 5);
     await idle();
@@ -221,7 +221,7 @@ describe("a review item", () => {
     const found = await server.client.reviewCase(1);
     const [, other] = found.candidates.map((candidate) => candidate.identity);
     const names = memory();
-    open(server, "#/review/1", undefined, names);
+    open(server, "/review/1", undefined, names);
     const card = await item();
 
     // The button under an identity proposes that identity, and the dialog
@@ -257,7 +257,7 @@ describe("a review item", () => {
   test("is resolved by placing its observation in a new identity", async () => {
     const waiting = await row(server.client, "crm", "c-117");
     const found = await server.client.reviewItem(1);
-    open(server, "#/review/1");
+    open(server, "/review/1");
     await item();
 
     const dialog = await asked("None of them: new identity");
@@ -309,7 +309,7 @@ describe("a review item", () => {
       const record = await server.client.observation(id);
       return `${record.source}:${record.key}`;
     };
-    open(server, "#/review/1");
+    open(server, "/review/1");
     const card = await item();
 
     // It is said under each of the two, with the changeset that decided it and the way to why.
@@ -318,9 +318,9 @@ describe("a review item", () => {
     const decided = document.querySelector("tr[data-part=decided]")!;
     expect(decided.querySelector("th")!.textContent).toBe("Already decided");
     expect(texts("td", decided)[0]).toBe("nothing");
-    expect(decided.querySelector(`a[href='#/log/${kept!.from}']`)).toBeTruthy();
-    expect(decided.querySelector("[data-part=constraint] a[href^='#/explain']")!.getAttribute("href")).toBe(
-      `#/explain?a=${kept!.a}&b=${kept!.b}`,
+    expect(decided.querySelector(`a[href='/log/${kept!.from}']`)).toBeTruthy();
+    expect(decided.querySelector("[data-part=constraint] a[href^='/explain']")!.getAttribute("href")).toBe(
+      `/explain?a=${kept!.a}&b=${kept!.b}`,
     );
 
     // The engine would refuse the merge, so it is not offered, and the item says why.
@@ -348,7 +348,7 @@ describe("a review item", () => {
       ops: [{ op: "constrain", kind: "cannot_link", a: waiting.id, b: member.id }],
     });
     calls.length = 0;
-    open(server, "#/review/1");
+    open(server, "/review/1");
     const card = await item();
 
     await waitFor(() => expect(parts("constraint")).toHaveLength(3));
@@ -367,7 +367,7 @@ describe("a review item", () => {
   test("is resolved by saying the identities it matched are one", async () => {
     const waiting = await row(server.client, "crm", "c-117");
     const { into, other } = await matched();
-    open(server, "#/review/1");
+    open(server, "/review/1");
     await item();
     expect(merging()).toBe(0);
 
@@ -413,7 +413,7 @@ describe("a review item", () => {
     const moved = await row(server.client, "crm", "c-108");
     const { into } = await matched();
     expect(await allow()).toBe(8);
-    open(server, "#/review/1");
+    open(server, "/review/1");
     await item();
 
     // Someone gives one of them another record while the item is read.
@@ -493,7 +493,7 @@ describe("a review item", () => {
     expect(shown).toHaveLength(25);
     expect(against).toHaveLength(32);
 
-    open(server, "#/review/1");
+    open(server, "/review/1");
     await item();
     await screen.findByText("32 records");
     const column = found.candidates.findIndex((candidate) => candidate.identity.id === into.id);
@@ -530,7 +530,7 @@ describe("a review item", () => {
     const waiting = await row(server.client, "crm", "c-117");
     const found = await server.client.reviewCase(1);
     const [first] = found.candidates.map((candidate) => candidate.identity);
-    open(server, "#/review");
+    open(server, "/review");
     await heading("Review");
     await screen.findByRole("article", { name: "Review item 1" });
     await idle();
@@ -540,14 +540,14 @@ describe("a review item", () => {
     expect(await said()).toBe("1 observation placed at log position 8.");
     await waitFor(() => expect(screen.queryByRole("article")).toBeNull());
     expect(parts("empty")[0]).toStartWith("Nothing waits for review.");
-    expect(document.querySelector("[role=status] a")?.getAttribute("href")).toBe("#/log/8");
+    expect(document.querySelector("[role=status] a")?.getAttribute("href")).toBe("/log/8");
     await waitFor(() => expect(screens().getByRole("link", { name: /^Review/ }).textContent).toBe("Review"));
     expect((await server.client.observation(waiting.id)).identity).toBe(first!.id);
     expect((await server.client.reviewItem(1)).status).toBe("resolved");
   });
 
   test("is not changed until the reviewer says who they are and where its observation goes", async () => {
-    open(server, "#/review/1");
+    open(server, "/review/1");
     await item();
 
     await make("None of them: new identity");
@@ -565,7 +565,7 @@ describe("a review item", () => {
   });
 
   test("is dismissed under the reviewer's name", async () => {
-    open(server, "#/review/1", undefined, memory());
+    open(server, "/review/1", undefined, memory());
     const card = await item();
 
     await make("Dismiss", { ...ada, Reason: "not a company of ours" });
@@ -581,7 +581,7 @@ describe("a review item", () => {
   });
 
   test("that someone else settled first says so", async () => {
-    open(server, "#/review/1");
+    open(server, "/review/1");
     await item();
     await server.client.dismissReview(1, { actor: REVIEWER });
 
@@ -597,7 +597,7 @@ describe("an observation", () => {
     const other = await row(server.client, "crm", "c-109");
     const names = memory();
     names.setItem(REVIEWER_KEY, "grace");
-    open(server, `#/observations/${moved.id}`, undefined, names);
+    open(server, `/records/${moved.id}`, undefined, names);
     await heading("Atlas Trading");
     await screen.findByText("Move it");
     await idle();
@@ -639,7 +639,7 @@ describe("an observation", () => {
   test("that was moved by someone else since it was read is left where it is", async () => {
     const moved = await row(server.client, "crm", "c-108");
     const other = await row(server.client, "crm", "c-109");
-    open(server, `#/observations/${moved.id}`);
+    open(server, `/records/${moved.id}`);
     await heading("Atlas Trading");
     await screen.findByText("Move it");
     await idle();
@@ -661,7 +661,7 @@ describe("an identity", () => {
   test("is split in two by ticking the members that are something else", async () => {
     const orchard = await row(server.client, "crm", "c-111");
     const other = await row(server.client, "crm", "c-122");
-    open(server, `#/identities/${orchard.identity}`);
+    open(server, `/identities/${orchard.identity}`);
     await counted("Records", 3);
     await idle();
     expect(screen.queryByRole("button", { name: /^Split the/ })).toBeNull();
@@ -684,8 +684,8 @@ describe("an identity", () => {
 
     const parted = (await server.client.observation(other.id)).identity!;
     expect(parted).not.toBe(orchard.identity!);
-    expect(document.querySelector("[role=status] a[href^='#/identities/']")?.getAttribute("href")).toBe(
-      `#/identities/${parted}`,
+    expect(document.querySelector("[role=status] a[href^='/identities/']")?.getAttribute("href")).toBe(
+      `/identities/${parted}`,
     );
     expect((await server.client.identity(orchard.identity!)).members.map((member) => member.key).sort()).toEqual([
       "X0000011",
@@ -704,7 +704,7 @@ describe("an identity", () => {
   test("is split without keeping the sides apart when the reviewer unticks that", async () => {
     const orchard = await row(server.client, "crm", "c-111");
     const other = await row(server.client, "crm", "c-122");
-    open(server, `#/identities/${orchard.identity}`);
+    open(server, `/identities/${orchard.identity}`);
     await counted("Records", 3);
     await idle();
 
@@ -729,7 +729,7 @@ describe("an identity", () => {
   test("takes in another identity once the reviewer has seen what it holds", async () => {
     const atlas = await row(server.client, "crm", "c-108");
     const other = await row(server.client, "crm", "c-109");
-    open(server, `#/identities/${atlas.identity}`);
+    open(server, `/identities/${atlas.identity}`);
     await counted("Records", 2);
     await idle();
     expect(screen.queryByRole("button", { name: "Merge it into this one" })).toBeNull();
@@ -764,7 +764,7 @@ describe("an identity", () => {
     const atlas = await row(server.client, "crm", "c-108");
     const other = await row(server.client, "crm", "c-109");
     const moved = await row(server.client, "registry", "X0000010");
-    open(server, `#/identities/${atlas.identity}`);
+    open(server, `/identities/${atlas.identity}`);
     await counted("Records", 2);
     await idle();
 
@@ -799,7 +799,7 @@ describe("an identity", () => {
     const orchard = await row(server.client, "crm", "c-111");
     const registered = await row(server.client, "registry", "X0000011");
     const other = await row(server.client, "crm", "c-122");
-    open(server, `#/identities/${orchard.identity}`);
+    open(server, `/identities/${orchard.identity}`);
     await counted("Records", 3);
     await idle();
 
@@ -826,7 +826,7 @@ describe("an identity", () => {
     const registered = await row(server.client, "registry", "X0000011");
     const other = await row(server.client, "crm", "c-122");
     const added = await row(server.client, "registry", "X0000010");
-    open(server, `#/identities/${orchard.identity}`);
+    open(server, `/identities/${orchard.identity}`);
     await counted("Records", 3);
     await idle();
     fireEvent.click(screen.getByRole("checkbox", { name: `Choose observation ${orchard.id}` }));
@@ -862,7 +862,7 @@ describe("an identity", () => {
     const atlas = await row(server.client, "crm", "c-108");
     const other = await row(server.client, "crm", "c-109");
     const moved = await row(server.client, "registry", "X0000010");
-    open(server, `#/identities/${atlas.identity}`);
+    open(server, `/identities/${atlas.identity}`);
     await counted("Records", 2);
     await idle();
     lookUp("crm:c-109");
@@ -898,7 +898,7 @@ describe("an identity", () => {
     const { changeset } = await entry(6);
     const merge = changeset.ops.find((op) => op.op === "merge");
     if (merge?.op !== "merge") throw new Error("log position 6 has no merge");
-    open(server, `#/identities/${merge.from}`);
+    open(server, `/identities/${merge.from}`);
     await counted("Records", 3);
     await idle();
     expect(screen.queryByText("Split it")).toBeNull();
@@ -910,7 +910,7 @@ describe("two observations", () => {
   test("are kept apart by a constraint, which can be removed again", async () => {
     const a = await row(server.client, "crm", "c-108");
     const b = await row(server.client, "crm", "c-109");
-    open(server, `#/explain?a=${a.id}&b=${b.id}`);
+    open(server, `/explain?a=${a.id}&b=${b.id}`);
     await heading("Explain");
     await screen.findByText("Different identities");
     await idle();
@@ -935,7 +935,7 @@ describe("two observations", () => {
 
   test("of one identity can only be said to be one", async () => {
     const versions = (await server.client.observations({ source: "crm", key: "c-104" })).observations;
-    open(server, `#/explain?a=${versions[0]!.id}&b=${versions[1]!.id}`);
+    open(server, `/explain?a=${versions[0]!.id}&b=${versions[1]!.id}`);
     await heading("Explain");
     await screen.findByText("The same identity");
     await idle();
@@ -946,7 +946,7 @@ describe("two observations", () => {
   test("without an identity can be said to be one or to be two", async () => {
     const a = await row(server.client, "crm", "c-117");
     const b = await row(server.client, "registry", "X0000009");
-    open(server, `#/explain?a=${a.id}&b=${b.id}`);
+    open(server, `/explain?a=${a.id}&b=${b.id}`);
     await heading("Explain");
     await screen.findByText("Not both placed");
     await idle();
@@ -961,7 +961,7 @@ describe("two observations", () => {
 describe("a changeset in the log", () => {
   test("is undone after the screen showed what undoing it would do", async () => {
     const orchard = await row(server.client, "crm", "c-111");
-    open(server, "#/log/6");
+    open(server, "/log/6");
     await heading("Log position 6");
     await counted("Operations", 2);
     await idle();
@@ -992,7 +992,7 @@ describe("a changeset in the log", () => {
   });
 
   test("that was undone before is not undone again", async () => {
-    open(server, "#/log/2");
+    open(server, "/log/2");
     await heading("Log position 2");
     await counted("Operations", 1);
     await idle();

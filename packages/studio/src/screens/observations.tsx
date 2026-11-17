@@ -34,7 +34,7 @@ import { excerpt, mentionOf, named, observationName } from "../format.ts";
 import type { Excerpt, Mention } from "../format.ts";
 import { useLabels, useLoad, usePages, useStudio } from "../hooks.ts";
 import { RecordIcon } from "../icons.tsx";
-import { href } from "../router.ts";
+import { href, navigate } from "../router.ts";
 import type { Route } from "../router.ts";
 import { colors, radius, spacing, typography } from "../styles/shelf/tokens.stylex";
 import { tones } from "../styles/tones.stylex";
@@ -77,7 +77,7 @@ export function Observations({ route, types }: { route: Route; types: string[] }
       }
     >
       <Filters
-        path={["observations"]}
+        path={["records"]}
         query={route.query}
         search={{ name: "q", label: "Find", placeholder: "Words in a value, the source or the key" }}
         selects={[{ name: "type", label: "Entity type", choices: types.map((value) => ({ value })) }]}
@@ -362,7 +362,7 @@ function ExplainWith({ observation }: { observation: ObservationRecord }) {
             (other) => {
               setBusy(false);
               if (other === null) setProblem(`No observation is named ${reference}.`);
-              else window.location.hash = href(["explain"], { a: observation.id, b: other.id });
+              else navigate(href(["explain"], { a: observation.id, b: other.id }));
             },
             (error: unknown) => {
               setBusy(false);

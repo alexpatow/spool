@@ -9,6 +9,7 @@ import { TOKEN } from "../../client/test/server.ts";
 import type { Server } from "../../client/test/server.ts";
 import type { SpoolClient } from "../src/api.ts";
 import { App, THEME_KEY, TOKEN_KEY } from "../src/app.tsx";
+import { here } from "../src/router.ts";
 import {
   SEEDING,
   calls,
@@ -31,7 +32,7 @@ import { REVIEWER, companies, news, row, seedCompanies, seedNews } from "./seed.
 
 afterEach(() => {
   cleanup();
-  window.location.hash = "";
+  window.history.replaceState(null, "", "/");
 });
 
 afterAll(stopAll);
@@ -111,6 +112,24 @@ describe("company records a reviewer corrected", () => {
     calls.length = 0;
   }, SEEDING);
 
+  test("the address of every screen is one the server answers with the studio", async () => {
+    open(server, "");
+    await heading("Overview");
+    const page = await (await fetch(`${server.url}/`)).text();
+    const screens = [...document.querySelectorAll("nav[aria-label=Screens] a")].map((link) =>
+      link.getAttribute("href")!,
+    );
+    expect(screens.length).toBeGreaterThan(5);
+    for (const address of screens) {
+      const answered = await fetch(`${server.url}${address}`);
+      expect([address, answered.status]).toEqual([address, 200]);
+      expect(await answered.text()).toBe(page);
+      // What a screen names comes after its own name.
+      if (address !== "/") expect((await fetch(`${server.url}${address}/of/these`)).status).toBe(200);
+    }
+    calls.length = 0;
+  });
+
   test("the overview counts what the store holds and what waits for someone", async () => {
     open(server, "");
     await heading("Overview");
@@ -119,7 +138,7 @@ describe("company records a reviewer corrected", () => {
     // What waits is marked, and each number leads to the list it counts.
     expect(
       [...document.querySelectorAll("[data-part=stat][data-waits]")].map((stat) => stat.getAttribute("href")),
-    ).toEqual(["#/observations?type=company&unassigned=true", "#/review?type=company"]);
+    ).toEqual(["/records?type=company&unassigned=true", "/review?type=company"]);
     expect(field("Head")).toBe("log position 7");
     expect(field("Declaration")).toBe("version 1");
     expect(document.title).toBe("Overview · Spool studio");
@@ -134,12 +153,12 @@ describe("company records a reviewer corrected", () => {
       within(waiting as HTMLElement)
         .getByRole("link", { name: "Review" })
         .getAttribute("href"),
-    ).toBe("#/review");
+    ).toBe("/review");
     expect(
       within(waiting as HTMLElement)
         .getByRole("link", { name: "Open the draft" })
         .getAttribute("href"),
-    ).toBe(`#/drafts/${drafts[0]!.id}`);
+    ).toBe(`/drafts/${drafts[0]!.id}`);
 
     // The same numbers stand beside their screens in the list of them.
     const nav = screens();
@@ -162,10 +181,10 @@ describe("company records a reviewer corrected", () => {
     expect(sources.reduce((sum, source) => sum + source.unassigned, 0)).toBe(5);
     // A source leads to its records, and to those of them that have no identity.
     expect(within(table).getByRole("link", { name: "registry" }).getAttribute("href")).toBe(
-      "#/observations?type=company&source=registry",
+      "/records?type=company&source=registry",
     );
     expect(within(table).getByRole("link", { name: "4" }).getAttribute("href")).toBe(
-      "#/observations?type=company&source=registry&unassigned=true",
+      "/records?type=company&source=registry&unassigned=true",
     );
 
     const runs = rowsOf(screen.getByRole("table", { name: "Latest runs" }));
@@ -173,7 +192,7 @@ describe("company records a reviewer corrected", () => {
   });
 
   test("a run that left a draft says what it made and where the draft is", async () => {
-    open(server, "#/runs");
+    open(server, "/runs");
     await heading("Runs");
     const table = await screen.findByRole("table");
     const lines = rowsOf(table);
@@ -191,8 +210,8 @@ describe("company records a reviewer corrected", () => {
     expect(field("Draft")).toMatch(/ was left for review$/);
 
     const drafts = await server.client.drafts({ status: "open" });
-    const draft = document.querySelector("dd a[href^='#/drafts/']")!;
-    expect(draft.getAttribute("href")).toBe(`#/drafts/${drafts[0]!.id}`);
+    const draft = document.querySelector("dd a[href^='/drafts/']")!;
+    expect(draft.getAttribute("href")).toBe(`/drafts/${drafts[0]!.id}`);
     follow(draft);
     await heading("Draft");
     await counted("Operations", 5);
@@ -212,18 +231,18 @@ describe("company records a reviewer corrected", () => {
   });
 
   test("the runs can be narrowed, and the address says how", async () => {
-    open(server, "#/runs");
+    open(server, "/runs");
     await heading("Runs");
     await screen.findByRole("table");
     fireEvent.change(screen.getByLabelText("Kind"), { target: { value: "ingest" } });
-    expect(window.location.hash).toBe("#/runs?kind=ingest");
+    expect(here()).toBe("/runs?kind=ingest");
     await waitFor(() => expect(rowsOf(screen.getByRole("table"))).toHaveLength(4));
     expect(rowsOf(screen.getByRole("table")).every((line) => line[1] === "ingest")).toBe(true);
     expect((screen.getByLabelText("Kind") as HTMLSelectElement).value).toBe("ingest");
   });
 
   test("the identities are listed by what their records call them, with where the records came from", async () => {
-    open(server, "#/identities");
+    open(server, "/identities");
     await heading("Identities");
     const lines = rowsOf(await screen.findByRole("table"));
     expect(lines).toHaveLength(16);
@@ -242,12 +261,12 @@ describe("company records a reviewer corrected", () => {
   });
 
   test("the identities are found by words their records hold", async () => {
-    open(server, "#/identities");
+    open(server, "/identities");
     await heading("Identities");
     await screen.findByRole("table");
     fireEvent.change(screen.getByRole("searchbox", { name: "Find" }), { target: { value: " halden energy " } });
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    expect(window.location.hash).toBe("#/identities?q=halden+energy");
+    expect(here()).toBe("/identities?q=halden+energy");
     await waitFor(() => expect(rowsOf(screen.getByRole("table")).map((line) => line[0])).toEqual(["Halden Energy"]));
     expect(screen.getByText("The identities one of whose records holds every word of “halden energy”.")).toBeTruthy();
 
@@ -265,7 +284,7 @@ describe("company records a reviewer corrected", () => {
 
   test("an identity shows its members and the constraints on them", async () => {
     const split = await row(server.client, "registry", "X0000010");
-    open(server, `#/identities/${split.identity}`);
+    open(server, `/identities/${split.identity}`);
     // It is called what its record calls it.
     await heading("PIONEER SUPPLIES LTD");
     await counted("Records", 1);
@@ -293,7 +312,7 @@ describe("company records a reviewer corrected", () => {
 
   test("an identity says what its records say, and which of them say it", async () => {
     const kestrel = await row(server.client, "crm", "c-115");
-    open(server, `#/identities/${kestrel.identity}`);
+    open(server, `/identities/${kestrel.identity}`);
     await heading("Kestrel Analytics");
     await counted("Records", 4);
     expect(screen.getByText("4 records from 2 sources")).toBeTruthy();
@@ -321,7 +340,7 @@ describe("company records a reviewer corrected", () => {
     expect(differing).toEqual(["id", "name", "website"]);
     // A value leads to the record that holds it.
     expect(within(table).getAllByRole("link", { name: "c-115" })[0]?.getAttribute("href")).toBe(
-      `#/observations/${kestrel.id}`,
+      `/records/${kestrel.id}`,
     );
 
     // The row crm:c-104 came twice, and what it said the first time is not what it says.
@@ -338,7 +357,7 @@ describe("company records a reviewer corrected", () => {
 
   test("an identity shows every changeset that touched it", async () => {
     const atlas = await row(server.client, "crm", "c-109");
-    open(server, `#/identities/${atlas.identity}`);
+    open(server, `/identities/${atlas.identity}`);
     await heading("Atlas Trading");
     await screen.findByText("History");
     await screen.findAllByRole("link", { name: "crm:c-109" });
@@ -360,14 +379,14 @@ describe("company records a reviewer corrected", () => {
     expect(history[2]).toMatch(/^Log position 4 \S+ \S+ by user:studio-demo “they are two companies after all”/);
     expect(history[2]).toContain(`reinstate identity ${here}`);
     expect(history[2]).toContain(`move observation crm:c-109 from ${there} to ${here}`);
-    expect(document.querySelector("[data-part=history] a[href='#/log/4']")?.textContent).toBe("Log position 4");
+    expect(document.querySelector("[data-part=history] a[href='/log/4']")?.textContent).toBe("Log position 4");
   });
 
   test("an identity that was merged away leads to the one that stands for it", async () => {
     const { changesets } = await server.client.changesets({ after: 5, limit: 1 });
     const merge = changesets[0]!.changeset.ops.find((op) => op.op === "merge");
     if (merge?.op !== "merge") throw new Error("log position 6 has no merge");
-    open(server, `#/identities/${merge.from}`);
+    open(server, `/identities/${merge.from}`);
     await heading(/./);
     await counted("Records", 3);
     expect(parts("id")).toEqual([merge.from]);
@@ -375,7 +394,7 @@ describe("company records a reviewer corrected", () => {
     expect(merged.textContent).toMatch(
       /^This identity was merged into 0\S+, which stands for it now\. The records below are that one's\.$/,
     );
-    expect(merged.querySelector("a[data-kind=identity]")?.getAttribute("href")).toBe(`#/identities/${merge.into}`);
+    expect(merged.querySelector("a[data-kind=identity]")?.getAttribute("href")).toBe(`/identities/${merge.into}`);
     // The reviewer said two of them are one company, and the identity says so.
     expect(rowsOf(screen.getAllByRole("table").at(-1)!)).toEqual([
       ["must link", "crm:c-111", "registry:X0000011", "log position 6"],
@@ -383,7 +402,7 @@ describe("company records a reviewer corrected", () => {
   });
 
   test("an identity that is not there is said not to be", async () => {
-    open(server, "#/identities/00000000-0000-7000-8000-000000000000");
+    open(server, "/identities/00000000-0000-7000-8000-000000000000");
     await heading("Identity");
     expect((await screen.findByRole("alert")).textContent).toBe(
       "identity 00000000-0000-7000-8000-000000000000 does not exist",
@@ -391,11 +410,11 @@ describe("company records a reviewer corrected", () => {
   });
 
   test("the observations no identity holds can be listed, and two of them explained", async () => {
-    open(server, "#/observations");
+    open(server, "/records");
     await heading("Records");
     await screen.findByRole("table");
     fireEvent.click(screen.getByRole("checkbox", { name: "Without an identity" }));
-    expect(window.location.hash).toBe("#/observations?unassigned=true");
+    expect(here()).toBe("/records?unassigned=true");
     await waitFor(() => expect(rowsOf(screen.getByRole("table"))).toHaveLength(5));
     const lines = rowsOf(screen.getByRole("table"));
     // Each is called what it says it is, beside the source and key it came with.
@@ -418,12 +437,12 @@ describe("company records a reviewer corrected", () => {
   });
 
   test("the observations are found by words they hold", async () => {
-    open(server, "#/observations");
+    open(server, "/records");
     await heading("Records");
     await screen.findByRole("table");
     fireEvent.change(screen.getByRole("searchbox", { name: "Find" }), { target: { value: "KESTREL" } });
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-    expect(window.location.hash).toBe("#/observations?q=KESTREL");
+    expect(here()).toBe("/records?q=KESTREL");
     const { observations } = await server.client.observations({ q: "kestrel" });
     expect(observations).toHaveLength(4);
     await waitFor(() => expect(rowsOf(screen.getByRole("table"))).toHaveLength(4));
@@ -441,7 +460,7 @@ describe("company records a reviewer corrected", () => {
       expect(rowsOf(screen.getByRole("table")).map((line) => line[5])).toEqual([kestrel, kestrel, kestrel, kestrel]),
     );
     expect(document.querySelector("[data-part=identity] a")!.getAttribute("href")).toBe(
-      `#/identities/${observations[0]!.identity}`,
+      `/identities/${observations[0]!.identity}`,
     );
 
     fireEvent.change(screen.getByRole("searchbox", { name: "Find" }), { target: { value: "nothing-holds-this" } });
@@ -450,20 +469,20 @@ describe("company records a reviewer corrected", () => {
   });
 
   test("the observations can be narrowed to a source and a key", async () => {
-    open(server, "#/observations");
+    open(server, "/records");
     await heading("Records");
     await screen.findByRole("table");
     fireEvent.change(screen.getByLabelText("Source"), { target: { value: "crm" } });
     fireEvent.change(screen.getByLabelText("Key"), { target: { value: "c-104" } });
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-    expect(window.location.hash).toBe("#/observations?source=crm&key=c-104");
+    expect(here()).toBe("/records?source=crm&key=c-104");
     // The row came in both batches, with a change, so it has two versions.
     await waitFor(() => expect(rowsOf(screen.getByRole("table"))).toHaveLength(2));
   });
 
   test("an observation shows what was ingested and the review item it waits in", async () => {
     const waiting = await row(server.client, "crm", "c-117");
-    open(server, `#/observations/${waiting.id}`);
+    open(server, `/records/${waiting.id}`);
     await heading("Pioneer Supplies");
     await screen.findByText("What it says");
     expect(parts("id")).toEqual([waiting.id]);
@@ -488,11 +507,11 @@ describe("company records a reviewer corrected", () => {
   test("a review item shows what it is decided from: the record, the identities it matched, and why", async () => {
     const waiting = await row(server.client, "crm", "c-117");
     const found = await server.client.reviewCase(1);
-    open(server, "#/review");
+    open(server, "/review");
     await heading("Review");
     const card = within(await screen.findByRole("article", { name: "Review item 1" }));
     expect(card.getByRole("heading", { level: 2 }).textContent).toBe("Pioneer Supplies matched 2 identities.");
-    expect(card.getByRole("link", { name: "Item 1" }).getAttribute("href")).toBe("#/review/1");
+    expect(card.getByRole("link", { name: "Item 1" }).getAttribute("href")).toBe("/review/1");
 
     // The record that waits and the identities it matched are side by side.
     const table = card.getByRole("table", { name: "What review item 1 is decided from" });
@@ -541,7 +560,7 @@ describe("company records a reviewer corrected", () => {
         .getAllByRole("link", { name: "why" })
         .at(-1)
         ?.getAttribute("href"),
-    ).toBe(`#/explain?a=${waiting.id}&b=${other.id}`);
+    ).toBe(`/explain?a=${waiting.id}&b=${other.id}`);
 
     // A reviewer split the two identities before the record came, and each says so.
     const decided = table.querySelector("tr[data-part=decided]")!;
@@ -570,7 +589,7 @@ describe("company records a reviewer corrected", () => {
   });
 
   test("the review items that are no longer open are a choice away", async () => {
-    open(server, "#/review");
+    open(server, "/review");
     await heading("Review");
     await screen.findByRole("article", { name: "Review item 1" });
     const statuses = within(screen.getByRole("list", { name: "Status" }));
@@ -584,7 +603,7 @@ describe("company records a reviewer corrected", () => {
     expect(statuses.getByRole("link", { name: /^Open/ }).getAttribute("aria-current")).toBe("true");
 
     follow(statuses.getByRole("link", { name: "Resolved" }));
-    expect(window.location.hash).toBe("#/review?status=resolved");
+    expect(here()).toBe("/review?status=resolved");
     await waitFor(() => expect(parts("empty")).toEqual(["No review items.No item has this status."]));
     follow(within(screen.getByRole("list", { name: "Status" })).getByRole("link", { name: "All" }));
     await screen.findByRole("article", { name: "Review item 1" });
@@ -593,7 +612,7 @@ describe("company records a reviewer corrected", () => {
   test("an observation is explained with another that is named by its source and key", async () => {
     const waiting = await row(server.client, "registry", "X0612001");
     const other = await row(server.client, "registry", "X0000009");
-    open(server, `#/observations/${waiting.id}`);
+    open(server, `/records/${waiting.id}`);
     await heading("FENNMORE ENERGY LIMITED");
     const ask = await screen.findByLabelText("The other record");
     fireEvent.change(ask, { target: { value: "registry:nothing" } });
@@ -602,13 +621,13 @@ describe("company records a reviewer corrected", () => {
 
     fireEvent.change(ask, { target: { value: "registry:X0000009" } });
     fireEvent.click(within(screen.getByRole("main")).getByRole("button", { name: "Explain" }));
-    await waitFor(() => expect(window.location.hash).toBe(`#/explain?a=${waiting.id}&b=${other.id}`));
+    await waitFor(() => expect(here()).toBe(`/explain?a=${waiting.id}&b=${other.id}`));
     await screen.findByText("Not both placed");
     await screen.findByText("No block rule holds, so a run of the rules would not compare the two.");
   });
 
   test("two records a reviewer merged and then parted are explained by what happened", async () => {
-    open(server, "#/explain");
+    open(server, "/explain");
     await heading("Explain");
     fireEvent.click(within(screen.getByRole("main")).getByRole("button", { name: "Explain" }));
     expect((await screen.findByRole("alert")).textContent).toBe("An explanation is about two observations.");
@@ -620,7 +639,7 @@ describe("company records a reviewer corrected", () => {
     await screen.findByText("Different identities");
     const a = await row(server.client, "crm", "c-108");
     const b = await row(server.client, "crm", "c-109");
-    expect(window.location.hash).toBe(`#/explain?a=${a.id}&b=${b.id}`);
+    expect(here()).toBe(`/explain?a=${a.id}&b=${b.id}`);
 
     // The sentences are the engine's own, with what it put in backticks set as code.
     const explanation = await server.client.explain(a.id, b.id);
@@ -653,7 +672,7 @@ describe("company records a reviewer corrected", () => {
   test("two versions of one row are explained by what joins them", async () => {
     const { observations } = await server.client.observations({ source: "crm", key: "c-104" });
     expect(observations).toHaveLength(2);
-    open(server, `#/explain?a=${observations[0]!.id}&b=${observations[1]!.id}`);
+    open(server, `/explain?a=${observations[0]!.id}&b=${observations[1]!.id}`);
     await heading("Explain");
     await screen.findByText("The same identity");
     const sides = [...document.querySelectorAll("[data-part=side]")];
@@ -665,7 +684,7 @@ describe("company records a reviewer corrected", () => {
 
   test("an observation that is not there is said not to be", async () => {
     const a = await row(server.client, "crm", "c-108");
-    open(server, `#/explain?a=${a.id}&b=00000000-0000-4000-8000-000000000000`);
+    open(server, `/explain?a=${a.id}&b=00000000-0000-4000-8000-000000000000`);
     await heading("Explain");
     expect((await screen.findByRole("alert")).textContent).toBe(
       "there is no observation 00000000-0000-4000-8000-000000000000",
@@ -674,7 +693,7 @@ describe("company records a reviewer corrected", () => {
 
   test("the log lists every changeset, and one shows what it did", async () => {
     const { changesets } = await server.client.changesets({ after: 3, limit: 1 });
-    open(server, "#/log");
+    open(server, "/log");
     await heading("Log");
     const table = await screen.findByRole("table");
     const lines = rowsOf(table);
@@ -700,7 +719,7 @@ describe("company records a reviewer corrected", () => {
   });
 
   test("a log position past the end is said not to be there", async () => {
-    open(server, "#/log/99");
+    open(server, "/log/99");
     await heading("Log position 99");
     expect((await screen.findByRole("alert")).textContent).toBe("The log has no position 99.");
   });
@@ -718,35 +737,35 @@ describe("company records a reviewer corrected", () => {
   test("an ID, or a source and key, typed into the box that finds things goes to what it names", async () => {
     const orchard = await row(server.client, "crm", "c-111");
     const drafts = await server.client.drafts({ status: "open" });
-    open(server, "#/runs");
+    open(server, "/runs");
     await heading("Runs");
 
     fireEvent.change(await finding(), { target: { value: " crm:c-111 " } });
     fireEvent.click(await screen.findByRole("option", { name: "Open what crm:c-111 names" }));
-    await waitFor(() => expect(window.location.hash).toBe(`#/observations/${orchard.id}`));
+    await waitFor(() => expect(here()).toBe(`/records/${orchard.id}`));
     await heading("Orchard");
     // It went there, so the box is closed.
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
     fireEvent.change(await finding(), { target: { value: orchard.identity! } });
     fireEvent.click(await screen.findByRole("option", { name: `Open what ${orchard.identity} names` }));
-    await waitFor(() => expect(window.location.hash).toBe(`#/identities/${orchard.identity}`));
+    await waitFor(() => expect(here()).toBe(`/identities/${orchard.identity}`));
     await screen.findByText("Constraints on its records");
 
     fireEvent.change(await finding(), { target: { value: drafts[0]!.id } });
     fireEvent.click(await screen.findByRole("option", { name: `Open what ${drafts[0]!.id} names` }));
-    await waitFor(() => expect(window.location.hash).toBe(`#/drafts/${drafts[0]!.id}`));
+    await waitFor(() => expect(here()).toBe(`/drafts/${drafts[0]!.id}`));
     await heading("Draft");
 
     fireEvent.change(await finding(), { target: { value: "crm:nothing" } });
     fireEvent.click(await screen.findByRole("option", { name: "Open what crm:nothing names" }));
     expect((await screen.findByRole("alert")).textContent).toBe("Nothing here is named crm:nothing.");
-    expect(window.location.hash).toBe(`#/drafts/${drafts[0]!.id}`);
+    expect(here()).toBe(`/drafts/${drafts[0]!.id}`);
   });
 
   test("words typed into the box that finds things list the identities and the records that hold them", async () => {
     const waiting = await row(server.client, "crm", "c-117");
-    open(server, "#/runs");
+    open(server, "/runs");
     await heading("Runs");
 
     // Before anything is typed, it lists the screens.
@@ -776,7 +795,7 @@ describe("company records a reviewer corrected", () => {
 
     fireEvent.change(box, { target: { value: "pioneer c-117" } });
     fireEvent.click(await screen.findByRole("option", { name: /^Pioneer Supplies c-117/ }));
-    await waitFor(() => expect(window.location.hash).toBe(`#/observations/${waiting.id}`));
+    await waitFor(() => expect(here()).toBe(`/records/${waiting.id}`));
     await heading("Pioneer Supplies");
   });
 
@@ -801,10 +820,10 @@ describe("company records a reviewer corrected", () => {
   });
 
   test("an address no screen has says so", async () => {
-    for (const address of ["#/nowhere", "#/runs/9/more", "#/explain/this"]) {
+    for (const address of ["/nowhere", "/runs/9/more", "/explain/this"]) {
       open(server, address);
       await heading("No such screen");
-      expect(screen.getByRole("link", { name: "Go to the overview." }).getAttribute("href")).toBe("#/");
+      expect(screen.getByRole("link", { name: "Go to the overview." }).getAttribute("href")).toBe("/");
       cleanup();
     }
   });
@@ -815,7 +834,7 @@ describe("company records a reviewer corrected", () => {
   });
 
   test("what changed since a screen was read is shown when it is read again", async () => {
-    open(server, "#/review");
+    open(server, "/review");
     await heading("Review");
     await screen.findByRole("article", { name: "Review item 1" });
     expect(screens().getByRole("link", { name: /^Review/ }).textContent).toBe("Review1");
@@ -854,7 +873,7 @@ describe("news items an extractor read", () => {
   }, SEEDING);
 
   test("a document shows its text with each mention where it was found", async () => {
-    open(server, "#/documents");
+    open(server, "/documents");
     await heading("Documents");
     const table = await screen.findByRole("table");
     expect(rowsOf(table).length).toBeGreaterThan(5);
@@ -899,7 +918,7 @@ describe("news items an extractor read", () => {
 
     // And leads back to the document, at the mention.
     const back = screen.getByRole("link", { name: "news:09-falcon-watch.txt" });
-    expect(back.getAttribute("href")).toBe(`#/documents/${record.id}?at=70`);
+    expect(back.getAttribute("href")).toBe(`/documents/${record.id}?at=70`);
     follow(back);
     await heading("news:09-falcon-watch.txt");
     await counted("Mentions", 3);
@@ -914,7 +933,7 @@ describe("news items an extractor read", () => {
     const taken = spyOn(Array, "from");
     const apart = () => taken.mock.calls.filter(([value]) => value === record.text).length;
     try {
-      open(server, `#/documents/${record.id}`);
+      open(server, `/documents/${record.id}`);
       await heading("news:09-falcon-watch.txt");
       await counted("Mentions", 3);
       expect(apart()).toBe(1);
@@ -939,7 +958,7 @@ describe("news items an extractor read", () => {
     const found = first.evidence as { key: string; start: number; end: number };
     const name = `news:${found.key}[${found.start}-${found.end}]`;
 
-    open(server, `#/identities/${largest.id}`);
+    open(server, `/identities/${largest.id}`);
     await heading(largest.label!);
     await counted("Records", largest.members);
     // Each is named by its document and where in it the mention is, in the
@@ -954,7 +973,7 @@ describe("news items an extractor read", () => {
 
   test("the mentions of one document can be listed as observations", async () => {
     const { documents } = await server.client.documents({ source: "news", key: "09-falcon-watch.txt" });
-    open(server, `#/observations?document=${documents[0]!.id}`);
+    open(server, `/records?document=${documents[0]!.id}`);
     await heading("Records");
     await waitFor(() => expect(rowsOf(screen.getByRole("table"))).toHaveLength(3));
     expect(
@@ -988,14 +1007,14 @@ describe("news items an extractor read", () => {
   test("a source and a key with a space in it, typed into the box that finds things, goes to what it names", async () => {
     await server.client.addDocuments("news", [{ key: "Annual Report.txt", text: "Halden Energy Ltd reported." }]);
     const { documents } = await server.client.documents({ source: "news", key: "Annual Report.txt" });
-    open(server, "#/runs");
+    open(server, "/runs");
     await heading("Runs");
 
     fireEvent.click(screen.getByRole("button", { name: /^Find a name, an ID, or source:key/ }));
     const box = await screen.findByRole("combobox", { name: "Find by words, by ID, or by source and key" });
     fireEvent.change(box, { target: { value: "news:Annual Report.txt" } });
     fireEvent.click(await screen.findByRole("option", { name: "Open what news:Annual Report.txt names" }));
-    await waitFor(() => expect(window.location.hash).toBe(`#/documents/${documents[0]!.id}`));
+    await waitFor(() => expect(here()).toBe(`/documents/${documents[0]!.id}`));
     await heading("news:Annual Report.txt");
   });
 });

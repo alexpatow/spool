@@ -17,7 +17,7 @@ import { describeOp, plain, short, tail, when } from "./format.ts";
 import type { Part } from "./format.ts";
 import type { Loaded, Pages } from "./hooks.ts";
 import { ArrowRightIcon, CircleAlertIcon, CircleCheckIcon, InfoIcon } from "./icons.tsx";
-import { href } from "./router.ts";
+import { href, navigate } from "./router.ts";
 import type { QueryValue } from "./router.ts";
 import { colors, radius, spacing, typography } from "./styles/shelf/tokens.stylex";
 import { tones } from "./styles/tones.stylex";
@@ -403,7 +403,7 @@ export function Sources({ sources }: { sources: Array<{ source: string; observat
 export type Kind = "observation" | "identity" | "document" | "draft" | "run" | "review" | "log";
 
 const SCREENS: Record<Kind, string> = {
-  observation: "observations",
+  observation: "records",
   identity: "identities",
   document: "documents",
   draft: "drafts",
@@ -646,7 +646,7 @@ export function Filters({
   flags?: Array<{ name: string; label: string }>;
 }) {
   const go = (name: string, value: QueryValue) => {
-    window.location.hash = href(path, { ...query, [name]: value });
+    navigate(href(path, { ...query, [name]: value }));
   };
   const typed = [...(search ? [search] : []), ...texts];
   return (
@@ -658,7 +658,7 @@ export function Filters({
         const entered = new FormData(event.currentTarget);
         const values: Record<string, QueryValue> = {};
         for (const { name } of typed) values[name] = String(entered.get(name) ?? "").trim();
-        window.location.hash = href(path, { ...query, ...values });
+        navigate(href(path, { ...query, ...values }));
       }}
     >
       {search ? (

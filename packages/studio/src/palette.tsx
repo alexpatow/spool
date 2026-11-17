@@ -13,7 +13,7 @@ import { findScreen, isReference } from "./find.ts";
 import { count, observationName, short } from "./format.ts";
 import { useStudio } from "./hooks.ts";
 import { ArrowRightIcon, IdentityIcon, RecordIcon, SearchIcon } from "./icons.tsx";
-import { href } from "./router.ts";
+import { href, navigate } from "./router.ts";
 import { colors, spacing, typography } from "./styles/shelf/tokens.stylex";
 
 export interface Place {
@@ -102,7 +102,7 @@ export function Palette({
 
   const groups = useMemo((): Group[] => {
     const go = (address: string) => () => {
-      window.location.hash = address;
+      navigate(address);
       onOpenChange(false);
     };
     const list: Group[] = [];
@@ -192,7 +192,7 @@ export function Palette({
                   <Source name={observation.source} />
                 </>
               ),
-              go: go(href(["observations", observation.id])),
+              go: go(href(["records", observation.id])),
             })),
             ...(results.observations.length === MOST
               ? [
@@ -205,7 +205,7 @@ export function Palette({
                         <span>Every record that holds “{words}”</span>
                       </>
                     ),
-                    go: go(href(["observations"], { q: words })),
+                    go: go(href(["records"], { q: words })),
                   },
                 ]
               : []),

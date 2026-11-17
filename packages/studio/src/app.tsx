@@ -2,7 +2,7 @@
 // changes a reviewer makes to it.
 //
 // Every screen is one or a few calls a client could make, shown, and every
-// change is one more; the address after `#` says which screen.
+// change is one more; the path of the address says which screen.
 
 import * as stylex from "@stylexjs/stylex";
 import { useEffect, useMemo, useState } from "react";
@@ -302,7 +302,7 @@ function Shell({
       label: "Look",
       entries: [
         { path: "identities", label: "Identities", icon: <IdentityIcon /> },
-        { path: "observations", label: "Records", icon: <RecordIcon /> },
+        { path: "records", label: "Records", icon: <RecordIcon /> },
         { path: "documents", label: "Documents", icon: <FileTextIcon /> },
         { path: "explain", label: "Explain", icon: <ExplainIcon /> },
       ],
@@ -449,7 +449,7 @@ function Screen({ route, types }: { route: Route; types: string[] }) {
       return id === undefined ? <Runs route={route} types={types} /> : <Run id={id} />;
     case "identities":
       return id === undefined ? <Identities route={route} types={types} /> : <Identity id={id} />;
-    case "observations":
+    case "records":
       return id === undefined ? <Observations route={route} types={types} /> : <Observation id={id} />;
     case "documents":
       return id === undefined ? <Documents route={route} /> : <Document id={id} route={route} />;

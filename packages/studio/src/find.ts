@@ -90,14 +90,14 @@ export async function findScreen(client: SpoolClient, reference: string): Promis
       found(client.document(text)),
       found(client.draft(text)),
     ]);
-    if (observation) return href(["observations", text]);
+    if (observation) return href(["records", text]);
     if (identity) return href(["identities", text]);
     if (document) return href(["documents", text]);
     if (draft) return href(["drafts", text]);
     return null;
   }
   const observation = await findObservation(client, text);
-  if (observation) return href(["observations", observation.id]);
+  if (observation) return href(["records", observation.id]);
   const colon = text.indexOf(":");
   if (colon < 1) return null;
   const { documents } = await client.documents({

@@ -31,8 +31,8 @@ const SCRIPT: &str = "text/javascript; charset=utf-8";
 const STYLE: &str = "text/css; charset=utf-8";
 const FONT: &str = "font/woff2";
 
-/// Each path of the studio, with what is served there. The page names the
-/// others relative to itself.
+/// Each file of the studio, with the path it is served at. The page names
+/// the others from the root.
 const SOURCES: [(&str, &str, &[u8]); 7] = [
     ("/", HTML, include_bytes!("studio/index.html")),
     ("/studio.js", SCRIPT, include_bytes!("studio/studio.js")),
@@ -113,12 +113,33 @@ static FILES: LazyLock<Vec<(&'static str, File)>> = LazyLock::new(|| {
         .collect()
 });
 
+/// The screens of the studio. The address of a screen is a path that begins
+/// with its name, and the page works out the rest, so each is answered with
+/// the page.
+const SCREENS: [&str; 8] = [
+    "review",
+    "drafts",
+    "identities",
+    "records",
+    "documents",
+    "explain",
+    "runs",
+    "log",
+];
+
 /// The studio's paths.
 pub fn routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
-    FILES.iter().fold(Router::new(), |router, (path, file)| {
+    let files = FILES.iter().fold(Router::new(), |router, (path, file)| {
         router.route(
             path,
             get(move |headers: HeaderMap| async move { file.respond(&headers) }),
         )
+    });
+    let page = &FILES[0].1;
+    SCREENS.iter().fold(files, |router, screen| {
+        let shown = get(move |headers: HeaderMap| async move { page.respond(&headers) });
+        router
+            .route(&format!("/{screen}"), shown.clone())
+            .route(&format!("/{screen}/{{*rest}}"), shown)
     })
 }

@@ -177,7 +177,7 @@ function DocumentScreen({ document, found, cut, at }: Loaded & { at: number | nu
         {cut ? (
           <Quiet>
             Only the first {found.length} mentions are marked.{" "}
-            <LinkTo path={["observations"]} query={{ document: document.id }}>
+            <LinkTo path={["records"]} query={{ document: document.id }}>
               List them all
             </LinkTo>
           </Quiet>
@@ -194,7 +194,7 @@ function DocumentScreen({ document, found, cut, at }: Loaded & { at: number | nu
             {
               title: "Mention",
               cell: ({ observation, mention }) => (
-                <a href={href(["observations", observation.id])} {...stylex.props(styles.link)}>
+                <a href={href(["records", observation.id])} {...stylex.props(styles.link)}>
                   {points.slice(mention.start, mention.end).join("")}
                 </a>
               ),
@@ -252,7 +252,7 @@ function Marked({ points, found, at }: { points: string[]; found: Found[]; at: n
             data-part="mention"
             data-here={here ? "" : undefined}
             {...stylex.props(styles.mention, here && styles.here)}
-            href={href(["observations", first.observation.id])}
+            href={href(["records", first.observation.id])}
             title={piece.covered.map(({ observation }) => `${observation.entity_type} ${observation.id}`).join("\n")}
           >
             {piece.text}

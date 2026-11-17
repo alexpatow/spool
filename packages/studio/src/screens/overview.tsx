@@ -56,12 +56,12 @@ function Store({ info, runs }: { info: Info; runs: RunRecord[] }) {
             <Stat
               number={type.observations}
               label={type.observations === 1 ? "record" : "records"}
-              address={href(["observations"], { type: type.name })}
+              address={href(["records"], { type: type.name })}
             />
             <Stat
               number={type.unassigned}
               label="without an identity"
-              address={href(["observations"], { type: type.name, unassigned: true })}
+              address={href(["records"], { type: type.name, unassigned: true })}
               waits={type.unassigned > 0}
             />
             <Stat
@@ -78,7 +78,7 @@ function Store({ info, runs }: { info: Info; runs: RunRecord[] }) {
                 title: "Source",
                 cell: (source) => (
                   <a
-                    href={href(["observations"], { type: type.name, source: source.source })}
+                    href={href(["records"], { type: type.name, source: source.source })}
                     {...stylex.props(styles.plain)}
                   >
                     <Source name={source.source} />
@@ -90,10 +90,7 @@ function Store({ info, runs }: { info: Info; runs: RunRecord[] }) {
                 title: "Without an identity",
                 cell: (source) =>
                   source.unassigned > 0 ? (
-                    <LinkTo
-                      path={["observations"]}
-                      query={{ type: type.name, source: source.source, unassigned: true }}
-                    >
+                    <LinkTo path={["records"]} query={{ type: type.name, source: source.source, unassigned: true }}>
                       {source.unassigned}
                     </LinkTo>
                   ) : (

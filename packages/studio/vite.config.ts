@@ -37,8 +37,8 @@ export default defineConfig({
   // The styles of the components are written beside them and compiled into
   // the one style sheet, so the page needs no style of its own at run time.
   plugins: [stylex({ useCSSLayers: true }), react(), styleSheet("studio.css")],
-  // The files find each other wherever the server puts them.
-  base: "./",
+  // A screen's address is a path, so the page names its files from the root.
+  base: "/",
   server: {
     proxy: {
       "/v1": server,

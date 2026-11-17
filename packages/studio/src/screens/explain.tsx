@@ -38,7 +38,7 @@ import { tones } from "../styles/tones.stylex";
 import { findObservation } from "../find.ts";
 import { observationName, plain } from "../format.ts";
 import { useLabels, useLoad, useStudio } from "../hooks.ts";
-import { href } from "../router.ts";
+import { href, navigate } from "../router.ts";
 import type { Route } from "../router.ts";
 
 export function Explain({ route }: { route: Route }) {
@@ -75,7 +75,7 @@ function Ask({ a, b }: { a?: string; b?: string }) {
               setBusy(false);
               const missing = references.find((_, index) => found[index] === null);
               if (missing !== undefined) setProblem(`No observation is named ${missing}.`);
-              else window.location.hash = href(["explain"], { a: found[0]!.id, b: found[1]!.id });
+              else navigate(href(["explain"], { a: found[0]!.id, b: found[1]!.id }));
             },
             (error: unknown) => {
               setBusy(false);

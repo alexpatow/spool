@@ -3,7 +3,7 @@
 
 import { rmSync } from "node:fs";
 
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { TOKEN, serve } from "../../client/test/server.ts";
 import type { Server } from "../../client/test/server.ts";
@@ -68,7 +68,7 @@ export async function idle(): Promise<void> {
  * `storage` says otherwise. `names` is where it keeps the reviewer's name.
  */
 export function open(server: Server, address: string, storage = memory(TOKEN), names = memory()) {
-  window.location.hash = address;
+  window.history.replaceState(null, "", address === "" ? "/" : address);
   render(<App url={server.url} fetch={recording} storage={storage} names={names} />);
   return storage;
 }
@@ -76,8 +76,8 @@ export function open(server: Server, address: string, storage = memory(TOKEN), n
 /** Follows a link of the studio, as a click in a browser would. */
 export function follow(link: Element) {
   const address = link.getAttribute("href");
-  if (address === null || !address.startsWith("#")) throw new Error(`${link.outerHTML} is not a link of the studio`);
-  window.location.hash = address;
+  if (address === null || !address.startsWith("/")) throw new Error(`${link.outerHTML} is not a link of the studio`);
+  fireEvent.click(link);
 }
 
 export const heading = (name: string | RegExp) => screen.findByRole("heading", { level: 1, name });

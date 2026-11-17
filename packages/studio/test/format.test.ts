@@ -14,7 +14,7 @@ import {
   when,
 } from "../src/format.ts";
 import { isReference } from "../src/find.ts";
-import { href, parseHash } from "../src/router.ts";
+import { href, parseAddress } from "../src/router.ts";
 
 const A = "2060cadc-cebd-9817-f61a-f4fd7fd74ee7";
 const B = "42a8e89a-91a6-6c9c-2295-010d61b8803a";
@@ -166,25 +166,25 @@ describe("the text of a document", () => {
 
 describe("an address", () => {
   test("names a screen and what narrows it", () => {
-    expect(parseHash("")).toEqual({ path: [], query: {} });
-    expect(parseHash("#/")).toEqual({ path: [], query: {} });
-    expect(parseHash("#/runs/9")).toEqual({ path: ["runs", "9"], query: {} });
-    expect(parseHash("#/observations?source=crm&key=c%2F1&unassigned=true")).toEqual({
-      path: ["observations"],
+    expect(parseAddress("")).toEqual({ path: [], query: {} });
+    expect(parseAddress("/")).toEqual({ path: [], query: {} });
+    expect(parseAddress("/runs/9")).toEqual({ path: ["runs", "9"], query: {} });
+    expect(parseAddress("/records?source=crm&key=c%2F1&unassigned=true")).toEqual({
+      path: ["records"],
       query: { source: "crm", key: "c/1", unassigned: "true" },
     });
   });
 
   test("is written so that it reads back the same", () => {
-    expect(href([])).toBe("#/");
-    expect(href(["runs", 9])).toBe("#/runs/9");
-    const address = href(["observations"], { source: "crm", key: "a b&c", unassigned: true, type: "", document: null });
-    expect(address).toBe("#/observations?source=crm&key=a+b%26c&unassigned=true");
-    expect(parseHash(address)).toEqual({
-      path: ["observations"],
+    expect(href([])).toBe("/");
+    expect(href(["runs", 9])).toBe("/runs/9");
+    const address = href(["records"], { source: "crm", key: "a b&c", unassigned: true, type: "", document: null });
+    expect(address).toBe("/records?source=crm&key=a+b%26c&unassigned=true");
+    expect(parseAddress(address)).toEqual({
+      path: ["records"],
       query: { source: "crm", key: "a b&c", unassigned: "true" },
     });
-    expect(parseHash(href(["documents", "a/b"]))).toEqual({ path: ["documents", "a/b"], query: {} });
+    expect(parseAddress(href(["documents", "a/b"]))).toEqual({ path: ["documents", "a/b"], query: {} });
   });
 });
 
