@@ -1,0 +1,20 @@
+{
+  "name": "spool-stress",
+  "version": "0.1.0",
+  "description": "Stress tests of a Spool server: scale, crashes, a random reviewer, hostile input.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "scale": "bun src/scale.ts",
+    "crash": "bun src/crash.ts",
+    "reviewer": "bun src/reviewer.ts",
+    "hostile": "bun src/hostile.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "typescript": "^5.6.0"
+  }
+}

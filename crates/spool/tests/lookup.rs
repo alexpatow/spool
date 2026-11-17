@@ -267,6 +267,27 @@ fn the_log_is_read_in_pages_and_ids_are_minted_for_callers() {
 }
 
 #[test]
+fn a_log_position_no_log_reaches_has_nothing_after_it_and_nothing_at_it() {
+    let engine = populated();
+    assert!(!engine.log().unwrap().is_empty());
+    // The database counts positions in signed 64 bits, and a caller may
+    // name any unsigned one.
+    for position in [i64::MAX as u64, i64::MAX as u64 + 1, u64::MAX] {
+        assert!(
+            engine.log_after(Seq(position), 10).unwrap().is_empty(),
+            "after {position}"
+        );
+        assert!(
+            matches!(
+                engine.undo(Seq(position), Actor::User("ada".to_owned()), None, true),
+                Err(Error::UnknownChangeset(Seq(unknown))) if unknown == position
+            ),
+            "undo of {position}"
+        );
+    }
+}
+
+#[test]
 fn rows_given_as_json_keep_their_types() {
     let engine = engine();
     engine

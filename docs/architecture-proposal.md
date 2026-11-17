@@ -752,7 +752,7 @@ Training data, model state and thresholds belong to the strategy. The framework 
 
 The built-in strategy for Milestone 1 is deliberately plain, and it knows nothing about any entity type. It is a rule runner. Its rules are SQL predicates over a left row `l` and a right row `r` of the type's feature table, one predicate per file:
 
-- `rules/block/` predicates generate the candidate pairs.
+- `rules/block/` predicates generate the candidate pairs. Each is joined on its own, so a block rule should be one equality, or several joined by `AND`: the database then finds the pairs by hashing. A rule that says `OR` is compared for every pair of observations, which took 40 seconds for 155,000 observations where its two halves as two rules took 0.6 seconds and found the same pairs.
 - A candidate for which any `rules/no_match/` predicate holds is judged `no_match`.
 - Otherwise, a candidate for which any `rules/match/` predicate holds is judged `match`.
 
@@ -951,6 +951,13 @@ Milestone 6 continues with the studio: `packages/studio`, `crates/spool-cli/src/
 - A split of the larger side says that side stays, and it does. A split is refused when the identity gained a member after the screen was read, and is made after the screen is read again (also `a_split_based_on_a_log_position_is_refused_when_the_members_changed_after_it` in `crates/spool/tests/lifecycle.rs`, and over HTTP in `packages/client/test/client.test.ts`).
 - A change that needs a name is not sent without one, and the name is kept for the next.
 - `bun run demo` fills only the server it started, and stops when another server already listens at its address.
+
+Beside the milestones, `packages/stress` puts a real server under load and abuse. Each part is a command for a run of any size, and runs in a small form with the tests (`crates/spool-cli/tests/stress.rs`, with `--include-ignored`). Every part ends with the server stopped and the store checked by `Engine::verify`, through the `verify` example of the `spool` crate:
+
+- **Scale** (`src/scale.ts`). Company records are generated with their truth: aliases, trading names, subsidiaries that share a name, typing mistakes, bare rows, and rows sent again. They are ingested and matched over HTTP in batches and matched again, each step is timed with the server's memory and the store's size, and the calls a reader makes are timed.
+- **Crashes** (`src/crash.ts`). The same records are loaded into two servers. One is killed at a moment chosen at random within each step and started again. After each kill the store verifies, no run is left `running`, and the calls of the API agree with each other. In the end both stores say the same about who is who.
+- **A random reviewer** (`src/reviewer.ts`). Records arrive and are matched while identities are merged, split and taken apart, constraints are set, changesets are undone, drafts are decided and the server is stopped or killed, in an order chosen at random, by one reviewer or by several at once. What is out of date or names nothing is refused, the server never answers with a failure of its own, and the calls of the API keep agreeing with each other.
+- **Hostile requests** (`src/hostile.ts`). Each is one request nobody should send and the status the server answers it with.
 
 Out of scope after this part of Milestone 6: a studio that follows a running server without being asked to read again, explaining what a user-code strategy would judge now, explaining a pair as of an earlier log position, LLM matching, an extractor built into the engine, documents that are not text, relationships between entities, canonical attribute views, applying a rematch's suggestions automatically.
 
