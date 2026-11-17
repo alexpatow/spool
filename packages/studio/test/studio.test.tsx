@@ -55,7 +55,7 @@ describe("the door", () => {
 
   test("asks for the token when the one of `spool dev` is refused, and keeps the one that works", async () => {
     const storage = open(server, "", memory());
-    expect(await screen.findByText(/This server needs its bearer token/)).toBeTruthy();
+    expect(await screen.findByText("SPOOL_TOKEN")).toBeTruthy();
     expect(screen.getByText(server.url)).toBeTruthy();
     expect(document.title).toBe("Spool studio");
 
@@ -63,7 +63,7 @@ describe("the door", () => {
     expect(token.type).toBe("password");
     fireEvent.change(token, { target: { value: "not-the-token" } });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
-    expect(await screen.findByText("The server refused that token.")).toBeTruthy();
+    expect(await screen.findByText("Token rejected.")).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText("Token"), { target: { value: TOKEN } });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
@@ -134,7 +134,7 @@ describe("company records a reviewer corrected", () => {
     open(server, "");
     await heading("Overview");
     await screen.findByText("Entity type company");
-    expect(parts("stat")).toEqual(["16identities", "39records", "5without an identity", "1review item open"]);
+    expect(parts("stat")).toEqual(["16identities", "39records", "5unassigned", "1open review item"]);
     // What waits is marked, and each number leads to the list it counts.
     expect(
       [...document.querySelectorAll("[data-part=stat][data-waits]")].map((stat) => stat.getAttribute("href")),
@@ -147,8 +147,8 @@ describe("company records a reviewer corrected", () => {
     const drafts = await server.client.drafts({ status: "open" });
     const waiting = document.querySelector("[data-part=notice]")!;
     expect(waiting.getAttribute("data-tone")).toBe("waits");
-    expect(waiting.textContent).toContain("1 review item of company waits for a decision.");
-    expect(waiting.textContent).toContain("A run left a draft of company changes for approval.");
+    expect(waiting.textContent).toContain("1 open review item (company)");
+    expect(waiting.textContent).toContain("1 draft to approve (company)");
     expect(
       within(waiting as HTMLElement)
         .getByRole("link", { name: "Review" })
@@ -156,7 +156,7 @@ describe("company records a reviewer corrected", () => {
     ).toBe("/review");
     expect(
       within(waiting as HTMLElement)
-        .getByRole("link", { name: "Open the draft" })
+        .getByRole("link", { name: "Open" })
         .getAttribute("href"),
     ).toBe(`/drafts/${drafts[0]!.id}`);
 
@@ -170,7 +170,7 @@ describe("company records a reviewer corrected", () => {
   test("the overview says where the records of a type came from", async () => {
     open(server, "");
     await heading("Overview");
-    const table = await screen.findByRole("table", { name: "Where the company records came from" });
+    const table = await screen.findByRole("table", { name: "company sources" });
     const { store } = await server.client.info();
     const sources = store.entity_types[0]!.sources;
     expect(sources.map((source) => source.source)).toEqual(["crm", "registry"]);
@@ -202,12 +202,12 @@ describe("company records a reviewer corrected", () => {
 
     follow(within(table).getByRole("link", { name: "Run 9" }));
     await heading("Run 9");
-    await screen.findByText("What it made of them");
+    await screen.findByText("Resolution");
     expect(field("Status")).toBe("drafted");
-    expect(field("Examined")).toBe("5 observations, 1 of them left for review before");
-    expect(field("Placed")).toBe("4 observations, 1 identity created");
-    expect(field("Left out")).toBe("1 observation in 1 review item");
-    expect(field("Draft")).toMatch(/ was left for review$/);
+    expect(field("Examined")).toBe("5 records, 1 of them from earlier review items");
+    expect(field("Assigned")).toBe("4 records, 1 identity created");
+    expect(field("Unassigned")).toBe("1 record in 1 review item");
+    expect(field("Draft")).toMatch(/^[0-9a-f]{8}…[0-9a-f]{4}$/);
 
     const drafts = await server.client.drafts({ status: "open" });
     const draft = document.querySelector("dd a[href^='/drafts/']")!;
@@ -216,17 +216,16 @@ describe("company records a reviewer corrected", () => {
     await heading("Draft");
     await counted("Operations", 5);
     expect(field("Status")).toBe("open");
-    expect(field("From")).toBe("match run 9, reconcile run 10");
-    expect(field("Would place")).toBe("4 observations, 1 identity created");
+    expect(field("Runs")).toBe("match run 9, reconcile run 10");
+    expect(field("Changes")).toBe("4 records assigned, 1 identity created");
     // An operation names an observation by its source and key once it is read.
     await screen.findByRole("link", { name: "registry:X0000016" });
     // And an identity by what its records call it, with the end of its ID. The one the draft
     // would make has no record yet, so it is named by its ID.
-    const placed = () =>
-      texts("[data-part=ops] li").filter((text) => /^place observation registry:X\d+ in /.test(text));
+    const placed = () => texts("[data-part=ops] li").filter((text) => /^assign record registry:X\d+ to /.test(text));
     await waitFor(() => expect(placed().filter((text) => CALLED.test(text))).toHaveLength(3));
     expect(placed()).toHaveLength(4);
-    expect(placed().filter((text) => / in 0\S+$/.test(text))).toHaveLength(1);
+    expect(placed().filter((text) => / to 0\S+$/.test(text))).toHaveLength(1);
     expect(texts("[data-part=ops] li").filter((text) => /^create company identity 0\S+$/.test(text))).toHaveLength(1);
   });
 
@@ -247,7 +246,7 @@ describe("company records a reviewer corrected", () => {
     const lines = rowsOf(await screen.findByRole("table"));
     expect(lines).toHaveLength(16);
     expect(lines.reduce((sum, line) => sum + Number(line[2]), 0)).toBe(34);
-    expect(screen.getByText(/^16 identities that stand now/)).toBeTruthy();
+    expect(screen.getByText("16 identities")).toBeTruthy();
 
     const { identities } = await server.client.identities({ limit: 100 });
     expect(lines.map((line) => line[0]).sort()).toEqual(identities.map((identity) => identity.label!).sort());
@@ -264,22 +263,21 @@ describe("company records a reviewer corrected", () => {
     open(server, "/identities");
     await heading("Identities");
     await screen.findByRole("table");
-    fireEvent.change(screen.getByRole("searchbox", { name: "Find" }), { target: { value: " halden energy " } });
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search" }), { target: { value: " halden energy " } });
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     expect(here()).toBe("/identities?q=halden+energy");
     await waitFor(() => expect(rowsOf(screen.getByRole("table")).map((line) => line[0])).toEqual(["Halden Energy"]));
-    expect(screen.getByText("The identities one of whose records holds every word of “halden energy”.")).toBeTruthy();
 
     // A word of a value that is not the name finds it too, whatever its case.
-    fireEvent.change(screen.getByRole("searchbox", { name: "Find" }), { target: { value: "X0000004" } });
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search" }), { target: { value: "X0000004" } });
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     await waitFor(() =>
       expect(rowsOf(screen.getByRole("table")).map((line) => line[0])).toEqual(["Kestrel Analytics"]),
     );
 
-    fireEvent.change(screen.getByRole("searchbox", { name: "Find" }), { target: { value: "nothing-holds-this" } });
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search" }), { target: { value: "nothing-holds-this" } });
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    await waitFor(() => expect(parts("empty")).toEqual(["No identity has a record that holds “nothing-holds-this”."]));
+    await waitFor(() => expect(parts("empty")).toEqual(["No identities match “nothing-holds-this”."]));
   });
 
   test("an identity shows its members and the constraints on them", async () => {
@@ -305,7 +303,7 @@ describe("company records a reviewer corrected", () => {
     // The identities a changeset names are called what their records call them.
     await waitFor(() =>
       expect(texts("[data-part=history] > li")[0]).toMatch(
-        /move observation registry:X0000010 from Pioneer Supplies \(…[0-9a-f]{4}\) to PIONEER SUPPLIES LTD \(…[0-9a-f]{4}\)$/,
+        /move record registry:X0000010 from Pioneer Supplies \(…[0-9a-f]{4}\) to PIONEER SUPPLIES LTD \(…[0-9a-f]{4}\)$/,
       ),
     );
   });
@@ -318,7 +316,7 @@ describe("company records a reviewer corrected", () => {
     expect(screen.getByText("4 records from 2 sources")).toBeTruthy();
 
     // A field to a group of rows: each value that is held, and the records that hold it.
-    const table = screen.getByRole("table", { name: "What its records say" });
+    const table = screen.getByRole("table", { name: "Fields" });
     const said = (name: string) =>
       [...table.querySelectorAll(`tr[data-field=${name}]`)].map((line) =>
         [...line.querySelectorAll("td")].slice(-2).map((cell) => cell.textContent),
@@ -344,7 +342,7 @@ describe("company records a reviewer corrected", () => {
     );
 
     // The row crm:c-104 came twice, and what it said the first time is not what it says.
-    expect(screen.getByText(/1 earlier version of a row is left out\.$/)).toBeTruthy();
+    expect(screen.getByText("1 superseded version not counted.")).toBeTruthy();
     const records = rowsOf(screen.getByRole("table", { name: "Records" }));
     expect(records.map((line) => `${line[2]}:${line[3]}`).sort()).toEqual([
       "crm:c-104",
@@ -352,14 +350,14 @@ describe("company records a reviewer corrected", () => {
       "crm:c-115",
       "registry:X0000004",
     ]);
-    expect(records.filter((line) => line[1]?.endsWith("earlier version"))).toHaveLength(1);
+    expect(records.filter((line) => line[1]?.endsWith("superseded"))).toHaveLength(1);
   });
 
   test("an identity shows every changeset that touched it", async () => {
     const atlas = await row(server.client, "crm", "c-109");
     open(server, `/identities/${atlas.identity}`);
     await heading("Atlas Trading");
-    await screen.findByText("History");
+    await screen.findByRole("heading", { name: "History" });
     await screen.findAllByRole("link", { name: "crm:c-109" });
 
     // It was made by the engine, merged away by the reviewer, and brought
@@ -373,12 +371,12 @@ describe("company records a reviewer corrected", () => {
     const history = texts("[data-part=history] > li");
     expect(history).toHaveLength(3);
     expect(history[0]).toMatch(/^Log position 1 \S+ \S+ by engine, drafted by reconcile run 4/);
-    expect(history[0]).toContain(`place observation crm:c-109 in ${here}`);
+    expect(history[0]).toContain(`assign record crm:c-109 to ${here}`);
     expect(history[1]).toMatch(/^Log position 2 \S+ \S+ by user:studio-demo “same name, taken for one company”merge /);
     expect(history[1]).toEndWith(`merge ${here} into ${there}`);
     expect(history[2]).toMatch(/^Log position 4 \S+ \S+ by user:studio-demo “they are two companies after all”/);
     expect(history[2]).toContain(`reinstate identity ${here}`);
-    expect(history[2]).toContain(`move observation crm:c-109 from ${there} to ${here}`);
+    expect(history[2]).toContain(`move record crm:c-109 from ${there} to ${here}`);
     expect(document.querySelector("[data-part=history] a[href='/log/4']")?.textContent).toBe("Log position 4");
   });
 
@@ -391,9 +389,7 @@ describe("company records a reviewer corrected", () => {
     await counted("Records", 3);
     expect(parts("id")).toEqual([merge.from]);
     const merged = document.querySelector("[data-part=notice]")!;
-    expect(merged.textContent).toMatch(
-      /^This identity was merged into 0\S+, which stands for it now\. The records below are that one's\.$/,
-    );
+    expect(merged.textContent).toMatch(/^Merged into 0\S+\. Showing its records\.$/);
     expect(merged.querySelector("a[data-kind=identity]")?.getAttribute("href")).toBe(`/identities/${merge.into}`);
     // The reviewer said two of them are one company, and the identity says so.
     expect(rowsOf(screen.getAllByRole("table").at(-1)!)).toEqual([
@@ -413,7 +409,7 @@ describe("company records a reviewer corrected", () => {
     open(server, "/records");
     await heading("Records");
     await screen.findByRole("table");
-    fireEvent.click(screen.getByRole("checkbox", { name: "Without an identity" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Unassigned" }));
     expect(here()).toBe("/records?unassigned=true");
     await waitFor(() => expect(rowsOf(screen.getByRole("table"))).toHaveLength(5));
     const lines = rowsOf(screen.getByRole("table"));
@@ -425,22 +421,22 @@ describe("company records a reviewer corrected", () => {
       "registry:X0000017 WEXCOMBE PRINT LTD",
       "registry:X0612001 FENNMORE ENERGY LIMITED",
     ]);
-    expect(lines.every((line) => line[5] === "none")).toBe(true);
+    expect(lines.every((line) => line[5] === "unassigned")).toBe(true);
 
-    const ticks = screen.getAllByRole("checkbox", { name: /^Choose observation/ });
+    const ticks = screen.getAllByRole("checkbox", { name: /^Select record/ });
     fireEvent.click(ticks[0]!);
-    expect(screen.queryByRole("link", { name: "Explain the two that are ticked" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Explain selected" })).toBeNull();
     fireEvent.click(ticks[1]!);
-    follow(screen.getByRole("link", { name: "Explain the two that are ticked" }));
+    follow(screen.getByRole("link", { name: "Explain selected" }));
     await heading("Explain");
-    expect((await screen.findByText("Not both placed")).getAttribute("data-part")).toBe("word");
+    expect((await screen.findByText("Not both assigned")).getAttribute("data-part")).toBe("word");
   });
 
   test("the observations are found by words they hold", async () => {
     open(server, "/records");
     await heading("Records");
     await screen.findByRole("table");
-    fireEvent.change(screen.getByRole("searchbox", { name: "Find" }), { target: { value: "KESTREL" } });
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search" }), { target: { value: "KESTREL" } });
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
     expect(here()).toBe("/records?q=KESTREL");
     const { observations } = await server.client.observations({ q: "kestrel" });
@@ -463,9 +459,9 @@ describe("company records a reviewer corrected", () => {
       `/identities/${observations[0]!.identity}`,
     );
 
-    fireEvent.change(screen.getByRole("searchbox", { name: "Find" }), { target: { value: "nothing-holds-this" } });
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search" }), { target: { value: "nothing-holds-this" } });
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-    await waitFor(() => expect(parts("empty")).toEqual(["No record holds “nothing-holds-this”."]));
+    await waitFor(() => expect(parts("empty")).toEqual(["No records match “nothing-holds-this”."]));
   });
 
   test("the observations can be narrowed to a source and a key", async () => {
@@ -484,24 +480,24 @@ describe("company records a reviewer corrected", () => {
     const waiting = await row(server.client, "crm", "c-117");
     open(server, `/records/${waiting.id}`);
     await heading("Pioneer Supplies");
-    await screen.findByText("What it says");
+    await screen.findByText("Payload");
     expect(parts("id")).toEqual([waiting.id]);
     expect(field("Source")).toBe("crm");
     expect(field("Key")).toBe("c-117");
-    expect(field("Identity")).toBe("none");
+    expect(field("Identity")).toBe("unassigned");
     expect(field("Review")).toBe("item 1 possible merge open");
     for (const [name, value] of Object.entries(waiting.payload as Record<string, string>)) {
       expect(field(name)).toBe(value);
     }
     // Why it has no identity is said before anything else.
-    expect(parts("notice")).toEqual(["It has no identity until someone decides review item 1."]);
+    expect(parts("notice")).toEqual(["Unassigned, pending review item 1."]);
 
     follow(screen.getByRole("link", { name: "item 1" }));
     await heading("Review item 1");
     await screen.findByRole("article", { name: "Review item 1" });
     expect(field("Kind")).toBe("possible merge");
     expect(field("Status")).toBe("open");
-    expect(field("Raised by")).toBe("reconcile run 7");
+    expect(field("Run")).toBe("reconcile run 7");
   });
 
   test("a review item shows what it is decided from: the record, the identities it matched, and why", async () => {
@@ -510,19 +506,19 @@ describe("company records a reviewer corrected", () => {
     open(server, "/review");
     await heading("Review");
     const card = within(await screen.findByRole("article", { name: "Review item 1" }));
-    expect(card.getByRole("heading", { level: 2 }).textContent).toBe("Pioneer Supplies matched 2 identities.");
+    expect(card.getByRole("heading", { level: 2 }).textContent).toBe("Pioneer Supplies matched 2 identities");
     expect(card.getByRole("link", { name: "Item 1" }).getAttribute("href")).toBe("/review/1");
 
     // The record that waits and the identities it matched are side by side.
-    const table = card.getByRole("table", { name: "What review item 1 is decided from" });
+    const table = card.getByRole("table", { name: "Review item 1" });
     const columns = within(table)
       .getAllByRole("columnheader")
       .slice(1)
       .map((column) => column.textContent);
     expect(columns).toEqual([
-      "Waits for an identityPioneer Suppliescrmcrm:c-117",
-      "Identity it matchedPioneer Supplies2 recordscrm1registry1",
-      "Identity it matchedPIONEER SUPPLIES LTD1 recordregistry1",
+      "Unassigned recordPioneer Suppliescrmcrm:c-117",
+      "Matched identityPioneer Supplies2 recordscrm1registry1",
+      "Matched identityPIONEER SUPPLIES LTD1 recordregistry1",
     ]);
     expect([...table.querySelectorAll("th a[data-kind=identity]")].map((link) => link.getAttribute("title"))).toEqual(
       found.candidates.map((candidate) => candidate.identity.id),
@@ -547,7 +543,7 @@ describe("company records a reviewer corrected", () => {
     expect(agreeing("city")).toEqual([null, null, null]);
 
     // The run's verdicts on the record and each identity's records, with the rule behind each.
-    const verdicts = [...table.querySelectorAll("tr")].find((found) => found.textContent?.startsWith("The run found"))!;
+    const verdicts = [...table.querySelectorAll("tr")].find((found) => found.textContent?.startsWith("Judgements"))!;
     expect([...verdicts.querySelectorAll("td")].map((cell) => parts("word", cell))).toEqual([
       [],
       ["match", "match"],
@@ -557,34 +553,30 @@ describe("company records a reviewer corrected", () => {
     const other = found.candidates[1]!.members[0]!;
     expect(
       within(verdicts as HTMLElement)
-        .getAllByRole("link", { name: "why" })
+        .getAllByRole("link", { name: "explain" })
         .at(-1)
         ?.getAttribute("href"),
     ).toBe(`/explain?a=${waiting.id}&b=${other.id}`);
 
     // A reviewer split the two identities before the record came, and each says so.
     const decided = table.querySelector("tr[data-part=decided]")!;
-    expect(decided.querySelector("th")!.textContent).toBe("Already decided");
+    expect(decided.querySelector("th")!.textContent).toBe("Constraints");
     expect([...decided.querySelectorAll("td")].map((cell) => parts("word", cell))).toEqual([
       [],
-      ["kept apart"],
-      ["kept apart"],
+      ["cannot link"],
+      ["cannot link"],
     ]);
-    await waitFor(() =>
-      expect(decided.textContent).toContain(
-        "crm:c-110 and registry:X0000010 must not share an identity, since log position 5",
-      ),
-    );
+    await waitFor(() => expect(decided.textContent).toContain("crm:c-110 and registry:X0000010, since log position 5"));
 
     // Under each column is the decision it stands for. Merging the two is not one: they are kept apart.
     expect(card.getAllByRole("button").map((button) => button.textContent)).toEqual([
-      "None of them: new identity",
-      "Place in Pioneer Supplies",
-      "Place in PIONEER SUPPLIES LTD",
+      "New identity",
+      "Assign to Pioneer Supplies",
+      "Assign to PIONEER SUPPLIES LTD",
       "Dismiss",
     ]);
     expect(parts("apart", card.getByRole("table").closest("article")!)).toEqual([
-      "A constraint keeps these apart, so they cannot be merged into one.",
+      "Cannot be merged: a cannot_link constraint is between them.",
     ]);
   });
 
@@ -604,7 +596,7 @@ describe("company records a reviewer corrected", () => {
 
     follow(statuses.getByRole("link", { name: "Resolved" }));
     expect(here()).toBe("/review?status=resolved");
-    await waitFor(() => expect(parts("empty")).toEqual(["No review items.No item has this status."]));
+    await waitFor(() => expect(parts("empty")).toEqual(["No review items."]));
     follow(within(screen.getByRole("list", { name: "Status" })).getByRole("link", { name: "All" }));
     await screen.findByRole("article", { name: "Review item 1" });
   });
@@ -614,26 +606,26 @@ describe("company records a reviewer corrected", () => {
     const other = await row(server.client, "registry", "X0000009");
     open(server, `/records/${waiting.id}`);
     await heading("FENNMORE ENERGY LIMITED");
-    const ask = await screen.findByLabelText("The other record");
+    const ask = await screen.findByLabelText("Compare with");
     fireEvent.change(ask, { target: { value: "registry:nothing" } });
     fireEvent.click(within(screen.getByRole("main")).getByRole("button", { name: "Explain" }));
-    expect((await screen.findByRole("alert")).textContent).toBe("No observation is named registry:nothing.");
+    expect((await screen.findByRole("alert")).textContent).toBe("No record found for registry:nothing.");
 
     fireEvent.change(ask, { target: { value: "registry:X0000009" } });
     fireEvent.click(within(screen.getByRole("main")).getByRole("button", { name: "Explain" }));
     await waitFor(() => expect(here()).toBe(`/explain?a=${waiting.id}&b=${other.id}`));
-    await screen.findByText("Not both placed");
-    await screen.findByText("No block rule holds, so a run of the rules would not compare the two.");
+    await screen.findByText("Not both assigned");
+    await screen.findByText("No block rule holds, so a run would not compare this pair.");
   });
 
   test("two records a reviewer merged and then parted are explained by what happened", async () => {
     open(server, "/explain");
     await heading("Explain");
     fireEvent.click(within(screen.getByRole("main")).getByRole("button", { name: "Explain" }));
-    expect((await screen.findByRole("alert")).textContent).toBe("An explanation is about two observations.");
+    expect((await screen.findByRole("alert")).textContent).toBe("Enter two records.");
 
-    fireEvent.change(screen.getByLabelText("One observation"), { target: { value: "crm:c-108" } });
-    fireEvent.change(screen.getByLabelText("The other"), { target: { value: "crm:c-109" } });
+    fireEvent.change(screen.getByLabelText("Left record"), { target: { value: "crm:c-108" } });
+    fireEvent.change(screen.getByLabelText("Right record"), { target: { value: "crm:c-109" } });
     fireEvent.click(within(screen.getByRole("main")).getByRole("button", { name: "Explain" }));
 
     await screen.findByText("Different identities");
@@ -654,18 +646,13 @@ describe("company records a reviewer corrected", () => {
     expect(features).toContainEqual(["trading_key", "-", "-", ""]);
     // Only a value both have is marked as shared: two that are missing are not.
     expect(texts("tr[data-same] td:first-child")).toEqual(["name_key"]);
-    expect(document.querySelector("tr[data-same] [aria-label='The same']")).toBeTruthy();
+    expect(document.querySelector("tr[data-same] [aria-label='Same']")).toBeTruthy();
     expect(rules).toContainEqual(["block", "same_name", "l.name_key = r.name_key", "holds"]);
     expect(rules).toContainEqual(["match", "same_name_and_country", expect.any(String), "does not hold"]);
-    expect(rules).toContainEqual([
-      "block",
-      "same_domain",
-      "l.domain = r.domain",
-      "cannot be decided: a feature it reads is null",
-    ]);
-    expect(screen.getByText("A run of the rules would compare the two and make no judgement.")).toBeTruthy();
+    expect(rules).toContainEqual(["block", "same_domain", "l.domain = r.domain", "unknown: a feature is null"]);
+    expect(screen.getByText("A run would compare this pair and make no judgement.")).toBeTruthy();
     expect(comparisons?.map((line) => [line[0], line[2], line[4], line[5]])).toEqual([
-      ["Run 3", "rules", "same_name", "no judgement"],
+      ["Run 3", "rules", "same_name", "none"],
     ]);
   });
 
@@ -674,12 +661,12 @@ describe("company records a reviewer corrected", () => {
     expect(observations).toHaveLength(2);
     open(server, `/explain?a=${observations[0]!.id}&b=${observations[1]!.id}`);
     await heading("Explain");
-    await screen.findByText("The same identity");
+    await screen.findByText("Same identity");
     const sides = [...document.querySelectorAll("[data-part=side]")];
-    expect(sides.map((side) => field("Observation", side))).toEqual(["crm:c-104", "crm:c-104"]);
+    expect(sides.map((side) => field("Record", side))).toEqual(["crm:c-104", "crm:c-104"]);
     const identity = await shownFor(server.client, observations[0]!.identity!);
     await waitFor(() => expect(sides.map((side) => field("Identity", side))).toEqual([identity, identity]));
-    expect((screen.getByLabelText("One observation") as HTMLInputElement).value).toBe(observations[0]!.id);
+    expect((screen.getByLabelText("Left record") as HTMLInputElement).value).toBe(observations[0]!.id);
   });
 
   test("an observation that is not there is said not to be", async () => {
@@ -706,7 +693,7 @@ describe("company records a reviewer corrected", () => {
     await counted("Operations", 3);
     expect(field("Actor")).toBe(REVIEWER);
     expect(field("Reason")).toBe("“they are two companies after all”");
-    expect(field("Written against")).toBe("log position 3");
+    expect(field("Base")).toBe("log position 3");
     expect(field("Changeset")).toBe(changesets[0]!.changeset.id);
     expect(field("Content hash")).toBe(changesets[0]!.content_hash);
     await screen.findByRole("link", { name: "crm:c-109" });
@@ -714,23 +701,23 @@ describe("company records a reviewer corrected", () => {
       expect(texts("[data-part=ops] li")[0]).toMatch(/^reinstate identity Atlas Trading \(…[0-9a-f]{4}\)$/),
     );
     expect(texts("[data-part=ops] li")[1]).toMatch(
-      /^move observation crm:c-109 from Atlas Trading \(…[0-9a-f]{4}\) to Atlas Trading \(…[0-9a-f]{4}\)$/,
+      /^move record crm:c-109 from Atlas Trading \(…[0-9a-f]{4}\) to Atlas Trading \(…[0-9a-f]{4}\)$/,
     );
   });
 
   test("a log position past the end is said not to be there", async () => {
     open(server, "/log/99");
     await heading("Log position 99");
-    expect((await screen.findByRole("alert")).textContent).toBe("The log has no position 99.");
+    expect((await screen.findByRole("alert")).textContent).toBe("No log position 99.");
   });
 
   /** Opens the box that finds things, and gives it. */
   async function finding(): Promise<HTMLInputElement> {
     if (screen.queryByRole("dialog") === null) {
-      fireEvent.click(screen.getByRole("button", { name: /^Find a name, an ID, or source:key/ }));
+      fireEvent.click(screen.getByRole("button", { name: /^Search/ }));
     }
     return (await screen.findByRole("combobox", {
-      name: "Find by words, by ID, or by source and key",
+      name: "Search",
     })) as HTMLInputElement;
   }
 
@@ -741,25 +728,25 @@ describe("company records a reviewer corrected", () => {
     await heading("Runs");
 
     fireEvent.change(await finding(), { target: { value: " crm:c-111 " } });
-    fireEvent.click(await screen.findByRole("option", { name: "Open what crm:c-111 names" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Go to crm:c-111" }));
     await waitFor(() => expect(here()).toBe(`/records/${orchard.id}`));
     await heading("Orchard");
     // It went there, so the box is closed.
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
     fireEvent.change(await finding(), { target: { value: orchard.identity! } });
-    fireEvent.click(await screen.findByRole("option", { name: `Open what ${orchard.identity} names` }));
+    fireEvent.click(await screen.findByRole("option", { name: `Go to ${orchard.identity}` }));
     await waitFor(() => expect(here()).toBe(`/identities/${orchard.identity}`));
-    await screen.findByText("Constraints on its records");
+    await screen.findByText("Constraints");
 
     fireEvent.change(await finding(), { target: { value: drafts[0]!.id } });
-    fireEvent.click(await screen.findByRole("option", { name: `Open what ${drafts[0]!.id} names` }));
+    fireEvent.click(await screen.findByRole("option", { name: `Go to ${drafts[0]!.id}` }));
     await waitFor(() => expect(here()).toBe(`/drafts/${drafts[0]!.id}`));
     await heading("Draft");
 
     fireEvent.change(await finding(), { target: { value: "crm:nothing" } });
-    fireEvent.click(await screen.findByRole("option", { name: "Open what crm:nothing names" }));
-    expect((await screen.findByRole("alert")).textContent).toBe("Nothing here is named crm:nothing.");
+    fireEvent.click(await screen.findByRole("option", { name: "Go to crm:nothing" }));
+    expect((await screen.findByRole("alert")).textContent).toBe("crm:nothing not found.");
     expect(here()).toBe(`/drafts/${drafts[0]!.id}`);
   });
 
@@ -789,7 +776,7 @@ describe("company records a reviewer corrected", () => {
     // Every word has to be held, and a word that names a screen lists it too.
     fireEvent.change(box, { target: { value: "pioneer nothing-holds-this" } });
     await waitFor(() =>
-      expect(screen.getByRole("status").textContent).toBe("Nothing here holds “pioneer nothing-holds-this”."),
+      expect(screen.getByRole("status").textContent).toBe("No results for “pioneer nothing-holds-this”."),
     );
     expect(screen.queryAllByRole("option")).toEqual([]);
 
@@ -804,26 +791,26 @@ describe("company records a reviewer corrected", () => {
     open(server, "", undefined, names);
     await heading("Overview");
     expect(document.documentElement.dataset.theme).toBe("light");
-    fireEvent.click(screen.getByRole("button", { name: "Make the page dark" }));
+    fireEvent.click(screen.getByRole("button", { name: "Dark theme" }));
     expect(document.documentElement.dataset.theme).toBe("dark");
     expect(document.documentElement.style.colorScheme).toBe("dark");
     expect(names.getItem(THEME_KEY)).toBe("dark");
-    // What it says nothing with is a class on the page: its policy allows no style of its own.
+    // Payload nothing with is a class on the page: its policy allows no style of its own.
     expect(document.querySelectorAll("style")).toHaveLength(0);
     cleanup();
 
     open(server, "", undefined, names);
     await heading("Overview");
     expect(document.documentElement.dataset.theme).toBe("dark");
-    fireEvent.click(screen.getByRole("button", { name: "Make the page light" }));
+    fireEvent.click(screen.getByRole("button", { name: "Light theme" }));
     expect(names.getItem(THEME_KEY)).toBe("light");
   });
 
   test("an address no screen has says so", async () => {
     for (const address of ["/nowhere", "/runs/9/more", "/explain/this"]) {
       open(server, address);
-      await heading("No such screen");
-      expect(screen.getByRole("link", { name: "Go to the overview." }).getAttribute("href")).toBe("/");
+      await heading("Not found");
+      expect(screen.getByText("No screen at this address.")).toBeTruthy();
       cleanup();
     }
   });
@@ -845,7 +832,7 @@ describe("company records a reviewer corrected", () => {
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     // It no longer waits, so it leaves the list of those that do.
     await waitFor(() => expect(parts("empty")).toHaveLength(1));
-    expect(parts("empty")[0]).toStartWith("Nothing waits for review.");
+    expect(parts("empty")[0]).toStartWith("No open review items.");
     await waitFor(() => expect(screens().getByRole("link", { name: /^Review/ }).textContent).toBe("Review"));
 
     follow(within(screen.getByRole("list", { name: "Status" })).getByRole("link", { name: "Dismissed" }));
@@ -885,7 +872,7 @@ describe("news items an extractor read", () => {
     const record = await server.client.document(documents[0]!.id);
     expect(parts("document")).toEqual([record.text!]);
     expect(parts("mention")).toEqual(["The Falcon Ltd", "Orchard Ltd", "NORTHWIND TRADERS LTD"]);
-    expect(field("Read by")).toMatch(/^suffix_ts in run \d+ \(3 mentions\)$/);
+    expect(field("Extracted by")).toMatch(/^suffix_ts in run \d+ \(3 mentions\)$/);
     expect(rowsOf(screen.getByRole("table")).map((line) => line.slice(1, 4))).toEqual([
       ["The Falcon Ltd", "0 to 14", "company"],
       ["Orchard Ltd", "70 to 81", "company"],
@@ -908,7 +895,7 @@ describe("news items an extractor read", () => {
     // A mention is an observation: its screen shows where it was found.
     follow(document.querySelectorAll("[data-part=mention]")[1]!);
     await heading("Orchard Ltd");
-    await screen.findByText("Where it was found");
+    await screen.findByText("Mention");
     expect(texts("[data-part=excerpt] mark")).toEqual(["Orchard Ltd"]);
     expect(parts("excerpt")[0]).toContain("Its maker, Orchard Ltd, said more stock would arrive in March.");
     expect(field("extractor")).toBe("suffix_ts");
@@ -939,10 +926,10 @@ describe("news items an extractor read", () => {
       expect(apart()).toBe(1);
 
       // Ticking a mention shows the screen again, with the same text.
-      const ticks = screen.getAllByRole("checkbox", { name: /^Choose observation/ });
+      const ticks = screen.getAllByRole("checkbox", { name: /^Select record/ });
       fireEvent.click(ticks[0]!);
       fireEvent.click(ticks[1]!);
-      await screen.findByRole("link", { name: "Explain the two that are ticked" });
+      await screen.findByRole("link", { name: "Explain selected" });
       expect(apart()).toBe(1);
     } finally {
       taken.mockRestore();
@@ -998,7 +985,7 @@ describe("news items an extractor read", () => {
         .map((line) => line[0]),
     ).toContain("suffix_ts");
     expect(field("Documents")).toBe(String((await server.client.info()).store.documents));
-    expect(parts("notice")).toEqual(["Nothing waits for a decision."]);
+    expect(parts("notice")).toEqual(["Nothing to review."]);
     const nav = screens();
     expect(nav.getByRole("link", { name: "Review" }).textContent).toBe("Review");
     expect(nav.getByRole("link", { name: "Drafts" }).textContent).toBe("Drafts");
@@ -1010,10 +997,10 @@ describe("news items an extractor read", () => {
     open(server, "/runs");
     await heading("Runs");
 
-    fireEvent.click(screen.getByRole("button", { name: /^Find a name, an ID, or source:key/ }));
-    const box = await screen.findByRole("combobox", { name: "Find by words, by ID, or by source and key" });
+    fireEvent.click(screen.getByRole("button", { name: /^Search/ }));
+    const box = await screen.findByRole("combobox", { name: "Search" });
     fireEvent.change(box, { target: { value: "news:Annual Report.txt" } });
-    fireEvent.click(await screen.findByRole("option", { name: "Open what news:Annual Report.txt names" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Go to news:Annual Report.txt" }));
     await waitFor(() => expect(here()).toBe(`/documents/${documents[0]!.id}`));
     await heading("news:Annual Report.txt");
   });

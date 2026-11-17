@@ -25,7 +25,6 @@ import {
   Quiet,
   Reason,
   Ref,
-  Section,
   Select,
   Source,
   Sources,
@@ -65,10 +64,7 @@ export function ReviewItems({ route, types }: { route: Route; types: string[] })
     .filter((entity) => type === undefined || entity.name === type)
     .reduce((sum, entity) => sum + entity.open_review_items, 0);
   return (
-    <Page
-      title="Review"
-      about="What the runs would not decide alone. A record an open item names has no identity until someone places it."
-    >
+    <Page title="Review">
       <div {...stylex.props(styles.narrow)}>
         <Choose
           label="Status"
@@ -93,12 +89,7 @@ export function ReviewItems({ route, types }: { route: Route; types: string[] })
           items.length === 0 ? (
             <div data-part="empty" {...stylex.props(styles.nothing)}>
               <InboxIcon {...stylex.props(styles.nothingIcon)} />
-              <strong>{status === "open" ? "Nothing waits for review." : "No review items."}</strong>
-              <Quiet>
-                {status === "open"
-                  ? "Every record the runs looked at has an identity, or was left alone by a reviewer."
-                  : "No item has this status."}
-              </Quiet>
+              <strong>{status === "open" ? "No open review items." : "No review items."}</strong>
             </div>
           ) : (
             <>
@@ -174,7 +165,7 @@ function Details({ item }: { item: ReviewRecord }) {
         ["Kind", <Word value={item.kind} />],
         ["Status", <Word value={item.status} />],
         ["Entity type", item.entity_type],
-        ["Raised by", <Ref kind="run" id={item.run} label={`reconcile run ${item.run}`} />],
+        ["Run", <Ref kind="run" id={item.run} label={`reconcile run ${item.run}`} />],
         [
           "Resolved at",
           item.resolved_seq ? (
@@ -182,7 +173,7 @@ function Details({ item }: { item: ReviewRecord }) {
           ) : null,
         ],
         [
-          "Raised again by",
+          "Superseded by",
           item.superseded_by ? (
             <Ref kind="run" id={item.superseded_by} label={`reconcile run ${item.superseded_by}`} />
           ) : null,
@@ -239,22 +230,12 @@ function ruled({ candidates, constraints }: ReviewCase, waiting: ObservationReco
   };
 }
 
-/** What the item asks of a reviewer, in a sentence. */
-function asked({ item, observations, candidates }: ReviewCase, apart: boolean): { question: string; advice: string } {
-  const what = observations.length === 1 ? recordName(observations[0]!) : `${count(observations.length, "record")}`;
-  if (item.kind === "possible_merge") {
-    return {
-      question: `${what} matched ${count(candidates.length, "identity")}.`,
-      advice:
-        candidates.length > 1
-          ? `Place ${observations.length === 1 ? "it" : "them"} in the one ${observations.length === 1 ? "it belongs" : "they belong"} to. ${apart ? "If" : `If those are one ${item.entity_type}, merge them; if`} ${observations.length === 1 ? "it is" : "they are"} none of them, make a new identity.`
-          : `Place ${observations.length === 1 ? "it" : "them"} where ${observations.length === 1 ? "it belongs" : "they belong"}.`,
-    };
-  }
-  return {
-    question: `What the run found about ${observations.length === 1 ? what : `these ${what}`} contradicts itself.`,
-    advice: `The run placed ${observations.length === 1 ? "it nowhere" : "none of them"}. Place each where it belongs, or dismiss the item to leave ${observations.length === 1 ? "it" : "them"} alone.`,
-  };
+/** What the item is about, in a line. */
+function asked({ item, observations, candidates }: ReviewCase): string {
+  const what = observations.length === 1 ? recordName(observations[0]!) : count(observations.length, "record");
+  return item.kind === "possible_merge"
+    ? `${what} matched ${count(candidates.length, "identity")}`
+    : `Conflicting evidence about ${what}`;
 }
 
 function CaseCard({
@@ -273,7 +254,6 @@ function CaseCard({
   const open = item.status === "open";
   const waiting = observations.filter((observation) => !observation.identity);
   const rules = ruled(found, waiting);
-  const { question, advice } = asked(found, rules.apart);
   return (
     <article aria-label={`Review item ${item.id}`} {...stylex.props(styles.card)}>
       <header {...stylex.props(styles.cardHead)}>
@@ -283,11 +263,11 @@ function CaseCard({
           {open ? null : <Word value={item.status} />}
           <span>{item.entity_type}</span>
           <span>
-            raised by <Ref kind="run" id={item.run} label={`run ${item.run}`} />
+            <Ref kind="run" id={item.run} label={`run ${item.run}`} />
           </span>
         </div>
-        <h2 {...stylex.props(styles.question)}>{question}</h2>
-        {open ? <Quiet>{advice}</Quiet> : <Outcome item={item} />}
+        <h2 {...stylex.props(styles.question)}>{asked(found)}</h2>
+        {open ? null : <Outcome item={item} />}
       </header>
       <Compare found={found} open={open} waiting={waiting} rules={rules} done={done} />
       {open ? (
@@ -295,7 +275,7 @@ function CaseCard({
           {waiting.length > 0 && candidates.length > 1 ? (
             rules.apart ? (
               <span data-part="apart" {...stylex.props(styles.apart)}>
-                A constraint keeps these apart, so they cannot be merged into one.
+                Cannot be merged: a cannot_link constraint is between them.
               </span>
             ) : (
               <MergeAndPlace found={found} head={head} waiting={waiting} done={done} />
@@ -305,12 +285,12 @@ function CaseCard({
             label="Dismiss"
             variant="ghost"
             title={`Dismiss review item ${item.id}`}
-            about="The item is closed without placing its records. They keep no identity, and later runs leave them alone."
+            about="Its records stay unassigned, and later runs skip them."
             who
             why="Reason"
             act={async (client, { actor, reason }) => {
               await client.dismissReview(item.id, { actor, reason });
-              return "The item was dismissed. Later runs leave its observations alone.";
+              return "Dismissed.";
             }}
             done={done}
           />
@@ -332,7 +312,7 @@ function Outcome({ item }: { item: ReviewRecord }) {
             at <Ref kind="log" id={item.resolved_seq} label={`log position ${item.resolved_seq}`} />
           </>
         ) : null}
-        : every record it names has an identity.
+        .
       </Quiet>
     );
   }
@@ -358,14 +338,14 @@ function Outcome({ item }: { item: ReviewRecord }) {
   }
   return (
     <Quiet>
-      Raised again
+      Superseded
       {item.superseded_by ? (
         <>
           {" "}
           by <Ref kind="run" id={item.superseded_by} label={`run ${item.superseded_by}`} />
         </>
       ) : null}
-      , as a later item.
+      .
     </Quiet>
   );
 }
@@ -413,14 +393,14 @@ function Compare({
   const matched = new Set(candidates.map((candidate) => candidate.identity.id));
   return (
     <div {...stylex.props(styles.compare)}>
-      <ShelfTable.Root aria-label={`What review item ${found.item.id} is decided from`}>
+      <ShelfTable.Root aria-label={`Review item ${found.item.id}`}>
         <ShelfTable.Header>
           <ShelfTable.Row style={styles.row}>
             <ShelfTable.Head style={[styles.cell, styles.corner]} />
             {observations.map((observation) => (
               <ShelfTable.Head key={observation.id} scope="col" style={[styles.cell, styles.column, styles.waits]}>
                 <span {...stylex.props(styles.columnKind)}>
-                  {observation.identity ? "Record" : "Waits for an identity"}
+                  {observation.identity ? "Record" : "Unassigned record"}
                 </span>
                 <span {...stylex.props(styles.columnName)}>
                   <Ref kind="observation" id={observation.id} label={recordName(observation)} />
@@ -433,7 +413,7 @@ function Compare({
             ))}
             {candidates.map((candidate) => (
               <ShelfTable.Head key={candidate.identity.id} scope="col" style={[styles.cell, styles.column]}>
-                <span {...stylex.props(styles.columnKind)}>Identity it matched</span>
+                <span {...stylex.props(styles.columnKind)}>Matched identity</span>
                 <span {...stylex.props(styles.columnName)}>
                   <Ref kind="identity" id={candidate.identity.id} label={identityName(candidate.identity)} />
                 </span>
@@ -442,7 +422,7 @@ function Compare({
                   <Sources sources={candidate.identity.sources} />
                   {/* The case holds some of the records of a large identity: what is compared below is theirs. */}
                   {candidate.members.length < candidate.identity.members ? (
-                    <span data-part="sample">{candidate.members.length} of them compared here</span>
+                    <span data-part="sample">{candidate.members.length} shown</span>
                   ) : null}
                 </span>
               </ShelfTable.Head>
@@ -484,7 +464,7 @@ function Compare({
                     )}
                     {ordered.length > MOST_VALUES ? (
                       <span data-part="more" {...stylex.props(styles.none)}>
-                        and {ordered.length - MOST_VALUES} more values
+                        +{ordered.length - MOST_VALUES} more
                       </span>
                     ) : null}
                   </ShelfTable.Cell>
@@ -494,7 +474,7 @@ function Compare({
           ))}
           <ShelfTable.Row data-part="found" style={styles.row}>
             <ShelfTable.Head scope="row" style={[styles.cell, styles.rowName]}>
-              The run found
+              Judgements
             </ShelfTable.Head>
             {observations.map((observation) => (
               <ShelfTable.Cell key={observation.id} style={[styles.cell, styles.value, styles.waits]}>
@@ -518,7 +498,6 @@ function Compare({
                       !observations.some((other) => other.id === judgement.other),
                   )}
                   named={named}
-                  rest="against its records"
                 />
               </ShelfTable.Cell>
             ))}
@@ -526,7 +505,7 @@ function Compare({
           {constraints.length > 0 ? (
             <ShelfTable.Row data-part="decided" style={styles.row}>
               <ShelfTable.Head scope="row" style={[styles.cell, styles.rowName]}>
-                Already decided
+                Constraints
               </ShelfTable.Head>
               {observations.map((observation) => (
                 <ShelfTable.Cell key={observation.id} style={[styles.cell, styles.value, styles.waits]}>
@@ -554,7 +533,7 @@ function Compare({
           {open && waiting.length > 0 ? (
             <ShelfTable.Row style={[styles.row, styles.decide]}>
               <ShelfTable.Head scope="row" style={[styles.cell, styles.rowName]}>
-                Decide
+                Assign
               </ShelfTable.Head>
               <ShelfTable.Cell colSpan={observations.length} style={[styles.cell, styles.waits]}>
                 <Place
@@ -562,7 +541,7 @@ function Compare({
                   waiting={waiting}
                   rules={rules}
                   to={NEW}
-                  label={waiting.length === 1 ? "None of them: new identity" : "None of them: new identities"}
+                  label={waiting.length === 1 ? "New identity" : "New identities"}
                   icon={<PlusIcon />}
                   done={done}
                 />
@@ -570,16 +549,14 @@ function Compare({
               {candidates.map((candidate) => (
                 <ShelfTable.Cell key={candidate.identity.id} style={styles.cell}>
                   {waiting.every((observation) => rules.barred(observation.id, candidate.identity.id)) ? (
-                    <span {...stylex.props(styles.none)}>
-                      {waiting.length === 1 ? "It cannot go here" : "None of them can go here"}
-                    </span>
+                    <span {...stylex.props(styles.none)}>Blocked by a constraint</span>
                   ) : (
                     <Place
                       found={found}
                       waiting={waiting}
                       rules={rules}
                       to={candidate.identity.id}
-                      label={`Place in ${identityName(candidate.identity)}`}
+                      label={`Assign to ${identityName(candidate.identity)}`}
                       icon={<CheckIcon />}
                       primary
                       done={done}
@@ -601,7 +578,7 @@ function Value({ value, agrees, times }: { value: string | null; agrees?: boolea
   return (
     <span data-agrees={agrees} {...stylex.props(styles.held)}>
       {agrees === undefined ? null : agrees ? (
-        <CheckIcon aria-label="The same" aria-hidden={false} {...stylex.props(styles.agrees)} />
+        <CheckIcon aria-label="Same" aria-hidden={false} {...stylex.props(styles.agrees)} />
       ) : (
         <span role="img" aria-label="Different" {...stylex.props(styles.differs)} />
       )}
@@ -615,7 +592,7 @@ function Value({ value, agrees, times }: { value: string | null; agrees?: boolea
 
 /** What the constraints in force say of some pairs, each with the changeset that made it. */
 function Constraints({ constraints, names }: { constraints: CaseConstraint[]; names: Map<string, string> }) {
-  if (constraints.length === 0) return <span {...stylex.props(styles.none)}>nothing</span>;
+  if (constraints.length === 0) return <span {...stylex.props(styles.none)}>none</span>;
   return (
     <span {...stylex.props(styles.judgements)}>
       {constraints.map((constraint) => (
@@ -625,15 +602,14 @@ function Constraints({ constraints, names }: { constraints: CaseConstraint[]; na
           data-kind={constraint.kind}
           {...stylex.props(styles.judgement)}
         >
-          <Word value={constraint.kind} label={constraint.kind === "cannot_link" ? "kept apart" : "kept together"} />
+          <Word value={constraint.kind} />
           <span>
             <Ref kind="observation" id={constraint.a} label={names.get(constraint.a)} /> and{" "}
-            <Ref kind="observation" id={constraint.b} label={names.get(constraint.b)} />{" "}
-            {constraint.kind === "cannot_link" ? "must not share an identity" : "must share an identity"}, since{" "}
+            <Ref kind="observation" id={constraint.b} label={names.get(constraint.b)} />, since{" "}
             <Ref kind="log" id={constraint.from} label={`log position ${constraint.from}`} />
           </span>
           <Onward path={["explain"]} query={{ a: constraint.a, b: constraint.b }}>
-            why
+            explain
           </Onward>
         </span>
       ))}
@@ -658,16 +634,7 @@ const MOST_JUDGEMENTS = 6;
  * counted by verdict, with a button that writes them out: none is left out
  * unsaid.
  */
-function Judgements({
-  judgements,
-  named,
-  rest = "",
-}: {
-  judgements: PairJudgement[];
-  named: Map<string, string>;
-  /** What the judgements that are not written out are said to be, after "and 3 more". */
-  rest?: string;
-}) {
+function Judgements({ judgements, named }: { judgements: PairJudgement[]; named: Map<string, string> }) {
   const [all, setAll] = useState(false);
   const ordered = foremost(judgements);
   const shown = all ? ordered : ordered.slice(0, MOST_JUDGEMENTS);
@@ -677,7 +644,7 @@ function Judgements({
     shown.map((judgement) => judgement.other),
     named,
   );
-  if (judgements.length === 0) return <span {...stylex.props(styles.none)}>no verdict</span>;
+  if (judgements.length === 0) return <span {...stylex.props(styles.none)}>none</span>;
   return (
     <span {...stylex.props(styles.judgements)}>
       {shown.map((judgement) => {
@@ -695,7 +662,7 @@ function Judgements({
               {judgement.score !== null && judgement.score !== undefined ? `, score ${judgement.score}` : ""}
             </span>
             <Onward path={["explain"]} query={{ a: judgement.observation, b: judgement.other }}>
-              why
+              explain
             </Onward>
           </span>
         );
@@ -703,7 +670,7 @@ function Judgements({
       {more.length > 0 ? (
         <span {...stylex.props(styles.judgement)}>
           <span data-part="more" {...stylex.props(styles.none)}>
-            and {more.length} more{rest ? ` ${rest}` : ""}: {tally(more)}
+            +{more.length} more: {tally(more)}
           </span>
           <Button variant="ghost" size="sm" onClick={() => setAll(true)}>
             Show all {ordered.length}
@@ -745,8 +712,7 @@ function Place({
       icon={icon}
       size="sm"
       variant={primary ? "default" : "outline"}
-      title={waiting.length === 1 ? `Place ${recordName(waiting[0]!)}` : `Place ${count(waiting.length, "record")}`}
-      about="Once every record the item names has an identity, the item is resolved."
+      title={waiting.length === 1 ? `Assign ${recordName(waiting[0]!)}` : `Assign ${count(waiting.length, "record")}`}
       who
       why="Reason"
       act={async (client, { actor, reason, entered }) => {
@@ -754,7 +720,7 @@ function Place({
           const where = String(entered.get(`to-${observation.id}`) ?? "");
           return where === "" ? [] : [{ observation: observation.id, to: where }];
         });
-        if (chosen.length === 0) throw new Mistake("Choose where at least one of them goes.");
+        if (chosen.length === 0) throw new Mistake("Choose an identity for at least one record.");
         const created = chosen.filter((choice) => choice.to === NEW).length;
         const minted = created > 0 ? (await client.mintIds({ identities: created })).identities : [];
         const ops: Op[] = [];
@@ -769,19 +735,19 @@ function Place({
         const committed = await client.commit({ actor, reason, ops });
         return (
           <>
-            {count(chosen.length, "observation")} placed at <At committed={committed} />.
+            {count(chosen.length, "record")} assigned at <At committed={committed} />.
           </>
         );
       }}
       done={done}
     >
       {waiting.map((observation) => (
-        <Labelled key={observation.id} label={`Where ${observationName(observation)} goes`}>
+        <Labelled key={observation.id} label={observationName(observation)}>
           {/* An identity the record is kept apart from is not a choice, and is not proposed. */}
           <Select
             name={`to-${observation.id}`}
             defaultValue={rules.barred(observation.id, to) ? "" : to}
-            any="nowhere yet"
+            any="Leave unassigned"
             choices={[
               ...candidates
                 .filter(({ identity }) => !rules.barred(observation.id, identity.id))
@@ -789,7 +755,7 @@ function Place({
                   value: identity.id,
                   label: `${identityName(identity)} (${short(identity.id)})`,
                 })),
-              { value: NEW, label: "a new identity of its own" },
+              { value: NEW, label: "New identity" },
             ]}
           />
         </Labelled>
@@ -822,10 +788,10 @@ function MergeAndPlace({
   if (!into) return null;
   return (
     <Act
-      label="They are one: merge them"
+      label="Merge identities"
       icon={<MergeIcon />}
-      title={`Merge ${count(found.candidates.length, "identity")} and place ${waiting.length === 1 ? recordName(waiting[0]!) : count(waiting.length, "record")}`}
-      about={`${others.map(({ identity }) => identityName(identity)).join(" and ")} ${others.length === 1 ? "is" : "are"} merged into ${identityName(into.identity)}, which has the most records, and ${waiting.length === 1 ? "the record that waits is" : "the records that wait are"} placed in it. Undoing the changeset in the log takes it back.`}
+      title={`Merge ${count(found.candidates.length, "identity")}`}
+      about={`Merges ${others.map(({ identity }) => identityName(identity)).join(", ")} into ${identityName(into.identity)}, and assigns ${waiting.length === 1 ? recordName(waiting[0]!) : count(waiting.length, "record")} to it.`}
       who
       why="Reason"
       act={async (client, { actor, reason }) => {
@@ -845,7 +811,7 @@ function MergeAndPlace({
         });
         return (
           <>
-            {count(found.candidates.length, "identity")} merged and {count(waiting.length, "observation")} placed at{" "}
+            {count(found.candidates.length, "identity")} merged and {count(waiting.length, "record")} assigned at{" "}
             <At committed={committed} />.
           </>
         );

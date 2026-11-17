@@ -33,7 +33,7 @@ export function Overview() {
     return { info, runs };
   });
   return (
-    <Page title="Overview" about="What this server holds, where it came from, and what waits for someone.">
+    <Page title="Overview">
       <Load state={loaded}>{({ info, runs }) => <Store info={info} runs={runs} />}</Load>
     </Page>
   );
@@ -44,7 +44,7 @@ function Store({ info, runs }: { info: Info; runs: RunRecord[] }) {
   return (
     <>
       <Waiting types={store.entity_types} />
-      {store.entity_types.length === 0 ? <Quiet>The project declares no entity type.</Quiet> : null}
+      {store.entity_types.length === 0 ? <Quiet>No entity types declared.</Quiet> : null}
       {store.entity_types.map((type) => (
         <Section key={type.name} title={`Entity type ${type.name}`}>
           <div {...stylex.props(styles.stats)}>
@@ -60,19 +60,19 @@ function Store({ info, runs }: { info: Info; runs: RunRecord[] }) {
             />
             <Stat
               number={type.unassigned}
-              label="without an identity"
+              label="unassigned"
               address={href(["records"], { type: type.name, unassigned: true })}
               waits={type.unassigned > 0}
             />
             <Stat
               number={type.open_review_items}
-              label={type.open_review_items === 1 ? "review item open" : "review items open"}
+              label={type.open_review_items === 1 ? "open review item" : "open review items"}
               address={href(["review"], { type: type.name })}
               waits={type.open_review_items > 0}
             />
           </div>
           <Table
-            label={`Where the ${type.name} records came from`}
+            label={`${type.name} sources`}
             columns={[
               {
                 title: "Source",
@@ -87,7 +87,7 @@ function Store({ info, runs }: { info: Info; runs: RunRecord[] }) {
               },
               { title: "Records", cell: (source) => source.observations, number: true },
               {
-                title: "Without an identity",
+                title: "Unassigned",
                 cell: (source) =>
                   source.unassigned > 0 ? (
                     <LinkTo path={["records"]} query={{ type: type.name, source: source.source, unassigned: true }}>
@@ -102,7 +102,7 @@ function Store({ info, runs }: { info: Info; runs: RunRecord[] }) {
             ]}
             rows={type.sources}
             rowKey={(source) => source.source}
-            empty={`Nothing has been ingested as ${type.name} yet.`}
+            empty="No records yet."
           />
           <Fields
             rows={[
@@ -143,7 +143,7 @@ function Store({ info, runs }: { info: Info; runs: RunRecord[] }) {
             { title: "Kind", cell: (run) => run.kind },
             { title: "Status", cell: (run) => <Word value={run.status} /> },
             {
-              title: "About",
+              title: "Details",
               cell: (run) =>
                 [run.entity_type, run.strategy?.name, run.extractor?.name].filter((part) => part).join(", "),
             },
@@ -151,7 +151,7 @@ function Store({ info, runs }: { info: Info; runs: RunRecord[] }) {
           ]}
           rows={runs}
           rowKey={(run) => run.run}
-          empty="Nothing has run yet."
+          empty="No runs yet."
         />
       </Section>
       {(store.extractors ?? []).length > 0 ? (
@@ -159,12 +159,12 @@ function Store({ info, runs }: { info: Info; runs: RunRecord[] }) {
           <Table
             columns={[
               { title: "Extractor", cell: (extractor) => <Code>{extractor.name}</Code> },
-              { title: "Runs with", cell: (extractor) => extractor.runtime },
+              { title: "Runtime", cell: (extractor) => extractor.runtime },
               { title: "File", cell: (extractor) => <Code>{extractor.file}</Code> },
             ]}
             rows={store.extractors ?? []}
             rowKey={(extractor) => extractor.name}
-            empty="The project has no extractor."
+            empty="No extractors."
           />
         </Section>
       ) : null}
@@ -189,8 +189,7 @@ function Waiting({ types }: { types: TypeInfo[] }) {
     if (type.open_review_items > 0) {
       lines.push(
         <span key={`${type.name}-review`}>
-          {count(type.open_review_items, "review item")} of {type.name}{" "}
-          {type.open_review_items === 1 ? "waits" : "wait"} for a decision.{" "}
+          {count(type.open_review_items, "open review item")} ({type.name}){" "}
           <Onward path={["review"]} query={{ type: types.length > 1 ? type.name : undefined }}>
             Review
           </Onward>
@@ -200,14 +199,13 @@ function Waiting({ types }: { types: TypeInfo[] }) {
     if (type.open_draft) {
       lines.push(
         <span key={`${type.name}-draft`}>
-          A run left a draft of {type.name} changes for approval.{" "}
-          <Onward path={["drafts", type.open_draft]}>Open the draft</Onward>
+          1 draft to approve ({type.name}) <Onward path={["drafts", type.open_draft]}>Open</Onward>
         </span>,
       );
     }
   }
   if (lines.length === 0) {
-    return types.length > 0 ? <Notice tone="good">Nothing waits for a decision.</Notice> : null;
+    return types.length > 0 ? <Notice tone="good">Nothing to review.</Notice> : null;
   }
   return <Notice tone="waits">{lines}</Notice>;
 }

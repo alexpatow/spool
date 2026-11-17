@@ -15,7 +15,6 @@ import {
   Notice,
   Page,
   Panel,
-  Quiet,
   Reason,
   Ref,
   Row,
@@ -44,7 +43,7 @@ import type { Route } from "../router.ts";
 export function Explain({ route }: { route: Route }) {
   const { a, b } = route.query;
   return (
-    <Page title="Explain" about="Why two records share an identity, or why they do not, from what the store holds.">
+    <Page title="Explain">
       <Ask a={a} b={b} />
       {a && b ? <Answer a={a} b={b} /> : null}
     </Page>
@@ -65,7 +64,7 @@ function Ask({ a, b }: { a?: string; b?: string }) {
           const entered = new FormData(event.currentTarget);
           const references = ["a", "b"].map((name) => String(entered.get(name) ?? "").trim());
           if (references.some((reference) => reference === "")) {
-            setProblem("An explanation is about two observations.");
+            setProblem("Enter two records.");
             return;
           }
           setBusy(true);
@@ -74,7 +73,7 @@ function Ask({ a, b }: { a?: string; b?: string }) {
             (found) => {
               setBusy(false);
               const missing = references.find((_, index) => found[index] === null);
-              if (missing !== undefined) setProblem(`No observation is named ${missing}.`);
+              if (missing !== undefined) setProblem(`No record found for ${missing}.`);
               else navigate(href(["explain"], { a: found[0]!.id, b: found[1]!.id }));
             },
             (error: unknown) => {
@@ -84,21 +83,21 @@ function Ask({ a, b }: { a?: string; b?: string }) {
           );
         }}
       >
-        <Labelled label="One observation">
+        <Labelled label="Left record">
           <Input
             name="a"
             defaultValue={a ?? ""}
-            placeholder="an ID, or source:key"
+            placeholder="ID or source:key"
             spellCheck={false}
             autoComplete="off"
             style={styles.box}
           />
         </Labelled>
-        <Labelled label="The other">
+        <Labelled label="Right record">
           <Input
             name="b"
             defaultValue={b ?? ""}
-            placeholder="an ID, or source:key"
+            placeholder="ID or source:key"
             spellCheck={false}
             autoComplete="off"
             style={styles.box}
@@ -123,9 +122,9 @@ function Answer({ a, b }: { a: string; b: string }) {
 }
 
 const OUTCOMES: Record<string, string> = {
-  same_identity: "The same identity",
+  same_identity: "Same identity",
   different_identities: "Different identities",
-  unassigned: "Not both placed",
+  unassigned: "Not both assigned",
   different_types: "Different entity types",
 };
 
@@ -158,7 +157,7 @@ function ExplanationView({ explanation }: { explanation: Explanation }) {
       <Features left={left} right={right} />
       {explanation.rules ? <Rules rules={explanation.rules} /> : null}
       {explanation.comparisons.length > 0 ? (
-        <Section title="Runs that compared them">
+        <Section title="Comparisons">
           <Table
             columns={[
               {
@@ -187,10 +186,10 @@ function ExplanationView({ explanation }: { explanation: Explanation }) {
                 ),
               },
               {
-                title: "Found by",
+                title: "Block rules",
                 cell: (comparison) =>
                   comparison.blocked_by.length === 0
-                    ? "no block rule"
+                    ? "none"
                     : comparison.blocked_by.map((rule, index) => (
                         <span key={rule}>
                           {index > 0 ? ", " : ""}
@@ -199,11 +198,11 @@ function ExplanationView({ explanation }: { explanation: Explanation }) {
                       )),
               },
               {
-                title: "Judged",
+                title: "Judgements",
                 wrap: true,
                 cell: (comparison) =>
                   comparison.judgements.length === 0
-                    ? "no judgement"
+                    ? "none"
                     : comparison.judgements.map((judgement, index) => (
                         <span key={index}>
                           {index > 0 ? " " : ""}
@@ -221,33 +220,13 @@ function ExplanationView({ explanation }: { explanation: Explanation }) {
             ]}
             rows={explanation.comparisons}
             rowKey={(comparison) => comparison.run}
-            empty="No run compared them."
+            empty="No comparisons."
           />
-        </Section>
-      ) : null}
-      {explanation.constraints.length > 0 ? (
-        <Section title="Constraints between them">
-          <Lines>
-            {explanation.constraints.map((record) => (
-              <li key={`${record.kind}-${record.from}`}>
-                <Word value={record.kind} /> from{" "}
-                <Ref kind="log" id={record.from} label={`log position ${record.from}`} />
-                {record.to !== null && record.to !== undefined ? (
-                  <>
-                    {" "}
-                    until <Ref kind="log" id={record.to} label={`position ${record.to}`} />
-                  </>
-                ) : (
-                  ", in force"
-                )}
-              </li>
-            ))}
-          </Lines>
         </Section>
       ) : null}
       <Constrain explanation={explanation} />
       {explanation.review_items.length > 0 ? (
-        <Section title="Review items that name them">
+        <Section title="Review items">
           <Lines>
             {explanation.review_items.map((item) => (
               <li key={item.id}>
@@ -261,7 +240,7 @@ function ExplanationView({ explanation }: { explanation: Explanation }) {
         </Section>
       ) : null}
       {explanation.path.length > 1 ? (
-        <Section title="What joins them">
+        <Section title="Path">
           <Chain path={explanation.path} names={names} />
         </Section>
       ) : null}
@@ -270,8 +249,8 @@ function ExplanationView({ explanation }: { explanation: Explanation }) {
 }
 
 const KINDS: Record<ConstraintKind, string> = {
-  must_link: "must share an identity",
-  cannot_link: "must not share an identity",
+  must_link: "always the same identity",
+  cannot_link: "never the same identity",
 };
 
 /**
@@ -281,6 +260,7 @@ const KINDS: Record<ConstraintKind, string> = {
  */
 function Constrain({ explanation }: { explanation: Explanation }) {
   const [done, setDone] = useState<ReactNode>(null);
+  // Two records of different entity types are never compared, so nothing is said of them.
   if (explanation.outcome === "different_types") return null;
   const a = explanation.left.observation.id;
   const b = explanation.right.observation.id;
@@ -292,17 +272,31 @@ function Constrain({ explanation }: { explanation: Explanation }) {
         ? ["cannot_link"]
         : ["must_link", "cannot_link"];
   return (
-    <Section
-      title="Constrain them"
-      about="A constraint holds whatever a run judges: no run joins or parts the two against it."
-    >
+    <Section title="Constraints" about="A constraint overrides what runs decide for this pair.">
       <Done>{done}</Done>
+      {explanation.constraints.length > 0 ? (
+        <Lines>
+          {explanation.constraints.map((record) => (
+            <li key={`${record.kind}-${record.from}`}>
+              <Word value={record.kind} /> from{" "}
+              <Ref kind="log" id={record.from} label={`log position ${record.from}`} />
+              {record.to !== null && record.to !== undefined ? (
+                <>
+                  {" "}
+                  until <Ref kind="log" id={record.to} label={`position ${record.to}`} />
+                </>
+              ) : (
+                ", active"
+              )}
+            </li>
+          ))}
+        </Lines>
+      ) : null}
       <Row>
         {inForce.map((record) => (
           <Act
             key={record.kind}
-            label={`Remove the ${record.kind} constraint`}
-            about="Runs are free to join or part the two again."
+            label={`Remove ${record.kind}`}
             who
             why="Reason"
             act={async (client, { actor, reason }) => {
@@ -313,7 +307,7 @@ function Constrain({ explanation }: { explanation: Explanation }) {
               });
               return (
                 <>
-                  The {record.kind} constraint was removed at <At committed={committed} />.
+                  Removed {record.kind} at <At committed={committed} />.
                 </>
               );
             }}
@@ -322,9 +316,7 @@ function Constrain({ explanation }: { explanation: Explanation }) {
         ))}
         {inForce.length === 0 ? (
           <Act
-            label="Record it"
-            title="Record what you know about the two"
-            about="It is kept as a constraint, which every run from now on keeps to."
+            label="Add constraint"
             who
             why="Reason"
             act={async (client, { actor, reason, entered }) => {
@@ -332,17 +324,17 @@ function Constrain({ explanation }: { explanation: Explanation }) {
               const committed = await client.commit({ actor, reason, ops: [{ op: "constrain", kind, a, b }] });
               return (
                 <>
-                  The {kind} constraint was recorded at <At committed={committed} />.
+                  Added {kind} at <At committed={committed} />.
                 </>
               );
             }}
             done={setDone}
           >
-            <Labelled label="The two">
+            <Labelled label="Kind">
               <Select
                 name="kind"
                 defaultValue={kinds[0]}
-                choices={kinds.map((kind) => ({ value: kind, label: `${KINDS[kind]} (${kind})` }))}
+                choices={kinds.map((kind) => ({ value: kind, label: `${kind}: ${KINDS[kind]}` }))}
               />
             </Labelled>
           </Act>
@@ -365,20 +357,16 @@ function Side({ title, letter, explained }: { title: string; letter: string; exp
       </div>
       <Fields
         rows={[
-          ["Observation", <Ref kind="observation" id={observation.id} label={observationName(observation)} />],
+          ["Record", <Ref kind="observation" id={observation.id} label={observationName(observation)} />],
           ["Source", <Source name={observation.source} />],
           ["ID", <Ref kind="observation" id={observation.id} />],
           ["Entity type", observation.entity_type],
           [
             "Identity",
-            observation.identity ? (
-              <Identity id={observation.identity} labels={labels} />
-            ) : (
-              <Word value="unassigned" label="none" />
-            ),
+            observation.identity ? <Identity id={observation.identity} labels={labels} /> : <Word value="unassigned" />,
           ],
           [
-            "Placed",
+            "Assigned",
             placed ? (
               <>
                 at <Ref kind="log" id={placed.seq} label={`log position ${placed.seq}`} /> by{" "}
@@ -408,7 +396,7 @@ function Features({ left, right }: { left: Explained; right: Explained }) {
   if (names.length === 0) return null;
   const value = (side: Explained, name: string) => side.features?.[name];
   return (
-    <Section title="Features" about="What the rules read of each. A row is marked where the two have the same value.">
+    <Section title="Features">
       <Panel flush>
         <ShelfTable.Root aria-label="Features">
           <ShelfTable.Header>
@@ -432,7 +420,7 @@ function Features({ left, right }: { left: Explained; right: Explained }) {
                   <ShelfTable.Cell style={[styles.cell, styles.wrap]}>{plain(l)}</ShelfTable.Cell>
                   <ShelfTable.Cell style={[styles.cell, styles.wrap]}>{plain(r)}</ShelfTable.Cell>
                   <ShelfTable.Cell style={[styles.cell, styles.sameMark]}>
-                    {same ? <CheckIcon aria-label="The same" aria-hidden={false} /> : null}
+                    {same ? <CheckIcon aria-label="Same" aria-hidden={false} /> : null}
                   </ShelfTable.Cell>
                 </ShelfTable.Row>
               );
@@ -454,11 +442,11 @@ function Rules({ rules }: { rules: RuleReading }) {
   const reading = (row: (typeof rows)[number]) => {
     if (row.holds === true) return <Word value="holds" />;
     if (row.holds === false) return <Word value="does_not_hold" label="does not hold" />;
-    if (row.group !== "block" && rules.failed) return <Word value="failed" label="cannot be applied to these values" />;
-    return <Word value="unsure" label="cannot be decided: a feature it reads is null" />;
+    if (row.group !== "block" && rules.failed) return <Word value="failed" label="error" />;
+    return <Word value="unsure" label="unknown: a feature is null" />;
   };
   return (
-    <Section title="Rules as they are now">
+    <Section title="Current rules">
       <Table
         columns={[
           { title: "Kind", cell: (row) => <Code>{row.group}</Code> },
@@ -472,24 +460,24 @@ function Rules({ rules }: { rules: RuleReading }) {
             ),
             wrap: true,
           },
-          { title: "On this pair", cell: reading },
+          { title: "Result", cell: reading },
         ]}
         rows={rows}
         rowKey={(row) => `${row.group}/${row.name}`}
-        empty="The entity type has no rules."
+        empty="No rules."
       />
-      {rules.failed ? <Notice tone="bad">Applying the no_match and match rules failed: {rules.failed}</Notice> : null}
+      {rules.failed ? <Notice tone="bad">The no_match and match rules failed: {rules.failed}</Notice> : null}
       <Text>
         {rules.candidate ? (
           rules.verdict ? (
             <>
-              A run of the rules would compare the two and judge <Word value={rules.verdict} />.
+              A run would judge this pair <Word value={rules.verdict} />.
             </>
           ) : (
-            "A run of the rules would compare the two and make no judgement."
+            "A run would compare this pair and make no judgement."
           )
         ) : (
-          "No block rule holds, so a run of the rules would not compare the two."
+          "No block rule holds, so a run would not compare this pair."
         )}
       </Text>
     </Section>
@@ -498,7 +486,7 @@ function Rules({ rules }: { rules: RuleReading }) {
 
 const LINKS: Record<Link["kind"], string> = {
   must_link: "must_link constraint",
-  version: "a later version of the same row",
+  version: "later version",
   match: "match",
 };
 

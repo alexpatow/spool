@@ -93,7 +93,7 @@ export function Load<T>({ state, children }: { state: Loaded<T>; children: (data
   if (state.status === "loading") {
     return (
       <p {...stylex.props(styles.quiet, styles.reading)}>
-        <Spinner role="presentation" aria-label={undefined} aria-hidden /> Reading…
+        <Spinner role="presentation" aria-label={undefined} aria-hidden /> Loading…
       </p>
     );
   }
@@ -306,7 +306,7 @@ export function More({ pages }: { pages: Pick<Pages<unknown>, "more" | "reading"
   return (
     <div {...stylex.props(styles.more)}>
       <Button variant="outline" size="sm" onClick={pages.readMore} disabled={pages.reading}>
-        {pages.reading ? "Reading…" : "Show more"}
+        {pages.reading ? "Loading…" : "Show more"}
       </Button>
     </div>
   );
@@ -453,7 +453,7 @@ export function Id({ value }: { value: string }) {
       <code data-part="id" {...stylex.props(styles.code)}>
         {value}
       </code>
-      <CopyButton text={value} label="Copy the ID" size="icon-xs" />
+      <CopyButton text={value} label="Copy ID" size="icon-xs" />
     </span>
   );
 }
@@ -714,11 +714,7 @@ export function useTicks(most?: number): {
   return {
     chosen,
     tick: (id) => (
-      <Checkbox
-        aria-label={`Choose observation ${id}`}
-        checked={chosen.includes(id)}
-        onCheckedChange={() => toggle(id)}
-      />
+      <Checkbox aria-label={`Select record ${id}`} checked={chosen.includes(id)} onCheckedChange={() => toggle(id)} />
     ),
   };
 }
@@ -727,10 +723,10 @@ export function useTicks(most?: number): {
 export function ExplainTicked({ chosen }: { chosen: string[] }) {
   return chosen.length === 2 ? (
     <Onward path={["explain"]} query={{ a: chosen[0], b: chosen[1] }}>
-      Explain the two that are ticked
+      Explain selected
     </Onward>
   ) : (
-    <Quiet>Tick two to ask why they share an identity, or why they do not.</Quiet>
+    <Quiet>Select two to explain.</Quiet>
   );
 }
 

@@ -10,7 +10,7 @@ import type { ReactNode } from "react";
 
 import { SpoolClient, SpoolError } from "./api.ts";
 import type { Fetch, Info } from "./api.ts";
-import { Code, Failure, Labelled, LinkTo, Notice, Page, Quiet, Text } from "./components.tsx";
+import { Code, Failure, Labelled, Notice, Page, Quiet, Text } from "./components.tsx";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Kbd } from "./components/ui/kbd";
@@ -151,7 +151,7 @@ export function App({
   if (connection.status === "checking") {
     return (
       <Door url={url}>
-        <Quiet>Asking the server what it holds…</Quiet>
+        <Quiet>Connecting…</Quiet>
       </Door>
     );
   }
@@ -238,17 +238,19 @@ function TokenForm({ guessed, connect }: { guessed: boolean; connect: (token: st
       }}
     >
       {guessed ? (
-        <Text>This server needs its bearer token: the value of SPOOL_TOKEN it was started with.</Text>
+        <Text>
+          Enter the server's token (<Code>SPOOL_TOKEN</Code>).
+        </Text>
       ) : (
         <Notice tone="bad" role="alert">
-          The server refused that token.
+          Token rejected.
         </Notice>
       )}
       <Labelled label="Token">
         <Input name="token" type="password" autoComplete="off" autoFocus />
       </Labelled>
       <Button type="submit">Connect</Button>
-      <Quiet>The token is kept in this tab until it is closed, and sent only to this server.</Quiet>
+      <Quiet>Stored in this tab only.</Quiet>
     </form>
   );
 }
@@ -279,11 +281,11 @@ function Shell({
   const route = useRoute();
   const [finding, setFinding] = useState(false);
   const types = info.store.entity_types;
-  const groups: Array<{ label: string; entries: Entry[] }> = [
+  const groups: Array<{ label: string | null; entries: Entry[] }> = [
+    { label: null, entries: [{ path: "", label: "Overview", icon: <LayoutDashboardIcon /> }] },
     {
-      label: "Decide",
+      label: "Inbox",
       entries: [
-        { path: "", label: "Overview", icon: <LayoutDashboardIcon /> },
         {
           path: "review",
           label: "Review",
@@ -299,7 +301,7 @@ function Shell({
       ],
     },
     {
-      label: "Look",
+      label: "Data",
       entries: [
         { path: "identities", label: "Identities", icon: <IdentityIcon /> },
         { path: "records", label: "Records", icon: <RecordIcon /> },
@@ -308,7 +310,7 @@ function Shell({
       ],
     },
     {
-      label: "What happened",
+      label: "History",
       entries: [
         { path: "runs", label: "Runs", icon: <RunIcon /> },
         { path: "log", label: "Log", icon: <LogIcon /> },
@@ -354,8 +356,8 @@ function Shell({
         <SidebarContent>
           <nav aria-label="Screens" {...stylex.props(styles.nav)}>
             {groups.map((group) => (
-              <SidebarGroup key={group.label}>
-                <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+              <SidebarGroup key={group.label ?? ""}>
+                {group.label ? <SidebarGroupLabel>{group.label}</SidebarGroupLabel> : null}
                 <SidebarMenu>
                   {group.entries.map((entry) => (
                     <SidebarMenuItem key={entry.path}>
@@ -390,13 +392,7 @@ function Shell({
               <span {...stylex.props(styles.serverMark)} />
               <span {...stylex.props(styles.serverName)}>{url.replace(/^https?:\/\//, "")}</span>
             </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={forget}
-              title="Forget the token and ask for it again"
-              style={styles.footButton}
-            >
+            <Button variant="ghost" size="sm" onClick={forget} style={styles.footButton}>
               <TokenIcon /> Change token
             </Button>
           </Hidden>
@@ -407,18 +403,18 @@ function Shell({
           <SidebarTrigger />
           <button type="button" onClick={() => setFinding(true)} {...stylex.props(styles.find)}>
             <SearchIcon />
-            <span {...stylex.props(styles.findWords)}>Find a name, an ID, or source:key</span>
+            <span {...stylex.props(styles.findWords)}>Search</span>
             <Kbd>⌘K</Kbd>
           </button>
           <div {...stylex.props(styles.barEnd)}>
-            <Button variant="ghost" size="sm" onClick={refresh} title="Read what is shown again">
+            <Button variant="ghost" size="sm" onClick={refresh}>
               <RefreshIcon /> Refresh
             </Button>
             <Button
               variant="ghost"
               size="icon-sm"
               onClick={toggleTheme}
-              aria-label={theme === "dark" ? "Make the page light" : "Make the page dark"}
+              aria-label={theme === "dark" ? "Light theme" : "Dark theme"}
             >
               {theme === "dark" ? <LightModeIcon /> : <DarkModeIcon />}
             </Button>
@@ -468,10 +464,8 @@ function Screen({ route, types }: { route: Route; types: string[] }) {
 
 function Nowhere() {
   return (
-    <Page title="No such screen">
-      <Text>
-        The studio has no screen at this address. <LinkTo path={[]}>Go to the overview.</LinkTo>
-      </Text>
+    <Page title="Not found">
+      <Text>No screen at this address.</Text>
     </Page>
   );
 }

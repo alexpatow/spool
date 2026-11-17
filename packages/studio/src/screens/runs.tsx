@@ -9,7 +9,6 @@ import {
   Notice,
   Onward,
   Page,
-  Quiet,
   Ref,
   Section,
   Table,
@@ -37,7 +36,7 @@ export function Runs({ route, types }: { route: Route; types: string[] }) {
     }),
   );
   return (
-    <Page title="Runs" about="Each ingest, extraction, match and reconcile the engine made, newest first.">
+    <Page title="Runs">
       <Filters
         path={["runs"]}
         query={route.query}
@@ -56,7 +55,7 @@ export function Runs({ route, types }: { route: Route; types: string[] }) {
                 { title: "Kind", cell: (run) => run.kind },
                 { title: "Status", cell: (run) => <Word value={run.status} /> },
                 {
-                  title: "About",
+                  title: "Details",
                   cell: (run) =>
                     [run.entity_type, run.strategy?.name, run.extractor?.name].filter((part) => part).join(", "),
                 },
@@ -135,28 +134,28 @@ function RunView({ run }: { run: RunRecord }) {
         </Notice>
       ) : null}
       {ingest ? (
-        <Section title="What it stored">
+        <Section title="Ingest">
           <Fields
             rows={[
               [
                 "Rows",
-                `${ingest.received} received: ${ingest.inserted} new, ${ingest.duplicates} known, ${ingest.superseded ?? 0} new versions of a known row`,
+                `${ingest.received} received: ${ingest.inserted} new, ${ingest.duplicates} duplicates, ${ingest.superseded ?? 0} new versions`,
               ],
             ]}
           />
         </Section>
       ) : null}
       {extraction ? (
-        <Section title="What it found">
+        <Section title="Extraction">
           <Fields
             rows={[
               ["Documents", `${extraction.documents} read`],
               [
                 "Mentions",
-                `${extraction.mentions} found: ${extraction.inserted} new, ${extraction.duplicates} known, ${extraction.superseded} new versions of a known mention`,
+                `${extraction.mentions} found: ${extraction.inserted} new, ${extraction.duplicates} duplicates, ${extraction.superseded} new versions`,
               ],
               [
-                "Stored by",
+                "Ingest run",
                 extraction.ingest_run ? (
                   <Ref kind="run" id={extraction.ingest_run} label={`ingest run ${extraction.ingest_run}`} />
                 ) : null,
@@ -167,12 +166,12 @@ function RunView({ run }: { run: RunRecord }) {
       ) : null}
       {resolution ? (
         <>
-          <Section title="What it made of them">
+          <Section title="Resolution">
             <Fields
               rows={[
                 [
                   "Examined",
-                  `${count(resolution.new_observations, "observation")}, ${resolution.reexamined} of them left for review before`,
+                  `${count(resolution.new_observations, "record")}, ${resolution.reexamined} of them from earlier review items`,
                 ],
                 ["Candidates", count(resolution.candidates, "pair")],
                 [
@@ -180,15 +179,15 @@ function RunView({ run }: { run: RunRecord }) {
                   `${resolution.judgements.match} match, ${resolution.judgements.no_match} no_match, ${resolution.judgements.unsure} unsure`,
                 ],
                 [
-                  "Placed",
-                  `${count(resolution.observations_assigned, "observation")}, ${count(resolution.identities_created, "identity")} created`,
+                  "Assigned",
+                  `${count(resolution.observations_assigned, "record")}, ${count(resolution.identities_created, "identity")} created`,
                 ],
                 [
-                  "Left out",
-                  `${count(resolution.observations_unassigned, "observation")} in ${count(resolution.review.length, "review item")}`,
+                  "Unassigned",
+                  `${count(resolution.observations_unassigned, "record")} in ${count(resolution.review.length, "review item")}`,
                 ],
                 [
-                  "Reconciled by",
+                  "Reconcile run",
                   <Ref kind="run" id={resolution.reconcile_run} label={`run ${resolution.reconcile_run}`} />,
                 ],
                 [
@@ -196,9 +195,7 @@ function RunView({ run }: { run: RunRecord }) {
                   resolution.committed ? (
                     <Ref kind="log" id={resolution.committed.seq} label={`log position ${resolution.committed.seq}`} />
                   ) : resolution.draft ? (
-                    <>
-                      <Ref kind="draft" id={resolution.draft} /> was left for review
-                    </>
+                    <Ref kind="draft" id={resolution.draft} />
                   ) : (
                     "nothing to commit"
                   ),
@@ -207,13 +204,13 @@ function RunView({ run }: { run: RunRecord }) {
             />
           </Section>
           {resolution.review.length > 0 ? (
-            <Section title="What it would not decide">
+            <Section title="Review items">
               <Lines>
                 {resolution.review.map((item, index) => (
                   <li key={index}>
                     {item.kind === "possible_merge"
-                      ? `${count(item.observations.length, "observation")} matched ${count(item.identities.length, "identity")}, which may be one: `
-                      : `the evidence about ${count(item.observations.length, "observation")} contradicts itself: `}
+                      ? `${count(item.observations.length, "record")} matched ${count(item.identities.length, "identity")}: `
+                      : `conflicting evidence about ${count(item.observations.length, "record")}: `}
                     {item.observations.map((observation, index) => (
                       <span key={observation}>
                         {index > 0 ? ", " : ""}
@@ -226,7 +223,7 @@ function RunView({ run }: { run: RunRecord }) {
             </Section>
           ) : null}
           {resolution.suggestions && resolution.suggestions.merges.length + resolution.suggestions.splits.length > 0 ? (
-            <Section title="Where the strategy disagrees with the identities as they are">
+            <Section title="Suggestions" about="Not applied.">
               <Lines>
                 {resolution.suggestions.merges.map((merge) => (
                   <li key={merge.identities.join()}>
@@ -242,7 +239,6 @@ function RunView({ run }: { run: RunRecord }) {
                   </li>
                 ))}
               </Lines>
-              <Quiet>Nothing here was applied.</Quiet>
             </Section>
           ) : null}
         </>

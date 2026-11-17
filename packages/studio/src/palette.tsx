@@ -117,7 +117,7 @@ export function Palette({
               <>
                 <ArrowRightIcon />
                 <span>
-                  Open what <code {...stylex.props(styles.code)}>{words}</code> names
+                  Go to <code {...stylex.props(styles.code)}>{words}</code>
                 </span>
               </>
             ),
@@ -126,7 +126,7 @@ export function Palette({
               findScreen(client, words).then(
                 (screen) => {
                   setBusy(false);
-                  if (screen === null) setProblem(`Nothing here is named ${words}.`);
+                  if (screen === null) setProblem(`${words} not found.`);
                   else go(screen)();
                 },
                 (error: unknown) => {
@@ -167,7 +167,7 @@ export function Palette({
                     line: (
                       <>
                         <SearchIcon />
-                        <span>Every identity that holds “{words}”</span>
+                        <span>All identities matching “{words}”</span>
                       </>
                     ),
                     go: go(href(["identities"], { q: words })),
@@ -202,7 +202,7 @@ export function Palette({
                     line: (
                       <>
                         <SearchIcon />
-                        <span>Every record that holds “{words}”</span>
+                        <span>All records matching “{words}”</span>
                       </>
                     ),
                     go: go(href(["records"], { q: words })),
@@ -239,14 +239,14 @@ export function Palette({
     <Command.Dialog
       open={open}
       onOpenChange={onOpenChange}
-      title="Find"
-      description="Find an identity or a record by words it holds, by its ID, or by its source and key."
+      title="Search"
+      description="Search identities and records."
       style={styles.dialog}
     >
       <Command.Root items={groups} filter={null} value={typed} onValueChange={(value) => setTyped(value)}>
         <Command.Input
-          aria-label="Find by words, by ID, or by source and key"
-          placeholder="A name, an ID, or source:key…"
+          aria-label="Search"
+          placeholder="Name, ID, or source:key"
           spellCheck={false}
           autoComplete="off"
         />
@@ -255,7 +255,7 @@ export function Palette({
             {problem}
           </div>
         ) : null}
-        <Command.List aria-label="What was found">
+        <Command.List aria-label="Results">
           {(group: Group) => (
             <Command.Group key={group.value} items={group.items}>
               <Command.GroupLabel>{group.value}</Command.GroupLabel>
@@ -271,12 +271,9 @@ export function Palette({
         </Command.List>
         {groups.length === 0 ? (
           <div role="status" {...stylex.props(styles.nothing)}>
-            {waiting ? "Looking…" : `Nothing here holds “${words}”.`}
+            {waiting ? "Searching…" : `No results for “${words}”.`}
           </div>
         ) : null}
-        <div {...stylex.props(styles.foot)}>
-          Every word has to be in a record: in one of its values, its source or its key.
-        </div>
       </Command.Root>
     </Command.Dialog>
   );
@@ -317,15 +314,5 @@ const styles = stylex.create({
     paddingBlock: spacing["2"],
     paddingInline: spacing["3"],
     color: colors.destructiveText,
-  },
-  foot: {
-    borderTopColor: colors.border,
-    borderTopStyle: "solid",
-    borderTopWidth: 1,
-    paddingBlock: spacing["2"],
-    paddingInline: spacing["3"],
-    color: colors.mutedForeground,
-    fontSize: typography.fontSizeXs,
-    lineHeight: typography.lineHeightXs,
   },
 });

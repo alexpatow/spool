@@ -93,17 +93,17 @@ export function describeOp(op: Op): Part[] {
     case "assign": {
       const { from, to } = op;
       if (from && to)
-        return ["move observation ", observation(op.observation), " from ", identity(from), " to ", identity(to)];
-      if (to) return ["place observation ", observation(op.observation), " in ", identity(to)];
-      if (from) return ["take observation ", observation(op.observation), " out of ", identity(from)];
-      return ["leave observation ", observation(op.observation), " without an identity"];
+        return ["move record ", observation(op.observation), " from ", identity(from), " to ", identity(to)];
+      if (to) return ["assign record ", observation(op.observation), " to ", identity(to)];
+      if (from) return ["unassign record ", observation(op.observation), " from ", identity(from)];
+      return ["leave record ", observation(op.observation), " unassigned"];
     }
     case "merge":
       return ["merge ", identity(op.from), " into ", identity(op.into)];
     case "constrain":
       return ["constrain ", observation(op.a), " and ", observation(op.b), `: ${op.kind}`];
     case "unconstrain":
-      return [`remove the ${op.kind} constraint on `, observation(op.a), " and ", observation(op.b)];
+      return [`remove ${op.kind} between `, observation(op.a), " and ", observation(op.b)];
     case "reinstate":
       return ["reinstate identity ", identity(op.identity)];
   }

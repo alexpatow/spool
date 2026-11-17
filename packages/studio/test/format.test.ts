@@ -99,13 +99,13 @@ describe("what is shown", () => {
     );
     expect(said).toEqual([
       "create company identity <identity 01a1e95d…55db>",
-      "place observation <observation 2060cadc…4ee7> in <identity 01a1e95d…55db>",
-      "move observation <observation 2060cadc…4ee7> from <identity 01a1e95d…55db> to <identity 01a1e95d…e882>",
-      "take observation <observation 2060cadc…4ee7> out of <identity 01a1e95d…e882>",
+      "assign record <observation 2060cadc…4ee7> to <identity 01a1e95d…55db>",
+      "move record <observation 2060cadc…4ee7> from <identity 01a1e95d…55db> to <identity 01a1e95d…e882>",
+      "unassign record <observation 2060cadc…4ee7> from <identity 01a1e95d…e882>",
       "merge <identity 01a1e95d…55db> into <identity 01a1e95d…e882>",
       "reinstate identity <identity 01a1e95d…55db>",
       "constrain <observation 2060cadc…4ee7> and <observation 42a8e89a…803a>: must_link",
-      "remove the cannot_link constraint on <observation 2060cadc…4ee7> and <observation 42a8e89a…803a>",
+      "remove cannot_link between <observation 2060cadc…4ee7> and <observation 42a8e89a…803a>",
     ]);
     expect(observationsOf(ops)).toEqual([A, B]);
   });
