@@ -369,6 +369,11 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// How often an explanation begins again when the declaration changed
+/// under it, and how long it waits in between.
+const EXPLAIN_ATTEMPTS: usize = 20;
+const EXPLAIN_PAUSE: std::time::Duration = std::time::Duration::from_millis(5);
+
 type RunWatcher = Box<dyn FnMut(RunId)>;
 
 thread_local! {
@@ -911,8 +916,30 @@ impl Engine {
     /// what every run that looked at the pair concluded, and what the
     /// project's rules say about it now.
     pub fn explain(&self, a: ObservationId, b: ObservationId) -> Result<Explanation> {
-        let manifest = self.manifest();
-        self.read(|conn| explain::explain(conn, manifest.as_deref(), a, b))
+        // The rules have to be those the feature tables were built for. The
+        // manifest is read before the store is, and `apply` can commit
+        // another declaration in between, so the read checks that the store
+        // was applied with the manifest it was given, and begins again with
+        // the engine's present manifest if not.
+        for _ in 0..EXPLAIN_ATTEMPTS {
+            let manifest = self.manifest();
+            let explanation = self.read(|conn| {
+                if let Some(manifest) = &manifest {
+                    let applied = schema::meta(conn, "manifest_hash")?;
+                    if applied.as_deref() != Some(manifest.hash.as_str()) {
+                        return Ok(None);
+                    }
+                }
+                explain::explain(conn, manifest.as_deref(), a, b).map(Some)
+            })?;
+            if let Some(explanation) = explanation {
+                return Ok(explanation);
+            }
+            std::thread::sleep(EXPLAIN_PAUSE);
+        }
+        // The declaration keeps changing. The rest of the explanation does
+        // not depend on it.
+        self.read(|conn| explain::explain(conn, None, a, b))
     }
 
     /// Mints IDs for a caller that writes its own changesets.

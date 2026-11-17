@@ -848,6 +848,67 @@ fn a_type_whose_features_are_only_the_observation_is_explained() {
 }
 
 #[test]
+fn an_explanation_reads_the_rules_of_the_declaration_its_features_were_built_from() {
+    let engine = engine();
+    ingest(
+        &engine,
+        "shop",
+        &[("1", Some("anvil"), None), ("2", Some("anvil"), None)],
+    );
+    resolve(&engine);
+    let (one, two) = (
+        observation(&engine, "shop", "1"),
+        observation(&engine, "shop", "2"),
+    );
+
+    // The same type with its feature columns under other names, as a
+    // project saved while `spool dev` runs would have them.
+    let mut renamed = thing();
+    renamed.features = SqlFile::new(
+        "features",
+        "SELECT observation_id, payload->>'name' AS label, payload->>'code' AS number
+         FROM observation",
+    );
+    renamed.block = vec![SqlFile::new("same_name", "l.label = r.label")];
+    renamed.no_match = vec![SqlFile::new("different_code", "l.number <> r.number")];
+    renamed.match_ = vec![SqlFile::new("same_name", "l.label = r.label")];
+    let (first, second) = (things(), manifest_of(vec![renamed]));
+
+    let applying = std::sync::atomic::AtomicBool::new(true);
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            for _ in 0..60 {
+                engine.apply(&second).unwrap();
+                engine.apply(&first).unwrap();
+            }
+            applying.store(false, std::sync::atomic::Ordering::Relaxed);
+        });
+        // Whichever declaration an explanation meets, its rules are those
+        // its feature rows were built for.
+        while applying.load(std::sync::atomic::Ordering::Relaxed) {
+            let explanation = engine.explain(one, two).unwrap();
+            let Some(rules) = &explanation.rules else {
+                continue;
+            };
+            let features = explanation.left.features.as_ref().unwrap();
+            let name = if features.contains_key("label") {
+                "label"
+            } else {
+                "name"
+            };
+            let rule = rules
+                .block
+                .iter()
+                .find(|rule| rule.name == "same_name")
+                .unwrap();
+            assert_eq!(rule.predicate, format!("l.{name} = r.{name}"));
+            assert_eq!(rule.holds, Some(true));
+            assert_eq!(rules.failed, None);
+        }
+    });
+}
+
+#[test]
 fn an_explanation_is_about_two_observations_the_store_holds() {
     let engine = engine();
     ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
