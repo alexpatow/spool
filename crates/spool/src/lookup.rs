@@ -44,6 +44,31 @@ pub struct ObservationRecord {
     pub superseded_by: Option<ObservationId>,
 }
 
+impl ObservationRecord {
+    /// What to call the observation in a sentence: `source:key`, which is
+    /// how the people who sent it know it. A mention is
+    /// `source:document[start-end]` with the document's own key, since the
+    /// key of a mention names its document by ID. An observation without a
+    /// key is its ID.
+    pub fn name(&self) -> String {
+        let mention = self.evidence.as_ref().and_then(|evidence| {
+            evidence.get("document")?;
+            Some(format!(
+                "{}:{}[{}-{}]",
+                self.source,
+                evidence.get("key")?.as_str()?,
+                evidence.get("start")?.as_u64()?,
+                evidence.get("end")?.as_u64()?
+            ))
+        });
+        match (mention, &self.key) {
+            (Some(mention), _) => mention,
+            (None, Some(key)) => format!("{}:{key}", self.source),
+            (None, None) => self.id.to_string(),
+        }
+    }
+}
+
 /// Which observations to list. Results are ordered by ID.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ObservationFilter {

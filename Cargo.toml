@@ -37,4 +37,7 @@ sha2 = "0.11"
 tempfile = "3"
 thiserror = "2"
 toml = "1"
+# The commands that read from a running server. The build of the `duckdb`
+# crate already depends on it, to download the DuckDB library.
+ureq = { version = "3.5", default-features = false, features = ["rustls"] }
 uuid = { version = "1.29", features = ["serde", "v7"] }

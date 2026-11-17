@@ -1,6 +1,8 @@
 pub mod bench;
 pub mod project;
+mod remote;
 pub mod serve;
+pub mod show;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;

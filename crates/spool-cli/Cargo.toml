@@ -23,6 +23,7 @@ serde.workspace = true
 serde_json.workspace = true
 spool = { workspace = true, features = ["schema"] }
 tokio.workspace = true
+ureq.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true

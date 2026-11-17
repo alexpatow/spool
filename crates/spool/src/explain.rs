@@ -552,15 +552,6 @@ fn path(
     Ok(chain)
 }
 
-/// How an observation is named in a sentence: by its source and key, which
-/// is how the people who sent it know it.
-fn name(observation: &ObservationRecord) -> String {
-    match &observation.key {
-        Some(key) => format!("{}:{key}", observation.source),
-        None => observation.id.to_string(),
-    }
-}
-
 fn listed<'a>(names: impl IntoIterator<Item = &'a str>) -> String {
     names
         .into_iter()
@@ -587,7 +578,7 @@ fn summary(explanation: &Explanation) -> Vec<String> {
         &explanation.right.observation,
     );
     // Two versions of one row have the same source and key.
-    let (l, r) = match (name(left), name(right)) {
+    let (l, r) = match (left.name(), right.name()) {
         (l, r) if l == r => (left.id.to_string(), right.id.to_string()),
         names => names,
     };
