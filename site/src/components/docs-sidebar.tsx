@@ -15,10 +15,10 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { Wordmark } from "@/components/brand";
 import type { NavGroup } from "@/lib/nav";
-import { site } from "@/lib/site";
 import { layout } from "@/styles/layout.stylex";
-import { colors, spacing, typography } from "@/styles/shelf/tokens.stylex";
+import { colors, spacing } from "@/styles/shelf/tokens.stylex";
 
 /** The page tree, on the left. Below 48rem Shelf turns it into a drawer. */
 export function DocsSidebar({ groups }: { groups: NavGroup[] }) {
@@ -30,7 +30,7 @@ export function DocsSidebar({ groups }: { groups: NavGroup[] }) {
     <Sidebar>
       <SidebarHeader style={styles.header}>
         <Link href="/" onClick={close} {...stylex.props(styles.wordmark)}>
-          {site.name}
+          <Wordmark />
         </Link>
       </SidebarHeader>
       <SidebarContent>
@@ -73,8 +73,6 @@ const styles = stylex.create({
   wordmark: {
     textDecoration: "none",
     color: colors.foreground,
-    fontSize: typography.fontSizeLg,
-    fontWeight: typography.fontWeightSemibold,
-    letterSpacing: "-0.02em",
+    display: "flex",
   },
 });

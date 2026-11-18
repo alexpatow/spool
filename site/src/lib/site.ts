@@ -1,12 +1,14 @@
 /** What the site says about itself, in one place. */
 export const site = {
   name: "Spool",
+  /** The front page's headline. */
+  headline: "Extract, resolve and track entities.",
+  /** The sentence under it, and the description a search result shows. */
   summary:
-    "Spool decides which records are the same real-world thing, and gives each thing an ID that stays the same as more records arrive.",
+    "Spool pulls records out of text and rows, decides which are the same real-world thing, and gives each thing an ID that stays the same as more arrive.",
+  title: "Spool: extract, resolve and track entities",
   description:
-    "Entity resolution with persistent identity. Sources and rules are files, records are matched in runs, and identities keep their IDs as data changes.",
-  problem:
-    "Your CRM, your billing system and a public registry each have their own row for the same company. Spool matches them with rules you write, gives the company one ID, and keeps that ID when more rows arrive or the rules improve. The matching is called entity resolution. The lasting ID is what Spool adds to it.",
+    "Spool pulls records out of text and rows, decides which are the same real-world thing, and gives each thing an ID that stays the same as more arrive.",
   // What `spool --version` prints. The samples check compares the two on the
   // Getting started page.
   version: "0.1.0",

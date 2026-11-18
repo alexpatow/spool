@@ -94,6 +94,7 @@ const styles = stylex.create({
     fontFamily: "inherit",
   },
   copy: {
+    backgroundColor: colors.card,
     position: "absolute",
     insetInlineEnd: spacing["2"],
     top: spacing["2"],

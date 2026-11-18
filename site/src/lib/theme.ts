@@ -1,6 +1,6 @@
 import * as stylex from "@stylexjs/stylex";
 
-import { darkTheme } from "@/styles/shelf/themes";
+import { darkLinen, darkTheme } from "@/styles/shelf/themes";
 
 export const THEME_STORAGE_KEY = "spool-theme";
 
@@ -11,7 +11,7 @@ export const THEME_STORAGE_KEY = "spool-theme";
  */
 export function themeScript(): string {
   const classes = JSON.stringify(
-    (stylex.props(darkTheme).className ?? "").split(" ").filter(Boolean),
+    (stylex.props(darkTheme, darkLinen).className ?? "").split(" ").filter(Boolean),
   );
   return `(function(){var t;try{t=localStorage.getItem(${JSON.stringify(THEME_STORAGE_KEY)})}catch(e){}if(t!=="light"&&t!=="dark"){t=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"}var r=document.documentElement;if(t==="dark"){r.classList.add.apply(r.classList,${classes})}r.dataset.theme=t;r.style.colorScheme=t})()`;
 }

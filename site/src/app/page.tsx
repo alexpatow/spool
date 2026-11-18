@@ -1,46 +1,33 @@
 import * as stylex from "@stylexjs/stylex";
 import Link from "next/link";
 
+import { Wordmark } from "@/components/brand";
 import { CodeBlock } from "@/components/code-block";
+import { FirstScreen } from "@/components/first-screen";
 import { SiteLinks } from "@/components/site-links";
 import { Button } from "@/components/ui/button";
 import * as Typography from "@/components/ui/typography";
 import { site } from "@/lib/site";
 import { layout, breakpoints } from "@/styles/layout.stylex";
-import { colors, spacing, typography } from "@/styles/shelf/tokens.stylex";
+import { colors, linen, spacing, typography } from "@/styles/shelf/tokens.stylex";
 
-const start = `git clone ${site.repository}.git
-cd spool
-cargo build --release --locked -p spool-cli
-export PATH="$PWD/target/release:$PATH"
-spool init ../companies --entity company --source crm
-cd ../companies
+const server = `curl -fsSL ${site.repository}/releases/latest/download/install.sh | sh
+spool init companies
+cd companies
 spool dev`;
 
-const rule = `-- entities/company/rules/match/same_name.sql
-l.name_key = r.name_key`;
-
-const firstBatch = `$ curl -s -X POST http://127.0.0.1:7765/v1/ingest -d @batch-1.json
-$ curl -s -X POST http://127.0.0.1:7765/v1/runs -d '{"entity_type": "company"}'
-$ spool show records
-source and key  identity
-crm:c-1         01a1ef24-76bc-73d9-9c8c-469e735d8cdd
-crm:c-2         01a1ef24-76bc-73d9-9c8c-469e735d8cdd
-crm:c-3         01a1ef24-76bc-73d9-9c8c-469f8e792cfb`;
-
-const secondBatch = `$ curl -s -X POST http://127.0.0.1:7765/v1/ingest -d @batch-2.json
-$ curl -s -X POST http://127.0.0.1:7765/v1/runs -d '{"entity_type": "company"}'
-$ spool show records
-source and key  identity
-crm:c-5         01a1ef24-7706-701a-a707-bebd05a4f9e6
-crm:c-1         01a1ef24-76bc-73d9-9c8c-469e735d8cdd
-crm:c-4         01a1ef24-76bc-73d9-9c8c-469e735d8cdd
-crm:c-2         01a1ef24-76bc-73d9-9c8c-469e735d8cdd
-crm:c-3         01a1ef24-76bc-73d9-9c8c-469f8e792cfb`;
+const commands = `spool load samples/crm-1.csv
+spool match
+spool load samples/crm-2.csv
+spool match
+spool extract samples/notes-1.txt
+spool match
+spool show identities`;
 
 const does = [
   "Takes rows from several sources and keeps each one as it arrived.",
-  "Matches them with rules you write in SQL, kept as files in Git.",
+  "Finds records in text with a pattern, or with code of yours in Python or TypeScript, and keeps where in the text each one was found.",
+  "Matches records with rules you write in SQL, kept as files in Git.",
   "Gives each real-world thing an ID that later runs and better rules do not change.",
   "Records every merge, split and correction in a log, with an author, a reason and an undo.",
   "Says why two records were matched, and leaves what it cannot decide for a person or an agent.",
@@ -60,11 +47,19 @@ export default function Home() {
       <header {...stylex.props(styles.header)}>
         <div {...stylex.props(styles.headerInner)}>
           <Link href="/" {...stylex.props(styles.wordmark)}>
-            {site.name}
+            <Wordmark />
           </Link>
           <nav aria-label="Site" {...stylex.props(styles.nav)}>
             <Button variant="ghost" size="sm" nativeButton={false} render={<Link href="/docs" />}>
               Docs
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              nativeButton={false}
+              render={<Link href="/docs/getting-started" />}
+            >
+              Getting started
             </Button>
             <Button
               variant="ghost"
@@ -81,16 +76,11 @@ export default function Home() {
 
       <main {...stylex.props(styles.main)}>
         <section {...stylex.props(styles.hero)}>
-          <Typography.H1 style={styles.title}>{site.summary}</Typography.H1>
-          <Typography.P style={styles.lead}>{site.problem}</Typography.P>
-          <CodeBlock>{start}</CodeBlock>
-          <Typography.Muted>
-            Needs Rust 1.89 or later and a C compiler. Version {site.version}, with no release yet, so the first
-            step is a build from source. {site.licence} licence.
-          </Typography.Muted>
+          <Typography.H1 style={styles.title}>{site.headline}</Typography.H1>
+          <Typography.P style={styles.lead}>{site.summary}</Typography.P>
           <div {...stylex.props(styles.actions)}>
             <Button size="lg" nativeButton={false} render={<Link href="/docs/getting-started" />}>
-              Getting started
+              Get started
             </Button>
             <Button
               variant="outline"
@@ -98,44 +88,51 @@ export default function Home() {
               nativeButton={false}
               render={<Link href="/docs/limits" />}
             >
-              Limits: what it does not do
+              What it is not for
             </Button>
           </div>
         </section>
 
-        <section aria-labelledby="sample" {...stylex.props(styles.section)}>
-          <Typography.H2 id="sample" style={styles.heading}>
-            What it looks like
-          </Typography.H2>
-          <div {...stylex.props(styles.steps)}>
-            <div>
-              <Typography.P style={styles.step}>
-                A match rule is a file that holds one SQL condition over two records.
-              </Typography.P>
-              <CodeBlock>{rule}</CodeBlock>
-            </div>
-            <div>
-              <Typography.P style={styles.step}>
-                Load three rows and run. Two of them are "Acorn Tools" and "ACORN TOOLS", so they
-                share an identity.
-              </Typography.P>
-              <CodeBlock copy={false}>{firstBatch}</CodeBlock>
-            </div>
-            <div>
-              <Typography.P style={styles.step}>
-                Load two more. "Acorn tools" joins the identity that exists, and no ID that was handed
-                out before changes.
-              </Typography.P>
-              <CodeBlock copy={false}>{secondBatch}</CodeBlock>
-            </div>
-          </div>
-          <Typography.Muted style={styles.caption}>
-            Shortened from{" "}
+        <section aria-label="The sample project" {...stylex.props(styles.screen)}>
+          <FirstScreen />
+          <Typography.Muted style={styles.screenCaption}>
+            The sample project at the end of{" "}
             <Link href="/docs/getting-started" {...stylex.props(styles.link)}>
               Getting started
             </Link>
-            , which has every command and its full output.
+            : nine rows from a CRM and one call note. "Acorn Tools Ltd" in the note joined the
+            identity that four CRM rows already had, and its ID did not change.
           </Typography.Muted>
+        </section>
+
+        <section aria-labelledby="start" {...stylex.props(styles.section, styles.columns)}>
+          <div>
+            <Typography.H2 id="start" style={styles.heading}>
+              Run it
+            </Typography.H2>
+            <Typography.P>
+              Install it, make the sample project and start the server on your machine.
+            </Typography.P>
+            <CodeBlock>{server}</CodeBlock>
+            <Typography.Muted>
+              Linux or macOS on Apple silicon. Version {site.version}, {site.licence} licence. Nobody
+              runs it in production yet.
+            </Typography.Muted>
+          </div>
+          <div>
+            <Typography.H2 style={styles.heading}>Then, in a second terminal</Typography.H2>
+            <Typography.P>
+              Load the rows, match them, and get the companies out of the note. These seven commands
+              give the picture above.
+            </Typography.P>
+            <CodeBlock>{commands}</CodeBlock>
+            <Typography.Muted>
+              <Link href="/docs/getting-started" {...stylex.props(styles.link)}>
+                Getting started
+              </Link>{" "}
+              has what each one prints, and the same steps over HTTP and MCP.
+            </Typography.Muted>
+          </div>
         </section>
 
         <section aria-label="Scope" {...stylex.props(styles.section, styles.columns)}>
@@ -183,7 +180,7 @@ const styles = stylex.create({
     borderBottomWidth: 1,
   },
   headerInner: {
-    gap: spacing["4"],
+    gap: spacing["6"],
     marginInline: "auto",
     paddingInline: {
       default: "2.5rem",
@@ -198,18 +195,19 @@ const styles = stylex.create({
   wordmark: {
     textDecoration: "none",
     color: colors.foreground,
-    fontSize: typography.fontSizeLg,
-    fontWeight: typography.fontWeightSemibold,
-    letterSpacing: "-0.02em",
+    display: "flex",
   },
   nav: {
-    display: "flex",
+    display: {
+      default: "flex",
+      [breakpoints.mobile]: "none",
+    },
     flexGrow: 1,
   },
   main: {
     marginInline: "auto",
     paddingBlock: {
-      default: "6rem",
+      default: "5rem",
       [breakpoints.mobile]: "3rem",
     },
     paddingInline: {
@@ -221,42 +219,52 @@ const styles = stylex.create({
     width: "100%",
   },
   hero: {
-    maxWidth: "46rem",
+    marginInline: "auto",
+    alignItems: "center",
+    display: "flex",
+    flexDirection: "column",
+    maxWidth: "40rem",
+    textAlign: "center",
   },
   title: {
     fontSize: {
-      default: "2rem",
-      [breakpoints.mobile]: "1.5rem",
+      default: "3.25rem",
+      [breakpoints.mobile]: "2.25rem",
     },
-    lineHeight: {
-      default: "2.5rem",
-      [breakpoints.mobile]: "2rem",
-    },
+    lineHeight: 1.08,
   },
   lead: {
     marginTop: spacing["6"],
+    color: colors.mutedForeground,
+    fontSize: "1.125rem",
+    lineHeight: "1.75rem",
+    textWrap: "pretty",
   },
   actions: {
     gap: spacing["3"],
     display: "flex",
     flexWrap: "wrap",
-    marginTop: spacing["6"],
+    justifyContent: "center",
+    marginTop: "2rem",
+  },
+  screen: {
+    marginTop: "4rem",
+  },
+  screenCaption: {
+    marginInline: "auto",
+    marginTop: spacing["4"],
+    maxWidth: "44rem",
+    textAlign: "center",
   },
   section: {
+    borderTopColor: colors.border,
+    borderTopStyle: "solid",
+    borderTopWidth: 1,
     marginTop: "4.5rem",
+    paddingTop: "3rem",
   },
   heading: {
-    borderBottomWidth: 0,
-    fontSize: "1.25rem",
-    lineHeight: "1.75rem",
-    paddingBottom: 0,
-  },
-  steps: {
-    maxWidth: "46rem",
-  },
-  step: {
-    marginBottom: 0,
-    marginTop: spacing["6"],
+    fontSize: "1.375rem",
   },
   caption: {
     marginTop: spacing["4"],
@@ -265,8 +273,8 @@ const styles = stylex.create({
     gap: "3rem",
     display: "grid",
     gridTemplateColumns: {
-      default: "1fr 1fr",
-      [breakpoints.narrow]: "1fr",
+      default: "minmax(0, 1fr) minmax(0, 1fr)",
+      [breakpoints.narrow]: "minmax(0, 1fr)",
     },
   },
   list: {
@@ -277,11 +285,15 @@ const styles = stylex.create({
   item: {
     marginTop: spacing["2"],
     color: colors.foreground,
-    fontSize: typography.fontSizeBase,
-    lineHeight: "1.75rem",
+    fontSize: "0.9375rem",
+    lineHeight: "1.625rem",
+    "::marker": {
+      color: linen.faint,
+    },
   },
   link: {
     color: colors.foreground,
+    textDecorationColor: linen.lineStrong,
     textDecorationLine: "underline",
     textUnderlineOffset: 4,
   },

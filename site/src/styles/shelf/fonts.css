@@ -1,3 +1,5 @@
-/* Loads the typefaces named in `typography`. Import this file once, from the app entry. */
-@import "@fontsource-variable/geist";
-@import "@fontsource-variable/geist-mono";
+/* Loads the typefaces named in `typography` and `display`. Import this file once, from the app entry. */
+@import "@fontsource-variable/hanken-grotesk";
+@import "@fontsource-variable/newsreader/opsz.css";
+@import "@fontsource/commit-mono/400.css";
+@import "@fontsource/commit-mono/700.css";

@@ -1,6 +1,6 @@
 import * as stylex from "@stylexjs/stylex";
 import type { ComponentProps } from "react";
-import { colors, radius, spacing, typography } from "@/styles/shelf/tokens.stylex";
+import { colors, display, linen, radius, spacing, typography } from "@/styles/shelf/tokens.stylex";
 import type { Styled } from "@/lib/shelf/utils";
 
 /**
@@ -113,57 +113,58 @@ const styles = stylex.create({
     fontFamily: typography.fontFamily,
   },
   h1: {
-    fontSize: "2.25rem",
-    fontWeight: typography.fontWeightSemibold,
-    letterSpacing: "-0.025em",
-    lineHeight: "2.5rem",
+    fontFamily: display.fontFamily,
+    fontSize: "2.75rem",
+    fontVariationSettings: '"opsz" 72',
+    fontWeight: linen.displayWeight,
+    letterSpacing: display.tracking,
+    lineHeight: 1.1,
     textWrap: "balance",
   },
   h2: {
-    fontSize: "1.875rem",
-    fontWeight: typography.fontWeightSemibold,
-    letterSpacing: "-0.025em",
-    lineHeight: "2.25rem",
-    borderBottomColor: colors.border,
-    borderBottomStyle: "solid",
-    borderBottomWidth: 1,
+    fontFamily: display.fontFamily,
+    fontSize: "1.625rem",
+    fontVariationSettings: '"opsz" 36',
+    fontWeight: linen.displayWeight,
+    letterSpacing: display.tracking,
+    lineHeight: 1.25,
     marginTop: {
-      default: "2.5rem",
+      default: "3rem",
       ":first-child": 0,
     },
-    paddingBottom: spacing["2"],
   },
   h3: {
-    fontSize: "1.5rem",
-    fontWeight: typography.fontWeightSemibold,
-    letterSpacing: "-0.025em",
-    lineHeight: "2rem",
+    fontFamily: display.fontFamily,
+    fontSize: "1.3125rem",
+    fontVariationSettings: '"opsz" 36',
+    fontWeight: linen.displayWeight,
+    letterSpacing: display.tracking,
+    lineHeight: 1.3,
     marginTop: {
       default: "2rem",
       ":first-child": 0,
     },
   },
   h4: {
-    fontSize: "1.25rem",
-    fontWeight: typography.fontWeightSemibold,
-    letterSpacing: "-0.025em",
-    lineHeight: "1.75rem",
+    fontSize: typography.fontSizeBase,
+    fontWeight: typography.fontWeightMedium,
+    lineHeight: "1.5rem",
     marginTop: {
       default: spacing["6"],
       ":first-child": 0,
     },
   },
   p: {
-    fontSize: typography.fontSizeBase,
-    lineHeight: "1.75rem",
+    fontSize: "0.9375rem",
+    lineHeight: "1.625rem",
     marginTop: {
-      default: spacing["6"],
+      default: spacing["4"],
       ":first-child": 0,
     },
   },
   lead: {
     color: colors.mutedForeground,
-    fontSize: "1.25rem",
+    fontSize: "1.125rem",
     lineHeight: "1.75rem",
     marginTop: {
       default: spacing["2"],
@@ -196,9 +197,9 @@ const styles = stylex.create({
     marginTop: spacing["6"],
   },
   list: {
-    marginBlock: spacing["6"],
-    fontSize: typography.fontSizeBase,
-    lineHeight: "1.75rem",
+    marginBlock: spacing["4"],
+    fontSize: "0.9375rem",
+    lineHeight: "1.625rem",
     listStyleType: "disc",
     paddingInlineStart: spacing["6"],
   },
@@ -208,7 +209,7 @@ const styles = stylex.create({
     paddingInline: "0.3em",
     backgroundColor: colors.muted,
     fontFamily: typography.fontFamilyMono,
-    fontSize: typography.fontSizeSm,
-    fontWeight: typography.fontWeightMedium,
+    fontSize: "0.8125rem",
+    fontWeight: typography.fontWeightRegular,
   },
 });
