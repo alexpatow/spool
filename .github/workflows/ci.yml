@@ -1,22 +1,27 @@
 name: CI
 
-# Nothing these jobs build or test reads `docs/` or `site/`, and the site's
-# checks are a workflow of their own. A change to those alone starts none of
-# these jobs, and a change to anything else as well starts them all. A test
-# that comes to read `docs/` or `site/` must take it off both lists, which
-# are the same.
+# Nothing these jobs build or test reads `docs/`, `site/`, or the `README.md`
+# and `LICENSE` at the root, and the site's checks are a workflow of their
+# own. A change to those alone starts none of these jobs, and a change to
+# anything else as well starts them all. A test that comes to read one of
+# them must take it off both lists, which are the same. `README.md` here is
+# the one at the root: a crate's or a package's is not on the lists.
 on:
   pull_request:
     paths-ignore:
       - "docs/**"
       - "site/**"
       - ".github/workflows/site.yml"
+      - "README.md"
+      - "LICENSE"
   push:
     branches: [main]
     paths-ignore:
       - "docs/**"
       - "site/**"
       - ".github/workflows/site.yml"
+      - "README.md"
+      - "LICENSE"
 
 permissions:
   contents: read
@@ -61,36 +66,66 @@ jobs:
       - name: Format
         run: cargo fmt --all -- --check
 
-      # The `test` jobs divide the server's test files among them by name.
-      # This reads the patterns they use and fails unless every test file of
-      # the server matches exactly one, and exactly one job takes the tests
-      # inside the crate.
-      - name: Every test file of the server is in one job
+      # The `test` jobs divide the test files of the engine among them by
+      # name, and those of the server. This reads the patterns they use and
+      # fails unless every test file matches exactly one job of its kind,
+      # and exactly one job of each kind takes the tests inside the crates.
+      # It prints the job each file is in.
+      - name: Every test file is in one job
         run: |
           export LC_ALL=C
           workflow=.github/workflows/ci.yml
-          groups=$(grep -E "^ +targets: " "$workflow" || true)
-          patterns=$(grep -oE -- "--test '[^']+'" <<< "$groups" | sed -E "s/^--test '(.*)'$/\1/" || true)
-          [ -n "$patterns" ] || { echo "no job names the test files it takes"; exit 1; }
-          files=$(cargo metadata --no-deps --format-version 1 |
-            jq -r '.packages[] | select(.name == "spool-cli") | .targets[] | select(.kind == ["test"]) | .name')
-          [ -n "$files" ] || { echo "the server has no test files"; exit 1; }
+          # A line for each job that names its files: its kind, its part
+          # and its `targets`.
+          rows=$(awk '/^ +- name: /{kind=$3; part=$4} /^ +targets: /{sub(/^ +targets: /, ""); print kind "\t" part "\t" $0}' "$workflow")
           failed=0
-          for file in $files; do
-            jobs=0
-            while read -r pattern; do
-              # shellcheck disable=SC2053
-              if [[ $file == $pattern ]]; then jobs=$((jobs + 1)); fi
-            done <<< "$patterns"
-            if [ "$jobs" -ne 1 ]; then
-              echo "::error::tests/$file.rs is in $jobs jobs, and should be in one"
+          for kind in engine server; do
+            mine=$(awk -F'\t' -v kind="$kind" '$1 == kind' <<< "$rows")
+            files=$(cargo metadata --no-deps --format-version 1 |
+              jq -r --arg kind "$kind" --arg root "$PWD/" '.packages[]
+                | select((.name == "spool-cli") == ($kind == "server"))
+                | .targets[] | select(.kind == ["test"])
+                | "\(.name) \(.src_path | ltrimstr($root))"')
+            if [ -z "$files" ] || [ -z "$mine" ]; then
+              echo "::error file=$workflow::no $kind job names its test files, or there are none to name"
+              failed=1
+              continue
+            fi
+            while read -r file path; do
+              jobs=0
+              found=
+              while IFS=$'\t' read -r _ part targets; do
+                pattern=$(sed -nE "s/.*--test '([^']+)'.*/\1/p" <<< "$targets")
+                # shellcheck disable=SC2053
+                if [[ -n $pattern && $file == $pattern ]]; then
+                  jobs=$((jobs + 1))
+                  found="$found $kind $part"
+                fi
+              done <<< "$mine"
+              echo "$path:${found:- no job}"
+              if [ "$jobs" -ne 1 ]; then
+                echo "::error file=$workflow::$path is in $jobs of the $kind jobs, and must be in exactly one"
+                failed=1
+              fi
+            done <<< "$files"
+            inside=$(grep -cE -- "--lib --bins( |$)" <<< "$mine" || true)
+            if [ "$inside" -ne 1 ]; then
+              echo "::error file=$workflow::the tests inside the crates are in $inside of the $kind jobs, and must be in exactly one"
               failed=1
             fi
           done
-          inside=$(grep -cE -- "--lib --bins( |$)" <<< "$groups" || true)
-          if [ "$inside" -ne 1 ]; then
-            echo "::error::the tests inside the crate are in $inside jobs, and should be in one"
-            failed=1
+          if [ "$failed" -ne 0 ]; then
+            echo
+            echo "How the test files are divided, and how to mend this:"
+            echo "  In $workflow, each 'engine' and 'server' job has a 'targets' line that"
+            echo "  names its test files by their first letter, as in --test '[elu]*'. One job"
+            echo "  of each kind takes every letter the others do not, as in --test '[!eilnsu]*',"
+            echo "  and the tests inside the crates, with --lib --bins."
+            echo "  - A new test file needs no change: it is in the job that has its first letter."
+            echo "  - The pattern that begins with '!' must list exactly the letters that the"
+            echo "    other jobs of its kind name, each once."
+            echo "  - To move the files of a letter to another job, change that letter in the"
+            echo "    patterns of both jobs, and keep the '!' pattern as above."
           fi
           exit "$failed"
 
@@ -115,12 +150,15 @@ jobs:
         # being added here. `spool` is built with the feature the server
         # turns on, as it is when the whole workspace is built.
         #
-        # The server's tests are divided by test file, so that each job
-        # builds only the files it runs: `targets` names them by their first
-        # letter, and the last group takes every letter the others do not,
-        # with the tests inside the crate itself. The groups are of about
-        # the same length in time. The lint job checks that every test file
-        # is in exactly one of them.
+        # The tests of the engine are divided by test file, and so are the
+        # server's, so that each job builds only the files it runs: `targets`
+        # names them by their first letter, and one job of each kind takes
+        # every letter the others do not, with the tests inside the crates
+        # themselves. The jobs of a kind are of about the same length in
+        # time, by the times of the tests when they were divided. The
+        # engine's longest test by far is inside the crate, and its job has
+        # the files with no long test of their own. The lint job checks that
+        # every test file is in exactly one job.
         #
         # The stress tests and the studio's are each one Rust test that runs
         # the test files of a TypeScript package, and the longest in the
@@ -139,15 +177,15 @@ jobs:
             save: true
             documentation: true
             packages: --workspace --exclude spool-cli --features spool/schema
-            tests: --partition slice:1/3
+            targets: --lib --bins --examples --test '[!eilnsu]*'
           - name: engine 2/3
             cache: engine
             packages: --workspace --exclude spool-cli --features spool/schema
-            tests: --partition slice:2/3
+            targets: --test '[elu]*'
           - name: engine 3/3
             cache: engine
             packages: --workspace --exclude spool-cli --features spool/schema
-            tests: --partition slice:3/3
+            targets: --test '[ins]*'
           - name: server 1/3
             cache: server
             save: true
