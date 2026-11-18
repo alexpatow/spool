@@ -1,0 +1,3 @@
+# Writes each value in its own column, and a length in milliseconds.
+key: TID
+columns: [TID, CTID, SourceID, id, number, title, length, artist, album, year, language]

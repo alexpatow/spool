@@ -1,0 +1,37 @@
+# A person on the voter register is compared by a given name, a surname, a
+# suburb and a postcode, and nothing else is known of them. The five sources
+# have the same columns, so their mappings are the same.
+label: name
+features: [name, given, surname, suburb, postcode]
+
+mapping:
+  party_0:
+    name: { from: [givenname, surname], transform: full_name }
+    given: { from: givenname, transform: folded }
+    surname: { from: surname, transform: folded }
+    suburb: { from: suburb, transform: folded }
+    postcode: { from: postcode, transform: folded }
+  party_1:
+    name: { from: [givenname, surname], transform: full_name }
+    given: { from: givenname, transform: folded }
+    surname: { from: surname, transform: folded }
+    suburb: { from: suburb, transform: folded }
+    postcode: { from: postcode, transform: folded }
+  party_2:
+    name: { from: [givenname, surname], transform: full_name }
+    given: { from: givenname, transform: folded }
+    surname: { from: surname, transform: folded }
+    suburb: { from: suburb, transform: folded }
+    postcode: { from: postcode, transform: folded }
+  party_3:
+    name: { from: [givenname, surname], transform: full_name }
+    given: { from: givenname, transform: folded }
+    surname: { from: surname, transform: folded }
+    suburb: { from: suburb, transform: folded }
+    postcode: { from: postcode, transform: folded }
+  party_4:
+    name: { from: [givenname, surname], transform: full_name }
+    given: { from: givenname, transform: folded }
+    surname: { from: surname, transform: folded }
+    suburb: { from: suburb, transform: folded }
+    postcode: { from: postcode, transform: folded }
