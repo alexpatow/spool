@@ -74,6 +74,7 @@ use crate::api::{
 };
 use crate::studio;
 
+mod local;
 mod mcp;
 
 /// How long a call that starts work waits when it does not say.
@@ -307,13 +308,17 @@ pub fn router(engine: Arc<Engine>, options: &ServerOptions) -> Router {
     if options.studio {
         router = router.merge(studio::routes());
     }
-    router
+    let router = router
         .fallback(not_found)
         .layer(sessions)
         .layer(middleware::from_fn(own_pages_only))
         .layer(DefaultBodyLimit::max(options.max_body_bytes))
         .layer(middleware::map_response(describe_failure))
-        .with_state(app)
+        .with_state(app);
+    match options.dev {
+        true => router.layer(middleware::from_fn(local::this_machine_only)),
+        false => router,
+    }
 }
 
 /// Serves the API on `listener` until `shutdown` completes. Requests in

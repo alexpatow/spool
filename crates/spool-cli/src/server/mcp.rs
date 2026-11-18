@@ -58,6 +58,9 @@ const MAX_REQUEST_BYTES: usize = 4 * 1024 * 1024;
 /// cuts off what it cannot hold without saying where.
 const MAX_RESULT_BYTES: usize = 256 * 1024;
 
+/// The largest field kept in an answer that was too large to return whole.
+const MAX_FIELD_BYTES: usize = 4 * 1024;
+
 /// The most that is read of what the transport says when it refuses.
 const MAX_REFUSAL_BYTES: usize = 4 * 1024;
 
@@ -93,7 +96,7 @@ Read what you are about to change first, and pass the `head` you read as \
 changeset changes nothing; its `rejections` say which operation broke \
 which rule.";
 
-/// Serves the endpoint. `dev` is a server nobody signs in to.
+/// Serves the endpoint.
 pub(super) fn service(
     app: App,
     options: &ServerOptions,
@@ -101,18 +104,11 @@ pub(super) fn service(
     let config = StreamableHttpServerConfig::default()
         .with_legacy_session_mode(false)
         .with_json_response(true)
-        .with_max_request_body_bytes(options.max_body_bytes.min(MAX_REQUEST_BYTES));
-    // A page on another site can reach a server on this machine by a name
-    // of its own that resolves here, and the browser then sends the page's
-    // requests as if to the page's own site. A server that asks for no
-    // sign-in answers them, so it answers only to the names of this
-    // machine. Elsewhere every request carries a token or a session, which
-    // such a page does not have, and the server is reached by whatever
-    // name its operator gave it.
-    let config = match options.dev {
-        true => config,
-        false => config.disable_allowed_hosts(),
-    };
+        .with_max_request_body_bytes(options.max_body_bytes.min(MAX_REQUEST_BYTES))
+        // Which names the server answers to is the server's to say, for
+        // every path at once: a development server answers only to this
+        // machine's, and any other to whatever name its operator gave it.
+        .disable_allowed_hosts();
     let tools = Tools { app };
     StreamableHttpService::new(
         move || Ok(tools.clone()),
@@ -190,12 +186,13 @@ impl ServerHandler for Tools {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
-        if self.get_tool(&request.name).is_none() {
+        let Some(tool) = self.get_tool(&request.name) else {
             return Err(ErrorData::invalid_params(
                 format!("there is no tool called `{}`", request.name),
                 None,
             ));
-        }
+        };
+        let reads = tool.annotations.and_then(|told| told.read_only_hint) == Some(true);
         // The server authorized the request before it came here and left
         // who it is from with the request.
         let caller = context
@@ -208,14 +205,14 @@ impl ServerHandler for Tools {
             })?;
         let arguments = request.arguments.unwrap_or_default();
         let result = self.call(&request.name, arguments, caller).await;
-        Ok(answer(result).await.into())
+        Ok(answer(result, reads).await.into())
     }
 }
 
 /// The result of a tool: the JSON the API answers with, as text. A failure
 /// is a result too, with the API's error in it, so that the model reads why
 /// and can put it right.
-async fn answer(result: ApiResult) -> CallToolResult {
+async fn answer(result: ApiResult, reads: bool) -> CallToolResult {
     let response = match result {
         Ok(response) => response,
         Err(error) => return refused(error),
@@ -226,22 +223,56 @@ async fn answer(result: ApiResult) -> CallToolResult {
     let Ok(body) = to_bytes(response.into_body(), usize::MAX).await else {
         return refused(ApiError::internal("the answer could not be read"));
     };
-    if body.len() > MAX_RESULT_BYTES {
-        return refused(ApiError::new(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            ErrorCode::TooLarge,
-            format!(
-                "the answer is {} bytes and a tool returns at most {MAX_RESULT_BYTES}: ask for \
-                 less, with a smaller `limit` or a narrower search",
-                body.len()
-            ),
-        ));
-    }
-    match String::from_utf8(body.to_vec()) {
+    let body = match body.len() > MAX_RESULT_BYTES {
+        false => body.to_vec(),
+        // What a tool looked up can be asked for again, in smaller parts.
+        true if reads || !succeeded => {
+            return refused(ApiError::new(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                ErrorCode::TooLarge,
+                format!(
+                    "the answer is {} bytes and a tool returns at most {MAX_RESULT_BYTES}: ask \
+                     for less, with a smaller `limit` or a narrower search",
+                    body.len()
+                ),
+            ));
+        }
+        // What a tool changed is changed, and saying that the call failed
+        // would be untrue. The answer is returned without its large parts.
+        true => shortened(&body),
+    };
+    match String::from_utf8(body) {
         Ok(text) if succeeded => CallToolResult::success(vec![ContentBlock::text(text)]),
         Ok(text) => CallToolResult::error(vec![ContentBlock::text(text)]),
         Err(_) => refused(ApiError::internal("the answer is not text")),
     }
+}
+
+/// An answer too large to return, without the fields that make it so: the
+/// receipt of a change is small, and the changeset it committed is not.
+fn shortened(body: &[u8]) -> Vec<u8> {
+    let mut left_out = Vec::new();
+    let mut answer = match serde_json::from_slice(body) {
+        Ok(Value::Object(answer)) => answer,
+        _ => JsonObject::new(),
+    };
+    answer.retain(|name, value| {
+        let small = serde_json::to_vec(value).is_ok_and(|value| value.len() <= MAX_FIELD_BYTES);
+        if !small {
+            left_out.push(Value::String(name.clone()));
+        }
+        small
+    });
+    answer.insert("left_out".to_owned(), Value::Array(left_out));
+    answer.insert(
+        "note".to_owned(),
+        Value::String(
+            "The call succeeded. Its answer was too large to return whole, so the fields named \
+             in `left_out` are missing. `get_identity` and `search_records` read what it left."
+                .to_owned(),
+        ),
+    );
+    serde_json::to_vec(&Value::Object(answer)).unwrap_or_default()
 }
 
 fn refused(error: ApiError) -> CallToolResult {

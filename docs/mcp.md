@@ -50,7 +50,7 @@ Tools that change something. Each is marked as a change, so a client can ask the
 
 Not offered: ingesting rows and documents, starting and reconciling match runs, drafts, and people. Those are the work of a pipeline or an admin, and they stay on `/v1`.
 
-Two limits keep an answer the size a model can use. A list returns 20 entries unless the call gives a `limit`, and a result over 256 KiB is refused with an error that says to ask for less.
+Two limits keep an answer the size a model can use. A list returns 20 entries unless the call gives a `limit`, and a tool returns at most 256 KiB. A lookup over that is refused with an error that says to ask for less. A change over that was made all the same, so it is answered as made, without its large fields: the answer keeps where the change was committed and names what it left out in `left_out`.
 
 ## Adding it to a client
 
@@ -136,7 +136,7 @@ What can be done about it, none of which is built:
 
 `spool serve` answers `/mcp` by whatever name the server is reached by. Like every write to the server, a request that a browser sends from another site's page is refused.
 
-`spool dev` asks nobody to sign in, so its endpoint answers only when it is called by a name of this machine: `localhost`, `127.0.0.1` or `::1`. A page on another site that has a name of its own for this machine is refused. What an assistant changes on a development server is recorded under the `dev` account.
+`spool dev` asks nobody to sign in, so it answers, at `/mcp` as at every other path, only a request sent to `localhost` or to a loopback address such as `127.0.0.1`. A page on another site that has a name of its own for this machine is refused. What an assistant changes on a development server is recorded under the `dev` account.
 
 ## What was tried
 

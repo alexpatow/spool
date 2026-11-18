@@ -74,9 +74,9 @@ did keeps running.
 Open the address it listens on in a browser for the studio, which shows what
 the store holds and takes changes. Nobody signs in, and a caller needs no
 token: every change is recorded under an account called `dev`, an admin. So
-it listens on this machine only; `spool serve` runs a server that others
-reach. A caller that does present a token writes as that token, as it would
-there.
+it listens on this machine only, and answers only what is sent to `localhost`
+or to a loopback address; `spool serve` runs a server that others reach. A
+caller that does present a token writes as that token, as it would there.
 
 An assistant on this machine that speaks the Model Context Protocol, such as
 Claude Code, is pointed at `/mcp`, where the server offers it tools to look
