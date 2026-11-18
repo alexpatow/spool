@@ -360,6 +360,33 @@ fn the_steps_after_init(project: &Path) {
     // With the sample extractor, on a machine that has not run it before,
     // this is where the model is fetched.
     assert_eq!(extracted(&server, project, &["samples/notes-1.txt"]), FIRST);
+    // Nobody signs in to a development server, so what the command started
+    // is the `dev` account's, as the load and the match before it are: the
+    // load of the note, the extraction, and the load of what it found.
+    let dev = server
+        .request("GET", "/auth/session")
+        .without("Authorization")
+        .send()
+        .ok();
+    let dev = format!("user:{}", dev["person"]["id"].as_str().unwrap());
+    let started: Vec<(Value, Value)> = server.read("/v1/runs")["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rev()
+        .map(|run| (run["kind"].clone(), run["started_by"].clone()))
+        .collect();
+    assert_eq!(
+        started,
+        ["load", "match", "reconcile", "load", "extract", "load"]
+            .map(|kind| (json!(kind), json!(dev)))
+    );
+    let run = shown(&[
+        "show",
+        "run",
+        &runs(&server, "extract")[0]["run"].to_string(),
+    ]);
+    assert!(run.contains(&format!("\nstarted by  {dev}\n")), "{run}");
     // Each record says where it was found, and the place is the text.
     let records = found(&server);
     let note: Vec<char> = NOTE.chars().collect();
@@ -751,6 +778,14 @@ fn the_same_step_over_http_sends_the_file_as_it_is() {
     .ok();
     assert_eq!(stored["run"]["status"], "succeeded", "{stored}");
     assert_eq!(stored["run"]["load"]["inserted"], 1, "{stored}");
+    // A document sent as text is loaded by its caller, as one sent as JSON.
+    let dev = server
+        .request("GET", "/auth/session")
+        .without("Authorization")
+        .send()
+        .ok();
+    let dev = format!("user:{}", dev["person"]["id"].as_str().unwrap());
+    assert_eq!(stored["run"]["started_by"], dev.as_str(), "{stored}");
     let documents = server.read("/v1/documents?source=notes");
     let document = &documents["documents"][0];
     assert_eq!(document["key"], "notes-1.txt");
@@ -766,6 +801,7 @@ fn the_same_step_over_http_sends_the_file_as_it_is() {
     let read = server.request("POST", "/v1/extractions").send().ok();
     assert_eq!(read["run"]["status"], "succeeded", "{read}");
     assert_eq!(read["run"]["extractor"]["name"], "companies");
+    assert_eq!(read["run"]["started_by"], dev.as_str(), "{read}");
     let report = &read["run"]["extraction"];
     assert_eq!(
         (

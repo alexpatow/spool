@@ -1488,6 +1488,7 @@ async fn info(State(app): State<App>) -> ApiResult {
 
 async fn load(
     State(app): State<App>,
+    Extension(caller): Extension<Caller>,
     params: Result<Query<LoadParams>, QueryRejection>,
     headers: HeaderMap,
     body: Bytes,
@@ -1498,6 +1499,7 @@ async fn load(
         return job(&app, params.wait_ms, move |engine| {
             let report = stored(
                 engine,
+                caller.actor,
                 &params.source,
                 &params.entity_type,
                 rows,
@@ -1513,6 +1515,7 @@ async fn load(
         return job(&app, params.wait_ms, move |engine| {
             let report = stored(
                 engine,
+                caller.actor,
                 &params.source,
                 &params.entity_type,
                 rows,
@@ -1527,6 +1530,7 @@ async fn load(
     job(&app, request.wait_ms, move |engine| {
         let report = stored(
             engine,
+            caller.actor,
             &request.source,
             &request.entity_type,
             rows,
@@ -1541,11 +1545,13 @@ async fn load(
 /// unless the call said `replace` is false.
 fn stored(
     engine: &Engine,
+    by: Actor,
     source: &str,
     entity_type: &str,
     rows: impl RecordBatchReader,
     replace: Option<bool>,
 ) -> spool::Result<spool::LoadReport> {
+    let engine = engine.acting(by);
     match replace {
         Some(false) => engine.load_without_replacing(source, entity_type, rows),
         Some(true) | None => engine.load(source, entity_type, rows),
@@ -1591,6 +1597,7 @@ struct TextDocumentParams {
 /// mean with the header it left out.
 async fn post_documents(
     State(app): State<App>,
+    Extension(caller): Extension<Caller>,
     RawQuery(named): RawQuery,
     params: Result<Query<TextDocumentParams>, QueryRejection>,
     headers: HeaderMap,
@@ -1599,7 +1606,7 @@ async fn post_documents(
     const NAMED: &str = "in the query string, as in `/v1/documents?source=notes&key=call.txt`";
     let named = named.is_some_and(|named| !named.is_empty());
     if !named || is_json(&headers) {
-        return add_documents(State(app), body)
+        return add_documents(State(app), Extension(caller), body)
             .await
             .map_err(|mut refused| {
                 if !named && is_text(&headers) {
@@ -1633,16 +1640,22 @@ async fn post_documents(
         }],
         wait_ms: params.wait_ms,
     };
-    store_documents(&app, request).await
+    store_documents(&app, caller, request).await
 }
 
-async fn add_documents(State(app): State<App>, body: Bytes) -> ApiResult {
-    store_documents(&app, json_body(&body)?).await
+async fn add_documents(
+    State(app): State<App>,
+    Extension(caller): Extension<Caller>,
+    body: Bytes,
+) -> ApiResult {
+    store_documents(&app, caller, json_body(&body)?).await
 }
 
-async fn store_documents(app: &App, request: DocumentsRequest) -> ApiResult {
+async fn store_documents(app: &App, caller: Caller, request: DocumentsRequest) -> ApiResult {
     job(app, request.wait_ms, move |engine| {
-        let report = engine.add_documents(&request.source, &request.documents)?;
+        let report = engine
+            .acting(caller.actor)
+            .add_documents(&request.source, &request.documents)?;
         Ok(Some(report.run))
     })
     .await
@@ -1687,7 +1700,11 @@ async fn read_document(State(app): State<App>, Path(document): Path<String>) -> 
     ok(engine(&app, move |engine| engine.document(document)).await?)
 }
 
-async fn extract(State(app): State<App>, body: Bytes) -> ApiResult {
+async fn extract(
+    State(app): State<App>,
+    Extension(caller): Extension<Caller>,
+    body: Bytes,
+) -> ApiResult {
     let request: ExtractRequest = optional_json_body(&body)?;
     let extractor = match request.extractor {
         Some(extractor) => extractor,
@@ -1728,12 +1745,16 @@ async fn extract(State(app): State<App>, body: Bytes) -> ApiResult {
         limit: request.limit,
     };
     job(&app, request.wait_ms, move |engine| {
-        Ok(Some(engine.extract(&options)?.run))
+        Ok(Some(engine.acting(caller.actor).extract(&options)?.run))
     })
     .await
 }
 
-async fn start_match(State(app): State<App>, body: Bytes) -> ApiResult {
+async fn start_match(
+    State(app): State<App>,
+    Extension(caller): Extension<Caller>,
+    body: Bytes,
+) -> ApiResult {
     let request: MatchRequest = json_body(&body)?;
     let entity_type = request.entity_type;
     let rematch = request.rematch.unwrap_or(false);
@@ -1767,6 +1788,7 @@ async fn start_match(State(app): State<App>, body: Bytes) -> ApiResult {
             }
             job(&app, request.wait_ms, move |engine| {
                 engine
+                    .acting(caller.actor)
                     .begin_run(
                         &strategy,
                         &Scope {
@@ -1786,7 +1808,7 @@ async fn start_match(State(app): State<App>, body: Bytes) -> ApiResult {
                 rematch,
             };
             job(&app, request.wait_ms, move |engine| {
-                let report = engine.resolve(&options)?;
+                let report = engine.acting(caller.actor).resolve(&options)?;
                 Ok(report.resolved.first().map(|resolved| resolved.match_run))
             })
             .await
@@ -1941,7 +1963,12 @@ async fn submit_judgements(
     ok(JudgementsResponse { stored })
 }
 
-async fn reconcile(State(app): State<App>, Path(run): Path<String>, body: Bytes) -> ApiResult {
+async fn reconcile(
+    State(app): State<App>,
+    Extension(caller): Extension<Caller>,
+    Path(run): Path<String>,
+    body: Bytes,
+) -> ApiResult {
     let run = run_id(&run)?;
     let request: ReconcileRequest = optional_json_body(&body)?;
     let then = if request.commit.unwrap_or(true) {
@@ -1950,7 +1977,9 @@ async fn reconcile(State(app): State<App>, Path(run): Path<String>, body: Bytes)
         Disposition::LeaveForReview
     };
     let report = engine(&app, move |engine| {
-        engine.reconcile_with(run, &Policy::default(), then)
+        engine
+            .acting(caller.actor)
+            .reconcile_with(run, &Policy::default(), then)
     })
     .await?;
     ok(report)
@@ -2118,7 +2147,7 @@ async fn list_changesets(
     let limit = page(params.limit);
     ok(engine(&app, move |engine| {
         Ok(ChangesetList {
-            changesets: engine.log_after(after, limit)?,
+            changesets: engine.logged_after(after, limit)?,
             head: engine.head()?,
         })
     })

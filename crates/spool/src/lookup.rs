@@ -9,7 +9,8 @@ use std::collections::BTreeMap;
 use duckdb::{Connection, params};
 use serde::{Deserialize, Serialize};
 use spool_core::{
-    Actor, ChangesetId, DocumentId, EntityType, IdentityId, Op, RecordId, RunId, Seq, StateError,
+    Actor, ChangesetId, DocumentId, EntityType, IdentityId, LogEntry, Op, RecordId, RunId, Seq,
+    StateError,
 };
 
 use crate::error::Result;
@@ -253,6 +254,25 @@ pub struct HistoryEntry {
     pub committed_at: String,
     /// The operations that name the identity, in the order they were applied.
     pub ops: Vec<Op>,
+}
+
+/// A committed changeset as the log holds it, with who asked for the work
+/// it came from.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "schema",
+    derive(schemars::JsonSchema),
+    schemars(rename = "LogEntry")
+)]
+pub struct LoggedChangeset {
+    #[serde(flatten)]
+    pub entry: LogEntry,
+    /// Who started the run that committed the changeset, if a run did: a
+    /// match run, a retraction, or a load of rows that had been taken back.
+    /// The changeset's `actor` is who decided its operations, which for a
+    /// match run and for rows that come back is the engine.
+    #[serde(default)]
+    pub started_by: Option<Actor>,
 }
 
 /// What a store holds.
@@ -773,6 +793,49 @@ pub(crate) fn history(conn: &Connection, id: IdentityId) -> Result<Vec<HistoryEn
         }
     }
     Ok(entries)
+}
+
+/// The changesets with who started the run each came from.
+pub(crate) fn logged(conn: &Connection, entries: Vec<LogEntry>) -> Result<Vec<LoggedChangeset>> {
+    let (Some(first), Some(last)) = (entries.first(), entries.last()) else {
+        return Ok(Vec::new());
+    };
+    // A changeset names the reconcile run that drafted it. A retraction and
+    // a load of rows that came back commit one that names no run, and the
+    // run's report names the changeset instead. Those runs are the ones
+    // `spool.retraction` names, so no other run's report is read.
+    let mut statement = conn.prepare(
+        "SELECT c.seq, r.started_by
+         FROM spool.changeset c
+         JOIN spool.run r ON r.run_id = c.run_id
+         WHERE c.seq BETWEEN $1 AND $2
+         UNION ALL
+         SELECT c.seq, r.started_by
+         FROM spool.changeset c
+         JOIN spool.run r
+           ON TRY_CAST(json_extract_string(r.result, '$.committed.seq') AS BIGINT) = c.seq
+         WHERE c.seq BETWEEN $1 AND $2 AND c.run_id IS NULL
+           AND r.kind IN ('load', 'retract')
+           AND r.run_id IN (
+             SELECT retract_run FROM spool.retraction
+             UNION ALL
+             SELECT restored_run FROM spool.retraction WHERE restored_run IS NOT NULL)",
+    )?;
+    let mut rows = statement.query(params![first.seq.0 as i64, last.seq.0 as i64])?;
+    let mut started: BTreeMap<Seq, Actor> = BTreeMap::new();
+    while let Some(row) = rows.next()? {
+        started.insert(
+            Seq(row.get::<_, i64>(0)? as u64),
+            parse(&row.get::<_, String>(1)?)?,
+        );
+    }
+    Ok(entries
+        .into_iter()
+        .map(|entry| LoggedChangeset {
+            started_by: started.remove(&entry.seq),
+            entry,
+        })
+        .collect())
 }
 
 /// The sources of a manifest, each with the entity types that read it.

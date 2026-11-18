@@ -450,7 +450,7 @@ fn spool_show_says_what_was_taken_back() {
     );
     assert!(
         shown.contains(&format!(
-            "\ncommitted  log position {}, changeset ",
+            "\ncommitted   log position {}, changeset ",
             run["load"]["committed"]["seq"]
         )),
         "{shown}"

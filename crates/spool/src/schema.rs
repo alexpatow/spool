@@ -7,7 +7,7 @@ use crate::error::{Error, Result};
 
 /// Written to `spool.meta` when a store is created and checked when one is
 /// opened.
-pub(crate) const FORMAT_VERSION: &str = "10";
+pub(crate) const FORMAT_VERSION: &str = "11";
 
 const TABLES: &str = "
 CREATE SCHEMA spool;
@@ -75,7 +75,8 @@ CREATE TABLE spool.run (               -- also the task record a client reads
   started_at       TIMESTAMPTZ NOT NULL,
   finished_at      TIMESTAMPTZ,
   error            VARCHAR,              -- failed: why
-  result           JSON                  -- what the run reported: a load's, an extraction's or a retraction's counts, a match run's resolution
+  result           JSON,                 -- what the run reported: a load's, an extraction's or a retraction's counts, a match run's resolution
+  started_by       VARCHAR     NOT NULL  -- who asked for the run, as an actor; 'engine' when nobody did
 );
 
 CREATE TABLE spool.candidate (         -- per run, disposable
@@ -219,9 +220,10 @@ CREATE VIEW spool.draft_open AS
 ";
 
 /// Creates the schema in an empty database, or checks the format version of
-/// an existing one. A store of another format is refused and left as it is:
-/// format 10 renamed columns that were there, so nothing earlier is brought
-/// up to date.
+/// an existing one. A store of another format is refused and left as it is.
+/// Nothing brings an earlier one up to date: format 10 renamed columns that
+/// were there, and format 11 says who started each run, which no earlier
+/// store knows.
 pub(crate) fn ensure(conn: &mut Connection) -> Result<()> {
     let exists: bool = conn.query_row(
         "SELECT count(*) > 0 FROM information_schema.schemata WHERE schema_name = 'spool'",

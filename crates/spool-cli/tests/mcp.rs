@@ -368,6 +368,15 @@ fn the_endpoint_answers_only_a_caller_the_api_answers() {
     assert!(!failed, "{by_assistant}");
     let third = entry(&server, by_assistant["seq"].as_u64().unwrap());
     assert_eq!(third["changeset"]["actor"], "agent:claude");
+    // A run is started by its caller in the same way.
+    let anvil = json!({ "source": "shop", "entity_type": "thing", "rows": [{ "id": "1", "code": "anvil" }] });
+    let (failed, by_person) = call_tool(browser(), "load_rows", anvil.clone());
+    assert!(!failed, "{by_person}");
+    assert_eq!(by_person["run"]["started_by"], format!("user:{person}"));
+    let (failed, by_assistant) =
+        call_tool(assistant(), "run_match", json!({ "entity_type": "thing" }));
+    assert!(!failed, "{by_assistant}");
+    assert_eq!(by_assistant["run"]["started_by"], "agent:claude");
     succeed(&["token", "revoke", "claude", "--store", path(&store)]);
     let revoked = assistant().header("Accept", ACCEPT).json(&list).send();
     revoked.error(401, "unauthorized");
@@ -820,6 +829,13 @@ fn rows_are_loaded_matched_and_taken_back_through_tools() {
     assert_eq!(resolution["committed"]["seq"], 1, "{matched}");
     assert!(resolution["draft"].is_null(), "{matched}");
     assert_eq!(head(&server), 1);
+    // A run says who started it. What a match run commits is the engine's
+    // in the log, which says who asked beside it.
+    assert_eq!(loaded["run"]["started_by"], "agent:api", "{loaded}");
+    assert_eq!(matched["run"]["started_by"], "agent:api", "{matched}");
+    let placed = tool(&server, "list_changesets", json!({ "limit": 1 }));
+    assert_eq!(placed["changesets"][0]["changeset"]["actor"], "engine");
+    assert_eq!(placed["changesets"][0]["started_by"], "agent:api");
     let run = matched["run"]["run"].as_u64().unwrap();
     assert_eq!(tool(&server, "get_run", json!({ "run": run })), matched);
     // With nothing new, no run is started.
@@ -1546,8 +1562,12 @@ fn a_development_server_answers_the_endpoint_only_by_this_machines_names() {
     let (failed, committed) = call_tool(request, "commit_changeset", create);
     assert!(!failed, "{committed}");
     let logged = entry(&server, committed["seq"].as_u64().unwrap());
-    assert_eq!(
-        logged["changeset"]["actor"],
-        format!("user:{}", text(&dev["person"]["id"]))
-    );
+    let dev_is = format!("user:{}", text(&dev["person"]["id"]));
+    assert_eq!(logged["changeset"]["actor"], dev_is.as_str());
+    // And what it loads is started by that account.
+    let anvil = json!({ "source": "shop", "entity_type": "thing", "rows": [{ "id": "1", "code": "anvil" }] });
+    let request = server.request("POST", "/mcp").without("Authorization");
+    let (failed, loaded) = call_tool(request, "load_rows", anvil);
+    assert!(!failed, "{loaded}");
+    assert_eq!(loaded["run"]["started_by"], dev_is.as_str());
 }

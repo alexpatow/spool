@@ -14,7 +14,7 @@ mcp       http://0.0.0.0:7765/mcp
 
 - **A tool is a call of the API.** Each tool runs the handler that the matching path under `/v1` runs, so it answers what the API answers and is refused what the API refuses. A changeset that breaks a rule is rejected whole, with the operation that broke it.
 - **The caller is whoever the server says it is.** `/mcp` takes the callers `/v1` takes and no others: a token, which writes under its name as `agent:<name>`, or the session of someone signed in, which writes as `user:<id>`. No tool has an argument that names the author of a change, and a call that sends one is refused.
-- **A change made under the caller's name says why.** The tools that change identities or take rows back require a `reason`, which the log keeps beside the change. The API leaves it optional. An assistant's change with no reason is hard to review afterwards. A load, an extraction and a match run take no reason, because a run has no author: see [Loading and matching](#loading-and-matching).
+- **A change made under the caller's name says why.** The tools that change identities or take rows back require a `reason`, which the log keeps beside the change. The API leaves it optional. An assistant's change with no reason is hard to review afterwards. A load, an extraction and a match run take no reason: a run records who started it, and what it did is in its report. See [Loading and matching](#loading-and-matching).
 - **Nothing is kept between requests.** The transport is Streamable HTTP without sessions, and every answer is one JSON response. Each request is authorized on its own. The endpoint speaks the protocol revisions from `2024-11-05` to `2026-07-28`, so a client that starts with the `initialize` handshake and one that sends no handshake both work.
 - **The protocol is the `rmcp` crate's**, the official Rust SDK. It is compiled into the binary: there is no second process and nothing else to install.
 
@@ -74,7 +74,7 @@ Each of the four answers with the run, and a run that is still going after 30 se
 - **A call is 4 MiB at most**, which is a few thousand rows. A pipeline loads more with `POST /v1/load`, which takes 256 MiB and Arrow, and `POST /v1/documents`.
 - **`run_match` always commits.** It takes no `commit` argument, because no tool approves a draft. Its `strategy` is `rules` or one the project declares for the type. Any other name is refused: on the API such a run waits for the caller's judgements, and no tool sends them.
 - **A token can do everything a tool does.** There are no tokens that only read, so an assistant that may look things up may also load, match, retract and merge. Give an assistant a token only on a store it may change, and mark the tools that change something as needing approval in a client that can ask.
-- **A load, an extraction and a match run are not recorded under the caller.** A run has a number and a time and no author, and what a match run commits is in the log as the engine's, with the reason "reconcile new records". A retraction, and every changeset an assistant commits, is recorded under its name with its reason.
+- **A run records who started it.** A load, an extraction and a match run each keep the caller that asked for them, as `started_by`: `get_run` gives it, and so do `GET /v1/runs`, `spool show runs` and the studio. What a match run commits is still the engine's in the log, with the reason "reconcile new records", because the engine decided those placements and the caller only asked for the run. The log entry names both: its `actor` is `engine` and its `started_by` is the caller. A retraction, and every changeset an assistant commits, is recorded under its name with its reason.
 
 ## Adding it to a client
 
@@ -160,7 +160,7 @@ What can be done about it, none of which is built:
 
 `spool serve` answers `/mcp` by whatever name the server is reached by. Like every write to the server, a request that a browser sends from another site's page is refused.
 
-`spool dev` asks nobody to sign in, so it answers, at `/mcp` as at every other path, only a request sent to `localhost` or to a loopback address such as `127.0.0.1`. A page on another site that has a name of its own for this machine is refused. A changeset or a retraction that an assistant makes on a development server is recorded under the `dev` account.
+`spool dev` asks nobody to sign in, so it answers, at `/mcp` as at every other path, only a request sent to `localhost` or to a loopback address such as `127.0.0.1`. A page on another site that has a name of its own for this machine is refused. What an assistant does on a development server is recorded under the `dev` account: it is the author of a changeset or a retraction, and the one who started a load, an extraction or a match run.
 
 ## What was tried
 

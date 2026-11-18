@@ -1178,9 +1178,9 @@ mod tests {
 
     #[test]
     fn a_store_with_another_format_version_is_refused() {
-        // One from before a load was called a load in the store, and one
-        // from an engine yet to come.
-        for other in ["9", "999"] {
+        // One from before a run recorded who started it, and one from an
+        // engine yet to come.
+        for other in ["10", "999"] {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("store.duckdb");
             {
@@ -1196,7 +1196,7 @@ mod tests {
                 error.to_string(),
                 format!(
                     "the store has format version {other}, and this engine reads only version \
-                     10: it does not convert a store, so load into a new one"
+                     11: it does not convert a store, so load into a new one"
                 )
             );
             // The store is as it was.

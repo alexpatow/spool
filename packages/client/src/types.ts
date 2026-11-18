@@ -840,12 +840,20 @@ export interface LoadRequest {
 }
 
 /**
- * A committed changeset as the log holds it.
+ * A committed changeset as the log holds it, with who asked for the work
+ * it came from.
  */
 export interface LogEntry {
   changeset: Changeset;
   content_hash: ContentHash;
   seq: Seq;
+  /**
+   * Who started the run that committed the changeset, if a run did: a
+   * match run, a retraction, or a load of rows that had been taken back.
+   * The changeset's `actor` is who decided its operations, which for a
+   * match run and for rows that come back is the engine.
+   */
+  started_by?: Actor | null;
 }
 
 /**
@@ -1583,6 +1591,12 @@ export interface RunEntry {
    */
   said?: string | null;
   started_at: string;
+  /**
+   * Who asked for the run: `engine` when nobody did. It is not who
+   * authored what the run changed. A changeset names its own author,
+   * and a match run's changeset is the engine's.
+   */
+  started_by: Actor;
   status: RunStatus;
   /**
    * The strategy of a match run.

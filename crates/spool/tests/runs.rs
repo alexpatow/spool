@@ -10,10 +10,10 @@ use common::*;
 use spool::arrow::datatypes::SchemaRef;
 use spool::arrow::error::ArrowError;
 use spool::arrow::record_batch::{RecordBatch, RecordBatchReader};
-use spool::core::{EntityType, Policy, RunId, Seq};
+use spool::core::{Actor, ConstraintKind, EntityType, Op, Policy, RunId, Seq};
 use spool::{
-    Engine, EntityTypeSource, Error, Options, ResolveOptions, RunFilter, RunKind, RunStatus, Scope,
-    SqlFile, StrategyRef, watch_runs,
+    Engine, EntityTypeSource, Error, LoggedChangeset, Options, ResolveOptions, RunFilter, RunKind,
+    RunStatus, Scope, SqlFile, StrategyRef, watch_runs,
 };
 
 fn thing_scope() -> Scope {
@@ -374,4 +374,207 @@ fn an_engine_adopts_only_the_manifest_its_store_was_applied_with() {
     assert_eq!(engine.manifest().unwrap().hash, things().hash);
     load(&engine, "shop", &[("1", Some("anvil"), None)]);
     engine.resolve(&ResolveOptions::default()).unwrap();
+}
+
+fn pipeline() -> Actor {
+    Actor::Agent("pipeline".to_owned())
+}
+
+fn reviewer() -> Actor {
+    Actor::User("reviewer".to_owned())
+}
+
+fn started_by(engine: &Engine, run: RunId) -> Actor {
+    engine.run(run).unwrap().started_by
+}
+
+/// The log after a position, as who decided each changeset, who started the
+/// run it came from, and its reason.
+fn logged(engine: &Engine, after: Seq) -> Vec<(Actor, Option<Actor>, Option<String>)> {
+    engine
+        .logged_after(after, 100)
+        .unwrap()
+        .into_iter()
+        .map(|LoggedChangeset { entry, started_by }| {
+            (entry.changeset.actor, started_by, entry.changeset.reason)
+        })
+        .collect()
+}
+
+#[test]
+fn a_run_records_who_started_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("spool.duckdb");
+    let engine = Engine::open(&path, Options::seeded(1)).unwrap();
+    engine.apply(&things()).unwrap();
+
+    // Nobody is named on the engine itself, so the run is its own.
+    let own = load(&engine, "shop", &[("1", Some("anvil"), None)]);
+    assert_eq!(started_by(&engine, own.run), Actor::Engine);
+
+    let asked = engine.acting(pipeline());
+    let loaded = asked
+        .load("depot", "thing", rows(&[("1", Some("anvil"), None)]))
+        .unwrap();
+    assert_eq!(started_by(&engine, loaded.run), pipeline());
+    // The reconcile run of a match run is started by whoever started that.
+    let report = asked.resolve(&ResolveOptions::default()).unwrap();
+    let resolution = &report.resolved[0];
+    assert_eq!(started_by(&engine, resolution.match_run), pipeline());
+    assert_eq!(started_by(&engine, resolution.reconcile_run), pipeline());
+
+    // What the run committed is still the engine's, which decided where the
+    // records go. The log says who asked beside it.
+    assert_eq!(
+        logged(&engine, Seq(0)),
+        [(
+            Actor::Engine,
+            Some(pipeline()),
+            Some("reconcile new records".to_owned())
+        )]
+    );
+    let entry = serde_json::to_value(&engine.logged_after(Seq(0), 1).unwrap()[0]).unwrap();
+    assert_eq!(entry["seq"], 1);
+    assert_eq!(entry["changeset"]["actor"], "engine");
+    assert_eq!(entry["started_by"], "agent:pipeline");
+    assert_eq!(
+        serde_json::to_value(engine.run(loaded.run).unwrap()).unwrap()["started_by"],
+        "agent:pipeline"
+    );
+
+    // It is in the store, so it is there after a restart.
+    drop(asked);
+    drop(engine);
+    let engine = Engine::open(&path, Options::seeded(2)).unwrap();
+    engine.adopt(&things()).unwrap();
+    let starters: Vec<(RunKind, Actor)> = engine
+        .runs(&RunFilter::default())
+        .unwrap()
+        .into_iter()
+        .rev()
+        .map(|run| (run.kind, run.started_by))
+        .collect();
+    assert_eq!(
+        starters,
+        [
+            (RunKind::Load, Actor::Engine),
+            (RunKind::Load, pipeline()),
+            (RunKind::Match, pipeline()),
+            (RunKind::Reconcile, pipeline()),
+        ]
+    );
+}
+
+#[test]
+fn a_reconcile_run_is_started_by_whoever_reconciles() {
+    let engine = engine();
+    load(
+        &engine,
+        "shop",
+        &[("1", Some("anvil"), None), ("2", Some("anvil"), None)],
+    );
+    let open = engine
+        .acting(pipeline())
+        .begin_run(&by_hand(), &thing_scope())
+        .unwrap();
+    let pairs = engine.candidates(open).unwrap();
+    let (left, right) = (
+        cell(&pairs[0], 0, 0).unwrap(),
+        cell(&pairs[0], 1, 0).unwrap(),
+    );
+    let judgements = spool::Rows::from_text(
+        &["left_id", "right_id", "verdict"],
+        &[vec![
+            Some(left.as_str()),
+            Some(right.as_str()),
+            Some("match"),
+        ]],
+    )
+    .unwrap();
+    engine.submit_judgements(open, judgements).unwrap();
+
+    let draft = engine
+        .acting(reviewer())
+        .reconcile(open, &Policy::default())
+        .unwrap();
+    let reconcile = draft.changeset.run.expect("a draft names its run");
+    assert_eq!(started_by(&engine, open), pipeline());
+    assert_eq!(started_by(&engine, reconcile), reviewer());
+
+    engine.commit(draft.changeset).unwrap();
+    assert_eq!(
+        logged(&engine, Seq(0)),
+        [(
+            Actor::Engine,
+            Some(reviewer()),
+            Some("reconcile new records".to_owned())
+        )]
+    );
+}
+
+#[test]
+fn the_log_says_who_started_the_run_a_changeset_came_from_where_one_did() {
+    let engine = engine();
+    load(
+        &engine,
+        "shop",
+        &[("1", Some("anvil"), None), ("2", Some("hammer"), None)],
+    );
+    load(&engine, "depot", &[("1", Some("anvil"), None)]);
+    engine.resolve(&ResolveOptions::default()).unwrap();
+    let head = engine.head().unwrap();
+
+    // Taking a row back is a run of the one who took it back, and so is
+    // what it changed.
+    let taken = engine
+        .retract(
+            "shop",
+            "thing",
+            &["1".to_owned()],
+            pipeline(),
+            Some("struck off".to_owned()),
+        )
+        .unwrap();
+    assert_eq!(started_by(&engine, taken.run), pipeline());
+
+    // The engine puts a row that is sent again back where it was. Whoever
+    // loaded it asked for that.
+    let again = engine
+        .acting(reviewer())
+        .load("shop", "thing", rows(&[("1", Some("anvil"), None)]))
+        .unwrap();
+    assert!(again.committed.is_some());
+
+    // A changeset written by hand came from no run.
+    let (anvil, hammer) = (
+        record_id(&engine, "shop", "1"),
+        record_id(&engine, "shop", "2"),
+    );
+    engine
+        .author(
+            reviewer(),
+            Some("they are not one thing".to_owned()),
+            vec![Op::Constrain {
+                kind: ConstraintKind::CannotLink,
+                a: anvil.min(hammer),
+                b: anvil.max(hammer),
+            }],
+        )
+        .unwrap();
+
+    assert_eq!(
+        logged(&engine, head),
+        [
+            (pipeline(), Some(pipeline()), Some("struck off".to_owned())),
+            (
+                Actor::Engine,
+                Some(reviewer()),
+                Some("source `shop` sent the rows again".to_owned())
+            ),
+            (reviewer(), None, Some("they are not one thing".to_owned())),
+        ]
+    );
+    // A page of the log is the same entries.
+    assert_eq!(logged(&engine, Seq(head.0 + 1)).len(), 2);
+    engine.verify().unwrap();
 }

@@ -105,11 +105,15 @@ fn the_same_seed_gives_the_same_changesets_through_the_library_and_the_server() 
         let log = server.read("/v1/changesets");
         assert_eq!(hashes(&log), expected, "{encoding:?}");
         assert_eq!(log["head"], 2);
-        assert_eq!(
-            log["changesets"],
-            serde_json::to_value(library.log_after(Seq(0), 1_000).unwrap()).unwrap(),
-            "{encoding:?}"
-        );
+        // The entries are the same but for who started the runs: the token
+        // here, and nobody in the library.
+        let mut entries =
+            serde_json::to_value(library.logged_after(Seq(0), 1_000).unwrap()).unwrap();
+        for entry in entries.as_array_mut().unwrap() {
+            assert_eq!(entry["started_by"], "engine");
+            entry["started_by"] = json!("agent:api");
+        }
+        assert_eq!(log["changesets"], entries, "{encoding:?}");
 
         // The state the log leaves is the same too.
         let identities = server.read("/v1/identities?limit=1000");

@@ -6,7 +6,7 @@
 
 use duckdb::{Connection, params};
 use serde::{Deserialize, Serialize};
-use spool_core::{Committed, ContentHash, EntityType, RunId, Seq, StateError};
+use spool_core::{Actor, Committed, ContentHash, EntityType, RunId, Seq, StateError};
 
 use crate::documents::{ExtractReport, ExtractorRef};
 use crate::engine::{StrategyRef, TypeResolution};
@@ -100,6 +100,10 @@ pub struct RunEntry {
     pub run: RunId,
     pub kind: RunKind,
     pub status: RunStatus,
+    /// Who asked for the run: `engine` when nobody did. It is not who
+    /// authored what the run changed. A changeset names its own author,
+    /// and a match run's changeset is the engine's.
+    pub started_by: Actor,
     /// The entity type a load, a match or a retract run is about.
     pub entity_type: Option<EntityType>,
     /// The strategy of a match run.
@@ -158,7 +162,8 @@ const RECORD: &str = "
            epoch_us(r.started_at), epoch_us(r.finished_at), r.error, r.result::VARCHAR,
            c.seq, c.changeset_id::VARCHAR, c.content_hash,
            json_extract_string(r.config, '$.extractor.name'),
-           json_extract_string(r.config, '$.extractor.version')
+           json_extract_string(r.config, '$.extractor.version'),
+           r.started_by
     FROM spool.run r
     LEFT JOIN spool.draft d ON d.match_run = r.run_id AND d.status = 'committed'
     LEFT JOIN spool.changeset c ON c.seq = d.closed_seq";
@@ -214,6 +219,7 @@ fn entry(row: &duckdb::Row<'_>) -> Result<RunEntry> {
         run,
         kind,
         status: RunStatus::from_stored(&row.get::<_, String>(2)?)?,
+        started_by: parse::<Actor>(&row.get::<_, String>(15)?)?,
         strategy: row.get::<_, Option<String>>(3)?.map(|name| StrategyRef {
             name,
             version: row.get(4).unwrap_or(None),

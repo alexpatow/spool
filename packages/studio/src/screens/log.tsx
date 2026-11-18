@@ -31,6 +31,7 @@ export function Log() {
                 "-"
               ),
           },
+          { title: "Started by", cell: (entry) => (entry.started_by ? <Who actor={entry.started_by} /> : "-") },
           { title: "Reason", cell: (entry) => entry.changeset.reason ?? "-", wrap: true },
         ]}
         rowKey={(entry) => entry.seq}
@@ -55,6 +56,7 @@ function Entry({ entry }: { entry: LogEntry }) {
               <Ref kind="run" id={entry.changeset.run} label={`reconcile run ${entry.changeset.run}`} />
             ) : null,
           ],
+          ["Started by", entry.started_by ? <Who actor={entry.started_by} /> : null],
           ["Base", `log position ${entry.changeset.base}`],
           ["Content hash", <Code>{entry.content_hash}</Code>],
         ]}
