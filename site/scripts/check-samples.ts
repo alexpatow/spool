@@ -62,7 +62,8 @@
  */
 import { type Subprocess, spawn, spawnSync } from "bun";
 import {
-  existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync,
+  existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -180,10 +181,16 @@ async function main() {
   const unaddress = (text: string) => movePorts(text, port, DEFAULT_PORT);
 
   const tools = mkdtempSync(join(tmpdir(), "spool-samples-tools-"));
+  // The pages run `spool`. The binary under test may have another file name,
+  // and another `spool` may be installed, so the name is a link to this one,
+  // ahead of everything else on the search path.
+  const bin = join(tools, "bin");
+  mkdirSync(bin);
+  symlinkSync(realpathSync(spoolBin), join(bin, "spool"));
 
   const env = {
     ...process.env,
-    PATH: `${dirname(spoolBin)}:${process.env["PATH"] ?? ""}`,
+    PATH: `${bin}:${process.env["PATH"] ?? ""}`,
     SPOOL_URL: `http://127.0.0.1:${port}`,
     // What a reader's terminal has not got.
     SPOOL_TOKEN: "",

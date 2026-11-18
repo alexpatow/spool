@@ -28,7 +28,7 @@ An ID that never changes by itself has a price, and this is it.
 - **The result depends on the order rows arrive in.** Two records that arrive together and match become one identity. The same two, each placed alone before a rule matched them, stay apart until someone merges them.
 - **A better rule suggests, and changes nothing.** A rematch under new rules lists the merges the rules now imply. A person or an agent makes them. The suggestions are in the run's report and nowhere else.
 - **A match never splits an identity.** A wrong match that was committed stays until someone splits it. When a row that held an identity together is taken back, a review item asks whether to split, and nothing is split by itself.
-- **An earlier version of a row still counts.** It stays in its identity and still matches, so a row that was corrected can raise a review item through the version it replaced.
+- **An earlier version of a row still counts.** It stays in its identity and still matches, so a row that was corrected can raise a review item through the version it replaced. Earlier versions go where the latest version is placed, by a match or by a changeset someone sends. A split, an undo and a draft that is approved move only the records they name, so they can leave the versions of one row in two identities until the latest is placed again.
 
 [Matching](/docs/concepts/matching#the-cost-of-ids-that-stay) shows the first two with rows.
 

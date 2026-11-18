@@ -147,6 +147,8 @@ record                                source and key  name                 ident
 
 The earlier version stays a member of the identity and can still be matched by later records. That keeps history intact, and it has a cost: an old version that lacks a value can match something the new version would not. [Review](/docs/concepts/review#a-conflict) shows what a missing value does.
 
+The versions of a row travel together. When the latest version is placed in an identity, by a match or by a changeset that a person or an agent sends, each earlier version that is in another identity, or in none, is moved there too. The moves are operations of the same changeset, so the log shows them and undoing it puts each version back. A match that moved some says so on its `placed` line, as `1 earlier version moved along`. A split, an undo and a draft that is approved move only the records they name.
+
 A row that changes from A to B and back to A ends at A. The second A is a new version with an ID of its own, which replaces B. So a file is only ignored when it says what the server holds now: loading an older file after a newer one moves the rows that changed between them back to what the older file says.
 
 ## A row the source no longer holds

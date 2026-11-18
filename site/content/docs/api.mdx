@@ -103,7 +103,7 @@ curl -s -X POST http://127.0.0.1:7765/v1/match -d '{"entity_type": "company", "w
 ```
 
 ```text title="Output"
-{"run":{"run":3,"kind":"match","status":"succeeded","started_by":"user:01a1f0a3-7961-77eb-b436-a883824aafc0","entity_type":"company","strategy":{"name":"rules","version":"0.1.0"},"extractor":null,"started_at":"2026-11-18T21:55:21.255836Z","finished_at":"2026-11-18T21:55:21.272981Z","error":null,"load":null,"extraction":null,"resolution":{"entity_type":"company","match_run":3,"reconcile_run":4,"new_records":7,"reexamined":0,"candidates":4,"judgements":{"match":3,"no_match":1,"unsure":0},"identities_created":5,"records_assigned":7,"records_unassigned":0,"review":[],"committed":{"seq":1,"changeset":"01a1f0a8-4232-7087-b692-f8d5ca051cd2","content_hash":"bce9261ad37cd01b33ddbf1f35a93ad9a70bac195a2a5579a0f65cec0917cdda"},"draft":null,"suggestions":null},"retraction":null}}
+{"run":{"run":3,"kind":"match","status":"succeeded","started_by":"user:01a1f0a3-7961-77eb-b436-a883824aafc0","entity_type":"company","strategy":{"name":"rules","version":"0.1.0"},"extractor":null,"started_at":"2026-11-18T22:10:03.814727Z","finished_at":"2026-11-18T22:10:03.832263Z","error":null,"load":null,"extraction":null,"resolution":{"entity_type":"company","match_run":3,"reconcile_run":4,"new_records":7,"reexamined":0,"candidates":4,"judgements":{"match":3,"no_match":1,"unsure":0},"identities_created":5,"records_assigned":7,"versions_moved":0,"records_unassigned":0,"review":[],"committed":{"seq":1,"changeset":"01a1f0b5-b9b0-7443-a834-945d59293e96","content_hash":"32c29e26ae8c63c31300f3c95102c1c057f4eef72609815fd8f45d4dcc80fdd6"},"draft":null,"suggestions":null},"retraction":null}}
 ```
 
 | Field | Meaning |
@@ -166,7 +166,7 @@ curl -s -X POST http://127.0.0.1:7765/v1/runs/$RUN/reconcile -d '{}'
 ```
 
 ```text title="Output"
-{"entity_type":"company","match_run":6,"reconcile_run":7,"new_records":1,"reexamined":0,"candidates":3,"judgements":{"match":1,"no_match":0,"unsure":0},"identities_created":0,"records_assigned":1,"records_unassigned":0,"review":[],"committed":{"seq":2,"changeset":"01a1f0a8-42c1-7442-a62b-88f3c018cacf","content_hash":"6a86dfc16ea83c8469f67cc52d851739b28fe7cc406fb54de9ac2bede3ffb8a3"},"draft":null,"suggestions":null}
+{"entity_type":"company","match_run":6,"reconcile_run":7,"new_records":1,"reexamined":0,"candidates":3,"judgements":{"match":1,"no_match":0,"unsure":0},"identities_created":0,"records_assigned":1,"versions_moved":0,"records_unassigned":0,"review":[],"committed":{"seq":2,"changeset":"01a1f0b5-ba40-73bd-93b5-b29d667d9177","content_hash":"2166ed732fd26d3f68d52397ab5d896778167df0dab41e344bb652b16f20004b"},"draft":null,"suggestions":null}
 ```
 
 `verdict` is `match`, `no_match` or `unsure`. A pair that gets no judgement is left undecided. `score` and `detail` are kept with the judgement and shown by `spool explain`.
@@ -243,6 +243,8 @@ curl -s -X POST http://127.0.0.1:7765/v1/changesets -d '{"reason": "Halden Group
 | `unconstrain` | `kind`, `a`, `b` | Removes one |
 
 The body may carry `base`, the log position the caller last read. Each operation says what it expects to find, an `assign` its `from` for example, and a changeset whose expectations no longer hold is refused whole, with the operation that failed. So is one that would put two `cannot_link` records in one identity, or leave two `must_link` records apart.
+
+A changeset that places the latest version of a row moves its earlier versions along. The server adds those moves to the changeset, so the log may show more operations than were sent. A match run counts them in `versions_moved`.
 
 `GET /v1/changesets?after=<seq>` reads the log. [Using the IDs](/docs/using-the-ids#follow-the-log) shows a consumer following it.
 
