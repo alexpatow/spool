@@ -72,7 +72,7 @@ number.
 
 A model that runs on this machine reads only so many words at once, and
 ignores the rest of a longer text without saying so. `document.pieces(words)`
-gives the text in pieces it can read whole:
+gives the text in pieces it can read whole, one at a time:
 
     for piece in document.pieces(300):
         for start, end in model.find(piece.text):
@@ -87,6 +87,12 @@ Each mention becomes a record of its entity type, whose source is the
 document's. An extractor says what a document mentions. It cannot say that
 two mentions are the same thing: the type's rules and strategies decide that.
 
+What an extractor writes to its standard error is shown to whoever waits for
+the run, a line at a time. A function that is called once for each document
+has a line written for it every ten seconds, such as `read 400 of 3,053
+documents`. Spool stops a run that takes longer than it allows, which is 600
+seconds unless `--task-timeout` says otherwise where Spool is started.
+
 Without `SPOOL_TASK_DIR` in the environment the decorators do nothing, so
 the file can be imported, and its function called, in a test.
 """
@@ -94,15 +100,21 @@ the file can be imported, and its function called, in a test.
 from __future__ import annotations
 
 import inspect
+import itertools
 import json
 import os
 import re
+import sys
+import time
 from pathlib import Path
 
 __all__ = ["PROTOCOL", "Document", "ExtractTask", "Piece", "Task", "extractor", "strategy"]
 
 #: The version of the task directory's layout this module reads and writes.
 PROTOCOL = 1
+
+#: How often, in seconds, a long extract run says how many documents it has read.
+_SAY_EVERY = 10
 
 _COLUMNS = ("left_id", "right_id", "verdict", "score", "detail")
 _REQUIRED = _COLUMNS[:3]
@@ -337,13 +349,16 @@ class Document:
         return places
 
     def pieces(self, words, shared=None):
-        """The text in pieces of at most `words` words, as a list of `Piece`.
+        """The text in pieces of at most `words` words, one `Piece` at a time.
 
         For a model that reads only so much at once. A punctuation mark
         counts as a word, which is how such models count. Each piece shares
         its last `shared` words with the next: an eighth of `words` unless
         it is given. A text that fits is one piece, and one with no words in
         it is none.
+
+        The pieces are made as they are asked for, so a long text takes no
+        more memory in pieces than one piece does: `list(...)` holds them all.
         """
         if isinstance(words, bool) or not isinstance(words, int) or words < 1:
             raise ValueError(f"`words` is how many words a piece may have, and it is {words!r}")
@@ -354,22 +369,30 @@ class Document:
                 f"`shared` is how many of its {words} words a piece shares with the next, "
                 f"and it is {shared!r}"
             )
-        spans = [found.span() for found in _WORD.finditer(self.text)]
-        pieces = []
-        first = 0
-        while spans:
-            last = min(first + words, len(spans))
+        return self._pieces(words, shared)
+
+    def _pieces(self, words, shared):
+        # Where the words are is asked for as the pieces are made, and only
+        # the words of one piece are kept: a text can be nothing but words,
+        # and a place for each of them is many times the text.
+        spans = (found.span() for found in _WORD.finditer(self.text))
+        piece = list(itertools.islice(spans, words))
+        first = True
+        while piece:
             # What is found in shared words belongs to the piece that has
             # more of the text around it: the halves meet in the middle.
-            start = 0 if first == 0 else spans[first][0]
-            own = 0 if first == 0 else spans[first + shared // 2][0]
-            if last == len(spans):
-                pieces.append(Piece(self, start, len(self.text), own, len(self.text) + 1))
-                break
-            until = spans[last - (shared - shared // 2)][0]
-            pieces.append(Piece(self, start, spans[last - 1][1], own, until))
-            first += words - shared
-        return pieces
+            start = 0 if first else piece[0][0]
+            own = 0 if first else piece[shared // 2][0]
+            following = next(spans, None)
+            if following is None:
+                yield Piece(self, start, len(self.text), own, len(self.text) + 1)
+                return
+            until = (piece + [following])[words - (shared - shared // 2)][0]
+            yield Piece(self, start, piece[-1][1], own, until)
+            # The next piece begins with the last `shared` words of this one.
+            piece = piece[words - shared :] + [following]
+            piece += itertools.islice(spans, words - shared - 1)
+            first = False
 
 
 #: A word, or a mark that is not part of one.
@@ -472,7 +495,15 @@ def extractor(function):
     given = {"task": task} if "task" in names else {}
     found = []
     if "document" in names:
-        for document in task.documents:
+        documents = task.documents
+        said = time.monotonic()
+        for read, document in enumerate(documents):
+            # A run that takes long says how far it is, so that whoever
+            # waits for it can tell when it will be done.
+            if time.monotonic() - said >= _SAY_EVERY:
+                said = time.monotonic()
+                progress = f"read {read:,} of {len(documents):,} documents"
+                print(progress, file=sys.stderr, flush=True)
             for mention in function(document=document, **given) or ():
                 if mention is None:
                     continue

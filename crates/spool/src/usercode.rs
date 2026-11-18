@@ -643,10 +643,19 @@ impl Task {
             ))
         })?;
         match finished {
-            Finished::TimedOut => Err(self.fail(format!(
-                "it was stopped after {} without finishing",
-                seconds(timeout)
-            ))),
+            Finished::TimedOut => {
+                let said = end_of(&self.dir.join("stderr.log"))
+                    .ok()
+                    .and_then(|end| last_line(&String::from_utf8_lossy(&end)))
+                    .map(|line| format!(". The last it said was `{line}`"))
+                    .unwrap_or_default();
+                Err(self.fail(format!(
+                    "it was stopped after {} without finishing. That is the longest a strategy \
+                     or an extractor may run here, and `--task-timeout <seconds>` sets it, on \
+                     `spool dev`, `spool serve` or `spool bench`{said}",
+                    seconds(timeout)
+                )))
+            }
             Finished::Exited(status) if !status.success() => {
                 let said = tail(&self.dir.join("stderr.log"));
                 let said = match said.is_empty() {

@@ -27,6 +27,11 @@ An extractor's first run may fetch what it depends on, a model for one. When
 a run takes more than a few seconds, the command says on standard error which
 file is running, and what the file says as it goes.
 
+One run reads every document the extractor has not read, and the server stops
+a run that takes longer than it lets user code run: 600 seconds, unless
+`--task-timeout` said otherwise when the server was started. A run that is
+stopped finds nothing, and the documents stay stored for the next one.
+
   <file>               a file of UTF-8 text
 
 Options:

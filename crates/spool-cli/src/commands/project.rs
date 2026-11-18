@@ -144,9 +144,11 @@ import sys
 from fast_gliner import FastGLiNER
 from spool import extractor
 
-# What to look for. On the left are the words the model is given, and any
-# will do: \"person\" or \"medicine\" as well as \"company\". On the right is
-# the entity type of this project that such a find becomes a record of.
+# What to look for. On the left is the word the model is given, and the word
+# decides what is found: \"company\" misses most universities, parties and
+# charities, and \"organization\" finds them. Any word will do, \"person\" or
+# \"medicine\" as well. On the right is the entity type of this project that
+# such a find becomes a record of.
 LOOK_FOR = {{\"company\": \"{entity}\"}}
 
 # GLiNER small: 245 MB, Apache-2.0, at the version it was tried with.

@@ -11,11 +11,20 @@
 //! cargo test -p spool-cli --test first_extraction -- --include-ignored
 //! ```
 //!
-//! Two of them run the sample extractor as `spool init` writes it, with its
-//! model, which runs on this machine and costs nothing. One of the two
-//! fetches the model, about 330 MB with what runs it, each time it runs. The
-//! others put a stand-in in the sample's place, which finds the same names
-//! in the sample note and fetches nothing.
+//! Those put a stand-in in the sample extractor's place, which finds the
+//! same names in the sample note and needs no model. They are what CI runs.
+//!
+//! Two tests run the sample extractor as `spool init` writes it, with its
+//! model, which runs on this machine and costs nothing. The model is about
+//! 330 MB to fetch with what runs it, so these two are run by hand, and do
+//! nothing unless `SPOOL_TEST_MODEL` is set:
+//!
+//! ```sh
+//! SPOOL_TEST_MODEL=1 cargo test -p spool-cli --test first_extraction -- --include-ignored sample_model
+//! ```
+//!
+//! One of the two fetches the model each time it runs, into caches of its
+//! own.
 
 mod support;
 
@@ -64,6 +73,17 @@ def find(document):
     for found in NAME.finditer(document.text):
         yield document.mention("company", found.start(), found.end(), name=found.group())
 "#;
+
+/// Whether the tests that run the sample extractor's model were asked for.
+/// They fetch about 330 MB, so `--include-ignored` alone does not run them:
+/// see the top of this file.
+fn model_asked_for() -> bool {
+    let asked = std::env::var_os("SPOOL_TEST_MODEL").is_some_and(|value| !value.is_empty());
+    if !asked {
+        eprintln!("not run: this test runs a model, which SPOOL_TEST_MODEL=1 asks for");
+    }
+    asked
+}
 
 /// A new project whose extractor is the stand-in.
 fn init_with_stand_in(dir: &Path) -> PathBuf {
@@ -297,15 +317,30 @@ fn the_extractor_of_a_new_project_names_what_it_needs_and_what_it_finds() {
 }
 
 /// The steps a reader takes after `spool init`, with what each prints: the
-/// text the README and the site show. The extractor is the one `spool init`
-/// wrote, and its model reads the note.
+/// text the README and the site show. Here the extractor is the stand-in,
+/// which finds in the note what the model finds.
 #[test]
-#[ignore = "runs uv, and the sample extractor's model"]
+#[ignore = "runs uv"]
 fn the_note_of_a_new_project_is_read_and_what_it_names_joins_the_rows() {
     let dir = tempfile::tempdir().unwrap();
-    let project = init_companies(dir.path());
-    let server = Server::dev(&project);
-    let shown = |arguments: &[&str]| shown(&server, &project, arguments);
+    the_steps_after_init(&init_with_stand_in(dir.path()));
+}
+
+/// The same steps with the extractor `spool init` wrote, whose model reads
+/// the note. By hand: see the top of this file.
+#[test]
+#[ignore = "runs the sample extractor's model, and only with SPOOL_TEST_MODEL=1"]
+fn the_sample_model_reads_the_note_and_what_it_names_joins_the_rows() {
+    if !model_asked_for() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    the_steps_after_init(&init_companies(dir.path()));
+}
+
+fn the_steps_after_init(project: &Path) {
+    let server = Server::dev(project);
+    let shown = |arguments: &[&str]| shown(&server, project, arguments);
 
     // The rows first, as the reader has them by now.
     shown(&["load", "samples/crm-1.csv"]);
@@ -322,12 +357,9 @@ fn the_note_of_a_new_project_is_read_and_what_it_names_joins_the_rows() {
     };
 
     // The step: one command, which needs no source and no extractor named.
-    // On a machine that has not run it before, this is where the model is
-    // fetched.
-    assert_eq!(
-        extracted(&server, &project, &["samples/notes-1.txt"]),
-        FIRST
-    );
+    // With the sample extractor, on a machine that has not run it before,
+    // this is where the model is fetched.
+    assert_eq!(extracted(&server, project, &["samples/notes-1.txt"]), FIRST);
     // Each record says where it was found, and the place is the text.
     let records = found(&server);
     let note: Vec<char> = NOTE.chars().collect();
@@ -386,8 +418,7 @@ placed      3 records, 1 identity created
     assert!(!acorn.contains('#'), "{acorn}");
 
     // The same command again has nothing to do, and says how to have it
-    // done regardless. By now the model is on this machine, and reading
-    // the note again finds what it found.
+    // done regardless. Reading the note again finds what was found.
     assert_eq!(
         shown(&["extract", "samples/notes-1.txt"]),
         "\
@@ -399,7 +430,7 @@ found      0 records: `companies` has read every document. `--again` reads them 
 "
     );
     assert_eq!(
-        extracted(&server, &project, &["samples/notes-1.txt", "--again"]),
+        extracted(&server, project, &["samples/notes-1.txt", "--again"]),
         "\
 source     notes
 read       1 document from samples/notes-1.txt
@@ -414,15 +445,15 @@ found      3 records in 1 document: 0 new, 3 already held
     );
     assert_eq!(found(&server), records);
 
-    // A document longer than the model reads at once is read in pieces,
-    // and a name is found wherever it is: here after two thousand words,
-    // with letters that are more than one byte before it.
+    // A document longer than the sample's model reads at once is read in
+    // pieces, and a name is found wherever it is: here after two thousand
+    // words, with letters that are more than one byte before it.
     let long = format!(
         "{}Zoë Müller confirmed that Halden Group Inc had signed.\n",
         "Nothing of note was said in the weekly call. ".repeat(250)
     );
     write(&project.join("notes-long.txt"), &long);
-    let read = extracted(&server, &project, &["notes-long.txt"]);
+    let read = extracted(&server, project, &["notes-long.txt"]);
     let start = long.chars().count() - "Halden Group Inc had signed.\n".chars().count();
     assert!(
         read.contains(&format!(
@@ -603,6 +634,98 @@ fn a_run_that_takes_a_while_says_what_its_extractor_says() {
     assert_eq!(finished["status"], "succeeded", "{finished}");
     assert_eq!(finished["said"], Value::Null, "{finished}");
     assert_eq!(finished["extraction"]["mentions"], 3, "{finished}");
+}
+
+/// A run over many documents can take longer than Spool lets user code run.
+/// While it runs it says how far it is, and when it is stopped the message
+/// says how far it got, what the limit is and what raises it.
+#[test]
+#[ignore = "runs uv"]
+fn a_run_that_is_stopped_says_how_far_it_got_and_what_raises_the_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = init_companies(dir.path());
+    // A second and a half for each document, as a model on a slow machine.
+    write(
+        &project.join("extractors/companies.py"),
+        &BY_LEGAL_FORM
+            .replacen("import re\n", "import re\nimport time\n", 1)
+            .replacen(
+                "    for found in",
+                "    time.sleep(1.5)\n    for found in",
+                1,
+            ),
+    );
+    let notes: Vec<String> = (1..=20).map(|note| format!("notes-{note}.txt")).collect();
+    for (note, name) in notes.iter().enumerate() {
+        write(
+            &project.join("samples").join(name),
+            &format!("Note {note}: Acorn Tools Ltd called."),
+        );
+    }
+    let files: Vec<String> = notes.iter().map(|name| format!("samples/{name}")).collect();
+    let files: Vec<&str> = files.iter().map(String::as_str).collect();
+    let limited = |seconds: &str| {
+        Server::start(&[
+            "dev",
+            path(&project),
+            "--listen",
+            "127.0.0.1:0",
+            "--seed",
+            "1",
+            "--task-timeout",
+            seconds,
+        ])
+    };
+
+    // Twenty documents take thirty seconds, and the run has twenty-five.
+    let server = limited("25");
+    let output = server
+        .spool_in(&project, &[&["extract"], &files[..]].concat())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output.stdout));
+    let said = text(&output.stderr);
+    let lines: Vec<&str> = said.lines().collect();
+    assert_eq!(lines[0], "running    extractors/companies.py", "{said}");
+    let progress: Vec<&str> = lines
+        .iter()
+        .filter_map(|line| line.strip_prefix("           read "))
+        .collect();
+    assert!(!progress.is_empty(), "{said}");
+    for line in &progress {
+        let read: u32 = line
+            .strip_suffix(" of 20 documents")
+            .unwrap_or_else(|| panic!("{said}"))
+            .parse()
+            .unwrap();
+        assert!((1..20).contains(&read), "{said}");
+    }
+    let last = progress.last().unwrap();
+    let kept = lines
+        .last()
+        .unwrap()
+        .strip_prefix(&format!(
+            "spool: run 2 failed: extractor `companies`: it was stopped after 25 seconds without \
+             finishing. \
+             That is the longest a strategy or an extractor may run here, and \
+             `--task-timeout <seconds>` sets it, on `spool dev`, `spool serve` or `spool bench`. \
+             The last it said was `read {last}`. Its task is kept in "
+        ))
+        .unwrap_or_else(|| panic!("{said}"));
+    assert!(Path::new(kept).join("stderr.log").is_file(), "{said}");
+
+    // The documents are stored and none of them is read: a run is all or
+    // nothing. One that has the time reads every one. Here that is the same
+    // extractor without the wait, to keep the test short.
+    assert_eq!(found(&server), Vec::<Value>::new());
+    drop(server);
+    write(&project.join("extractors/companies.py"), BY_LEGAL_FORM);
+    let server = limited("25");
+    let read = extracted(&server, &project, &[]);
+    assert!(
+        read.contains("found      20 records in 20 documents: 20 new, 0 already held"),
+        "{read}"
+    );
 }
 
 /// The step as a program takes it: two requests, with no JSON to write.
@@ -976,8 +1099,11 @@ fn the_image_of_a_new_project_holds_what_its_extractor_fetches() {
 /// --install` with the caches the Dockerfile names, on a machine that has
 /// fetched nothing, and then a server that may fetch nothing.
 #[test]
-#[ignore = "runs uv, and fetches the sample extractor's model"]
-fn build_install_fetches_the_model_and_a_run_then_needs_no_network() {
+#[ignore = "fetches the sample extractor's model, and only with SPOOL_TEST_MODEL=1"]
+fn build_install_fetches_the_sample_model_and_a_run_then_needs_no_network() {
+    if !model_asked_for() {
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     let project = init_companies(dir.path());
     let cache = dir.path().join("cache");
