@@ -74,8 +74,8 @@ use axum::body::Bytes;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{DefaultBodyLimit, Extension, Path, Query, Request, State};
 use axum::http::header::{
-    ACCEPT, AUTHORIZATION, CACHE_CONTROL, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE,
-    COOKIE as COOKIES, HOST, LOCATION, ORIGIN, SET_COOKIE, WWW_AUTHENTICATE,
+    ACCEPT, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, COOKIE as COOKIES, HOST, LOCATION, ORIGIN,
+    SET_COOKIE, WWW_AUTHENTICATE,
 };
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware::{self, Next};
@@ -115,6 +115,7 @@ use crate::studio;
 
 mod local;
 mod mcp;
+mod newline;
 mod unread;
 
 /// How long a call that starts work waits when it does not say.
@@ -433,39 +434,8 @@ fn router_until(engine: Arc<Engine>, options: &ServerOptions, stopping: Stopping
         false => router,
     };
     router
-        .layer(middleware::from_fn(end_with_a_newline))
+        .layer(middleware::from_fn(newline::end_with_a_newline))
         .layer(middleware::from_fn(unread::finish_the_body))
-}
-
-/// Ends a JSON answer with a newline, so that in a terminal the prompt
-/// that follows starts a line of its own, and two answers are two lines.
-///
-/// The MCP endpoint is left as it is: what it sends is the protocol's.
-async fn end_with_a_newline(request: Request, next: Next) -> Response {
-    let leave = request.method() == Method::HEAD || request.uri().path() == MCP_PATH;
-    let response = next.run(request).await;
-    let json = response
-        .headers()
-        .get(CONTENT_TYPE)
-        .is_some_and(|value| value.as_bytes().starts_with(b"application/json"));
-    if leave || !json || response.headers().contains_key(CONTENT_ENCODING) {
-        return response;
-    }
-    let (mut parts, body) = response.into_parts();
-    // The answers this server gives as JSON are held in memory already.
-    let Ok(bytes) = axum::body::to_bytes(body, usize::MAX).await else {
-        return ApiError::internal("the answer could not be written").into_response();
-    };
-    if bytes.is_empty() || bytes.ends_with(b"\n") {
-        return Response::from_parts(parts, axum::body::Body::from(bytes));
-    }
-    let mut ended = Vec::with_capacity(bytes.len() + 1);
-    ended.extend_from_slice(&bytes);
-    ended.push(b'\n');
-    // The length the answer was given is one short now, and the server
-    // writes the right one for a body it holds whole.
-    parts.headers.remove(CONTENT_LENGTH);
-    Response::from_parts(parts, axum::body::Body::from(ended))
 }
 
 /// Serves the API on `listener` until `shutdown` completes, and then stops

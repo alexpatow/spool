@@ -1803,10 +1803,11 @@ fn an_answer_as_json_ends_with_a_newline() {
             "{:?}",
             String::from_utf8_lossy(&response.body)
         );
-        // The length it names is the length it has.
-        if let Some(length) = response.header("content-length") {
-            assert_eq!(length, response.body.len().to_string());
-        }
+        // It still comes with its length, which is the length it has.
+        assert_eq!(
+            response.header("content-length"),
+            Some(response.body.len().to_string().as_str())
+        );
         response
     };
     ends(server.get("/v1/info")).ok();
