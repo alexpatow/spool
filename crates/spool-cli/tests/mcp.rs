@@ -12,25 +12,33 @@ use support::*;
 /// What a client sends to say it takes either kind of answer.
 const ACCEPT: &str = "application/json, text/event-stream";
 
-/// The tools, in the order the server lists them, and whether each only
-/// reads.
-const TOOLS: [(&str, bool); 16] = [
-    ("describe_store", true),
-    ("search_identities", true),
-    ("get_identity", true),
-    ("get_identity_history", true),
-    ("search_records", true),
-    ("get_record", true),
-    ("explain_pair", true),
-    ("list_review_items", true),
-    ("get_review_case", true),
-    ("list_constraints", true),
-    ("list_changesets", true),
-    ("mint_identity_ids", true),
-    ("commit_changeset", false),
-    ("split_identity", false),
-    ("undo_changeset", false),
-    ("dismiss_review_item", false),
+/// The tools, in the order the server lists them, whether each only reads,
+/// and whether it asks for a reason. A tool that writes under its caller's
+/// name does. A load and a match run are recorded as runs, which have no
+/// author and no reason.
+const TOOLS: [(&str, bool, bool); 22] = [
+    ("describe_store", true, false),
+    ("search_identities", true, false),
+    ("get_identity", true, false),
+    ("get_identity_history", true, false),
+    ("search_records", true, false),
+    ("get_record", true, false),
+    ("explain_pair", true, false),
+    ("list_review_items", true, false),
+    ("get_review_case", true, false),
+    ("list_constraints", true, false),
+    ("list_changesets", true, false),
+    ("get_run", true, false),
+    ("mint_identity_ids", true, false),
+    ("load_rows", false, false),
+    ("load_documents", false, false),
+    ("run_extraction", false, false),
+    ("run_match", false, false),
+    ("retract_rows", false, true),
+    ("commit_changeset", false, true),
+    ("split_identity", false, true),
+    ("undo_changeset", false, true),
+    ("dismiss_review_item", false, true),
 ];
 
 fn companies() -> PathBuf {
@@ -160,10 +168,16 @@ fn a_client_connects_and_is_told_the_tools() {
     assert_eq!(hello["serverInfo"]["name"], "spool");
     assert_eq!(hello["serverInfo"]["version"], env!("CARGO_PKG_VERSION"));
     assert!(hello["capabilities"]["tools"].is_object(), "{hello}");
-    assert!(
-        text(&hello["instructions"]).contains("describe_store"),
-        "{hello}"
-    );
+    for named in [
+        "describe_store",
+        "load_rows",
+        "load_documents",
+        "run_extraction",
+        "run_match",
+        "retract_rows",
+    ] {
+        assert!(text(&hello["instructions"]).contains(named), "{hello}");
+    }
     let ready = json!({ "jsonrpc": "2.0", "method": "notifications/initialized" });
     let ready = message(&server, &ready).send();
     assert_eq!(ready.status, 202);
@@ -173,9 +187,9 @@ fn a_client_connects_and_is_told_the_tools() {
     let listed = ask(&server, "tools/list", json!({}));
     let tools = listed["tools"].as_array().unwrap();
     let names: Vec<&str> = tools.iter().map(|tool| text(&tool["name"])).collect();
-    assert_eq!(names, TOOLS.map(|(name, _)| name));
+    assert_eq!(names, TOOLS.map(|(name, _, _)| name));
     assert!(listed["nextCursor"].is_null(), "{listed}");
-    for (tool, (name, reads)) in tools.iter().zip(TOOLS) {
+    for (tool, (name, reads, says_why)) in tools.iter().zip(TOOLS) {
         assert!(text(&tool["description"]).len() > 40, "{name}");
         assert_eq!(tool["annotations"]["readOnlyHint"], reads, "{name}");
         assert_eq!(tool["annotations"]["destructiveHint"], !reads, "{name}");
@@ -193,9 +207,9 @@ fn a_client_connects_and_is_told_the_tools() {
             assert!(described.get("anyOf").is_none(), "{name}.{argument}");
             assert!(!described["type"].is_array(), "{name}.{argument}");
         }
-        // Every change says why.
+        // Every change made under the caller's name says why.
         let required = schema["required"].as_array().cloned().unwrap_or_default();
-        assert_eq!(required.contains(&json!("reason")), !reads, "{name}");
+        assert_eq!(required.contains(&json!("reason")), says_why, "{name}");
     }
     let search = &tools[1]["inputSchema"];
     assert_eq!(search["properties"]["q"]["type"], "string");
@@ -688,6 +702,461 @@ fn a_tool_that_changes_something_is_held_to_the_rules_of_the_api() {
 }
 
 #[test]
+fn rows_are_loaded_matched_and_taken_back_through_tools() {
+    let dir = tempfile::tempdir().unwrap();
+    let (server, _) = thing_server(dir.path());
+    let runs = || server.read("/v1/runs")["runs"].as_array().unwrap().len();
+
+    // Before a row is loaded, the store says which sources the project
+    // declares and the columns of each.
+    let described = tool(&server, "describe_store", json!({}));
+    assert_eq!(described, server.read("/v1/info"));
+    let declared = &described["store"]["sources"];
+    assert_eq!(declared.as_array().unwrap().len(), 13, "{declared}");
+    let shop = json!({
+        "name": "shop",
+        "key": "id",
+        "columns": ["id", "code", "colour", "name", "weight"],
+        "entity_types": ["thing"],
+    });
+    assert!(declared.as_array().unwrap().contains(&shop), "{declared}");
+
+    // Loading stores the rows and matches nothing.
+    let rows = json!([
+        { "id": "1", "code": "anvil", "colour": "black" },
+        { "id": "2", "code": "anvil", "colour": "black" },
+        { "id": "3", "code": "anvil", "colour": "red" },
+        { "id": "4", "code": "hammer", "colour": "red" },
+    ]);
+    let load = json!({ "source": "shop", "entity_type": "thing", "rows": rows });
+    let loaded = tool(&server, "load_rows", load.clone());
+    assert_eq!(loaded["run"]["kind"], "load", "{loaded}");
+    assert_eq!(loaded["run"]["status"], "succeeded", "{loaded}");
+    assert_eq!(loaded["run"]["load"]["inserted"], 4, "{loaded}");
+    assert_eq!(
+        server.read("/v1/records?unassigned=true")["records"]
+            .as_array()
+            .unwrap()
+            .len(),
+        4
+    );
+    assert_eq!(head(&server), 0);
+    // The same rows again add nothing.
+    let again = tool(&server, "load_rows", load);
+    assert_eq!(again["run"]["load"]["inserted"], 0, "{again}");
+    assert_eq!(again["run"]["load"]["duplicates"], 4, "{again}");
+    // What the API refuses of a load, the tool refuses.
+    for (source, entity_type, row, why) in [
+        (
+            "shop",
+            "thing",
+            json!({ "id": "5", "shape": "round" }),
+            "a column `shape`",
+        ),
+        (
+            "warehouse",
+            "thing",
+            json!({ "id": "5" }),
+            "`thing` takes rows from `",
+        ),
+        (
+            "shop",
+            "widget",
+            json!({ "id": "5" }),
+            "`widget` is not declared",
+        ),
+    ] {
+        let load = json!({ "source": source, "entity_type": entity_type, "rows": [row] });
+        let error = refused(&server, "load_rows", load, "invalid");
+        assert!(text(&error["message"]).contains(why), "{error}");
+    }
+    refused(
+        &server,
+        "load_rows",
+        json!({ "source": "shop", "entity_type": "thing", "rows": [], "actor": "user:someone" }),
+        "invalid",
+    );
+    // A refused load stores nothing.
+    let held = server.read("/v1/info")["store"]["entity_types"][0]["records"].clone();
+    assert_eq!(held, 4);
+
+    // A run is read by its number, as the API reads it.
+    let run = loaded["run"]["run"].as_u64().unwrap();
+    assert_eq!(tool(&server, "get_run", json!({ "run": run })), loaded);
+    assert_eq!(
+        tool(&server, "get_run", json!({ "run": run, "wait_ms": 500 })),
+        server.read(&format!("/v1/runs/{run}"))
+    );
+    refused(&server, "get_run", json!({ "run": 99 }), "not_found");
+
+    // A match run places what was loaded and commits it.
+    let matched = tool(&server, "run_match", json!({ "entity_type": "thing" }));
+    let resolution = &matched["run"]["resolution"];
+    assert_eq!(matched["run"]["kind"], "match", "{matched}");
+    assert_eq!(matched["run"]["status"], "succeeded", "{matched}");
+    assert_eq!(resolution["new_records"], 4, "{matched}");
+    assert_eq!(resolution["identities_created"], 3, "{matched}");
+    assert_eq!(resolution["committed"]["seq"], 1, "{matched}");
+    assert!(resolution["draft"].is_null(), "{matched}");
+    assert_eq!(head(&server), 1);
+    let run = matched["run"]["run"].as_u64().unwrap();
+    assert_eq!(tool(&server, "get_run", json!({ "run": run })), matched);
+    // With nothing new, no run is started.
+    let nothing = tool(&server, "run_match", json!({ "entity_type": "thing" }));
+    assert_eq!(nothing, json!({ "run": null }));
+    // The project's rules are a strategy by name, and a rematch judges
+    // what has an identity again and moves nothing.
+    let rematch = json!({ "entity_type": "thing", "strategy": "rules", "rematch": true });
+    let rematched = tool(&server, "run_match", rematch);
+    let resolution = &rematched["run"]["resolution"];
+    assert_eq!(resolution["candidates"], 3, "{rematched}");
+    assert_eq!(
+        resolution["suggestions"],
+        json!({ "merges": [], "splits": [] })
+    );
+    assert!(resolution["committed"].is_null(), "{rematched}");
+    assert_eq!(head(&server), 1);
+    // A draft is not left, since no tool approves one, and a strategy the
+    // project does not have is not started, since no tool sends judgements.
+    let before = runs();
+    for arguments in [
+        json!({ "entity_type": "thing", "commit": false }),
+        json!({ "entity_type": "thing", "strategy": "mine" }),
+        json!({ "entity_type": "widget" }),
+    ] {
+        refused(&server, "run_match", arguments, "invalid");
+    }
+    assert_eq!(runs(), before);
+    assert!(
+        server.read("/v1/drafts")["drafts"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    // A pair is explained by source and key, as by ID.
+    let id = |key: &str| {
+        let found = server.read(&format!("/v1/records?source=shop&key={key}"));
+        text(&found["records"][0]["id"]).to_owned()
+    };
+    let by_key = tool(
+        &server,
+        "explain_pair",
+        json!({ "a": "shop:1", "b": "shop:3" }),
+    );
+    assert_eq!(by_key["outcome"], "different_identities", "{by_key}");
+    assert_eq!(
+        by_key,
+        tool(
+            &server,
+            "explain_pair",
+            json!({ "a": id("1"), "b": id("3") })
+        )
+    );
+    assert_eq!(by_key, server.read("/v1/explain?a=shop:1&b=shop:3"));
+    let unknown = json!({ "a": "shop:1", "b": "shop:9" });
+    refused(&server, "explain_pair", unknown, "not_found");
+    let unnamed = refused(
+        &server,
+        "explain_pair",
+        json!({ "a": "1", "b": "shop:3" }),
+        "invalid",
+    );
+    assert!(
+        text(&unnamed["message"]).contains("<source>:<key>"),
+        "{unnamed}"
+    );
+
+    // Taking a row back says why, and is recorded under the caller. The
+    // row stays, out of its identity.
+    let keys = json!({ "source": "shop", "entity_type": "thing", "keys": ["2", "9"] });
+    refused(&server, "retract_rows", keys.clone(), "invalid");
+    let mut taken = keys;
+    taken["reason"] = json!("loaded by mistake");
+    let retracted = tool(&server, "retract_rows", taken);
+    let retraction = &retracted["run"]["retraction"];
+    assert_eq!(retracted["run"]["kind"], "retract", "{retracted}");
+    assert_eq!(retraction["retracted"], 1, "{retracted}");
+    assert_eq!(retraction["unknown"], 1, "{retracted}");
+    assert_eq!(retraction["committed"]["seq"], 2, "{retracted}");
+    let entry = entry(&server, 2);
+    assert_eq!(entry["changeset"]["actor"], "agent:api", "{entry}");
+    assert_eq!(entry["changeset"]["reason"], "loaded by mistake", "{entry}");
+    let record = tool(&server, "get_record", json!({ "record": id("2") }));
+    assert!(record["identity"].is_null(), "{record}");
+    assert_eq!(record["retracted"], retracted["run"]["run"], "{record}");
+    // Loading the row again ends the retraction.
+    let row = json!({ "id": "2", "code": "anvil", "colour": "black" });
+    let back = json!({ "source": "shop", "entity_type": "thing", "rows": [row] });
+    let back = tool(&server, "load_rows", back);
+    assert_eq!(back["run"]["load"]["restored"], 1, "{back}");
+    let record = tool(&server, "get_record", json!({ "record": id("2") }));
+    assert!(record["identity"].is_string(), "{record}");
+    assert!(record["retracted"].is_null(), "{record}");
+}
+
+/// Takes a capitalised word to be a thing, with the word in lower case as
+/// its code.
+const WORDS: &str = r#"
+import re
+
+from spool import extractor
+
+
+@extractor
+def find(document):
+    for found in re.finditer(r"[A-Z][a-z]+", document.text):
+        yield document.mention("thing", found.start(), found.end(), code=found.group().lower())
+"#;
+
+#[test]
+fn documents_are_loaded_through_a_tool() {
+    let dir = tempfile::tempdir().unwrap();
+    let (server, _) = thing_server(dir.path());
+
+    let documents = json!([
+        { "key": "a.txt", "text": "Anvil and Hammer.", "uri": "https://notes.test/a" },
+        { "key": "b.txt", "text": "Hammer again." },
+        { "key": "a.txt", "text": "Anvil and Hammer.", "uri": "https://notes.test/a" },
+    ]);
+    let load = json!({ "source": "notes", "documents": documents });
+    let loaded = tool(&server, "load_documents", load.clone());
+    assert_eq!(loaded["run"]["kind"], "load", "{loaded}");
+    assert_eq!(loaded["run"]["status"], "succeeded", "{loaded}");
+    assert_eq!(loaded["run"]["load"]["received"], 3, "{loaded}");
+    assert_eq!(loaded["run"]["load"]["inserted"], 2, "{loaded}");
+    assert_eq!(loaded["run"]["load"]["duplicates"], 1, "{loaded}");
+    let run = loaded["run"]["run"].as_u64().unwrap();
+    assert_eq!(tool(&server, "get_run", json!({ "run": run })), loaded);
+    // The same documents again add nothing, and other text under a key is
+    // the next version of that document.
+    let again = tool(&server, "load_documents", load);
+    assert_eq!(again["run"]["load"]["inserted"], 0, "{again}");
+    let changed = json!([{ "key": "b.txt", "text": "Hammer once more." }]);
+    let changed = json!({ "source": "notes", "documents": changed });
+    let changed = tool(&server, "load_documents", changed);
+    assert_eq!(changed["run"]["load"]["superseded"], 1, "{changed}");
+    let held = server.read("/v1/documents?latest=true")["documents"].clone();
+    let latest = || server.read("/v1/documents?latest=true")["documents"].clone();
+    let held = held.as_array().unwrap();
+    assert_eq!(held.len(), 2, "{held:?}");
+    let a = held.iter().find(|document| document["key"] == "a.txt");
+    assert_eq!(a.unwrap()["uri"], "https://notes.test/a");
+    // Storing a document finds nothing in it.
+    assert_eq!(
+        server.read("/v1/info")["store"]["entity_types"][0]["records"],
+        0
+    );
+
+    // What the API refuses of a document, the tool refuses, and a field
+    // the tool does not have is refused as well.
+    let unkeyed = json!({ "source": "notes", "documents": [{ "key": "", "text": "x" }] });
+    let unkeyed = refused(&server, "load_documents", unkeyed, "invalid");
+    assert!(
+        text(&unkeyed["message"]).contains("document 1: it has no key"),
+        "{unkeyed}"
+    );
+    // Documents of a source the project does not declare would never
+    // become records, so they are not stored.
+    let undeclared = json!({ "source": "letters", "documents": [{ "key": "c", "text": "x" }] });
+    let undeclared = refused(&server, "load_documents", undeclared, "invalid");
+    assert!(
+        text(&undeclared["message"])
+            .starts_with("source `letters` is not declared: the project's sources are `"),
+        "{undeclared}"
+    );
+    for arguments in [
+        json!({ "source": "notes", "documents": [{ "key": "c", "text": "x", "title": "y" }] }),
+        json!({ "source": "notes", "documents": [{ "key": "c" }] }),
+        json!({ "source": "notes", "documents": [], "actor": "user:someone" }),
+        json!({ "documents": [] }),
+    ] {
+        refused(&server, "load_documents", arguments, "invalid");
+    }
+
+    // The server runs the project's extractors and no other.
+    let runs = server.read("/v1/runs")["runs"].as_array().unwrap().len();
+    let unknown = json!({ "extractor": "words" });
+    let unknown = refused(&server, "run_extraction", unknown, "invalid");
+    assert!(
+        text(&unknown["message"]).contains("the project has no extractor `words`"),
+        "{unknown}"
+    );
+    let code = json!({ "extractor": "words", "code": "import os" });
+    refused(&server, "run_extraction", code, "invalid");
+    assert_eq!(latest().as_array().unwrap().len(), 2);
+    assert_eq!(
+        server.read("/v1/runs")["runs"].as_array().unwrap().len(),
+        runs
+    );
+}
+
+#[test]
+#[ignore = "runs uv"]
+fn an_extractor_is_run_through_a_tool_and_what_it_finds_is_matched() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("project");
+    write_things(&project);
+    std::fs::create_dir_all(project.join("extractors")).unwrap();
+    std::fs::write(project.join("extractors/words.py"), WORDS).unwrap();
+    let manifest = build(&project);
+    let server = Server::start(&[
+        "serve",
+        "--manifest",
+        path(&manifest),
+        "--project",
+        path(&project),
+        "--tasks",
+        path(&dir.path().join("tasks")),
+        "--store",
+        path(&dir.path().join("store.duckdb")),
+        "--listen",
+        "127.0.0.1:0",
+        "--seed",
+        "1",
+    ]);
+
+    // The store names the extractor before a document is loaded.
+    let described = tool(&server, "describe_store", json!({}));
+    assert_eq!(described["store"]["extractors"][0]["name"], "words");
+
+    let rows = json!([{ "id": "1", "code": "hammer", "colour": "red" }]);
+    let rows = json!({ "source": "shop", "entity_type": "thing", "rows": rows });
+    tool(&server, "load_rows", rows);
+    tool(&server, "run_match", json!({ "entity_type": "thing" }));
+    let documents = json!([
+        { "key": "a.txt", "text": "Anvil and Hammer." },
+        { "key": "b.txt", "text": "Hammer again." },
+    ]);
+    let documents = json!({ "source": "notes", "documents": documents });
+    tool(&server, "load_documents", documents);
+
+    // The call is an extract run, as the API answers it, and what it found
+    // is records with no identity yet.
+    let extracted = tool(&server, "run_extraction", json!({ "extractor": "words" }));
+    let run = extracted["run"]["run"].as_u64().unwrap();
+    assert_eq!(extracted, server.read(&format!("/v1/runs/{run}")));
+    assert_eq!(tool(&server, "get_run", json!({ "run": run })), extracted);
+    assert_eq!(extracted["run"]["kind"], "extract", "{extracted}");
+    assert_eq!(extracted["run"]["status"], "succeeded", "{extracted}");
+    assert_eq!(extracted["run"]["extractor"]["name"], "words");
+    let report = &extracted["run"]["extraction"];
+    assert_eq!(report["documents"], 2, "{extracted}");
+    assert_eq!(report["mentions"], 3, "{extracted}");
+    assert_eq!(report["inserted"], 3, "{extracted}");
+    let found = tool(&server, "search_records", json!({ "source": "notes" }));
+    let found = found["records"].as_array().unwrap().clone();
+    assert_eq!(found.len(), 3, "{found:?}");
+    assert!(found.iter().all(|record| record["identity"].is_null()));
+
+    // A match run places them as it places rows: the hammers of the two
+    // notes join the hammer the shop sent.
+    let matched = tool(&server, "run_match", json!({ "entity_type": "thing" }));
+    let resolution = &matched["run"]["resolution"];
+    assert_eq!(resolution["new_records"], 3, "{matched}");
+    assert_eq!(resolution["identities_created"], 1, "{matched}");
+    assert_eq!(resolution["records_assigned"], 3, "{matched}");
+    let hammer = found
+        .iter()
+        .find(|record| record["evidence"]["key"] == "b.txt")
+        .unwrap();
+    let key = text(&hammer["key"]);
+    let pair = json!({ "a": "shop:1", "b": format!("notes:{key}") });
+    let explained = tool(&server, "explain_pair", pair);
+    assert_eq!(explained["outcome"], "same_identity", "{explained}");
+    // A mention is also named by its place in the document, as the lists of
+    // `spool show records` name it.
+    let evidence = &hammer["evidence"];
+    let place = format!("notes:b.txt[{}-{}]", evidence["start"], evidence["end"]);
+    let placed = json!({ "a": place, "b": "shop:1" });
+    assert_eq!(tool(&server, "explain_pair", placed), explained);
+    let nowhere = json!({ "a": "notes:b.txt[900-906]", "b": "shop:1" });
+    refused(&server, "explain_pair", nowhere, "not_found");
+
+    // Documents the extractor has read are not read again unless asked.
+    let nothing = tool(&server, "run_extraction", json!({ "extractor": "words" }));
+    assert_eq!(nothing["run"]["extraction"]["documents"], 0, "{nothing}");
+    let again = json!({ "extractor": "words", "source": "notes", "again": true, "limit": 1 });
+    let again = tool(&server, "run_extraction", again);
+    assert_eq!(again["run"]["extraction"]["documents"], 1, "{again}");
+    assert_eq!(again["run"]["extraction"]["inserted"], 0, "{again}");
+
+    // What an extractor found is taken back as a row is, by its key.
+    let taken = json!({
+        "source": "notes",
+        "entity_type": "thing",
+        "keys": [key],
+        "reason": "the note was about another hammer",
+    });
+    let retracted = tool(&server, "retract_rows", taken);
+    assert_eq!(
+        retracted["run"]["retraction"]["retracted"], 1,
+        "{retracted}"
+    );
+    let record = tool(&server, "get_record", json!({ "record": hammer["id"] }));
+    assert!(record["identity"].is_null(), "{record}");
+}
+
+#[test]
+fn a_run_too_large_for_a_model_is_answered_without_its_lists() {
+    let dir = tempfile::tempdir().unwrap();
+    let (server, _) = thing_server(dir.path());
+    // A thing in black and one in red under each code are two identities.
+    let things = 2000;
+    let colours: Vec<Value> = (0..things)
+        .flat_map(|code| {
+            ["black", "red"].map(|colour| {
+                json!({ "id": format!("{code}-{colour}"), "code": format!("c-{code}"), "colour": colour })
+            })
+        })
+        .collect();
+    server.call(
+        "/v1/load",
+        json!({ "source": "shop", "entity_type": "thing", "rows": colours }),
+    );
+    let placed = tool(&server, "run_match", json!({ "entity_type": "thing" }));
+    assert_eq!(
+        placed["run"]["resolution"]["identities_created"],
+        2 * things
+    );
+    assert!(placed["left_out"].is_null(), "{placed}");
+
+    // One of no colour under each code fits both, so each is left for
+    // review, and the run lists them all: more than a tool returns.
+    let plain: Vec<Value> = (0..things)
+        .map(|code| json!({ "id": format!("{code}"), "code": format!("c-{code}") }))
+        .collect();
+    server.call(
+        "/v1/load",
+        json!({ "source": "bulk", "entity_type": "thing", "rows": plain }),
+    );
+    let matched = tool(&server, "run_match", json!({ "entity_type": "thing" }));
+    let run = matched["run"]["run"].as_u64().unwrap();
+    let whole = server.get(&format!("/v1/runs/{run}"));
+    assert!(whole.body.len() > 256 * 1024, "{}", whole.body.len());
+    // The run was made, so it is answered as made, with its counts.
+    for answer in [matched, tool(&server, "get_run", json!({ "run": run }))] {
+        assert_eq!(
+            answer["left_out"],
+            json!(["run.resolution.review"]),
+            "{answer}"
+        );
+        assert!(
+            text(&answer["note"]).contains("list_review_items"),
+            "{answer}"
+        );
+        let resolution = &answer["run"]["resolution"];
+        assert_eq!(answer["run"]["status"], "succeeded", "{answer}");
+        assert_eq!(resolution["new_records"], things, "{answer}");
+        assert_eq!(resolution["records_unassigned"], things, "{answer}");
+        assert!(resolution["review"].is_null(), "{answer}");
+        assert!(answer.to_string().len() < 8 * 1024, "{answer}");
+    }
+    let open = server.read("/v1/review?status=open");
+    assert_eq!(open["items"].as_array().unwrap().len(), things as usize);
+}
+
+#[test]
 fn an_answer_too_large_for_a_model_is_refused_and_says_what_to_do() {
     let dir = tempfile::tempdir().unwrap();
     let (server, _) = thing_server(dir.path());
@@ -769,7 +1238,12 @@ fn a_change_whose_answer_is_too_large_is_still_answered_as_made() {
     );
     assert_eq!(split["committed"]["seq"], 2, "{split}");
     assert_eq!(split["kept"], whole);
-    assert_eq!(split["left_out"], json!(["changeset", "moved"]), "{split}");
+    assert_eq!(
+        split["left_out"],
+        json!(["changeset.ops", "moved"]),
+        "{split}"
+    );
+    assert_eq!(split["changeset"]["reason"], "two things", "{split}");
     assert!(text(&split["note"]).contains("succeeded"), "{split}");
     assert_eq!(head(&server), 2);
     let new = tool(
@@ -786,7 +1260,7 @@ fn a_change_whose_answer_is_too_large_is_still_answered_as_made() {
         json!({ "seq": 2, "reason": "one thing after all", "commit": false }),
     );
     assert!(shown["committed"].is_null(), "{shown}");
-    assert_eq!(shown["left_out"], json!(["changeset"]));
+    assert_eq!(shown["left_out"], json!(["changeset.ops"]));
     assert_eq!(head(&server), 2);
     let undone = tool(
         &server,
@@ -794,7 +1268,7 @@ fn a_change_whose_answer_is_too_large_is_still_answered_as_made() {
         json!({ "seq": 2, "reason": "one thing after all" }),
     );
     assert_eq!(undone["committed"]["seq"], 3, "{undone}");
-    assert_eq!(undone["left_out"], json!(["changeset"]));
+    assert_eq!(undone["left_out"], json!(["changeset.ops"]));
     assert_eq!(head(&server), 3);
 }
 
