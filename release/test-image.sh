@@ -83,14 +83,21 @@ grep -q '^RUN spool build --install$' "$project/companies/Dockerfile" \
 docker build --quiet --tag spool-test-project "$project/companies" > /dev/null
 # Everything the extractor needs is in the image by now.
 server=$(docker run --detach --network none spool-test-project)
-token=$(docker exec "$server" spool token add test 2> /dev/null)
+# A token is made beside a store, and the server makes the store as it
+# starts, which `docker run --detach` does not wait for.
+tries=0
+until token=$(docker exec "$server" spool token add test 2> /dev/null); do
+    tries=$((tries + 1))
+    [ "$tries" -lt 150 ] || fail "the project's server made no store to add a token to: $(docker logs "$server" 2>&1)"
+    sleep 0.2
+done
 spool() {
     docker exec --interactive --env SPOOL_TOKEN="$token" "$server" spool "$@"
 }
 tries=0
 until spool show > /dev/null 2>&1; do
     tries=$((tries + 1))
-    [ "$tries" -lt 50 ] || fail "the project's server did not answer: $(docker logs "$server" 2>&1)"
+    [ "$tries" -lt 150 ] || fail "the project's server did not answer: $(docker logs "$server" 2>&1)"
     sleep 0.2
 done
 [ "$(docker exec "$server" id -un)" = spool ] || fail "the project's server does not run as the user \`spool\`"
