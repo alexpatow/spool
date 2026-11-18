@@ -1,0 +1,1 @@
+l.document = r.document

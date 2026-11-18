@@ -46,3 +46,31 @@ name = "musicbrainz_2m"
 url = "https://dbs.uni-leipzig.de/files/datasets/saeedi/musicbrainz-2000-A01.csv.dapo"
 sha256 = "32efc65542530549ee16596838634ac4ce07bb613733c64d26f683b6516076ed"
 licence = "CC BY 4.0, as for ncvoters_5. Downloaded and never committed, but for the 26 records of resolution/music/sample.csv."
+
+# Linked-DocRED: the opening sections of 5,051 English Wikipedia articles with
+# every mention of a named thing marked, and the Wikidata entry it is a
+# mention of. https://github.com/alteca/Linked-DocRED, at the commit the
+# addresses name. Cite Genest, Portier, Egyed-Zsigmond and Lovisetto,
+# "Linked-DocRED: Enhancing DocRED with Entity-Linking to Evaluate End-To-End
+# Document-Level Information Extraction Pipelines", SIGIR 2023, when you
+# publish results on it.
+#
+# No scenario names these. `extraction/linked-docred/run.py` downloads them
+# and writes the documents and scenarios that `spool bench` runs.
+[[dataset]]
+name = "linked_docred_train"
+url = "https://raw.githubusercontent.com/alteca/Linked-DocRED/8d3e39ceaa71c64f4e833f086c55bc6e123bdd2d/Linked-DocRED/train_annotated.json"
+sha256 = "5a303469c3fbc994c3f4562a177e1f5b690478bc4a1105d44c06b7ec9e23535e"
+licence = "GPL-3.0. Downloaded when the benchmark is run and never committed, and neither is anything made from it but the scores."
+
+[[dataset]]
+name = "linked_docred_dev"
+url = "https://raw.githubusercontent.com/alteca/Linked-DocRED/8d3e39ceaa71c64f4e833f086c55bc6e123bdd2d/Linked-DocRED/dev.json"
+sha256 = "beed23a9941e4960fee27a4ab14c340394a684ec556dbabc46a7b07a409bd740"
+licence = "GPL-3.0, as for linked_docred_train."
+
+[[dataset]]
+name = "linked_docred_test"
+url = "https://raw.githubusercontent.com/alteca/Linked-DocRED/8d3e39ceaa71c64f4e833f086c55bc6e123bdd2d/Linked-DocRED/test.json"
+sha256 = "51960d6258ed1a578131c9d210db79a2ce52438682ae26299f798ed1bc8a9cbe"
+licence = "GPL-3.0, as for linked_docred_train."

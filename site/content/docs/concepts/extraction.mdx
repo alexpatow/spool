@@ -332,6 +332,8 @@ extractor `names_ts` (typescript, extractors/names_ts.ts)
 
 An extractor is scored apart from matching. `spool bench` runs a scenario with labelled mentions and reports what the extractor found, missed and made up. The repository's [`benchmarks/extraction/company-news`](https://github.com/alexpatow/spool/tree/main/benchmarks/extraction/company-news) has ten news items, a rule-based extractor in both languages, and its scores.
 
+It also reports the two together, end to end: the identities against the true entities over every labelled mention, where a mention the extractor missed is with nothing. [`benchmarks/extraction/linked-docred`](https://github.com/alexpatow/spool/tree/main/benchmarks#from-text-to-identities) measures all three on 5,051 Wikipedia articles.
+
 ## What extraction does not do
 
 - **Documents are text.** Spool does not read PDF or HTML. Turn them into text first.
