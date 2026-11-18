@@ -1,9 +1,22 @@
 name: CI
 
+# Nothing these jobs build or test reads `docs/` or `site/`, and the site's
+# checks are a workflow of their own. A change to those alone starts none of
+# these jobs, and a change to anything else as well starts them all. A test
+# that comes to read `docs/` or `site/` must take it off both lists, which
+# are the same.
 on:
   pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "site/**"
+      - ".github/workflows/site.yml"
   push:
     branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "site/**"
+      - ".github/workflows/site.yml"
 
 permissions:
   contents: read
