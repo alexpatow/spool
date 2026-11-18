@@ -96,7 +96,7 @@ A project with no `entities/company/` has no company type. A project that resolv
 
 | Command | What it does |
 | --- | --- |
-| `spool init` | Scaffolds the directory. |
+| `spool init` | Scaffolds the directory: a source, an entity type with a block, a match and a no_match rule, and two files of sample rows under `samples/` that those rules match. The project reader does not read `samples/`. |
 | `spool dev` | Runs the server on localhost against a development database under `.spool/`, and applies file changes as they are saved. |
 | `spool info` | Lists the discovered sources, entity types, rules, strategies and extractors, with diagnostics. |
 | `spool build` | Validates the project and compiles it into a manifest. Every YAML file is checked against the files it names and every SQL file is prepared against DuckDB, so a mistake fails the build, not a run. Writes a `Dockerfile` if the project has none. With `--install` it also starts each user-code strategy and extractor once with nothing to do, which fetches what it depends on. |
@@ -985,6 +985,8 @@ Milestone 2's exit criteria, each a test in `crates/spool-cli/tests` unless it s
 - A caller reads a run's candidates and submits judgements, as Arrow and as JSON, and reconciles the run.
 - Identities, members, history, records and typed review items are read through the API.
 - `init` scaffolds a project that `info` lists and `build` compiles; `build` writes the Dockerfile once.
+- The sample rows `init` writes match as its rules say: three spellings of one name share an identity, one name in two countries is two identities, and the rows of the second file join the identities of the first, which keep their IDs.
+- A second server on a store that is open, or on a port that is taken, is refused in words that say what to do.
 - `apply` rebuilds the feature table of a changed declaration and changes no identity; `dev` does the same as files are saved, and keeps the last version that compiled.
 - A run cut short by a killed server is recorded as failed when the store is next opened.
 - The binary starts with no library path set.
