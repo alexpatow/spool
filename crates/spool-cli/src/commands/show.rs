@@ -419,6 +419,9 @@ impl View<'_> {
                     ),
                 ));
             }
+            if report.possible_splits > 0 {
+                rows.push(("left for review", left_for_review(report.possible_splits)));
+            }
             if let Some(committed) = &report.committed {
                 rows.push((
                     "committed",
@@ -443,13 +446,7 @@ impl View<'_> {
                 ),
             ));
             if report.possible_splits > 0 {
-                rows.push((
-                    "left for review",
-                    format!(
-                        "{} with records that nothing holds together now (`possible_split`)",
-                        count(report.possible_splits, "identity")
-                    ),
-                ));
+                rows.push(("left for review", left_for_review(report.possible_splits)));
             }
             if let Some(committed) = &report.committed {
                 rows.push((
@@ -996,7 +993,8 @@ impl View<'_> {
             (
                 "raised by",
                 match split {
-                    true => format!("retract run {}", item.run),
+                    // A retract run, or the ingest run that brought a record back.
+                    true => format!("run {}", item.run),
                     false => format!("reconcile run {}", item.run),
                 },
             ),
@@ -1390,6 +1388,14 @@ fn describe(op: &Op) -> String {
         }
         Op::Reinstate { identity } => format!("reinstate identity {identity}"),
     }
+}
+
+/// What a run says of the `possible_split` items it raised.
+fn left_for_review(identities: u64) -> String {
+    format!(
+        "{} with records that nothing holds together now (`possible_split`)",
+        count(identities, "identity")
+    )
 }
 
 /// What a review item is about, in a few words.

@@ -176,7 +176,7 @@ function Details({ item }: { item: ReviewEntry }) {
           <Ref
             kind="run"
             id={item.run}
-            label={`${item.kind === "possible_split" ? "retract" : "reconcile"} run ${item.run}`}
+            label={`${item.kind === "possible_split" ? "" : "reconcile "}run ${item.run}`}
           />,
         ],
         [

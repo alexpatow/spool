@@ -511,7 +511,7 @@ fn a_run_that_judges_the_groups_a_match_supersedes_the_item() {
 }
 
 #[test]
-fn another_retraction_raises_the_item_again_in_the_groups_that_are_left() {
+fn another_retraction_keeps_the_item_with_the_groups_that_are_left() {
     let engine = engine();
     let held = held_by_one(&engine);
     // A second anvil, which matches the first.
@@ -533,17 +533,19 @@ fn another_retraction_raises_the_item_again_in_the_groups_that_are_left() {
     assert_eq!(retract(&engine, "kiosk", &["1"]).possible_splits, 0);
     assert_eq!(open(&engine), [before.clone()]);
 
-    // The yard's anvil goes too. The question stands, about fewer records.
+    // The yard's anvil goes too. The question stands, about fewer records:
+    // it is the same item, in step with the identity.
     let second = retract(&engine, "yard", &["1"]);
-    assert_eq!(second.possible_splits, 1);
-    let closed = item(&engine, before.id);
-    assert_eq!(closed.status, ReviewStatus::Superseded);
-    assert_eq!(closed.superseded_by, Some(second.run));
+    assert_eq!(second.possible_splits, 0, "no new item was raised");
     let [after] = &open(&engine)[..] else {
         panic!("one open review item");
     };
-    assert_eq!(after.run, second.run);
+    assert_eq!((after.id, after.run), (before.id, first.run));
     assert_eq!(groups(&engine, after), names(&[&["depot:1"], &["shop:1"]]));
+    let mut left = vec![held.anvil, held.mallet];
+    left.sort();
+    assert_eq!(after.records, left);
+    engine.verify().unwrap();
 
     // When a whole group goes, nothing is left to ask.
     let third = retract(&engine, "depot", &["1"]);
@@ -552,6 +554,78 @@ fn another_retraction_raises_the_item_again_in_the_groups_that_are_left() {
     assert_eq!(closed.status, ReviewStatus::Resolved);
     assert_eq!(closed.resolved_seq, third.committed.map(|done| done.seq));
     assert_eq!(open(&engine), []);
+    engine.verify().unwrap();
+}
+
+#[test]
+fn a_record_that_joins_the_identity_is_in_the_group_it_matches() {
+    let engine = engine();
+    let (held, item) = asked(&engine);
+
+    // The yard has a mallet too. It matches the depot's, and joins it.
+    ingest(&engine, "yard", &[("1", Some("mallet"), None)]);
+    resolve(&engine);
+    assert_eq!(identity(&engine, "yard", "1"), Some(held.identity));
+
+    // The question stands, and a split along its groups takes the new
+    // mallet with the old one.
+    let [now] = &open(&engine)[..] else {
+        panic!("one open review item");
+    };
+    assert_eq!(now.id, item.id);
+    assert_eq!(
+        groups(&engine, now),
+        names(&[&["depot:1", "yard:1"], &["shop:1"]])
+    );
+    assert_eq!(now.records.len(), 3);
+    engine.verify().unwrap();
+}
+
+#[test]
+fn a_record_that_comes_back_where_what_held_it_is_still_gone_is_asked_about() {
+    let engine = engine();
+    // Two anvils, the kiosk's anvil with the code K2, and the yard's
+    // mallet with the same code: only the kiosk's row says the mallet
+    // belongs with the anvils.
+    ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
+    ingest(&engine, "depot", &[("1", Some("anvil"), None)]);
+    ingest(&engine, "kiosk", &[("1", Some("anvil"), Some("K2"))]);
+    ingest(&engine, "yard", &[("1", Some("mallet"), Some("K2"))]);
+    resolve(&engine);
+    let identity = identity(&engine, "shop", "1").unwrap();
+    assert_eq!(members(&engine, identity).len(), 4);
+
+    // The mallet goes, then the row that held it. The anvils hold together.
+    assert_eq!(retract(&engine, "yard", &["1"]).possible_splits, 0);
+    assert_eq!(retract(&engine, "kiosk", &["1"]).possible_splits, 0);
+    assert_eq!(open(&engine), []);
+
+    // The mallet comes back to the identity it left. Nothing that is there
+    // now says it belongs.
+    let back = ingest(&engine, "yard", &[("1", Some("mallet"), Some("K2"))]);
+    assert_eq!((back.returned, back.possible_splits), (1, 1));
+    assert_eq!(self::identity(&engine, "yard", "1"), Some(identity));
+    let [item] = &open(&engine)[..] else {
+        panic!("one open review item");
+    };
+    assert_eq!(item.kind, ReviewKind::PossibleSplit);
+    assert_eq!(item.run, back.run);
+    assert_eq!(item.identities, [identity]);
+    assert_eq!(
+        groups(&engine, item),
+        names(&[&["depot:1", "shop:1"], &["yard:1"]])
+    );
+    assert_eq!(engine.run(back.run).unwrap().ingest, Some(back));
+    // The record that held it is still what the case shows as taken back.
+    let case = engine.review_case(item.id).unwrap();
+    let taken: Vec<RecordId> = case.taken_back.iter().map(|record| record.id).collect();
+    assert_eq!(taken, [record_id(&engine, "kiosk", "1")]);
+    engine.verify().unwrap();
+
+    // When the kiosk's row is back as well, nothing is left to ask.
+    ingest(&engine, "kiosk", &[("1", Some("anvil"), Some("K2"))]);
+    assert_eq!(open(&engine), []);
+    assert_eq!(self::item(&engine, item.id).status, ReviewStatus::Resolved);
     engine.verify().unwrap();
 }
 

@@ -53,8 +53,9 @@ pub struct RetractReport {
     /// The changeset that detached them. `None` when none had an identity.
     pub committed: Option<Committed>,
     /// Identities the records left whose remaining members nothing holds
-    /// together any more. Each has an open `possible_split` review item,
-    /// which this run raised.
+    /// together any more, and that this run raised a `possible_split`
+    /// review item for. One that already had an open item keeps it, and
+    /// is not counted.
     #[serde(default)]
     pub possible_splits: u64,
 }

@@ -8,7 +8,7 @@ use std::path::Path;
 use common::cell;
 use sha2::{Digest, Sha256};
 use spool::arrow::record_batch::RecordBatchReader;
-use spool::{Engine, Error, Options, Rows, Scenario};
+use spool::{Engine, Error, Options, PossibleSplits, Rows, Scenario};
 
 const PAPERS: &str = "\
 id,title,work
@@ -1148,6 +1148,27 @@ fn a_step_takes_rows_back_and_what_is_left_is_compared_with_resolving_it_afresh(
         .collect();
     assert_eq!(taken, [(2, 1, 1, 1), (2, 0, 2, 2)]);
     assert_eq!(withdrawn.resolve.resolved, []);
+    // Paper 2 was what joined 1 and 3, so their identity is put to a
+    // reviewer. Papers 5 and 7 were all of theirs.
+    let raised: Vec<u64> = withdrawn
+        .retract
+        .iter()
+        .map(|taken| taken.possible_splits)
+        .collect();
+    assert_eq!(raised, [1, 0]);
+    assert_eq!(
+        (&first.possible_splits, &more.possible_splits),
+        (&None, &None)
+    );
+    // The item asks about one pair, which the truth says is one work.
+    let asked = PossibleSplits {
+        open: 1,
+        records: 2,
+        pairs: 1,
+        wrong_pairs: 0,
+        wrong: 0,
+    };
+    assert_eq!(withdrawn.possible_splits, Some(asked.clone()));
 
     // What is scored is what the library still holds: papers 1 and 3 of one
     // work, and two of another. Papers 1 and 3 are still one identity,
@@ -1174,6 +1195,8 @@ fn a_step_takes_rows_back_and_what_is_left_is_compared_with_resolving_it_afresh(
         ),
         (1, 1, 0)
     );
+    // The pair only the store has together is the pair the item asks about.
+    assert_eq!(rebuild.pairs_only_kept_asked, 1);
     assert_eq!(rebuild.pair_agreement, Some(0.5));
     assert_eq!(rebuild.metrics.records, 4);
     assert_eq!(rebuild.metrics.identities, 3);
@@ -1188,6 +1211,8 @@ fn a_step_takes_rows_back_and_what_is_left_is_compared_with_resolving_it_afresh(
     assert_eq!((suggestions.merges.len(), suggestions.splits.len()), (0, 0));
     assert_eq!(again.metrics, withdrawn.metrics);
     assert_eq!(again.rebuild, None);
+    // Nothing joins them either, so the question stays open.
+    assert_eq!(again.possible_splits, Some(asked));
     assert_eq!(again.id_stability.strict, Some(1.0));
 
     // Paper 2 is sent again and is back where it was, and the store agrees
@@ -1204,6 +1229,18 @@ fn a_step_takes_rows_back_and_what_is_left_is_compared_with_resolving_it_afresh(
     assert_eq!((rebuild.records, rebuild.same_group), (5, 5));
     assert_eq!(rebuild.pair_agreement, Some(1.0));
     assert_eq!(rebuild.metrics, back.metrics);
+    // What joined 1 and 3 is back, so nothing is left to ask.
+    assert_eq!(rebuild.pairs_only_kept_asked, 0);
+    assert_eq!(
+        back.possible_splits,
+        Some(PossibleSplits {
+            open: 0,
+            records: 0,
+            pairs: 0,
+            wrong_pairs: 0,
+            wrong: 0,
+        })
+    );
 
     // The other order is tried on what is left at the end: five rows.
     let order = report.order_sensitivity.as_ref().unwrap();

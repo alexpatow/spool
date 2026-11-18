@@ -186,6 +186,10 @@ pub struct Rebuild {
     pub pairs_in_both: u64,
     /// Pairs that share an identity in the store and not in the rebuild.
     pub pairs_only_kept: u64,
+    /// Of those, the pairs an open `possible_split` review item asks
+    /// about: its two records are in different groups of the item.
+    #[serde(default)]
+    pub pairs_only_kept_asked: u64,
     /// Pairs that share an identity in the rebuild and not in the store.
     pub pairs_only_rebuilt: u64,
     /// Pairs in both, of those in either.
@@ -210,6 +214,7 @@ impl Rebuild {
             agreement: ratio(compared.same_group as f64, compared.records as f64),
             pairs_in_both: compared.in_both,
             pairs_only_kept: compared.in_first - compared.in_both,
+            pairs_only_kept_asked: 0,
             pairs_only_rebuilt: compared.in_second - compared.in_both,
             pair_agreement: ratio(compared.in_both as f64, in_either as f64),
             metrics,

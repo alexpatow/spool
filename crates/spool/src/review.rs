@@ -26,7 +26,8 @@
 //!
 //! A `possible_split` is the other way round: its records have an identity,
 //! and the question is whether they should share it. A retraction raises
-//! one. The `possible_split` module says when, and how it closes. None
+//! one, and so does a record that comes back. The `possible_split` module
+//! says when, and how it closes. None
 //! of the above applies to it: its records wait for nothing, so no match
 //! run examines them on its account.
 
@@ -101,8 +102,10 @@ impl ReviewStatus {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ReviewEntry {
     pub id: u64,
-    /// The run that raised it: a reconcile run, or for a `possible_split`
-    /// the retract run that took back what held the records together.
+    /// The run that raised it: a reconcile run. For a `possible_split`, the
+    /// retract run that took back what held the records together, or the
+    /// ingest run that brought a record back to where what held it is
+    /// still gone.
     pub run: RunId,
     pub entity_type: EntityType,
     pub kind: ReviewKind,
@@ -114,10 +117,11 @@ pub struct ReviewEntry {
     /// records themselves. For a `possible_split`, the one identity the
     /// records are in.
     pub identities: Vec<IdentityId>,
-    /// Only a `possible_split` has these: its records as the groups that
-    /// are each still held together, as they were when the item was raised.
-    /// Nothing the store knows says that two of the groups are one thing.
-    /// The largest group is first.
+    /// Only a `possible_split` has these: the records of its identity as
+    /// the groups that are each still held together. Nothing the store
+    /// knows says that two of the groups are one thing. While the item is
+    /// open they are the identity's records as they are now; once it is
+    /// closed, as they were last. The largest group is first.
     #[serde(default)]
     pub groups: Vec<Vec<RecordId>>,
     pub status: ReviewStatus,
@@ -128,9 +132,8 @@ pub struct ReviewEntry {
     pub resolved_seq: Option<Seq>,
     /// Superseded: the reconcile run that raised it again in another form,
     /// or the retract run that took back the records it asked about. For a
-    /// `possible_split`, the retract run that raised it again with other
-    /// groups, or the reconcile run whose judgements hold the groups
-    /// together.
+    /// `possible_split`, the reconcile run whose judgements hold the
+    /// groups together.
     pub superseded_by: Option<RunId>,
     /// Dismissed: who closed it, when and why.
     #[serde(default)]

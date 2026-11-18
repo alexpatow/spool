@@ -1492,6 +1492,7 @@ impl Inner {
                 restored,
                 returned: 0,
                 committed: None,
+                possible_splits: 0,
             };
             let finished = inner.store.clock.now_micros();
             tx.execute(
@@ -1559,10 +1560,26 @@ impl Inner {
         };
         report.returned = ops.len() as u64;
         report.committed = Some(committed);
-        self.store.conn.execute(
+        // A record is back where it was, and what held it there may still
+        // be gone. That is put to a reviewer, as when a record leaves.
+        let returned_to: Vec<IdentityId> = ops
+            .iter()
+            .filter_map(|op| match op {
+                Op::Assign {
+                    to: Some(identity), ..
+                } => Some(*identity),
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let tx = self.store.conn.transaction()?;
+        report.possible_splits = possible_split::raise(&tx, report.run, &returned_to)?;
+        tx.execute(
             "UPDATE spool.run SET result = ?::JSON WHERE run_id = ?",
             params![json!(report).to_string(), report.run.0 as i64],
         )?;
+        tx.commit()?;
         Ok(report)
     }
 
@@ -1643,7 +1660,7 @@ impl Inner {
             )?;
             // What is left of an identity may have been held together only
             // through a record that is gone now. That is put to a reviewer.
-            let possible_splits = possible_split::raise(&tx, &name, run, &left)?;
+            let possible_splits = possible_split::raise(&tx, run, &left)?;
             let report = RetractReport {
                 run,
                 received: named.received,

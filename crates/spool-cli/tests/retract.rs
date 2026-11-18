@@ -532,7 +532,7 @@ fn an_identity_that_a_retraction_left_without_what_held_it_together_is_shown_for
 kind         possible_split
 status       open
 type         thing
-raised by    retract run {number}
+raised by    run {number}
 identity     {identity}
 
 Are these records still one thing?
@@ -603,5 +603,77 @@ The review screen of the studio does each of these.
     assert_eq!(
         said(&server, &["show", "review", "--status", "open"]),
         "no review items\n"
+    );
+}
+
+#[test]
+fn a_row_that_comes_back_where_what_held_it_is_still_gone_is_left_for_review() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("project");
+    write_things(&project);
+    for part in ["block", "match"] {
+        std::fs::write(
+            project.join(format!("entities/thing/rules/{part}/same_colour.sql")),
+            "l.colour = r.colour\n",
+        )
+        .unwrap();
+    }
+    let server = Server::serve(&project, dir.path(), 1);
+    // Two anvils, a blue anvil, and a blue mallet: only the blue anvil says
+    // the mallet belongs with the anvils.
+    ingest(
+        &server,
+        &[
+            &["id", "code", "colour"],
+            &["1", "anvil", ""],
+            &["2", "anvil", ""],
+            &["3", "anvil", "blue"],
+            &["4", "mallet", "blue"],
+        ],
+    );
+    resolve(&server);
+    let identity = record(&server, "1")["identity"].clone();
+    assert_eq!(record(&server, "4")["identity"], identity);
+
+    for key in ["4", "3"] {
+        let run = server.call(
+            "/v1/retract",
+            json!({ "source": "shop", "entity_type": "thing", "keys": [key] }),
+        )["run"]
+            .clone();
+        assert_eq!(run["retraction"]["possible_splits"], 0);
+    }
+    assert_eq!(server.read("/v1/review?status=open")["items"], json!([]));
+
+    // The mallet is sent again and goes back to the anvils, where nothing
+    // holds it now.
+    let run = ingest(
+        &server,
+        &[&["id", "code", "colour"], &["4", "mallet", "blue"]],
+    );
+    assert_eq!(run["ingest"]["returned"], 1);
+    assert_eq!(run["ingest"]["possible_splits"], 1);
+    assert_eq!(record(&server, "4")["identity"], identity);
+    let shown = said(&server, &["show", "run", &run["run"].to_string()]);
+    has(
+        &shown,
+        "left for review  1 identity with records that nothing holds together now (`possible_split`)",
+    );
+    let item = said(&server, &["show", "review", "1"]);
+    has(&item, &format!("raised by  run {}", run["run"]));
+    has(
+        &item,
+        &format!(
+            "{}  shop:4  still in the identity",
+            record(&server, "4")["id"].as_str().unwrap()
+        ),
+    );
+    has(
+        &item,
+        &format!(
+            "{}  shop:3  in run {}",
+            record(&server, "3")["id"].as_str().unwrap(),
+            record(&server, "3")["retracted"]
+        ),
     );
 }

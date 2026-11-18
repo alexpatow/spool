@@ -8,7 +8,9 @@
 //! that by itself: no rule says they differ, so a rematch is silent.
 //!
 //! A retraction therefore looks at each identity it took a record out of,
-//! and sorts the members that are left into groups. Two members are in one
+//! and sorts the members that are left into groups. An ingest does the same
+//! for each identity it gave a record back to: the record is where it was,
+//! and what held it there may still be gone. Two members are in one
 //! group when a chain of these leads from one to the other, through members
 //! only:
 //!
@@ -30,18 +32,23 @@
 //! be one thing, and only what joined them is gone.
 //!
 //! The item changes no identity and makes no work for a match run. It is
-//! open while members of the identity come from more than one of its
-//! groups by the rules above, and it closes like this:
+//! open while the members of the identity are in more than one group by
+//! the rules above, and there is one open item for an identity at most.
+//! Its records and groups are kept in step with the identity, in the
+//! transaction that commits a changeset which touches it and when a
+//! reconcile run has judged: a record that joins is in the group it
+//! matches, and one that leaves is gone from the item. So a split made
+//! along the groups is a split of the identity as it is. The item closes
+//! like this:
 //!
 //! - `resolved`: a changeset left nothing to ask. A reviewer split the
 //!   identity, or said the groups are one thing with a `must_link`; or the
 //!   record that was taken back came back; or a run placed a new record
-//!   that matches both groups.
-//! - `superseded`: another retraction left the identity in other groups,
-//!   and raised the item again in that form. Or a run judged members of the
-//!   groups a match and committed nothing that touches the identity, as a
-//!   rematch may.
-//! - `dismissed`: a reviewer closed it as it is.
+//!   that matches both groups; or a whole group left.
+//! - `superseded`: a run judged members of the groups a match and
+//!   committed nothing that touches the identity, as a rematch may.
+//! - `dismissed`: a reviewer closed it as it is. A later retraction from
+//!   the identity, or a record that comes back to it, asks again.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -331,8 +338,27 @@ fn stands(item: &Open, now: &BTreeMap<IdentityId, Vec<Vec<RecordId>>>) -> bool {
         > 1
 }
 
-/// The open items among `items` that have nothing left to ask.
-fn answered(conn: &Connection, items: Vec<Open>) -> Result<Vec<i64>> {
+/// A list of record IDs as SQL.
+fn list(records: &[RecordId]) -> String {
+    let quoted: Vec<String> = records.iter().map(|id| format!("'{id}'")).collect();
+    format!("[{}]::UUID[]", quoted.join(", "))
+}
+
+/// The records and the groups of an item as SQL: every record in the
+/// groups, in order, and the groups as they are.
+fn held(groups: &[Vec<RecordId>]) -> (String, String) {
+    let mut records: Vec<RecordId> = groups.iter().flatten().copied().collect();
+    records.sort();
+    let grouped: Vec<String> = groups.iter().map(|group| list(group)).collect();
+    (list(&records), format!("[{}]", grouped.join(", ")))
+}
+
+/// Brings open items in step with the identities they ask about. An item
+/// whose identity is in other groups now, and still in more than one, is
+/// given those groups and their records: what a reviewer reads, and a
+/// split made along it, are about the identity as it is. The items that
+/// have nothing left to ask are returned, for the caller to close.
+fn settle(conn: &Connection, items: Vec<Open>) -> Result<Vec<i64>> {
     let identities: Vec<IdentityId> = items
         .iter()
         .map(|item| item.identity)
@@ -340,11 +366,25 @@ fn answered(conn: &Connection, items: Vec<Open>) -> Result<Vec<i64>> {
         .into_iter()
         .collect();
     let now = groups(conn, &identities)?;
-    Ok(items
-        .iter()
-        .filter(|item| !stands(item, &now))
-        .map(|item| item.id)
-        .collect())
+    let mut answered = Vec::new();
+    for item in &items {
+        if !stands(item, &now) {
+            answered.push(item.id);
+            continue;
+        }
+        let groups = &now[&item.identity];
+        if *groups != item.groups {
+            let (records, grouped) = held(groups);
+            conn.execute(
+                &format!(
+                    "UPDATE spool.review_item SET record_ids = {records}, groups = {grouped}
+                     WHERE review_id = ?"
+                ),
+                [item.id],
+            )?;
+        }
+    }
+    Ok(answered)
 }
 
 fn ids(items: &[i64]) -> String {
@@ -354,15 +394,10 @@ fn ids(items: &[i64]) -> String {
 
 /// Raises a `possible_split` item for each of the identities whose members
 /// are in more than one group, and returns how many it raised. The
-/// identities are those the retract run `run` took a record out of. An
-/// identity that has an open item in the same groups keeps it; one whose
-/// open item names other groups has it closed as superseded by the run.
-pub(crate) fn raise(
-    conn: &Connection,
-    entity_type: &EntityType,
-    run: RunId,
-    identities: &[IdentityId],
-) -> Result<u64> {
+/// identities are those the run `run` took a record out of, or gave one
+/// back to. An identity that has an open item keeps it, in step with its
+/// groups, and is not counted.
+pub(crate) fn raise(conn: &Connection, run: RunId, identities: &[IdentityId]) -> Result<u64> {
     let apart: BTreeMap<IdentityId, Vec<Vec<RecordId>>> = groups(conn, identities)?
         .into_iter()
         .filter(|(_, groups)| groups.len() > 1)
@@ -379,53 +414,39 @@ pub(crate) fn raise(
         [],
         |row| row.get(0),
     )?;
-    let mut superseded = Vec::new();
     let mut raised = 0;
     for (identity, groups) in apart {
+        let (records, grouped) = held(&groups);
         if let Some(item) = known.get(&identity) {
-            if item.groups == groups {
-                continue;
+            if item.groups != groups {
+                conn.execute(
+                    &format!(
+                        "UPDATE spool.review_item SET record_ids = {records}, groups = {grouped}
+                         WHERE review_id = ?"
+                    ),
+                    [item.id],
+                )?;
             }
-            superseded.push(item.id);
+            continue;
         }
-        let list = |records: &[RecordId]| {
-            let quoted: Vec<String> = records.iter().map(|id| format!("'{id}'")).collect();
-            format!("[{}]::UUID[]", quoted.join(", "))
-        };
-        let mut records: Vec<RecordId> = groups.iter().flatten().copied().collect();
-        records.sort();
-        let grouped: Vec<String> = groups.iter().map(|group| list(group)).collect();
         conn.execute(
             &format!(
                 "INSERT INTO spool.review_item
-                 VALUES (?, ?, ?, 'possible_split', {}, {}, 'open',
-                         NULL, NULL, NULL, NULL, NULL, [{}])",
-                list(&records),
-                format_args!("['{identity}']::UUID[]"),
-                grouped.join(", ")
+                 SELECT ?, ?, entity_type, 'possible_split', {records}, ['{identity}']::UUID[],
+                        'open', NULL, NULL, NULL, NULL, NULL, {grouped}
+                 FROM spool.identity WHERE identity_id = '{identity}'"
             ),
-            params![next_id, run.0 as i64, entity_type.as_str()],
+            params![next_id, run.0 as i64],
         )?;
         next_id += 1;
         raised += 1;
     }
-    if !superseded.is_empty() {
-        conn.execute(
-            &format!(
-                "UPDATE spool.review_item SET status = 'superseded', closed_run = ?
-                 WHERE review_id IN ({})",
-                ids(&superseded)
-            ),
-            [run.0 as i64],
-        )?;
-    }
     Ok(raised)
 }
 
-/// Closes as resolved the open items that the changeset at `seq` left
-/// nothing to ask about. Only the items of an identity the changeset
-/// touches are looked at. Runs inside the transaction that commits the
-/// changeset.
+/// Brings the open items of the identities that the changeset at `seq`
+/// touches in step with them, and closes as resolved those it left nothing
+/// to ask about. Runs inside the transaction that commits the changeset.
 pub(crate) fn resolve_answered(conn: &Connection, seq: Seq) -> Result<()> {
     if !any_open(conn)? {
         return Ok(());
@@ -450,7 +471,7 @@ pub(crate) fn resolve_answered(conn: &Connection, seq: Seq) -> Result<()> {
              OR coalesce(i.merged_into, i.identity_id) IN ({touched})"
         ),
     )?;
-    let answered = answered(conn, items)?;
+    let answered = settle(conn, items)?;
     if !answered.is_empty() {
         conn.execute(
             &format!(
@@ -464,9 +485,10 @@ pub(crate) fn resolve_answered(conn: &Connection, seq: Seq) -> Result<()> {
     Ok(())
 }
 
-/// Closes as superseded by `run` the open items of an entity type that have
-/// nothing left to ask: a reconcile run does this once its match run has
-/// judged, because judgements alone may hold the groups together.
+/// Brings the open items of an entity type in step with their identities,
+/// and closes as superseded by `run` those that have nothing left to ask:
+/// a reconcile run does this once its match run has judged, because
+/// judgements alone may hold groups together.
 pub(crate) fn supersede_answered(
     conn: &Connection,
     entity_type: &EntityType,
@@ -476,7 +498,7 @@ pub(crate) fn supersede_answered(
         return Ok(());
     }
     let items = open(conn, &format!("r.entity_type = '{entity_type}'"))?;
-    let answered = answered(conn, items)?;
+    let answered = settle(conn, items)?;
     if !answered.is_empty() {
         conn.execute(
             &format!(
@@ -497,7 +519,14 @@ pub(crate) fn stale(conn: &Connection) -> Result<u64> {
         return Ok(0);
     }
     let items = open(conn, "true")?;
-    Ok(answered(conn, items)?.len() as u64)
+    let identities: Vec<IdentityId> = items
+        .iter()
+        .map(|item| item.identity)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let now = groups(conn, &identities)?;
+    Ok(items.iter().filter(|item| !stands(item, &now)).count() as u64)
 }
 
 /// The records that a retraction took out of the given identities, or out

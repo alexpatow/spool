@@ -176,6 +176,7 @@ impl Inner {
                 restored: 0,
                 returned: 0,
                 committed: None,
+                possible_splits: 0,
             };
             let finished = inner.store.clock.now_micros();
             tx.execute(
@@ -400,6 +401,7 @@ impl Inner {
                 restored,
                 returned: 0,
                 committed: None,
+                possible_splits: 0,
             });
             if let Some(stored) = &stored {
                 tx.execute(
