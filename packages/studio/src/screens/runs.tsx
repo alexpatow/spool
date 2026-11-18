@@ -21,6 +21,7 @@ import { RunIcon } from "../icons.tsx";
 import { count } from "../format.ts";
 import { useLabels, useLoad } from "../hooks.ts";
 import type { Route } from "../router.ts";
+import { Who } from "../who.tsx";
 
 const KINDS: RunKind[] = ["load", "extract", "match", "reconcile", "retract"];
 const STATUSES: RunStatus[] = ["running", "open", "drafted", "succeeded", "failed"];
@@ -61,6 +62,7 @@ export function Runs({ route, types }: { route: Route; types: string[] }) {
                   cell: (run) =>
                     [run.entity_type, run.strategy?.name, run.extractor?.name].filter((part) => part).join(", "),
                 },
+                { title: "Started by", cell: (run) => <Who actor={run.started_by} /> },
                 { title: "Started", cell: (run) => <When at={run.started_at} /> },
               ]}
               rows={runs}
@@ -137,6 +139,7 @@ function RunView({ run }: { run: RunEntry }) {
               </>
             ) : null,
           ],
+          ["Started by", <Who actor={run.started_by} />],
           ["Started", <When at={run.started_at} />],
           ["Finished", run.finished_at ? <When at={run.finished_at} /> : null],
         ]}

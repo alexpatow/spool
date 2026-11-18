@@ -24,8 +24,8 @@ use crate::explain::{self, Explanation};
 use crate::features;
 use crate::load::{self, LoadReport};
 use crate::lookup::{
-    self, HistoryEntry, IdentityFilter, IdentitySummary, IdentityView, RecordEntry, RecordFilter,
-    StoreInfo,
+    self, HistoryEntry, IdentityFilter, IdentitySummary, IdentityView, LoggedChangeset,
+    RecordEntry, RecordFilter, StoreInfo,
 };
 use crate::metrics::{self, Churn, IdStability, Metrics};
 use crate::possible_split;
@@ -39,7 +39,10 @@ use crate::schema;
 use crate::store::{self, DuckStore};
 use crate::usercode::{self, Task, TaskInfo, UserCode};
 
+mod acting;
 mod extract;
+
+pub use acting::Acting;
 
 /// Where an engine gets new IDs and the time from. The default mints UUIDv7
 /// values and reads the system clock.
@@ -587,7 +590,8 @@ impl Engine {
         entity_type: &str,
         rows: impl RecordBatchReader,
     ) -> Result<LoadReport> {
-        self.lock().load(source, entity_type, rows, true)
+        self.lock()
+            .load(&Actor::Engine, source, entity_type, rows, true)
     }
 
     /// As [`Engine::load`], for a caller that means to add rows and not to
@@ -604,7 +608,8 @@ impl Engine {
         entity_type: &str,
         rows: impl RecordBatchReader,
     ) -> Result<LoadReport> {
-        self.lock().load(source, entity_type, rows, false)
+        self.lock()
+            .load(&Actor::Engine, source, entity_type, rows, false)
     }
 
     /// Takes back rows a source no longer holds, named by their keys. Every
@@ -638,7 +643,8 @@ impl Engine {
     /// The run is `open`: it takes judgements until it is reconciled, and it
     /// stays open across a restart.
     pub fn begin_run(&self, strategy: &StrategyRef, scope: &Scope) -> Result<RunId> {
-        self.lock().begin_match(strategy, scope, RunStatus::Open)
+        self.lock()
+            .begin_match(&Actor::Engine, strategy, scope, RunStatus::Open)
     }
 
     /// A run's candidate pairs with both sides' features: `left_id`,
@@ -673,9 +679,9 @@ impl Engine {
     /// The same as [`reconcile_with`](Self::reconcile_with) and
     /// [`Disposition::LeaveForReview`], returning the draft itself.
     pub fn reconcile(&self, run: RunId, policy: &Policy) -> Result<Draft> {
-        let (draft, _) = self
-            .lock()
-            .reconcile(run, policy, Disposition::LeaveForReview)?;
+        let (draft, _) =
+            self.lock()
+                .reconcile(&Actor::Engine, run, policy, Disposition::LeaveForReview)?;
         Ok(draft)
     }
 
@@ -697,7 +703,7 @@ impl Engine {
         policy: &Policy,
         then: Disposition,
     ) -> Result<TypeResolution> {
-        let (_, report) = self.lock().reconcile(run, policy, then)?;
+        let (_, report) = self.lock().reconcile(&Actor::Engine, run, policy, then)?;
         Ok(report)
     }
 
@@ -825,6 +831,10 @@ impl Engine {
     /// resolve that is cut short leaves the run unfinished, and the next
     /// resolve examines the same records again.
     pub fn resolve(&self, options: &ResolveOptions) -> Result<ResolveReport> {
+        self.resolve_by(&Actor::Engine, options)
+    }
+
+    fn resolve_by(&self, by: &Actor, options: &ResolveOptions) -> Result<ResolveReport> {
         let _turn = lock(&self.resolving);
         let plan = self.lock().plan(options)?;
         // Before anything is started: user code needs the project's files,
@@ -858,10 +868,10 @@ impl Engine {
             let resolution = match chosen {
                 Chosen::Rules => {
                     let run =
-                        inner.begin_match(&StrategyRef::rules(), &scope, RunStatus::Running)?;
+                        inner.begin_match(by, &StrategyRef::rules(), &scope, RunStatus::Running)?;
                     inner.in_run(run, |inner| {
                         inner.judge_with_rules(run)?;
-                        inner.conclude(run, &Policy::default(), then)
+                        inner.conclude(by, run, &Policy::default(), then)
                     })?
                 }
                 Chosen::UserCode(strategy) => {
@@ -872,7 +882,7 @@ impl Engine {
                         name: strategy.name.clone(),
                         version: Some(strategy.hash.clone()),
                     };
-                    let run = inner.begin_match(&reference, &scope, RunStatus::Running)?;
+                    let run = inner.begin_match(by, &reference, &scope, RunStatus::Running)?;
                     let mut task =
                         inner.in_run(run, |inner| inner.write_task(run, &strategy, &user_code))?;
                     // The user code runs with the writer let go. The run
@@ -886,7 +896,7 @@ impl Engine {
                         inner
                             .take_judgements(run, &task)
                             .map_err(|error| task.rejected(error))?;
-                        inner.conclude(run, &Policy::default(), then)
+                        inner.conclude(by, run, &Policy::default(), then)
                     })?;
                     task.remove();
                     resolution
@@ -1058,6 +1068,13 @@ impl Engine {
     /// order.
     pub fn log_after(&self, after: Seq, limit: u64) -> Result<Vec<LogEntry>> {
         self.read(|conn| store::read_log_after(conn, after, limit))
+    }
+
+    /// The same changesets as [`log_after`](Self::log_after), each with who
+    /// started the run it came from. The log is what was changed and who
+    /// decided it; this adds who asked.
+    pub fn logged_after(&self, after: Seq, limit: u64) -> Result<Vec<LoggedChangeset>> {
+        self.read(|conn| lookup::logged(conn, store::read_log_after(conn, after, limit)?))
     }
 
     /// All of identity state, read from the projection tables.
@@ -1357,9 +1374,11 @@ impl Inner {
         Ok((manifest, entry, version as u32))
     }
 
+    /// Records a run as begun. `by` is who asked for it.
     fn start_run(
         &mut self,
         kind: &str,
+        by: &Actor,
         strategy: Option<&StrategyRef>,
         config: &serde_json::Value,
     ) -> Result<RunId> {
@@ -1372,7 +1391,7 @@ impl Inner {
         )?;
         conn.execute(
             "INSERT INTO spool.run
-             VALUES (?, ?, 'running', ?, ?, ?, ?, ?, make_timestamptz(?), NULL, NULL, NULL)",
+             VALUES (?, ?, 'running', ?, ?, ?, ?, ?, make_timestamptz(?), NULL, NULL, NULL, ?)",
             params![
                 run,
                 kind,
@@ -1381,7 +1400,8 @@ impl Inner {
                 config.to_string(),
                 hash_json(config),
                 env!("CARGO_PKG_VERSION"),
-                now
+                now,
+                by.to_string()
             ],
         )?;
         let run = RunId(run as u64);
@@ -1443,6 +1463,7 @@ impl Inner {
 
     fn load(
         &mut self,
+        by: &Actor,
         source: &str,
         entity_type: &str,
         rows: impl RecordBatchReader,
@@ -1461,6 +1482,7 @@ impl Inner {
 
         let run = self.start_run(
             "load",
+            by,
             None,
             &json!({ "source": source.name, "entity_type": name }),
         )?;
@@ -1644,6 +1666,7 @@ impl Inner {
 
         let run = self.start_run(
             "retract",
+            &actor,
             None,
             &json!({ "source": source, "entity_type": name, "reason": reason }),
         )?;
@@ -1726,6 +1749,7 @@ impl Inner {
     /// a run the engine drives stays `running` until it is concluded.
     fn begin_match(
         &mut self,
+        by: &Actor,
         strategy: &StrategyRef,
         scope: &Scope,
         then: RunStatus,
@@ -1746,7 +1770,7 @@ impl Inner {
             rules,
         };
 
-        let run = self.start_run("match", Some(strategy), &json!(config))?;
+        let run = self.start_run("match", by, Some(strategy), &json!(config))?;
         self.in_run(run, |inner| {
             let tx = inner.store.conn.transaction()?;
             rules::create_scope(
@@ -1912,6 +1936,7 @@ impl Inner {
 
     fn reconcile(
         &mut self,
+        by: &Actor,
         run: RunId,
         policy: &Policy,
         then: Disposition,
@@ -1923,7 +1948,7 @@ impl Inner {
                 message: format!("it is {} and cannot be reconciled", row.status),
             });
         }
-        self.conclude(run, policy, then)
+        self.conclude(by, run, policy, then)
     }
 
     /// Turns a match run's judgements into a draft, stores its review items,
@@ -1937,6 +1962,7 @@ impl Inner {
     /// new.
     fn conclude(
         &mut self,
+        by: &Actor,
         run: RunId,
         policy: &Policy,
         then: Disposition,
@@ -1946,6 +1972,7 @@ impl Inner {
 
         let reconcile_run = self.start_run(
             "reconcile",
+            by,
             None,
             &json!({ "match_run": run, "policy": policy }),
         )?;

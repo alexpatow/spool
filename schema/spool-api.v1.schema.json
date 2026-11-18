@@ -1710,7 +1710,7 @@
       "type": "object"
     },
     "LogEntry": {
-      "description": "A committed changeset as the log holds it.",
+      "description": "A committed changeset as the log holds it, with who asked for the work\nit came from.",
       "properties": {
         "changeset": {
           "$ref": "#/$defs/Changeset"
@@ -1720,6 +1720,18 @@
         },
         "seq": {
           "$ref": "#/$defs/Seq"
+        },
+        "started_by": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Actor"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Who started the run that committed the changeset, if a run did: a\nmatch run, a retraction, or a load of rows that had been taken back.\nThe changeset's `actor` is who decided its operations, which for a\nmatch run and for rows that come back is the engine."
         }
       },
       "required": [
@@ -3460,6 +3472,10 @@
         "started_at": {
           "type": "string"
         },
+        "started_by": {
+          "$ref": "#/$defs/Actor",
+          "description": "Who asked for the run: `engine` when nobody did. It is not who\nauthored what the run changed. A changeset names its own author,\nand a match run's changeset is the engine's."
+        },
         "status": {
           "$ref": "#/$defs/RunStatus"
         },
@@ -3479,6 +3495,7 @@
         "run",
         "kind",
         "status",
+        "started_by",
         "started_at"
       ],
       "type": "object"

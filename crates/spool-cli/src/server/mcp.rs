@@ -914,15 +914,16 @@ static TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
             "List changes",
             Effect::Reads,
             "The log of committed changesets, oldest first, after a position: who made each, \
-             why, and its operations. `head` is the position of the last one. Use this to \
-             see what changed since a position you read before.",
+             why, and its operations. A changeset a run made is the engine's (`actor` is \
+             `engine`), and `started_by` says who asked for the run. `head` is the position \
+             of the last one. Use this to see what changed since a position you read before.",
         ),
         tool::<OneRun>(
             "get_run",
             "Get a run",
             Effect::Reads,
-            "One run by its number: whether it is `running`, `succeeded` or `failed`, and \
-             what it reported. A load reports in `load` how many rows or documents were \
+            "One run by its number: whether it is `running`, `succeeded` or `failed`, who \
+             started it, and what it reported. A load reports in `load` how many rows or documents were \
              new; an extraction reports in `extraction` the documents it read and the \
              records it found; a match run reports in `resolution` how many records it \
              examined, the pairs it judged, the identities it created, and what it left \
@@ -1248,7 +1249,8 @@ impl Tools {
                     replace: Some(asked.replace.unwrap_or(false)),
                     wait_ms: None,
                 };
-                super::load(app, Ok(Query(beside)), HeaderMap::new(), body(&request)?).await
+                let rows = body(&request)?;
+                super::load(app, caller, Ok(Query(beside)), HeaderMap::new(), rows).await
             }
             "load_documents" => {
                 let asked: LoadDocuments = arguments(tool, given)?;
@@ -1263,7 +1265,7 @@ impl Tools {
                     documents: documents.collect(),
                     wait_ms: None,
                 };
-                super::add_documents(app, body(&request)?).await
+                super::add_documents(app, caller, body(&request)?).await
             }
             "run_extraction" => {
                 let asked: RunExtraction = arguments(tool, given)?;
@@ -1274,7 +1276,7 @@ impl Tools {
                     limit: asked.limit,
                     wait_ms: None,
                 };
-                super::extract(app, body(&request)?).await
+                super::extract(app, caller, body(&request)?).await
             }
             "run_match" => {
                 let asked: RunMatch = arguments(tool, given)?;
@@ -1290,7 +1292,7 @@ impl Tools {
                     rematch: asked.rematch,
                     wait_ms: None,
                 };
-                super::start_match(app, body(&request)?).await
+                super::start_match(app, caller, body(&request)?).await
             }
             "retract_rows" => {
                 let asked: RetractRows = arguments(tool, given)?;

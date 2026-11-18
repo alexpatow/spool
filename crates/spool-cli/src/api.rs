@@ -8,13 +8,13 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use spool::core::{
-    Changeset, ChangesetId, Committed, ConstraintEntry, DocumentId, EntityType, IdentityId,
-    LogEntry, Op, RecordId, Rejection, RunId, Seq, Verdict,
+    Changeset, ChangesetId, Committed, ConstraintEntry, DocumentId, EntityType, IdentityId, Op,
+    RecordId, Rejection, RunId, Seq, Verdict,
 };
 use spool::{
     Authored, DocumentEntry, DraftEntry, DraftSummary, Explanation, HistoryEntry, IdentitySummary,
-    IdentityView, MintedIds, NewDocument, RecordEntry, ReviewCase, ReviewEntry, RunEntry,
-    SplitReport, StoreInfo, StrategyRef, TypeResolution,
+    IdentityView, LoggedChangeset, MintedIds, NewDocument, RecordEntry, ReviewCase, ReviewEntry,
+    RunEntry, SplitReport, StoreInfo, StrategyRef, TypeResolution,
 };
 
 /// The version of the API, which is the first segment of every path.
@@ -325,7 +325,7 @@ pub struct DismissRequest {
 /// `GET /v1/changesets`: a page of the log.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ChangesetList {
-    pub changesets: Vec<LogEntry>,
+    pub changesets: Vec<LoggedChangeset>,
     /// The position of the last committed changeset.
     pub head: Seq,
 }

@@ -23,6 +23,7 @@ import { useLoad } from "../hooks.ts";
 import { href } from "../router.ts";
 import { colors, radius, spacing, typography } from "../styles/shelf/tokens.stylex";
 import { tones } from "../styles/tones.stylex";
+import { Who } from "../who.tsx";
 
 /** How many of the latest runs the overview lists. */
 const RUNS = 5;
@@ -147,6 +148,7 @@ function Store({ info, runs }: { info: Info; runs: RunEntry[] }) {
               cell: (run) =>
                 [run.entity_type, run.strategy?.name, run.extractor?.name].filter((part) => part).join(", "),
             },
+            { title: "Started by", cell: (run) => <Who actor={run.started_by} /> },
             { title: "Started", cell: (run) => <When at={run.started_at} /> },
           ]}
           rows={runs}

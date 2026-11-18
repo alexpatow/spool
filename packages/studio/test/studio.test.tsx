@@ -373,13 +373,14 @@ describe("company records a reviewer corrected", () => {
     const table = await screen.findByRole("table");
     const lines = rowsOf(table);
     expect(lines).toHaveLength(10);
-    expect(lines[0]?.slice(0, 3)).toEqual(["Run 10", "reconcile", "succeeded"]);
-    expect(lines[1]?.slice(0, 4)).toEqual(["Run 9", "match", "drafted", "company, rules"]);
+    expect(lines[0]?.slice(0, 5)).toEqual(["Run 10", "reconcile", "succeeded", "", "agent:api"]);
+    expect(lines[1]?.slice(0, 5)).toEqual(["Run 9", "match", "drafted", "company, rules", "agent:api"]);
 
     follow(within(table).getByRole("link", { name: "Run 9" }));
     await heading("Run 9");
     await screen.findByText("Resolution");
     expect(field("Status")).toBe("drafted");
+    expect(field("Started by")).toBe("agent:api");
     expect(field("Examined")).toBe("5 records, 1 of them from earlier review items");
     expect(field("Assigned")).toBe("4 records, 1 identity created");
     expect(field("Unassigned")).toBe("1 record in 1 review item");
@@ -859,13 +860,14 @@ describe("company records a reviewer corrected", () => {
     const table = await screen.findByRole("table");
     const lines = rowsOf(table);
     expect(lines.map((line) => line[0])).toEqual(["1", "2", "3", "4", "5", "6", "7"]);
-    expect(lines[0]).toEqual(["1", "engine", "40", "reconcile run 4", "reconcile new records"]);
-    expect(lines[3]).toEqual(["4", "agent:api", "3", "-", "they are two companies after all"]);
+    expect(lines[0]).toEqual(["1", "engine", "40", "reconcile run 4", "agent:api", "reconcile new records"]);
+    expect(lines[3]).toEqual(["4", "agent:api", "3", "-", "-", "they are two companies after all"]);
 
     follow(within(table).getByRole("link", { name: "4" }));
     await heading("Log position 4");
     await counted("Operations", 3);
     expect(field("Actor")).toBe("agent:api");
+    expect(field("Started by")).toBeNull();
     expect(field("Reason")).toBe("“they are two companies after all”");
     expect(field("Base")).toBe("log position 3");
     expect(field("Changeset")).toBe(changesets[0]!.changeset.id);

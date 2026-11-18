@@ -125,6 +125,93 @@ fn a_change_is_recorded_under_whoever_made_it() {
     assert_eq!(actors, [format!("user:{id}").as_str(), "agent:api"]);
 }
 
+/// The kind of each run and who started it, oldest first.
+fn starters(server: &Server) -> Vec<(String, String)> {
+    let runs = server.read("/v1/runs");
+    let word = |value: &Value| value.as_str().unwrap().to_owned();
+    runs["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rev()
+        .map(|run| (word(&run["kind"]), word(&run["started_by"])))
+        .collect()
+}
+
+#[test]
+fn a_run_is_recorded_as_started_by_whoever_asked_for_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let (server, code) = served(dir.path());
+    let (ada, id) = set_up(&server, &code);
+    let ada_is = format!("user:{id}");
+    let anvils = json!({ "source": "shop", "entity_type": "thing", "rows": [
+        { "id": "1", "code": "anvil", "colour": "black" },
+        { "id": "2", "code": "anvil", "colour": "black" },
+    ] });
+
+    // A request does not say who started the run.
+    let mut named = anvils.clone();
+    named["started_by"] = json!("user:someone-else");
+    post(&server, "/v1/load", &ada, named).error(400, "invalid");
+
+    // A person loads, the token starts a run to judge by hand, and the
+    // person reconciles it: each run is its own caller's.
+    let loaded = post(&server, "/v1/load", &ada, anvils).ok();
+    assert_eq!(loaded["run"]["started_by"], ada_is.as_str());
+    let strategy = json!({ "name": "by-hand", "version": "1" });
+    let open = server.call(
+        "/v1/match",
+        json!({ "entity_type": "thing", "strategy": strategy }),
+    );
+    assert_eq!(open["run"]["started_by"], "agent:api");
+    let reconcile = format!("/v1/runs/{}/reconcile", open["run"]["run"]);
+    post(&server, &reconcile, &ada, json!({})).ok();
+    assert_eq!(
+        starters(&server),
+        [
+            ("load".to_owned(), ada_is.clone()),
+            ("match".to_owned(), "agent:api".to_owned()),
+            ("reconcile".to_owned(), ada_is.clone()),
+        ]
+    );
+
+    // What the run committed is the engine's, and the log says who asked.
+    let log = server.read("/v1/changesets");
+    assert_eq!(log["changesets"][0]["changeset"]["actor"], "engine");
+    assert_eq!(log["changesets"][0]["started_by"], ada_is.as_str());
+
+    // Rows the token takes back are its change and its run. The person
+    // sends one again, and the engine puts it back because they did.
+    let taken = json!({ "source": "shop", "entity_type": "thing", "keys": ["1"] });
+    let taken = server.call("/v1/retract", taken);
+    assert_eq!(taken["run"]["started_by"], "agent:api");
+    let again = json!({ "source": "shop", "entity_type": "thing", "rows": [
+        { "id": "1", "code": "anvil", "colour": "black" },
+    ] });
+    post(&server, "/v1/load", &ada, again).ok();
+    // A changeset written by hand came from no run.
+    let minted = server.call("/v1/ids", json!({ "identities": 1 }));
+    let create = json!({ "ops": [
+        { "op": "create_identity", "identity": minted["identities"][0], "entity_type": "thing" }
+    ] });
+    server.call("/v1/changesets", create);
+    let log = server.read("/v1/changesets?after=1");
+    let who: Vec<(&Value, &Value)> = log["changesets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| (&entry["changeset"]["actor"], &entry["started_by"]))
+        .collect();
+    assert_eq!(
+        who,
+        [
+            (&json!("agent:api"), &json!("agent:api")),
+            (&json!("engine"), &json!(ada_is)),
+            (&json!("agent:api"), &Value::Null),
+        ]
+    );
+}
+
 #[test]
 fn an_admin_adds_people_and_nobody_else_does() {
     let dir = tempfile::tempdir().unwrap();
@@ -279,6 +366,28 @@ fn nobody_signs_in_to_a_development_server() {
         log["changesets"][0]["changeset"]["actor"],
         format!("user:{dev}").as_str()
     );
+
+    // So is a run it starts, from the command line as from anywhere else.
+    let anvil = json!({ "source": "shop", "entity_type": "thing", "rows": [
+        { "id": "1", "code": "anvil", "colour": "black" },
+    ] });
+    post(&server, "/v1/load", "", anvil).ok();
+    let matched = server
+        .spool_in(dir.path(), &["match", "--type", "thing"])
+        .output()
+        .unwrap();
+    assert!(matched.status.success(), "{}", text(&matched.stderr));
+    let dev_is = format!("user:{dev}");
+    assert_eq!(
+        starters(&server),
+        ["load", "match", "reconcile"].map(|kind| (kind.to_owned(), dev_is.clone()))
+    );
+    let shown = server
+        .spool_in(dir.path(), &["show", "runs"])
+        .output()
+        .unwrap();
+    let shown = text(&shown.stdout);
+    assert_eq!(shown.matches(&dev_is).count(), 3, "{shown}");
 }
 
 #[test]

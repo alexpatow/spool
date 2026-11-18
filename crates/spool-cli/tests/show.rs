@@ -127,15 +127,15 @@ fn show_lists_what_a_server_holds() {
 
     let runs = shown(&server, &["show", "runs"]);
     assert!(
-        runs.starts_with("run  kind       status     about         started\n"),
+        runs.starts_with("run  kind       status     about         started by  started\n"),
         "{runs}"
     );
     assert!(
-        runs.contains("\n2    match      succeeded  thing, rules  "),
+        runs.contains("\n2    match      succeeded  thing, rules  agent:api   "),
         "{runs}"
     );
     assert!(
-        runs.contains("\n1    load       succeeded  thing         "),
+        runs.contains("\n1    load       succeeded  thing         agent:api   "),
         "{runs}"
     );
     let matches = shown(&server, &["show", "runs", "--kind", "match"]);
@@ -150,6 +150,7 @@ fn show_lists_what_a_server_holds() {
 
     let run = shown(&server, &["show", "run", "2"]);
     has(&run, "kind           match");
+    has(&run, "started by     agent:api");
     has(&run, "strategy       rules, version 0.1.0");
     has(
         &run,
@@ -281,11 +282,11 @@ fn show_lists_what_a_server_holds() {
     let log = shown(&server, &["show", "log"]);
     has(
         &log,
-        "position  actor   operations  from             reason",
+        "position  actor   operations  from             started by  reason",
     );
     has(
         &log,
-        "1         engine  7           reconcile run 3  reconcile new records",
+        "1         engine  7           reconcile run 3  agent:api   reconcile new records",
     );
     assert_eq!(
         shown(&server, &["show", "log", "--after", "1"]),

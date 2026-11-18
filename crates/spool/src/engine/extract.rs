@@ -7,7 +7,7 @@ use std::path::Path;
 use duckdb::params;
 use duckdb::vtab::arrow::ArrowBatchRegistration;
 use serde_json::json;
-use spool_core::{DocumentId, EntityType, RunId};
+use spool_core::{Actor, DocumentId, EntityType, RunId};
 
 use super::{Engine, Inner, lock};
 use crate::batch::{Column, batch};
@@ -47,7 +47,7 @@ impl Engine {
     ///
     /// Nothing is extracted yet: [`extract`](Self::extract) does that.
     pub fn add_documents(&self, source: &str, documents: &[NewDocument]) -> Result<LoadReport> {
-        self.lock().add_documents(source, documents)
+        self.lock().add_documents(&Actor::Engine, source, documents)
     }
 
     /// A document with its text and the extractors that have read it.
@@ -78,6 +78,10 @@ impl Engine {
     /// in time, or writes a mention the engine refuses fails its run, and
     /// nothing it found is stored.
     pub fn extract(&self, options: &ExtractOptions) -> Result<ExtractReport> {
+        self.extract_by(&Actor::Engine, options)
+    }
+
+    pub(super) fn extract_by(&self, by: &Actor, options: &ExtractOptions) -> Result<ExtractReport> {
         let _turn = lock(&self.resolving);
         let mut inner = self.lock();
         let manifest = inner.manifest.clone().ok_or(Error::NoManifest)?;
@@ -103,6 +107,7 @@ impl Engine {
 
         let run = inner.start_run(
             "extract",
+            by,
             None,
             &json!({
                 "extractor": ExtractorRef::from(&extractor),
@@ -129,7 +134,7 @@ impl Engine {
         let report = inner.in_run(run, |inner| {
             executed?;
             inner
-                .take_mentions(run, &task.path(usercode::MENTIONS), &extractor)
+                .take_mentions(by, run, &task.path(usercode::MENTIONS), &extractor)
                 .map_err(|error| match error {
                     Error::Mentions(_) => task.rejected(error),
                     other => other,
@@ -146,11 +151,17 @@ fn sql_text(text: &str) -> String {
 }
 
 impl Inner {
-    fn add_documents(&mut self, source: &str, documents: &[NewDocument]) -> Result<LoadReport> {
+    pub(super) fn add_documents(
+        &mut self,
+        by: &Actor,
+        source: &str,
+        documents: &[NewDocument],
+    ) -> Result<LoadReport> {
         let staged = documents::stage(source, documents)?;
         let received = documents.len() as u64;
         let run = self.start_run(
             "load",
+            by,
             None,
             &json!({ "source": source, "documents": received }),
         )?;
@@ -263,6 +274,7 @@ impl Inner {
     /// documents it was given, and stores them as records.
     fn take_mentions(
         &mut self,
+        by: &Actor,
         run: RunId,
         mentions: &Path,
         extractor: &Extractor,
@@ -323,6 +335,7 @@ impl Inner {
             true => None,
             false => Some(self.start_run(
                 "load",
+                by,
                 None,
                 &json!({ "extract_run": run, "extractor": reference }),
             )?),

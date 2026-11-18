@@ -316,6 +316,15 @@ fn the_server_runs_the_projects_extractors_and_resolves_what_they_find() {
     assert_ne!(stored["run"], run["run"]);
     assert_eq!(stored["kind"], "load");
     assert_eq!(stored["extractor"]["name"], "words");
+    // Whoever asked for the extraction started both, and the load of the
+    // documents before them.
+    let starters: Vec<Value> = server.read("/v1/runs")["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|run| run["started_by"].clone())
+        .collect();
+    assert_eq!(starters, ["agent:api"; 3]);
 
     // Matching then treats them as any record: the two hammers are one.
     let resolved = server.call("/v1/match", json!({ "entity_type": "thing" }))["run"].clone();

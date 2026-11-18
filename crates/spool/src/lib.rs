@@ -65,9 +65,9 @@ pub use documents::{
 };
 pub use drafts::{DraftEntry, DraftFilter, DraftStatus, DraftSummary};
 pub use engine::{
-    ApplyReport, Authored, ConstraintFilter, Disposition, Engine, JudgementCounts, MintedIds,
-    Options, ResolveOptions, ResolveReport, Scope, SplitReport, StrategyRef, SuggestedMerge,
-    SuggestedSplit, Suggestions, TypeResolution, watch_runs,
+    Acting, ApplyReport, Authored, ConstraintFilter, Disposition, Engine, JudgementCounts,
+    MintedIds, Options, ResolveOptions, ResolveReport, Scope, SplitReport, StrategyRef,
+    SuggestedMerge, SuggestedSplit, Suggestions, TypeResolution, watch_runs,
 };
 pub use error::{Error, Result};
 pub use explain::{
@@ -76,8 +76,8 @@ pub use explain::{
 };
 pub use load::LoadReport;
 pub use lookup::{
-    DeclaredSource, HistoryEntry, IdentityFilter, IdentitySummary, IdentityView, Member,
-    RecordEntry, RecordFilter, SourceCount, SourceInfo, StoreInfo, TypeInfo,
+    DeclaredSource, HistoryEntry, IdentityFilter, IdentitySummary, IdentityView, LoggedChangeset,
+    Member, RecordEntry, RecordFilter, SourceCount, SourceInfo, StoreInfo, TypeInfo,
 };
 pub use metrics::{
     BCubed, Churn, EndToEndMetrics, ExtractionMetrics, IdStability, Metrics, OrderSensitivity,

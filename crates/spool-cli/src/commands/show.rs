@@ -9,12 +9,11 @@ use std::collections::{BTreeMap, HashMap};
 
 use serde::Serialize;
 use serde_json::{Value, json};
-use spool::core::{
-    ChangesetId, ConstraintEntry, DocumentId, IdentityId, LogEntry, Op, RecordId, ReviewItem,
-};
+use spool::core::{ChangesetId, ConstraintEntry, DocumentId, IdentityId, Op, RecordId, ReviewItem};
 use spool::{
     DocumentEntry, DraftEntry, DraftSummary, Explanation, HistoryEntry, IdentitySummary,
-    IdentityView, Member, RecordEntry, ReviewEntry, ReviewKind, ReviewStatus, RuleResult, RunEntry,
+    IdentityView, LoggedChangeset, Member, RecordEntry, ReviewEntry, ReviewKind, ReviewStatus,
+    RuleResult, RunEntry,
 };
 use spool_cli::api::{DocumentList, Info, RecordList};
 
@@ -442,7 +441,7 @@ impl View<'_> {
         let runs: Vec<RunEntry> = typed(&answer["runs"])?;
         table(
             "runs",
-            &["run", "kind", "status", "about", "started"],
+            &["run", "kind", "status", "about", "started by", "started"],
             runs.iter()
                 .map(|run| {
                     let about = [
@@ -457,6 +456,7 @@ impl View<'_> {
                         word(&run.kind),
                         run.status.to_string(),
                         about.into_iter().flatten().collect::<Vec<_>>().join(", "),
+                        run.started_by.to_string(),
                         when(&run.started_at),
                     ]
                 })
@@ -498,6 +498,7 @@ impl View<'_> {
                 versioned(&extractor.name, Some(&extractor.version)),
             ));
         }
+        rows.push(("started by", run.started_by.to_string()));
         rows.push(("started", when(&run.started_at)));
         if let Some(finished) = &run.finished_at {
             rows.push(("finished", when(finished)));
@@ -1344,30 +1345,43 @@ impl View<'_> {
             print_json(&answer);
             return Ok(());
         }
-        let entries: Vec<LogEntry> = typed(&answer["changesets"])?;
+        let entries: Vec<LoggedChangeset> = typed(&answer["changesets"])?;
+        // The actor decided the operations. Who asked for the run that
+        // committed them is beside it, where a run did.
         table(
             "changesets",
-            &["position", "actor", "operations", "from", "reason"],
+            &[
+                "position",
+                "actor",
+                "operations",
+                "from",
+                "started by",
+                "reason",
+            ],
             entries
                 .iter()
-                .map(|entry| {
-                    let changeset = &entry.changeset;
+                .map(|logged| {
+                    let changeset = &logged.entry.changeset;
                     vec![
-                        entry.seq.to_string(),
+                        logged.entry.seq.to_string(),
                         changeset.actor.to_string(),
                         changeset.ops.len().to_string(),
                         changeset
                             .run
                             .map_or_else(|| "-".to_owned(), |run| format!("reconcile run {run}")),
+                        logged
+                            .started_by
+                            .as_ref()
+                            .map_or_else(|| "-".to_owned(), ToString::to_string),
                         changeset.reason.clone().unwrap_or_else(|| "-".to_owned()),
                     ]
                 })
                 .collect(),
         );
         if let (Some(last), Some(head)) = (entries.last(), answer["head"].as_u64())
-            && last.seq.0 < head
+            && last.entry.seq.0 < head
         {
-            println!("\nmore: add `--after {}`", last.seq);
+            println!("\nmore: add `--after {}`", last.entry.seq);
         }
         Ok(())
     }

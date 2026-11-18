@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use common::members;
-use spool::core::{DocumentId, EntityType, IdentityId, Policy};
+use spool::core::{Actor, DocumentId, EntityType, IdentityId, Policy};
 use spool::{
     Disposition, DocumentFilter, Engine, Error, ExtractOptions, ExtractReport, Manifest,
     NewDocument, Options, RecordEntry, RecordFilter, ResolveOptions, RunFilter, RunKind, RunStatus,
@@ -323,6 +323,21 @@ fn a_document_is_stored_once_and_a_changed_text_is_its_next_version() {
 }
 
 #[test]
+fn documents_are_added_by_whoever_is_named() {
+    let engine = Engine::open_in_memory(Options::seeded(1)).unwrap();
+    let own = engine
+        .add_documents("news", &documents_of(&[("a", FIRST)]))
+        .unwrap();
+    let desk = Actor::Agent("desk".to_owned());
+    let named = engine
+        .acting(desk.clone())
+        .add_documents("news", &documents_of(&[("b", SECOND)]))
+        .unwrap();
+    assert_eq!(engine.run(own.run).unwrap().started_by, Actor::Engine);
+    assert_eq!(engine.run(named.run).unwrap().started_by, desk);
+}
+
+#[test]
 fn a_document_that_holds_again_the_text_it_had_has_a_version_more() {
     let engine = Engine::open_in_memory(Options::seeded(1)).unwrap();
     let edited = "Acme Inc closed an office.";
@@ -620,6 +635,24 @@ fn what_an_extractor_finds_is_records_and_resolves_like_rows() {
     engine.resolve(&ResolveOptions::default()).unwrap();
     assert_eq!(engine.identity(acme).unwrap().members.len(), 4);
     engine.verify().unwrap();
+}
+
+#[test]
+#[ignore = "runs uv"]
+fn an_extraction_and_the_load_of_what_it_found_are_started_by_whoever_is_named() {
+    let news = News::new();
+    news.extractor("names.py", NAMES);
+    news.add(&[("a", FIRST)]);
+    let desk = Actor::Agent("desk".to_owned());
+    let report = news
+        .engine
+        .acting(desk.clone())
+        .extract(&ExtractOptions::with("names"))
+        .unwrap();
+    let stored = report.load_run.expect("it found something");
+    for run in [report.run, stored] {
+        assert_eq!(news.engine.run(run).unwrap().started_by, desk);
+    }
 }
 
 #[test]
