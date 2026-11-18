@@ -13,8 +13,12 @@ import { copyProject } from "./seed.ts";
 
 export const SEEDING = 120_000;
 
-/** How long the servers a test started may take to stop. More time for a test is not more time for them. */
-export const STOPPING = 5_000;
+/**
+ * How long the servers a test started may take to stop. One stops in a few
+ * hundredths of a second, and a machine that stood still while one did has
+ * held it for half a minute, which failed the test that had passed.
+ */
+export const STOPPING = 60_000;
 
 // A wait gives up after a second unless it is told otherwise. That is long
 // for a server on a quiet machine, and shorter than a machine that runs the
