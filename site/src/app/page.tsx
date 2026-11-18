@@ -1,4 +1,5 @@
 import * as stylex from "@stylexjs/stylex";
+import type { Metadata } from "next";
 import Link from "next/link";
 
 import { Wordmark } from "@/components/brand";
@@ -7,6 +8,7 @@ import { FirstScreen } from "@/components/first-screen";
 import { SiteLinks } from "@/components/site-links";
 import { Button } from "@/components/ui/button";
 import * as Typography from "@/components/ui/typography";
+import { sharing, siteCardPath } from "@/lib/sharing";
 import { site } from "@/lib/site";
 import { layout, breakpoints } from "@/styles/layout.stylex";
 import { colors, linen, spacing, typography } from "@/styles/shelf/tokens.stylex";
@@ -40,6 +42,15 @@ const notFor = [
   "Building a merged golden record, or writing corrections back to a source.",
   "Many tenants, many writers or many machines. One server owns one store.",
 ];
+
+export const metadata: Metadata = sharing({
+  title: site.title,
+  description: site.description,
+  path: "/",
+  image: siteCardPath,
+  imageAlt: `${site.name}: ${site.headline}`,
+  type: "website",
+});
 
 export default function Home() {
   return (

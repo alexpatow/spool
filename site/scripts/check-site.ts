@@ -17,6 +17,9 @@
  *   - every link to a page of this site resolves, and so does its `#fragment`
  *   - `/llms.txt` lists every page, and `/llms-full.txt` holds every page
  *   - `/sitemap.xml` lists every page
+ *   - every page, and the home page, has what a link preview reads: a
+ *     canonical link and an `og:url` to itself, a title, a description, and
+ *     a card at an absolute address that answers with a PNG
  */
 import { spawn } from "bun";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
@@ -136,6 +139,17 @@ async function freePort(): Promise<number> {
 /** The `id`s a page of HTML has, which are what a `#fragment` can name. */
 function idsOf(html: string): Set<string> {
   return new Set([...html.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1] ?? ""));
+}
+
+/** A page's `<meta>` tags, by their `property` or `name`. */
+function metaOf(html: string): Map<string, string> {
+  const head = html.slice(0, html.indexOf("</head>"));
+  return new Map(
+    [...head.matchAll(/<meta (?:property|name)="([^"]+)" content="([^"]*)"/g)].map((match) => [
+      match[1] ?? "",
+      match[2] ?? "",
+    ]),
+  );
 }
 
 function linksOf(html: string): string[] {
@@ -289,6 +303,33 @@ async function checkBuilt(pages: Page[]) {
           fail(from, `links to ${href}, and that page has nothing with that id`);
         }
       }
+    }
+
+    // What X, Slack, LinkedIn, Discord and iMessage read when a page is shared.
+    for (const from of ["/", ...pages.map((page) => page.url)]) {
+      const { body } = await get(from);
+      const meta = metaOf(body);
+      const self = (address: string | undefined) => pathOf(address ?? "").replace(/^$/, "/") === from;
+      const canonical = /<link rel="canonical" href="([^"]+)"/.exec(body)?.[1];
+      if (!self(canonical)) fail(from, `its canonical link is ${canonical ?? "missing"}`);
+      if (!self(meta.get("og:url"))) fail(from, `its og:url is ${meta.get("og:url") ?? "missing"}`);
+      for (const key of [
+        "description", "og:title", "og:description", "og:site_name", "og:type",
+        "og:image:alt", "twitter:title", "twitter:description",
+      ]) {
+        if (!meta.get(key)) fail(from, `no ${key}`);
+      }
+      if (meta.get("twitter:card") !== "summary_large_image") fail(from, "twitter:card is not summary_large_image");
+      const image = meta.get("og:image") ?? "";
+      if (!/^https?:\/\//.test(image)) fail(from, `og:image is not an absolute address: ${image || "missing"}`);
+      if (meta.get("twitter:image") !== image) fail(from, "twitter:image is not its og:image");
+      const card = await get(pathOf(image));
+      if (card.status !== 200 || card.type !== "image/png") {
+        fail(from, `its card ${pathOf(image)} answered ${card.status} ${card.type}`);
+      }
+    }
+    for (const icon of ["/favicon.ico", "/icon.svg", "/apple-icon"]) {
+      if ((await get(icon)).status !== 200) fail(icon, "does not answer");
     }
   } finally {
     server.kill();

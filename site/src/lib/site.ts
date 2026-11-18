@@ -14,18 +14,17 @@ export const site = {
   version: "0.1.0",
   licence: "MIT",
   repository: "https://github.com/alexpatow/spool",
+  /** Where the site is published. `SITE_URL`, when it is set, takes its place. */
+  url: "https://spool.alexpatow.com",
 } as const;
 
 /**
- * The origin every absolute address is built on: the sitemap, the `url` in a
- * page's Markdown, and the links in `llms.txt`.
+ * The origin every absolute address is built on: canonical links, the
+ * addresses a link preview reads, the sitemap, the `url` in a page's
+ * Markdown, and the links in `llms.txt`.
  */
 export function siteOrigin(): string {
-  const explicit = process.env["SITE_URL"];
-  if (explicit) return explicit.replace(/\/+$/, "");
-  const production = process.env["VERCEL_PROJECT_PRODUCTION_URL"];
-  if (production) return `https://${production}`;
-  return `http://localhost:${process.env["PORT"] ?? "3000"}`;
+  return (process.env["SITE_URL"] || site.url).replace(/\/+$/, "");
 }
 
 export function absoluteUrl(path: string): string {
