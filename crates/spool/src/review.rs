@@ -115,7 +115,9 @@ pub struct ReviewEntry {
     pub records: Vec<RecordId>,
     /// The identities they matched. Empty when the conflict is among the
     /// records themselves. For a `possible_split`, the one identity the
-    /// records are in.
+    /// records are in. While the item is open that is the identity as it is
+    /// now: when the identity is merged into another, the item names the
+    /// one that stands for both.
     pub identities: Vec<IdentityId>,
     /// Only a `possible_split` has these: the records of its identity as
     /// the groups that are each still held together. Nothing the store
@@ -128,7 +130,8 @@ pub struct ReviewEntry {
     /// Resolved: the changeset after which every record had an identity.
     /// For a `possible_split`, the changeset after which nothing was left
     /// to ask: it took the groups apart, or it added what holds them
-    /// together.
+    /// together, or it merged the identity with one whose item asks for
+    /// both.
     pub resolved_seq: Option<Seq>,
     /// Superseded: the reconcile run that raised it again in another form,
     /// or the retract run that took back the records it asked about. For a

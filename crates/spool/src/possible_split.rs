@@ -14,8 +14,10 @@
 //! group when a chain of these leads from one to the other, through members
 //! only:
 //!
-//! - the latest judgement of the two by a run that did not fail is a
-//!   `match`;
+//! - the latest judgement of the two by a match run that has been
+//!   reconciled, or is being, is a `match`. A run that still takes
+//!   judgements may be given up, so what it has said so far is not
+//!   evidence yet;
 //! - a `must_link` constraint in force names the two;
 //! - one is the earlier version of the other, under the same key;
 //! - a decision joined them. A changeset that is not the engine's and
@@ -34,17 +36,23 @@
 //! The item changes no identity and makes no work for a match run. It is
 //! open while the members of the identity are in more than one group by
 //! the rules above, and there is one open item for an identity at most.
-//! Its records and groups are kept in step with the identity, in the
-//! transaction that commits a changeset which touches it and when a
-//! reconcile run has judged: a record that joins is in the group it
-//! matches, and one that leaves is gone from the item. So a split made
-//! along the groups is a split of the identity as it is. The item closes
-//! like this:
+//! Its identity, records and groups are kept in step with where its
+//! records are, in the transaction that commits a changeset which touches
+//! them and when a reconcile run has judged: a record that joins is in the
+//! group it matches, and one that leaves is gone from the item. So a split
+//! made along the groups is a split of the identity as it is.
+//!
+//! The item goes with its records. When its identity is merged into
+//! another, it names the one that stands for both, and if that one had an
+//! item of its own, one of the two is kept. When the merge is undone, each
+//! identity that is left in more than one group has an item again. The
+//! item closes like this:
 //!
 //! - `resolved`: a changeset left nothing to ask. A reviewer split the
 //!   identity, or said the groups are one thing with a `must_link`; or the
 //!   record that was taken back came back; or a run placed a new record
-//!   that matches both groups; or a whole group left.
+//!   that matches both groups; or a whole group left; or its identity was
+//!   merged with one whose item asks for both.
 //! - `superseded`: a run judged members of the groups a match and
 //!   committed nothing that touches the identity, as a rematch may.
 //! - `dismissed`: a reviewer closed it as it is. A later retraction from
@@ -63,9 +71,14 @@ use crate::store::parse;
 /// The members of each of the given active identities, as the groups that
 /// are each held together, the largest group first. An identity without
 /// members has no entry.
-pub(crate) fn groups(
+///
+/// `concluding` is the match run that is being reconciled, if one is: its
+/// judgements count from then on, and its status says so only when the
+/// reconciling is done.
+fn groups(
     conn: &Connection,
     identities: &[IdentityId],
+    concluding: Option<RunId>,
 ) -> Result<BTreeMap<IdentityId, Vec<Vec<RecordId>>>> {
     let mut found = BTreeMap::new();
     if identities.is_empty() {
@@ -81,6 +94,14 @@ pub(crate) fn groups(
                     .collect(),
             ),
         )])?))
+    };
+    // A match run has been reconciled once it is drafted or has succeeded.
+    let reconciled = match concluding {
+        Some(run) => format!(
+            "(r.status IN ('drafted', 'succeeded') OR r.run_id = {})",
+            run.0
+        ),
+        None => "r.status IN ('drafted', 'succeeded')".to_owned(),
     };
     const MEMBERS: &str = "
         member AS (
@@ -116,7 +137,7 @@ pub(crate) fn groups(
                FROM spool.judgement j
                JOIN member a ON a.record_id = j.left_id
                JOIN member b ON b.record_id = j.right_id AND b.identity_id = a.identity_id
-               JOIN spool.run r ON r.run_id = j.run_id AND r.status <> 'failed'
+               JOIN spool.run r ON r.run_id = j.run_id AND {reconciled}
                QUALIFY j.run_id = max(j.run_id) OVER (PARTITION BY j.left_id, j.right_id))
              SELECT left_id::VARCHAR, right_id::VARCHAR FROM judged
              GROUP BY left_id, right_id
@@ -281,7 +302,7 @@ impl Union {
 /// An open `possible_split` item, reduced to what deciding about it takes.
 struct Open {
     id: i64,
-    /// The identity that stands for the one it names.
+    /// The identity it names.
     identity: IdentityId,
     groups: Vec<Vec<RecordId>>,
 }
@@ -291,8 +312,7 @@ struct Open {
 /// identity it names.
 fn open(conn: &Connection, condition: &str) -> Result<Vec<Open>> {
     let mut statement = conn.prepare(&format!(
-        "SELECT r.review_id, coalesce(i.merged_into, i.identity_id)::VARCHAR,
-                to_json(r.groups)::VARCHAR
+        "SELECT r.review_id, i.identity_id::VARCHAR, to_json(r.groups)::VARCHAR
          FROM spool.review_item r
          JOIN spool.identity i ON i.identity_id = r.identity_ids[1]
          WHERE r.status = 'open' AND r.kind = 'possible_split' AND ({condition})
@@ -324,16 +344,46 @@ fn any_open(conn: &Connection) -> Result<bool> {
     )?)
 }
 
-/// Whether an item still has something to ask: members of its identity come
-/// from more than one of the groups the identity is in now.
-fn stands(item: &Open, now: &BTreeMap<IdentityId, Vec<Vec<RecordId>>>) -> bool {
-    let Some(groups) = now.get(&item.identity) else {
-        return false;
-    };
-    let named: BTreeSet<RecordId> = item.groups.iter().flatten().copied().collect();
+fn ids(items: impl IntoIterator<Item = i64>) -> String {
+    let ids: Vec<String> = items.into_iter().map(|id| id.to_string()).collect();
+    ids.join(", ")
+}
+
+/// The identities that the records of the given items are in now, for each
+/// item, with those of its records that are there.
+fn whereabouts(
+    conn: &Connection,
+    items: &[Open],
+) -> Result<BTreeMap<i64, BTreeMap<IdentityId, BTreeSet<RecordId>>>> {
+    let mut found: BTreeMap<i64, BTreeMap<IdentityId, BTreeSet<RecordId>>> = BTreeMap::new();
+    if items.is_empty() {
+        return Ok(found);
+    }
+    let mut statement = conn.prepare(&format!(
+        "SELECT r.review_id, m.identity_id::VARCHAR, m.record_id::VARCHAR
+         FROM (SELECT review_id, unnest(record_ids) AS record_id
+               FROM spool.review_item WHERE review_id IN ({})) r
+         JOIN spool.membership m ON m.record_id = r.record_id AND m.to_seq IS NULL",
+        ids(items.iter().map(|item| item.id))
+    ))?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        found
+            .entry(row.get(0)?)
+            .or_default()
+            .entry(parse(&row.get::<_, String>(1)?)?)
+            .or_default()
+            .insert(parse(&row.get::<_, String>(2)?)?);
+    }
+    Ok(found)
+}
+
+/// Whether records have something to ask of the identity they are in:
+/// they come from more than one of the groups it is in now.
+fn apart(records: &BTreeSet<RecordId>, groups: &[Vec<RecordId>]) -> bool {
     groups
         .iter()
-        .filter(|group| group.iter().any(|record| named.contains(record)))
+        .filter(|group| group.iter().any(|record| records.contains(record)))
         .count()
         > 1
 }
@@ -353,43 +403,115 @@ fn held(groups: &[Vec<RecordId>]) -> (String, String) {
     (list(&records), format!("[{}]", grouped.join(", ")))
 }
 
-/// Brings open items in step with the identities they ask about. An item
-/// whose identity is in other groups now, and still in more than one, is
-/// given those groups and their records: what a reviewer reads, and a
-/// split made along it, are about the identity as it is. The items that
-/// have nothing left to ask are returned, for the caller to close.
-fn settle(conn: &Connection, items: Vec<Open>) -> Result<Vec<i64>> {
-    let identities: Vec<IdentityId> = items
-        .iter()
-        .map(|item| item.identity)
+/// Brings open items in step with where their records are, so that each
+/// identity that the records of an item leave in more than one group has
+/// one open item, which names it and its groups as they are: what a
+/// reviewer reads, and a split made along it, are about the identity as it
+/// is.
+///
+/// An item goes with its records. It stays with the identity it names
+/// while that one has the question. Otherwise it goes to an identity its
+/// records are in that has the question and no item: the one its own was
+/// merged into, or the one it was in before a merge that is undone. Where
+/// an identity has the question and every item that could ask it is
+/// taken, a new item is made, of the run that raised the one it comes
+/// from. The items that are left with nothing to ask are returned, for
+/// the caller to close: their identity is in one group, or another item
+/// asks for it.
+fn settle(conn: &Connection, items: Vec<Open>, concluding: Option<RunId>) -> Result<Vec<i64>> {
+    let places = whereabouts(conn, &items)?;
+    let identities: Vec<IdentityId> = places
+        .values()
+        .flat_map(|identities| identities.keys().copied())
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
-    let now = groups(conn, &identities)?;
-    let mut answered = Vec::new();
+    let now = groups(conn, &identities, concluding)?;
+    // The identities that have the question, each with the items whose
+    // records ask it, in the order of the items.
+    let mut asking: BTreeMap<IdentityId, Vec<&Open>> = BTreeMap::new();
     for item in &items {
-        if !stands(item, &now) {
-            answered.push(item.id);
+        for (identity, records) in places.get(&item.id).into_iter().flatten() {
+            if now
+                .get(identity)
+                .is_some_and(|groups| apart(records, groups))
+            {
+                asking.entry(*identity).or_default().push(item);
+            }
+        }
+    }
+    let mut kept: BTreeMap<IdentityId, &Open> = BTreeMap::new();
+    let mut taken: BTreeSet<i64> = BTreeSet::new();
+    for (identity, items) in &asking {
+        if let Some(item) = items.iter().find(|item| item.identity == *identity) {
+            kept.insert(*identity, item);
+            taken.insert(item.id);
+        }
+    }
+    let mut next_id: Option<i64> = None;
+    for (identity, items) in &asking {
+        if kept.contains_key(identity) {
             continue;
         }
-        let groups = &now[&item.identity];
-        if *groups != item.groups {
+        if let Some(item) = items.iter().find(|item| !taken.contains(&item.id)) {
+            kept.insert(*identity, item);
+            taken.insert(item.id);
+            continue;
+        }
+        // An item that the caller did not pass may name the identity
+        // already. It is in step, or the caller would have passed it.
+        let named: bool = conn.query_row(
+            &format!(
+                "SELECT count(*) > 0 FROM spool.review_item
+                 WHERE status = 'open' AND kind = 'possible_split'
+                   AND identity_ids[1] = '{identity}'"
+            ),
+            [],
+            |row| row.get(0),
+        )?;
+        if named {
+            continue;
+        }
+        let id = match next_id {
+            Some(id) => id,
+            None => conn.query_row(
+                "SELECT coalesce(max(review_id), 0) + 1 FROM spool.review_item",
+                [],
+                |row| row.get(0),
+            )?,
+        };
+        let (records, grouped) = held(&now[identity]);
+        conn.execute(
+            &format!(
+                "INSERT INTO spool.review_item
+                 SELECT ?, run_id, entity_type, 'possible_split', {records},
+                        ['{identity}']::UUID[], 'open', NULL, NULL, NULL, NULL, NULL, {grouped}
+                 FROM spool.review_item WHERE review_id = ?"
+            ),
+            params![id, items[0].id],
+        )?;
+        next_id = Some(id + 1);
+    }
+    for (identity, item) in &kept {
+        let groups = &now[identity];
+        if item.identity != *identity || item.groups != *groups {
             let (records, grouped) = held(groups);
             conn.execute(
                 &format!(
-                    "UPDATE spool.review_item SET record_ids = {records}, groups = {grouped}
+                    "UPDATE spool.review_item
+                     SET identity_ids = ['{identity}']::UUID[], record_ids = {records},
+                         groups = {grouped}
                      WHERE review_id = ?"
                 ),
                 [item.id],
             )?;
         }
     }
-    Ok(answered)
-}
-
-fn ids(items: &[i64]) -> String {
-    let ids: Vec<String> = items.iter().map(ToString::to_string).collect();
-    ids.join(", ")
+    Ok(items
+        .iter()
+        .map(|item| item.id)
+        .filter(|id| !taken.contains(id))
+        .collect())
 }
 
 /// Raises a `possible_split` item for each of the identities whose members
@@ -398,7 +520,7 @@ fn ids(items: &[i64]) -> String {
 /// back to. An identity that has an open item keeps it, in step with its
 /// groups, and is not counted.
 pub(crate) fn raise(conn: &Connection, run: RunId, identities: &[IdentityId]) -> Result<u64> {
-    let apart: BTreeMap<IdentityId, Vec<Vec<RecordId>>> = groups(conn, identities)?
+    let apart: BTreeMap<IdentityId, Vec<Vec<RecordId>>> = groups(conn, identities, None)?
         .into_iter()
         .filter(|(_, groups)| groups.len() > 1)
         .collect();
@@ -447,10 +569,23 @@ pub(crate) fn raise(conn: &Connection, run: RunId, identities: &[IdentityId]) ->
 /// Brings the open items of the identities that the changeset at `seq`
 /// touches in step with them, and closes as resolved those it left nothing
 /// to ask about. Runs inside the transaction that commits the changeset.
+///
+/// A changeset that a reconcile run drafted is what the run's judgements
+/// came to, so the match run it reconciled counts as evidence here,
+/// whether or not it has been recorded as finished yet.
 pub(crate) fn resolve_answered(conn: &Connection, seq: Seq) -> Result<()> {
     if !any_open(conn)? {
         return Ok(());
     }
+    let concluding: Option<i64> = conn.query_row(
+        "SELECT max((r.config->>'match_run')::BIGINT)
+         FROM spool.changeset c
+         JOIN spool.run r ON r.run_id = c.run_id AND r.kind = 'reconcile'
+         WHERE c.seq = ?",
+        [seq.0 as i64],
+        |row| row.get(0),
+    )?;
+    let concluding = concluding.map(|run| RunId(run as u64));
     let touched = format!(
         "SELECT identity_id FROM spool.changeset_op
          WHERE seq = {seq} AND identity_id IS NOT NULL
@@ -471,13 +606,13 @@ pub(crate) fn resolve_answered(conn: &Connection, seq: Seq) -> Result<()> {
              OR coalesce(i.merged_into, i.identity_id) IN ({touched})"
         ),
     )?;
-    let answered = settle(conn, items)?;
+    let answered = settle(conn, items, concluding)?;
     if !answered.is_empty() {
         conn.execute(
             &format!(
                 "UPDATE spool.review_item SET status = 'resolved', closed_seq = ?
                  WHERE review_id IN ({})",
-                ids(&answered)
+                ids(answered)
             ),
             [seq.0 as i64],
         )?;
@@ -487,24 +622,25 @@ pub(crate) fn resolve_answered(conn: &Connection, seq: Seq) -> Result<()> {
 
 /// Brings the open items of an entity type in step with their identities,
 /// and closes as superseded by `run` those that have nothing left to ask:
-/// a reconcile run does this once its match run has judged, because
-/// judgements alone may hold groups together.
+/// the reconcile run `run` does this where it concludes the match run
+/// `match_run`, because judgements alone may hold groups together.
 pub(crate) fn supersede_answered(
     conn: &Connection,
     entity_type: &EntityType,
     run: RunId,
+    match_run: RunId,
 ) -> Result<()> {
     if !any_open(conn)? {
         return Ok(());
     }
     let items = open(conn, &format!("r.entity_type = '{entity_type}'"))?;
-    let answered = settle(conn, items)?;
+    let answered = settle(conn, items, Some(match_run))?;
     if !answered.is_empty() {
         conn.execute(
             &format!(
                 "UPDATE spool.review_item SET status = 'superseded', closed_run = ?
                  WHERE review_id IN ({})",
-                ids(&answered)
+                ids(answered)
             ),
             [run.0 as i64],
         )?;
@@ -512,21 +648,38 @@ pub(crate) fn supersede_answered(
     Ok(())
 }
 
-/// How many open items have nothing to ask, which the store never leaves
-/// open: an item is closed in the transaction that answers it.
+/// How many open items the store should not have: one whose records have
+/// nothing to ask of the identity it names, which is closed in the
+/// transaction that answers it, or one that names an identity another open
+/// item names.
 pub(crate) fn stale(conn: &Connection) -> Result<u64> {
     if !any_open(conn)? {
         return Ok(0);
     }
     let items = open(conn, "true")?;
+    let places = whereabouts(conn, &items)?;
     let identities: Vec<IdentityId> = items
         .iter()
         .map(|item| item.identity)
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
-    let now = groups(conn, &identities)?;
-    Ok(items.iter().filter(|item| !stands(item, &now)).count() as u64)
+    let now = groups(conn, &identities, None)?;
+    let mut asked: BTreeSet<IdentityId> = BTreeSet::new();
+    let mut stale = 0;
+    for item in &items {
+        let asks = match (
+            places.get(&item.id).and_then(|at| at.get(&item.identity)),
+            now.get(&item.identity),
+        ) {
+            (Some(records), Some(groups)) => apart(records, groups),
+            _ => false,
+        };
+        if !asks || !asked.insert(item.identity) {
+            stale += 1;
+        }
+    }
+    Ok(stale)
 }
 
 /// The records that a retraction took out of the given identities, or out

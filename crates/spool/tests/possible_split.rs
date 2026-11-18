@@ -5,10 +5,11 @@
 mod common;
 
 use common::*;
-use spool::core::{Actor, ConstraintKind, IdentityId, Op, RecordId, Verdict};
+use spool::core::{Actor, ConstraintKind, IdentityId, Op, Policy, RecordId, Verdict};
 use spool::{
-    Engine, EntityTypeSource, Error, Options, RecordFilter, ResolveOptions, ResolveReport,
-    RetractReport, ReviewEntry, ReviewFilter, ReviewKind, ReviewStatus, SqlFile,
+    Disposition, Engine, EntityTypeSource, Error, Options, RecordFilter, ResolveOptions,
+    ResolveReport, RetractReport, ReviewEntry, ReviewFilter, ReviewKind, ReviewStatus, Rows, Scope,
+    SqlFile, StrategyRef,
 };
 
 fn resolve(engine: &Engine) -> ResolveReport {
@@ -582,6 +583,240 @@ fn a_record_that_joins_the_identity_is_in_the_group_it_matches() {
 }
 
 #[test]
+fn the_item_goes_with_its_records_into_a_merge_and_back() {
+    let engine = engine();
+    let (held, item) = asked(&engine);
+    ingest(&engine, "yard", &[("1", Some("wrench"), None)]);
+    resolve(&engine);
+    let wrenches = identity(&engine, "yard", "1").unwrap();
+
+    // A reviewer merges the identity into another. The question is the
+    // same, and is about the identity that stands for both now.
+    let merged = decide(
+        &engine,
+        vec![Op::Merge {
+            from: held.identity,
+            into: wrenches,
+        }],
+    );
+    let [now] = &open(&engine)[..] else {
+        panic!("one open review item");
+    };
+    assert_eq!(now.id, item.id);
+    assert_eq!(now.identities, [wrenches]);
+    assert_eq!(
+        groups(&engine, now),
+        names(&[&["depot:1"], &["shop:1"], &["yard:1"]])
+    );
+    let case = engine.review_case(item.id).unwrap();
+    assert_eq!(case.candidates[0].identity.id, wrenches);
+    assert!(
+        case.records
+            .iter()
+            .all(|record| record.identity == Some(wrenches))
+    );
+    let taken: Vec<RecordId> = case.taken_back.iter().map(|record| record.id).collect();
+    assert_eq!(taken, [held.bridge]);
+    engine.verify().unwrap();
+
+    // Undoing the merge puts the records back, and the question with them.
+    engine.undo(merged.seq, reviewer(), None, true).unwrap();
+    let [back] = &open(&engine)[..] else {
+        panic!("one open review item");
+    };
+    assert_eq!(back.id, item.id);
+    assert_eq!(back.identities, [held.identity]);
+    assert_eq!(groups(&engine, back), names(&[&["depot:1"], &["shop:1"]]));
+    engine.verify().unwrap();
+
+    // Merged again, the identity the item names is one that can be split.
+    // Without the mallet, what is left of the side that was merged is the
+    // anvil, and the merge says the anvil and the wrench are one thing.
+    decide(
+        &engine,
+        vec![Op::Merge {
+            from: held.identity,
+            into: wrenches,
+        }],
+    );
+    let named = open(&engine)[0].identities[0];
+    let split = engine
+        .split(named, &[held.mallet], true, None, reviewer(), None)
+        .unwrap();
+    assert_eq!(open(&engine), []);
+    let closed = self::item(&engine, item.id);
+    assert_eq!(closed.status, ReviewStatus::Resolved);
+    assert_eq!(closed.resolved_seq, Some(split.committed.seq));
+    assert_eq!(
+        members(&engine, wrenches),
+        ["shop:1", "yard:1"].map(str::to_owned).into()
+    );
+    engine.verify().unwrap();
+}
+
+#[test]
+fn identities_that_are_merged_have_one_item_between_them() {
+    let engine = engine();
+    let held = held_by_one(&engine);
+    // A second identity that one row holds together.
+    ingest(&engine, "shop", &[("5", Some("pliers"), None)]);
+    ingest(&engine, "depot", &[("5", Some("tongs"), Some("K5"))]);
+    ingest(&engine, "kiosk", &[("5", Some("pliers"), Some("K5"))]);
+    resolve(&engine);
+    let pliers = identity(&engine, "shop", "5").unwrap();
+    let taken = retract(&engine, "kiosk", &["1", "5"]);
+    assert_eq!(taken.possible_splits, 2);
+    let before = open(&engine);
+    let of = |identity: IdentityId| {
+        before
+            .iter()
+            .find(|item| item.identities == [identity])
+            .expect("an item for the identity")
+            .clone()
+    };
+    let (kept, other) = (of(held.identity), of(pliers));
+
+    // A reviewer merges the two. One item asks about the identity that
+    // stands, and the other is closed by the merge.
+    let merged = decide(
+        &engine,
+        vec![Op::Merge {
+            from: pliers,
+            into: held.identity,
+        }],
+    );
+    let [now] = &open(&engine)[..] else {
+        panic!("one open review item, not {:?}", open(&engine));
+    };
+    assert_eq!(now.id, kept.id);
+    assert_eq!(now.identities, [held.identity]);
+    assert_eq!(
+        groups(&engine, now),
+        names(&[&["depot:1"], &["depot:5"], &["shop:1"], &["shop:5"]])
+    );
+    let closed = item(&engine, other.id);
+    assert_eq!(closed.status, ReviewStatus::Resolved);
+    assert_eq!(closed.resolved_seq, Some(merged.seq));
+    engine.verify().unwrap();
+
+    // Undoing the merge leaves two identities with the question, and each
+    // has an item again.
+    engine.undo(merged.seq, reviewer(), None, true).unwrap();
+    let after = open(&engine);
+    assert_eq!(after.len(), 2, "{after:?}");
+    let of = |identity: IdentityId| {
+        after
+            .iter()
+            .find(|item| item.identities == [identity])
+            .expect("an item for the identity")
+    };
+    assert_eq!(of(held.identity).id, kept.id);
+    assert_eq!(
+        groups(&engine, of(held.identity)),
+        names(&[&["depot:1"], &["shop:1"]])
+    );
+    assert_ne!(of(pliers).id, other.id, "a closed item stays closed");
+    assert_eq!(of(pliers).run, taken.run);
+    assert_eq!(
+        groups(&engine, of(pliers)),
+        names(&[&["depot:5"], &["shop:5"]])
+    );
+    engine.verify().unwrap();
+
+    // Dismissing the one item of an identity leaves no other that asks the
+    // same.
+    decide(
+        &engine,
+        vec![Op::Merge {
+            from: pliers,
+            into: held.identity,
+        }],
+    );
+    let [one] = &open(&engine)[..] else {
+        panic!("one open review item");
+    };
+    engine.dismiss_review(one.id, &reviewer(), None).unwrap();
+    assert_eq!(open(&engine), []);
+    engine.verify().unwrap();
+}
+
+#[test]
+fn a_run_that_is_still_taking_judgements_does_not_answer_the_item() {
+    let engine = engine();
+    let (held, item) = asked(&engine);
+
+    // A caller judges everything again by hand, and says the anvil and the
+    // mallet are a match. Until the run is reconciled that is not evidence:
+    // the run may be given up, and the item is closed when it is reconciled.
+    let thing = spool::core::EntityType::new("thing").unwrap();
+    let run = engine
+        .begin_run(
+            &StrategyRef::external("by-hand", None),
+            &Scope::rematch(thing),
+        )
+        .unwrap();
+    let (anvil, mallet) = (held.anvil.to_string(), held.mallet.to_string());
+    let (left, right) = match anvil < mallet {
+        true => (anvil, mallet),
+        false => (mallet, anvil),
+    };
+    let rows = Rows::from_text(
+        &["left_id", "right_id", "verdict"],
+        &[vec![
+            Some(left.as_str()),
+            Some(right.as_str()),
+            Some("match"),
+        ]],
+    )
+    .unwrap();
+    assert_eq!(engine.submit_judgements(run, rows).unwrap(), 1);
+    assert_eq!(open(&engine), std::slice::from_ref(&item));
+    engine.verify().unwrap();
+
+    // A retraction while the run is open does not count its judgements
+    // either: the same question is not raised twice, and is not dropped.
+    assert_eq!(retract(&engine, "kiosk", &["1"]).possible_splits, 0);
+    assert_eq!(open(&engine), std::slice::from_ref(&item));
+
+    let resolved = engine
+        .reconcile_with(run, &Policy::default(), Disposition::Commit)
+        .unwrap();
+    let closed = self::item(&engine, item.id);
+    assert_eq!(closed.status, ReviewStatus::Superseded);
+    assert_eq!(closed.superseded_by, Some(resolved.reconcile_run));
+    engine.verify().unwrap();
+
+    // A run that is given up leaves the item as it was.
+    let engine = self::engine();
+    let (held, item) = asked(&engine);
+    let thing = spool::core::EntityType::new("thing").unwrap();
+    let run = engine
+        .begin_run(
+            &StrategyRef::external("by-hand", None),
+            &Scope::rematch(thing),
+        )
+        .unwrap();
+    let (anvil, mallet) = (held.anvil.to_string(), held.mallet.to_string());
+    let (left, right) = match anvil < mallet {
+        true => (anvil, mallet),
+        false => (mallet, anvil),
+    };
+    let rows = Rows::from_text(
+        &["left_id", "right_id", "verdict"],
+        &[vec![
+            Some(left.as_str()),
+            Some(right.as_str()),
+            Some("match"),
+        ]],
+    )
+    .unwrap();
+    engine.submit_judgements(run, rows).unwrap();
+    engine.cancel_run(run).unwrap();
+    assert_eq!(open(&engine), [item]);
+    engine.verify().unwrap();
+}
+
+#[test]
 fn a_record_that_comes_back_where_what_held_it_is_still_gone_is_asked_about() {
     let engine = engine();
     // Two anvils, the kiosk's anvil with the code K2, and the yard's
@@ -803,7 +1038,9 @@ fn a_store_that_keeps_an_item_open_with_nothing_to_ask_does_not_verify() {
     ));
     assert_eq!(
         problems(),
-        ["1 open `possible_split` review items with nothing left to ask"]
+        [
+            "1 open `possible_split` review items with nothing left to ask, or that ask what another asks"
+        ]
     );
     tamper(&format!(
         "UPDATE db.spool.review_item SET status = 'resolved', closed_seq = 1
@@ -814,17 +1051,39 @@ fn a_store_that_keeps_an_item_open_with_nothing_to_ask_does_not_verify() {
         .verify()
         .unwrap();
 
-    // Open, and not in the form the kind has.
+    // Two open items that ask about one identity. The one that was
+    // dismissed has something to ask when it is open again, and a copy of
+    // it asks the same.
     tamper(&format!(
         "UPDATE db.spool.review_item
-         SET status = 'open', closed_by = NULL, closed_at = NULL, groups = NULL
+         SET status = 'open', closed_by = NULL, closed_at = NULL, closed_reason = NULL
+         WHERE review_id = {dismissed}"
+    ));
+    Engine::open(&path, Options::seeded(2))
+        .unwrap()
+        .verify()
+        .unwrap();
+    tamper(&format!(
+        "INSERT INTO db.spool.review_item
+         SELECT 99, * EXCLUDE (review_id) FROM db.spool.review_item
          WHERE review_id = {dismissed}"
     ));
     assert_eq!(
         problems(),
         [
-            "1 `possible_split` review items that do not name one identity and two groups of its records, or review items of another kind that have groups",
-            "1 open `possible_split` review items with nothing left to ask",
+            "1 open `possible_split` review items with nothing left to ask, or that ask what another asks"
+        ]
+    );
+    tamper("DELETE FROM db.spool.review_item WHERE review_id = 99");
+
+    // Open, and not in the form the kind has.
+    tamper(&format!(
+        "UPDATE db.spool.review_item SET groups = NULL WHERE review_id = {dismissed}"
+    ));
+    assert_eq!(
+        problems(),
+        [
+            "1 `possible_split` review items that do not name one identity and two groups of its records, or review items of another kind that have groups"
         ]
     );
 }

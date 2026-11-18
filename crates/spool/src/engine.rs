@@ -1975,8 +1975,12 @@ impl Inner {
             review::record(&tx, &entity_type, reconcile_run, &draft.review)?;
             // The match run may have judged a match between records that
             // nothing held together. If it commits nothing that touches
-            // their identity, this is where the question is closed.
-            possible_split::supersede_answered(&tx, &entity_type, reconcile_run)?;
+            // their identity, the question is closed where the run is
+            // concluded: here when its draft is left for review, and after
+            // the commit otherwise.
+            if then == Disposition::LeaveForReview {
+                possible_split::supersede_answered(&tx, &entity_type, reconcile_run, run)?;
+            }
             // Whatever this run drafts, an earlier draft of the type was
             // written against a state this one may change.
             drafts::supersede(&tx, &entity_type, reconcile_run)?;
@@ -2014,7 +2018,18 @@ impl Inner {
                 let validated = validate(&self.store, draft.changeset.clone())?;
                 report.committed = Some(self.store.apply(validated)?);
             }
-            self.finish_run(run, RunStatus::Succeeded, Some(&json!(report)))?;
+            // The run has succeeded, and its judgements are evidence from
+            // here on: both are recorded together.
+            let finished = self.store.clock.now_micros();
+            let tx = self.store.conn.transaction()?;
+            tx.execute(
+                "UPDATE spool.run
+                 SET status = 'succeeded', finished_at = make_timestamptz(?), result = ?::JSON
+                 WHERE run_id = ?",
+                params![finished, json!(report).to_string(), run.0 as i64],
+            )?;
+            possible_split::supersede_answered(&tx, &entity_type, reconcile_run, run)?;
+            tx.commit()?;
         }
         Ok((draft, report))
     }
@@ -2761,11 +2776,12 @@ impl Inner {
         }
         // An item is closed in the transaction that answers it, so none
         // stays open once what the store knows holds its groups together or
-        // they no longer share the identity.
+        // they no longer share the identity, and an identity has one at
+        // most.
         let stale = possible_split::stale(&self.store.conn)?;
         if stale > 0 {
             problems.push(format!(
-                "{stale} open `possible_split` review items with nothing left to ask"
+                "{stale} open `possible_split` review items with nothing left to ask, or that ask what another asks"
             ));
         }
         if problems.is_empty() {

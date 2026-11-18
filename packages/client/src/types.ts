@@ -1354,7 +1354,9 @@ export interface ReviewEntry {
   /**
    * The identities they matched. Empty when the conflict is among the
    * records themselves. For a `possible_split`, the one identity the
-   * records are in.
+   * records are in. While the item is open that is the identity as it is
+   * now: when the identity is merged into another, the item names the
+   * one that stands for both.
    */
   identities: IdentityId[];
   kind: ReviewKind;
@@ -1368,7 +1370,8 @@ export interface ReviewEntry {
    * Resolved: the changeset after which every record had an identity.
    * For a `possible_split`, the changeset after which nothing was left
    * to ask: it took the groups apart, or it added what holds them
-   * together.
+   * together, or it merged the identity with one whose item asks for
+   * both.
    */
   resolved_seq?: Seq | null;
   /**

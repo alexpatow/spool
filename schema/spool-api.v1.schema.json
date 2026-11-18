@@ -3027,7 +3027,7 @@
           "type": "integer"
         },
         "identities": {
-          "description": "The identities they matched. Empty when the conflict is among the\nrecords themselves. For a `possible_split`, the one identity the\nrecords are in.",
+          "description": "The identities they matched. Empty when the conflict is among the\nrecords themselves. For a `possible_split`, the one identity the\nrecords are in. While the item is open that is the identity as it is\nnow: when the identity is merged into another, the item names the\none that stands for both.",
           "items": {
             "$ref": "#/$defs/IdentityId"
           },
@@ -3052,7 +3052,7 @@
               "type": "null"
             }
           ],
-          "description": "Resolved: the changeset after which every record had an identity.\nFor a `possible_split`, the changeset after which nothing was left\nto ask: it took the groups apart, or it added what holds them\ntogether."
+          "description": "Resolved: the changeset after which every record had an identity.\nFor a `possible_split`, the changeset after which nothing was left\nto ask: it took the groups apart, or it added what holds them\ntogether, or it merged the identity with one whose item asks for\nboth."
         },
         "run": {
           "$ref": "#/$defs/RunId",
