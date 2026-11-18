@@ -23,8 +23,15 @@ pub const VERSION: &str = "v1";
 /// The media type of an Arrow IPC stream.
 pub const ARROW_STREAM: &str = "application/vnd.apache.arrow.stream";
 
-/// `POST /v1/ingest` with a JSON body. With an Arrow body, the same fields
-/// other than `rows` are query parameters.
+/// The media type of CSV: a first line that names the columns, then a line
+/// for each row.
+pub const CSV: &str = "text/csv";
+
+/// The media type of CSV with tabs between the fields.
+pub const TSV: &str = "text/tab-separated-values";
+
+/// `POST /v1/ingest` with a JSON body. With an Arrow or a CSV body, the
+/// same fields other than `rows` are query parameters.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IngestRequest {
@@ -63,7 +70,10 @@ pub struct RetractRequest {
     pub wait_ms: Option<u64>,
 }
 
-/// The query parameters of `POST /v1/ingest` with an Arrow body.
+/// The query parameters of `POST /v1/ingest` with an Arrow body, or with a
+/// CSV body: `content-type: text/csv`, or `text/tab-separated-values` for
+/// tabs between the fields. The first line of CSV names the columns, every
+/// value is text, and an empty field is a missing value.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct IngestParams {

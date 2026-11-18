@@ -1638,3 +1638,282 @@ fn calls_made_at_once_are_all_served_and_writes_take_turns() {
     assert_eq!(seqs, (1..=seqs.len() as u64).collect::<Vec<_>>());
     assert_eq!(log["head"], seqs.len() as u64);
 }
+
+/// The keys and payloads of a source's records, in the order they are
+/// listed.
+fn held(server: &Server, source: &str) -> Vec<(Value, Value)> {
+    server.read(&format!("/v1/records?source={source}"))["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|record| (record["key"].clone(), record["payload"].clone()))
+        .collect()
+}
+
+#[test]
+fn a_first_line_of_too_many_columns_is_refused_at_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = things_server(dir.path());
+    let csv = |body: &str| {
+        server
+            .request("POST", "/v1/ingest?source=shop&entity_type=thing")
+            .header("Content-Type", "text/csv")
+            .body(body.as_bytes())
+            .send()
+    };
+    let line = |columns: usize| -> String {
+        let names: Vec<String> = (0..columns).map(|column| format!("c{column}")).collect();
+        names.join(",")
+    };
+
+    // Half a megabyte of names and no rows: what it costs to refuse does
+    // not grow faster than the line does.
+    let began = std::time::Instant::now();
+    let message = csv(&line(80_000)).error(400, "invalid");
+    assert_eq!(
+        message,
+        "the body cannot be read as CSV: line 1 names 80000 columns, which is more than the \
+         10000 a file of rows may have"
+    );
+    // As many as there may be are looked at, and so is a name that comes
+    // twice among them.
+    let message = csv(&format!("{},c0\n", line(9_999))).error(400, "invalid");
+    assert_eq!(
+        message,
+        "the body cannot be read as CSV: line 1: two columns are named `c0`"
+    );
+    assert!(
+        began.elapsed() < std::time::Duration::from_secs(5),
+        "the first lines took {:?}",
+        began.elapsed()
+    );
+    // The server goes on reading rows.
+    let answer = csv("id,code\n1,anvil\n").ok();
+    assert_eq!(answer["run"]["ingest"]["inserted"], 1, "{answer}");
+}
+
+#[test]
+fn rows_are_taken_as_csv_and_as_tab_separated_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = things_server(dir.path());
+    let csv = |query: &str, content_type: &str, body: &str| {
+        server
+            .request("POST", &format!("/v1/ingest?{query}"))
+            .header("Content-Type", content_type)
+            .body(body.as_bytes())
+            .send()
+    };
+    let shop = "source=shop&entity_type=thing";
+
+    // The first line names the columns, and every value is the text the
+    // line has. A field with nothing in it is a value the row does not have.
+    let body = "id,code,colour,name\n1,anvil,black,\"Anvil, large\"\n2,hammer,,\"\"\n";
+    let answer = csv(shop, "text/csv", body).ok();
+    assert_eq!(answer["run"]["status"], "succeeded");
+    assert_eq!(answer["run"]["ingest"]["received"], 2);
+    assert_eq!(answer["run"]["ingest"]["inserted"], 2);
+    assert_eq!(
+        held(&server, "shop"),
+        [
+            (
+                json!("1"),
+                json!({ "id": "1", "code": "anvil", "colour": "black", "name": "Anvil, large" })
+            ),
+            (json!("2"), json!({ "id": "2", "code": "hammer" })),
+        ]
+    );
+
+    // The same rows are the same records however they come: as CSV with
+    // its character set named and Windows line ends, as tabs, and as JSON.
+    let again = csv(shop, "text/csv; charset=utf-8", &body.replace('\n', "\r\n")).ok();
+    assert_eq!(again["run"]["ingest"]["duplicates"], 2, "{again}");
+    let tabs = "id\tcode\tcolour\tname\n1\tanvil\tblack\tAnvil, large\n2\thammer\t\t\n";
+    let again = csv(shop, "text/tab-separated-values", tabs).ok();
+    assert_eq!(again["run"]["ingest"]["duplicates"], 2, "{again}");
+    let again = server.call(
+        "/v1/ingest",
+        json!({
+            "source": "shop",
+            "entity_type": "thing",
+            "rows": [
+                { "id": "1", "code": "anvil", "colour": "black", "name": "Anvil, large" },
+                { "id": "2", "code": "hammer", "colour": null },
+            ],
+        }),
+    );
+    assert_eq!(again["run"]["ingest"]["duplicates"], 2, "{again}");
+    assert_eq!(held(&server, "shop").len(), 2);
+
+    // What is wrong with a body is said with the line it is on.
+    let message = csv(shop, "text/csv", "id,code\n3,saw\n4,file,flat\n").error(400, "invalid");
+    assert_eq!(
+        message,
+        "the body cannot be read as CSV: line 3 has 3 fields, and the first line names 2 columns"
+    );
+    let message = csv(shop, "text/tab-separated-values", "id\tcode\n3\n").error(400, "invalid");
+    assert_eq!(
+        message,
+        "the body cannot be read as tab-separated text: line 2 has 1 field, and the first line \
+         names 2 columns"
+    );
+    let message = csv(shop, "text/csv", "").error(400, "invalid");
+    assert_eq!(
+        message,
+        "the body cannot be read as CSV: it is empty: the first line has to name the columns"
+    );
+    let message = csv(shop, "text/csv", "id,code,id\n3,saw,3\n").error(400, "invalid");
+    assert_eq!(
+        message,
+        "the body cannot be read as CSV: line 1: two columns are named `id`"
+    );
+    // Where the rows go is in the query, as it is for Arrow.
+    let message = csv("entity_type=thing", "text/csv", body).error(400, "invalid");
+    assert!(message.contains("source"), "{message}");
+    // A column the source does not list is refused, with the ones it does.
+    let message = csv(shop, "text/csv", "id,code,price\n3,saw,12\n").error(400, "invalid");
+    assert_eq!(
+        message,
+        "ingest rejected: the rows have a column `price`, which sources/shop.yaml does not \
+         list. It lists `id`, `code`, `colour`, `name`, `weight`. Add the column to that file to \
+         keep it, or leave it out of the rows"
+    );
+    assert_eq!(held(&server, "shop").len(), 2, "none of those stored a row");
+
+    // The first line alone is no rows, which is not a mistake.
+    let none = csv(shop, "text/csv", "id,code\n").ok();
+    assert_eq!(none["run"]["ingest"]["received"], 0, "{none}");
+}
+
+#[test]
+fn an_answer_as_json_ends_with_a_newline() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = things_server(dir.path());
+    two_anvils_and_a_hammer(&server);
+
+    // What `curl` prints is followed by the prompt on a line of its own.
+    let ends = |response: Response| {
+        assert_eq!(
+            response.header("content-type"),
+            Some("application/json"),
+            "{}",
+            String::from_utf8_lossy(&response.body)
+        );
+        assert!(
+            response.body.ends_with(b"}\n") && !response.body.ends_with(b"\n\n"),
+            "{:?}",
+            String::from_utf8_lossy(&response.body)
+        );
+        // It still comes with its length, which is the length it has.
+        assert_eq!(
+            response.header("content-length"),
+            Some(response.body.len().to_string().as_str())
+        );
+        response
+    };
+    ends(server.get("/v1/info")).ok();
+    ends(server.get("/v1/records")).ok();
+    ends(server.post("/v1/runs", json!({ "entity_type": "thing" }))).ok();
+    ends(server.get("/v1/no-such-path")).error(404, "not_found");
+    ends(server.get("/v1/runs/first")).error(400, "invalid");
+    ends(Request::to(&server.address, "GET", "/v1/info").send()).error(401, "unauthorized");
+
+    // The studio's pages are not JSON, and are served as they are.
+    let page = server.get("/");
+    assert_eq!(page.status, 200);
+    assert!(!page.body.ends_with(b"}\n"));
+}
+
+#[test]
+fn records_are_listed_by_source_and_key_and_the_sources_are_named() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = things_server(dir.path());
+    ingest_things(
+        &server,
+        "shop",
+        &[
+            &["id", "code"],
+            &["b", "bolt"],
+            &["10", "ten"],
+            &["2", "two"],
+        ],
+    );
+    ingest_things(&server, "bulk", &[&["id", "code"], &["z", "zip"]]);
+    ingest_things(&server, "shop", &[&["id", "code"], &["10", "ten again"]]);
+
+    // A source's rows are together, by key as text, and a row's versions
+    // follow each other.
+    let all = server.read("/v1/records")["records"].clone();
+    let listed: Vec<(&str, &str, &str)> = all
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|record| {
+            (
+                record["source"].as_str().unwrap(),
+                record["key"].as_str().unwrap(),
+                record["payload"]["code"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            ("bulk", "z", "zip"),
+            ("shop", "10", "ten"),
+            ("shop", "10", "ten again"),
+            ("shop", "2", "two"),
+            ("shop", "b", "bolt"),
+        ]
+    );
+    // Pages follow the same order: `next` is the last record of a page.
+    let mut walked = Vec::new();
+    let mut after = String::new();
+    loop {
+        let page = server.read(&format!("/v1/records?limit=2{after}"));
+        walked.extend(page["records"].as_array().unwrap().iter().cloned());
+        match page["next"].as_str() {
+            Some(next) => {
+                assert_eq!(walked.last().unwrap()["id"], next);
+                after = format!("&after={next}");
+            }
+            None => break,
+        }
+    }
+    assert_eq!(json!(walked), all);
+    // A place in the list is a record the server holds.
+    let message = server
+        .get("/v1/records?after=00000000-0000-7000-8000-000000000000")
+        .error(404, "not_found");
+    assert_eq!(
+        message,
+        "there is no record 00000000-0000-7000-8000-000000000000"
+    );
+
+    // What a client needs to know to send rows: the sources, the columns
+    // they list, and the entity types that read them.
+    let sources = server.read("/v1/info")["store"]["sources"].clone();
+    let names: Vec<&str> = sources
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|source| source["name"].as_str().unwrap())
+        .collect();
+    let mut sorted = names.clone();
+    sorted.sort_unstable();
+    assert_eq!(names, sorted);
+    let shop = sources
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|source| source["name"] == "shop")
+        .unwrap();
+    assert_eq!(
+        *shop,
+        json!({
+            "name": "shop",
+            "key": "id",
+            "columns": ["id", "code", "colour", "name", "weight"],
+            "entity_types": ["thing"],
+        })
+    );
+}

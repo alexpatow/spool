@@ -18,6 +18,7 @@ path = "src/main.rs"
 arrow.workspace = true
 async-trait.workspace = true
 axum.workspace = true
+csv.workspace = true
 getrandom.workspace = true
 http-body.workspace = true
 libduckdb-sys.workspace = true

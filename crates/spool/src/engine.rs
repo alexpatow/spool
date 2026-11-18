@@ -943,8 +943,9 @@ impl Engine {
         self.read(|conn| lookup::record(conn, id))
     }
 
-    /// Records, ordered by ID. A caller that knows a row by its source
-    /// and key finds its record IDs here: only the engine computes them.
+    /// Records, ordered by source and key. A caller that knows a row by its
+    /// source and key finds its record IDs here: only the engine computes
+    /// them.
     pub fn records(&self, filter: &RecordFilter) -> Result<Vec<RecordEntry>> {
         self.read(|conn| lookup::records(conn, filter))
     }

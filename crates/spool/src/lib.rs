@@ -75,8 +75,8 @@ pub use explain::{
 };
 pub use ingest::IngestReport;
 pub use lookup::{
-    HistoryEntry, IdentityFilter, IdentitySummary, IdentityView, Member, RecordEntry, RecordFilter,
-    SourceCount, SourceInfo, StoreInfo, TypeInfo,
+    DeclaredSource, HistoryEntry, IdentityFilter, IdentitySummary, IdentityView, Member,
+    RecordEntry, RecordFilter, SourceCount, SourceInfo, StoreInfo, TypeInfo,
 };
 pub use metrics::{
     BCubed, Churn, ExtractionMetrics, IdStability, Metrics, OrderSensitivity, OverridePersistence,

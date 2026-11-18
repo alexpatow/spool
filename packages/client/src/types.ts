@@ -234,6 +234,27 @@ export interface ConstraintList {
 export type ContentHash = string;
 
 /**
+ * A source as the project declares it, whether or not it has sent rows.
+ */
+export interface DeclaredSource {
+  /**
+   * The columns a row of it may have. A row with any other is refused.
+   */
+  columns: string[];
+  /**
+   * The entity types whose mapping reads the source, by name. Its rows
+   * can be sent as records of these types and of no other.
+   */
+  entity_types: EntityType[];
+  /**
+   * The column that holds each row's key within the source, if the
+   * source names one.
+   */
+  key?: string | null;
+  name: string;
+}
+
+/**
  * `POST /v1/review/{id}/dismiss`: close a review item without placing its
  * records.
  */
@@ -732,8 +753,8 @@ export interface IngestReport {
 }
 
 /**
- * `POST /v1/ingest` with a JSON body. With an Arrow body, the same fields
- * other than `rows` are query parameters.
+ * `POST /v1/ingest` with a JSON body. With an Arrow or a CSV body, the
+ * same fields other than `rows` are query parameters.
  */
 export interface IngestRequest {
   entity_type: string;
@@ -1726,6 +1747,11 @@ export interface StoreInfo {
    * The hash of the manifest the store was last applied with.
    */
   manifest_hash?: string | null;
+  /**
+   * The sources the project declares, by name: what rows can be sent
+   * as. Empty when the engine runs without a manifest.
+   */
+  sources?: DeclaredSource[];
 }
 
 /**

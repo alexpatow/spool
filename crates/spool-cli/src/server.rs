@@ -109,11 +109,13 @@ use crate::api::{
     RunList, RunResponse, SessionState, SetupRequest, SignInRequest, SplitRequest, StartRunRequest,
     TokenList, UndoRequest,
 };
+use crate::delimited::{self, Malformed};
 use crate::google::{Failed, Google, Provider, Started};
 use crate::studio;
 
 mod local;
 mod mcp;
+mod newline;
 mod unread;
 
 /// How long a call that starts work waits when it does not say.
@@ -160,6 +162,11 @@ const MAX_AUTH_BODY_BYTES: usize = 64 * 1024;
 /// and a sign-in costs one whether or not the account exists, so anyone who
 /// reaches the server could otherwise have it make as many as they sent.
 const MAX_HASHING: usize = 4;
+
+/// The most bodies of delimited text read into rows at once. Reading one
+/// takes a thread and as much memory again as the body, so the ones past
+/// these wait their turn rather than each taking a thread of its own.
+const MAX_READING: usize = 4;
 
 /// The name of the cookie that keeps a sign-in with Google while the
 /// browser is at Google.
@@ -223,6 +230,7 @@ struct App {
     setup: Arc<Mutex<Option<String>>>,
     attempts: Attempts,
     hashing: Arc<Semaphore>,
+    reading: Arc<Semaphore>,
     https: bool,
     google: Option<Arc<Provider>>,
     asking: Arc<Semaphore>,
@@ -339,6 +347,7 @@ fn router_until(engine: Arc<Engine>, options: &ServerOptions, stopping: Stopping
         setup: Arc::new(Mutex::new(options.setup.clone())),
         attempts: Attempts::default(),
         hashing: Arc::new(Semaphore::new(MAX_HASHING)),
+        reading: Arc::new(Semaphore::new(MAX_READING)),
         https: options.https,
         google: options.google.clone().map(Provider::new).map(Arc::new),
         asking: Arc::new(Semaphore::new(MAX_ASKING)),
@@ -424,7 +433,9 @@ fn router_until(engine: Arc<Engine>, options: &ServerOptions, stopping: Stopping
         true => router.layer(middleware::from_fn(local::this_machine_only)),
         false => router,
     };
-    router.layer(middleware::from_fn(unread::finish_the_body))
+    router
+        .layer(middleware::from_fn(newline::end_with_a_newline))
+        .layer(middleware::from_fn(unread::finish_the_body))
 }
 
 /// Serves the API on `listener` until `shutdown` completes, and then stops
@@ -1312,6 +1323,54 @@ fn media_type(headers: &HeaderMap, name: axum::http::HeaderName) -> Option<Strin
     )
 }
 
+/// The character between the fields of a body of delimited text, if the
+/// body is one.
+fn delimiter(headers: &HeaderMap) -> Option<u8> {
+    let sent = media_type(headers, CONTENT_TYPE)?;
+    if sent.starts_with(api::CSV) {
+        Some(b',')
+    } else if sent.starts_with(api::TSV) {
+        Some(b'\t')
+    } else {
+        None
+    }
+}
+
+/// The rows of a body of delimited text. Reading them is work, so it is
+/// done off the threads that answer requests, and by no more at once than
+/// `reading` has room for: a body waits its turn, and the one being read
+/// keeps its place until it is done, even if whoever sent it has gone.
+async fn delimited_rows(reading: &Arc<Semaphore>, body: Bytes, delimiter: u8) -> ApiResult<Rows> {
+    /// As many as DuckDB hands on at a time.
+    const ROWS_AT_A_TIME: usize = 2048;
+    let stopped = || ApiError::internal("the server stopped while it was reading the body");
+    let turn = Arc::clone(reading)
+        .acquire_owned()
+        .await
+        .map_err(|_| stopped())?;
+    let read = move || -> Result<Rows, Malformed> {
+        let _turn = turn;
+        let mut reader = delimited::Reader::new(body.as_ref(), delimiter)?;
+        let mut batches = Vec::new();
+        while let Some(batch) = reader.next_batch(ROWS_AT_A_TIME, usize::MAX)? {
+            batches.push(batch);
+        }
+        Ok(Rows::new(reader.schema(), batches))
+    };
+    match tokio::task::spawn_blocking(read).await {
+        Ok(Ok(rows)) => Ok(rows),
+        Ok(Err(Malformed(why))) => Err(ApiError::invalid(format!(
+            "the body cannot be read as {}: {why}",
+            if delimiter == b'\t' {
+                "tab-separated text"
+            } else {
+                "CSV"
+            }
+        ))),
+        Err(_) => Err(stopped()),
+    }
+}
+
 fn arrow_rows(body: Bytes) -> ApiResult<StreamReader<Cursor<Bytes>>> {
     StreamReader::try_new(Cursor::new(body), None)
         .map_err(|error| ApiError::invalid(format!("the body is not an Arrow IPC stream: {error}")))
@@ -1418,6 +1477,15 @@ async fn ingest(
     if is_arrow(&headers) {
         let params = query(params)?;
         let rows = arrow_rows(body)?;
+        return job(&app, params.wait_ms, move |engine| {
+            let report = engine.ingest(&params.source, &params.entity_type, rows)?;
+            Ok(Some(report.run))
+        })
+        .await;
+    }
+    if let Some(delimiter) = delimiter(&headers) {
+        let params = query(params)?;
+        let rows = delimited_rows(&app.reading, body, delimiter).await?;
         return job(&app, params.wait_ms, move |engine| {
             let report = engine.ingest(&params.source, &params.entity_type, rows)?;
             Ok(Some(report.run))
@@ -2127,7 +2195,29 @@ async fn dismiss_review(
 
 #[cfg(test)]
 mod tests {
-    use super::same;
+    use super::{delimited_rows, same};
+    use axum::body::Bytes;
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::sync::Semaphore;
+
+    #[tokio::test]
+    async fn a_body_of_delimited_text_waits_its_turn_to_be_read() {
+        let reading = Arc::new(Semaphore::new(1));
+        let body = || Bytes::from_static(b"id,name\n1,Acme\n");
+        let taken = Arc::clone(&reading).acquire_owned().await.unwrap();
+        let waiting = tokio::spawn({
+            let reading = Arc::clone(&reading);
+            async move { delimited_rows(&reading, body(), b',').await.is_ok() }
+        });
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(!waiting.is_finished(), "it was read out of turn");
+        drop(taken);
+        assert!(waiting.await.unwrap());
+        // A body that cannot be read gives its turn back too.
+        assert!(delimited_rows(&reading, Bytes::new(), b',').await.is_err());
+        assert_eq!(reading.available_permits(), 1);
+    }
 
     #[test]
     fn codes_are_compared_whole() {

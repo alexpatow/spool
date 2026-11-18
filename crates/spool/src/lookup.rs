@@ -101,7 +101,11 @@ fn common_label(labels: impl Iterator<Item = String>) -> Option<String> {
 /// The most members an identity's label is judged from: its oldest.
 const LABEL_MEMBERS: u64 = 100;
 
-/// Which records to list. Results are ordered by ID.
+/// Which records to list. Results are ordered by source and key, as text:
+/// the rows of one source are together, and the versions of one row follow
+/// each other, the oldest first. The mentions of a document are together
+/// too, in the order they stand in its text. Records without a key come
+/// last in their source.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RecordFilter {
     pub entity_type: Option<EntityType>,
@@ -119,7 +123,8 @@ pub struct RecordFilter {
     /// Only those that wait for an identity: they have none, and their
     /// source has not taken them back.
     pub unassigned: bool,
-    /// Only those after this ID: the last one of the page before.
+    /// Only those that come after this record in the list: the last one of
+    /// the page before. A record the store does not hold is refused.
     pub after: Option<RecordId>,
     pub limit: u64,
 }
@@ -261,6 +266,10 @@ pub struct StoreInfo {
     /// The position of the last committed changeset.
     pub head: Seq,
     pub entity_types: Vec<TypeInfo>,
+    /// The sources the project declares, by name: what rows can be sent
+    /// as. Empty when the engine runs without a manifest.
+    #[serde(default)]
+    pub sources: Vec<DeclaredSource>,
     /// The project's extractors. Empty when the engine runs without a
     /// manifest.
     #[serde(default)]
@@ -296,6 +305,21 @@ pub struct TypeInfo {
     pub open_review_items: u64,
     /// The draft that waits for a decision, if there is one.
     pub open_draft: Option<ChangesetId>,
+}
+
+/// A source as the project declares it, whether or not it has sent rows.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct DeclaredSource {
+    pub name: String,
+    /// The column that holds each row's key within the source, if the
+    /// source names one.
+    pub key: Option<String>,
+    /// The columns a row of it may have. A row with any other is refused.
+    pub columns: Vec<String>,
+    /// The entity types whose mapping reads the source, by name. Its rows
+    /// can be sent as records of these types and of no other.
+    pub entity_types: Vec<EntityType>,
 }
 
 /// What one source gave of an entity type.
@@ -393,19 +417,49 @@ fn holds_words(words: &str) -> String {
     )
 }
 
+/// Where the record `o` stands in a list of records, as SQL: a row of
+/// values none of which is null, so that two of them compare the way the
+/// list is ordered.
+///
+/// A mention stands where [`RecordEntry::name`] puts it, under the key of
+/// its document and then at its place there. Its own key begins with the
+/// ID of the document and ends with the span as text, which would put the
+/// documents in no order a reader knows and `[119-142]` before `[54-69]`.
+const RECORD_ORDER: &str = "o.source_id, o.source_key IS NULL, \
+     coalesce(CASE WHEN json_extract_string(o.evidence, '$.document') IS NOT NULL \
+                   THEN json_extract_string(o.evidence, '$.key') END, o.source_key, ''), \
+     coalesce(CASE WHEN json_extract_string(o.evidence, '$.document') IS NOT NULL \
+                   THEN TRY_CAST(json_extract_string(o.evidence, '$.start') AS BIGINT) END, 0), \
+     coalesce(o.source_key, ''), o.entity_type, o.ingest_run, o.record_id";
+
 pub(crate) fn records(conn: &Connection, filter: &RecordFilter) -> Result<Vec<RecordEntry>> {
+    // A page continues from where a record stands, so the record has to be
+    // one the store holds. Records are never deleted, so the last one of a
+    // page always is.
+    if let Some(after) = filter.after {
+        let held: bool = conn.query_row(
+            "SELECT count(*) > 0 FROM spool.record WHERE record_id = ?::UUID",
+            [after.to_string()],
+            |row| row.get(0),
+        )?;
+        if !held {
+            return Err(crate::error::Error::UnknownRecord(after));
+        }
+    }
     let mut statement = conn.prepare(&format!(
         "{RECORD}
          WHERE ($1::VARCHAR IS NULL OR o.entity_type = $1::VARCHAR)
            AND ($2::VARCHAR IS NULL OR o.source_id = $2::VARCHAR)
            AND ($3::VARCHAR IS NULL OR o.source_key = $3::VARCHAR)
-           AND ($4::VARCHAR IS NULL OR o.record_id > $4::UUID)
+           AND ($4::VARCHAR IS NULL OR row({RECORD_ORDER}) > (
+                 SELECT row({RECORD_ORDER}) FROM spool.record o
+                 WHERE o.record_id = $4::UUID))
            AND (NOT $5::BOOLEAN OR (m.identity_id IS NULL AND taken.record_id IS NULL))
            AND ($7::VARCHAR IS NULL
                 OR json_extract_string(o.evidence, '$.document') = $7::VARCHAR)
            AND ($8::VARCHAR IS NULL OR m.identity_id = $8::UUID)
            AND {}
-         ORDER BY o.record_id
+         ORDER BY {RECORD_ORDER}
          LIMIT $6",
         holds_words("$9")
     ))?;
@@ -719,6 +773,27 @@ pub(crate) fn history(conn: &Connection, id: IdentityId) -> Result<Vec<HistoryEn
     Ok(entries)
 }
 
+/// The sources of a manifest, each with the entity types that read it.
+fn declared_sources(manifest: &Manifest) -> Vec<DeclaredSource> {
+    let mut sources: Vec<DeclaredSource> = manifest
+        .sources
+        .iter()
+        .map(|source| DeclaredSource {
+            name: source.name.clone(),
+            key: source.key.clone(),
+            columns: source.columns.clone(),
+            entity_types: manifest
+                .entity_types
+                .iter()
+                .filter(|entry| entry.sources.contains(&source.name))
+                .map(|entry| entry.name.clone())
+                .collect(),
+        })
+        .collect();
+    sources.sort_by(|a, b| a.name.cmp(&b.name));
+    sources
+}
+
 pub(crate) fn info(conn: &Connection, manifest: Option<&Manifest>) -> Result<StoreInfo> {
     let mut entity_types = Vec::new();
     let mut statement = conn.prepare(
@@ -804,6 +879,7 @@ pub(crate) fn info(conn: &Connection, manifest: Option<&Manifest>) -> Result<Sto
         manifest_hash: schema::meta(conn, "manifest_hash")?,
         head: crate::store::read_head(conn)?,
         entity_types,
+        sources: manifest.map(declared_sources).unwrap_or_default(),
         extractors: manifest
             .map(|manifest| manifest.extractors.clone())
             .unwrap_or_default(),

@@ -173,7 +173,7 @@ fn show_lists_what_a_server_holds() {
     assert_eq!(identities.lines().count(), 4, "{identities}");
     assert!(
         identities
-            .starts_with("identity                              type   members  created at\n"),
+            .starts_with("identity                              name    members  created at\n"),
         "{identities}"
     );
     let page = shown(
@@ -224,11 +224,43 @@ fn show_lists_what_a_server_holds() {
     );
     assert_eq!(bundle["constraints"], json!([]));
 
+    // Records are listed by source and key, with the name their type's
+    // label gives them. Their IDs are one option away.
     let records = shown(&server, &["show", "records", "--source", "shop"]);
-    assert_eq!(records.lines().count(), 5, "{records}");
-    has(&records, &format!("{one}  thing  shop:1          {anvils}"));
+    let listed: Vec<&str> = records.lines().collect();
+    assert_eq!(listed.len(), 5, "{records}");
+    assert_eq!(listed[0], "source and key  name    identity");
+    assert_eq!(listed[1], format!("shop:1          anvil   {anvils}"));
+    assert_eq!(listed[2], format!("shop:2          anvil   {anvils}"));
+    assert!(
+        listed[3].starts_with("shop:3          anvil   "),
+        "{records}"
+    );
+    assert!(
+        listed[4].starts_with("shop:4          hammer  "),
+        "{records}"
+    );
+    let with_ids = shown(&server, &["show", "records", "--source", "shop", "--ids"]);
+    assert_eq!(with_ids.lines().count(), 5, "{with_ids}");
+    has(
+        &with_ids,
+        "record                                source and key  name    identity",
+    );
+    has(&with_ids, &format!("{one}  shop:1  anvil  {anvils}"));
+    let page = shown(&server, &["show", "records", "--limit", "2"]);
+    has(&page, &format!("more: add `--after {two}`"));
+    let rest = shown(&server, &["show", "records", "--after", &two]);
+    assert_eq!(rest.lines().count(), 3, "{rest}");
+    assert!(rest.contains("\nshop:3  "), "{rest}");
     let none = shown(&server, &["show", "records", "--unassigned"]);
     assert_eq!(none, "no records\n");
+    // `--ids` is an option of the list.
+    let (code, complaint) = refused(&server, &["show", "record", "shop:1", "--ids"]);
+    assert_eq!(code, Some(2));
+    assert!(
+        complaint.starts_with("spool: `--ids` goes with the list of records\n"),
+        "{complaint}"
+    );
 
     // A record is named by its ID or by its source and key.
     let record = shown(&server, &["show", "record", "shop:1"]);
@@ -480,7 +512,16 @@ fn drafts_and_review_items_are_shown_with_what_they_hold() {
     has(&record, "identity     none");
     has(&record, "review       item 1 (possible_merge, open)");
     let unassigned = shown(&server, &["show", "records", "--unassigned"]);
-    assert_eq!(unassigned.lines().count(), 2, "{unassigned}");
+    assert_eq!(
+        unassigned,
+        "\
+source and key  name              identity
+crm:c-117       Pioneer Supplies  -
+
+1 record has no identity. `spool match` places new records in identities,
+and `spool show review` lists the ones a match left out.
+"
+    );
     let matched = server.read("/v1/review/1")["identities"][0]
         .as_str()
         .unwrap()
@@ -611,8 +652,20 @@ fn a_mention_is_shown_in_its_document() {
     assert_eq!(bundle["mention"]["text"], "Anvil");
     assert_eq!(bundle["mention"]["document"], document);
     assert_eq!(bundle["mention"]["cut_before"], true);
+    // The list names a mention by its document and its place there, as
+    // an explanation does, and the name finds the record.
     let found = shown(&server, &["show", "records", "--document", document]);
-    assert_eq!(found.lines().count(), 2, "{found}");
+    has(&found, "notes:a.txt[105-110]  anvil  -");
+    assert_eq!(
+        shown(&server, &["show", "record", "notes:a.txt[105-110]"]),
+        record
+    );
+    let (code, complaint) = refused(&server, &["show", "record", "notes:a.txt[1-2]"]);
+    assert_eq!(code, Some(1));
+    assert_eq!(
+        complaint,
+        "spool: there is no record with key `a.txt[1-2]` from source `notes`\n"
+    );
 
     // Evidence that points outside the document is shown as it is.
     let evidence = json!({ "document": document, "start": 5, "end": 5000 });
@@ -628,12 +681,120 @@ fn a_mention_is_shown_in_its_document() {
     has(&record, "  end       5000");
     assert!(!record.contains("in document"), "{record}");
 
+    // A document's mentions are listed in the order of its text. The key an
+    // extractor gives one begins with the ID of the document, and by those
+    // keys `[105-110]` would come before `[12-17]`.
+    let evidence = json!({ "document": document, "key": "a.txt", "start": 12, "end": 17 });
+    server.call(
+        "/v1/ingest",
+        json!({
+            "source": "notes",
+            "entity_type": "thing",
+            "rows": [{ "id": "a-first", "code": "xs", "where": evidence.to_string() }],
+        }),
+    );
+    let listed = shown(&server, &["show", "records", "--source", "notes"]);
+    let names: Vec<&str> = listed
+        .lines()
+        .skip(1)
+        .take(3)
+        .map(|line| line.split_whitespace().next().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        ["notes:a.txt[12-17]", "notes:a.txt[105-110]", "notes:m2"],
+        "{listed}"
+    );
+
     // A mention is named by its document and its place in it, when its
     // evidence says both.
     let explanation = shown(&server, &["explain", "notes:m1", "notes:m2"]);
     let summary = explanation.lines().next().unwrap();
     assert!(summary.contains("`notes:a.txt[105-110]`"), "{explanation}");
     assert!(summary.contains("`notes:m2`"), "{explanation}");
+}
+
+#[test]
+fn a_mention_named_by_its_place_is_the_latest_there_is() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("project");
+    write_things(&project);
+    let server = Server::serve(&project, dir.path(), 1);
+
+    // Four versions of a document, each with a mention at the same place,
+    // and a fifth with none. The IDs of documents say nothing of their
+    // order: they are hashes of the text.
+    let mention = |row: &str, code: &str, document: &str| {
+        let evidence = json!({ "document": document, "key": "a.txt", "start": 4, "end": 9 });
+        let response = server.post(
+            "/v1/ingest",
+            json!({
+                "source": "notes",
+                "entity_type": "thing",
+                "rows": [{ "id": row, "code": code, "where": evidence.to_string() }],
+            }),
+        );
+        assert_eq!(response.ok()["run"]["status"], "succeeded");
+    };
+    let mut versions = Vec::new();
+    for number in 1..=5 {
+        let text = match number {
+            5 => "Nothing is here any more.".to_owned(),
+            number => format!("The anvil, as it was in version {number}."),
+        };
+        server.call(
+            "/v1/documents",
+            json!({ "source": "notes", "documents": [{ "key": "a.txt", "text": text }] }),
+        );
+        let latest = server.read("/v1/documents?source=notes&key=a.txt&latest=true");
+        let document = latest["documents"][0]["id"].as_str().unwrap().to_owned();
+        if number < 5 {
+            mention(&format!("m{number}"), &format!("v{number}"), &document);
+        }
+        versions.push(document);
+    }
+    let mut sorted = versions[..4].to_vec();
+    sorted.sort();
+    assert_ne!(
+        sorted[0], versions[3],
+        "the test needs the fourth version not to have the lowest ID"
+    );
+
+    // The name is that of the mention in the latest version that has one.
+    let name = "notes:a.txt[4-9]";
+    let record = shown(&server, &["show", "record", name]);
+    has(&record, "key          m4");
+    has(&record, "  code    v4");
+    assert_eq!(record, shown(&server, &["show", "record", "notes:m4"]));
+
+    // A mention that was found again with other values is a version of the
+    // same record, and the name is the latest of them, as a key is.
+    mention("m4", "v4 again", &versions[3]);
+    let record = shown(&server, &["show", "record", name]);
+    has(&record, "key          m4");
+    has(&record, "  code    v4 again");
+    let explanation = shown(&server, &["explain", name, "notes:m1"]);
+    has(&explanation, "code v1 v4 again");
+
+    // Two records at one place in one version are two, and the name does
+    // not choose.
+    mention("other", "tongs", &versions[3]);
+    let (code, complaint) = refused(&server, &["show", "record", name]);
+    assert_eq!(code, Some(1));
+    let (first, second) = (
+        id_of(&server, "notes", "m4"),
+        id_of(&server, "notes", "other"),
+    );
+    assert!(
+        complaint
+            .starts_with("spool: 2 records are named `notes:a.txt[4-9]`: name one by its ID, of "),
+        "{complaint}"
+    );
+    assert!(complaint.contains(&second), "{complaint}");
+    assert!(
+        !complaint.contains(&first),
+        "the version that was replaced is not one of them"
+    );
 }
 
 #[test]

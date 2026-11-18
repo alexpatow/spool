@@ -395,7 +395,7 @@ pub fn init(arguments: &[String]) -> Result<(), Failure> {
             "transforms/name_key.sql".to_owned(),
             "the lower-case name the rules compare".to_owned(),
         ),
-        (first_sample, "six rows to load first".to_owned()),
+        (first_sample.clone(), "six rows to load first".to_owned()),
         (second_sample, "three more for later".to_owned()),
     ];
     if ignores {
@@ -404,12 +404,13 @@ pub fn init(arguments: &[String]) -> Result<(), Failure> {
             "keeps the server's data, .spool/, out of Git".to_owned(),
         ));
     }
+    let load = format!("spool load {first_sample}");
     let width = written
         .iter()
-        .map(|(file, _)| file.chars().count())
+        .map(|(file, _)| file.chars().count() + 6)
         .max()
         .unwrap_or(0)
-        + 6;
+        .max(load.chars().count() + 2);
     println!("created   {}\n", dir.display());
     for (file, holds) in &written {
         println!("  {file:<width$}{holds}");
@@ -420,6 +421,7 @@ pub fn init(arguments: &[String]) -> Result<(), Failure> {
         println!("  cd {}", shell_word(&dir));
     }
     println!("  {:<width$}runs the server on this machine", "spool dev");
+    println!("  {load:<width$}loads the first rows, from a second terminal");
     Ok(())
 }
 

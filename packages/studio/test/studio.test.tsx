@@ -944,8 +944,8 @@ describe("company records a reviewer corrected", () => {
       "Pioneer Suppliescompany · 2 recordscrm1registry1",
       "PIONEER SUPPLIES LTDcompany · 1 recordregistry1",
       "Pioneer Suppliesc-110crm",
-      "PIONEER SUPPLIES LTDX0000009registry",
       "Pioneer Suppliesc-117crm",
+      "PIONEER SUPPLIES LTDX0000009registry",
       "PIONEER SUPPLIES LTDX0000010registry",
     ]);
 

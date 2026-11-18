@@ -5,6 +5,8 @@
 //! `--json` they print the answer itself. Nothing here decides anything: a
 //! sentence that says why comes from the engine.
 
+use std::collections::BTreeMap;
+
 use serde::Serialize;
 use serde_json::{Value, json};
 use spool::core::{
@@ -14,7 +16,7 @@ use spool::{
     DocumentEntry, DraftEntry, DraftSummary, Explanation, HistoryEntry, IdentitySummary,
     IdentityView, RecordEntry, ReviewEntry, ReviewKind, ReviewStatus, RuleResult, RunEntry,
 };
-use spool_cli::api::{Info, RecordList};
+use spool_cli::api::{DocumentList, Info, RecordList};
 
 use super::remote::{self, Remote, print_json, typed};
 use crate::Failure;
@@ -29,16 +31,17 @@ much there is of each.
   runs [<run>]                   the latest runs, or one run and what it reported
   identities [<identity>]        identities, or one with its members, the
                                  constraints on them and its history
-  records [<record>]   records, or one with its payload, its
-                                 evidence and, for a mention, the place in the
-                                 document it was found in
+  records [<record>]             records by source and key, or one with its
+                                 payload, its evidence and, for a mention, the
+                                 place in the document it was found in
   documents [<document>]         documents, or one with its text
   review [<item>]                review items, or one with its records
   drafts [<draft>]               drafts, or one with the changeset it would commit
   log                            the changeset log
 
 A record is named by its ID or as <source>:<key>, which names the
-latest version of that row.
+latest version of that row. A record found in a document is named as the
+lists name it, <source>:<document>[<start>-<end>].
 
 Options:
   --type <name>      only this entity type (runs, identities, records,
@@ -52,6 +55,7 @@ Options:
   --unassigned       only records that wait for an identity: they have
                      none, and their source has not taken them back
   --latest           only the version of each document that nothing replaced
+  --ids              list each record's ID as well (records)
   --after <id>       continue a list after this ID, or the log after this
                      position
   --limit <n>        list at most this many
@@ -70,7 +74,8 @@ constraints and review items that name them, and what the project's rules
 say about the pair as it is now.
 
 A record is named by its ID or as <source>:<key>, which names the
-latest version of that row.
+latest version of that row. A record found in a document is named as the
+lists name it, <source>:<document>[<start>-<end>].
 
 Options:
   --url <url>        the server (default: $SPOOL_URL, or http://127.0.0.1:7765)
@@ -114,7 +119,7 @@ pub fn show(arguments: &[String]) -> Result<(), Failure> {
                 remote::VALUES[0],
                 remote::VALUES[1],
             ],
-            flags: &["--unassigned", "--latest", "--json"],
+            flags: &["--unassigned", "--latest", "--ids", "--json"],
             positional: 2,
         },
     )?;
@@ -126,6 +131,11 @@ pub fn show(arguments: &[String]) -> Result<(), Failure> {
     };
     let what = arguments.positional.first().map(String::as_str);
     let id = arguments.positional.get(1).map(String::as_str);
+    if arguments.flag("--ids") && !matches!((what, id), (Some("record" | "records"), None)) {
+        return Err(Failure::Usage(
+            "`--ids` goes with the list of records".to_owned(),
+        ));
+    }
     match (what, id) {
         (None, _) => view.overview(),
         (Some("run" | "runs"), None) => view.runs(),
@@ -176,7 +186,8 @@ pub fn explain(arguments: &[String]) -> Result<(), Failure> {
 }
 
 /// The record a reference names: an ID, or `<source>:<key>`, which
-/// names the version of the row that nothing has replaced.
+/// names the version of the row that nothing has replaced, or a mention as
+/// the lists name it, `<source>:<document>[<start>-<end>]`.
 fn find_record(remote: &Remote, reference: &str) -> Result<RecordEntry, Failure> {
     if reference.parse::<RecordId>().is_ok() {
         let found = remote.get(&format!("/records/{reference}"), &[], || {
@@ -189,8 +200,8 @@ fn find_record(remote: &Remote, reference: &str) -> Result<RecordEntry, Failure>
             "`{reference}` does not name a record: give its ID, or <source>:<key>"
         )));
     };
-    // Versions are listed by ID, in pages, and the latest can be on any of
-    // them: it is the one no other replaced.
+    // Versions are listed oldest first, in pages. The latest is the one no
+    // other replaced.
     let mut query = vec![("source", source.to_owned()), ("key", key.to_owned())];
     let mut last = None;
     loop {
@@ -210,11 +221,104 @@ fn find_record(remote: &Remote, reference: &str) -> Result<RecordEntry, Failure>
             None => break,
         }
     }
-    last.ok_or_else(|| {
-        Failure::Failed(format!(
-            "there is no record with key `{key}` from source `{source}`"
-        ))
-    })
+    if let Some(last) = last {
+        return Ok(last);
+    }
+    if let Some(mention) = find_mention(remote, reference, source, key)? {
+        return Ok(mention);
+    }
+    Err(Failure::Failed(format!(
+        "there is no record with key `{key}` from source `{source}`"
+    )))
+}
+
+/// The record found at a place in a document, named as
+/// [`RecordEntry::name`] names it. Of the versions of the document, it is
+/// the one in the latest that has such a record.
+fn find_mention(
+    remote: &Remote,
+    reference: &str,
+    source: &str,
+    place: &str,
+) -> Result<Option<RecordEntry>, Failure> {
+    let Some((document, span)) = place
+        .strip_suffix(']')
+        .and_then(|place| place.rsplit_once('['))
+    else {
+        return Ok(None);
+    };
+    let is_span = span
+        .split_once('-')
+        .is_some_and(|(start, end)| start.parse::<u64>().is_ok() && end.parse::<u64>().is_ok());
+    if !is_span {
+        return Ok(None);
+    }
+    let mut versions: Vec<DocumentEntry> = Vec::new();
+    let mut query = vec![("source", source.to_owned()), ("key", document.to_owned())];
+    loop {
+        let page: DocumentList = typed(&remote.list("/documents", &query)?)?;
+        versions.extend(page.documents);
+        let Some(next) = page.next else { break };
+        query.truncate(2);
+        query.push(("after", next.to_string()));
+    }
+    for version in newest_first(versions) {
+        let mut found = Vec::new();
+        let mut query = vec![("document", version.id.to_string())];
+        loop {
+            let page: RecordList = typed(&remote.list("/records", &query)?)?;
+            found.extend(
+                page.records
+                    .into_iter()
+                    .filter(|record| record.name() == reference),
+            );
+            let Some(next) = page.next else { break };
+            query.truncate(1);
+            query.push(("after", next.to_string()));
+        }
+        // A mention found again with other values is a version of the same
+        // record, at the same place: the name is the one no other replaced.
+        let ids: Vec<RecordId> = found.iter().map(|record| record.id).collect();
+        found.retain(|record| {
+            record
+                .superseded_by
+                .is_none_or(|later| !ids.contains(&later))
+        });
+        match found.len() {
+            0 => {}
+            1 => return Ok(found.pop()),
+            several => {
+                let ids: Vec<String> = found.iter().map(|record| record.id.to_string()).collect();
+                return Err(Failure::Failed(format!(
+                    "{several} records are named `{reference}`: name one by its ID, of {}",
+                    ids.join(", ")
+                )));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// The versions of one document, the one nothing replaced first and then
+/// the one each replaced. A list of documents is in the order of their
+/// IDs, which are hashes of their text and say nothing of which is newer.
+fn newest_first(versions: Vec<DocumentEntry>) -> Vec<DocumentEntry> {
+    let mut left: BTreeMap<DocumentId, DocumentEntry> = versions
+        .into_iter()
+        .map(|version| (version.id, version))
+        .collect();
+    let mut ordered = Vec::with_capacity(left.len());
+    let mut next = left
+        .values()
+        .find(|version| version.superseded_by.is_none())
+        .map(|version| version.id);
+    while let Some(version) = next.and_then(|id| left.remove(&id)) {
+        next = version.supersedes;
+        ordered.push(version);
+    }
+    // A chain that is whole leaves none.
+    ordered.extend(left.into_values());
+    ordered
 }
 
 struct View<'a> {
@@ -564,18 +668,30 @@ impl View<'_> {
             return Ok(());
         }
         let identities: Vec<IdentitySummary> = typed(&answer["identities"])?;
+        // The type is said once, by the option that chose it or by there
+        // being one, and per row only when the rows differ.
+        let typed_rows = mixed(identities.iter().map(|identity| &identity.entity_type));
+        let mut headers = vec!["identity"];
+        if typed_rows {
+            headers.push("type");
+        }
+        headers.extend(["name", "members", "created at"]);
         table(
             "identities",
-            &["identity", "type", "members", "created at"],
+            &headers,
             identities
                 .iter()
                 .map(|identity| {
-                    vec![
-                        identity.id.to_string(),
-                        identity.entity_type.to_string(),
+                    let mut row = vec![identity.id.to_string()];
+                    if typed_rows {
+                        row.push(identity.entity_type.to_string());
+                    }
+                    row.extend([
+                        label(identity.label.as_deref()),
                         identity.members.to_string(),
                         format!("log position {}", identity.created),
-                    ]
+                    ]);
+                    row
                 })
                 .collect(),
         );
@@ -695,24 +811,60 @@ impl View<'_> {
             return Ok(());
         }
         let records: Vec<RecordEntry> = typed(&answer["records"])?;
+        if records.is_empty() && query.is_empty() {
+            println!("no records: `spool load <file>` sends rows");
+            return Ok(());
+        }
+        let ids = self.arguments.flag("--ids");
+        let typed_rows = mixed(records.iter().map(|record| &record.entity_type));
+        let mut headers = Vec::new();
+        if ids {
+            headers.push("record");
+        }
+        if typed_rows {
+            headers.push("type");
+        }
+        headers.extend(["source and key", "name", "identity"]);
         table(
             "records",
-            &["record", "type", "source and key", "identity"],
+            &headers,
             records
                 .iter()
                 .map(|record| {
-                    vec![
-                        record.id.to_string(),
-                        record.entity_type.to_string(),
-                        named(&record.source, record.key.as_deref()),
+                    let mut row = Vec::new();
+                    if ids {
+                        row.push(record.id.to_string());
+                    }
+                    if typed_rows {
+                        row.push(record.entity_type.to_string());
+                    }
+                    row.extend([
+                        record_name(record),
+                        label(record.label.as_deref()),
                         record
                             .identity
                             .map_or_else(|| "-".to_owned(), |identity| identity.to_string()),
-                    ]
+                    ]);
+                    row
                 })
                 .collect(),
         );
         more(&answer);
+        // A `-` in the last column says nothing about why, or what to do.
+        let waiting = records
+            .iter()
+            .filter(|record| record.identity.is_none() && record.retracted.is_none())
+            .count() as u64;
+        if waiting > 0 {
+            println!(
+                "\n{} no identity. `spool match` places new records in identities,\n\
+                 and `spool show review` lists the ones a match left out.",
+                match waiting {
+                    1 => "1 record has".to_owned(),
+                    several => format!("{several} records have"),
+                }
+            );
+        }
         Ok(())
     }
 
@@ -1033,7 +1185,7 @@ impl View<'_> {
                 .map(|record| {
                     vec![
                         record.id.to_string(),
-                        named(&record.source, record.key.as_deref()),
+                        record_name(record),
                         match (record.identity, record.retracted) {
                             (Some(identity), _) => format!("in identity {identity}"),
                             (None, Some(run)) => {
@@ -1441,7 +1593,7 @@ fn possible_split(item: &ReviewEntry, records: &[RecordEntry], taken_back: &[Rec
             .map(|record| {
                 vec![
                     record.id.to_string(),
-                    named(&record.source, record.key.as_deref()),
+                    record_name(record),
                     match (record.identity, record.retracted) {
                         (Some(now), _) if now.to_string() == identity => {
                             "still in the identity".to_owned()
@@ -1462,7 +1614,7 @@ fn possible_split(item: &ReviewEntry, records: &[RecordEntry], taken_back: &[Rec
             .map(|record| {
                 vec![
                     record.id.to_string(),
-                    named(&record.source, record.key.as_deref()),
+                    record_name(record),
                     record
                         .retracted
                         .map_or_else(String::new, |run| format!("in run {run}")),
@@ -1522,10 +1674,56 @@ fn when(timestamp: &str) -> String {
     }
 }
 
+/// The most characters of a name a list shows. With a name of this
+/// length and a key of ordinary length, a line of the list of records is
+/// under a hundred characters.
+const LABEL_CHARACTERS: usize = 40;
+
+/// What a record or an identity is called, in a list: its label, cut to a
+/// length that keeps the columns after it in sight.
+fn label(label: Option<&str>) -> String {
+    let Some(label) = label else {
+        return "-".to_owned();
+    };
+    // A line break in a value would break the list.
+    let line: String = label
+        .chars()
+        .map(|character| match character {
+            '\n' | '\r' | '\t' => ' ',
+            other => other,
+        })
+        .collect();
+    match line.chars().count() > LABEL_CHARACTERS {
+        true => {
+            let kept: String = line.chars().take(LABEL_CHARACTERS - 1).collect();
+            format!("{}…", kept.trim_end())
+        }
+        false => line,
+    }
+}
+
+/// Whether the rows of a list are of more than one entity type.
+fn mixed<'a, T: PartialEq + 'a>(mut types: impl Iterator<Item = &'a T>) -> bool {
+    match types.next() {
+        Some(first) => types.any(|other| other != first),
+        None => false,
+    }
+}
+
 fn named(source: &str, key: Option<&str>) -> String {
     match key {
         Some(key) => format!("{source}:{key}"),
         None => format!("{source} (no key)"),
+    }
+}
+
+/// What a list calls a record: its source and key, and a mention its
+/// document and its place there, as an explanation does. The key of a
+/// mention is the ID of its document and more, which nobody reads.
+fn record_name(record: &RecordEntry) -> String {
+    match &record.key {
+        Some(_) => record.name(),
+        None => named(&record.source, None),
     }
 }
 
@@ -1555,7 +1753,7 @@ fn read_by(document: &DocumentEntry) -> String {
     }
 }
 
-fn count(number: u64, what: &str) -> String {
+pub(super) fn count(number: u64, what: &str) -> String {
     let plural = match what.strip_suffix('y') {
         _ if number == 1 => what.to_owned(),
         Some(stem) => format!("{stem}ies"),
@@ -1565,7 +1763,7 @@ fn count(number: u64, what: &str) -> String {
 }
 
 /// Label and value, one pair per line, the values in one column.
-fn fields(rows: &[(&str, String)]) {
+pub(super) fn fields(rows: &[(&str, String)]) {
     let rows: Vec<Vec<String>> = rows
         .iter()
         .map(|(label, value)| vec![(*label).to_owned(), value.clone()])
