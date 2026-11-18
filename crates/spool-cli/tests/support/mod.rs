@@ -114,6 +114,39 @@ pub fn write_things(dir: &Path) {
     }
 }
 
+/// A project with two sources and two entity types. `company` reads both
+/// sources, `person` reads `crm`, and nothing reads `spare`.
+pub fn write_two_of_each(dir: &Path) {
+    let write = |file: &Path, contents: &str| {
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, contents).unwrap();
+    };
+    for source in ["crm", "registry", "spare"] {
+        write(
+            &dir.join(format!("sources/{source}.yaml")),
+            "key: id\ncolumns: [id, name]\n",
+        );
+    }
+    for (entity_type, sources) in [("company", &["crm", "registry"][..]), ("person", &["crm"])] {
+        let mut yaml = "label: name\nfeatures: [name]\nmapping:\n".to_owned();
+        for source in sources {
+            yaml += &format!("  {source}:\n    name: name\n");
+        }
+        write(
+            &dir.join(format!("entities/{entity_type}/entity.yaml")),
+            &yaml,
+        );
+        for group in ["block", "match"] {
+            write(
+                &dir.join(format!(
+                    "entities/{entity_type}/rules/{group}/same_name.sql"
+                )),
+                "l.name = r.name\n",
+            );
+        }
+    }
+}
+
 /// Copies a project's files, so that building it leaves the original as it
 /// was.
 pub fn copy_project(from: &Path, to: &Path) {
@@ -134,6 +167,14 @@ pub fn copy_project(from: &Path, to: &Path) {
             copy(&from.join(part), &to.join(part));
         }
     }
+}
+
+/// A project as `spool init` leaves it, in `dir/companies`: the source
+/// `crm`, the entity type `company`, and two files of sample rows.
+pub fn init_companies(dir: &Path) -> PathBuf {
+    let project = dir.join("companies");
+    succeed(&["init", path(&project)]);
+    project
 }
 
 /// Builds the project in `dir` and returns the path of its manifest.
@@ -282,6 +323,32 @@ impl Server {
             "--seed",
             &seed.to_string(),
         ])
+    }
+
+    /// `spool dev` over the project in `project`, which asks for no token.
+    pub fn dev(project: &Path) -> Server {
+        Self::start(&[
+            "dev",
+            path(project),
+            "--listen",
+            "127.0.0.1:0",
+            "--seed",
+            "1",
+        ])
+    }
+
+    /// `spool <arguments>` against this server, run in `dir`, with the
+    /// server's token in the environment if it asks for one.
+    pub fn spool_in(&self, dir: &Path, arguments: &[&str]) -> Command {
+        let mut command = spool();
+        command
+            .current_dir(dir)
+            .args(arguments)
+            .args(["--url", &format!("http://{}", self.address)]);
+        if let Some(token) = &self.token {
+            command.env("SPOOL_TOKEN", token);
+        }
+        command
     }
 
     /// Waits for a line on the server's standard output that contains `what`.

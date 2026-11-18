@@ -29,9 +29,9 @@ much there is of each.
   runs [<run>]                   the latest runs, or one run and what it reported
   identities [<identity>]        identities, or one with its members, the
                                  constraints on them and its history
-  records [<record>]   records, or one with its payload, its
-                                 evidence and, for a mention, the place in the
-                                 document it was found in
+  records [<record>]             records by source and key, or one with its
+                                 payload, its evidence and, for a mention, the
+                                 place in the document it was found in
   documents [<document>]         documents, or one with its text
   review [<item>]                review items, or one with its records
   drafts [<draft>]               drafts, or one with the changeset it would commit
@@ -52,6 +52,7 @@ Options:
   --unassigned       only records that wait for an identity: they have
                      none, and their source has not taken them back
   --latest           only the version of each document that nothing replaced
+  --ids              list each record's ID as well (records)
   --after <id>       continue a list after this ID, or the log after this
                      position
   --limit <n>        list at most this many
@@ -114,7 +115,7 @@ pub fn show(arguments: &[String]) -> Result<(), Failure> {
                 remote::VALUES[0],
                 remote::VALUES[1],
             ],
-            flags: &["--unassigned", "--latest", "--json"],
+            flags: &["--unassigned", "--latest", "--ids", "--json"],
             positional: 2,
         },
     )?;
@@ -126,6 +127,11 @@ pub fn show(arguments: &[String]) -> Result<(), Failure> {
     };
     let what = arguments.positional.first().map(String::as_str);
     let id = arguments.positional.get(1).map(String::as_str);
+    if arguments.flag("--ids") && !matches!((what, id), (Some("record" | "records"), None)) {
+        return Err(Failure::Usage(
+            "`--ids` goes with the list of records".to_owned(),
+        ));
+    }
     match (what, id) {
         (None, _) => view.overview(),
         (Some("run" | "runs"), None) => view.runs(),
@@ -189,8 +195,8 @@ fn find_record(remote: &Remote, reference: &str) -> Result<RecordEntry, Failure>
             "`{reference}` does not name a record: give its ID, or <source>:<key>"
         )));
     };
-    // Versions are listed by ID, in pages, and the latest can be on any of
-    // them: it is the one no other replaced.
+    // Versions are listed oldest first, in pages. The latest is the one no
+    // other replaced.
     let mut query = vec![("source", source.to_owned()), ("key", key.to_owned())];
     let mut last = None;
     loop {
@@ -558,18 +564,30 @@ impl View<'_> {
             return Ok(());
         }
         let identities: Vec<IdentitySummary> = typed(&answer["identities"])?;
+        // The type is said once, by the option that chose it or by there
+        // being one, and per row only when the rows differ.
+        let typed_rows = mixed(identities.iter().map(|identity| &identity.entity_type));
+        let mut headers = vec!["identity"];
+        if typed_rows {
+            headers.push("type");
+        }
+        headers.extend(["name", "members", "created at"]);
         table(
             "identities",
-            &["identity", "type", "members", "created at"],
+            &headers,
             identities
                 .iter()
                 .map(|identity| {
-                    vec![
-                        identity.id.to_string(),
-                        identity.entity_type.to_string(),
+                    let mut row = vec![identity.id.to_string()];
+                    if typed_rows {
+                        row.push(identity.entity_type.to_string());
+                    }
+                    row.extend([
+                        label(identity.label.as_deref()),
                         identity.members.to_string(),
                         format!("log position {}", identity.created),
-                    ]
+                    ]);
+                    row
                 })
                 .collect(),
         );
@@ -689,24 +707,60 @@ impl View<'_> {
             return Ok(());
         }
         let records: Vec<RecordEntry> = typed(&answer["records"])?;
+        if records.is_empty() && query.is_empty() {
+            println!("no records: `spool load <file>` sends rows");
+            return Ok(());
+        }
+        let ids = self.arguments.flag("--ids");
+        let typed_rows = mixed(records.iter().map(|record| &record.entity_type));
+        let mut headers = Vec::new();
+        if ids {
+            headers.push("record");
+        }
+        if typed_rows {
+            headers.push("type");
+        }
+        headers.extend(["source and key", "name", "identity"]);
         table(
             "records",
-            &["record", "type", "source and key", "identity"],
+            &headers,
             records
                 .iter()
                 .map(|record| {
-                    vec![
-                        record.id.to_string(),
-                        record.entity_type.to_string(),
+                    let mut row = Vec::new();
+                    if ids {
+                        row.push(record.id.to_string());
+                    }
+                    if typed_rows {
+                        row.push(record.entity_type.to_string());
+                    }
+                    row.extend([
                         named(&record.source, record.key.as_deref()),
+                        label(record.label.as_deref()),
                         record
                             .identity
                             .map_or_else(|| "-".to_owned(), |identity| identity.to_string()),
-                    ]
+                    ]);
+                    row
                 })
                 .collect(),
         );
         more(&answer);
+        // A `-` in the last column says nothing about why, or what to do.
+        let waiting = records
+            .iter()
+            .filter(|record| record.identity.is_none() && record.retracted.is_none())
+            .count() as u64;
+        if waiting > 0 {
+            println!(
+                "\n{} no identity. `spool match` places new records in identities,\n\
+                 and `spool show review` lists the ones a match left out.",
+                match waiting {
+                    1 => "1 record has".to_owned(),
+                    several => format!("{several} records have"),
+                }
+            );
+        }
         Ok(())
     }
 
@@ -1386,6 +1440,42 @@ fn when(timestamp: &str) -> String {
     }
 }
 
+/// The most characters of a name a list shows. With a name of this
+/// length and a key of ordinary length, a line of the list of records is
+/// under a hundred characters.
+const LABEL_CHARACTERS: usize = 40;
+
+/// What a record or an identity is called, in a list: its label, cut to a
+/// length that keeps the columns after it in sight.
+fn label(label: Option<&str>) -> String {
+    let Some(label) = label else {
+        return "-".to_owned();
+    };
+    // A line break in a value would break the list.
+    let line: String = label
+        .chars()
+        .map(|character| match character {
+            '\n' | '\r' | '\t' => ' ',
+            other => other,
+        })
+        .collect();
+    match line.chars().count() > LABEL_CHARACTERS {
+        true => {
+            let kept: String = line.chars().take(LABEL_CHARACTERS - 1).collect();
+            format!("{}…", kept.trim_end())
+        }
+        false => line,
+    }
+}
+
+/// Whether the rows of a list are of more than one entity type.
+fn mixed<'a, T: PartialEq + 'a>(mut types: impl Iterator<Item = &'a T>) -> bool {
+    match types.next() {
+        Some(first) => types.any(|other| other != first),
+        None => false,
+    }
+}
+
 fn named(source: &str, key: Option<&str>) -> String {
     match key {
         Some(key) => format!("{source}:{key}"),
@@ -1419,7 +1509,7 @@ fn read_by(document: &DocumentEntry) -> String {
     }
 }
 
-fn count(number: u64, what: &str) -> String {
+pub(super) fn count(number: u64, what: &str) -> String {
     let plural = match what.strip_suffix('y') {
         _ if number == 1 => what.to_owned(),
         Some(stem) => format!("{stem}ies"),
@@ -1429,7 +1519,7 @@ fn count(number: u64, what: &str) -> String {
 }
 
 /// Label and value, one pair per line, the values in one column.
-fn fields(rows: &[(&str, String)]) {
+pub(super) fn fields(rows: &[(&str, String)]) {
     let rows: Vec<Vec<String>> = rows
         .iter()
         .map(|(label, value)| vec![(*label).to_owned(), value.clone()])

@@ -71,10 +71,19 @@ pub(crate) fn stage(
     let schema = incoming.schema();
     for field in schema.fields() {
         if !source.columns.iter().any(|column| column == field.name()) {
+            let listed = match source.columns.as_slice() {
+                [] => "no columns".to_owned(),
+                columns => columns
+                    .iter()
+                    .map(|column| format!("`{column}`"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            };
             return Err(Error::Ingest(format!(
-                "the rows have a column `{}`, which sources/{}.yaml does not list",
+                "the rows have a column `{}`, which sources/{}.yaml does not list. \
+                 It lists {listed}. Add the column to that file to keep it, or leave it out of the rows",
                 field.name(),
-                source.name
+                source.name,
             )));
         }
     }

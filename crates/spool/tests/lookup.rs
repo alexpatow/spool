@@ -94,10 +94,9 @@ fn an_record_is_found_by_its_id_and_by_its_source_and_key() {
     assert_eq!(unassigned[0].id, record_id(&engine, "depot", "9"));
     assert_eq!(unassigned[0].identity, None);
 
-    // Pages are ordered by ID and continue after the last one seen.
+    // Pages continue after the last record seen.
     let all = engine.records(&RecordFilter::default()).unwrap();
     assert_eq!(all.len(), 4);
-    assert!(all.windows(2).all(|pair| pair[0].id < pair[1].id));
     let first = engine
         .records(&RecordFilter {
             limit: 3,
@@ -119,6 +118,99 @@ fn an_record_is_found_by_its_id_and_by_its_source_and_key() {
             .identities_of(&[id, unknown, record_id(&engine, "depot", "9")])
             .unwrap(),
         [identity(&engine, "shop", "1"), None, None]
+    );
+}
+
+#[test]
+fn records_are_listed_by_source_and_key() {
+    let engine = engine();
+    ingest(
+        &engine,
+        "shop",
+        &[
+            ("b", Some("bolt"), None),
+            ("10", Some("ten"), None),
+            ("2", Some("two"), None),
+        ],
+    );
+    ingest(&engine, "depot", &[("z", Some("last of the depot"), None)]);
+    // A second version of a row, and rows that have no key.
+    ingest(&engine, "shop", &[("10", Some("ten again"), None)]);
+    engine
+        .ingest(
+            "shop",
+            "thing",
+            json_rows(json!([{ "name": "keyless" }, { "name": "keyless too" }])),
+        )
+        .unwrap();
+
+    // The rows of a source are together, in the order of their keys as
+    // text, a row's versions the oldest first, and the keyless ones last.
+    let all = engine.records(&RecordFilter::default()).unwrap();
+    let listed: Vec<(&str, Option<&str>, u64)> = all
+        .iter()
+        .map(|record| {
+            (
+                record.source.as_str(),
+                record.key.as_deref(),
+                record.ingest_run.0,
+            )
+        })
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            ("depot", Some("z"), 2),
+            ("shop", Some("10"), 1),
+            ("shop", Some("10"), 3),
+            ("shop", Some("2"), 1),
+            ("shop", Some("b"), 1),
+            ("shop", None, 4),
+            ("shop", None, 4),
+        ]
+    );
+    assert_eq!(all[2].supersedes, Some(all[1].id));
+    assert!(all[5].id < all[6].id, "the keyless ones by their IDs");
+
+    // Every page size walks the same list, with no record twice or missing.
+    for limit in 1..=all.len() as u64 {
+        let mut walked = Vec::new();
+        let mut after = None;
+        loop {
+            let page = engine
+                .records(&RecordFilter {
+                    limit,
+                    after,
+                    ..RecordFilter::default()
+                })
+                .unwrap();
+            let Some(last) = page.last() else { break };
+            after = Some(last.id);
+            walked.extend(page);
+        }
+        assert_eq!(walked, all, "in pages of {limit}");
+    }
+    // A filter keeps the order and the place.
+    let shop = engine
+        .records(&RecordFilter {
+            source: Some("shop".to_owned()),
+            after: Some(all[3].id),
+            ..RecordFilter::default()
+        })
+        .unwrap();
+    assert_eq!(shop, all[4..]);
+
+    // A place in the list is a record the store holds.
+    let unknown = spool::core::RecordId::from_u128(7);
+    let refused = engine
+        .records(&RecordFilter {
+            after: Some(unknown),
+            ..RecordFilter::default()
+        })
+        .unwrap_err();
+    assert!(
+        matches!(refused, Error::UnknownRecord(id) if id == unknown),
+        "{refused}"
     );
 }
 

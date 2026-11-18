@@ -173,7 +173,7 @@ fn show_lists_what_a_server_holds() {
     assert_eq!(identities.lines().count(), 4, "{identities}");
     assert!(
         identities
-            .starts_with("identity                              type   members  created at\n"),
+            .starts_with("identity                              name    members  created at\n"),
         "{identities}"
     );
     let page = shown(
@@ -224,11 +224,43 @@ fn show_lists_what_a_server_holds() {
     );
     assert_eq!(bundle["constraints"], json!([]));
 
+    // Records are listed by source and key, with the name their type's
+    // label gives them. Their IDs are one option away.
     let records = shown(&server, &["show", "records", "--source", "shop"]);
-    assert_eq!(records.lines().count(), 5, "{records}");
-    has(&records, &format!("{one}  thing  shop:1          {anvils}"));
+    let listed: Vec<&str> = records.lines().collect();
+    assert_eq!(listed.len(), 5, "{records}");
+    assert_eq!(listed[0], "source and key  name    identity");
+    assert_eq!(listed[1], format!("shop:1          anvil   {anvils}"));
+    assert_eq!(listed[2], format!("shop:2          anvil   {anvils}"));
+    assert!(
+        listed[3].starts_with("shop:3          anvil   "),
+        "{records}"
+    );
+    assert!(
+        listed[4].starts_with("shop:4          hammer  "),
+        "{records}"
+    );
+    let with_ids = shown(&server, &["show", "records", "--source", "shop", "--ids"]);
+    assert_eq!(with_ids.lines().count(), 5, "{with_ids}");
+    has(
+        &with_ids,
+        "record                                source and key  name    identity",
+    );
+    has(&with_ids, &format!("{one}  shop:1  anvil  {anvils}"));
+    let page = shown(&server, &["show", "records", "--limit", "2"]);
+    has(&page, &format!("more: add `--after {two}`"));
+    let rest = shown(&server, &["show", "records", "--after", &two]);
+    assert_eq!(rest.lines().count(), 3, "{rest}");
+    assert!(rest.contains("\nshop:3  "), "{rest}");
     let none = shown(&server, &["show", "records", "--unassigned"]);
     assert_eq!(none, "no records\n");
+    // `--ids` is an option of the list.
+    let (code, complaint) = refused(&server, &["show", "record", "shop:1", "--ids"]);
+    assert_eq!(code, Some(2));
+    assert!(
+        complaint.starts_with("spool: `--ids` goes with the list of records\n"),
+        "{complaint}"
+    );
 
     // A record is named by its ID or by its source and key.
     let record = shown(&server, &["show", "record", "shop:1"]);
@@ -479,7 +511,16 @@ fn drafts_and_review_items_are_shown_with_what_they_hold() {
     has(&record, "identity     none");
     has(&record, "review       item 1 (possible_merge, open)");
     let unassigned = shown(&server, &["show", "records", "--unassigned"]);
-    assert_eq!(unassigned.lines().count(), 2, "{unassigned}");
+    assert_eq!(
+        unassigned,
+        "\
+source and key  name              identity
+crm:c-117       Pioneer Supplies  -
+
+1 record has no identity. `spool match` places new records in identities,
+and `spool show review` lists the ones a match left out.
+"
+    );
     let matched = server.read("/v1/review/1")["identities"][0]
         .as_str()
         .unwrap()
@@ -611,7 +652,7 @@ fn a_mention_is_shown_in_its_document() {
     assert_eq!(bundle["mention"]["document"], document);
     assert_eq!(bundle["mention"]["cut_before"], true);
     let found = shown(&server, &["show", "records", "--document", document]);
-    assert_eq!(found.lines().count(), 2, "{found}");
+    has(&found, "notes:m1  anvil  -");
 
     // Evidence that points outside the document is shown as it is.
     let evidence = json!({ "document": document, "start": 5, "end": 5000 });

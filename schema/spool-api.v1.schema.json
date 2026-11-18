@@ -483,6 +483,41 @@
       "description": "SHA-256 of the canonical encoding of a list of operations, as lowercase hex.",
       "type": "string"
     },
+    "DeclaredSource": {
+      "description": "A source as the project declares it, whether or not it has sent rows.",
+      "properties": {
+        "columns": {
+          "description": "The columns a row of it may have. A row with any other is refused.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "entity_types": {
+          "description": "The entity types whose mapping reads the source, by name. Its rows\ncan be sent as records of these types and of no other.",
+          "items": {
+            "$ref": "#/$defs/EntityType"
+          },
+          "type": "array"
+        },
+        "key": {
+          "description": "The column that holds each row's key within the source, if the\nsource names one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "columns",
+        "entity_types"
+      ],
+      "type": "object"
+    },
     "DismissRequest": {
       "additionalProperties": false,
       "description": "`POST /v1/review/{id}/dismiss`: close a review item without placing its\nrecords.",
@@ -1486,7 +1521,7 @@
     },
     "IngestRequest": {
       "additionalProperties": false,
-      "description": "`POST /v1/ingest` with a JSON body. With an Arrow body, the same fields\nother than `rows` are query parameters.",
+      "description": "`POST /v1/ingest` with a JSON body. With an Arrow or a CSV body, the\nsame fields other than `rows` are query parameters.",
       "properties": {
         "entity_type": {
           "type": "string"
@@ -3740,6 +3775,14 @@
             "string",
             "null"
           ]
+        },
+        "sources": {
+          "default": [],
+          "description": "The sources the project declares, by name: what rows can be sent\nas. Empty when the engine runs without a manifest.",
+          "items": {
+            "$ref": "#/$defs/DeclaredSource"
+          },
+          "type": "array"
         }
       },
       "required": [

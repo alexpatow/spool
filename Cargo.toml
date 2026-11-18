@@ -39,6 +39,9 @@ rmcp = { version = "3.11", default-features = false, features = ["server", "tran
 # spool-cli names arrow itself for the IPC and JSON forms the server speaks.
 arrow = { version = "60.1", default-features = false, features = ["ipc", "json"] }
 duckdb = { version = "~1.20000.2", features = ["appender-arrow", "vtab-arrow"] }
+# The CSV that `spool load` and the server read rows from. Only spool-cli
+# depends on it: it says which line of a file is wrong, which a new user needs.
+csv = "1.3"
 # Named by spool-cli only so that its build script runs after the one that
 # downloads the DuckDB library.
 libduckdb-sys = "~1.20000.2"

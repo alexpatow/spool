@@ -8,7 +8,8 @@ use std::time::Duration;
 
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use spool_cli::api::ErrorResponse;
+use spool::{RunEntry, RunStatus};
+use spool_cli::api::{ErrorResponse, Info};
 
 use crate::Failure;
 use crate::args::Arguments;
@@ -19,6 +20,9 @@ const DEFAULT_URL: &str = "http://127.0.0.1:7765";
 /// The largest answer that is read. A document is the largest thing a
 /// server returns in one piece.
 const MAX_BODY_BYTES: u64 = 256 * 1024 * 1024;
+
+/// How long one request waits for a run before the command asks again.
+pub const WAIT_MS: u64 = 30_000;
 
 /// The options every command that calls a server takes.
 pub const VALUES: [&str; 2] = ["--url", "--token"];
@@ -85,6 +89,57 @@ impl Remote {
                 self.url
             ))
         })
+    }
+
+    /// `POST <path>` under `/v1` with a body that is not JSON, and the JSON
+    /// it answers.
+    pub fn send(
+        &self,
+        path: &str,
+        query: &[(&str, String)],
+        content_type: &str,
+        body: &[u8],
+    ) -> Result<Value, Failure> {
+        let mut request = self
+            .agent
+            .post(format!("{}/v1{path}", self.url))
+            .header("Content-Type", content_type);
+        if let Some(token) = &self.token {
+            request = request.header("Authorization", format!("Bearer {token}"));
+        }
+        for (name, value) in query {
+            request = request.query(*name, value);
+        }
+        self.answer(request.send(body))?.ok_or_else(|| {
+            Failure::Failed(format!(
+                "{} has no `/v1{path}`; is it a Spool server of this version?",
+                self.url
+            ))
+        })
+    }
+
+    /// What the server holds and what its project declares.
+    pub fn info(&self) -> Result<Info, Failure> {
+        typed(&self.list("/info", &[])?)
+    }
+
+    /// Waits until the run that `answer` started has ended, and returns the
+    /// answer that says how. `None` when the server had nothing to do and
+    /// started no run.
+    pub fn ended(&self, mut answer: Value) -> Result<Option<(Value, RunEntry)>, Failure> {
+        if answer["run"].is_null() {
+            return Ok(None);
+        }
+        let mut run: RunEntry = typed(&answer["run"])?;
+        while run.status == RunStatus::Running {
+            answer = self.get(
+                &format!("/runs/{}", run.run),
+                &[("wait_ms", WAIT_MS.to_string())],
+                || format!("the server no longer has run {}", run.run),
+            )?;
+            run = typed(&answer["run"])?;
+        }
+        Ok(Some((answer, run)))
     }
 
     /// What the server answered, as JSON. `Ok(None)` when it has no such
@@ -171,6 +226,16 @@ pub fn typed<T: DeserializeOwned>(value: &Value) -> Result<T, Failure> {
             "the server's answer is not what this version of `spool` expects: {error}"
         ))
     })
+}
+
+/// Why a run that did not succeed ended as it did, as a command's failure.
+pub fn unsuccessful(run: &RunEntry) -> Failure {
+    Failure::Failed(format!(
+        "run {} {}: {}",
+        run.run,
+        run.status,
+        run.error.as_deref().unwrap_or("the server did not say why")
+    ))
 }
 
 pub fn print_json(value: &Value) {

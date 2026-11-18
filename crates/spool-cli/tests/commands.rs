@@ -119,6 +119,7 @@ created   companies
 
   cd companies
   spool dev                         runs the server on this machine
+  spool load samples/crm-1.csv      loads the first rows, from a second terminal
 "
     );
     let project = dir.path().join("companies");
@@ -200,6 +201,7 @@ created   .
   samples/ledger-2.csv             three more for later
 
   spool dev                        runs the server on this machine
+  spool load samples/ledger-1.csv  loads the first rows, from a second terminal
 "
     );
     assert_eq!(read(&here.join(".gitignore")), "target/\n");

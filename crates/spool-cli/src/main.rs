@@ -15,9 +15,11 @@ Commands:
   apply    apply a manifest to a store
   serve    run the server from a manifest and a store
   dev      run the server on localhost and apply file changes as they are saved
+  load     send the rows of a file to a running server
+  match    match the new records on a running server and place them in identities
   show     show what a running server holds
-  retract  take back rows a source no longer holds
   explain  say why two records share an identity, or why they do not
+  retract  take back rows a source no longer holds
   token    make, list and revoke the tokens of callers that are not people
   bench    run a benchmark scenario
   schema   print the JSON Schema of the server's API
@@ -65,6 +67,8 @@ fn main() -> ExitCode {
         "apply" => (commands::project::APPLY_USAGE, commands::project::apply),
         "serve" => (commands::serve::SERVE_USAGE, commands::serve::serve),
         "dev" => (commands::serve::DEV_USAGE, commands::serve::dev),
+        "load" => (commands::load::USAGE, commands::load::load),
+        "match" => (commands::matching::USAGE, commands::matching::run),
         "show" => (commands::show::SHOW_USAGE, commands::show::show),
         "retract" => (commands::retract::USAGE, commands::retract::retract),
         "explain" => (commands::show::EXPLAIN_USAGE, commands::show::explain),

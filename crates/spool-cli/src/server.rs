@@ -74,8 +74,8 @@ use axum::body::Bytes;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{DefaultBodyLimit, Extension, Path, Query, Request, State};
 use axum::http::header::{
-    ACCEPT, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, COOKIE as COOKIES, HOST, LOCATION, ORIGIN,
-    SET_COOKIE, WWW_AUTHENTICATE,
+    ACCEPT, AUTHORIZATION, CACHE_CONTROL, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE,
+    COOKIE as COOKIES, HOST, LOCATION, ORIGIN, SET_COOKIE, WWW_AUTHENTICATE,
 };
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware::{self, Next};
@@ -109,6 +109,7 @@ use crate::api::{
     RunList, RunResponse, SessionState, SetupRequest, SignInRequest, SplitRequest, StartRunRequest,
     TokenList, UndoRequest,
 };
+use crate::delimited::{self, Malformed};
 use crate::google::{Failed, Google, Provider, Started};
 use crate::studio;
 
@@ -424,7 +425,40 @@ fn router_until(engine: Arc<Engine>, options: &ServerOptions, stopping: Stopping
         true => router.layer(middleware::from_fn(local::this_machine_only)),
         false => router,
     };
-    router.layer(middleware::from_fn(unread::finish_the_body))
+    router
+        .layer(middleware::from_fn(end_with_a_newline))
+        .layer(middleware::from_fn(unread::finish_the_body))
+}
+
+/// Ends a JSON answer with a newline, so that in a terminal the prompt
+/// that follows starts a line of its own, and two answers are two lines.
+///
+/// The MCP endpoint is left as it is: what it sends is the protocol's.
+async fn end_with_a_newline(request: Request, next: Next) -> Response {
+    let leave = request.method() == Method::HEAD || request.uri().path() == MCP_PATH;
+    let response = next.run(request).await;
+    let json = response
+        .headers()
+        .get(CONTENT_TYPE)
+        .is_some_and(|value| value.as_bytes().starts_with(b"application/json"));
+    if leave || !json || response.headers().contains_key(CONTENT_ENCODING) {
+        return response;
+    }
+    let (mut parts, body) = response.into_parts();
+    // The answers this server gives as JSON are held in memory already.
+    let Ok(bytes) = axum::body::to_bytes(body, usize::MAX).await else {
+        return ApiError::internal("the answer could not be written").into_response();
+    };
+    if bytes.is_empty() || bytes.ends_with(b"\n") {
+        return Response::from_parts(parts, axum::body::Body::from(bytes));
+    }
+    let mut ended = Vec::with_capacity(bytes.len() + 1);
+    ended.extend_from_slice(&bytes);
+    ended.push(b'\n');
+    // The length the answer was given is one short now, and the server
+    // writes the right one for a body it holds whole.
+    parts.headers.remove(CONTENT_LENGTH);
+    Response::from_parts(parts, axum::body::Body::from(ended))
 }
 
 /// Serves the API on `listener` until `shutdown` completes, and then stops
@@ -1312,6 +1346,48 @@ fn media_type(headers: &HeaderMap, name: axum::http::HeaderName) -> Option<Strin
     )
 }
 
+/// The character between the fields of a body of delimited text, if the
+/// body is one.
+fn delimiter(headers: &HeaderMap) -> Option<u8> {
+    let sent = media_type(headers, CONTENT_TYPE)?;
+    if sent.starts_with(api::CSV) {
+        Some(b',')
+    } else if sent.starts_with(api::TSV) {
+        Some(b'\t')
+    } else {
+        None
+    }
+}
+
+/// The rows of a body of delimited text. Reading them is work, so it is
+/// done off the threads that answer requests.
+async fn delimited_rows(body: Bytes, delimiter: u8) -> ApiResult<Rows> {
+    /// As many as DuckDB hands on at a time.
+    const ROWS_AT_A_TIME: usize = 2048;
+    let read = move || -> Result<Rows, Malformed> {
+        let mut reader = delimited::Reader::new(body.as_ref(), delimiter)?;
+        let mut batches = Vec::new();
+        while let Some(batch) = reader.next_batch(ROWS_AT_A_TIME, usize::MAX)? {
+            batches.push(batch);
+        }
+        Ok(Rows::new(reader.schema(), batches))
+    };
+    match tokio::task::spawn_blocking(read).await {
+        Ok(Ok(rows)) => Ok(rows),
+        Ok(Err(Malformed(why))) => Err(ApiError::invalid(format!(
+            "the body cannot be read as {}: {why}",
+            if delimiter == b'\t' {
+                "tab-separated text"
+            } else {
+                "CSV"
+            }
+        ))),
+        Err(_) => Err(ApiError::internal(
+            "the server stopped while it was reading the body",
+        )),
+    }
+}
+
 fn arrow_rows(body: Bytes) -> ApiResult<StreamReader<Cursor<Bytes>>> {
     StreamReader::try_new(Cursor::new(body), None)
         .map_err(|error| ApiError::invalid(format!("the body is not an Arrow IPC stream: {error}")))
@@ -1418,6 +1494,15 @@ async fn ingest(
     if is_arrow(&headers) {
         let params = query(params)?;
         let rows = arrow_rows(body)?;
+        return job(&app, params.wait_ms, move |engine| {
+            let report = engine.ingest(&params.source, &params.entity_type, rows)?;
+            Ok(Some(report.run))
+        })
+        .await;
+    }
+    if let Some(delimiter) = delimiter(&headers) {
+        let params = query(params)?;
+        let rows = delimited_rows(body, delimiter).await?;
         return job(&app, params.wait_ms, move |engine| {
             let report = engine.ingest(&params.source, &params.entity_type, rows)?;
             Ok(Some(report.run))
