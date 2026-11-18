@@ -799,6 +799,45 @@ fn a_change_whose_answer_is_too_large_is_still_answered_as_made() {
 }
 
 #[test]
+fn a_refusal_too_large_for_a_model_gives_the_first_of_its_reasons() {
+    let dir = tempfile::tempdir().unwrap();
+    let (server, _) = thing_server(dir.path());
+    let ops: Vec<Value> = (0..5000)
+        .map(|op| {
+            let identity = format!("01a1ee5d-3154-710c-8a15-{op:012x}");
+            json!({ "op": "merge", "from": identity, "into": identity })
+        })
+        .collect();
+
+    // The API answers with every operation that broke a rule, which is more
+    // than a tool returns.
+    let whole = server
+        .request("POST", "/v1/changesets")
+        .json(&json!({ "ops": ops, "reason": "each into itself" }))
+        .send();
+    assert_eq!(whole.status, 409);
+    assert!(whole.body.len() > 256 * 1024, "{}", whole.body.len());
+
+    let error = refused(
+        &server,
+        "commit_changeset",
+        json!({ "ops": ops, "reason": "each into itself" }),
+        "rejected",
+    );
+    assert!(error.to_string().len() < 256 * 1024 - 16, "{error}");
+    let given = error["rejections"].as_array().unwrap();
+    assert!(!given.is_empty() && given.len() < 5000, "{}", given.len());
+    for (index, rejection) in given.iter().enumerate() {
+        assert_eq!(rejection["op_index"], index, "{rejection}");
+    }
+    let message = text(&error["message"]);
+    let count = format!("the first {}", given.len());
+    assert!(message.contains(&count), "{message}");
+    assert!(message.contains("Nothing was changed"), "{message}");
+    assert_eq!(head(&server), 0);
+}
+
+#[test]
 fn a_development_server_answers_the_endpoint_only_by_this_machines_names() {
     let dir = tempfile::tempdir().unwrap();
     write_things(dir.path());

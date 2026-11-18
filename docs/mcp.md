@@ -50,7 +50,7 @@ Tools that change something. Each is marked as a change, so a client can ask the
 
 Not offered: ingesting rows and documents, starting and reconciling match runs, drafts, and people. Those are the work of a pipeline or an admin, and they stay on `/v1`.
 
-Two limits keep an answer the size a model can use. A list returns 20 entries unless the call gives a `limit`, and a tool returns at most 256 KiB. A lookup over that is refused with an error that says to ask for less. A change over that was made all the same, so it is answered as made, without its large fields: the answer keeps where the change was committed and names what it left out in `left_out`.
+Two limits keep an answer the size a model can use. A list returns 20 entries unless the call gives a `limit`, and a tool returns at most 256 KiB. A lookup over that is refused with an error that says to ask for less. A change over that was made all the same, so it is answered as made, without its large fields: the answer keeps where the change was committed and names what it left out in `left_out`. A changeset rejected for more reasons than fit is answered with the first of them, and its message says how many there are.
 
 ## Adding it to a client
 
