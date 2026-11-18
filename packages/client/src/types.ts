@@ -325,7 +325,7 @@ export interface DocumentExtraction {
 }
 
 /**
- * Identifies one version of a document. Derived by the engine from the document's source, key and text.
+ * Identifies one version of a document. Derived by the engine from the document's source, key and text, and for a version that holds a text the document held before, from the version it follows as well.
  */
 export type DocumentId = string;
 
@@ -773,7 +773,8 @@ export interface LoadReport {
    */
   committed?: Committed | null;
   /**
-   * Rows that were already known, or repeated within this call.
+   * Rows that brought nothing new: a row that says what its key holds
+   * already, and a row without a key that the store has.
    */
   duplicates: number;
   /**
@@ -805,7 +806,8 @@ export interface LoadReport {
   run: RunId;
   /**
    * Records created as a new version of a row the source had sent
-   * before under the same key with other content.
+   * before under the same key with other content. A row that says again
+   * what an earlier version of it said, with another since, is one.
    */
   superseded?: number;
 }
@@ -816,6 +818,14 @@ export interface LoadReport {
  */
 export interface LoadRequest {
   entity_type: string;
+  /**
+   * Whether a row may replace one the store holds. Left out or `true`,
+   * a row under a known key with other values becomes the next version
+   * of that row. With `false` such a row is refused and the whole call
+   * with it: nothing is stored, and the error names the keys. That is
+   * for a caller that means to add rows and not to change any.
+   */
+  replace?: boolean | null;
   /**
    * One object per row, with the columns the source declares. A column
    * holds text, booleans or numbers.
@@ -1246,7 +1256,7 @@ export interface RecordEntry {
 }
 
 /**
- * Identifies a record. Derived by the engine from the record's source, key and content.
+ * Identifies a record. Derived by the engine from the record's source, key and content, and for a version that holds what its row held before, from the version it follows as well.
  */
 export type RecordId = string;
 

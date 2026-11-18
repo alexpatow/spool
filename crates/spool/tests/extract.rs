@@ -323,6 +323,63 @@ fn a_document_is_stored_once_and_a_changed_text_is_its_next_version() {
 }
 
 #[test]
+fn a_document_that_holds_again_the_text_it_had_has_a_version_more() {
+    let engine = Engine::open_in_memory(Options::seeded(1)).unwrap();
+    let edited = "Acme Inc closed an office.";
+    let add = |documents: &[(&str, &str)]| {
+        engine
+            .add_documents("news", &documents_of(documents))
+            .unwrap()
+    };
+    add(&[("a", FIRST)]);
+    add(&[("a", edited)]);
+
+    // The text is one the store holds as the document's first version, and
+    // the document has another since. This is its third.
+    let back = add(&[("a", FIRST)]);
+    assert_eq!((back.inserted, back.duplicates, back.superseded), (1, 0, 1));
+    let third = id("a", FIRST).held_again(id("a", edited));
+    let latest = engine
+        .documents(&DocumentFilter {
+            latest: true,
+            ..DocumentFilter::default()
+        })
+        .unwrap();
+    assert_eq!(
+        latest
+            .iter()
+            .map(|document| document.id)
+            .collect::<Vec<_>>(),
+        [third]
+    );
+    let document = engine.document(third).unwrap();
+    assert_eq!(document.text.as_deref(), Some(FIRST));
+    assert_eq!(document.supersedes, Some(id("a", edited)));
+    let first = engine.document(id("a", FIRST)).unwrap();
+    assert_eq!(
+        (first.supersedes, first.superseded_by),
+        (None, Some(id("a", edited)))
+    );
+
+    // What the document holds now is nothing new, and it can change the
+    // same way again, in one call too. Two that say the same one after the
+    // other are one version.
+    let again = add(&[("a", FIRST)]);
+    assert_eq!((again.inserted, again.duplicates), (0, 1));
+    let more = add(&[("a", edited), ("a", edited), ("a", FIRST)]);
+    assert_eq!((more.inserted, more.duplicates, more.superseded), (2, 1, 2));
+    let fourth = id("a", edited).held_again(third);
+    let fifth = id("a", FIRST).held_again(fourth);
+    let document = engine.document(fifth).unwrap();
+    assert_eq!(
+        (document.supersedes, document.superseded_by),
+        (Some(fourth), None)
+    );
+    assert_eq!(engine.info().unwrap().documents, 5);
+    engine.verify().unwrap();
+}
+
+#[test]
 fn an_extractor_is_one_the_project_has_and_needs_the_projects_files() {
     let news = News::new();
     news.extractor("names.py", NAMES);
@@ -605,6 +662,41 @@ fn only_the_latest_version_of_a_document_is_read() {
     assert_eq!(
         news.identity(id("a", FIRST), 2, 10),
         news.identity(id("a", edited), 30, 38)
+    );
+    engine.verify().unwrap();
+}
+
+#[test]
+#[ignore = "runs uv"]
+fn a_document_that_changes_back_is_read_as_the_version_it_is_now() {
+    let news = News::new();
+    news.extractor("names.py", NAMES);
+    let engine = &news.engine;
+    news.add(&[("a", FIRST)]);
+    news.extract("names").unwrap();
+    let edited = "Initech Ltd opened an office. Acme Inc did not.";
+    news.add(&[("a", edited)]);
+    news.extract("names").unwrap();
+    engine.resolve(&ResolveOptions::default()).unwrap();
+
+    // The first text again is the document's latest version, which the
+    // extractor has not read. What it finds there is found in that
+    // version, and is the company the first version mentioned.
+    news.add(&[("a", FIRST)]);
+    let third = id("a", FIRST).held_again(id("a", edited));
+    let report = news.extract("names").unwrap();
+    assert_eq!(
+        (report.documents, report.mentions, report.inserted),
+        (1, 2, 2)
+    );
+    assert_eq!(news.mentions(third).len(), 2);
+    assert_eq!(news.mentions(id("a", FIRST)).len(), 2);
+    assert_eq!(news.extract("names").unwrap().documents, 0);
+
+    engine.resolve(&ResolveOptions::default()).unwrap();
+    assert_eq!(
+        news.identity(third, 2, 10),
+        news.identity(id("a", FIRST), 2, 10)
     );
     engine.verify().unwrap();
 }

@@ -139,7 +139,7 @@ use spool_core::{Actor, Changeset, Constraint, ConstraintKind, IdentityId, Op, R
 
 use spool_core::DocumentId;
 
-use crate::documents::{ExtractOptions, NewDocument, locator};
+use crate::documents::{DocumentFilter, ExtractOptions, NewDocument, locator};
 use crate::engine::{
     ConstraintFilter, Engine, Options, ResolveOptions, ResolveReport, StrategyRef, Suggestions,
 };
@@ -575,13 +575,13 @@ struct Label {
 }
 
 impl Truth {
-    /// Takes note of a document that was stored: its labelled mentions are
-    /// now mentions an extractor should find, each at a known key.
-    fn add_document(&mut self, source: &str, key: &str, text: &str) -> Result<()> {
+    /// Takes note of a document that was stored as the version `id`: its
+    /// labelled mentions are now mentions an extractor should find, each
+    /// at a known key.
+    fn add_document(&mut self, source: &str, id: DocumentId, key: &str, text: &str) -> Result<()> {
         let Some(labels) = self.labels.get(&(source.to_owned(), key.to_owned())) else {
             return Ok(());
         };
-        let id = DocumentId::derive(source, key, text);
         let characters: Vec<char> = text.chars().collect();
         for label in labels {
             let invalid = |message: String| {
@@ -848,10 +848,28 @@ impl Scenario {
         }
         for documents in &step.documents {
             let read = read_documents(&self.dir.join(&documents.dir))?;
-            for document in &read {
-                truth.add_document(&documents.source, &document.key, &document.text)?;
-            }
             let report = engine.add_documents(&documents.source, &read)?;
+            // The engine names each version, and a text a document held
+            // before is not named by the text alone.
+            let stored: HashMap<String, DocumentId> = if truth.labelled {
+                engine
+                    .documents(&DocumentFilter {
+                        source: Some(documents.source.clone()),
+                        latest: true,
+                        limit: u64::MAX,
+                        ..DocumentFilter::default()
+                    })?
+                    .into_iter()
+                    .map(|document| (document.key, document.id))
+                    .collect()
+            } else {
+                HashMap::new()
+            };
+            for document in &read {
+                if let Some(id) = stored.get(&document.key) {
+                    truth.add_document(&documents.source, *id, &document.key, &document.text)?;
+                }
+            }
             fed.documents.push(DocumentsSummary {
                 source: documents.source.clone(),
                 received: report.received,

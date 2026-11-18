@@ -49,6 +49,7 @@ mod store;
 mod store_property;
 mod time;
 mod usercode;
+mod versions;
 
 /// The Arrow version the engine is built against.
 pub use duckdb::arrow;

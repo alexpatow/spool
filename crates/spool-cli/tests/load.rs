@@ -161,6 +161,66 @@ next    `spool match` places them in identities
 }
 
 #[test]
+fn a_row_that_is_loaded_as_it_was_before_it_changed_is_that_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = init_companies(dir.path());
+    let server = Server::dev(&project);
+    let named = |reference: &str| -> Value {
+        let output = server
+            .spool_in(&project, &["show", "record", reference, "--json"])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", text(&output.stderr));
+        serde_json::from_str(&text(&output.stdout)).unwrap()
+    };
+    load(&server, &project, &["samples/crm-1.csv"]);
+    server.call("/v1/match", json!({ "entity_type": "company" }));
+    let first = named("crm:c-2");
+
+    write(
+        &project.join("changed.csv"),
+        "id,name,country\nc-2,Acorn Tools of Sheffield,GB\n",
+    );
+    load(&server, &project, &["changed.csv"]);
+    server.call("/v1/match", json!({ "entity_type": "company" }));
+    let changed = named("crm:c-2");
+    assert_eq!(
+        changed["record"]["payload"]["name"],
+        "Acorn Tools of Sheffield"
+    );
+
+    // The first file again: one of its rows is not what the store holds
+    // now, and the others are.
+    let (printed, _) = load(&server, &project, &["samples/crm-1.csv"]);
+    assert_eq!(
+        printed,
+        "\
+loaded  6 rows into source `crm`, type `company`: 0 new, 1 new version of a row held before, 5 already held
+next    `spool match` places it in an identity
+"
+    );
+    server.call("/v1/match", json!({ "entity_type": "company" }));
+
+    // The key names the row as it is now, which is as it was at first, in
+    // the identity it was in all along. Each step is a version.
+    let back = named("crm:c-2");
+    assert_eq!(back["record"]["payload"], first["record"]["payload"]);
+    assert_eq!(back["record"]["supersedes"], changed["record"]["id"]);
+    assert_ne!(back["record"]["id"], first["record"]["id"]);
+    assert_eq!(back["record"]["identity"], first["record"]["identity"]);
+    assert_eq!(changed["record"]["identity"], first["record"]["identity"]);
+    let versions = server.read("/v1/records?source=crm&key=c-2")["records"].clone();
+    assert_eq!(versions.as_array().unwrap().len(), 3, "{versions}");
+
+    // What the row holds now, sent again, adds nothing.
+    let (printed, _) = load(&server, &project, &["samples/crm-1.csv"]);
+    assert_eq!(
+        printed,
+        "loaded  6 rows into source `crm`, type `company`: 0 new, 6 already held\n"
+    );
+}
+
+#[test]
 fn an_empty_field_is_a_value_the_row_does_not_have() {
     let dir = tempfile::tempdir().unwrap();
     let project = init_companies(dir.path());

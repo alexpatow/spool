@@ -587,7 +587,24 @@ impl Engine {
         entity_type: &str,
         rows: impl RecordBatchReader,
     ) -> Result<LoadReport> {
-        self.lock().load(source, entity_type, rows)
+        self.lock().load(source, entity_type, rows, true)
+    }
+
+    /// As [`Engine::load`], for a caller that means to add rows and not to
+    /// change any. A row under a key the store holds with other content
+    /// would become the next version of that row. Here it is refused, and
+    /// the whole call with it: nothing is stored, and the error names the
+    /// keys. Content the key held before, and not now, is other content:
+    /// a row that would change back is refused too. A row the store holds
+    /// as it is creates nothing, as in any load, and so does one a source
+    /// took back and sends again unchanged.
+    pub fn load_without_replacing(
+        &self,
+        source: &str,
+        entity_type: &str,
+        rows: impl RecordBatchReader,
+    ) -> Result<LoadReport> {
+        self.lock().load(source, entity_type, rows, false)
     }
 
     /// Takes back rows a source no longer holds, named by their keys. Every
@@ -1429,6 +1446,7 @@ impl Inner {
         source: &str,
         entity_type: &str,
         rows: impl RecordBatchReader,
+        replace: bool,
     ) -> Result<LoadReport> {
         if source.is_empty() {
             return Err(Error::Load("the source needs a name".to_owned()));
@@ -1484,6 +1502,9 @@ impl Inner {
                 let stored = load::insert(&tx, name.as_str(), &source.name, now, run, staged)?;
                 inserted += stored.inserted;
                 restored += stored.restored;
+            }
+            if !replace && let Some(refusal) = load::replacing(&tx, run)? {
+                return Err(Error::Load(refusal));
             }
 
             let problem = features::fill(

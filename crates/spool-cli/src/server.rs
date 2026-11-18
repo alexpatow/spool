@@ -1496,7 +1496,13 @@ async fn load(
         let params = query(params)?;
         let rows = arrow_rows(body)?;
         return job(&app, params.wait_ms, move |engine| {
-            let report = engine.load(&params.source, &params.entity_type, rows)?;
+            let report = stored(
+                engine,
+                &params.source,
+                &params.entity_type,
+                rows,
+                params.replace,
+            )?;
             Ok(Some(report.run))
         })
         .await;
@@ -1505,7 +1511,13 @@ async fn load(
         let params = query(params)?;
         let rows = delimited_rows(&app.reading, body, delimiter).await?;
         return job(&app, params.wait_ms, move |engine| {
-            let report = engine.load(&params.source, &params.entity_type, rows)?;
+            let report = stored(
+                engine,
+                &params.source,
+                &params.entity_type,
+                rows,
+                params.replace,
+            )?;
             Ok(Some(report.run))
         })
         .await;
@@ -1513,10 +1525,31 @@ async fn load(
     let request: LoadRequest = json_body(&body)?;
     let rows = Rows::from_json(&request.rows)?;
     job(&app, request.wait_ms, move |engine| {
-        let report = engine.load(&request.source, &request.entity_type, rows)?;
+        let report = stored(
+            engine,
+            &request.source,
+            &request.entity_type,
+            rows,
+            request.replace,
+        )?;
         Ok(Some(report.run))
     })
     .await
+}
+
+/// Loads rows as the call asked: a load replaces a row the store holds
+/// unless the call said `replace` is false.
+fn stored(
+    engine: &Engine,
+    source: &str,
+    entity_type: &str,
+    rows: impl RecordBatchReader,
+    replace: Option<bool>,
+) -> spool::Result<spool::LoadReport> {
+    match replace {
+        Some(false) => engine.load_without_replacing(source, entity_type, rows),
+        Some(true) | None => engine.load(source, entity_type, rows),
+    }
 }
 
 async fn retract(

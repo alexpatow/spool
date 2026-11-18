@@ -662,7 +662,7 @@
       "type": "object"
     },
     "DocumentId": {
-      "description": "Identifies one version of a document. Derived by the engine from the document's source, key and text.",
+      "description": "Identifies one version of a document. Derived by the engine from the document's source, key and text, and for a version that holds a text the document held before, from the version it follows as well.",
       "format": "uuid",
       "type": "string"
     },
@@ -1608,7 +1608,7 @@
           "description": "The changeset that put them back, if any went back."
         },
         "duplicates": {
-          "description": "Rows that were already known, or repeated within this call.",
+          "description": "Rows that brought nothing new: a row that says what its key holds\nalready, and a row without a key that the store has.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -1651,7 +1651,7 @@
         },
         "superseded": {
           "default": 0,
-          "description": "Records created as a new version of a row the source had sent\nbefore under the same key with other content.",
+          "description": "Records created as a new version of a row the source had sent\nbefore under the same key with other content. A row that says again\nwhat an earlier version of it said, with another since, is one.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -1671,6 +1671,14 @@
       "properties": {
         "entity_type": {
           "type": "string"
+        },
+        "replace": {
+          "default": null,
+          "description": "Whether a row may replace one the store holds. Left out or `true`,\na row under a known key with other values becomes the next version\nof that row. With `false` such a row is refused and the whole call\nwith it: nothing is stored, and the error names the keys. That is\nfor a caller that means to add rows and not to change any.",
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "rows": {
           "description": "One object per row, with the columns the source declares. A column\nholds text, booleans or numbers.",
@@ -2830,7 +2838,7 @@
       "type": "object"
     },
     "RecordId": {
-      "description": "Identifies a record. Derived by the engine from the record's source, key and content.",
+      "description": "Identifies a record. Derived by the engine from the record's source, key and content, and for a version that holds what its row held before, from the version it follows as well.",
       "format": "uuid",
       "type": "string"
     },

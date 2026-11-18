@@ -1912,6 +1912,57 @@ fn a_name_that_two_records_have_is_refused_with_their_ids() {
 }
 
 #[test]
+fn a_load_replaces_a_row_unless_it_is_told_not_to() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = things_server(dir.path());
+    let load = |rows: Value, replace: Option<bool>| {
+        let mut body = json!({ "source": "shop", "entity_type": "thing", "rows": rows });
+        if let Some(replace) = replace {
+            body["replace"] = json!(replace);
+        }
+        server.post("/v1/load", body)
+    };
+    let csv = |query: &str, body: &str| {
+        server
+            .request(
+                "POST",
+                &format!("/v1/load?source=shop&entity_type=thing{query}"),
+            )
+            .header("Content-Type", "text/csv")
+            .body(body.as_bytes())
+            .send()
+    };
+    let first = json!([{ "id": "1", "code": "anvil" }, { "id": "2", "code": "saw" }]);
+    load(first.clone(), Some(false)).ok();
+
+    // Told not to replace, a load of a row the store holds with other
+    // values is refused whole, in JSON and in CSV alike.
+    let changed = json!([{ "id": "3", "code": "file" }, { "id": "2", "code": "saw, hand" }]);
+    let refusal = "load rejected: 1 row has a key the store holds with other values: `2`. \
+                   Nothing was loaded, because this load was not to replace rows. If the row is \
+                   meant to change, load again with `replace` set to true";
+    assert_eq!(
+        load(changed.clone(), Some(false)).error(400, "invalid"),
+        refusal
+    );
+    let lines = "id,code\n3,file\n2,\"saw, hand\"\n";
+    assert_eq!(csv("&replace=false", lines).error(400, "invalid"), refusal);
+    assert_eq!(held(&server, "shop").len(), 2);
+    // The rows the store holds as they are add nothing and are not refused.
+    let same = load(first, Some(false)).ok();
+    assert_eq!(same["run"]["load"]["duplicates"], 2, "{same}");
+
+    // A load that does not say replaces the row, as a load that says it may.
+    let replaced = load(changed, None).ok();
+    assert_eq!(replaced["run"]["load"]["superseded"], 1, "{replaced}");
+    let again = csv("&replace=true", "id,code\n2,\"saw, bow\"\n").ok();
+    assert_eq!(again["run"]["load"]["superseded"], 1, "{again}");
+    let again = csv("", "id,code\n2,\"saw, pit\"\n").ok();
+    assert_eq!(again["run"]["load"]["superseded"], 1, "{again}");
+    csv("&replace=perhaps", "id,code\n2,saw\n").error(400, "invalid");
+}
+
+#[test]
 fn a_load_and_a_match_are_called_by_the_words_the_commands_have() {
     let dir = tempfile::tempdir().unwrap();
     let server = things_server(dir.path());
