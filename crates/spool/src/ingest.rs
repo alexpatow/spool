@@ -46,6 +46,12 @@ pub struct IngestReport {
     /// The changeset that put them back, if any went back.
     #[serde(default)]
     pub committed: Option<Committed>,
+    /// Identities a record went back to where nothing holds it with the
+    /// records that are there: what joined them went through a record that
+    /// is still taken back. Each has an open `possible_split` review item,
+    /// which this run raised.
+    #[serde(default)]
+    pub possible_splits: u64,
 }
 
 /// What storing one staged batch did.

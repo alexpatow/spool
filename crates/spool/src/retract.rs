@@ -33,6 +33,7 @@ use spool_core::{Committed, EntityType, IdentityId, Op, RecordId, RunId, Seq};
 use crate::batch::{Column, batch};
 use crate::error::{Error, Result};
 use crate::features;
+use crate::review::ABOUT_WAITING;
 use crate::store::parse;
 
 /// What a retraction did.
@@ -51,6 +52,12 @@ pub struct RetractReport {
     pub detached: u64,
     /// The changeset that detached them. `None` when none had an identity.
     pub committed: Option<Committed>,
+    /// Identities the records left whose remaining members nothing holds
+    /// together any more, and that this run raised a `possible_split`
+    /// review item for. One that already had an open item keeps it, and
+    /// is not counted.
+    #[serde(default)]
+    pub possible_splits: u64,
 }
 
 /// A condition on `record_id` that leaves out the records that are taken
@@ -185,11 +192,13 @@ pub(crate) fn record(
         params![run.0 as i64, entity_type.as_str()],
     )?;
     // An item stays open while one of its records waits for an identity. A
-    // record that was taken back does not wait.
+    // record that was taken back does not wait. A `possible_split` is not
+    // about records that wait: the changeset that took its record out of
+    // the identity has already closed it if nothing is left to ask.
     conn.execute(
         &format!(
             "UPDATE spool.review_item SET status = 'superseded', closed_run = ?
-             WHERE status = 'open' AND entity_type = ?
+             WHERE status = 'open' AND entity_type = ? AND {ABOUT_WAITING}
                AND review_id IN (
                  SELECT review_id
                  FROM (SELECT review_id, unnest(record_ids) AS record_id
