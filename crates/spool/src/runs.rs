@@ -12,6 +12,7 @@ use crate::documents::{ExtractReport, ExtractorRef};
 use crate::engine::{StrategyRef, TypeResolution};
 use crate::error::{Error, Result};
 use crate::ingest::IngestReport;
+use crate::retract::RetractReport;
 use crate::store::parse;
 use crate::time::rfc3339;
 
@@ -23,6 +24,7 @@ pub enum RunKind {
     Extract,
     Match,
     Reconcile,
+    Retract,
 }
 
 impl RunKind {
@@ -32,6 +34,7 @@ impl RunKind {
             RunKind::Extract => "extract",
             RunKind::Match => "match",
             RunKind::Reconcile => "reconcile",
+            RunKind::Retract => "retract",
         }
     }
 }
@@ -97,7 +100,7 @@ pub struct RunEntry {
     pub run: RunId,
     pub kind: RunKind,
     pub status: RunStatus,
-    /// The entity type an ingest or a match run is about.
+    /// The entity type an ingest, a match or a retract run is about.
     pub entity_type: Option<EntityType>,
     /// The strategy of a match run.
     pub strategy: Option<StrategyRef>,
@@ -118,6 +121,9 @@ pub struct RunEntry {
     /// What a match run reported when it was reconciled. `committed` is
     /// filled in once its draft is committed.
     pub resolution: Option<TypeResolution>,
+    /// What a retract run reported when it finished.
+    #[serde(default)]
+    pub retraction: Option<RetractReport>,
 }
 
 /// Which runs to list. The default lists the latest runs of every kind.
@@ -163,10 +169,11 @@ fn entry(row: &duckdb::Row<'_>) -> Result<RunEntry> {
         "extract" => RunKind::Extract,
         "match" => RunKind::Match,
         "reconcile" => RunKind::Reconcile,
+        "retract" => RunKind::Retract,
         _ => return Err(unreadable("kind")),
     };
     let result: Option<String> = row.get(9)?;
-    let (mut ingest, mut extraction, mut resolution) = (None, None, None);
+    let (mut ingest, mut extraction, mut resolution, mut retraction) = (None, None, None, None);
     if let Some(result) = &result {
         match kind {
             RunKind::Ingest => {
@@ -190,6 +197,9 @@ fn entry(row: &duckdb::Row<'_>) -> Result<RunEntry> {
                     });
                 }
                 resolution = Some(report);
+            }
+            RunKind::Retract => {
+                retraction = Some(serde_json::from_str(result).map_err(|_| unreadable("result"))?);
             }
             RunKind::Reconcile => {}
         }
@@ -219,6 +229,7 @@ fn entry(row: &duckdb::Row<'_>) -> Result<RunEntry> {
         ingest,
         extraction,
         resolution,
+        retraction,
     })
 }
 

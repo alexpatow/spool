@@ -14,7 +14,8 @@
 // both stores are verified.
 //
 // Only ingests and matches by the rules are replayed. A scenario with
-// corrections, documents or a strategy of its own is refused.
+// corrections, documents, a strategy of its own or rows that are taken back
+// is refused.
 
 import { cpSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";

@@ -44,11 +44,13 @@ Options:
   --type <name>      only this entity type (runs, identities, records,
                      review, drafts)
   --status <status>  only this status (runs, review, drafts)
-  --kind <kind>      only runs of this kind: ingest, extract, match, reconcile
+  --kind <kind>      only runs of this kind: ingest, extract, match, reconcile,
+                     retract
   --source <name>    only this source (records, documents)
   --key <key>        only this key within its source (records, documents)
   --document <id>    only the mentions found in this document (records)
-  --unassigned       only records without an identity
+  --unassigned       only records that wait for an identity: they have
+                     none, and their source has not taken them back
   --latest           only the version of each document that nothing replaced
   --after <id>       continue a list after this ID, or the log after this
                      position
@@ -281,10 +283,16 @@ impl View<'_> {
             let mut rows = vec![
                 (
                     "records",
-                    format!(
-                        "{}, {} without an identity",
-                        entity_type.records, entity_type.unassigned
-                    ),
+                    match entity_type.retracted {
+                        0 => format!(
+                            "{}, {} without an identity",
+                            entity_type.records, entity_type.unassigned
+                        ),
+                        retracted => format!(
+                            "{}, {} without an identity, {retracted} taken back by their source",
+                            entity_type.records, entity_type.unassigned
+                        ),
+                    },
                 ),
                 ("identities", entity_type.identities.to_string()),
                 (
@@ -401,6 +409,48 @@ impl View<'_> {
                     report.received, report.inserted, report.duplicates, report.superseded
                 ),
             ));
+            if report.restored > 0 {
+                rows.push((
+                    "came back",
+                    format!(
+                        "{} the source had taken back, {} of them to the identity they left",
+                        count(report.restored, "record"),
+                        report.returned
+                    ),
+                ));
+            }
+            if let Some(committed) = &report.committed {
+                rows.push((
+                    "committed",
+                    format!(
+                        "log position {}, changeset {}",
+                        committed.seq, committed.changeset
+                    ),
+                ));
+            }
+        }
+        if let Some(report) = &run.retraction {
+            rows.push((
+                "keys",
+                format!("{} named, {} unknown", report.received, report.unknown),
+            ));
+            rows.push((
+                "taken back",
+                format!(
+                    "{}, {} of them left an identity",
+                    count(report.retracted, "record"),
+                    report.detached
+                ),
+            ));
+            if let Some(committed) = &report.committed {
+                rows.push((
+                    "committed",
+                    format!(
+                        "log position {}, changeset {}",
+                        committed.seq, committed.changeset
+                    ),
+                ));
+            }
         }
         if let Some(report) = &run.extraction {
             rows.push(("documents", format!("{} read", report.documents)));
@@ -691,9 +741,11 @@ impl View<'_> {
         ));
         rows.push((
             "identity",
-            record
-                .identity
-                .map_or_else(|| "none".to_owned(), |identity| identity.to_string()),
+            match (record.identity, record.retracted) {
+                (Some(identity), _) => identity.to_string(),
+                (None, Some(run)) => format!("none: its source took it back in run {run}"),
+                (None, None) => "none".to_owned(),
+            },
         ));
         if let Some(earlier) = record.supersedes {
             rows.push(("replaces", earlier.to_string()));

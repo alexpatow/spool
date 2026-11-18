@@ -464,6 +464,55 @@ describe("a reviewer", () => {
     expect((await client.record(first.id)).superseded_by).toBe(second.id);
     expect(second.identity).toBe(first.identity!);
   });
+
+  test("a row its source took back leaves its identity until it is sent again", async () => {
+    const { client } = await thingsServer(12);
+    await ingestThings(client, twoAnvilsAndAHammer);
+    await client.startRun({ entity_type: "thing" });
+    const kept = await thing(client, "1");
+    const taken = await thing(client, "2");
+    expect(taken.identity).toBe(kept.identity!);
+
+    const run = await client.retract({
+      source: "shop",
+      entity_type: "thing",
+      keys: ["2", "9"],
+      reason: "sold",
+    });
+    expect(run).toMatchObject({ kind: "retract", status: "succeeded", entity_type: "thing" });
+    expect(run.retraction).toMatchObject({ run: run.run, received: 2, unknown: 1, retracted: 1, detached: 1 });
+    const { changesets } = await client.changesets({ after: run.retraction!.committed!.seq - 1 });
+    expect(changesets[0]!.changeset).toMatchObject({
+      actor: "agent:api",
+      reason: "sold",
+      run: null,
+      ops: [{ op: "assign", record: taken.id, from: taken.identity!, to: null }],
+    });
+
+    // It is still there, without an identity, and it does not wait for one.
+    const gone = await client.record(taken.id);
+    expect(gone.identity ?? null).toBeNull();
+    expect(gone.retracted).toBe(run.run);
+    expect(gone.payload).toEqual(taken.payload);
+    expect((await client.records({ unassigned: true })).records).toEqual([]);
+    expect((await client.info()).store.entity_types[0]).toMatchObject({ records: 3, unassigned: 0, retracted: 1 });
+    expect(await client.startRun({ entity_type: "thing" })).toBeNull();
+    const placing = client.commit({ ops: [{ op: "assign", record: taken.id, from: null, to: kept.identity! }] });
+    expect(await failureOf(placing)).toMatchObject({ status: 409, code: "conflict" });
+
+    expect((await failureOf(client.retract({ source: "shop", entity_type: "thing", keys: [] }))).code).toBe("invalid");
+    expect((await client.runs({ kind: "retract" })).map((entry) => entry.run)).toEqual([run.run]);
+
+    const again = await ingestThings(client, [{ id: "2", code: "anvil" }]);
+    expect(again.ingest).toMatchObject({ inserted: 0, duplicates: 1, restored: 1, returned: 1 });
+    const put = (await client.changesets()).changesets.at(-1)!;
+    expect(put.seq).toBe(again.ingest!.committed!.seq);
+    expect(put.changeset.ops).toEqual([{ op: "assign", record: taken.id, from: null, to: kept.identity! }]);
+    expect(await client.startRun({ entity_type: "thing" })).toBeNull();
+    const back = await client.record(taken.id);
+    expect(back.identity).toBe(kept.identity!);
+    expect(back.retracted ?? null).toBeNull();
+  });
 });
 
 describe("a run judged by the caller", () => {

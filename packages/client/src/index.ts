@@ -40,6 +40,7 @@ import type {
   RecordList,
   RecordEntry,
   Rejection,
+  RetractRequest,
   ReviewCase,
   ReviewEntry,
   ReviewStatus,
@@ -251,6 +252,23 @@ export class SpoolClient {
       query: { ...options },
       arrow: rows,
     });
+    return run;
+  }
+
+  /**
+   * Takes back rows a source no longer holds, named by their keys. Every
+   * version of each row stays as evidence and leaves its identity, by a
+   * changeset recorded under the caller, and no run examines it after
+   * that. Ingesting a row under the same key brings every version back,
+   * to the identity it left: the ingest run's `ingest.returned` counts
+   * them, and `ingest.committed` is the changeset that did it.
+   *
+   * The run that comes back is a retract run, and its `retraction` says
+   * how many records were taken back. A key the source has no row under is
+   * counted there as unknown and changes nothing.
+   */
+  async retract(request: RetractRequest): Promise<RunEntry> {
+    const { run } = await this.json<{ run: RunEntry }>("POST", "/v1/retract", { json: request });
     return run;
   }
 

@@ -690,6 +690,10 @@ export interface Info {
 
 export interface IngestReport {
   /**
+   * The changeset that put them back, if any went back.
+   */
+  committed?: Committed | null;
+  /**
    * Rows that were already known, or repeated within this call.
    */
   duplicates: number;
@@ -701,6 +705,17 @@ export interface IngestReport {
    * Rows received.
    */
   received: number;
+  /**
+   * Records the source had taken back and holds again: every version
+   * of a row that was sent again, changed or not.
+   */
+  restored?: number;
+  /**
+   * Those of them that are back in the identity they left, or in the
+   * one that stands for it now. The rest had none, or can no longer be
+   * there, and are new to the next match run.
+   */
+  returned?: number;
   run: RunId;
   /**
    * Records created as a new version of a row the source had sent
@@ -1137,6 +1152,11 @@ export interface RecordEntry {
    * The attributes exactly as received.
    */
   payload: unknown;
+  /**
+   * The retract run in which its source took the row back, while that
+   * stands. Such a record has no identity and is given none.
+   */
+  retracted?: RunId | null;
   source: string;
   /**
    * The version that replaced this one, if the source has sent the row
@@ -1194,6 +1214,62 @@ export interface Rejection {
   op?: Op | null;
   op_index?: number | null;
   reason: Reason;
+}
+
+/**
+ * What a retraction did.
+ */
+export interface RetractReport {
+  /**
+   * The changeset that detached them. `None` when none had an identity.
+   */
+  committed?: Committed | null;
+  /**
+   * Records that left an identity.
+   */
+  detached: number;
+  /**
+   * Keys named, counting a key that was named twice once.
+   */
+  received: number;
+  /**
+   * Records taken back: every version of each row. A record that was
+   * already taken back is not counted again.
+   */
+  retracted: number;
+  run: RunId;
+  /**
+   * Keys under which the source has no row of the entity type.
+   */
+  unknown: number;
+}
+
+/**
+ * `POST /v1/retract`: take back rows a source no longer holds. The
+ * response is the retract run, whose `retraction` says what it did.
+ *
+ * Every version of each row stays as evidence and leaves its identity, by
+ * a changeset recorded under the caller. No run examines the records
+ * after that, until an ingest sends a row under the same key again.
+ */
+export interface RetractRequest {
+  entity_type: string;
+  /**
+   * The keys of the rows, as the source's key column gave them. A key
+   * the source has no row under is counted as unknown and changes
+   * nothing.
+   */
+  keys: string[];
+  /**
+   * Why, for the log. It is the reason of the changeset that detaches
+   * the records.
+   */
+  reason?: string | null;
+  /**
+   * The name of the source that held the rows.
+   */
+  source: string;
+  wait_ms?: number | null;
 }
 
 /**
@@ -1261,7 +1337,8 @@ export interface ReviewEntry {
   run: RunId;
   status: ReviewStatus;
   /**
-   * Superseded: the reconcile run that raised it again in another form.
+   * Superseded: the reconcile run that raised it again in another form,
+   * or the retract run that took back the records it asked about.
    */
   superseded_by?: RunId | null;
 }
@@ -1341,7 +1418,7 @@ export interface RuleResult {
  */
 export interface RunEntry {
   /**
-   * The entity type an ingest or a match run is about.
+   * The entity type an ingest, a match or a retract run is about.
    */
   entity_type?: EntityType | null;
   /**
@@ -1369,6 +1446,10 @@ export interface RunEntry {
    * filled in once its draft is committed.
    */
   resolution?: TypeResolution | null;
+  /**
+   * What a retract run reported when it finished.
+   */
+  retraction?: RetractReport | null;
   run: RunId;
   started_at: string;
   status: RunStatus;
@@ -1383,7 +1464,7 @@ export interface RunEntry {
  */
 export type RunId = number;
 
-export type RunKind = "ingest" | "extract" | "match" | "reconcile";
+export type RunKind = "ingest" | "extract" | "match" | "reconcile" | "retract";
 
 export interface RunList {
   runs: RunEntry[];
@@ -1479,9 +1560,13 @@ export interface SourceInfo {
    * Counting each version of a row.
    */
   records: number;
+  /**
+   * Those of them the source took back.
+   */
+  retracted?: number;
   source: string;
   /**
-   * Those of them no changeset has placed.
+   * Those of them that wait for an identity.
    */
   unassigned: number;
 }
@@ -1715,6 +1800,10 @@ export interface TypeInfo {
   open_review_items: number;
   records: number;
   /**
+   * Records their source took back. They are counted in `records`.
+   */
+  retracted?: number;
+  /**
    * The sources the records came from, by name.
    */
   sources: SourceInfo[];
@@ -1724,7 +1813,8 @@ export interface TypeInfo {
    */
   strategies?: Strategy[];
   /**
-   * Records no changeset has placed.
+   * Records that wait for an identity: no changeset has placed them,
+   * and their source has not taken them back.
    */
   unassigned: number;
 }

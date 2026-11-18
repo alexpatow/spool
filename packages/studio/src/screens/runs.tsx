@@ -20,7 +20,7 @@ import { count } from "../format.ts";
 import { useLabels, useLoad } from "../hooks.ts";
 import type { Route } from "../router.ts";
 
-const KINDS: RunKind[] = ["ingest", "extract", "match", "reconcile"];
+const KINDS: RunKind[] = ["ingest", "extract", "match", "reconcile", "retract"];
 const STATUSES: RunStatus[] = ["running", "open", "drafted", "succeeded", "failed"];
 const STEP = 100;
 
@@ -94,7 +94,7 @@ export function Run({ id }: { id: string }) {
 }
 
 function RunView({ run }: { run: RunEntry }) {
-  const { ingest, extraction, resolution } = run;
+  const { ingest, extraction, resolution, retraction } = run;
   // The identities a strategy would merge or split are named by ID.
   const labels = useLabels([
     ...(resolution?.suggestions?.merges.flatMap((merge) => merge.identities) ?? []),
@@ -140,6 +140,41 @@ function RunView({ run }: { run: RunEntry }) {
               [
                 "Rows",
                 `${ingest.received} received: ${ingest.inserted} new, ${ingest.duplicates} duplicates, ${ingest.superseded ?? 0} new versions`,
+              ],
+              [
+                "Came back",
+                ingest.restored
+                  ? `${count(ingest.restored, "record")} the source had taken back, ${ingest.returned ?? 0} of them to the identity they left`
+                  : null,
+              ],
+              [
+                "Committed",
+                ingest.committed ? (
+                  <Ref kind="log" id={ingest.committed.seq} label={`log position ${ingest.committed.seq}`} />
+                ) : null,
+              ],
+            ]}
+          />
+        </Section>
+      ) : null}
+      {retraction ? (
+        <Section title="Retraction">
+          <Fields
+            rows={[
+              ["Keys", `${retraction.received} named, ${retraction.unknown} unknown`],
+              [
+                "Taken back",
+                `${count(retraction.retracted, "record")}, ${retraction.detached} of them left an identity`,
+              ],
+              [
+                "Committed",
+                retraction.committed ? (
+                  <Ref
+                    kind="log"
+                    id={retraction.committed.seq}
+                    label={`log position ${retraction.committed.seq}`}
+                  />
+                ) : null,
               ],
             ]}
           />

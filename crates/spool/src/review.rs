@@ -3,12 +3,14 @@
 //! A review item names records that were left without an identity and
 //! says why. It is evidence, like a judgement: it changes no identity, and
 //! nothing is committed on its account. It is open while any of its
-//! records has no identity, and it closes in one of three ways:
+//! records waits for an identity, and it closes in one of three ways:
 //!
 //! - `resolved`: a changeset gave every record an identity. Any
 //!   changeset does this, whether a reviewer wrote it or a later run did.
 //! - `superseded`: a later run examined the records again and raised an
 //!   item that differs, for example because they now match a third identity.
+//!   Or their source took back the records that still waited, which
+//!   leaves nothing to ask.
 //! - `dismissed`: a reviewer closed it without placing its records.
 //!
 //! The records of open items are in the scope of every later match run
@@ -16,6 +18,10 @@
 //! rules may have changed. A run that reaches the same conclusion leaves the
 //! item as it is. The records of a dismissed item are not looked at
 //! again: they stay without an identity until a changeset places them.
+//!
+//! A record its source took back does not wait for an identity. An item
+//! that names one stays open for the sake of its other records, and
+//! is resolved when those have an identity.
 
 use std::collections::BTreeSet;
 
@@ -28,6 +34,7 @@ use spool_core::{
 
 use crate::error::{Error, Result};
 use crate::lookup::{self, IdentitySummary, RecordEntry};
+use crate::retract;
 use crate::store::{self, parse};
 use crate::time::rfc3339;
 
@@ -80,7 +87,8 @@ pub struct ReviewEntry {
     pub status: ReviewStatus,
     /// Resolved: the changeset after which every record had an identity.
     pub resolved_seq: Option<Seq>,
-    /// Superseded: the reconcile run that raised it again in another form.
+    /// Superseded: the reconcile run that raised it again in another form,
+    /// or the retract run that took back the records it asked about.
     pub superseded_by: Option<RunId>,
     /// Dismissed: who closed it, when and why.
     #[serde(default)]
@@ -578,19 +586,16 @@ pub(crate) fn record(
     Ok(())
 }
 
-/// Closes the open items whose records all have an identity, as
-/// resolved by the changeset at `seq`. Runs inside the transaction that
-/// commits that changeset.
+/// Closes the open items none of whose records waits for an identity
+/// any longer, as resolved by the changeset at `seq`. Runs inside the
+/// transaction that commits that changeset.
 pub(crate) fn resolve_assigned(conn: &Connection, seq: Seq) -> Result<()> {
     conn.execute(
-        "UPDATE spool.review_item SET status = 'resolved', closed_seq = ?
-         WHERE status = 'open' AND review_id NOT IN (
-           SELECT r.review_id
-           FROM (SELECT review_id, unnest(record_ids) AS record_id
-                 FROM spool.review_item WHERE status = 'open') r
-           WHERE NOT EXISTS (
-             SELECT 1 FROM spool.membership m
-             WHERE m.record_id = r.record_id AND m.to_seq IS NULL))",
+        &format!(
+            "UPDATE spool.review_item SET status = 'resolved', closed_seq = ?
+             WHERE status = 'open' AND review_id NOT IN ({})",
+            retract::WAITING
+        ),
         [seq.0 as i64],
     )?;
     Ok(())

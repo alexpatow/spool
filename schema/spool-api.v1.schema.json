@@ -1421,6 +1421,18 @@
     },
     "IngestReport": {
       "properties": {
+        "committed": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Committed"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The changeset that put them back, if any went back."
+        },
         "duplicates": {
           "description": "Rows that were already known, or repeated within this call.",
           "format": "uint64",
@@ -1435,6 +1447,20 @@
         },
         "received": {
           "description": "Rows received.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "restored": {
+          "default": 0,
+          "description": "Records the source had taken back and holds again: every version\nof a row that was sent again, changed or not.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "returned": {
+          "default": 0,
+          "description": "Those of them that are back in the identity they left, or in the\none that stands for it now. The rest had none, or can no longer be\nthere, and are new to the next match run.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -2659,6 +2685,18 @@
         "payload": {
           "description": "The attributes exactly as received."
         },
+        "retracted": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The retract run in which its source took the row back, while that\nstands. Such a record has no identity and is given none."
+        },
         "source": {
           "type": "string"
         },
@@ -2794,6 +2832,100 @@
       ],
       "type": "object"
     },
+    "RetractReport": {
+      "description": "What a retraction did.",
+      "properties": {
+        "committed": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Committed"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The changeset that detached them. `None` when none had an identity."
+        },
+        "detached": {
+          "description": "Records that left an identity.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "received": {
+          "description": "Keys named, counting a key that was named twice once.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "retracted": {
+          "description": "Records taken back: every version of each row. A record that was\nalready taken back is not counted again.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "run": {
+          "$ref": "#/$defs/RunId"
+        },
+        "unknown": {
+          "description": "Keys under which the source has no row of the entity type.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "run",
+        "received",
+        "unknown",
+        "retracted",
+        "detached"
+      ],
+      "type": "object"
+    },
+    "RetractRequest": {
+      "additionalProperties": false,
+      "description": "`POST /v1/retract`: take back rows a source no longer holds. The\nresponse is the retract run, whose `retraction` says what it did.\n\nEvery version of each row stays as evidence and leaves its identity, by\na changeset recorded under the caller. No run examines the records\nafter that, until an ingest sends a row under the same key again.",
+      "properties": {
+        "entity_type": {
+          "type": "string"
+        },
+        "keys": {
+          "description": "The keys of the rows, as the source's key column gave them. A key\nthe source has no row under is counted as unknown and changes\nnothing.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "reason": {
+          "default": null,
+          "description": "Why, for the log. It is the reason of the changeset that detaches\nthe records.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "description": "The name of the source that held the rows.",
+          "type": "string"
+        },
+        "wait_ms": {
+          "default": null,
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "source",
+        "entity_type",
+        "keys"
+      ],
+      "type": "object"
+    },
     "ReviewCase": {
       "description": "A review item with what a reviewer reads to decide it: the records\nit holds back, the identities they matched, what was judged between\nthem, and what was already decided about them.",
       "properties": {
@@ -2905,7 +3037,7 @@
               "type": "null"
             }
           ],
-          "description": "Superseded: the reconcile run that raised it again in another form."
+          "description": "Superseded: the reconcile run that raised it again in another form,\nor the retract run that took back the records it asked about."
         }
       },
       "required": [
@@ -3106,7 +3238,7 @@
               "type": "null"
             }
           ],
-          "description": "The entity type an ingest or a match run is about."
+          "description": "The entity type an ingest, a match or a retract run is about."
         },
         "error": {
           "description": "Why a failed run failed.",
@@ -3170,6 +3302,18 @@
           ],
           "description": "What a match run reported when it was reconciled. `committed` is\nfilled in once its draft is committed."
         },
+        "retraction": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RetractReport"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "What a retract run reported when it finished."
+        },
         "run": {
           "$ref": "#/$defs/RunId"
         },
@@ -3210,7 +3354,8 @@
         "ingest",
         "extract",
         "match",
-        "reconcile"
+        "reconcile",
+        "retract"
       ],
       "type": "string"
     },
@@ -3401,11 +3546,18 @@
           "minimum": 0,
           "type": "integer"
         },
+        "retracted": {
+          "default": 0,
+          "description": "Those of them the source took back.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "source": {
           "type": "string"
         },
         "unassigned": {
-          "description": "Those of them no changeset has placed.",
+          "description": "Those of them that wait for an identity.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -3815,6 +3967,13 @@
           "minimum": 0,
           "type": "integer"
         },
+        "retracted": {
+          "default": 0,
+          "description": "Records their source took back. They are counted in `records`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "sources": {
           "description": "The sources the records came from, by name.",
           "items": {
@@ -3831,7 +3990,7 @@
           "type": "array"
         },
         "unassigned": {
-          "description": "Records no changeset has placed.",
+          "description": "Records that wait for an identity: no changeset has placed them,\nand their source has not taken them back.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"

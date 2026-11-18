@@ -21,8 +21,9 @@
 //!
 //! # Calls that start work
 //!
-//! `POST /v1/ingest`, `POST /v1/documents`, `POST /v1/extractions` and
-//! `POST /v1/runs` say how long they wait with `wait_ms`. If the work is done by then, the response is `200` with the
+//! `POST /v1/ingest`, `POST /v1/retract`, `POST /v1/documents`,
+//! `POST /v1/extractions` and `POST /v1/runs` say how long they wait with
+//! `wait_ms`. If the work is done by then, the response is `200` with the
 //! finished run. Otherwise it is `202` with the run as far as it has got, and
 //! the caller reads `GET /v1/runs/{run}` until its status is no longer
 //! `running`. The work goes on whether or not anyone is waiting.
@@ -104,9 +105,9 @@ use crate::api::{
     DocumentList, DocumentsRequest, DraftList, ErrorBody, ErrorCode, ErrorResponse, ExtractRequest,
     History, IdentitiesOfRequest, IdentitiesOfResponse, IdentityList, Info, IngestParams,
     IngestRequest, JudgementsRequest, JudgementsResponse, MintRequest, PasswordRequest, Person,
-    PersonList, ReconcileRequest, RecordList, RejectDraftRequest, ReviewList, RunList, RunResponse,
-    SessionState, SetupRequest, SignInRequest, SplitRequest, StartRunRequest, TokenList,
-    UndoRequest,
+    PersonList, ReconcileRequest, RecordList, RejectDraftRequest, RetractRequest, ReviewList,
+    RunList, RunResponse, SessionState, SetupRequest, SignInRequest, SplitRequest, StartRunRequest,
+    TokenList, UndoRequest,
 };
 use crate::google::{Failed, Google, Provider, Started};
 use crate::studio;
@@ -364,6 +365,7 @@ fn router_until(engine: Arc<Engine>, options: &ServerOptions, stopping: Stopping
     let v1 = Router::new()
         .route("/info", get(info))
         .route("/ingest", post(ingest))
+        .route("/retract", post(retract))
         .route("/documents", get(list_documents).post(add_documents))
         .route("/documents/{document}", get(read_document))
         .route("/extractions", post(extract))
@@ -538,10 +540,12 @@ impl From<spool::Error> for ApiError {
             | Error::Draft { .. }
             | Error::Review { .. }
             | Error::Split { .. }
+            | Error::Retracted(_)
             | Error::NothingToUndo(_) => {
                 Self::new(StatusCode::CONFLICT, ErrorCode::Conflict, message)
             }
             Error::Ingest(_)
+            | Error::Retract(_)
             | Error::Documents(_)
             | Error::UnknownExtractor { .. }
             | Error::Judgements(_)
@@ -1424,6 +1428,25 @@ async fn ingest(
     let rows = Rows::from_json(&request.rows)?;
     job(&app, request.wait_ms, move |engine| {
         let report = engine.ingest(&request.source, &request.entity_type, rows)?;
+        Ok(Some(report.run))
+    })
+    .await
+}
+
+async fn retract(
+    State(app): State<App>,
+    Extension(caller): Extension<Caller>,
+    body: Bytes,
+) -> ApiResult {
+    let request: RetractRequest = json_body(&body)?;
+    job(&app, request.wait_ms, move |engine| {
+        let report = engine.retract(
+            &request.source,
+            &request.entity_type,
+            &request.keys,
+            caller.actor,
+            request.reason,
+        )?;
         Ok(Some(report.run))
     })
     .await
