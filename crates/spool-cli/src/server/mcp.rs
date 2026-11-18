@@ -561,8 +561,10 @@ struct Document {
 #[serde(deny_unknown_fields)]
 struct RunExtraction {
     /// The name of one of the project's extractors, which `describe_store`
-    /// lists in `extractors`.
-    extractor: String,
+    /// lists in `extractors`. It may be left out when the project has only
+    /// one.
+    #[serde(default)]
+    extractor: Option<String>,
     /// Read only the documents of this source.
     #[serde(default)]
     source: Option<String>,
@@ -979,17 +981,17 @@ static TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
             "run_extraction",
             "Run an extractor",
             Effect::Changes,
-            "Run one of the project's extractors over the documents it has not read. Each \
-             place where a document names something becomes a record of the document's \
-             source, which keeps the document and the characters it was found at as its \
-             evidence. The server runs the project's own extractor and nothing a caller \
-             sends. An extractor may ask a language model, which takes time and can cost \
-             money: `limit` says how many documents it reads at most. Extraction does not \
-             match: follow it with `run_match` for the entity type of the records. What \
-             was found is kept, as loaded rows are, and `retract_rows` takes a record \
-             back by its key. Returns the run, whose `extraction` counts the documents \
-             read and the records found. If its `status` is still `running`, read it with \
-             `get_run`.",
+            "Run one of the project's extractors over the documents it has not read. \
+             `extractor` may be left out when the project has only one. Each place where \
+             a document names something becomes a record of the document's source, which \
+             keeps the document and the characters it was found at as its evidence. The \
+             server runs the project's own extractor and nothing a caller sends. An \
+             extractor may ask a language model, which takes time and can cost money: \
+             `limit` says how many documents it reads at most. Extraction does not match: \
+             follow it with `run_match` for the entity type of the records. What was found \
+             is kept, as loaded rows are, and `retract_rows` takes a record back by its \
+             key. Returns the run, whose `extraction` counts the documents read and the \
+             records found. If its `status` is still `running`, read it with `get_run`.",
         ),
         tool::<RunMatch>(
             "run_match",
@@ -1267,7 +1269,7 @@ impl Tools {
             "run_extraction" => {
                 let asked: RunExtraction = arguments(tool, given)?;
                 let request = ExtractRequest {
-                    extractor: Some(asked.extractor),
+                    extractor: asked.extractor,
                     source: asked.source,
                     again: asked.again,
                     limit: asked.limit,
