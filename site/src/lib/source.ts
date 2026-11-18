@@ -3,7 +3,8 @@ import { defineDocs } from "fumadocs-mdx/macro";
 
 export const docs = defineDocs({
   dir: "content/docs",
-  docs: { postprocess: { includeProcessedMarkdown: true } },
+  // The Markdown agents read. Headings come without the `[#id]` suffix.
+  docs: { postprocess: { includeProcessedMarkdown: { headingIds: false } } },
 });
 
 export const source = loader({ baseUrl: "/docs", source: docs.toFumadocsSource() });
