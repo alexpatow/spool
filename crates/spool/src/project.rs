@@ -185,7 +185,8 @@ pub struct Strategy {
     pub hash: String,
 }
 
-/// What runs a strategy file. The file's extension decides.
+/// What runs a strategy's or an extractor's file. The file's extension
+/// decides.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
@@ -209,6 +210,23 @@ impl Runtime {
         match self {
             Runtime::Python => "python",
             Runtime::Typescript => "typescript",
+        }
+    }
+
+    /// The command that installs what runs files of this kind, on Linux
+    /// and macOS.
+    pub const fn install_command(self) -> &'static str {
+        match self {
+            Runtime::Python => "curl -LsSf https://astral.sh/uv/install.sh | sh",
+            Runtime::Typescript => "curl -fsSL https://bun.sh/install | bash",
+        }
+    }
+
+    /// The page that says how else to install it.
+    pub const fn install_page(self) -> &'static str {
+        match self {
+            Runtime::Python => "https://docs.astral.sh/uv/getting-started/installation/",
+            Runtime::Typescript => "https://bun.sh/docs/installation",
         }
     }
 }

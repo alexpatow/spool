@@ -694,7 +694,7 @@
     },
     "DocumentsRequest": {
       "additionalProperties": false,
-      "description": "`POST /v1/documents`: store documents from one source, to be read by an\nextractor. The response is the load run that stored them.",
+      "description": "`POST /v1/documents`: store documents from one source, to be read by an\nextractor. The response is the load run that stored them.\n\nOne document can also be sent as it is: a body of UTF-8 text, such as\n`text/plain`, with `source`, `key` and optionally `uri` and `wait_ms` in\nthe query string.",
       "properties": {
         "documents": {
           "items": {
@@ -1115,7 +1115,7 @@
     },
     "ExtractRequest": {
       "additionalProperties": false,
-      "description": "`POST /v1/extractions`: run one of the project's extractors over the\ndocuments it has not read. The response is the extract run. What it\nfound is records, which `POST /v1/match` then matches.",
+      "description": "`POST /v1/extractions`: run one of the project's extractors over the\ndocuments it has not read. The response is the extract run. What it\nfound is records, which `POST /v1/match` then matches.\n\nThe body may be left out: the project's only extractor then reads\nevery document it has not read.",
       "properties": {
         "again": {
           "default": null,
@@ -1126,8 +1126,12 @@
           ]
         },
         "extractor": {
-          "description": "The name of one of the project's extractors; `GET /v1/info` lists\nthem. The server runs no code it was not built with.",
-          "type": "string"
+          "default": null,
+          "description": "The name of one of the project's extractors; `GET /v1/info` lists\nthem. The server runs no code it was not built with. It may be left\nout when the project has exactly one.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "limit": {
           "default": null,
@@ -1158,9 +1162,6 @@
           ]
         }
       },
-      "required": [
-        "extractor"
-      ],
       "type": "object"
     },
     "Extractor": {
@@ -3449,6 +3450,13 @@
         "run": {
           "$ref": "#/$defs/RunId"
         },
+        "said": {
+          "description": "The last line the run's code has written to its standard error,\nwhile a strategy or an extractor is running. Left out otherwise:\na run that has ended says how in `status` and `error`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "started_at": {
           "type": "string"
         },
@@ -3552,7 +3560,7 @@
       ]
     },
     "Runtime": {
-      "description": "What runs a strategy file. The file's extension decides.",
+      "description": "What runs a strategy's or an extractor's file. The file's extension\ndecides.",
       "oneOf": [
         {
           "const": "python",

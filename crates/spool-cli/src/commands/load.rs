@@ -36,8 +36,9 @@ same key with other content is a new version of that row.
 
 Options:
   --source <name>    the source the rows come from (default: the only source
-                     the project declares, or the one the file is named
-                     after: crm-1.csv holds rows of `crm`)
+                     the project declares, the one the file is named after,
+                     as crm-1.csv is after `crm`, or else the one that lists
+                     most of the file's columns)
   --type <name>      the entity type they are records of (default: the only
                      type whose mapping reads the source)
   --delimiter <c>    the character between the fields, or `tab` (default: a
@@ -134,6 +135,7 @@ pub fn load(arguments: &[String]) -> Result<(), Failure> {
     let (source, entity_type) = target(
         &info,
         (file != "-").then_some(file.as_str()),
+        &columns,
         arguments.value("--source"),
         arguments.value("--type"),
     )?;
@@ -407,10 +409,14 @@ fn format(delimiter: u8) -> String {
 
 /// The source the rows come from and the entity type they are records of:
 /// what was asked for, or the only choice the project leaves. Of several
-/// sources, it is the one `file` is named after.
+/// sources, it is the one `file` is named after, or else the one that lists
+/// more of the file's `columns` than any other: a new project has a source
+/// of rows and a source of what is found in documents, and a file of rows
+/// is the first's whatever it is called.
 fn target<'a>(
     info: &'a Info,
     file: Option<&str>,
+    columns: &[String],
     source: Option<&str>,
     entity_type: Option<&'a str>,
 ) -> Result<(&'a DeclaredSource, &'a str), Failure> {
@@ -489,6 +495,8 @@ fn target<'a>(
                         && let Some(named) = several.iter().find(|source| source.name == after)
                     {
                         *named
+                    } else if let Some(fits) = best_fit(several, columns) {
+                        fits
                     } else {
                         let has = match entity_type {
                             Some(entity_type) => format!("`{entity_type}` reads"),
@@ -555,6 +563,30 @@ fn target<'a>(
         }
     };
     Ok((source, entity_type))
+}
+
+/// The source that lists more of a file's columns than any other does, if
+/// one does. A first line that another character divides counts by its
+/// parts, so that the file is still told whose it is, and then how to read
+/// it.
+fn best_fit<'a>(sources: &[&'a DeclaredSource], columns: &[String]) -> Option<&'a DeclaredSource> {
+    let listed = |source: &DeclaredSource| {
+        columns
+            .iter()
+            .flat_map(|column| column.split(OTHER_DELIMITERS))
+            .filter(|part| source.columns.iter().any(|known| known == part.trim()))
+            .count()
+    };
+    let counts: Vec<usize> = sources.iter().map(|source| listed(source)).collect();
+    let most = counts.iter().copied().max()?;
+    let mut best = sources
+        .iter()
+        .zip(&counts)
+        .filter(|(_, count)| **count == most);
+    match (most, best.next(), best.next()) {
+        (1.., Some((only, _)), None) => Some(*only),
+        _ => None,
+    }
 }
 
 /// Refuses a file with a column its source does not list, as the server

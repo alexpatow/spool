@@ -72,7 +72,7 @@ use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatchReader;
 use axum::body::Bytes;
 use axum::extract::rejection::QueryRejection;
-use axum::extract::{DefaultBodyLimit, Extension, Path, Query, Request, State};
+use axum::extract::{DefaultBodyLimit, Extension, Path, Query, RawQuery, Request, State};
 use axum::http::header::{
     ACCEPT, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, COOKIE as COOKIES, HOST, LOCATION, ORIGIN,
     SET_COOKIE, WWW_AUTHENTICATE,
@@ -375,7 +375,7 @@ fn router_until(engine: Arc<Engine>, options: &ServerOptions, stopping: Stopping
         .route("/info", get(info))
         .route("/load", post(load))
         .route("/retract", post(retract))
-        .route("/documents", get(list_documents).post(add_documents))
+        .route("/documents", get(list_documents).post(post_documents))
         .route("/documents/{document}", get(read_document))
         .route("/extractions", post(extract))
         .route("/match", post(start_match))
@@ -1309,6 +1309,23 @@ fn run_id(text: &str) -> ApiResult<RunId> {
     Ok(RunId(id(text, "a run ID")?))
 }
 
+/// Names between backticks, as a sentence lists them: `a`, `b` and `c`.
+fn listed(names: &[&str]) -> String {
+    let quoted: Vec<String> = names.iter().map(|name| format!("`{name}`")).collect();
+    match quoted.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
+        _ => quoted.join(""),
+    }
+}
+
+fn is_text(headers: &HeaderMap) -> bool {
+    media_type(headers, CONTENT_TYPE).is_some_and(|value| value.starts_with("text/"))
+}
+
+fn is_json(headers: &HeaderMap) -> bool {
+    media_type(headers, CONTENT_TYPE).is_some_and(|value| value.starts_with("application/json"))
+}
+
 fn is_arrow(headers: &HeaderMap) -> bool {
     media_type(headers, CONTENT_TYPE).is_some_and(|value| value.starts_with(ARROW_STREAM))
 }
@@ -1554,9 +1571,77 @@ async fn retract(
     .await
 }
 
+/// What the query string of `POST /v1/documents` says about a document
+/// that is sent as text.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TextDocumentParams {
+    source: String,
+    key: String,
+    uri: Option<String>,
+    wait_ms: Option<u64>,
+}
+
+/// `POST /v1/documents` as it arrives over HTTP: documents as JSON, or one
+/// document as the text it is, named in the query string.
+///
+/// The query string decides, and not the content type alone: `curl` sends a
+/// file as a form unless it is told otherwise, and a browser sends JSON as
+/// `text/plain` unless it is told otherwise, and each means what it would
+/// mean with the header it left out.
+async fn post_documents(
+    State(app): State<App>,
+    RawQuery(named): RawQuery,
+    params: Result<Query<TextDocumentParams>, QueryRejection>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> ApiResult {
+    const NAMED: &str = "in the query string, as in `/v1/documents?source=notes&key=call.txt`";
+    let named = named.is_some_and(|named| !named.is_empty());
+    if !named || is_json(&headers) {
+        return add_documents(State(app), body)
+            .await
+            .map_err(|mut refused| {
+                if !named && is_text(&headers) {
+                    refused.body.message = format!(
+                        "{}. To send one document as text, name it {NAMED}",
+                        refused.body.message
+                    );
+                }
+                refused
+            });
+    }
+    // Nothing has to be put into JSON: the body is the file.
+    let params = query(params).map_err(|refused| {
+        ApiError::invalid(format!(
+            "a document sent as text is named {NAMED}: {}",
+            refused.body.message
+        ))
+    })?;
+    let text = String::from_utf8(body.to_vec()).map_err(|_| {
+        ApiError::invalid(
+            "the body is not UTF-8 text: a document is stored as text, so turn a PDF or a web \
+             page into text first",
+        )
+    })?;
+    let request = DocumentsRequest {
+        source: params.source,
+        documents: vec![spool::NewDocument {
+            key: params.key,
+            uri: params.uri,
+            text,
+        }],
+        wait_ms: params.wait_ms,
+    };
+    store_documents(&app, request).await
+}
+
 async fn add_documents(State(app): State<App>, body: Bytes) -> ApiResult {
-    let request: DocumentsRequest = json_body(&body)?;
-    job(&app, request.wait_ms, move |engine| {
+    store_documents(&app, json_body(&body)?).await
+}
+
+async fn store_documents(app: &App, request: DocumentsRequest) -> ApiResult {
+    job(app, request.wait_ms, move |engine| {
         let report = engine.add_documents(&request.source, &request.documents)?;
         Ok(Some(report.run))
     })
@@ -1603,9 +1688,41 @@ async fn read_document(State(app): State<App>, Path(document): Path<String>) -> 
 }
 
 async fn extract(State(app): State<App>, body: Bytes) -> ApiResult {
-    let request: ExtractRequest = json_body(&body)?;
+    let request: ExtractRequest = optional_json_body(&body)?;
+    let extractor = match request.extractor {
+        Some(extractor) => extractor,
+        // A project with one extractor need not say which.
+        None => {
+            let manifest = app.engine.manifest();
+            let names: Vec<&str> = manifest
+                .as_deref()
+                .map(|manifest| {
+                    manifest
+                        .extractors
+                        .iter()
+                        .map(|extractor| extractor.name.as_str())
+                        .collect()
+                })
+                .unwrap_or_default();
+            match names[..] {
+                [only] => only.to_owned(),
+                [] => {
+                    return Err(ApiError::invalid(
+                        "the project has no extractors: one is a file under extractors/, and \
+                         `spool init` writes a sample",
+                    ));
+                }
+                _ => {
+                    return Err(ApiError::invalid(format!(
+                        "the project has the extractors {}: say which in `extractor`",
+                        listed(&names)
+                    )));
+                }
+            }
+        }
+    };
     let options = ExtractOptions {
-        extractor: request.extractor,
+        extractor,
         source: request.source,
         again: request.again.unwrap_or(false),
         limit: request.limit,

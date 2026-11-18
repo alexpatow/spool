@@ -87,12 +87,14 @@ fn files_of(dir: &Path) -> Vec<String> {
     found
 }
 
-/// `spool init <arguments>`, run in `dir`.
+/// `spool init <arguments>`, run in `dir`, on a machine that has `uv`: the
+/// command it is told to run Python files with is one that is there.
 fn init_in(dir: &Path, arguments: &[&str]) -> std::process::Output {
     spool()
         .current_dir(dir)
         .arg("init")
         .args(arguments)
+        .env("SPOOL_UV", std::env::current_exe().unwrap())
         .output()
         .unwrap()
 }
@@ -109,17 +111,24 @@ fn init_says_what_it_wrote_and_what_to_run_next() {
         "\
 created   companies
 
-  sources/crm.yaml                  the columns of a CRM export
-  entities/company/entity.yaml      what companies are compared by
-  entities/company/rules/           three rules, one line of SQL each
-  transforms/name_key.sql           the lower-case name the rules compare
-  samples/crm-1.csv                 six rows to load first
-  samples/crm-2.csv                 three more for later
-  .gitignore                        keeps the server's data, .spool/, out of Git
+  sources/crm.yaml                   the columns of a CRM export
+  sources/notes.yaml                 what a record found in a note may say
+  entities/company/entity.yaml       what companies are compared by
+  entities/company/rules/            three rules, one line of SQL each
+  transforms/name_key.sql            the lower-case name the rules compare
+  extractors/companies.py            finds company names in text, with a small model
+  samples/crm-1.csv                  six rows to load first
+  samples/crm-2.csv                  three more for later
+  samples/notes-1.txt                a call note that names three companies
+  .gitignore                         keeps the server's data, .spool/, out of Git
 
   cd companies
-  spool dev                         runs the server on this machine
-  spool load samples/crm-1.csv      loads the first rows, from a second terminal
+  spool dev                          runs the server on this machine
+  spool load samples/crm-1.csv       loads the first rows, from a second terminal
+  spool extract samples/notes-1.txt  finds the companies in the note
+
+The extractor is a Python file, which Spool runs with `uv`. Its first run fetches
+about 330 MB, most of it the model, and later runs fetch nothing.
 "
     );
     let project = dir.path().join("companies");
@@ -131,9 +140,12 @@ created   companies
             "entities/company/rules/block/name_prefix.sql",
             "entities/company/rules/match/similar_name.sql",
             "entities/company/rules/no_match/different_country.sql",
+            "extractors/companies.py",
             "samples/crm-1.csv",
             "samples/crm-2.csv",
+            "samples/notes-1.txt",
             "sources/crm.yaml",
+            "sources/notes.yaml",
             "transforms/name_key.sql",
         ]
     );
@@ -193,15 +205,22 @@ c-9,Acorn Tool,GB
         "\
 created   .
 
-  sources/ledger.yaml              the columns of a row from `ledger`
-  entities/person/entity.yaml      what records of type `person` are compared by
-  entities/person/rules/           three rules, one line of SQL each
-  transforms/name_key.sql          the lower-case name the rules compare
-  samples/ledger-1.csv             six rows to load first
-  samples/ledger-2.csv             three more for later
+  sources/ledger.yaml                the columns of a row from `ledger`
+  sources/notes.yaml                 what a record found in a note may say
+  entities/person/entity.yaml        what records of type `person` are compared by
+  entities/person/rules/             three rules, one line of SQL each
+  transforms/name_key.sql            the lower-case name the rules compare
+  extractors/person.py               finds records of type `person` in text, with a small model
+  samples/ledger-1.csv               six rows to load first
+  samples/ledger-2.csv               three more for later
+  samples/notes-1.txt                a call note that names three of them
 
-  spool dev                        runs the server on this machine
-  spool load samples/ledger-1.csv  loads the first rows, from a second terminal
+  spool dev                          runs the server on this machine
+  spool load samples/ledger-1.csv    loads the first rows, from a second terminal
+  spool extract samples/notes-1.txt  finds the records in the note
+
+The extractor is a Python file, which Spool runs with `uv`. Its first run fetches
+about 330 MB, most of it the model, and later runs fetch nothing.
 "
     );
     assert_eq!(read(&here.join(".gitignore")), "target/\n");
@@ -234,6 +253,57 @@ created   .
     let refused = init_in(dir.path(), &["odd", "--source", "a/b"]);
     assert_eq!(refused.status.code(), Some(2));
     assert!(!dir.path().join("odd").exists());
+
+    // On a machine without `uv`, which the last step needs and the others
+    // do not, the reader is told so now, with the line that installs it:
+    // the project is written all the same.
+    let empty = dir.path().join("empty");
+    std::fs::create_dir(&empty).unwrap();
+    let created = spool()
+        .current_dir(dir.path())
+        .args(["init", "bare"])
+        .env("PATH", &empty)
+        .env("HOME", &empty)
+        .env_remove("SPOOL_UV")
+        .output()
+        .unwrap();
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    assert_eq!(text(&created.stderr), "");
+    let created = text(&created.stdout);
+    assert!(
+        created.ends_with(
+            "
+  spool extract samples/notes-1.txt  finds the companies in the note
+
+The extractor is a Python file, which Spool runs with `uv`. Its first run fetches
+about 330 MB, most of it the model, and later runs fetch nothing.
+`uv` is not installed here. Before `spool extract`, install it:
+
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+"
+        ),
+        "{created}"
+    );
+    assert_eq!(files_of(&dir.path().join("bare")), files_of(&project));
+    // It is found where its installer puts it, with the search path as it
+    // was.
+    let installed = empty.join(".local/bin/uv");
+    std::fs::create_dir_all(installed.parent().unwrap()).unwrap();
+    std::fs::copy(std::env::current_exe().unwrap(), &installed).unwrap();
+    let created = spool()
+        .current_dir(dir.path())
+        .args(["init", "ready"])
+        .env("PATH", &empty)
+        .env("HOME", &empty)
+        .env_remove("SPOOL_UV")
+        .output()
+        .unwrap();
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    assert!(
+        text(&created.stdout).ends_with("and later runs fetch nothing.\n"),
+        "{}",
+        text(&created.stdout)
+    );
 }
 
 #[test]

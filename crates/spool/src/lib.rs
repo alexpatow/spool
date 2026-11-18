@@ -94,4 +94,4 @@ pub use review::{
 };
 pub use rows::Rows;
 pub use runs::{RunEntry, RunFilter, RunKind, RunStatus};
-pub use usercode::{Code, UserCode};
+pub use usercode::{Code, Running, UserCode};

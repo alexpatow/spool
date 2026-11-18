@@ -487,11 +487,24 @@ impl Engine {
     /// Tells the engine where the project's files are, so that it can run
     /// the user-code strategies and the extractors the manifest names.
     /// Without this it runs the SQL rules only.
-    pub fn set_user_code(&self, user_code: UserCode) {
-        *self
+    pub fn set_user_code(&self, mut user_code: UserCode) {
+        let mut held = self
             .user_code
             .write()
-            .unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(user_code));
+            .unwrap_or_else(PoisonError::into_inner);
+        // Code that is running was started by what is replaced here, and
+        // what it says is still asked for.
+        if let Some(previous) = held.as_ref() {
+            user_code.running = previous.running.clone();
+        }
+        *held = Some(Arc::new(user_code));
+    }
+
+    /// The last line the code of a run has written to its standard error,
+    /// while it runs. `None` for a run whose code is not running, which is
+    /// every run that has finished, and for code that has said nothing.
+    pub fn said(&self, run: RunId) -> Option<String> {
+        self.user_code()?.running.said(run)
     }
 
     /// Where the engine runs user code from, if it was told.
@@ -887,8 +900,13 @@ impl Engine {
     /// A run as the store records it: the task record of whatever started
     /// it.
     pub fn run(&self, run: RunId) -> Result<RunEntry> {
-        self.read(|conn| runs::get(conn, run))?
-            .ok_or(Error::UnknownRun(run))
+        let mut entry = self
+            .read(|conn| runs::get(conn, run))?
+            .ok_or(Error::UnknownRun(run))?;
+        if entry.status == RunStatus::Running {
+            entry.said = self.said(run);
+        }
+        Ok(entry)
     }
 
     /// Runs, newest first.

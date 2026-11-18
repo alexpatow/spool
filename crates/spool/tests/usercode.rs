@@ -321,7 +321,11 @@ def judge(candidates):
     let started = Instant::now();
     let message = strategy_error(things.resolve("model"));
     assert!(
-        message.contains("it was stopped after 5 seconds without finishing"),
+        message.contains(
+            "it was stopped after 5 seconds without finishing. That is the longest a strategy \
+             or an extractor may run here, and `--task-timeout <seconds>` sets it, on \
+             `spool dev`, `spool serve` or `spool bench`. Its task is kept in "
+        ),
         "{message}"
     );
     assert!(started.elapsed() < Duration::from_secs(60));

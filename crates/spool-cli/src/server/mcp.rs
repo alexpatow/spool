@@ -1268,7 +1268,7 @@ impl Tools {
             "run_extraction" => {
                 let asked: RunExtraction = arguments(tool, given)?;
                 let request = ExtractRequest {
-                    extractor: asked.extractor,
+                    extractor: Some(asked.extractor),
                     source: asked.source,
                     again: asked.again,
                     limit: asked.limit,

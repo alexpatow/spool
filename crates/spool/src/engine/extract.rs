@@ -98,7 +98,7 @@ impl Engine {
                 .to_owned(),
         })?;
         // A file that is not the one the manifest was compiled from is
-        // never run.
+        // never run, and neither is one that nothing here can run.
         user_code.check(&(&extractor).into())?;
 
         let run = inner.start_run(

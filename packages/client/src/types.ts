@@ -343,6 +343,10 @@ export interface DocumentList {
 /**
  * `POST /v1/documents`: store documents from one source, to be read by an
  * extractor. The response is the load run that stored them.
+ *
+ * One document can also be sent as it is: a body of UTF-8 text, such as
+ * `text/plain`, with `source`, `key` and optionally `uri` and `wait_ms` in
+ * the query string.
  */
 export interface DocumentsRequest {
   documents: NewDocument[];
@@ -533,6 +537,9 @@ export interface ExtractReport {
  * `POST /v1/extractions`: run one of the project's extractors over the
  * documents it has not read. The response is the extract run. What it
  * found is records, which `POST /v1/match` then matches.
+ *
+ * The body may be left out: the project's only extractor then reads
+ * every document it has not read.
  */
 export interface ExtractRequest {
   /**
@@ -541,9 +548,10 @@ export interface ExtractRequest {
   again?: boolean | null;
   /**
    * The name of one of the project's extractors; `GET /v1/info` lists
-   * them. The server runs no code it was not built with.
+   * them. The server runs no code it was not built with. It may be left
+   * out when the project has exactly one.
    */
-  extractor: string;
+  extractor?: string | null;
   /**
    * Read at most this many documents, oldest first.
    */
@@ -1568,6 +1576,12 @@ export interface RunEntry {
    */
   retraction?: RetractReport | null;
   run: RunId;
+  /**
+   * The last line the run's code has written to its standard error,
+   * while a strategy or an extractor is running. Left out otherwise:
+   * a run that has ended says how in `status` and `error`.
+   */
+  said?: string | null;
   started_at: string;
   status: RunStatus;
   /**
@@ -1606,7 +1620,8 @@ export interface RunResponse {
 export type RunStatus = "running" | "open" | "drafted" | "succeeded" | "failed";
 
 /**
- * What runs a strategy file. The file's extension decides.
+ * What runs a strategy's or an extractor's file. The file's extension
+ * decides.
  */
 export type Runtime = "python" | "typescript";
 
