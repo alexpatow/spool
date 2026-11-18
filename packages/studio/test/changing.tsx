@@ -6,7 +6,7 @@ import { afterEach, beforeEach, expect } from "bun:test";
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 
 import type { Server } from "../../client/test/server.ts";
-import { SEEDING, calls, idle, start, stopAll } from "./harness.tsx";
+import { SEEDING, STOPPING, calls, idle, start, stopAll } from "./harness.tsx";
 import { companies, seedCompanies } from "./seed.ts";
 
 export let server: Server;
@@ -23,7 +23,7 @@ export function aStoreForEachTest() {
     cleanup();
     window.history.replaceState(null, "", "/");
     await stopAll();
-  });
+  }, STOPPING);
 }
 
 // A change is proposed by a button, and made from the dialog the button
