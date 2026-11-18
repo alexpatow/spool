@@ -1993,7 +1993,7 @@ export interface TypeResolution {
    * from another identity or from none. They are not counted in
    * `records_assigned`.
    */
-  versions_moved: number;
+  versions_moved?: number;
 }
 
 /**

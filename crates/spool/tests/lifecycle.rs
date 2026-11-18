@@ -11,7 +11,7 @@ use spool::core::{
 };
 use spool::{
     ConstraintFilter, Engine, Error, Options, RecordFilter, ResolveOptions, ResolveReport,
-    ReviewFilter, ReviewKind, ReviewStatus,
+    ReviewFilter, ReviewKind, ReviewStatus, TypeResolution,
 };
 
 fn resolve(engine: &Engine) -> ResolveReport {
@@ -1148,6 +1148,12 @@ fn a_run_that_places_a_new_version_takes_along_an_earlier_one_that_waits() {
         ),
         (1, 1, 1)
     );
+    // A run recorded before runs counted the versions they moved along
+    // reads as having moved none.
+    let mut recorded = serde_json::to_value(resolution).unwrap();
+    recorded.as_object_mut().unwrap().remove("versions_moved");
+    let read: TypeResolution = serde_json::from_value(recorded).unwrap();
+    assert_eq!((read.records_assigned, read.versions_moved), (1, 0));
     let draft = engine.draft(resolution.draft.unwrap()).unwrap();
     let (versions, _) = placed_versions(&engine);
     assert_eq!(

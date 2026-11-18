@@ -210,6 +210,7 @@ pub struct TypeResolution {
     /// Earlier versions of the rows the run placed, moved along with them
     /// from another identity or from none. They are not counted in
     /// `records_assigned`.
+    #[serde(default)]
     pub versions_moved: u64,
     /// Examined records left without an identity. Each is named in
     /// `review`.
