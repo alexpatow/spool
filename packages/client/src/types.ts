@@ -160,6 +160,9 @@ export interface ChangesetList {
  * A caller that has read the state it is changing says so with `base`: a
  * merge is rejected if the members of either identity changed after it. A
  * caller that leaves `base` out is taken to have read the head of the log.
+ *
+ * Placing the latest version of a row moves its earlier versions along:
+ * the server adds those moves to the changeset, and the log shows them.
  */
 export interface CommitRequest {
   /**

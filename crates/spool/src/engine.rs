@@ -22,6 +22,7 @@ use crate::drafts::{self, DraftEntry, DraftFilter, DraftStatus, DraftSummary};
 use crate::error::{Error, Result};
 use crate::explain::{self, Explanation};
 use crate::features;
+use crate::following::following;
 use crate::load::{self, LoadReport};
 use crate::lookup::{
     self, HistoryEntry, IdentityFilter, IdentitySummary, IdentityView, LoggedChangeset,
@@ -1268,6 +1269,40 @@ fn id_error(error: impl std::error::Error + Send + Sync + 'static) -> Error {
 }
 
 impl Inner {
+    /// The moves that take the earlier versions of the rows `changeset`
+    /// places along with them, as far as the state allows: a move it
+    /// refuses, such as one a constraint forbids, is left out. Nothing when
+    /// the state refuses the changeset's own operations, so that the
+    /// refusal is theirs alone.
+    fn versions_along(&self, changeset: &Changeset) -> Result<Vec<Op>> {
+        let own = changeset.ops.len();
+        let mut along = following(&self.store.conn, &changeset.ops)?;
+        while !along.is_empty() {
+            let mut whole = changeset.clone();
+            whole.ops.extend(along.iter().cloned());
+            let rejections = match validate(&self.store, whole) {
+                Ok(_) => break,
+                Err(ValidationError::Rejected(rejections)) => rejections,
+                Err(_) => return Ok(Vec::new()),
+            };
+            let refused: HashSet<usize> = rejections
+                .iter()
+                .filter_map(|rejection| rejection.op_index)
+                .filter(|index| *index >= own)
+                .map(|index| index - own)
+                .collect();
+            if refused.is_empty() {
+                return Ok(Vec::new());
+            }
+            let mut at = 0;
+            along.retain(|_| {
+                at += 1;
+                !refused.contains(&(at - 1))
+            });
+        }
+        Ok(along)
+    }
+
     fn apply(&mut self, manifest: &Manifest) -> Result<ApplyReport> {
         let now = self.store.clock.now_micros();
         let mut report = ApplyReport {
@@ -2010,6 +2045,8 @@ impl Inner {
                     _ => {}
                 }
             }
+            let along = inner.versions_along(&draft.changeset)?;
+            draft.changeset.ops.extend(along);
             let held = then == Disposition::LeaveForReview && !draft.changeset.ops.is_empty();
             let report = TypeResolution {
                 entity_type: entity_type.clone(),
@@ -2232,7 +2269,7 @@ impl Inner {
         Ok(evidence)
     }
 
-    fn commit(&mut self, changeset: Changeset) -> Result<Committed> {
+    fn commit(&mut self, mut changeset: Changeset) -> Result<Committed> {
         // A changeset that carries the ID of a stored draft is that draft or
         // it is refused: the ID is what a reviewer approved.
         if let Some(record) = drafts::get(&self.store.conn, changeset.id)? {
@@ -2256,6 +2293,8 @@ impl Inner {
                 DraftStatus::Open | DraftStatus::Committed => {}
             }
         }
+        let along = self.versions_along(&changeset)?;
+        changeset.ops.extend(along);
         retract::refuse_placing(&self.store.conn, &changeset.ops)?;
         let validated = validate(&self.store, changeset)?;
         Ok(self.store.apply(validated)?)
@@ -2268,7 +2307,7 @@ impl Inner {
         ops: Vec<Op>,
         commit: bool,
     ) -> Result<Authored> {
-        let changeset = Changeset {
+        let mut changeset = Changeset {
             id: lock(&self.ids).changeset_id(),
             base: self.store.head()?,
             actor,
@@ -2276,6 +2315,8 @@ impl Inner {
             run: None,
             ops,
         };
+        let along = self.versions_along(&changeset)?;
+        changeset.ops.extend(along);
         retract::refuse_placing(&self.store.conn, &changeset.ops)?;
         let validated = validate(&self.store, changeset.clone())?;
         let committed = match commit {
@@ -2419,9 +2460,11 @@ impl Inner {
     }
 
     fn approve_draft(&mut self, draft: ChangesetId) -> Result<Committed> {
-        let record = self.open_draft(draft, "approved")?;
-        retract::refuse_placing(&self.store.conn, &record.changeset.ops)?;
-        let validated = validate(&self.store, record.changeset)?;
+        let mut changeset = self.open_draft(draft, "approved")?.changeset;
+        let along = self.versions_along(&changeset)?;
+        changeset.ops.extend(along);
+        retract::refuse_placing(&self.store.conn, &changeset.ops)?;
+        let validated = validate(&self.store, changeset)?;
         Ok(self.store.apply(validated)?)
     }
 

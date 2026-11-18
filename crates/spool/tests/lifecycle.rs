@@ -878,6 +878,180 @@ fn a_new_version_that_matches_another_identity_is_left_for_review() {
     engine.verify().unwrap();
 }
 
+/// The versions of `shop:1` from the first, and the identity of each.
+fn placed_versions(engine: &Engine) -> (Vec<RecordId>, Vec<Option<IdentityId>>) {
+    let versions = records(engine, "shop", "1");
+    let identities = engine.identities_of(&versions).unwrap();
+    (versions, identities)
+}
+
+#[test]
+fn a_reviewer_who_places_a_new_version_takes_its_earlier_versions_along() {
+    let engine = engine();
+    load(
+        &engine,
+        "shop",
+        &[("1", Some("anvil"), None), ("2", Some("hammer"), None)],
+    );
+    resolve(&engine);
+    let (anvil, hammer) = (
+        identity(&engine, "shop", "1").unwrap(),
+        identity(&engine, "shop", "2").unwrap(),
+    );
+    load(&engine, "shop", &[("1", Some("hammer"), None)]);
+    resolve(&engine);
+    let (versions, _) = placed_versions(&engine);
+    let (first, second) = (versions[0], versions[1]);
+
+    // The reviewer says the row is the hammer. The version before it says
+    // what the same row said earlier, so it goes too, and leaves the anvil
+    // with nothing.
+    let committed = author(
+        &engine,
+        vec![Op::Assign {
+            record: second,
+            from: None,
+            to: Some(hammer),
+        }],
+    );
+    let entry = engine.log().unwrap().pop().unwrap();
+    assert_eq!(entry.seq, committed.seq);
+    assert_eq!(
+        entry.changeset.ops,
+        [
+            Op::Assign {
+                record: second,
+                from: None,
+                to: Some(hammer),
+            },
+            Op::Assign {
+                record: first,
+                from: Some(anvil),
+                to: Some(hammer),
+            },
+        ]
+    );
+    assert_eq!(placed_versions(&engine).1, [Some(hammer); 2]);
+    assert_eq!(members(&engine, anvil), set(&[]));
+    assert_eq!(members(&engine, hammer), set(&["shop:1", "shop:2"]));
+    assert_eq!(engine.review_items(&ReviewFilter::open()).unwrap(), []);
+
+    // Undoing the decision puts each version back where it was.
+    engine.undo(committed.seq, reviewer(), None, true).unwrap();
+    assert_eq!(placed_versions(&engine).1, [Some(anvil), None]);
+    engine.verify().unwrap();
+}
+
+#[test]
+fn an_earlier_version_a_reviewer_moves_or_a_constraint_holds_stays_where_it_is() {
+    let engine = engine();
+    load(
+        &engine,
+        "shop",
+        &[("1", Some("anvil"), None), ("2", Some("hammer"), None)],
+    );
+    load(&engine, "depot", &[("1", Some("anvil"), None)]);
+    resolve(&engine);
+    let (anvil, hammer) = (
+        identity(&engine, "shop", "1").unwrap(),
+        identity(&engine, "shop", "2").unwrap(),
+    );
+    load(&engine, "shop", &[("1", Some("hammer"), None)]);
+    resolve(&engine);
+    let (versions, _) = placed_versions(&engine);
+    let (first, second) = (versions[0], versions[1]);
+    let place = Op::Assign {
+        record: second,
+        from: None,
+        to: Some(hammer),
+    };
+
+    // Where the changeset itself puts an earlier version is where it goes.
+    let kept = author(
+        &engine,
+        vec![
+            place.clone(),
+            Op::Assign {
+                record: first,
+                from: Some(anvil),
+                to: None,
+            },
+        ],
+    );
+    assert_eq!(placed_versions(&engine).1, [None, Some(hammer)]);
+    engine.undo(kept.seq, reviewer(), None, true).unwrap();
+
+    // A constraint that keeps the earlier version with the anvil keeps it
+    // there, and the row goes where the reviewer says.
+    let depot = record_id(&engine, "depot", "1");
+    author(
+        &engine,
+        vec![constrain(ConstraintKind::MustLink, first, depot)],
+    );
+    author(&engine, vec![place]);
+    assert_eq!(placed_versions(&engine).1, [Some(anvil), Some(hammer)]);
+    engine.verify().unwrap();
+}
+
+#[test]
+fn a_run_that_places_a_new_version_takes_along_an_earlier_one_that_waits() {
+    let engine = engine();
+    load(
+        &engine,
+        "shop",
+        &[
+            ("2", Some("anvil"), Some("K1")),
+            ("3", Some("anvil"), Some("K2")),
+        ],
+    );
+    resolve(&engine);
+    let anvil = identity(&engine, "shop", "2").unwrap();
+
+    // The first version of row 1 fits both anvils, and the reviewer leaves
+    // it without an identity.
+    load(&engine, "shop", &[("1", Some("anvil"), None)]);
+    resolve(&engine);
+    let item = engine
+        .review_items(&ReviewFilter::open())
+        .unwrap()
+        .remove(0);
+    engine.dismiss_review(item.id, &reviewer(), None).unwrap();
+
+    // Its next version fits one of them. The run places it there, and its
+    // earlier version with it, in the draft a reviewer approves.
+    load(&engine, "shop", &[("1", Some("anvil"), Some("K1"))]);
+    let options = ResolveOptions {
+        leave_for_review: true,
+        ..ResolveOptions::default()
+    };
+    let report = engine.resolve(&options).unwrap();
+    let resolution = &report.resolved[0];
+    assert_eq!(
+        (resolution.new_records, resolution.records_assigned),
+        (1, 1)
+    );
+    let draft = engine.draft(resolution.draft.unwrap()).unwrap();
+    let (versions, _) = placed_versions(&engine);
+    assert_eq!(
+        draft.changeset.ops,
+        [
+            Op::Assign {
+                record: versions[1],
+                from: None,
+                to: Some(anvil),
+            },
+            Op::Assign {
+                record: versions[0],
+                from: None,
+                to: Some(anvil),
+            },
+        ]
+    );
+    engine.approve_draft(draft.changeset.id).unwrap();
+    assert_eq!(placed_versions(&engine).1, [Some(anvil); 2]);
+    engine.verify().unwrap();
+}
+
 // Review items a reviewer closes
 
 #[test]

@@ -1028,8 +1028,10 @@ static TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
              record that has none, make a new identity, or record that two records must or \
              must not share an identity. The server checks every operation against the \
              store and commits all of them or none; a refusal lists the operations that \
-             broke a rule and changes nothing. The change is recorded under this \
-             connection's name and can be taken back with `undo_changeset`. Returns the \
+             broke a rule and changes nothing. Placing the latest version of a row moves \
+             its earlier versions along, as operations of the same change. The change is \
+             recorded under this connection's name and can be taken back with \
+             `undo_changeset`. Returns the \
              `seq` it was committed at.",
         ),
         tool::<SplitIdentity>(
