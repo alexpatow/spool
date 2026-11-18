@@ -61,6 +61,39 @@ jobs:
       - name: Format
         run: cargo fmt --all -- --check
 
+      # The `test` jobs divide the server's test files among them by name.
+      # This reads the patterns they use and fails unless every test file of
+      # the server matches exactly one, and exactly one job takes the tests
+      # inside the crate.
+      - name: Every test file of the server is in one job
+        run: |
+          export LC_ALL=C
+          workflow=.github/workflows/ci.yml
+          groups=$(grep -E "^ +targets: " "$workflow" || true)
+          patterns=$(grep -oE -- "--test '[^']+'" <<< "$groups" | sed -E "s/^--test '(.*)'$/\1/" || true)
+          [ -n "$patterns" ] || { echo "no job names the test files it takes"; exit 1; }
+          files=$(cargo metadata --no-deps --format-version 1 |
+            jq -r '.packages[] | select(.name == "spool-cli") | .targets[] | select(.kind == ["test"]) | .name')
+          [ -n "$files" ] || { echo "the server has no test files"; exit 1; }
+          failed=0
+          for file in $files; do
+            jobs=0
+            while read -r pattern; do
+              # shellcheck disable=SC2053
+              if [[ $file == $pattern ]]; then jobs=$((jobs + 1)); fi
+            done <<< "$patterns"
+            if [ "$jobs" -ne 1 ]; then
+              echo "::error::tests/$file.rs is in $jobs jobs, and should be in one"
+              failed=1
+            fi
+          done
+          inside=$(grep -cE -- "--lib --bins( |$)" <<< "$groups" || true)
+          if [ "$inside" -ne 1 ]; then
+            echo "::error::the tests inside the crate are in $inside jobs, and should be in one"
+            failed=1
+          fi
+          exit "$failed"
+
       - uses: Swatinem/rust-cache@v2
         with:
           cache-bin: false
@@ -81,6 +114,13 @@ jobs:
         # that a new crate or a new test file is in one of them without
         # being added here. `spool` is built with the feature the server
         # turns on, as it is when the whole workspace is built.
+        #
+        # The server's tests are divided by test file, so that each job
+        # builds only the files it runs: `targets` names them by their first
+        # letter, and the last group takes every letter the others do not,
+        # with the tests inside the crate itself. The groups are of about
+        # the same length in time. The lint job checks that every test file
+        # is in exactly one of them.
         #
         # The stress tests and the studio's are each one Rust test that runs
         # the test files of a TypeScript package, and the longest in the
@@ -113,15 +153,18 @@ jobs:
             save: true
             documentation: true
             packages: -p spool-cli
-            tests: -E 'not (binary_id(spool-cli::stress) | binary_id(spool-cli::studio))' --partition slice:1/3
+            targets: --lib --bins --examples --test '[!c-ls]*'
+            tests: -E 'not (binary_id(spool-cli::stress) | binary_id(spool-cli::studio))'
           - name: server 2/3
             cache: server
             packages: -p spool-cli
-            tests: -E 'not (binary_id(spool-cli::stress) | binary_id(spool-cli::studio))' --partition slice:2/3
+            targets: --test '[c-l]*'
+            tests: -E 'not (binary_id(spool-cli::stress) | binary_id(spool-cli::studio))'
           - name: server 3/3
             cache: server
             packages: -p spool-cli
-            tests: -E 'not (binary_id(spool-cli::stress) | binary_id(spool-cli::studio))' --partition slice:3/3
+            targets: --test 's*'
+            tests: -E 'not (binary_id(spool-cli::stress) | binary_id(spool-cli::studio))'
           - name: stress 1/2
             cache: server
             packages: -p spool-cli --test stress
@@ -197,13 +240,13 @@ jobs:
           restore-keys: datasets-${{ matrix.name }}-${{ hashFiles('benchmarks/datasets.toml') }}-
 
       - name: Build
-        run: cargo nextest run --locked --no-run ${{ matrix.packages }}
+        run: cargo nextest run --locked --no-run ${{ matrix.packages }} ${{ matrix.targets }}
 
       - name: Test
         env:
           SPOOL_STRESS_SHARD: ${{ matrix.stress }}
           SPOOL_STUDIO_SHARD: ${{ matrix.studio }}
-        run: cargo nextest run --locked --run-ignored all --no-fail-fast ${{ matrix.packages }} ${{ matrix.tests }}
+        run: cargo nextest run --locked --run-ignored all --no-fail-fast ${{ matrix.packages }} ${{ matrix.targets }} ${{ matrix.tests }}
 
       # nextest does not run the examples in documentation.
       - name: Test the documentation
