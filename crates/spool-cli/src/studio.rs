@@ -116,9 +116,10 @@ static FILES: LazyLock<Vec<(&'static str, File)>> = LazyLock::new(|| {
 /// The screens of the studio. The address of a screen is a path that begins
 /// with its name, and the page works out the rest, so each is answered with
 /// the page.
-const SCREENS: [&str; 10] = [
+const SCREENS: [&str; 11] = [
     "setup",
     "people",
+    "tokens",
     "review",
     "drafts",
     "identities",

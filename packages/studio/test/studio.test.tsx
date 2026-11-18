@@ -126,6 +126,43 @@ describe("the door", () => {
   );
 
   test(
+    "an admin makes a token, reads it once, and revokes it",
+    async () => {
+      const server = await start(companies, 14);
+      open(server, "/tokens");
+      await heading("Tokens");
+      const table = await screen.findByRole("table");
+      // The token the tests call with was made on the server's machine.
+      expect(rowsOf(table).map((cells) => cells.slice(0, 2))).toEqual([["api", "agent:api"]]);
+      expect(rowsOf(table)[0]?.[2]).toMatch(/ by spool token add$/);
+
+      press("Add token");
+      const adding = within(await screen.findByRole("dialog"));
+      fill("Name", "ingest", adding);
+      press("Add token", adding);
+      const said = await screen.findByRole("status");
+      const secret = said.querySelector("[data-part=secret] code")?.textContent ?? "";
+      expect(secret).toMatch(/^spool_[0-9a-f]{64}$/);
+      await waitFor(() => expect(rowsOf(table).map((cells) => cells[0])).toEqual(["api", "ingest"]));
+      expect(rowsOf(table)[1]?.slice(1, 4)).toEqual(["agent:ingest", expect.stringMatching(/ by Ada$/), "Never"]);
+
+      // What presents it is let in. The list does not show it.
+      const agent = new SpoolClient({ url: server.url, token: secret });
+      expect((await agent.info()).api).toBe("v1");
+      expect(table.textContent).not.toContain(secret);
+
+      fireEvent.click(within(screen.getAllByRole("row")[2]!).getByRole("button", { name: "Revoke" }));
+      const revoking = within(await screen.findByRole("dialog"));
+      press("Revoke", revoking);
+      await waitFor(() => expect(rowsOf(table).map((cells) => cells[0])).toEqual(["api"]));
+      expect(screen.getByRole("status").textContent).toBe("Revoked ingest.");
+      expect(document.body.textContent).not.toContain(secret);
+      expect(await agent.info().catch((error: unknown) => (error as { code: string }).code)).toBe("unauthorized");
+    },
+    SEEDING,
+  );
+
+  test(
     "says so when the server does not answer, and asks again",
     async () => {
       const server = await start(companies, 13);
@@ -797,7 +834,9 @@ describe("company records a reviewer corrected", () => {
     const box = await finding();
     const listed = () => screen.getAllByRole("option").map((option) => option.textContent);
     await waitFor(() => expect(listed()).toContain("Identities"));
-    expect(listed()).toHaveLength(10);
+    // Tokens is among them, since an admin is looking.
+    expect(listed()).toContain("Tokens");
+    expect(listed()).toHaveLength(11);
 
     fireEvent.change(box, { target: { value: "Pioneer" } });
     await screen.findByRole("option", { name: /^PIONEER SUPPLIES LTD company · 1 record/ });

@@ -9,6 +9,7 @@ import {
   FingerprintIcon as Fingerprint,
   GitCompareArrowsIcon as GitCompareArrows,
   GitMergeIcon as GitMerge,
+  KeySquareIcon as KeySquare,
   KeyRoundIcon as KeyRound,
   LogOutIcon as LogOut,
   RefreshCwIcon as RefreshCw,
@@ -54,6 +55,7 @@ export const SourceIcon = (props: IconProps) => <Database {...DEFAULTS} {...prop
 export const SplitIcon = (props: IconProps) => <Split {...DEFAULTS} {...props} />;
 export const PasswordIcon = (props: IconProps) => <KeyRound {...DEFAULTS} {...props} />;
 export const PeopleIcon = (props: IconProps) => <UsersRound {...DEFAULTS} {...props} />;
+export const TokenIcon = (props: IconProps) => <KeySquare {...DEFAULTS} {...props} />;
 export const SignOutIcon = (props: IconProps) => <LogOut {...DEFAULTS} {...props} />;
 export const UserPlusIcon = (props: IconProps) => <UserPlus {...DEFAULTS} {...props} />;
 export const UndoIcon = (props: IconProps) => <Undo2 {...DEFAULTS} {...props} />;

@@ -308,8 +308,7 @@ fn serve_can_be_told_not_to_serve_the_studio() {
 fn dev_serves_the_studio_and_says_where() {
     let dir = tempfile::tempdir().unwrap();
     write_things(dir.path());
-    let server =
-        Server::start_with(&["dev", path(dir.path()), "--listen", "127.0.0.1:0"], None).unwrap();
+    let server = Server::start_with(&["dev", path(dir.path()), "--listen", "127.0.0.1:0"]).unwrap();
     assert_eq!(
         server.printed("studio"),
         format!("studio    http://{}/", server.address)

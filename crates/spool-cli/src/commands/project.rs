@@ -128,8 +128,9 @@ fn dockerfile(base_image: &str) -> String {
 #
 # When it first starts, the server prints a link that makes the first account.
 # People sign in over HTTPS: put the server behind something that speaks it,
-# or add `--plain-http` to the command below to try it without. For callers
-# that are not people, pass a token with `-e SPOOL_TOKEN=...`.
+# or add `--plain-http` to the command below to try it without. A caller that
+# is not a person presents a token: an admin makes one on the studio's Tokens
+# page, and so does `docker exec <container> spool token add <name>`.
 #
 # A changed project is applied to an existing store as a step of its own,
 # with the server stopped:
@@ -192,8 +193,9 @@ fn dockerfile_with_user_code(base_image: &str, python: bool, typescript: bool) -
 #
 # When it first starts, the server prints a link that makes the first account.
 # People sign in over HTTPS: put the server behind something that speaks it,
-# or add `--plain-http` to the command below to try it without. For callers
-# that are not people, pass a token with `-e SPOOL_TOKEN=...`.
+# or add `--plain-http` to the command below to try it without. A caller that
+# is not a person presents a token: an admin makes one on the studio's Tokens
+# page, and so does `docker exec <container> spool token add <name>`.
 #
 # A changed project is applied to an existing store as a step of its own,
 # with the server stopped:

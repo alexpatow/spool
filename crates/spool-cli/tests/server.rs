@@ -146,18 +146,21 @@ fn every_call_under_v1_needs_a_caller_the_server_knows() {
         .send();
     assert_eq!(health.ok(), json!({ "status": "ok" }));
 
+    let token = server.token();
     for path in ["/v1/info", "/v1/identities", "/v1/no-such-path"] {
         for authorization in [
             None,
-            Some("Bearer wrong"),
-            Some("Bearer test-token-and-more"),
-            Some("Bearer test-toke"),
-            Some("Basic test-token"),
-            Some("test-token"),
-            Some("Bearer "),
+            Some("Bearer wrong".to_owned()),
+            Some("Bearer api".to_owned()),
+            Some(format!("Bearer {token}-and-more")),
+            Some(format!("Bearer {}", &token[..token.len() - 1])),
+            Some(format!("Bearer {}", token.to_uppercase())),
+            Some(format!("Basic {token}")),
+            Some(token.to_owned()),
+            Some("Bearer ".to_owned()),
         ] {
             let request = server.request("GET", path).without("Authorization");
-            let response = match authorization {
+            let response = match &authorization {
                 Some(value) => request.header("Authorization", value),
                 None => request,
             }
@@ -180,7 +183,7 @@ fn every_call_under_v1_needs_a_caller_the_server_knows() {
     // The scheme's name is not case-sensitive.
     let response = server
         .request("GET", "/v1/info")
-        .header("Authorization", "bearer test-token")
+        .header("Authorization", &format!("bearer {token}"))
         .send();
     assert_eq!(response.ok()["api"], "v1");
 }
@@ -306,10 +309,11 @@ fn a_body_over_the_limit_is_refused() {
         .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
         .unwrap();
     let address = listener.local_addr().unwrap().to_string();
+    let accounts = spool_cli::accounts::Accounts::in_memory();
+    let (_, token) = accounts.add_token("api", None).unwrap();
     let options = ServerOptions {
         max_body_bytes: 1_000,
-        token: Some(TOKEN.to_owned()),
-        ..ServerOptions::new(spool_cli::accounts::Accounts::in_memory())
+        ..ServerOptions::new(accounts)
     };
     runtime.spawn(async move {
         serve(
@@ -323,7 +327,7 @@ fn a_body_over_the_limit_is_refused() {
 
     let send = |body: &Value| {
         Request::to(&address, "POST", "/v1/ids")
-            .header("Authorization", &format!("Bearer {TOKEN}"))
+            .header("Authorization", &format!("Bearer {token}"))
             .json(body)
             .send()
     };

@@ -15,9 +15,6 @@ use crate::args::Arguments;
 /// Where `spool dev` listens unless it is told otherwise.
 const DEFAULT_URL: &str = "http://127.0.0.1:7765";
 
-/// The token of `spool dev` unless it is given another.
-const DEFAULT_TOKEN: &str = "dev";
-
 /// The largest answer that is read. A document is the largest thing a
 /// server returns in one piece.
 const MAX_BODY_BYTES: u64 = 256 * 1024 * 1024;
@@ -28,21 +25,19 @@ pub const VALUES: [&str; 2] = ["--url", "--token"];
 pub struct Remote {
     agent: ureq::Agent,
     pub url: String,
-    token: String,
+    /// What the server knows this caller by. `spool dev` asks for none.
+    token: Option<String>,
 }
 
 impl Remote {
     pub fn new(arguments: &Arguments) -> Remote {
-        let named = |option: &str, variable: &str, default: &str| {
-            arguments
-                .value(option)
-                .map(str::to_owned)
-                .or_else(|| {
-                    std::env::var(variable)
-                        .ok()
-                        .filter(|value| !value.is_empty())
-                })
-                .unwrap_or_else(|| default.to_owned())
+        let named = |option: &str, variable: &str| {
+            arguments.value(option).map(str::to_owned).or_else(|| {
+                std::env::var(variable)
+                    .ok()
+                    .map(|value| value.trim().to_owned())
+                    .filter(|value| !value.is_empty())
+            })
         };
         let config = ureq::Agent::config_builder()
             // A refusal has a body that says why, which is read like any
@@ -53,20 +48,21 @@ impl Remote {
             .build();
         Remote {
             agent: ureq::Agent::new_with_config(config),
-            url: named("--url", "SPOOL_URL", DEFAULT_URL)
+            url: named("--url", "SPOOL_URL")
+                .unwrap_or_else(|| DEFAULT_URL.to_owned())
                 .trim_end_matches('/')
                 .to_owned(),
-            token: named("--token", "SPOOL_TOKEN", DEFAULT_TOKEN),
+            token: named("--token", "SPOOL_TOKEN"),
         }
     }
 
     /// `GET <path>` under `/v1`, as JSON. `Ok(None)` when the server has no
     /// such thing.
     pub fn find(&self, path: &str, query: &[(&str, String)]) -> Result<Option<Value>, Failure> {
-        let mut request = self
-            .agent
-            .get(format!("{}/v1{path}", self.url))
-            .header("Authorization", format!("Bearer {}", self.token));
+        let mut request = self.agent.get(format!("{}/v1{path}", self.url));
+        if let Some(token) = &self.token {
+            request = request.header("Authorization", format!("Bearer {token}"));
+        }
         for (name, value) in query {
             request = request.query(*name, value);
         }
@@ -102,10 +98,18 @@ impl Remote {
         let refusal: ErrorResponse = serde_json::from_str(&body).map_err(|_| unexpected())?;
         match status {
             404 => Ok(None),
-            401 => Err(Failure::Failed(format!(
-                "the server at {} did not accept the token: pass its token with `--token` or in SPOOL_TOKEN",
-                self.url
-            ))),
+            401 => Err(Failure::Failed(match self.token {
+                Some(_) => format!(
+                    "the server at {} did not accept the token: pass one of its tokens with `--token` or in SPOOL_TOKEN",
+                    self.url
+                ),
+                None => format!(
+                    "the server at {} asks for a token: pass one with `--token` or in SPOOL_TOKEN. \
+                     An admin makes one on the studio's Tokens page, and `spool token add` makes \
+                     one on the server's machine.",
+                    self.url
+                ),
+            })),
             _ => Err(Failure::Failed(refusal.error.message)),
         }
     }

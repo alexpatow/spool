@@ -15,14 +15,17 @@ use serde_json::{Value, json};
 use spool::Rows;
 use support::*;
 
-/// `spool <arguments>` against `server`, with its token in the environment.
+/// `spool <arguments>` against `server`, with its token in the environment
+/// if it asks for one.
 fn ask(server: &Server, arguments: &[&str]) -> Output {
-    spool()
+    let mut command = spool();
+    command
         .args(arguments)
-        .args(["--url", &format!("http://{}", server.address)])
-        .env("SPOOL_TOKEN", &server.token)
-        .output()
-        .unwrap()
+        .args(["--url", &format!("http://{}", server.address)]);
+    if let Some(token) = &server.token {
+        command.env("SPOOL_TOKEN", token);
+    }
+    command.output().unwrap()
 }
 
 /// What a command that has to succeed printed.
@@ -852,7 +855,7 @@ fn a_mistake_or_a_server_that_does_not_answer_is_said_plainly() {
     );
     let right = spool()
         .args(["show", "--url", &format!("http://{}/", server.address)])
-        .args(["--token", TOKEN])
+        .args(["--token", server.token()])
         .env("SPOOL_TOKEN", "not-the-token")
         .output()
         .unwrap();
@@ -862,7 +865,9 @@ fn a_mistake_or_a_server_that_does_not_answer_is_said_plainly() {
     let named = spool()
         .args(["show", "runs", "--limit", "1"])
         .env("SPOOL_URL", format!("http://{}", server.address))
-        .env("SPOOL_TOKEN", TOKEN)
+        // A token read from a file often ends with a newline, which is not
+        // part of it.
+        .env("SPOOL_TOKEN", format!("{}\n", server.token()))
         .output()
         .unwrap();
     assert!(named.status.success(), "{}", text(&named.stderr));
@@ -890,20 +895,17 @@ fn a_mistake_or_a_server_that_does_not_answer_is_said_plainly() {
 fn the_defaults_are_those_of_spool_dev() {
     let dir = tempfile::tempdir().unwrap();
     write_things(dir.path());
-    let server = Server::start_with(
-        &[
-            "dev",
-            path(dir.path()),
-            "--listen",
-            "127.0.0.1:0",
-            "--seed",
-            "1",
-        ],
-        None,
-    )
+    let server = Server::start_with(&[
+        "dev",
+        path(dir.path()),
+        "--listen",
+        "127.0.0.1:0",
+        "--seed",
+        "1",
+    ])
     .unwrap();
 
-    // No token is named, and the development server's own is tried.
+    // No token is named, and the development server asks for none.
     let overview = spool()
         .args(["show", "--url", &format!("http://{}", server.address)])
         .output()

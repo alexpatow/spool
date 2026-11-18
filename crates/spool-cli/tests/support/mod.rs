@@ -16,7 +16,6 @@ use arrow::record_batch::{RecordBatch, RecordBatchReader};
 use serde_json::Value;
 use spool::Rows;
 
-pub const TOKEN: &str = "test-token";
 pub const ARROW: &str = "application/vnd.apache.arrow.stream";
 
 pub fn benchmarks() -> PathBuf {
@@ -151,7 +150,9 @@ pub struct Stopped {
 pub struct Server {
     child: Child,
     pub address: String,
-    pub token: String,
+    /// The token requests are sent with: one called `api`, made when
+    /// `spool serve` listened. `spool dev` asks for none.
+    pub token: Option<String>,
     stdout: Mutex<Receiver<String>>,
     stderr: Mutex<Receiver<String>>,
 }
@@ -185,26 +186,42 @@ fn wait_for(lines: &Receiver<String>, what: &str, seen: &mut Vec<String>) -> Opt
     }
 }
 
+/// Makes the token `api` on the store that `spool serve <arguments>` runs
+/// on, or takes it away and makes it again if a server before this one made
+/// it. `spool dev` asks for no token.
+fn token_of(arguments: &[&str]) -> Option<String> {
+    if arguments.first() != Some(&"serve") {
+        return None;
+    }
+    let store = arguments
+        .iter()
+        .position(|argument| *argument == "--store")
+        .map(|at| arguments[at + 1])?;
+    let _ = run(&["token", "revoke", "api", "--store", store]);
+    Some(
+        succeed(&["token", "add", "api", "--store", store])
+            .trim()
+            .to_owned(),
+    )
+}
+
 impl Server {
-    /// Starts `spool <arguments>` with the test token and waits until it
-    /// listens. The arguments must make it listen on a port of its choosing.
+    /// Starts `spool <arguments>` and waits until it listens. The arguments
+    /// must make it listen on a port of its choosing.
     pub fn start(arguments: &[&str]) -> Server {
-        Self::start_with(arguments, Some(TOKEN)).unwrap_or_else(|stopped| {
+        Self::start_with(arguments).unwrap_or_else(|stopped| {
             panic!("the server did not start:\n{}", stopped.output);
         })
     }
 
     /// As `start`. `Err` if the process stopped instead of listening.
-    pub fn start_with(arguments: &[&str], token: Option<&str>) -> Result<Server, Stopped> {
+    pub fn start_with(arguments: &[&str]) -> Result<Server, Stopped> {
         let mut command = spool();
         command
             .args(arguments)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        if let Some(token) = token {
-            command.env("SPOOL_TOKEN", token);
-        }
         let mut child = command.spawn().unwrap();
         let stdout = lines(child.stdout.take().unwrap());
         let stderr = lines(child.stderr.take().unwrap());
@@ -213,7 +230,7 @@ impl Server {
             Some(line) => Ok(Server {
                 child,
                 address: line.rsplit_once("http://").unwrap().1.trim().to_owned(),
-                token: token.unwrap_or("dev").to_owned(),
+                token: token_of(arguments),
                 stdout: Mutex::new(stdout),
                 stderr: Mutex::new(stderr),
             }),
@@ -227,6 +244,11 @@ impl Server {
                 })
             }
         }
+    }
+
+    /// The token of a server that was started with `spool serve`.
+    pub fn token(&self) -> &str {
+        self.token.as_deref().expect("the server has a token")
     }
 
     /// Kills the server with no chance to finish what it was doing.
@@ -288,8 +310,11 @@ impl Server {
     }
 
     pub fn request(&self, method: &str, path: &str) -> Request<'_> {
-        Request::to(&self.address, method, path)
-            .header("Authorization", &format!("Bearer {}", self.token))
+        let request = Request::to(&self.address, method, path);
+        match &self.token {
+            Some(token) => request.header("Authorization", &format!("Bearer {token}")),
+            None => request,
+        }
     }
 
     pub fn get(&self, path: &str) -> Response {

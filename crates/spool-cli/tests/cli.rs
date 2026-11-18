@@ -29,13 +29,15 @@ fn usage_is_printed_on_request_and_on_a_mistake() {
         let stdout = text(&output.stdout);
         assert!(stdout.starts_with("Usage: spool <command>"), "{stdout}");
         for command in [
-            "init", "info", "build", "apply", "serve", "dev", "show", "explain", "bench", "schema",
+            "init", "info", "build", "apply", "serve", "dev", "show", "explain", "token", "bench",
+            "schema",
         ] {
             assert!(stdout.contains(&format!("\n  {command} ")), "{command}");
         }
     }
     for command in [
-        "init", "info", "build", "apply", "serve", "dev", "show", "explain", "bench", "schema",
+        "init", "info", "build", "apply", "serve", "dev", "show", "explain", "token", "bench",
+        "schema",
     ] {
         for arguments in [&[command, "--help"][..], &[command, "x", "-h"]] {
             let output = spool(arguments);
@@ -68,6 +70,8 @@ fn usage_is_printed_on_request_and_on_a_mistake() {
             "`--listen` needs an address",
         ),
         (&["dev", "--port", "1"], "unknown option `--port`"),
+        // The server's own token is gone: a caller presents one that was made.
+        (&["dev", "--token", "dev"], "unknown option `--token`"),
         // Nobody signs in to it, so it is not for anyone else to reach.
         (
             &["dev", "--listen", "0.0.0.0:7765"],

@@ -207,7 +207,7 @@ impl UserCode {
         };
         command.current_dir(&self.project_dir);
         // User code runs with the service's permissions, and that is no
-        // reason to hand it the token that callers of the API present.
+        // reason to hand it a token this process was started with.
         command.env_remove("SPOOL_TOKEN");
         match task {
             Some(task) => command.env("SPOOL_TASK_DIR", absolute(task)?),

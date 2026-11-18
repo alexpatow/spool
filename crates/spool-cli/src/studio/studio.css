@@ -1509,6 +1509,11 @@
     transition-timing-function: var(--xpz2gi8);
   }
 
+  .xvrbanz {
+    -webkit-user-select: all;
+    user-select: all;
+  }
+
   .x87ps6o {
     -webkit-user-select: none;
     user-select: none;

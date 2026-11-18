@@ -11,7 +11,6 @@ import type { Fetch, Person } from "../src/index.ts";
 const here = dirname(fileURLToPath(import.meta.url));
 export const repository = resolve(here, "../../..");
 export const companies = join(repository, "benchmarks/identity/companies-small");
-export const TOKEN = "client-test-token";
 
 /** The binary under test: `SPOOL_BIN`, or the debug build of this checkout. */
 export function binary(): string {
@@ -76,7 +75,9 @@ export const hasUv = Bun.which(process.env.SPOOL_UV ?? "uv") !== null;
 
 export interface Server {
   url: string;
-  /** A client with the server's token: an agent, not a person. */
+  /** A token of the server's, called `api`. */
+  token: string;
+  /** A client with that token: an agent, not a person. */
   client: SpoolClient;
   /** The code of the link the server printed, which makes the first account. */
   setupCode: string;
@@ -144,7 +145,7 @@ export async function serve(project: string, seed: number): Promise<Server> {
       "--seed",
       String(seed),
     ],
-    { env: { ...process.env, SPOOL_TOKEN: TOKEN }, stdout: "pipe", stderr: "inherit" },
+    { stdout: "pipe", stderr: "inherit" },
   );
 
   // The server prints the address it listens on, and then, as nobody has
@@ -162,10 +163,13 @@ export async function serve(project: string, seed: number): Promise<Server> {
     setupCode = /\/setup#(\w+)\n/.exec(printed)?.[1];
   }
   reader.releaseLock();
+  // Made on the server's machine, as an operator would for a pipeline.
+  const token = spool("token", "add", "api", "--store", join(dir, "store.duckdb")).trim();
 
   return {
     url,
-    client: new SpoolClient({ url, token: TOKEN }),
+    token,
+    client: new SpoolClient({ url, token }),
     setupCode,
     async stop() {
       child.kill("SIGTERM");

@@ -2,8 +2,8 @@
 //!
 //! The server is the only process that has the store open. Every path under
 //! `/v1` needs a caller the server knows: a person who has signed in, whose
-//! browser carries a session cookie, or an agent with the bearer token. The
-//! paths under `/auth` sign a person in and out. The studio at `/` needs
+//! browser carries a session cookie, or an agent that presents one of the
+//! server's tokens. The paths under `/auth` sign a person in and out. The studio at `/` needs
 //! neither: it is a page that holds nothing, and reads through `/v1` as the
 //! person signed in. Small values are JSON; candidates, judgements and rows
 //! to ingest can also cross as Arrow IPC streams.
@@ -60,13 +60,14 @@ use tower_sessions::{Expiry, Session, SessionManagerLayer};
 
 use crate::accounts::{Accounts, Change, Entered, MARK, MAX_USERNAME, PERSON, Refused};
 use crate::api::{
-    self, ARROW_STREAM, AddPersonRequest, CandidateList, ChangePersonRequest, ChangesetList,
-    CommitRequest, ConstraintList, DismissRequest, DocumentList, DocumentsRequest, DraftList,
-    ErrorBody, ErrorCode, ErrorResponse, ExtractRequest, History, IdentitiesOfRequest,
-    IdentitiesOfResponse, IdentityList, Info, IngestParams, IngestRequest, JudgementsRequest,
-    JudgementsResponse, MintRequest, PasswordRequest, Person, PersonList, ReconcileRequest,
-    RecordList, RejectDraftRequest, ReviewList, RunList, RunResponse, SessionState, SetupRequest,
-    SignInRequest, SplitRequest, StartRunRequest, UndoRequest,
+    self, ARROW_STREAM, AddPersonRequest, AddTokenRequest, AddedToken, CandidateList,
+    ChangePersonRequest, ChangesetList, CommitRequest, ConstraintList, DismissRequest,
+    DocumentList, DocumentsRequest, DraftList, ErrorBody, ErrorCode, ErrorResponse, ExtractRequest,
+    History, IdentitiesOfRequest, IdentitiesOfResponse, IdentityList, Info, IngestParams,
+    IngestRequest, JudgementsRequest, JudgementsResponse, MintRequest, PasswordRequest, Person,
+    PersonList, ReconcileRequest, RecordList, RejectDraftRequest, ReviewList, RunList, RunResponse,
+    SessionState, SetupRequest, SignInRequest, SplitRequest, StartRunRequest, TokenList,
+    UndoRequest,
 };
 use crate::studio;
 
@@ -108,16 +109,10 @@ const MAX_AUTH_BODY_BYTES: usize = 64 * 1024;
 /// reaches the server could otherwise have it make as many as they sent.
 const MAX_HASHING: usize = 4;
 
-/// What the bearer token writes as.
-const TOKEN_ACTOR: &str = "api";
-
 #[derive(Clone, Debug)]
 pub struct ServerOptions {
     /// The people who may sign in, and their sessions.
     pub accounts: Accounts,
-    /// A bearer token for callers that are not people. It writes as
-    /// `agent:api`, and cannot manage people.
-    pub token: Option<String>,
     /// A caller that presents nothing is the `dev` account, an admin. For
     /// `spool dev`, which refuses to listen anywhere but on this machine.
     pub dev: bool,
@@ -135,7 +130,6 @@ impl ServerOptions {
     pub fn new(accounts: Accounts) -> Self {
         Self {
             accounts,
-            token: None,
             dev: false,
             setup: None,
             https: true,
@@ -149,7 +143,6 @@ impl ServerOptions {
 struct App {
     engine: Arc<Engine>,
     accounts: Accounts,
-    token: Option<Arc<str>>,
     dev: bool,
     setup: Arc<Mutex<Option<String>>>,
     attempts: Attempts,
@@ -224,7 +217,7 @@ impl Caller {
                 ApiError::new(
                     StatusCode::FORBIDDEN,
                     ErrorCode::Forbidden,
-                    "only an admin manages people",
+                    "only an admin manages people and tokens",
                 )
             })
     }
@@ -235,7 +228,6 @@ pub fn router(engine: Arc<Engine>, options: &ServerOptions) -> Router {
     let app = App {
         engine,
         accounts: options.accounts.clone(),
-        token: options.token.as_deref().map(Arc::from),
         dev: options.dev,
         setup: Arc::new(Mutex::new(options.setup.clone())),
         attempts: Attempts::default(),
@@ -291,6 +283,8 @@ pub fn router(engine: Arc<Engine>, options: &ServerOptions) -> Router {
         .route("/review/{item}/dismiss", post(dismiss_review))
         .route("/people", get(list_people).post(add_person))
         .route("/people/{person}", post(change_person))
+        .route("/tokens", get(list_tokens).post(add_token))
+        .route("/tokens/{token}/revoke", post(revoke_token))
         .fallback(not_found)
         .layer(middleware::from_fn_with_state(app.clone(), authorize));
     let mut router = Router::new()
@@ -466,8 +460,8 @@ impl From<Refused> for ApiError {
         let message = refused.to_string();
         match refused {
             Refused::Invalid(_) | Refused::WrongPassword => Self::invalid(message),
-            Refused::Unknown => Self::not_found(message),
-            Refused::Taken(_) | Refused::LastAdmin | Refused::SetUp => {
+            Refused::Unknown | Refused::UnknownToken => Self::not_found(message),
+            Refused::Taken(_) | Refused::TokenTaken(_) | Refused::LastAdmin | Refused::SetUp => {
                 Self::new(StatusCode::CONFLICT, ErrorCode::Conflict, message)
             }
             Refused::Failed(_) => Self::internal(message),
@@ -543,12 +537,16 @@ async fn caller(app: &App, session: &Session, headers: &HeaderMap) -> ApiResult<
             scheme.eq_ignore_ascii_case("bearer").then(|| token.trim())
         });
     if let Some(presented) = presented {
-        return match &app.token {
-            Some(token) if same(presented.as_bytes(), token.as_bytes()) => Ok(Caller {
-                actor: Actor::Agent(TOKEN_ACTOR.to_owned()),
+        let presented = presented.to_owned();
+        return match people(app, move |accounts| accounts.agent(&presented)).await? {
+            Some(name) => Ok(Caller {
+                actor: Actor::Agent(name),
                 person: None,
             }),
-            _ => Err(unauthorized("that is not this server's token")),
+            None => Err(unauthorized(
+                "that is not one of this server's tokens: an admin makes one on the studio's \
+                 Tokens page, and `spool token add` makes one on the server's machine",
+            )),
         };
     }
     if let Some(person) = signed_in(app, session).await? {
@@ -768,6 +766,36 @@ async fn change_person(
         true => hashing(&app, turn(&app).await?, changed).await?,
         false => people(&app, changed).await?,
     })
+}
+
+async fn list_tokens(State(app): State<App>, Extension(caller): Extension<Caller>) -> ApiResult {
+    caller.admin()?;
+    ok(TokenList {
+        tokens: people(&app, Accounts::tokens).await?,
+    })
+}
+
+async fn add_token(
+    State(app): State<App>,
+    Extension(caller): Extension<Caller>,
+    body: Bytes,
+) -> ApiResult {
+    let by = caller.admin()?.id.clone();
+    let request: AddTokenRequest = json_body(&body)?;
+    let (token, secret) = people(&app, move |accounts| {
+        accounts.add_token(&request.name, Some(&by))
+    })
+    .await?;
+    ok(AddedToken { token, secret })
+}
+
+async fn revoke_token(
+    State(app): State<App>,
+    Extension(caller): Extension<Caller>,
+    Path(token): Path<String>,
+) -> ApiResult {
+    caller.admin()?;
+    ok(people(&app, move |accounts| accounts.revoke_token(&token)).await?)
 }
 
 /// Compares without stopping at the first difference, so that the time taken
@@ -1619,7 +1647,7 @@ mod tests {
     use super::same;
 
     #[test]
-    fn tokens_are_compared_whole() {
+    fn codes_are_compared_whole() {
         assert!(same(b"secret", b"secret"));
         assert!(same(b"", b""));
         for (a, b) in [

@@ -48,6 +48,7 @@ import {
   RunIcon,
   SearchIcon,
   SignOutIcon,
+  TokenIcon,
 } from "./icons.tsx";
 import { Palette } from "./palette.tsx";
 import { here, href, parseAddress } from "./router.ts";
@@ -60,6 +61,7 @@ import { Changeset, Log } from "./screens/log.tsx";
 import { RecordPage, RecordsPage } from "./screens/records.tsx";
 import { Overview } from "./screens/overview.tsx";
 import { NewPassword, People, password, typed } from "./screens/people.tsx";
+import { Tokens } from "./screens/tokens.tsx";
 import { ReviewItem, ReviewItems } from "./screens/review.tsx";
 import { Run, Runs } from "./screens/runs.tsx";
 import { colors, radius, spacing, typography } from "./styles/shelf/tokens.stylex";
@@ -443,7 +445,11 @@ function Shell({
     },
     {
       label: "Access",
-      entries: [{ path: "people", label: "People", icon: <PeopleIcon /> }],
+      entries: [
+        { path: "people", label: "People", icon: <PeopleIcon /> },
+        // Only an admin can read them.
+        ...(me.admin ? [{ path: "tokens", label: "Tokens", icon: <TokenIcon /> }] : []),
+      ],
     },
   ];
   const places = useMemo(
@@ -596,6 +602,8 @@ function Screen({ route, types }: { route: Route; types: string[] }) {
       return id === undefined ? <Explain route={route} /> : <Nowhere />;
     case "people":
       return id === undefined ? <People /> : <Nowhere />;
+    case "tokens":
+      return id === undefined ? <Tokens /> : <Nowhere />;
     default:
       return <Nowhere />;
   }

@@ -17,6 +17,7 @@ Commands:
   dev      run the server on localhost and apply file changes as they are saved
   show     show what a running server holds
   explain  say why two records share an identity, or why they do not
+  token    make, list and revoke the tokens of callers that are not people
   bench    run a benchmark scenario
   schema   print the JSON Schema of the server's API
 
@@ -65,6 +66,7 @@ fn main() -> ExitCode {
         "dev" => (commands::serve::DEV_USAGE, commands::serve::dev),
         "show" => (commands::show::SHOW_USAGE, commands::show::show),
         "explain" => (commands::show::EXPLAIN_USAGE, commands::show::explain),
+        "token" => (commands::token::USAGE, commands::token::token),
         "bench" => (commands::bench::USAGE, commands::bench::bench),
         "schema" => (commands::SCHEMA_USAGE, commands::schema),
         other => {

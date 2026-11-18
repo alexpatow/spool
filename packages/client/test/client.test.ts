@@ -8,7 +8,6 @@ import { SpoolClient, SpoolError } from "../src/index.ts";
 import type { CommitRequest, RecordEntry, RunEntry } from "../src/index.ts";
 import {
   PASSWORD,
-  TOKEN,
   companies,
   cookies,
   copyProject,
@@ -761,7 +760,7 @@ describe("calls that take a while", () => {
   });
 });
 
-describe("people", () => {
+describe("people and tokens", () => {
   test("the first person sets the server up, adds another, and each writes under their own id", async () => {
     const server = await thingsServer(21);
     const nobody = new SpoolClient({ url: server.url, fetch: cookies() });
@@ -795,19 +794,50 @@ describe("people", () => {
     await ada.client.signOut();
     expect((await ada.client.session()).person).toBeNull();
   });
+
+  test("an admin makes a token, which writes under its own name until it is revoked", async () => {
+    const server = await thingsServer(22);
+    const ada = await firstPerson(server);
+    const { token, secret } = await ada.client.addToken("ingest");
+    expect(token).toMatchObject({ name: "ingest", created_by: ada.person.id, last_used_at: null });
+    expect((await failureOf(ada.client.addToken("ingest"))).code).toBe("conflict");
+
+    const agent = new SpoolClient({ url: server.url, token: secret });
+    const [identity] = (await agent.mintIds({ identities: 1 })).identities;
+    const made = await agent.commit({ ops: [{ op: "create_identity", identity: identity!, entity_type: "thing" }] });
+    const { changesets } = await agent.changesets({ after: made.seq - 1 });
+    expect(changesets[0]!.changeset.actor).toBe("agent:ingest");
+
+    // A token manages neither tokens nor people.
+    expect((await failureOf(agent.tokens())).code).toBe("forbidden");
+    expect((await failureOf(agent.addToken("another"))).code).toBe("forbidden");
+
+    // The one the tests call with was made on the server's machine.
+    const listed = await ada.client.tokens();
+    expect(listed.map((each) => [each.name, each.created_by])).toEqual([
+      ["api", null],
+      ["ingest", ada.person.id],
+    ]);
+    expect(listed[1]!.last_used_at).not.toBeNull();
+
+    expect((await ada.client.revokeToken(token.id)).name).toBe("ingest");
+    expect((await failureOf(agent.info())).code).toBe("unauthorized");
+    expect((await failureOf(ada.client.revokeToken(token.id))).code).toBe("not_found");
+    expect((await server.client.info()).api).toBe("v1");
+  });
 });
 
 describe("failures", () => {
   test("a wrong token is refused", async () => {
-    const { url, client } = await thingsServer(7);
-    const stranger = new SpoolClient({ url, token: `${TOKEN}-but-wrong` });
+    const { url, client, token } = await thingsServer(7);
+    const stranger = new SpoolClient({ url, token: `${token}-but-wrong` });
     const failure = await failureOf(stranger.info());
     expect(failure.status).toBe(401);
     expect(failure.code).toBe("unauthorized");
     expect(await stranger.healthy()).toBe(true);
     expect((await client.info()).store.head).toBe(0);
     // A trailing slash on the URL is not part of the path.
-    expect((await new SpoolClient({ url: `${url}/`, token: TOKEN }).info()).api).toBe("v1");
+    expect((await new SpoolClient({ url: `${url}/`, token }).info()).api).toBe("v1");
   });
 
   test("what the server will not take is described", async () => {
@@ -834,7 +864,7 @@ describe("failures", () => {
   });
 
   test("no server at all is not healthy", async () => {
-    const nowhere = new SpoolClient({ url: "http://127.0.0.1:1", token: TOKEN });
+    const nowhere = new SpoolClient({ url: "http://127.0.0.1:1", token: "of-no-server" });
     expect(await nowhere.healthy()).toBe(false);
   });
 });

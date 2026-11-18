@@ -7,7 +7,6 @@ import { join, resolve } from "node:path";
 import { SpoolClient } from "../../client/src/index.ts";
 
 export const repository = resolve(import.meta.dir, "../../..");
-export const TOKEN = "stress-token";
 
 /**
  * The binary under test: `SPOOL_BIN`, or the release build of this checkout.
@@ -38,6 +37,8 @@ export function scratch(name: string): string {
 
 export interface Running {
   url: string;
+  /** A token of the server's, called `stress`, which `client` presents. */
+  token: string;
   client: SpoolClient;
   pid: number;
   store: string;
@@ -97,7 +98,7 @@ export async function serve({ project, store, seed, args = [], build = true }: S
       ...(seed === undefined ? [] : ["--seed", String(seed)]),
       ...args,
     ],
-    { env: { ...process.env, SPOOL_TOKEN: TOKEN }, stdout: "pipe", stderr: "pipe" },
+    { stdout: "pipe", stderr: "pipe" },
   );
 
   let complaints = "";
@@ -129,9 +130,15 @@ export async function serve({ project, store, seed, args = [], build = true }: S
     for (;;) if ((await reader.read()).done) return;
   })();
 
+  // A token is shown once, so a server started again on the same store gets
+  // a new one in place of the last.
+  Bun.spawnSync([binary(), "token", "revoke", "stress", "--store", store], { stdout: "ignore", stderr: "ignore" });
+  const token = spool("token", "add", "stress", "--store", store).trim();
+
   return {
     url,
-    client: new SpoolClient({ url, token: TOKEN }),
+    token,
+    client: new SpoolClient({ url, token }),
     pid: child.pid,
     store,
     complaints: () => complaints,
