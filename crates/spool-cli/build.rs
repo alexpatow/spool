@@ -12,11 +12,16 @@
 //! 4. in the copy that build keeps in its own output directory. The download
 //!    can be gone while the copy is still there: a cache of `target/` that
 //!    keeps only what Cargo wrote restores it that way.
+//!
+//! The last two are directories of the machine that builds. A binary built
+//! with `SPOOL_RELEASE_BUILD` set is one to give out, as a release's archives
+//! and the image are, and looks in the first two only.
 
 use std::path::{Path, PathBuf};
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-env-changed=SPOOL_RELEASE_BUILD");
     let (origin, library) = match std::env::var("CARGO_CFG_TARGET_OS").as_deref() {
         Ok("macos") => ("@executable_path", "libduckdb.dylib"),
         Ok("linux") => ("$ORIGIN", "libduckdb.so"),
@@ -24,8 +29,10 @@ fn main() {
         _ => return,
     };
     let mut search = vec![origin.to_owned(), format!("{origin}/../lib")];
-    for dir in [downloaded(library), copied(library)].into_iter().flatten() {
-        search.push(dir.display().to_string());
+    if std::env::var_os("SPOOL_RELEASE_BUILD").is_none() {
+        for dir in [downloaded(library), copied(library)].into_iter().flatten() {
+            search.push(dir.display().to_string());
+        }
     }
     for dir in search {
         println!("cargo:rustc-link-arg-bins=-Wl,-rpath,{dir}");
