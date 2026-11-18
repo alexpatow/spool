@@ -824,17 +824,44 @@ fn a_refusal_too_large_for_a_model_gives_the_first_of_its_reasons() {
         json!({ "ops": ops, "reason": "each into itself" }),
         "rejected",
     );
-    assert!(error.to_string().len() < 256 * 1024 - 16, "{error}");
+    // With what the error is wrapped in, it is no more than a tool returns.
+    let size = json!({ "error": error }).to_string().len();
+    assert!(size <= 256 * 1024, "{size}");
     let given = error["rejections"].as_array().unwrap();
     assert!(!given.is_empty() && given.len() < 5000, "{}", given.len());
     for (index, rejection) in given.iter().enumerate() {
         assert_eq!(rejection["op_index"], index, "{rejection}");
     }
-    let message = text(&error["message"]);
+    let said = text(&error["message"]);
     let count = format!("the first {}", given.len());
-    assert!(message.contains(&count), "{message}");
-    assert!(message.contains("Nothing was changed"), "{message}");
+    assert!(said.contains(&count), "{said}");
+    assert!(said.contains("Nothing was changed"), "{said}");
     assert_eq!(head(&server), 0);
+
+    // An error that repeats what the caller sent repeats the beginning of
+    // it: an argument the tool does not take, and a tool there is not.
+    let long = "x".repeat(300 * 1024);
+    let mut named = json!({ "ops": [], "reason": "nothing" });
+    named[&long] = json!(true);
+    let error = refused(&server, "commit_changeset", named, "invalid");
+    let said = text(&error["message"]);
+    assert!(said.contains("`commit_changeset`"), "{said}");
+    assert!(said.len() <= 4 * 1024, "{}", said.len());
+    let unknown = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": { "name": long, "arguments": {} },
+    });
+    let answer = message(&server, &unknown).send().json();
+    assert_eq!(
+        answer["error"]["code"], -32602,
+        "{}",
+        answer["error"]["code"]
+    );
+    let said = text(&answer["error"]["message"]);
+    assert!(said.starts_with("there is no tool called `xxx"), "{said}");
+    assert!(said.len() <= 5 * 1024, "{}", said.len());
 }
 
 #[test]

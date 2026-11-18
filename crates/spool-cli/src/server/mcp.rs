@@ -194,7 +194,7 @@ impl ServerHandler for Tools {
     ) -> Result<CallToolResponse, ErrorData> {
         let Some(tool) = self.get_tool(&request.name) else {
             return Err(ErrorData::invalid_params(
-                format!("there is no tool called `{}`", request.name),
+                format!("there is no tool called `{}`", beginning(&request.name)),
                 None,
             ));
         };
@@ -282,19 +282,19 @@ fn shortened(body: &[u8]) -> Vec<u8> {
 }
 
 fn refused(error: ApiError) -> CallToolResult {
-    let error = within_limit(error.body);
-    let body = serde_json::to_string(&ErrorResponse { error })
-        .unwrap_or_else(|_| "the call failed".to_owned());
+    let mut error = ErrorResponse { error: error.body };
+    if size(&error) > MAX_RESULT_BYTES {
+        error.error = shortened_error(error.error);
+    }
+    let body = serde_json::to_string(&error).unwrap_or_else(|_| "the call failed".to_owned());
     CallToolResult::error(vec![ContentBlock::text(body)])
 }
 
-/// An error no larger than a tool returns. A changeset can be rejected for
-/// every one of its operations, and its error then repeats each of them,
-/// twice: in `rejections` and in the message.
-fn within_limit(mut error: ErrorBody) -> ErrorBody {
-    if size(&error) <= MAX_RESULT_BYTES {
-        return error;
-    }
+/// An error too large to return, cut to what a tool returns. A changeset can
+/// be rejected for every one of its operations, and its error then repeats
+/// each of them, twice: in `rejections` and in the message. Any other error
+/// is large only by repeating at length what the caller sent.
+fn shortened_error(mut error: ErrorBody) -> ErrorBody {
     if let Some(rejections) = &mut error.rejections {
         let all = rejections.len();
         let mut room = MAX_REJECTIONS_BYTES;
@@ -315,14 +315,18 @@ fn within_limit(mut error: ErrorBody) -> ErrorBody {
              fewer operations at a time, to see the rest."
         );
     }
-    if error.message.len() > MAX_FIELD_BYTES {
-        let end = (0..=MAX_FIELD_BYTES)
-            .rev()
-            .find(|&end| error.message.is_char_boundary(end))
-            .unwrap_or(0);
-        error.message.truncate(end);
-    }
+    let kept = beginning(&error.message).len();
+    error.message.truncate(kept);
     error
+}
+
+/// As much of the beginning of a text as a field holds.
+fn beginning(text: &str) -> &str {
+    let end = (0..=text.len().min(MAX_FIELD_BYTES))
+        .rev()
+        .find(|&end| text.is_char_boundary(end))
+        .unwrap_or(0);
+    &text[..end]
 }
 
 /// How many bytes a value is as JSON.
