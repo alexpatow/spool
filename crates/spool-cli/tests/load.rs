@@ -335,6 +335,29 @@ next    `spool match` places them in identities
         )
     );
     assert_eq!(records(&server, "crm").len(), 8);
+    // After several parts, the runs are said as the first and the last.
+    write(
+        &project.join("late.csv"),
+        "id,name,country\nc-40,A,GB\nc-41,B,GB\nc-42,C,GB\nc-43,D,GB,extra\n",
+    );
+    let before = ingest_runs(&server).len();
+    let output = server
+        .spool_in(&project, &["load", "late.csv", "--batch", "1"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let complaint = text(&output.stderr);
+    let runs = ingest_runs(&server);
+    assert_eq!(runs.len(), before + 3);
+    // The latest run is listed first.
+    let (first, last) = (runs[2]["run"].clone(), runs[0]["run"].clone());
+    assert!(
+        complaint.contains(&format!(
+            "\nThis was after the first 3 rows of late.csv were loaded, in 3 runs, {first} to \
+             {last}. "
+        )),
+        "{complaint}"
+    );
 
     let output = server
         .spool_in(&project, &["load", "samples/crm-1.csv", "--batch", "0"])

@@ -152,6 +152,8 @@ pub fn load(arguments: &[String]) -> Result<(), Failure> {
         );
     }
 
+    // What is kept of a part is its counts, so that a file of any size is
+    // loaded in the memory one part takes. Only `--json` prints the runs.
     let mut runs: Vec<Value> = Vec::new();
     let mut total = Total::default();
     loop {
@@ -166,7 +168,9 @@ pub fn load(arguments: &[String]) -> Result<(), Failure> {
         let (answer, report) = send(&remote, &source.name, entity_type, &batch)
             .map_err(|failure| total.before(failure, &name))?;
         total.add(batch.num_rows() as u64, &report);
-        runs.push(answer);
+        if json {
+            runs.push(answer);
+        }
     }
 
     if json {
@@ -218,8 +222,9 @@ struct Total {
     held: u64,
     restored: u64,
     returned: u64,
-    /// The ingest runs, for a failure that comes after some succeeded.
-    runs: Vec<u64>,
+    /// How many ingest runs there were, with the first and the last, for a
+    /// failure that comes after some succeeded.
+    runs: Option<(u64, u64, u64)>,
 }
 
 impl Total {
@@ -230,7 +235,10 @@ impl Total {
         self.held += report.duplicates;
         self.restored += report.restored;
         self.returned += report.returned;
-        self.runs.push(report.run.0);
+        self.runs = Some(match self.runs {
+            Some((count, first, _)) => (count + 1, first, report.run.0),
+            None => (1, report.run.0, report.run.0),
+        });
     }
 
     /// What became of the rows, in words.
@@ -265,14 +273,17 @@ impl Total {
         if self.rows == 0 {
             return Failure::Failed(why);
         }
-        let runs: Vec<String> = self.runs.iter().map(u64::to_string).collect();
+        let runs = match self.runs {
+            Some((1, run, _)) => format!("run {run}"),
+            Some((count, first, last)) => format!("{count} runs, {first} to {last}"),
+            None => "no run".to_owned(),
+        };
         Failure::Failed(format!(
-            "{why}\nThis was after the first {} of {name} were loaded, in {} {}. In what the \
+            "{why}\nThis was after the first {} of {name} {} loaded, in {runs}. In what the \
              server says, rows are counted from the one after them. Loading the file again \
              sends them once more and adds nothing.",
             count(self.rows, "row"),
-            if runs.len() == 1 { "run" } else { "runs" },
-            runs.join(", "),
+            if self.rows == 1 { "was" } else { "were" },
         ))
     }
 }
