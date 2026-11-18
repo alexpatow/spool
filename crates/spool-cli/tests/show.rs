@@ -715,6 +715,89 @@ fn a_mention_is_shown_in_its_document() {
 }
 
 #[test]
+fn a_mention_named_by_its_place_is_the_latest_there_is() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("project");
+    write_things(&project);
+    let server = Server::serve(&project, dir.path(), 1);
+
+    // Four versions of a document, each with a mention at the same place,
+    // and a fifth with none. The IDs of documents say nothing of their
+    // order: they are hashes of the text.
+    let mention = |row: &str, code: &str, document: &str| {
+        let evidence = json!({ "document": document, "key": "a.txt", "start": 4, "end": 9 });
+        let response = server.post(
+            "/v1/ingest",
+            json!({
+                "source": "notes",
+                "entity_type": "thing",
+                "rows": [{ "id": row, "code": code, "where": evidence.to_string() }],
+            }),
+        );
+        assert_eq!(response.ok()["run"]["status"], "succeeded");
+    };
+    let mut versions = Vec::new();
+    for number in 1..=5 {
+        let text = match number {
+            5 => "Nothing is here any more.".to_owned(),
+            number => format!("The anvil, as it was in version {number}."),
+        };
+        server.call(
+            "/v1/documents",
+            json!({ "source": "notes", "documents": [{ "key": "a.txt", "text": text }] }),
+        );
+        let latest = server.read("/v1/documents?source=notes&key=a.txt&latest=true");
+        let document = latest["documents"][0]["id"].as_str().unwrap().to_owned();
+        if number < 5 {
+            mention(&format!("m{number}"), &format!("v{number}"), &document);
+        }
+        versions.push(document);
+    }
+    let mut sorted = versions[..4].to_vec();
+    sorted.sort();
+    assert_ne!(
+        sorted[0], versions[3],
+        "the test needs the fourth version not to have the lowest ID"
+    );
+
+    // The name is that of the mention in the latest version that has one.
+    let name = "notes:a.txt[4-9]";
+    let record = shown(&server, &["show", "record", name]);
+    has(&record, "key          m4");
+    has(&record, "  code    v4");
+    assert_eq!(record, shown(&server, &["show", "record", "notes:m4"]));
+
+    // A mention that was found again with other values is a version of the
+    // same record, and the name is the latest of them, as a key is.
+    mention("m4", "v4 again", &versions[3]);
+    let record = shown(&server, &["show", "record", name]);
+    has(&record, "key          m4");
+    has(&record, "  code    v4 again");
+    let explanation = shown(&server, &["explain", name, "notes:m1"]);
+    has(&explanation, "code v1 v4 again");
+
+    // Two records at one place in one version are two, and the name does
+    // not choose.
+    mention("other", "tongs", &versions[3]);
+    let (code, complaint) = refused(&server, &["show", "record", name]);
+    assert_eq!(code, Some(1));
+    let (first, second) = (
+        id_of(&server, "notes", "m4"),
+        id_of(&server, "notes", "other"),
+    );
+    assert!(
+        complaint
+            .starts_with("spool: 2 records are named `notes:a.txt[4-9]`: name one by its ID, of "),
+        "{complaint}"
+    );
+    assert!(complaint.contains(&second), "{complaint}");
+    assert!(
+        !complaint.contains(&first),
+        "the version that was replaced is not one of them"
+    );
+}
+
+#[test]
 fn a_source_and_key_name_the_latest_version_however_many_there_were() {
     let dir = tempfile::tempdir().unwrap();
     let project = dir.path().join("project");

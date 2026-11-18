@@ -5,6 +5,8 @@
 //! `--json` they print the answer itself. Nothing here decides anything: a
 //! sentence that says why comes from the engine.
 
+use std::collections::BTreeMap;
+
 use serde::Serialize;
 use serde_json::{Value, json};
 use spool::core::{
@@ -260,9 +262,7 @@ fn find_mention(
         query.truncate(2);
         query.push(("after", next.to_string()));
     }
-    // The version nothing replaced first.
-    versions.sort_by_key(|version| version.superseded_by.is_some());
-    for version in versions {
+    for version in newest_first(versions) {
         let mut found = Vec::new();
         let mut query = vec![("document", version.id.to_string())];
         loop {
@@ -276,6 +276,14 @@ fn find_mention(
             query.truncate(1);
             query.push(("after", next.to_string()));
         }
+        // A mention found again with other values is a version of the same
+        // record, at the same place: the name is the one no other replaced.
+        let ids: Vec<RecordId> = found.iter().map(|record| record.id).collect();
+        found.retain(|record| {
+            record
+                .superseded_by
+                .is_none_or(|later| !ids.contains(&later))
+        });
         match found.len() {
             0 => {}
             1 => return Ok(found.pop()),
@@ -289,6 +297,28 @@ fn find_mention(
         }
     }
     Ok(None)
+}
+
+/// The versions of one document, the one nothing replaced first and then
+/// the one each replaced. A list of documents is in the order of their
+/// IDs, which are hashes of their text and say nothing of which is newer.
+fn newest_first(versions: Vec<DocumentEntry>) -> Vec<DocumentEntry> {
+    let mut left: BTreeMap<DocumentId, DocumentEntry> = versions
+        .into_iter()
+        .map(|version| (version.id, version))
+        .collect();
+    let mut ordered = Vec::with_capacity(left.len());
+    let mut next = left
+        .values()
+        .find(|version| version.superseded_by.is_none())
+        .map(|version| version.id);
+    while let Some(version) = next.and_then(|id| left.remove(&id)) {
+        next = version.supersedes;
+        ordered.push(version);
+    }
+    // A chain that is whole leaves none.
+    ordered.extend(left.into_values());
+    ordered
 }
 
 struct View<'a> {
