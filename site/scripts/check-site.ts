@@ -229,6 +229,11 @@ async function checkBuilt(pages: Page[]) {
       if (!html.body.includes(`type="text/markdown"`)) {
         fail(page.url, "does not name its Markdown in a <link rel=\"alternate\">");
       }
+      // The stylesheet scrolls smoothly. Without this on <html>, Next's scroll
+      // to the top of a new page is cut short and the title ends up under the header.
+      if (!/<html[^>]*\sdata-scroll-behavior="smooth"/.test(html.body)) {
+        fail(page.url, "<html> has no data-scroll-behavior=\"smooth\", so a new page does not start at its top");
+      }
 
       const markdown = await get(`${page.url}.md`);
       if (markdown.status !== 200 || !markdown.type.startsWith("text/markdown")) {

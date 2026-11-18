@@ -3,6 +3,7 @@
 import * as stylex from "@stylexjs/stylex";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useRef } from "react";
 
 import {
   Sidebar,
@@ -25,6 +26,13 @@ export function DocsSidebar({ groups }: { groups: NavGroup[] }) {
   const pathname = usePathname();
   const { setOpenMobile } = useSidebar();
   const close = () => setOpenMobile(false);
+  const nav = useRef<HTMLElement>(null);
+
+  // The sidebar scrolls on its own. A page opened by its address may be one
+  // that is out of sight there, so its item is brought into view.
+  useEffect(() => {
+    nav.current?.querySelector('[aria-current="page"]')?.scrollIntoView({ block: "nearest" });
+  }, [pathname]);
 
   return (
     <Sidebar>
@@ -34,7 +42,7 @@ export function DocsSidebar({ groups }: { groups: NavGroup[] }) {
         </Link>
       </SidebarHeader>
       <SidebarContent>
-        <nav aria-label="Documentation">
+        <nav aria-label="Documentation" ref={nav}>
           {groups.map((group) => (
             <SidebarGroup key={group.title}>
               <SidebarGroupLabel>{group.title}</SidebarGroupLabel>

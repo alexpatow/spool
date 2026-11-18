@@ -17,7 +17,11 @@ export const metadata: Metadata = {
 export default function Layout({ children }: { children: ReactNode }) {
   return (
     // The script in <head> sets the theme on <html> before React hydrates.
-    <html lang="en" suppressHydrationWarning>
+    // `data-scroll-behavior` tells Next that `globals.css` scrolls smoothly, so
+    // that it goes to the top of a new page at once. Without it the scroll to
+    // the top is still under way when Next looks, and the page ends up under
+    // the header.
+    <html lang="en" data-scroll-behavior="smooth" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript() }} />
       </head>
