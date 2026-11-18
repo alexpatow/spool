@@ -2,9 +2,9 @@
 export const site = {
   name: "Spool",
   summary:
-    "Spool is a framework for entity resolution with persistent identity. It decides which records from your sources are the same real-world thing, and gives each one an ID that stays the same as data arrives.",
+    "Spool decides which records are the same real-world thing, and gives each thing an ID that stays the same as more records arrive.",
   description:
-    "Entity resolution with persistent identity: declare sources and rules as files, match records, and keep stable IDs as data changes.",
+    "Entity resolution with persistent identity. Sources and rules are files, records are matched in runs, and identities keep their IDs as data changes.",
   repository: "https://github.com/alexpatow/spool",
 } as const;
 

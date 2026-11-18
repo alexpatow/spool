@@ -1,0 +1,264 @@
+---
+title: Matching
+description: Block rules pick the pairs worth comparing, match and no-match rules judge them, and a run turns the judgements into identities without moving the ones that exist.
+---
+
+Matching answers one question about two records: are they the same thing? In Spool the answer is a **judgement**: `match`, `no_match` or `unsure`. Judgements are evidence. They are kept, and they change nothing until a run turns them into identities.
+
+The examples continue the project from [Entity types and features](/docs/concepts/entity-types-and-features), with `spool dev` running.
+
+## Three kinds of rule
+
+A rule is a SQL file that holds one condition over two rows of the feature table, `l` and `r`. The file's name is the rule's name, and the directory it is in says what kind it is.
+
+| Directory | What a rule there says |
+| --- | --- |
+| `rules/block/` | This pair is worth comparing. Pairs that no block rule finds are never compared. |
+| `rules/match/` | This pair is the same thing. |
+| `rules/no_match/` | This pair is not the same thing. It wins over every match rule. |
+
+Block rules exist because comparing every record with every other does not scale. A block rule should be a plain equality, such as `l.domain = r.domain`, so that the database can find the pairs with a join. Write one file per equality: a block rule that says `OR` compares everything with everything.
+
+For each pair the block rules find, the verdict is:
+
+1. `no_match` if any no-match rule holds,
+2. otherwise `match` if any match rule holds,
+3. otherwise no judgement at all.
+
+A condition that reads an empty feature is neither true nor false, as in SQL, so it does not hold. Two records without a domain are not matched by `l.domain = r.domain`.
+
+## Add rules
+
+Two companies with the same website domain are one company:
+
+```sql title="entities/company/rules/block/same_domain.sql"
+l.domain = r.domain
+```
+
+```sql title="entities/company/rules/match/same_domain.sql"
+l.domain = r.domain
+```
+
+Two companies in different countries are different legal entities, however alike their names:
+
+```sql title="entities/company/rules/no_match/different_country.sql"
+l.country <> r.country
+```
+
+```sh
+spool info
+```
+
+```text title="Output"
+project   .
+manifest  7f43b02916b0aa2c55771a2dd9a068cc141e77bfd81fb5afeaec053b78c4493c
+
+entity type `company`
+  features  record_id UUID, name VARCHAR, name_key VARCHAR, domain VARCHAR, country VARCHAR
+  label     name
+  sources   crm, registry
+  block     same_domain, same_name
+  no_match  different_country
+  match     same_domain, same_name
+```
+
+## Run them
+
+Load some registry rows and some more CRM rows. Each call to `/v1/ingest` takes rows of one source:
+
+```json title="batch-3-registry.json"
+{
+  "source": "registry",
+  "entity_type": "company",
+  "rows": [
+    { "number": "X001", "legal_name": "ACORN TOOLS LIMITED", "country": "GB" },
+    { "number": "X002", "legal_name": "LARKFIELD LOGISTICS", "country": "GB" }
+  ]
+}
+```
+
+```json title="batch-3-crm.json"
+{
+  "source": "crm",
+  "entity_type": "company",
+  "rows": [
+    { "id": "c-6", "name": "Acorn Hardware", "website": "https://acornhardware.example", "country": "GB" },
+    { "id": "c-7", "name": "Halden Group", "website": "https://halden.example", "country": "GB" },
+    { "id": "c-8", "name": "Halden Group", "country": "US" },
+    { "id": "c-9", "name": "Kestrel Analytics", "website": "https://kestrel-us.example", "country": "US" }
+  ]
+}
+```
+
+```sh
+curl -s -X POST http://127.0.0.1:7765/v1/ingest -H 'content-type: application/json' -d @batch-3-registry.json
+curl -s -X POST http://127.0.0.1:7765/v1/ingest -H 'content-type: application/json' -d @batch-3-crm.json
+curl -s -X POST http://127.0.0.1:7765/v1/runs -H 'content-type: application/json' -d '{"entity_type": "company"}'
+```
+
+`spool show runs` lists the runs, newest first:
+
+```sh
+spool show runs --limit 4
+```
+
+```text title="Output"
+run  kind       status     about           started
+15   reconcile  succeeded                  2026-11-18T14:59:09Z
+14   match      succeeded  company, rules  2026-11-18T14:59:09Z
+13   ingest     succeeded  company         2026-11-18T14:59:09Z
+12   ingest     succeeded  company         2026-11-18T14:59:09Z
+```
+
+A call to `/v1/runs` makes two runs: a match run, which judges pairs, and a reconcile run, which turns the judgements into identities. The match run is the one to read:
+
+```sh
+spool show runs 14
+```
+
+```text title="Output"
+run            14
+kind           match
+status         succeeded
+type           company
+strategy       rules, version 0.1.0
+started        2026-11-18T14:59:09Z
+finished       2026-11-18T14:59:09Z
+examined       6 records, 0 of them left for review before
+candidates     4 pairs
+judgements     3 match, 1 no_match, 0 unsure
+placed         6 records, 4 identities created
+left out       0 records in 0 review items
+reconciled by  run 15
+committed      log position 4, changeset 01a1ef2b-38c1-732c-9f96-08c56fdb23ec
+```
+
+```sh
+spool show records
+```
+
+```text title="Output"
+record                                type     source and key  identity
+118b3805-5b71-8a29-ec51-2a3ffc810f82  company  crm:c-5         01a1ef24-7706-701a-a707-bebd05a4f9e6
+13687e30-654c-c22c-4a23-73e8cf22f9c0  company  crm:c-1         01a1ef24-76bc-73d9-9c8c-469e735d8cdd
+29f842c5-b478-a142-da89-59e5b57b065c  company  crm:c-4         01a1ef24-76bc-73d9-9c8c-469e735d8cdd
+2aa3e6d3-813d-35c4-c75c-47f0745f9bf2  company  crm:c-2         01a1ef24-76bc-73d9-9c8c-469e735d8cdd
+640e9dcb-e50e-e952-5411-6d42706fe7e6  company  crm:c-7         01a1ef2b-e1a7-773e-94e4-8ecc23055d92
+68614bf6-fdf1-b12a-7d7d-7401f9c2a0c8  company  crm:c-3         01a1ef24-76bc-73d9-9c8c-469f8e792cfb
+70756dbb-2d71-0fe7-0ba5-0c0bc113153c  company  registry:X001   01a1ef2b-e1a7-773e-94e4-8ecd3f127e17
+947162a2-6a20-e797-ba6b-d7a84a43be41  company  crm:c-9         01a1ef24-7706-701a-a707-bebd05a4f9e6
+c4ec1a11-9238-127c-4de7-aeb1cebb2439  company  crm:c-3         01a1ef24-76bc-73d9-9c8c-469f8e792cfb
+c5e44c72-a3a5-c78c-8320-eb31d9bccbc6  company  crm:c-8         01a1ef2b-e1a7-773e-94e4-8ece7fefd930
+e914473b-fc81-cea9-4715-441c68ebb288  company  crm:c-6         01a1ef2b-e1a7-773e-94e4-8ecf45f9bd51
+f8e32210-087e-7b75-ea3d-e129291d7e4b  company  registry:X002   01a1ef24-76bc-73d9-9c8c-469f8e792cfb
+```
+
+What happened to each new record:
+
+- `registry:X002` matched Larkfield Logistics by name and joined its identity.
+- `crm:c-7` and `crm:c-8` are both Halden Group. The block rule found the pair, the no-match rule held, and they became two identities.
+- `crm:c-6` matched nothing and became an identity.
+- `crm:c-9` joined Kestrel Analytics by name. It is a US company, and `crm:c-5` was loaded with no country, so the no-match rule had nothing to compare and did not hold. If these are two companies, this is a wrong match that no rule could have caught. [Identities](/docs/concepts/identities#split) splits it.
+- `registry:X001` also matched nothing. Its `name_key` is `acorn tools limited`, which is not `acorn tools`. That is a miss, and the last section of this page fixes it.
+
+`spool explain` says which rules decided a pair:
+
+```sh
+spool explain crm:c-7 crm:c-8
+```
+
+```text title="Output"
+`crm:c-7` belongs to identity 01a1ef2b-e1a7-773e-94e4-8ecc23055d92 and `crm:c-8` to identity 01a1ef2b-e1a7-773e-94e4-8ece7fefd930.
+Run 14 (strategy `rules`) judged them `no_match` (no_match rule `different_country` held).
+Both were placed at log position 4 by `engine` (reconcile run 15, "reconcile new records").
+By the rules as they are now, block rule `same_name` makes them a candidate pair and no_match rule `different_country` holds, so they would be judged `no_match`.
+
+left   640e9dcb-e50e-e952-5411-6d42706fe7e6  crm:c-7  identity 01a1ef2b-e1a7-773e-94e4-8ecc23055d92
+right  c5e44c72-a3a5-c78c-8320-eb31d9bccbc6  crm:c-8  identity 01a1ef2b-e1a7-773e-94e4-8ece7fefd930
+
+features
+            left            right
+  country   GB              US
+  domain    halden.example  -
+  name      Halden Group    Halden Group
+  name_key  halden group    halden group
+
+rules as they are now
+  block     same_domain        cannot be decided: a feature it reads is null
+  block     same_name          holds
+  no_match  different_country  holds
+  match     same_domain        cannot be decided: a feature it reads is null
+  match     same_name          holds
+
+runs that compared them
+  run 14  rules  succeeded  block: same_name  no_match
+```
+
+## What a run does
+
+A match run has a scope: the records of one entity type that are new since the last run of that type that succeeded, plus any that an earlier run left for review. It compares new records with each other and with existing ones. It does not compare two records that are both already placed.
+
+It then reconciles the judgements with the identities that exist. The policy is fixed and conservative:
+
+1. A new record that matches members of exactly one identity, with no `no_match` against it, joins that identity.
+2. New records that match only each other form a new identity.
+3. A new record that matches members of two or more identities is left without an identity, and a [review item](/docs/concepts/review) is recorded.
+4. Existing identities are never merged or split by a run.
+
+The result is one [changeset](/docs/concepts/identities#the-log), committed by default. A run started with `"commit": false` stores it as a draft for someone to approve.
+
+When nothing is new, `POST /v1/runs` answers `{"run":null}` and does nothing.
+
+Rule 4 is the reason IDs are stable, and it makes the policy depend on the order records arrive in. Two records that arrive in one batch and match each other become one identity. The same two records, each placed in its own identity before a rule existed that matches them, stay apart until someone merges them.
+
+## Rules that get better
+
+`registry:X001` should have matched Acorn Tools. Make the transform drop legal forms from the end of a name:
+
+```sql title="transforms/name_key.sql"
+-- Lower case, and legal forms removed from the end.
+lambda name: regexp_replace(lower(trim(name)), '( (ltd|limited|inc))+$', '')
+```
+
+`spool dev` rebuilds the features. No identity changes, because both records are already placed. To see what the better rule would say about records that are placed, start a run with `rematch`, which compares every record of the type:
+
+```sh
+curl -s -X POST http://127.0.0.1:7765/v1/runs -H 'content-type: application/json' -d '{"entity_type": "company", "rematch": true}'
+```
+
+```sh
+spool show runs 16
+```
+
+```text title="Output"
+run            16
+kind           match
+status         succeeded
+type           company
+strategy       rules, version 0.1.0
+started        2026-11-18T14:59:53Z
+finished       2026-11-18T14:59:53Z
+examined       0 records, 0 of them left for review before
+candidates     11 pairs
+judgements     10 match, 1 no_match, 0 unsure
+placed         0 records, 0 identities created
+left out       0 records in 0 review items
+reconciled by  run 17
+committed      nothing to commit
+
+suggested merge: 01a1ef24-76bc-73d9-9c8c-469e735d8cdd and 01a1ef2b-e1a7-773e-94e4-8ecd3f127e17 (3 match, 0 no_match between their members)
+```
+
+The run placed nothing and moved nothing. It reports a **suggested merge**: two identities with matches between their members. A person or an agent who agrees merges them, which [Identities](/docs/concepts/identities#merge) shows. A rematch reports suggested splits the same way, when a no-match rule holds between two members of one identity.
+
+This is deliberate. A better matcher run over old data produces a list of suggestions, not a change to IDs that other systems have stored.
+
+## Other ways to judge
+
+SQL rules are the built-in strategy. A project can also hold strategies written in Python or TypeScript under `entities/<type>/strategies/`, which the server runs as child processes with `uv` or `bun`. They read candidate pairs and write judgements, and the same policy reconciles them. A caller can also open a run, fetch the candidates over the API and send judgements of its own. Both are built, and their pages are not written yet.
+
+## Not yet
+
+- The reconciliation policy cannot be changed. A `policy.toml` in an entity type's directory is listed by `spool info` as not used by this version.
+- There is no rule kind that says `unsure`. Only a strategy written in code, or a caller that sends its own judgements, can.
+- Rules compare records of one entity type. There is no matching across types.

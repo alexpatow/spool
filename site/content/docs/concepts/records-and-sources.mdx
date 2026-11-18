@@ -1,0 +1,128 @@
+---
+title: Records and sources
+description: A record is a row as a source sent it. It is never changed, its ID comes from its content, and a changed row becomes a new version.
+---
+
+A **source** is a place rows come from: a CRM export, a company registry, a table in your warehouse. A **record** is one row from a source, kept as it arrived.
+
+The examples here continue the `companies` project from [Getting started](/docs/getting-started), with `spool dev` running.
+
+## A source is a file
+
+Each source is a YAML file under `sources/`, and the file's name is the source's name. It lists the columns a row may have and names the one that is the row's key:
+
+```yaml title="sources/crm.yaml"
+key: id
+columns: [id, name, website, country]
+```
+
+This adds two columns to the source from Getting started. `spool dev` applies the change when the file is saved. Rows that were loaded before stay as they are, with no value for the new columns.
+
+A source says nothing about what its rows mean. Which entity type they describe, and how they are compared, is in the entity type's [mapping](/docs/concepts/entity-types-and-features).
+
+## What a record holds
+
+```sh
+spool show records crm:c-1
+```
+
+```text title="Output"
+record    13687e30-654c-c22c-4a23-73e8cf22f9c0
+type      company
+source    crm
+key       c-1
+ingested  2026-11-18T14:59:45Z by run 1
+identity  01a1ef24-76bc-73d9-9c8c-469e735d8cdd
+
+payload
+  id    c-1
+  name  Acorn Tools
+```
+
+- **`record`** is the record's ID. It is derived from the source, the key and the row's content, so the same row always gets the same ID, on any machine.
+- **`payload`** is the row exactly as it was sent. Spool never rewrites it. What rules compare is computed from it, and can be computed again when you change how.
+- **`identity`** is the identity the record belongs to, once a run has placed it.
+
+A record is named by its ID, or as `source:key`, which names the latest version of that row.
+
+## Loading the same row twice does nothing
+
+A pipeline can send everything it has every time. Rows the server already holds are counted and ignored:
+
+```sh
+curl -s -X POST http://127.0.0.1:7765/v1/ingest -H 'content-type: application/json' -d @batch-1.json
+```
+
+```text title="Output"
+{"run":{"run":7,"kind":"ingest","status":"succeeded","entity_type":"company","strategy":null,"extractor":null,"started_at":"2026-11-18T14:58:18.800086Z","finished_at":"2026-11-18T14:58:18.804399Z","error":null,"ingest":{"run":7,"received":3,"inserted":0,"duplicates":3,"superseded":0},"extraction":null,"resolution":null}}
+```
+
+`"inserted":0,"duplicates":3`: nothing was added.
+
+## A changed row is a new version
+
+When a row arrives with a key the server has seen and content it has not, the row becomes a new record that replaces the earlier one. Send `c-3` again with a website and a country:
+
+```sh
+curl -s -X POST http://127.0.0.1:7765/v1/ingest -H 'content-type: application/json' -d '{"source": "crm", "entity_type": "company", "rows": [{"id": "c-3", "name": "Larkfield Logistics", "website": "https://www.larkfield.example", "country": "GB"}]}'
+```
+
+```text title="Output"
+{"run":{"run":8,"kind":"ingest","status":"succeeded","entity_type":"company","strategy":null,"extractor":null,"started_at":"2026-11-18T14:58:18.814618Z","finished_at":"2026-11-18T14:58:18.818932Z","error":null,"ingest":{"run":8,"received":1,"inserted":1,"duplicates":0,"superseded":1},"extraction":null,"resolution":null}}
+```
+
+`"superseded":1` says one earlier version was replaced. Both versions are kept:
+
+```sh
+spool show records --source crm --key c-3
+```
+
+```text title="Output"
+record                                type     source and key  identity
+68614bf6-fdf1-b12a-7d7d-7401f9c2a0c8  company  crm:c-3         01a1ef24-76bc-73d9-9c8c-469f8e792cfb
+c4ec1a11-9238-127c-4de7-aeb1cebb2439  company  crm:c-3         -
+```
+
+The new version has no identity yet. The next run gives it the identity of the version it replaces, whatever the rules say about the pair:
+
+```sh
+curl -s -X POST http://127.0.0.1:7765/v1/runs -H 'content-type: application/json' -d '{"entity_type": "company"}'
+```
+
+```sh
+spool show records --source crm --key c-3
+```
+
+```text title="Output"
+record                                type     source and key  identity
+68614bf6-fdf1-b12a-7d7d-7401f9c2a0c8  company  crm:c-3         01a1ef24-76bc-73d9-9c8c-469f8e792cfb
+c4ec1a11-9238-127c-4de7-aeb1cebb2439  company  crm:c-3         01a1ef24-76bc-73d9-9c8c-469f8e792cfb
+```
+
+The earlier version stays a member of the identity and can still be matched by later records. That keeps history intact, and it has a cost you will meet in [Review](/docs/concepts/review): an old version that lacks a value can match something the new version would not.
+
+One case to know: a row that changes from A to B and back to A ends at B. The second A is content the server has already seen under that key, so it is a duplicate and is ignored.
+
+## What is refused
+
+A row with a column its source does not list is refused, and so is the whole call:
+
+```sh
+curl -s -X POST http://127.0.0.1:7765/v1/ingest -H 'content-type: application/json' -d '{"source": "crm", "entity_type": "company", "rows": [{"id": "c-6", "name": "Acorn Hardware", "city": "Leeds"}]}'
+```
+
+```text title="Output"
+{"error":{"code":"invalid","message":"ingest rejected: the rows have a column `city`, which sources/crm.yaml does not list"}}
+```
+
+Rows are also refused when their source has no file, or when the entity type's mapping has no block for that source. A column that a row leaves out is fine: it is empty for that record.
+
+## Rows in bulk
+
+`POST /v1/ingest` takes rows as JSON, as on this page, or as an [Apache Arrow](https://arrow.apache.org) IPC stream, a binary format for tables, with `source` and `entity_type` in the query string. A call may be 256 MiB at most. The same rows become the same records either way.
+
+## Not yet
+
+- A record cannot be deleted or retracted. A row that disappears from its source stays in Spool.
+- Nothing reads from a database or a file for you. Something you run sends the rows.
+- Records can also come from text, through an extractor that finds mentions in documents. That is built, and its page is not written yet.

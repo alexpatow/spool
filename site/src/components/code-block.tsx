@@ -15,9 +15,14 @@ function textOf(node: ReactNode): string {
 /**
  * A fenced code block. The colours were worked out when the site was built:
  * every token carries a light and a dark one, and `globals.css` picks by
- * theme. A block written with `title="…"` shows it as a file name.
+ * theme. A block written with `title="…"` shows it as a file name. A block
+ * that is a transcript, not something to paste, is given `copy={false}`.
  */
-export function CodeBlock({ title, children }: ComponentProps<"pre">) {
+export function CodeBlock({
+  title,
+  children,
+  copy = true,
+}: ComponentProps<"pre"> & { copy?: boolean }) {
   // MDX wraps the lines in a `code` element; render its lines in ours, so the
   // inline-code style does not apply.
   const lines = isValidElement<{ children?: ReactNode }>(children)
@@ -32,9 +37,11 @@ export function CodeBlock({ title, children }: ComponentProps<"pre">) {
         <pre className={`shiki ${stylex.props(styles.pre).className ?? ""}`} tabIndex={0}>
           <code {...stylex.props(styles.code)}>{lines}</code>
         </pre>
-        <div {...stylex.props(styles.copy)}>
-          <CopyButton text={text} />
-        </div>
+        {copy ? (
+          <div {...stylex.props(styles.copy)}>
+            <CopyButton text={text} />
+          </div>
+        ) : null}
       </div>
     </figure>
   );

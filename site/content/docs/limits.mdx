@@ -1,0 +1,99 @@
+---
+title: Limits
+description: What Spool is not meant for, what fits better in those cases, what it does not do yet, and what is awkward today.
+---
+
+Read this page before you decide to use Spool. It lists what Spool is not designed to do and what to use instead, what it will do and does not yet, how large it has been run, and what works but is awkward. If you want to see what it does do, [Getting started](/docs/getting-started) runs it.
+
+## Not meant for
+
+These follow from the design and are not planned to change.
+
+- **Deduplicating one file once.** Spool exists to keep IDs the same as data arrives over time. If you have one file, will never get another, and nobody stores the IDs, it is more than you need.
+- **A decision per record, in the request.** Rows are loaded in batches and matched by runs. Loading a row does not answer whether it is a duplicate. A run over a small batch takes well under a second, and it is still a second call.
+- **Streaming.** There is no connection to Kafka or to a change feed. Something else has to collect rows and send them.
+- **Many writers or many machines.** One server process owns one file of [DuckDB](https://duckdb.org), a database that runs inside the process. It uses the cores and memory of one machine. There is no replication and no clustering.
+- **Many tenants in one server.** A store holds one project. Separate customers need separate servers.
+- **Embedding.** There are no Python or Node bindings. Your code calls the server over HTTP.
+- **Golden records.** Spool says which records are one thing. It does not produce one merged record with the best name and address, which is sometimes called a golden record, and it does not write anything back to a source.
+- **Matching with no rules.** The built-in matcher runs SQL conditions that you write, which can use DuckDB's functions for similar strings. There is no trained model inside. A model can be plugged in as a strategy, which is your own code in Python or TypeScript.
+
+## What fits better
+
+This is what we would reach for in the cases above. It is from reading each project's code and documentation in November 2026, not from running them side by side.
+
+| If you want | Look at | Why |
+| --- | --- | --- |
+| To deduplicate or link tables once, with a statistical model and no labelled examples | [Splink](https://github.com/moj-analytical-services/splink) | A Python library that generates SQL for DuckDB or Spark. It scores pairs and clusters them. Its cluster IDs come from one run and change when the data does. |
+| A matcher that learns from pairs you label | [dedupe](https://github.com/dedupeio/dedupe), or [Zingg](https://github.com/zinggAI/zingg) on Spark | Both ask you to label examples and train a model from them. Neither keeps identities between runs in its open-source form. |
+| Each record resolved the moment it arrives | [Senzing](https://senzing.com) | A proprietary engine built for that. Its entity IDs can move as data loads. |
+| Exact matching on a key you trust | A join in your database | If two rows are the same thing whenever a tax number is equal, you do not need a matcher. |
+| Stable IDs for people and companies in sanctions and due-diligence data | [nomenklatura](https://github.com/opensanctions/nomenklatura) | The Python library behind OpenSanctions. It keeps judgements and derives IDs from them, for data in the FollowTheMoney format. |
+
+Splink also fits beside Spool: a strategy can run it to judge pairs, and Spool keeps the identities.
+
+## Not yet
+
+### Getting it
+
+- No release, no package and no container image is published. You build from source with Rust 1.89 or later, as [Getting started](/docs/getting-started) shows.
+- The built binary depends on files inside the checkout it was built in, so it cannot be copied to another machine.
+- It is tested on Linux on x86-64, and these pages were run on macOS on Apple silicon. Windows is untried.
+
+### Loading and matching
+
+- No command loads rows or starts a run. Both are HTTP calls.
+- There are no connectors. Spool does not read a database, a warehouse or a file store by itself.
+- A row cannot be deleted or retracted. A record, once loaded, stays, which also means there is no way to remove a person's data on request.
+- When a run places a record, when it starts an identity and when it leaves a record for review is fixed. No setting changes that.
+- Rules compare records of one entity type. Nothing matches a company against a person.
+- An entity type is declared in the project's files. It cannot be added through the API.
+- No built-in rule can say `unsure`. A pair is matched, kept apart, or not judged.
+- Features are computed by SQL expressions only.
+- Documents must be text. Spool does not read PDFs or images.
+
+### Access
+
+- A token has full access to the API. There are no read-only tokens and no tokens limited to one entity type.
+- Tokens do not expire. They can be revoked.
+- People sign in with a username and password. There is no single sign-on.
+
+### Clients
+
+- There is no published client library. A TypeScript client exists in the repository and is not on npm. There is no Python client.
+- The command line can show and explain. It cannot merge, split, undo or decide a review item. Those are HTTP calls, or buttons in the browser interface.
+- Nothing is pushed to other systems when an identity changes. A consumer reads the log from the position it last saw.
+
+### Operating it
+
+- There is no backup command. A backup is a copy of the store file, taken while the server is stopped.
+- The format of the store can change before the first release, with no promise of a migration.
+- Nothing notifies anyone that review items are waiting, and review items cannot be assigned to a person.
+
+## How large
+
+The repository's benchmarks ran the built-in rules on public data, on four cores and 16 GB of memory:
+
+| Data | Records | Seconds | Peak memory |
+| --- | ---: | ---: | ---: |
+| North Carolina voters, five sources | 500,323 | 15 | 1.4 GB |
+| North Carolina voters, five sources | 5,000,000 | 210 | 13.4 GB |
+| MusicBrainz songs, five sources | 193,750 | 8 | 0.7 GB |
+| MusicBrainz songs, five sources | 1,937,500 | 67 | 4.3 GB |
+
+Those are whole data sets matched from nothing. Memory grows with the number of pairs that are compared, so blocking rules decide how far one machine goes. Nothing larger than 5,000,000 records has been tried. The scenarios and the method are in the repository's [`benchmarks/`](https://github.com/alexpatow/spool/tree/main/benchmarks) directory.
+
+A request to the API may be 256 MiB at most.
+
+## Awkward today
+
+Found while writing these pages by running every command in them. Each one works and costs the reader something.
+
+- After `cargo build` there is no install step. Each terminal needs `export PATH`, and the checkout has to stay where it is.
+- `spool init` ends with a project and nothing to load into it.
+- The API answers in JSON on one line. `spool show` is the readable way to see what a call did.
+- An identity is addressed only by its ID, which differs on every machine, so each correction starts with a lookup. A record can be named `crm:c-1` on the command line, and only by its long ID in a changeset.
+- A second server on one machine fails with `Address already in use` until one of them is given `--listen`.
+- `spool dev` says nothing when a broken file is fixed by removing it.
+- An earlier version of a row stays a member of its identity and still matches. A row that was corrected can produce a review item through the version it replaced. [Review](/docs/concepts/review#dismiss-one) has an example.
+- Strategies and extractors need `uv` or `bun` on the machine, and nothing says so until one is run.

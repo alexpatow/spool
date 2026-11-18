@@ -1,4 +1,13 @@
 {
   "title": "Docs",
-  "pages": ["---Start---", "index"]
+  "pages": [
+    "---Start---",
+    "index",
+    "getting-started",
+    "limits",
+    "---Concepts---",
+    "...concepts",
+    "---Reference---",
+    "project-structure"
+  ]
 }

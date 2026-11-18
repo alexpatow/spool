@@ -1,0 +1,327 @@
+---
+title: Getting started
+description: Build Spool from source, scaffold a project, load rows, match them, and see identities keep their IDs when more rows arrive.
+---
+
+This page takes you from nothing to a running server that has matched some company records and given each company an ID. It takes about ten minutes.
+
+Nothing is published yet: there is no release, package or container image. So the first step is a build from source.
+
+## What you need
+
+- Rust 1.89 or later, with `cargo`. [rustup](https://rustup.rs) installs both.
+- `git` and `curl`.
+- macOS or Linux. Windows has not been tried.
+
+## Build the binary
+
+{/* sample: skip the check runs against a binary built from the checkout it is in */}
+
+```sh
+git clone https://github.com/alexpatow/spool.git
+cd spool
+cargo build --release --locked -p spool-cli
+```
+
+The build downloads the DuckDB library it links against, so it needs the network. It took one minute on an Apple silicon laptop. The result is one binary, `target/release/spool`. Put it on your search path for this terminal:
+
+{/* sample: skip the check puts its own binary on the search path */}
+
+```sh
+export PATH="$PWD/target/release:$PATH"
+```
+
+You will open a second terminal later. Run the same line there, from the `spool` directory. Leave the checkout where it is: the binary loads the DuckDB library from the checkout's `target` directory.
+
+```sh
+spool --version
+```
+
+```text title="Output"
+spool 0.1.0
+```
+
+## Create a project
+
+A Spool project is a directory of files. `spool init` writes a small one. Run it somewhere outside the checkout:
+
+```sh
+spool init companies --entity company --source crm
+cd companies
+```
+
+```text title="Output"
+created   companies/entities/company
+
+The entity type `company` takes rows from the source `crm` and matches
+those whose `name` is the same but for case.
+Edit sources/crm.yaml, entity.yaml and the rules to say what your rows
+hold and what makes two of them the same thing.
+
+  spool info    lists what the project declares
+  spool dev     runs the server on localhost and applies your changes as you save
+```
+
+It declares one source of rows, `crm`, and one entity type, `company`. These are the files that matter.
+
+The source says which column tells one row from another, and which columns a row may have:
+
+{/* sample: existing */}
+
+```yaml title="sources/crm.yaml"
+# A source of rows. `key` is the column that tells one row from another, and
+# `columns` is every column a row may have.
+key: id
+columns: [id, name]
+```
+
+The entity type says what companies are compared by. Each feature comes from a column of the source, as it is or through a transform:
+
+{/* sample: existing */}
+
+```yaml title="entities/company/entity.yaml"
+# `features` is what records are compared by, and `label` is the feature a
+# record is called by. `mapping` says, for each source, which column each
+# feature comes from, and the transform it goes through if it needs one.
+label: name
+features: [name, name_key]
+
+mapping:
+  crm:
+    name: name
+    name_key: { from: name, transform: name_key }
+```
+
+A transform is one SQL expression. This one makes names comparable whatever their case:
+
+{/* sample: existing */}
+
+```sql title="transforms/name_key.sql"
+-- A transform is `lambda`, the names of its arguments, and a DuckDB
+-- expression over them.
+lambda name: lower(trim(name))
+```
+
+A match rule is a SQL condition over two rows of features, `l` and `r`. This one says two records with the same `name_key` are the same company:
+
+{/* sample: existing */}
+
+```sql title="entities/company/rules/match/same_name.sql"
+-- A match rule says a pair is the same thing. A file under rules/no_match/
+-- says a pair is not, and wins over any match rule.
+l.name_key = r.name_key
+```
+
+There is a block rule with the same condition in `entities/company/rules/block/same_name.sql`. Block rules decide which pairs get compared at all. [Matching](/docs/concepts/matching) explains why there are two kinds.
+
+`spool info` reads the directory, checks every file and lists what it found:
+
+```sh
+spool info
+```
+
+```text title="Output"
+project   .
+manifest  0348febc994b9f1fa46efc552547ce0b7a5c8c73fa88b81a4df2ca718c797414
+
+entity type `company`
+  features  record_id UUID, name VARCHAR, name_key VARCHAR
+  label     name
+  sources   crm
+  block     same_name
+  no_match  (none)
+  match     same_name
+```
+
+## Start the server
+
+{/* sample: background */}
+
+```sh
+spool dev
+```
+
+```text title="Output"
+project   .
+store     ./.spool/dev.duckdb
+applied   0348febc994b9f1fa46efc552547ce0b7a5c8c73fa88b81a4df2ca718c797414 (declared company)
+accounts  ./.spool/dev.auth.sqlite
+listening on http://127.0.0.1:7765
+studio    http://127.0.0.1:7765/
+mcp       http://127.0.0.1:7765/mcp
+```
+
+`spool dev` runs the server on this machine only, with its data in `.spool/dev.duckdb` inside the project. Nobody has to sign in. It keeps running until you press Ctrl-C, and it applies changes to the project's files as you save them.
+
+Leave it running. Open a second terminal, put `spool` on the search path there as before, and change to the `companies` directory.
+
+## Load rows
+
+There is no command that loads rows yet. Rows go to the server's HTTP API, so this page uses `curl`.
+
+Save three rows as a file. Two of them are the same company written differently:
+
+```json title="batch-1.json"
+{
+  "source": "crm",
+  "entity_type": "company",
+  "rows": [
+    { "id": "c-1", "name": "Acorn Tools" },
+    { "id": "c-2", "name": "ACORN TOOLS" },
+    { "id": "c-3", "name": "Larkfield Logistics" }
+  ]
+}
+```
+
+Send it:
+
+```sh
+curl -s -X POST http://127.0.0.1:7765/v1/ingest -H 'content-type: application/json' -d @batch-1.json
+```
+
+```text title="Output"
+{"run":{"run":1,"kind":"ingest","status":"succeeded","entity_type":"company","strategy":null,"extractor":null,"started_at":"2026-11-18T14:51:46.703613Z","finished_at":"2026-11-18T14:51:46.714356Z","error":null,"ingest":{"run":1,"received":3,"inserted":3,"duplicates":0,"superseded":0},"extraction":null,"resolution":null}}
+```
+
+The answer is one line of JSON. The part to read is `"inserted":3`: each row is now a record. Records have no identity yet, because loading does not match.
+
+## Match
+
+A match run compares the records that are new and places them in identities:
+
+```sh
+curl -s -X POST http://127.0.0.1:7765/v1/runs -H 'content-type: application/json' -d '{"entity_type": "company"}'
+```
+
+The answer is JSON again. `spool show` prints the same run so that it can be read:
+
+```sh
+spool show runs 2
+```
+
+```text title="Output"
+run            2
+kind           match
+status         succeeded
+type           company
+strategy       rules, version 0.1.0
+started        2026-11-18T14:51:46Z
+finished       2026-11-18T14:51:46Z
+examined       3 records, 0 of them left for review before
+candidates     1 pair
+judgements     1 match, 0 no_match, 0 unsure
+placed         3 records, 2 identities created
+left out       0 records in 0 review items
+reconciled by  run 3
+committed      log position 1, changeset 01a1ef24-76bc-73d9-9c8c-46a0035cb84d
+```
+
+One pair shared a `name_key`, the match rule held for it, and the three records became two identities:
+
+```sh
+spool show records
+```
+
+```text title="Output"
+record                                type     source and key  identity
+13687e30-654c-c22c-4a23-73e8cf22f9c0  company  crm:c-1         01a1ef24-76bc-73d9-9c8c-469e735d8cdd
+2aa3e6d3-813d-35c4-c75c-47f0745f9bf2  company  crm:c-2         01a1ef24-76bc-73d9-9c8c-469e735d8cdd
+68614bf6-fdf1-b12a-7d7d-7401f9c2a0c8  company  crm:c-3         01a1ef24-76bc-73d9-9c8c-469f8e792cfb
+```
+
+`crm:c-1` and `crm:c-2` have the same identity. That ID is the company's ID. It was minted when the identity was created, so yours differs from the one shown here. The record IDs on the left are derived from each row's content, so yours are the same as these.
+
+## Send more rows
+
+The point of Spool is what happens next. Save a second batch: another spelling of Acorn Tools, and a company that is new.
+
+```json title="batch-2.json"
+{
+  "source": "crm",
+  "entity_type": "company",
+  "rows": [
+    { "id": "c-4", "name": "Acorn tools" },
+    { "id": "c-5", "name": "Kestrel Analytics" }
+  ]
+}
+```
+
+Load it and match again:
+
+```sh
+curl -s -X POST http://127.0.0.1:7765/v1/ingest -H 'content-type: application/json' -d @batch-2.json
+curl -s -X POST http://127.0.0.1:7765/v1/runs -H 'content-type: application/json' -d '{"entity_type": "company"}'
+```
+
+```sh
+spool show records
+```
+
+```text title="Output"
+record                                type     source and key  identity
+118b3805-5b71-8a29-ec51-2a3ffc810f82  company  crm:c-5         01a1ef24-7706-701a-a707-bebd05a4f9e6
+13687e30-654c-c22c-4a23-73e8cf22f9c0  company  crm:c-1         01a1ef24-76bc-73d9-9c8c-469e735d8cdd
+29f842c5-b478-a142-da89-59e5b57b065c  company  crm:c-4         01a1ef24-76bc-73d9-9c8c-469e735d8cdd
+2aa3e6d3-813d-35c4-c75c-47f0745f9bf2  company  crm:c-2         01a1ef24-76bc-73d9-9c8c-469e735d8cdd
+68614bf6-fdf1-b12a-7d7d-7401f9c2a0c8  company  crm:c-3         01a1ef24-76bc-73d9-9c8c-469f8e792cfb
+```
+
+`crm:c-4` joined the identity that `crm:c-1` and `crm:c-2` already had, and that identity kept its ID. `crm:c-5` got a new one. Nothing that was placed before moved. Anything that stored the first ID still points at the right company.
+
+## Ask why
+
+`spool explain` takes two records and says why they share an identity, or why they do not. A record is named by its source and key:
+
+```sh
+spool explain crm:c-1 crm:c-4
+```
+
+```text title="Output"
+`crm:c-1` and `crm:c-4` belong to the same identity, 01a1ef24-76bc-73d9-9c8c-469e735d8cdd.
+Run 5 (strategy `rules`) judged them `match` (match rule `same_name` held).
+`crm:c-1` was placed at log position 1 by `engine` (reconcile run 3, "reconcile new records").
+`crm:c-4` was placed at log position 2 by `engine` (reconcile run 6, "reconcile new records").
+By the rules as they are now, block rule `same_name` makes them a candidate pair and match rule `same_name` holds, so they would be judged `match`.
+
+left   13687e30-654c-c22c-4a23-73e8cf22f9c0  crm:c-1  identity 01a1ef24-76bc-73d9-9c8c-469e735d8cdd
+right  29f842c5-b478-a142-da89-59e5b57b065c  crm:c-4  identity 01a1ef24-76bc-73d9-9c8c-469e735d8cdd
+
+features
+            left         right
+  name      Acorn Tools  Acorn tools
+  name_key  acorn tools  acorn tools
+
+rules as they are now
+  block  same_name  holds
+  match  same_name  holds
+
+runs that compared them
+  run 5  rules  succeeded  block: same_name  match
+```
+
+## Look at it in a browser
+
+The server has a browser interface, the studio, at the address `spool dev` printed: [http://127.0.0.1:7765/](http://127.0.0.1:7765/). It shows the same records, identities, runs and explanations, and it can make changes: merge two identities, split one, undo a change.
+
+## Stop and start again
+
+Press Ctrl-C in the first terminal to stop the server. The data stays in `.spool/dev.duckdb`, and `spool dev` picks it up the next time. To start from nothing, stop the server and delete the `.spool` directory.
+
+The pages under Concepts go on from here with the same project, so keep the server running if you want to follow them.
+
+## What was awkward
+
+Some of this is rougher than it should be, and it is better to say so:
+
+- You built from source, because nothing is published.
+- Loading and matching were raw HTTP calls that answer in JSON. The command line can show and explain, but it cannot load rows or start a run.
+- `spool init` gives you a project and no rows to try it with.
+
+[Limits](/docs/limits) has the full list of what Spool does not do yet.
+
+## Next
+
+- [Project structure](/docs/project-structure): every file a project can have.
+- [Records and sources](/docs/concepts/records-and-sources): what happens to a row when it is loaded, and when it changes.
+- [Matching](/docs/concepts/matching): block rules, match rules and what a run does.
+- [Identities](/docs/concepts/identities): why IDs stay, and how to merge, split and undo.

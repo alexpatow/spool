@@ -1,0 +1,221 @@
+---
+title: Review
+description: What a run will not decide is kept as a review item for a person or an agent, and a run can leave its whole changeset as a draft to approve.
+---
+
+A run decides the easy cases and leaves the rest. What it leaves is recorded, so the question outlives the run and someone can answer it later. There are two things to review: **review items**, which are records a run would not place, and **drafts**, which are changesets a run was told not to commit.
+
+The examples continue the project from [Identities](/docs/concepts/identities), with `spool dev` running.
+
+## A record that fits two identities
+
+Load a row that has the name of one company and the website of another, and run:
+
+```sh
+curl -s -X POST http://127.0.0.1:7765/v1/ingest -H 'content-type: application/json' -d '{"source": "crm", "entity_type": "company", "rows": [{"id": "c-10", "name": "Acorn Tools", "website": "http://acornhardware.example/shop", "country": "GB"}]}'
+curl -s -X POST http://127.0.0.1:7765/v1/runs -H 'content-type: application/json' -d '{"entity_type": "company"}'
+```
+
+```sh
+spool show review
+```
+
+```text title="Output"
+item  kind            status  type     holds     matched       raised by
+1     possible_merge  open    company  1 record  3 identities  run 20
+```
+
+```sh
+spool show review 1
+```
+
+```text title="Output"
+review item  1
+kind         possible_merge
+status       open
+type         company
+raised by    reconcile run 20
+
+record                                source and key
+4a14a801-4891-2ec5-6511-a2fd929db844  crm:c-10
+
+identities they matched
+  01a1ef24-76bc-73d9-9c8c-469e735d8cdd
+  01a1ef2b-e1a7-773e-94e4-8ecd3f127e17
+  01a1ef2b-e1a7-773e-94e4-8ecf45f9bd51
+```
+
+The record matched Acorn Tools and ACORN TOOLS LIMITED by name and Acorn Hardware by domain. Joining any of them would be a guess, and joining all would merge identities, which a run never does. So the record has no identity, and a `possible_merge` item says why.
+
+The other kind of item is a `conflict`: the record matches an identity and a no-match rule holds between it and a member of that identity. The evidence contradicts itself.
+
+## Decide it
+
+A reviewer who knows that `c-10` is Acorn Hardware places it there with a changeset of one `assign`:
+
+```sh
+curl -s -X POST http://127.0.0.1:7765/v1/changesets -H 'content-type: application/json' -d '{"reason": "the shop belongs to Acorn Hardware", "ops": [{"op": "assign", "record": "4a14a801-4891-2ec5-6511-a2fd929db844", "to": "<identity of crm:c-6>"}]}'
+```
+
+Replace `<identity of crm:c-6>` with the ID `spool show records crm:c-6` prints as `identity`. The record is `crm:c-10`, named by its ID, which `spool show review 1` printed.
+
+```sh
+spool show review
+```
+
+```text title="Output"
+item  kind            status    type     holds     matched       raised by
+1     possible_merge  resolved  company  1 record  3 identities  run 20
+```
+
+The item closed by itself. An item is open while any of its records has no identity, and any changeset that places the last one resolves it.
+
+An item closes in one of three ways:
+
+- **Resolved.** A changeset gave its records an identity. A reviewer may have written it, or a later run.
+- **Superseded.** A later run looked at the records again and raised an item that differs.
+- **Dismissed.** A reviewer closed it without placing the records.
+
+Open items are looked at again by every later run of their entity type. If the reviewer had merged the identities, or fixed a rule so that the record matched only one of them, the next run would have placed the record and resolved the item.
+
+The studio shows each open item as a card: the record beside the identities it matched, field by field, with what the run found for each pair. The decisions are buttons on the card.
+
+## Dismiss one
+
+Some records should stay out. Load a registry row for a US company with the name of a British one:
+
+```sh
+curl -s -X POST http://127.0.0.1:7765/v1/ingest -H 'content-type: application/json' -d '{"source": "registry", "entity_type": "company", "rows": [{"number": "X003", "legal_name": "Larkfield Logistics", "country": "US"}]}'
+curl -s -X POST http://127.0.0.1:7765/v1/runs -H 'content-type: application/json' -d '{"entity_type": "company"}'
+```
+
+```sh
+spool show review --status open
+```
+
+```text title="Output"
+item  kind      status  type     holds     matched     raised by
+2     conflict  open    company  1 record  1 identity  run 23
+```
+
+This is a `conflict`, and `spool explain` shows where it comes from:
+
+```sh
+spool explain registry:X003 crm:c-3
+```
+
+```text title="Output"
+`crm:c-3` belongs to identity 01a1ef24-76bc-73d9-9c8c-469f8e792cfb. `registry:X003` has no identity.
+Run 22 (strategy `rules`) judged them `no_match` (no_match rule `different_country` held).
+`crm:c-3` was placed at log position 3 by `engine` (reconcile run 10, "reconcile new records").
+Review item 2 (`conflict`) is open and names `registry:X003`: the evidence about it contradicts itself, which is left to a reviewer.
+By the rules as they are now, block rule `same_name` makes them a candidate pair and no_match rule `different_country` holds, so they would be judged `no_match`.
+
+left   c4ec1a11-9238-127c-4de7-aeb1cebb2439  crm:c-3        identity 01a1ef24-76bc-73d9-9c8c-469f8e792cfb
+right  dca899da-46ff-a1fa-2a52-756bcfae80e9  registry:X003  no identity
+
+features
+            left                 right
+  country   GB                   US
+  domain    larkfield.example    -
+  name      Larkfield Logistics  Larkfield Logistics
+  name_key  larkfield logistics  larkfield logistics
+
+rules as they are now
+  block     same_domain        cannot be decided: a feature it reads is null
+  block     same_name          holds
+  no_match  different_country  holds
+  match     same_domain        cannot be decided: a feature it reads is null
+  match     same_name          holds
+
+runs that compared them
+  run 22  rules  succeeded  block: same_name  no_match
+
+review items that name them
+  item 2 (conflict, open)
+```
+
+`crm:c-3` names the latest version of that row, which is in GB, so the no-match rule holds. The identity also holds the first version of `crm:c-3`, loaded before the source had a country. That version matches `registry:X003` by name, and no rule speaks against it. One member says yes and another says no, so the run left it.
+
+This is the cost of keeping earlier versions that [Records and sources](/docs/concepts/records-and-sources#a-changed-row-is-a-new-version) mentioned. A reviewer who decides the US company is not one to track dismisses the item:
+
+```sh
+curl -s -X POST http://127.0.0.1:7765/v1/review/2/dismiss -H 'content-type: application/json' -d '{"reason": "a US company we do not track"}'
+```
+
+```sh
+spool show review
+```
+
+```text title="Output"
+item  kind            status     type     holds     matched       raised by
+1     possible_merge  resolved   company  1 record  3 identities  run 20
+2     conflict        dismissed  company  1 record  1 identity    run 23
+```
+
+The record stays without an identity, and later runs stop asking about it. A changeset can still place it.
+
+## Drafts
+
+A run commits its changeset by default. With `"commit": false` it stores the changeset as a **draft** and changes nothing. That is how a new rule, or an agent, is tried against shared identities without touching them.
+
+```sh
+curl -s -X POST http://127.0.0.1:7765/v1/ingest -H 'content-type: application/json' -d '{"source": "crm", "entity_type": "company", "rows": [{"id": "c-11", "name": "Larkfield logistics", "country": "GB"}]}'
+curl -s -X POST http://127.0.0.1:7765/v1/runs -H 'content-type: application/json' -d '{"entity_type": "company", "commit": false}'
+```
+
+```sh
+spool show drafts
+```
+
+```text title="Output"
+draft                                 type     status  operations  from
+01a1ef2a-9241-7524-a930-442bf7570fb8  company  open    1           match run 25
+```
+
+Replace `<open draft>` below with the ID in the first column:
+
+```sh
+spool show drafts <open draft>
+```
+
+```text title="Output"
+draft            01a1ef2a-9241-7524-a930-442bf7570fb8
+type             company
+status           open
+from             match run 25, reconcile run 26
+written against  log position 9
+would place      1 record, 0 identities created
+
+operations
+  place record f4a847bf-05df-c7c8-8b65-4fb382930a50 in 01a1ef24-76bc-73d9-9c8c-469f8e792cfb
+```
+
+The draft is stored on the server, so whoever approves it need not be whoever started the run:
+
+```sh
+curl -s -X POST http://127.0.0.1:7765/v1/drafts/<open draft>/approve
+```
+
+```sh
+spool show drafts
+```
+
+```text title="Output"
+draft                                 type     status     operations  from
+01a1ef2a-9241-7524-a930-442bf7570fb8  company  committed  1           match run 25
+```
+
+Approving checks the draft like any changeset, against the identities as they are then. If they changed in a way that breaks it, the answer names the operations that no longer hold and the draft stays open. A draft can also be rejected, with `POST /v1/drafts/<draft>/reject`.
+
+An entity type has at most one open draft. A later run of the type replaces it. The records of a draft that is rejected, replaced or never decided are examined again by the next run, so nothing is stranded.
+
+## Who reviews
+
+A reviewer is anyone the server knows: a person signed in to the studio, or a program with a token. Each change is recorded under its author. An assistant that speaks the Model Context Protocol can be pointed at the server's `/mcp` address, where it has tools to read review items and explain pairs, and to commit a changeset, split an identity, undo a change and dismiss an item. Every tool that writes requires a reason.
+
+## Not yet
+
+- Nothing notifies anyone that an item is waiting. Someone has to look.
+- Items are not assigned to people, and there is no queue or priority beyond the list.
+- The command line shows review items and drafts and cannot decide them.

@@ -1,0 +1,138 @@
+---
+title: Entity types and features
+description: An entity type is a directory that says what its records are compared by, and how each source's columns become those features.
+---
+
+An **entity type** is a kind of thing you want one ID for: a company, a person, a product. Spool ships none. A project declares its own, and two projects need not agree on what a company looks like.
+
+A **feature** is a value records of that type are compared by. Sources name their columns differently and write values differently, so rules never read raw rows. They read features, which every source is mapped onto.
+
+The examples continue the project from [Records and sources](/docs/concepts/records-and-sources), with `spool dev` running.
+
+## An entity type is a directory
+
+`entities/company/` declares the entity type `company`. Its `entity.yaml` has three parts:
+
+- **`features`**: the columns of the type's feature table, which is what rules read.
+- **`label`**: the feature a record is called by when it is shown to a person.
+- **`mapping`**: for each source, where each feature comes from.
+
+The steps below add a second source, a company registry, and two features, `domain` and `country`.
+
+## Add a transform
+
+A transform is a file under `transforms/`, named for the transform. It holds `lambda`, the names of its arguments, and one DuckDB expression over them:
+
+```sql title="transforms/domain_of.sql"
+-- "https://www.acorn.example/about" becomes "acorn.example".
+lambda website: nullif(regexp_extract(lower(website), '^(?:https?://)?(?:www\.)?([^/:?#]+)', 1), '')
+```
+
+A transform sees only the values it is given from one record. It cannot read a table. Every value reaches it as text, whatever JSON type the row had, and a transform that returns another type, such as a date, gives the feature that type.
+
+## Add a source
+
+```yaml title="sources/registry.yaml"
+key: number
+columns: [number, legal_name, country]
+```
+
+## Map both sources
+
+```yaml title="entities/company/entity.yaml"
+label: name
+features: [name, name_key, domain, country]
+
+mapping:
+  crm:
+    name: name
+    name_key: { from: name, transform: name_key }
+    domain: { from: website, transform: domain_of }
+    country: { from: country, transform: upper }
+  registry:
+    name: legal_name
+    name_key: { from: legal_name, transform: name_key }
+    country: { from: country, transform: upper }
+```
+
+How to read a mapping:
+
+- `name: name` takes the column as it is.
+- `{ from: website, transform: domain_of }` passes the column through a transform. `from` can be a list of columns for a transform with several arguments.
+- A transform with no file in `transforms/` is the DuckDB function of that name. `upper` is one.
+- A feature a source does not map is empty for that source's records. The registry has no website, so its records have no `domain`. Every feature has to be mapped by at least one source.
+
+`spool dev` applied each file as it was saved. `spool info` shows the result:
+
+```sh
+spool info
+```
+
+```text title="Output"
+project   .
+manifest  bf6951c33d7b421c09e8c02fc207fecddf16e709aa633b9d28afd249e232a531
+
+entity type `company`
+  features  record_id UUID, name VARCHAR, name_key VARCHAR, domain VARCHAR, country VARCHAR
+  label     name
+  sources   crm, registry
+  block     same_name
+  no_match  (none)
+  match     same_name
+```
+
+## What changing a declaration does
+
+When `entity.yaml` or a transform it uses changes, the feature table is computed again from the stored rows. `spool dev` printed `rebuilt company` when it did so. That is possible because records keep their rows as they arrived.
+
+It changes no identity. Identities refer to records, not to features, so every ID stays where it was. Records that were already placed are also not matched again. [Matching](/docs/concepts/matching#rules-that-get-better) says what to do when a better feature would have matched differently.
+
+`spool explain` shows the features of two records side by side, as they are now:
+
+```sh
+spool explain crm:c-1 crm:c-3
+```
+
+```text title="Output"
+`crm:c-1` belongs to identity 01a1ef24-76bc-73d9-9c8c-469e735d8cdd and `crm:c-3` to identity 01a1ef24-76bc-73d9-9c8c-469f8e792cfb.
+No run has compared them.
+`crm:c-1` was placed at log position 1 by `engine` (reconcile run 3, "reconcile new records").
+`crm:c-3` was placed at log position 3 by `engine` (reconcile run 10, "reconcile new records").
+By the rules as they are now, no block rule holds for the pair, so a run would not compare them.
+
+left   13687e30-654c-c22c-4a23-73e8cf22f9c0  crm:c-1  identity 01a1ef24-76bc-73d9-9c8c-469e735d8cdd
+right  c4ec1a11-9238-127c-4de7-aeb1cebb2439  crm:c-3  identity 01a1ef24-76bc-73d9-9c8c-469f8e792cfb
+
+features
+            left         right
+  country   -            GB
+  domain    -            larkfield.example
+  name      Acorn Tools  Larkfield Logistics
+  name_key  acorn tools  larkfield logistics
+
+rules as they are now
+  block  same_name  does not hold
+  match  same_name  does not hold
+```
+
+`crm:c-1` was loaded before the source had a `website` column, so its `domain` and `country` are empty, shown as `-`.
+
+## What is checked
+
+A mistake in these files is found when the project is read, not when rows arrive. `spool info`, `spool build` and `spool dev` all refuse:
+
+- a mapping that names a source with no file,
+- a column the source does not list,
+- a transform given the wrong number of columns,
+- a transform or rule that DuckDB cannot prepare.
+
+When `spool dev` meets a change it cannot apply, it says what is wrong and keeps running the last version that worked.
+
+## Names
+
+The names of sources, entity types, transforms and rules come from file and directory names. Use lowercase letters, digits and underscores, starting with a letter: that is accepted for every kind of name. An entity type's name may have 48 characters at most.
+
+## Not yet
+
+- A feature cannot be computed by your own code, only by a SQL expression. A normaliser that needs a lookup table or a library has to run before the rows are sent.
+- An entity type cannot be declared through the API. It is a change to the project, applied by `spool dev`, or by `spool build` and `spool apply` for a deployed server.
