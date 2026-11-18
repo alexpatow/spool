@@ -57,6 +57,7 @@ interface Card {
 export async function card({ section, title, description, path }: Card): Promise<ImageResponse> {
   const address = `${siteOrigin().replace(/^https?:\/\//, "")}${path === "/" ? "" : path}`;
   const long = title.length > 34;
+  const wordy = description.length > 180;
 
   return new ImageResponse(
     <div
@@ -92,11 +93,11 @@ export async function card({ section, title, description, path }: Card): Promise
         <div
           style={{
             display: "block",
-            fontSize: 30,
+            fontSize: wordy ? 26 : 30,
             lineHeight: 1.4,
             color: colors.mutedForeground,
             maxWidth: 1000,
-            lineClamp: 3,
+            lineClamp: 4,
           }}
         >
           {description}
