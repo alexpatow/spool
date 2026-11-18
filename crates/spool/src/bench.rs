@@ -98,6 +98,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use duckdb::arrow::array::{Array, AsArray};
 use serde::{Deserialize, Serialize};
@@ -710,6 +711,55 @@ impl Scenario {
         Ok(fed)
     }
 
+    /// Checks the scenario against its project and against `datasets.toml`,
+    /// and returns the project's manifest: every ingest names a source the
+    /// entity type maps, and a file that is there or a dataset that is
+    /// listed. Nothing is downloaded, so a scenario that cannot run says so
+    /// before it has fetched anything.
+    pub fn check(&self) -> Result<Manifest> {
+        let manifest = Manifest::load(self.project_dir())?;
+        for step in &self.spec.steps {
+            for ingest in &step.ingest {
+                let invalid = |message: String| {
+                    Error::Scenario(format!(
+                        "step `{}`, the ingest from `{}`: {message}",
+                        step.name, ingest.source
+                    ))
+                };
+                let Some(entity_type) = manifest
+                    .entity_types
+                    .iter()
+                    .find(|entity_type| entity_type.name.as_str() == ingest.entity_type)
+                else {
+                    return Err(invalid(format!(
+                        "the project has no entity type `{}`",
+                        ingest.entity_type
+                    )));
+                };
+                if !entity_type.sources.contains(&ingest.source) {
+                    return Err(invalid(format!(
+                        "the mapping of `{}` has no block for the source",
+                        ingest.entity_type
+                    )));
+                }
+                match (&ingest.file, &ingest.dataset) {
+                    (Some(file), _) => {
+                        let path = self.dir.join(file);
+                        if !path.is_file() {
+                            return Err(invalid(format!("there is no file {}", path.display())));
+                        }
+                    }
+                    (None, Some(dataset)) => {
+                        find_dataset(&self.dir, dataset, ingest.member.as_deref())
+                            .map_err(|error| invalid(error.to_string()))?;
+                    }
+                    (None, None) => {}
+                }
+            }
+        }
+        Ok(manifest)
+    }
+
     /// Runs every step against an engine with an empty store. `after_step`
     /// is called once a step is committed and scored, while the engine still
     /// holds the state the step left.
@@ -718,7 +768,7 @@ impl Scenario {
         engine: &Engine,
         mut after_step: impl FnMut(&StepReport) -> Result<()>,
     ) -> Result<BenchReport> {
-        let manifest = Manifest::load(self.project_dir())?;
+        let manifest = self.check()?;
         engine.apply(&manifest)?;
         // The project's strategies and extractors are beside the manifest's
         // sources.
@@ -1260,6 +1310,25 @@ fn read_truth_file(path: &Path) -> Result<Vec<(String, String, String)>> {
 /// A dataset that is an archive is unpacked beside its download, once, and
 /// `member` names the file in it that is wanted.
 fn fetch_dataset(scenario_dir: &Path, name: &str, member: Option<&str>) -> Result<PathBuf> {
+    let (index, dataset) = find_dataset(scenario_dir, name, member)?;
+    let cache = index.with_file_name(".cache");
+    let Some(member) = member else {
+        let path = cache.join(format!("{name}.csv"));
+        if !(path.is_file() && sha256_of(&path)? == dataset.sha256) {
+            download(&cache, name, &dataset, &path)?;
+        }
+        return Ok(path);
+    };
+    unpacked(&cache, name, &dataset, member)
+}
+
+/// Finds a dataset in the `datasets.toml` nearest above the scenario, and
+/// that file. An ingest names a `member` of an archive, and of nothing else.
+fn find_dataset(
+    scenario_dir: &Path,
+    name: &str,
+    member: Option<&str>,
+) -> Result<(PathBuf, Dataset)> {
     let start = std::fs::canonicalize(scenario_dir).map_err(Error::io(scenario_dir))?;
     let index = start
         .ancestors()
@@ -1281,37 +1350,34 @@ fn fetch_dataset(scenario_dir: &Path, name: &str, member: Option<&str>) -> Resul
         .ok_or_else(|| {
             Error::Scenario(format!("{}: no dataset named `{name}`", index.display()))
         })?;
-    let member = match (dataset.archive, member) {
-        (None, None) => None,
-        (Some(Archive::Tar), Some(member)) => Some(member),
-        (None, Some(_)) => {
-            return Err(Error::Scenario(format!(
-                "dataset `{name}` is one file, and the ingest names a `member` of it"
-            )));
-        }
-        (Some(Archive::Tar), None) => {
-            return Err(Error::Scenario(format!(
-                "dataset `{name}` is an archive: the ingest names the file to read with `member`"
-            )));
-        }
-    };
+    match (dataset.archive, member) {
+        (None, None) | (Some(Archive::Tar), Some(_)) => Ok((index, dataset)),
+        (None, Some(_)) => Err(Error::Scenario(format!(
+            "dataset `{name}` is one file, and the ingest names a `member` of it"
+        ))),
+        (Some(Archive::Tar), None) => Err(Error::Scenario(format!(
+            "dataset `{name}` is an archive: the ingest names the file to read with `member`"
+        ))),
+    }
+}
 
-    let cache = index.with_file_name(".cache");
-    let Some(member) = member else {
-        let path = cache.join(format!("{name}.csv"));
-        if !(path.is_file() && sha256_of(&path)? == dataset.sha256) {
-            download(&cache, name, &dataset, &path)?;
-        }
-        return Ok(path);
-    };
-    unpacked(&cache, name, &dataset, member)
+/// A path in the cache that no other run uses: two runs that fetch the same
+/// dataset at once each write their own file, and the one that is whole
+/// takes the dataset's name.
+fn scratch(cache: &Path, name: &str, kind: &str) -> PathBuf {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    cache.join(format!(
+        "{name}.{}-{}.{kind}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ))
 }
 
 /// Downloads a dataset to `path`, which is kept only if it has the checksum
 /// `datasets.toml` names.
 fn download(cache: &Path, name: &str, dataset: &Dataset, path: &Path) -> Result<()> {
     std::fs::create_dir_all(cache).map_err(Error::io(cache))?;
-    let partial = cache.join(format!("{name}.part"));
+    let partial = scratch(cache, name, "part");
     let status = Command::new("curl")
         .args([
             "--fail",
@@ -1329,6 +1395,7 @@ fn download(cache: &Path, name: &str, dataset: &Dataset, path: &Path) -> Result<
             ))
         })?;
     if !status.success() {
+        let _ = std::fs::remove_file(&partial);
         return Err(Error::Scenario(format!(
             "dataset `{name}`: downloading {} failed",
             dataset.url
@@ -1360,34 +1427,50 @@ fn unpacked(cache: &Path, name: &str, dataset: &Dataset, member: &str) -> Result
         )));
     }
     let dir = cache.join(name);
-    let stamp = dir.join(".sha256");
-    let current = std::fs::read_to_string(&stamp).is_ok_and(|kept| kept == dataset.sha256);
-    if !current {
-        let archive = cache.join(format!("{name}.tar"));
+    let current = |dir: &Path| {
+        std::fs::read_to_string(dir.join(".sha256")).is_ok_and(|kept| kept == dataset.sha256)
+    };
+    if !current(&dir) {
+        let archive = scratch(cache, name, "tar");
         download(cache, name, dataset, &archive)?;
-        if dir.exists() {
-            std::fs::remove_dir_all(&dir).map_err(Error::io(&dir))?;
-        }
-        std::fs::create_dir_all(&dir).map_err(Error::io(&dir))?;
-        let status = Command::new("tar")
-            .arg("-xf")
-            .arg(&archive)
-            .arg("-C")
-            .arg(&dir)
-            .status()
-            .map_err(|error| {
-                Error::Scenario(format!(
-                    "dataset `{name}`: tar is needed to unpack it and could not be run: {error}"
-                ))
-            });
+        // Unpacked beside where it goes and then given its name, so that
+        // nobody reads a directory that is half there.
+        let unpacking = scratch(cache, name, "unpacking");
+        let unpack = || -> Result<()> {
+            std::fs::create_dir_all(&unpacking).map_err(Error::io(&unpacking))?;
+            let status = Command::new("tar")
+                .arg("-xf")
+                .arg(&archive)
+                .arg("-C")
+                .arg(&unpacking)
+                .status()
+                .map_err(|error| {
+                    Error::Scenario(format!(
+                        "dataset `{name}`: tar is needed to unpack it and could not be run: {error}"
+                    ))
+                })?;
+            if !status.success() {
+                return Err(Error::Scenario(format!(
+                    "dataset `{name}`: the download could not be unpacked with tar"
+                )));
+            }
+            let stamp = unpacking.join(".sha256");
+            std::fs::write(&stamp, &dataset.sha256).map_err(Error::io(&stamp))?;
+            if dir.exists() && !current(&dir) {
+                std::fs::remove_dir_all(&dir).map_err(Error::io(&dir))?;
+            }
+            match std::fs::rename(&unpacking, &dir) {
+                // Another run put the same files there first.
+                Err(_) if current(&dir) => Ok(()),
+                renamed => renamed.map_err(Error::io(&dir)),
+            }
+        };
+        let unpacked = unpack();
         let _ = std::fs::remove_file(&archive);
-        if !status?.success() {
-            let _ = std::fs::remove_dir_all(&dir);
-            return Err(Error::Scenario(format!(
-                "dataset `{name}`: the download could not be unpacked with tar"
-            )));
+        if unpacking.exists() {
+            let _ = std::fs::remove_dir_all(&unpacking);
         }
-        std::fs::write(&stamp, &dataset.sha256).map_err(Error::io(&stamp))?;
+        unpacked?;
     }
     let file = dir.join(inside);
     if !file.is_file() {

@@ -1,0 +1,42 @@
+# Twenty-six of the MusicBrainz records, committed so that the mapping of each
+# source can be tried without a download: four songs that are in all five
+# sources, and six records that are hard to read. See ../../datasets.toml
+# for where they are from.
+
+project = "."
+
+[truth]
+column = "CID"
+
+[[step]]
+name = "five sources"
+
+[[step.ingest]]
+file = "sample.csv"
+source = "source_1"
+entity_type = "song"
+where = "SourceID = '1'"
+
+[[step.ingest]]
+file = "sample.csv"
+source = "source_2"
+entity_type = "song"
+where = "SourceID = '2'"
+
+[[step.ingest]]
+file = "sample.csv"
+source = "source_3"
+entity_type = "song"
+where = "SourceID = '3'"
+
+[[step.ingest]]
+file = "sample.csv"
+source = "source_4"
+entity_type = "song"
+where = "SourceID = '4'"
+
+[[step.ingest]]
+file = "sample.csv"
+source = "source_5"
+entity_type = "song"
+where = "SourceID = '5'"
