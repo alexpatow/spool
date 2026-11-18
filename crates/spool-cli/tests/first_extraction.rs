@@ -132,8 +132,8 @@ fn shown(server: &Server, dir: &Path, arguments: &[&str]) -> String {
 }
 
 /// What `spool extract <arguments>` printed, which may have taken long
-/// enough for it to say on standard error what is running. It has to
-/// succeed.
+/// enough for it to say on standard error what is running, and how many
+/// documents its batches kept. It has to succeed.
 fn extracted(server: &Server, dir: &Path, arguments: &[&str]) -> String {
     let output = server
         .spool_in(dir, &[&["extract"], arguments].concat())
@@ -145,7 +145,8 @@ fn extracted(server: &Server, dir: &Path, arguments: &[&str]) -> String {
         "spool extract {arguments:?} failed:\n{}{said}",
         text(&output.stdout),
     );
-    // All it says there is which file is running, and what that file said.
+    // All it says there is which file is running, what that file said, and
+    // what each batch kept.
     assert!(
         said.is_empty() || said.starts_with("running    extractors/"),
         "{said}"
@@ -153,7 +154,7 @@ fn extracted(server: &Server, dir: &Path, arguments: &[&str]) -> String {
     assert!(
         said.lines()
             .skip(1)
-            .all(|line| line.starts_with("           ")),
+            .all(|line| line.starts_with("           ") || line.starts_with("kept       ")),
         "{said}"
     );
     text(&output.stdout)
@@ -593,18 +594,26 @@ next       `spool match` places it in identities
 "
     );
 
-    // `--json` prints the two runs as the server answered them.
+    // `--json` prints the runs as the server answered them: those that
+    // stored the documents, and one for each batch.
     write(&project.join("notes-2.txt"), "Acorn Tools Ltd rang back.\n");
     let answered: Value =
         serde_json::from_str(&extracted(&server, &project, &["notes-2.txt", "--json"])).unwrap();
-    assert_eq!(answered["documents"]["kind"], "load", "{answered}");
-    assert_eq!(answered["documents"]["load"]["inserted"], 1);
-    assert_eq!(answered["extraction"]["kind"], "extract");
-    assert_eq!(answered["extraction"]["status"], "succeeded");
-    assert_eq!(answered["extraction"]["extractor"]["name"], "companies");
-    assert_eq!(answered["extraction"]["extraction"]["inserted"], 1);
+    let [stored] = &answered["documents"].as_array().unwrap()[..] else {
+        panic!("one run stored the documents: {answered}");
+    };
+    assert_eq!(stored["kind"], "load", "{answered}");
+    assert_eq!(stored["load"]["inserted"], 1);
+    let [batch] = &answered["extractions"].as_array().unwrap()[..] else {
+        panic!("one batch: {answered}");
+    };
+    assert_eq!(batch["kind"], "extract");
+    assert_eq!(batch["status"], "succeeded");
+    assert_eq!(batch["extractor"]["name"], "companies");
+    assert_eq!(batch["extraction"]["inserted"], 1);
+    assert_eq!(batch["extraction"]["left"], 0);
     // A run that is over says nothing more.
-    assert_eq!(answered["extraction"]["said"], Value::Null);
+    assert_eq!(batch["said"], Value::Null);
 
     // A file of the reader's own is read once it is told its source.
     write(&project.join("call.txt"), "We met Acorn Tools Ltd.\n");
@@ -699,94 +708,312 @@ fn a_run_that_takes_a_while_says_what_its_extractor_says() {
     assert_eq!(finished["extraction"]["mentions"], 3, "{finished}");
 }
 
-/// A run over many documents can take longer than Spool lets user code run.
-/// While it runs it says how far it is, and when it is stopped the message
-/// says how far it got, what the limit is and what raises it.
-#[test]
-#[ignore = "runs uv"]
-fn a_run_that_is_stopped_says_how_far_it_got_and_what_raises_the_limit() {
-    let dir = tempfile::tempdir().unwrap();
-    let project = init_companies(dir.path());
-    // A second and a half for each document, as a model on a slow machine.
-    write(
-        &project.join("extractors/companies.py"),
-        &BY_LEGAL_FORM
-            .replacen("import re\n", "import re\nimport time\n", 1)
-            .replacen(
-                "    for found in",
-                "    time.sleep(1.5)\n    for found in",
-                1,
+/// The stand-in, made to take `seconds` over each document, and longer
+/// over one whose text has `slow` in it: as long as `slow_seconds`, after
+/// it writes a file `slow-started` in the project.
+fn slow_stand_in(seconds: f64, slow_seconds: u32) -> String {
+    BY_LEGAL_FORM
+        .replacen("import re\n", "import re\nimport time\n", 1)
+        .replacen(
+            "    for found in",
+            &format!(
+                "    if \"slow\" in document.text:\n        \
+                 open(\"slow-started\", \"w\").close()\n        \
+                 time.sleep({slow_seconds})\n    \
+                 time.sleep({seconds})\n    for found in"
             ),
-    );
-    let notes: Vec<String> = (1..=20).map(|note| format!("notes-{note}.txt")).collect();
-    for (note, name) in notes.iter().enumerate() {
+            1,
+        )
+}
+
+/// Writes `count` notes under `folder`, each naming one company, with
+/// `slow` in the note numbered `slow`. Their names sort as their numbers.
+fn notes(folder: &Path, count: usize, slow: Option<usize>) {
+    for note in 1..=count {
+        let word = if Some(note) == slow { "slow" } else { "quick" };
         write(
-            &project.join("samples").join(name),
-            &format!("Note {note}: Acorn Tools Ltd called."),
+            &folder.join(format!("note-{note:02}.txt")),
+            &format!("Note {note}, {word}: Acorn Tools Ltd called."),
         );
     }
-    let files: Vec<String> = notes.iter().map(|name| format!("samples/{name}")).collect();
-    let files: Vec<&str> = files.iter().map(String::as_str).collect();
-    let limited = |seconds: &str| {
-        Server::start(&[
-            "dev",
-            path(&project),
-            "--listen",
-            "127.0.0.1:0",
-            "--seed",
-            "1",
-            "--task-timeout",
-            seconds,
-        ])
-    };
+}
 
-    // Twenty documents take thirty seconds, and the run has twenty-five.
-    let server = limited("25");
+/// A folder is read in batches, each kept as it ends, and the command says
+/// how far it is. The files under the folder are its documents, by their
+/// paths from it, and what starts with a dot is left out.
+#[test]
+#[ignore = "runs uv"]
+fn a_folder_is_read_in_batches_that_say_how_far_they_are() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = init_with_stand_in(dir.path());
+    let documents = project.join("documents");
+    notes(&documents.join("dev"), 6, None);
+    notes(&documents.join("train"), 6, None);
+    write(&documents.join(".DS_Store"), "\0");
+    write(&documents.join("train/.hidden/note-99.txt"), "Kestrel Ltd.");
+    let server = Server::dev(&project);
+
     let output = server
-        .spool_in(&project, &[&["extract"], &files[..]].concat())
+        .spool_in(&project, &["extract", "documents", "--source", "notes"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    let printed = text(&output.stdout);
+    assert!(
+        printed.starts_with(
+            "\
+source     notes
+read       12 documents from documents
+loaded     12 new, 0 already held, 0 new versions
+extractor  companies
+found      12 records in 12 documents: 12 new, 0 already held
+
+  company  Acorn Tools Ltd  notes:dev/note-01.txt["
+        ),
+        "{printed}"
+    );
+    // The first batch is five documents, and the next is made larger.
+    let said = text(&output.stderr);
+    let lines: Vec<&str> = said.lines().collect();
+    assert_eq!(lines[0], "running    extractors/companies.py", "{said}");
+    assert!(
+        lines[1].starts_with("kept       5 of 12 documents, 5 records, about "),
+        "{said}"
+    );
+    assert_eq!(
+        lines.last(),
+        Some(&"kept       12 of 12 documents, 12 records"),
+        "{said}"
+    );
+    let batches = runs(&server, "extract");
+    assert!(batches.len() >= 2, "{batches:?}");
+    assert!(batches.len() < 12, "{batches:?}");
+    let keys: Vec<String> = server.read("/v1/documents?source=notes&limit=100")["documents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|document| document["key"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(keys.len(), 12, "{keys:?}");
+    assert!(keys.contains(&"train/note-06.txt".to_owned()), "{keys:?}");
+
+    // The same command again has nothing left to read.
+    let again = extracted(&server, &project, &["documents", "--source", "notes"]);
+    assert!(
+        again.contains(
+            "loaded     0 new, 12 already held, 0 new versions\nextractor  companies\n\
+             found      0 records: `companies` has read every document."
+        ),
+        "{again}"
+    );
+
+    // `--again` reads each document once more, in batches too.
+    let again = extracted(&server, &project, &["--again", "--source", "notes"]);
+    assert!(
+        again.contains("found      12 records in 12 documents: 0 new, 12 already held"),
+        "{again}"
+    );
+    let read: Vec<usize> = server.read("/v1/documents?source=notes&limit=100")["documents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|document| document["extractions"].as_array().unwrap().len())
+        .collect();
+    assert_eq!(read, vec![2; 12]);
+}
+
+/// A batch that fails, here one stopped for taking longer than Spool lets
+/// user code run, keeps nothing, and the batches before it are kept. The
+/// message says what the limit is, what raises it, and that the same
+/// command reads the rest.
+#[test]
+#[ignore = "runs uv"]
+fn a_batch_that_is_stopped_keeps_the_ones_before_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = init_companies(dir.path());
+    write(
+        &project.join("extractors/companies.py"),
+        &slow_stand_in(0.05, 60),
+    );
+    let documents = project.join("documents");
+    notes(&documents, 12, Some(9));
+    let server = Server::start(&[
+        "dev",
+        path(&project),
+        "--listen",
+        "127.0.0.1:0",
+        "--seed",
+        "1",
+        "--task-timeout",
+        "20",
+    ]);
+
+    let output = server
+        .spool_in(&project, &["extract", "documents", "--source", "notes"])
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(1), "{}", text(&output.stdout));
     let said = text(&output.stderr);
     let lines: Vec<&str> = said.lines().collect();
-    assert_eq!(lines[0], "running    extractors/companies.py", "{said}");
-    let progress: Vec<&str> = lines
-        .iter()
-        .filter_map(|line| line.strip_prefix("           read "))
-        .collect();
-    assert!(!progress.is_empty(), "{said}");
-    for line in &progress {
-        let read: u32 = line
-            .strip_suffix(" of 20 documents")
-            .unwrap_or_else(|| panic!("{said}"))
-            .parse()
-            .unwrap();
-        assert!((1..20).contains(&read), "{said}");
-    }
-    let last = progress.last().unwrap();
-    let kept = lines
-        .last()
-        .unwrap()
-        .strip_prefix(&format!(
-            "spool: run 2 failed: extractor `companies`: it was stopped after 25 seconds without \
-             finishing. \
-             That is the longest a strategy or an extractor may run here, and \
-             `--task-timeout <seconds>` sets it, on `spool dev`, `spool serve` or `spool bench`. \
-             The last it said was `read {last}`. Its task is kept in "
-        ))
+    let kept: usize = lines[lines.len() - 2]
+        .strip_prefix("kept       ")
+        .and_then(|line| line.split_once(" documents read before run "))
+        .and_then(|(kept, rest)| {
+            rest.ends_with(": the same command again reads the rest")
+                .then(|| kept.parse().ok())?
+        })
         .unwrap_or_else(|| panic!("{said}"));
-    assert!(Path::new(kept).join("stderr.log").is_file(), "{said}");
-
-    // The documents are stored and none of them is read: a run is all or
-    // nothing. One that has the time reads every one. Here that is the same
-    // extractor without the wait, to keep the test short.
-    assert_eq!(found(&server), Vec::<Value>::new());
-    drop(server);
-    write(&project.join("extractors/companies.py"), BY_LEGAL_FORM);
-    let server = limited("25");
-    let read = extracted(&server, &project, &[]);
+    assert!((5..9).contains(&kept), "{said}");
+    let failed = lines.last().unwrap();
     assert!(
-        read.contains("found      20 records in 20 documents: 20 new, 0 already held"),
+        failed.contains(
+            "failed: extractor `companies`: it was stopped after 20 seconds without finishing. \
+             That is the longest a strategy or an extractor may run here, and \
+             `--task-timeout <seconds>` sets it, on `spool dev`, `spool serve` or `spool bench`"
+        ),
+        "{said}"
+    );
+    assert_eq!(found(&server).len(), kept);
+
+    // Without the slow note's wait, the same command reads what is left.
+    drop(server);
+    write(
+        &project.join("extractors/companies.py"),
+        &slow_stand_in(0.05, 0),
+    );
+    let server = Server::dev(&project);
+    let read = extracted(&server, &project, &["documents", "--source", "notes"]);
+    assert!(
+        read.contains(&format!(
+            "found      {} records in {} documents: {} new, 0 already held",
+            12 - kept,
+            12 - kept,
+            12 - kept
+        )),
+        "{read}"
+    );
+}
+
+/// Ctrl-C cancels the batch that is running: the server stops the
+/// extractor and keeps nothing of the batch, the batches before it are
+/// kept, and the command says so. While the batch runs, its documents say
+/// they are being read.
+#[test]
+#[ignore = "runs uv"]
+fn ctrl_c_cancels_the_batch_that_is_running_and_keeps_the_ones_before() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = init_companies(dir.path());
+    write(
+        &project.join("extractors/companies.py"),
+        &slow_stand_in(0.0, 120),
+    );
+    let documents = project.join("documents");
+    notes(&documents, 10, Some(8));
+    let server = Server::dev(&project);
+
+    let mut command = server.spool_in(&project, &["extract", "documents", "--source", "notes"]);
+    let mut child = command
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let started = project.join("slow-started");
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while !started.exists() {
+        assert!(Instant::now() < deadline, "the slow note was never read");
+        assert!(child.try_wait().unwrap().is_none(), "the command ended");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    // The documents of the batch say which run reads them.
+    let running: Vec<Value> = runs(&server, "extract")
+        .into_iter()
+        .filter(|run| run["status"] == "running")
+        .collect();
+    let [running] = &running[..] else {
+        panic!("one batch runs: {running:?}");
+    };
+    let run = running["run"].as_u64().unwrap();
+    let listed = shown(
+        &server,
+        &project,
+        &["show", "documents", "--source", "notes"],
+    );
+    let state = |listed: &str, key: &str| {
+        listed
+            .lines()
+            .find(|line| line.contains(&format!("notes:{key}")))
+            .unwrap_or_else(|| panic!("{listed}"))
+            .split("  ")
+            .filter(|cell| !cell.is_empty())
+            .last()
+            .unwrap()
+            .trim()
+            .to_owned()
+    };
+    assert_eq!(
+        state(&listed, "note-08.txt"),
+        format!("being read by companies in run {run}"),
+        "{listed}"
+    );
+    assert!(
+        state(&listed, "note-01.txt").starts_with("companies in run "),
+        "{listed}"
+    );
+
+    let interrupted = Instant::now();
+    let killed = std::process::Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(killed.success());
+    let output = child.wait_with_output().unwrap();
+    assert!(interrupted.elapsed() < Duration::from_secs(20));
+    assert_eq!(output.status.code(), Some(130), "{}", text(&output.stderr));
+    let said = text(&output.stderr);
+    assert!(
+        said.contains(&format!(
+            "stopping   cancelling run {run}, the batch in progress"
+        )),
+        "{said}"
+    );
+    assert!(
+        said.trim_end().ends_with(&format!(
+            "spool: stopped: run {run} was cancelled, and nothing it read is kept. The 5 \
+             documents read before it are kept, and the same command again reads the rest."
+        )),
+        "{said}"
+    );
+
+    // The server stopped the extractor, which would have slept two minutes,
+    // and the run failed. Its documents are not read.
+    let ended = server.read(&format!("/v1/runs/{run}"))["run"].clone();
+    assert_eq!(ended["status"], "failed", "{ended}");
+    assert!(
+        ended["error"]
+            .as_str()
+            .unwrap()
+            .contains("it was cancelled"),
+        "{ended}"
+    );
+    assert_eq!(found(&server).len(), 5);
+    let listed = shown(
+        &server,
+        &project,
+        &["show", "documents", "--source", "notes"],
+    );
+    assert_eq!(state(&listed, "note-08.txt"), "not read yet", "{listed}");
+
+    // The same command reads what is left.
+    drop(server);
+    write(
+        &project.join("extractors/companies.py"),
+        &slow_stand_in(0.0, 0),
+    );
+    let server = Server::dev(&project);
+    let read = extracted(&server, &project, &["documents", "--source", "notes"]);
+    assert!(
+        read.contains("found      5 records in 5 documents: 5 new, 0 already held"),
         "{read}"
     );
 }
@@ -1021,8 +1248,28 @@ fn extract_says_what_is_in_the_way() {
     write(&project.join("other/notes-1.txt"), "Acorn Tools Ltd.\n");
     assert_eq!(
         refused(&["samples/notes-1.txt", "other/notes-1.txt"]),
-        "two of the files are called notes-1.txt, and a document is stored under its file's \
-         name: extract them one at a time, from sources of their own"
+        "samples/notes-1.txt and other/notes-1.txt would both be stored as `notes-1.txt`: a \
+         file is stored under its name, or under its path from the folder that was named, and \
+         a second document under one key is taken for a new version of the first. Name the \
+         folder that holds both, or extract them into sources of their own."
+    );
+    // A folder: what starts with a dot is left out, and every other file
+    // has to be text.
+    write(&project.join("empty/.DS_Store"), "\0\0");
+    write(
+        &project.join("empty/.cache/notes-1.txt"),
+        "Acorn Tools Ltd.\n",
+    );
+    assert_eq!(
+        refused(&["empty"]),
+        "empty is a folder with no files in it, other than ones whose names start with a dot"
+    );
+    std::fs::create_dir_all(project.join("scans/2024")).unwrap();
+    std::fs::write(project.join("scans/2024/report.pdf"), b"%PDF-1.7\n\xff").unwrap();
+    assert_eq!(
+        refused(&["scans", "--source", "notes"]),
+        "scans/2024/report.pdf is not text: a document is stored as UTF-8 text. Turn a PDF or \
+         a web page into text first."
     );
 
     // The source: a file of the reader's own is named after neither.

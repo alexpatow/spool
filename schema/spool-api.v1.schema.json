@@ -582,6 +582,17 @@
         "loaded_at": {
           "type": "string"
         },
+        "reading": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DocumentReading"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The extract run that is reading this version now. What it finds is\nstored when the run ends, and nothing is if it fails or is cancelled."
+        },
         "source": {
           "type": "string"
         },
@@ -689,6 +700,23 @@
       },
       "required": [
         "documents"
+      ],
+      "type": "object"
+    },
+    "DocumentReading": {
+      "description": "An extractor that is reading a document now.",
+      "properties": {
+        "extractor": {
+          "type": "string"
+        },
+        "run": {
+          "$ref": "#/$defs/RunId",
+          "description": "The extract run."
+        }
+      },
+      "required": [
+        "extractor",
+        "run"
       ],
       "type": "object"
     },
@@ -1077,6 +1105,13 @@
           "minimum": 0,
           "type": "integer"
         },
+        "left": {
+          "default": 0,
+          "description": "Documents the extraction would have read but for its `limit`: what\nthe same extraction reads next.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "load_run": {
           "anyOf": [
             {
@@ -1126,6 +1161,18 @@
             "null"
           ]
         },
+        "again_since": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "With `again`: leave out the documents this extractor read in this\nrun or a later one, so that reading everything again in batches reads\neach document once. Each batch after the first names the first\nbatch's run."
+        },
         "extractor": {
           "default": null,
           "description": "The name of one of the project's extractors; `GET /v1/info` lists\nthem. The server runs no code it was not built with. It may be left\nout when the project has exactly one.",
@@ -1136,7 +1183,7 @@
         },
         "limit": {
           "default": null,
-          "description": "Read at most this many documents, oldest first.",
+          "description": "Read at most this many documents, oldest first. The run's report\nsays in `left` how many the limit left out.",
           "format": "uint64",
           "minimum": 0,
           "type": [
@@ -1448,6 +1495,16 @@
         },
         "store": {
           "$ref": "#/$defs/StoreInfo"
+        },
+        "task_timeout_ms": {
+          "default": null,
+          "description": "The longest a strategy or an extractor may run, in milliseconds:\nwhat `--task-timeout` set. None when the server runs no user code.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         }
       },
       "required": [

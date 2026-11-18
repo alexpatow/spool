@@ -1,7 +1,7 @@
 // How the studio words what the server answers. Nothing here decides
 // anything: a sentence that says why comes from the engine.
 
-import type { RecordEntry, Op } from "./api.ts";
+import type { DocumentEntry, RecordEntry, Op } from "./api.ts";
 
 /** `3 records`, `1 identity`. */
 export function count(number: number, what: string): string {
@@ -200,4 +200,13 @@ export function segments<T>(text: string | string[], spans: Array<Span<T>>): Arr
     });
   }
   return pieces;
+}
+
+/** Which extractors read a document, and which is reading it now. */
+export function readBy(document: Pick<DocumentEntry, "extractions" | "reading">): string {
+  const said = document.extractions.map(
+    (extraction) => `${extraction.extractor} in run ${extraction.run} (${count(extraction.mentions, "mention")})`,
+  );
+  if (document.reading) said.push(`being read by ${document.reading.extractor} in run ${document.reading.run}`);
+  return said.length === 0 ? "not read yet" : said.join(", ");
 }

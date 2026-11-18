@@ -118,7 +118,15 @@ pub fn run(arguments: &[String]) -> Result<(), Failure> {
     let mut answered = Vec::new();
     let mut hints: Vec<&str> = Vec::new();
     let mut failures = Vec::new();
-    for (index, entity_type) in chosen.iter().enumerate() {
+    // A report is set apart from what is printed before and after it.
+    let mut printed: Option<bool> = None;
+    let mut part = |report: bool| {
+        if printed.is_some_and(|before| before || report) {
+            println!();
+        }
+        printed = Some(report);
+    };
+    for entity_type in &chosen {
         let name = &entity_type.name;
         let mut request = json!({ "entity_type": name, "wait_ms": WAIT_MS });
         if let Some(strategy) = strategy {
@@ -130,16 +138,17 @@ pub fn run(arguments: &[String]) -> Result<(), Failure> {
         let started = remote.post("/match", &request)?;
         let ended = remote.ended(started)?;
         if as_json {
-            let run = ended.as_ref().map_or(Value::Null, |(answer, _)| answer["run"].clone());
+            let run = ended
+                .as_ref()
+                .map_or(Value::Null, |(answer, _)| answer["run"].clone());
             match named {
                 Some(_) => print_json(&json!({ "run": run })),
                 None => answered.push(json!({ "entity_type": name, "run": run })),
             }
-        } else if index > 0 {
-            println!();
         }
         let Some((_, run)) = ended else {
             if !as_json {
+                part(false);
                 let (said, hint) = nothing(entity_type, rematch);
                 println!("nothing to match: {said}");
                 if !hints.contains(&hint) {
@@ -151,12 +160,14 @@ pub fn run(arguments: &[String]) -> Result<(), Failure> {
         if run.status != RunStatus::Succeeded {
             let failure = unsuccessful(&run);
             if !as_json {
+                part(false);
                 println!("run         {}, type `{name}`: {}", run.run, run.status);
             }
             failures.push(failure);
             continue;
         }
         if !as_json {
+            part(true);
             report(&run, name, rematch)?;
         }
     }
@@ -197,10 +208,7 @@ fn nothing(entity_type: &TypeInfo, rematch: bool) -> (String, &'static str) {
             "`spool load <file>` sends rows",
         )
     } else if rematch {
-        (
-            format!("`{name}` has no records a match can examine"),
-            "",
-        )
+        (format!("`{name}` has no records a match can examine"), "")
     } else {
         (
             format!("no `{name}` record is new since the last match"),

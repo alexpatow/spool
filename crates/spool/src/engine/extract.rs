@@ -13,8 +13,8 @@ use spool_core::{Actor, DocumentId, EntityType, RunId};
 use super::{Engine, Inner, Reading, lock};
 use crate::batch::{Column, batch};
 use crate::documents::{
-    self, DocumentEntry, DocumentFilter, DocumentReading, ExtractOptions, ExtractReport, ExtractorRef, Mention,
-    NewDocument, RawMention, TaskDocument,
+    self, DocumentEntry, DocumentFilter, DocumentReading, ExtractOptions, ExtractReport,
+    ExtractorRef, Mention, NewDocument, RawMention, TaskDocument,
 };
 use crate::error::{Error, Result};
 use crate::features;

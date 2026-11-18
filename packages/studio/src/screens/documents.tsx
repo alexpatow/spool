@@ -24,20 +24,11 @@ import {
 import { FileTextIcon } from "../icons.tsx";
 import { colors, radius, spacing, typography } from "../styles/shelf/tokens.stylex";
 import { tones } from "../styles/tones.stylex";
-import { codePoints, count, mentionOf, named, segments } from "../format.ts";
+import { codePoints, count, mentionOf, named, readBy, segments } from "../format.ts";
 import type { Mention } from "../format.ts";
 import { useLabels, useLoad, usePages } from "../hooks.ts";
 import { href } from "../router.ts";
 import type { Route } from "../router.ts";
-
-/** Which extractors read a document, and which is reading it now. */
-function readBy(document: DocumentEntry): string {
-  const said = document.extractions.map(
-    (extraction) => `${extraction.extractor} in run ${extraction.run} (${count(extraction.mentions, "mention")})`,
-  );
-  if (document.reading) said.push(`being read by ${document.reading.extractor} in run ${document.reading.run}`);
-  return said.length === 0 ? "not read yet" : said.join(", ");
-}
 
 export function Documents({ route }: { route: Route }) {
   const { source, key, latest } = route.query;

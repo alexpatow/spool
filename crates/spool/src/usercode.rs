@@ -172,7 +172,9 @@ impl Running {
     }
 
     fn cancelled(&self) -> std::sync::MutexGuard<'_, HashSet<RunId>> {
-        self.cancelled.lock().unwrap_or_else(|held| held.into_inner())
+        self.cancelled
+            .lock()
+            .unwrap_or_else(|held| held.into_inner())
     }
 
     /// Asks for the code of a run to be stopped, with every process it
@@ -744,7 +746,9 @@ impl Task {
         match finished {
             Finished::Cancelled => {
                 let _ = std::fs::remove_dir_all(&self.dir);
-                Err(self.code.fail("it was cancelled, and nothing it found is kept".to_owned()))
+                Err(self
+                    .code
+                    .fail("it was cancelled, and nothing it found is kept".to_owned()))
             }
             Finished::TimedOut => {
                 let said = end_of(&self.dir.join("stderr.log"))
@@ -898,13 +902,15 @@ mod tests {
 
     #[test]
     fn a_command_that_finishes_reports_its_exit_status() {
-        let Finished::Exited(status) = run(&mut shell("exit 0"), Duration::from_secs(30), &|| false).unwrap()
+        let Finished::Exited(status) =
+            run(&mut shell("exit 0"), Duration::from_secs(30), &|| false).unwrap()
         else {
             panic!("the command had time to finish");
         };
         assert!(status.success());
 
-        let Finished::Exited(status) = run(&mut shell("exit 3"), Duration::from_secs(30), &|| false).unwrap()
+        let Finished::Exited(status) =
+            run(&mut shell("exit 3"), Duration::from_secs(30), &|| false).unwrap()
         else {
             panic!("the command had time to finish");
         };
@@ -942,7 +948,12 @@ mod tests {
         assert!(!marker.exists(), "the process it started outlived it");
 
         // A command that was cancelled before it started is not started.
-        let finished = run(&mut shell(&format!("touch '{}'", marker.display())), Duration::from_secs(30), &|| true).unwrap();
+        let finished = run(
+            &mut shell(&format!("touch '{}'", marker.display())),
+            Duration::from_secs(30),
+            &|| true,
+        )
+        .unwrap();
         assert!(matches!(finished, Finished::Cancelled));
         assert!(!marker.exists());
     }

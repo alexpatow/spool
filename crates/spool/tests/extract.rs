@@ -1270,7 +1270,12 @@ def find(documents):
     assert_eq!(reading("a"), Some(("names".to_owned(), run.run)));
     assert_eq!(reading("b"), None);
     assert_eq!(
-        news.engine.document(id("a", FIRST)).unwrap().reading.unwrap().run,
+        news.engine
+            .document(id("a", FIRST))
+            .unwrap()
+            .reading
+            .unwrap()
+            .run,
         run.run
     );
 

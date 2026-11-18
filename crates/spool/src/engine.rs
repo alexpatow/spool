@@ -11,8 +11,8 @@ use duckdb::{Connection, params};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use spool_core::{
-    Actor, Changeset, ChangesetId, Clock, Committed, ConstraintEntry, ConstraintKind, DocumentId, Draft,
-    EntityType, EvidenceSummary, IdGenerator, IdentityId, IdentityLink, IdentityState,
+    Actor, Changeset, ChangesetId, Clock, Committed, ConstraintEntry, ConstraintKind, DocumentId,
+    Draft, EntityType, EvidenceSummary, IdGenerator, IdentityId, IdentityLink, IdentityState,
     IdentityStatus, IdentityStore, LogEntry, MemoryState, NewPair, NewRecord, Op, Policy,
     RandomIds, RecordId, ReviewItem, RunId, SeededIds, Seq, Snapshot, StepClock, SystemClock,
     ValidationError, Verdict, inverse, reconcile, validate,

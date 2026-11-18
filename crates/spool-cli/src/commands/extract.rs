@@ -382,7 +382,8 @@ fn sending(files: &[File]) -> Vec<&[File]> {
     let mut groups = Vec::new();
     let (mut start, mut bytes) = (0, 0);
     for (index, file) in files.iter().enumerate() {
-        if index > start && (index - start == SENT_DOCUMENTS || bytes + file.text.len() > SENT_BYTES)
+        if index > start
+            && (index - start == SENT_DOCUMENTS || bytes + file.text.len() > SENT_BYTES)
         {
             groups.push(&files[start..index]);
             (start, bytes) = (index, 0);
@@ -458,7 +459,8 @@ fn read(paths: &[String]) -> Result<Vec<File>, Failure> {
 /// `prefix`. What starts with a dot is left out. A link to a file is read
 /// and a link to a folder is not followed, since it can lead back up.
 fn under(folder: &Path, prefix: &str, found: &mut Vec<(String, String)>) -> Result<(), Failure> {
-    let unreadable = |error: std::io::Error| Failure::Failed(format!("{}: {error}", folder.display()));
+    let unreadable =
+        |error: std::io::Error| Failure::Failed(format!("{}: {error}", folder.display()));
     let mut entries = std::fs::read_dir(folder)
         .and_then(|entries| entries.collect::<Result<Vec<_>, _>>())
         .map_err(unreadable)?;
@@ -758,7 +760,6 @@ fn ended(remote: &Remote, answer: Value) -> Result<(Value, RunEntry), Failure> {
     })
 }
 
-
 /// Prints the records of the files' documents, in the order of the files
 /// and of the text. They are what the extractor found there, and what any
 /// other extractor found there before it.
@@ -847,7 +848,14 @@ fn unreported(run: &RunEntry, what: &str) -> Failure {
 mod tests {
     use spool::DeclaredSource;
 
-    use super::{File, source_of};
+    use std::time::Duration;
+
+    use super::{File, about, next_batch, read, sending, source_of};
+
+    /// The files the paths name, which have to be read.
+    fn read_all(paths: &[String]) -> Vec<File> {
+        read(paths).unwrap_or_else(|failure| panic!("{}", failure.message()))
+    }
 
     /// What `source_of` says of files called `files` in a project with
     /// `sources`: the source, or why there is none.
@@ -921,5 +929,92 @@ mod tests {
              source is a file sources/<name>.yaml that lists what a record found in its \
              documents may say."
         );
+    }
+
+    #[test]
+    fn a_batch_is_made_to_take_the_time_it_is_given_and_grows_by_steps() {
+        let target = Duration::from_secs(120);
+        // Five documents in ten seconds: sixty fit, and twenty are allowed.
+        assert_eq!(next_batch(5, Duration::from_secs(10), target), 20);
+        // Twenty in a minute: forty fit.
+        assert_eq!(next_batch(20, Duration::from_secs(60), target), 40);
+        // A batch that took longer than the time gets one smaller.
+        assert_eq!(next_batch(40, Duration::from_secs(240), target), 20);
+        // However slow, one document; however quick, a thousand.
+        assert_eq!(next_batch(5, Duration::from_secs(3600), target), 1);
+        assert_eq!(next_batch(800, Duration::from_millis(1), target), 1_000);
+        // A server that lets code run twenty-five seconds gives five.
+        assert_eq!(
+            next_batch(5, Duration::from_secs(5), Duration::from_secs(5)),
+            5
+        );
+    }
+
+    #[test]
+    fn files_are_sent_a_thousand_or_sixteen_megabytes_at_a_time() {
+        let file = |bytes: usize| File {
+            path: String::new(),
+            name: String::new(),
+            text: "x".repeat(bytes),
+        };
+        let small: Vec<File> = (0..2_500).map(|_| file(10)).collect();
+        let sizes: Vec<usize> = sending(&small).iter().map(|group| group.len()).collect();
+        assert_eq!(sizes, vec![1_000, 1_000, 500]);
+        let large: Vec<File> = (0..3).map(|_| file(10 * 1024 * 1024)).collect();
+        let sizes: Vec<usize> = sending(&large).iter().map(|group| group.len()).collect();
+        assert_eq!(sizes, vec![1, 1, 1]);
+        assert!(sending(&[]).is_empty());
+    }
+
+    #[test]
+    fn what_is_left_is_said_in_minutes_and_hours() {
+        assert_eq!(about(Duration::from_secs(5)), "1 minute");
+        assert_eq!(about(Duration::from_secs(61)), "2 minutes");
+        assert_eq!(about(Duration::from_secs(3600)), "1 hour");
+        assert_eq!(
+            about(Duration::from_secs(2 * 3600 + 5 * 60)),
+            "2 hours 5 minutes"
+        );
+    }
+
+    #[test]
+    fn a_folder_is_its_files_by_their_paths_from_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("documents");
+        let write = |path: &str, text: &str| {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        write("train/b.txt", "B");
+        write("dev/a.txt", "A");
+        write("dev/deeper/c.md", "C");
+        write(".git/HEAD", "ref");
+        write("dev/.DS_Store", "\0");
+        let elsewhere = dir.path().join("elsewhere.txt");
+        std::fs::write(&elsewhere, "E").unwrap();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&elsewhere, root.join("linked.txt")).unwrap();
+            // A link to a folder above would lead round and round.
+            std::os::unix::fs::symlink(dir.path(), root.join("dev/up")).unwrap();
+        }
+
+        let files = read_all(&[root.display().to_string()]);
+        let keys: Vec<&str> = files.iter().map(|file| file.name.as_str()).collect();
+        #[cfg(unix)]
+        assert_eq!(
+            keys,
+            ["dev/a.txt", "dev/deeper/c.md", "linked.txt", "train/b.txt"]
+        );
+        assert_eq!(files[0].text, "A");
+        assert_eq!(files[0].path, root.join("dev/a.txt").display().to_string());
+
+        // A file named on its own is stored under its name.
+        let files = read_all(&[root.join("dev/a.txt").display().to_string()]);
+        assert_eq!(files[0].name, "a.txt");
+        // A hidden file that is named is read.
+        let files = read_all(&[root.join(".git/HEAD").display().to_string()]);
+        assert_eq!(files[0].name, "HEAD");
     }
 }
