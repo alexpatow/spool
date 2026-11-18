@@ -281,13 +281,13 @@ export interface DocumentEntry {
    */
   extractions: DocumentExtraction[];
   id: DocumentId;
-  ingest_run: RunId;
-  ingested_at: string;
   key: string;
   /**
    * How long the text is, in Unicode code points.
    */
   length: number;
+  load_run: RunId;
+  loaded_at: string;
   source: string;
   /**
    * The version that replaced this one.
@@ -342,7 +342,7 @@ export interface DocumentList {
 
 /**
  * `POST /v1/documents`: store documents from one source, to be read by an
- * extractor. The response is the ingest run that stored them.
+ * extractor. The response is the load run that stored them.
  *
  * One document can also be sent as it is: a body of UTF-8 text, such as
  * `text/plain`, with `source`, `key` and optionally `uri` and `wait_ms` in
@@ -513,14 +513,14 @@ export interface ExtractReport {
    */
   duplicates: number;
   /**
-   * The ingest run the records were stored under. There is none
-   * when nothing was found.
-   */
-  ingest_run?: RunId | null;
-  /**
    * Records created.
    */
   inserted: number;
+  /**
+   * The load run the records were stored under. There is none
+   * when nothing was found.
+   */
+  load_run?: RunId | null;
   /**
    * Mentions it found.
    */
@@ -536,7 +536,7 @@ export interface ExtractReport {
 /**
  * `POST /v1/extractions`: run one of the project's extractors over the
  * documents it has not read. The response is the extract run. What it
- * found is records, which `POST /v1/runs` then matches.
+ * found is records, which `POST /v1/match` then matches.
  *
  * The body may be left out: the project's only extractor then reads
  * every document it has not read.
@@ -665,9 +665,9 @@ export interface IdentitySummary {
   id: IdentityId;
   /**
    * What a person would call it: the label most of its members have. Of
-   * labels that as many have, the one that was ingested first. `None`
+   * labels that as many have, the one that was loaded first. `None`
    * when no member's payload names it. An identity with very many
-   * members is judged by the hundred that were ingested first.
+   * members is judged by the hundred that were loaded first.
    */
   label?: string | null;
   members: number;
@@ -715,68 +715,6 @@ export interface Info {
    */
   api: string;
   store: StoreInfo;
-}
-
-export interface IngestReport {
-  /**
-   * The changeset that put them back, if any went back.
-   */
-  committed?: Committed | null;
-  /**
-   * Rows that were already known, or repeated within this call.
-   */
-  duplicates: number;
-  /**
-   * Records created.
-   */
-  inserted: number;
-  /**
-   * Identities a record went back to where nothing holds it with the
-   * records that are there: what joined them went through a record that
-   * is still taken back. Each has an open `possible_split` review item,
-   * which this run raised.
-   */
-  possible_splits?: number;
-  /**
-   * Rows received.
-   */
-  received: number;
-  /**
-   * Records the source had taken back and holds again: every version
-   * of a row that was sent again, changed or not.
-   */
-  restored?: number;
-  /**
-   * Those of them that are back in the identity they left, or in the
-   * one that stands for it now. The rest had none, or can no longer be
-   * there, and are new to the next match run.
-   */
-  returned?: number;
-  run: RunId;
-  /**
-   * Records created as a new version of a row the source had sent
-   * before under the same key with other content.
-   */
-  superseded?: number;
-}
-
-/**
- * `POST /v1/ingest` with a JSON body. With an Arrow or a CSV body, the
- * same fields other than `rows` are query parameters.
- */
-export interface IngestRequest {
-  entity_type: string;
-  /**
-   * One object per row, with the columns the source declares. A column
-   * holds text, booleans or numbers.
-   */
-  rows: Array<Record<string, unknown>>;
-  /**
-   * The name of the source the rows come from, which the project
-   * declares in `sources/<name>.yaml`.
-   */
-  source: string;
-  wait_ms?: number | null;
 }
 
 export interface Judgement {
@@ -829,6 +767,68 @@ export interface Link {
  */
 export type LinkKind = "must_link" | "version" | "match";
 
+export interface LoadReport {
+  /**
+   * The changeset that put them back, if any went back.
+   */
+  committed?: Committed | null;
+  /**
+   * Rows that were already known, or repeated within this call.
+   */
+  duplicates: number;
+  /**
+   * Records created.
+   */
+  inserted: number;
+  /**
+   * Identities a record went back to where nothing holds it with the
+   * records that are there: what joined them went through a record that
+   * is still taken back. Each has an open `possible_split` review item,
+   * which this run raised.
+   */
+  possible_splits?: number;
+  /**
+   * Rows received.
+   */
+  received: number;
+  /**
+   * Records the source had taken back and holds again: every version
+   * of a row that was sent again, changed or not.
+   */
+  restored?: number;
+  /**
+   * Those of them that are back in the identity they left, or in the
+   * one that stands for it now. The rest had none, or can no longer be
+   * there, and are new to the next match run.
+   */
+  returned?: number;
+  run: RunId;
+  /**
+   * Records created as a new version of a row the source had sent
+   * before under the same key with other content.
+   */
+  superseded?: number;
+}
+
+/**
+ * `POST /v1/load` with a JSON body. With an Arrow or a CSV body, the
+ * same fields other than `rows` are query parameters.
+ */
+export interface LoadRequest {
+  entity_type: string;
+  /**
+   * One object per row, with the columns the source declares. A column
+   * holds text, booleans or numbers.
+   */
+  rows: Array<Record<string, unknown>>;
+  /**
+   * The name of the source the rows come from, which the project
+   * declares in `sources/<name>.yaml`.
+   */
+  source: string;
+  wait_ms?: number | null;
+}
+
 /**
  * A committed changeset as the log holds it.
  */
@@ -836,6 +836,44 @@ export interface LogEntry {
   changeset: Changeset;
   content_hash: ContentHash;
   seq: Seq;
+}
+
+/**
+ * `POST /v1/match`: match the new records of one entity type.
+ */
+export interface MatchRequest {
+  /**
+   * With a strategy the server runs: commit the draft (the default), or
+   * store it for review. A run that waits for judgements is told this
+   * when it is reconciled.
+   */
+  commit?: boolean | null;
+  entity_type: EntityType;
+  /**
+   * Match every record of the type again, not only the new ones.
+   * Records that have an identity keep it: where the strategy
+   * disagrees with the identities as they are, the run's `resolution`
+   * lists `suggestions`.
+   */
+  rematch?: boolean | null;
+  /**
+   * Who judges. Left out, or named `rules`, the server runs the
+   * project's SQL rules and reconciles. The name of one of the project's
+   * user-code strategies runs that code on the server and reconciles;
+   * `GET /v1/info` lists them. Any other name starts a run that waits
+   * for the caller's judgements: the server runs no code it was not
+   * built with, whatever is named here.
+   *
+   * A `version` given with a project strategy must be the hash the
+   * project was built with.
+   */
+  strategy?: StrategyRef | null;
+  /**
+   * How long the call waits for the run, in milliseconds. If the run is
+   * still in progress then, the response has status 202 and the run as
+   * far as it has got.
+   */
+  wait_ms?: number | null;
 }
 
 export interface Member {
@@ -1160,7 +1198,7 @@ export interface ReconcileRequest {
 }
 
 /**
- * A record as it was ingested, and the identity it belongs to now.
+ * A record as it was loaded, and the identity it belongs to now.
  */
 export interface RecordEntry {
   entity_type: EntityType;
@@ -1173,8 +1211,6 @@ export interface RecordEntry {
    * `None` while no changeset has placed it.
    */
   identity?: IdentityId | null;
-  ingest_run: RunId;
-  ingested_at: string;
   /**
    * The row's key within its source, if it had one.
    */
@@ -1185,6 +1221,8 @@ export interface RecordEntry {
    * has no value there.
    */
   label?: string | null;
+  load_run: RunId;
+  loaded_at: string;
   /**
    * The attributes exactly as received.
    */
@@ -1294,7 +1332,7 @@ export interface RetractReport {
  *
  * Every version of each row stays as evidence and leaves its identity, by
  * a changeset recorded under the caller. No run examines the records
- * after that, until an ingest sends a row under the same key again.
+ * after that, until a load sends a row under the same key again.
  */
 export interface RetractRequest {
   entity_type: string;
@@ -1406,7 +1444,7 @@ export interface ReviewEntry {
   /**
    * The run that raised it: a reconcile run. For a `possible_split`, the
    * retract run that took back what held the records together, or the
-   * ingest run that brought a record back to where what held it is
+   * load run that brought a record back to where what held it is
    * still gone.
    */
   run: RunId;
@@ -1495,7 +1533,7 @@ export interface RuleResult {
  */
 export interface RunEntry {
   /**
-   * The entity type an ingest, a match or a retract run is about.
+   * The entity type a load, a match or a retract run is about.
    */
   entity_type?: EntityType | null;
   /**
@@ -1507,17 +1545,17 @@ export interface RunEntry {
    */
   extraction?: ExtractReport | null;
   /**
-   * The extractor of an extract run, and of the ingest run that stored
+   * The extractor of an extract run, and of the load run that stored
    * what it found.
    */
   extractor?: ExtractorRef | null;
   finished_at?: string | null;
+  kind: RunKind;
   /**
-   * What an ingest run reported when it finished. The run stored rows,
+   * What a load run reported when it finished. The run stored rows,
    * documents, or the mentions an extract run found.
    */
-  ingest?: IngestReport | null;
-  kind: RunKind;
+  load?: LoadReport | null;
   /**
    * What a match run reported when it was reconciled. `committed` is
    * filled in once its draft is committed.
@@ -1543,11 +1581,11 @@ export interface RunEntry {
 }
 
 /**
- * Identifies a run of the engine: an ingest, a match or a reconcile.
+ * Identifies a run of the engine: a load, a match or a reconcile.
  */
 export type RunId = number;
 
-export type RunKind = "ingest" | "extract" | "match" | "reconcile" | "retract";
+export type RunKind = "load" | "extract" | "match" | "reconcile" | "retract";
 
 export interface RunList {
   runs: RunEntry[];
@@ -1637,9 +1675,9 @@ export interface SourceCount {
  */
 export interface SourceInfo {
   /**
-   * When the latest of them was ingested.
+   * When the latest of them was loaded.
    */
-  last_ingested_at: string;
+  last_loaded_at: string;
   /**
    * Counting each version of a row.
    */
@@ -1698,44 +1736,6 @@ export interface SplitRequest {
    * on a tie.
    */
   records: RecordId[];
-}
-
-/**
- * `POST /v1/runs`: match the new records of one entity type.
- */
-export interface StartRunRequest {
-  /**
-   * With a strategy the server runs: commit the draft (the default), or
-   * store it for review. A run that waits for judgements is told this
-   * when it is reconciled.
-   */
-  commit?: boolean | null;
-  entity_type: EntityType;
-  /**
-   * Match every record of the type again, not only the new ones.
-   * Records that have an identity keep it: where the strategy
-   * disagrees with the identities as they are, the run's `resolution`
-   * lists `suggestions`.
-   */
-  rematch?: boolean | null;
-  /**
-   * Who judges. Left out, or named `rules`, the server runs the
-   * project's SQL rules and reconciles. The name of one of the project's
-   * user-code strategies runs that code on the server and reconciles;
-   * `GET /v1/info` lists them. Any other name starts a run that waits
-   * for the caller's judgements: the server runs no code it was not
-   * built with, whatever is named here.
-   *
-   * A `version` given with a project strategy must be the hash the
-   * project was built with.
-   */
-  strategy?: StrategyRef | null;
-  /**
-   * How long the call waits for the run, in milliseconds. If the run is
-   * still in progress then, the response has status 202 and the run as
-   * far as it has got.
-   */
-  wait_ms?: number | null;
 }
 
 /**
@@ -1928,7 +1928,7 @@ export interface TypeResolution {
   judgements: JudgementCounts;
   match_run: RunId;
   /**
-   * Records the run examined: those ingested since the last run, and
+   * Records the run examined: those loaded since the last run, and
    * those an earlier run left for review.
    */
   new_records: number;

@@ -7,7 +7,7 @@
 //! password or, where the server is a client of Google's, with Google. The
 //! studio at `/` needs neither: it is a page that holds nothing, and reads
 //! through `/v1` as the person signed in. Small values are JSON; candidates, judgements and rows
-//! to ingest can also cross as Arrow IPC streams.
+//! to load can also cross as Arrow IPC streams.
 //!
 //! `/mcp` is the same API as tools for an assistant, over the Model Context
 //! Protocol. It needs the same caller as `/v1` and runs the same handlers.
@@ -21,8 +21,8 @@
 //!
 //! # Calls that start work
 //!
-//! `POST /v1/ingest`, `POST /v1/retract`, `POST /v1/documents`,
-//! `POST /v1/extractions` and `POST /v1/runs` say how long they wait with
+//! `POST /v1/load`, `POST /v1/retract`, `POST /v1/documents`,
+//! `POST /v1/extractions` and `POST /v1/match` say how long they wait with
 //! `wait_ms`. If the work is done by then, the response is `200` with the
 //! finished run. Otherwise it is `202` with the run as far as it has got, and
 //! the caller reads `GET /v1/runs/{run}` until its status is no longer
@@ -103,10 +103,10 @@ use crate::api::{
     self, ARROW_STREAM, AddPersonRequest, AddTokenRequest, AddedToken, CandidateList,
     ChangePersonRequest, ChangesetList, CommitRequest, ConstraintList, DismissRequest,
     DocumentList, DocumentsRequest, DraftList, ErrorBody, ErrorCode, ErrorResponse, ExtractRequest,
-    History, IdentitiesOfRequest, IdentitiesOfResponse, IdentityList, Info, IngestParams,
-    IngestRequest, JudgementsRequest, JudgementsResponse, MintRequest, PasswordRequest, Person,
-    PersonList, ReconcileRequest, RecordList, RejectDraftRequest, RetractRequest, ReviewList,
-    RunList, RunResponse, SessionState, SetupRequest, SignInRequest, SplitRequest, StartRunRequest,
+    History, IdentitiesOfRequest, IdentitiesOfResponse, IdentityList, Info, JudgementsRequest,
+    JudgementsResponse, LoadParams, LoadRequest, MatchRequest, MintRequest, PasswordRequest,
+    Person, PersonList, ReconcileRequest, RecordList, RejectDraftRequest, RetractRequest,
+    ReviewList, RunList, RunResponse, SessionState, SetupRequest, SignInRequest, SplitRequest,
     TokenList, UndoRequest,
 };
 use crate::delimited::{self, Malformed};
@@ -373,12 +373,13 @@ fn router_until(engine: Arc<Engine>, options: &ServerOptions, stopping: Stopping
         ));
     let v1 = Router::new()
         .route("/info", get(info))
-        .route("/ingest", post(ingest))
+        .route("/load", post(load))
         .route("/retract", post(retract))
         .route("/documents", get(list_documents).post(post_documents))
         .route("/documents/{document}", get(read_document))
         .route("/extractions", post(extract))
-        .route("/runs", get(list_runs).post(start_run))
+        .route("/match", post(start_match))
+        .route("/runs", get(list_runs))
         .route("/runs/{run}", get(read_run))
         .route("/runs/{run}/candidates", get(candidates))
         .route("/runs/{run}/judgements", post(submit_judgements))
@@ -555,7 +556,7 @@ impl From<spool::Error> for ApiError {
             | Error::NothingToUndo(_) => {
                 Self::new(StatusCode::CONFLICT, ErrorCode::Conflict, message)
             }
-            Error::Ingest(_)
+            Error::Load(_)
             | Error::Retract(_)
             | Error::Documents(_)
             | Error::UnknownExtractor { .. }
@@ -1485,9 +1486,9 @@ async fn info(State(app): State<App>) -> ApiResult {
     })
 }
 
-async fn ingest(
+async fn load(
     State(app): State<App>,
-    params: Result<Query<IngestParams>, QueryRejection>,
+    params: Result<Query<LoadParams>, QueryRejection>,
     headers: HeaderMap,
     body: Bytes,
 ) -> ApiResult {
@@ -1495,7 +1496,7 @@ async fn ingest(
         let params = query(params)?;
         let rows = arrow_rows(body)?;
         return job(&app, params.wait_ms, move |engine| {
-            let report = engine.ingest(&params.source, &params.entity_type, rows)?;
+            let report = engine.load(&params.source, &params.entity_type, rows)?;
             Ok(Some(report.run))
         })
         .await;
@@ -1504,15 +1505,15 @@ async fn ingest(
         let params = query(params)?;
         let rows = delimited_rows(&app.reading, body, delimiter).await?;
         return job(&app, params.wait_ms, move |engine| {
-            let report = engine.ingest(&params.source, &params.entity_type, rows)?;
+            let report = engine.load(&params.source, &params.entity_type, rows)?;
             Ok(Some(report.run))
         })
         .await;
     }
-    let request: IngestRequest = json_body(&body)?;
+    let request: LoadRequest = json_body(&body)?;
     let rows = Rows::from_json(&request.rows)?;
     job(&app, request.wait_ms, move |engine| {
-        let report = engine.ingest(&request.source, &request.entity_type, rows)?;
+        let report = engine.load(&request.source, &request.entity_type, rows)?;
         Ok(Some(report.run))
     })
     .await
@@ -1699,8 +1700,8 @@ async fn extract(State(app): State<App>, body: Bytes) -> ApiResult {
     .await
 }
 
-async fn start_run(State(app): State<App>, body: Bytes) -> ApiResult {
-    let request: StartRunRequest = json_body(&body)?;
+async fn start_match(State(app): State<App>, body: Bytes) -> ApiResult {
+    let request: MatchRequest = json_body(&body)?;
     let entity_type = request.entity_type;
     let rematch = request.rematch.unwrap_or(false);
     // A name is the project's strategy if the manifest the server was built

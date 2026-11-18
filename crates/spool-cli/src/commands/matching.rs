@@ -114,7 +114,7 @@ pub fn run(arguments: &[String]) -> Result<(), Failure> {
     if rematch {
         request["rematch"] = json!(true);
     }
-    let started = remote.post("/runs", &request)?;
+    let started = remote.post("/match", &request)?;
     let Some((answer, run)) = remote.ended(started)? else {
         if arguments.flag("--json") {
             print_json(&json!({ "run": null }));

@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use common::{benchmarks, identity, ingest, members, record_id};
+use common::{benchmarks, identity, load, members, record_id};
 use spool::core::{Actor, EntityType, Op};
 use spool::{
     Engine, Error, Manifest, Options, ResolveOptions, RunFilter, RunStatus, Scenario, UserCode,
@@ -162,7 +162,7 @@ def judge(candidates):
 "#;
 
 fn two_anvils_and_a_hammer(engine: &Engine) {
-    ingest(
+    load(
         engine,
         "shop",
         &[
@@ -402,7 +402,7 @@ def judge(features):
     ]
 "#,
     );
-    ingest(&things.engine, "shop", &[("4", Some("tongs"), None)]);
+    load(&things.engine, "shop", &[("4", Some("tongs"), None)]);
     match things.resolve("everything") {
         Err(Error::Strategy { message, .. }) => {
             assert!(
@@ -536,7 +536,7 @@ def judge(candidates):
     engine.apply(&Manifest::load(&project).unwrap()).unwrap();
     for entity_type in ["first", "second"] {
         engine
-            .ingest(
+            .load(
                 entity_type,
                 entity_type,
                 common::rows(&[("1", Some("anvil"), None), ("2", Some("anvil"), None)]),
@@ -628,7 +628,7 @@ def judge(features, candidates, task):
     let anvils = identity(engine, "shop", "1").unwrap();
     assert_eq!(identity(engine, "shop", "2"), Some(anvils));
 
-    ingest(
+    load(
         engine,
         "depot",
         &[("9", Some("anvil"), None), ("8", Some("tongs"), None)],
@@ -712,7 +712,7 @@ def judge(candidates):
         ),
     );
     let engine = Arc::clone(&things.engine);
-    ingest(
+    load(
         &engine,
         "shop",
         &[
@@ -768,7 +768,7 @@ def judge(candidates):
             ],
         )
         .unwrap();
-    ingest(&engine, "depot", &[("9", Some("hammer"), None)]);
+    load(&engine, "depot", &[("9", Some("hammer"), None)]);
     assert!(!resolving.is_finished());
 
     fs::write(&go, "").unwrap();
@@ -865,7 +865,7 @@ await strategy(async (task) => {{
     assert_eq!(identity(engine, "shop", "2"), Some(anvils));
     assert!(things.tasks().is_empty(), "{:?}", things.tasks());
 
-    ingest(engine, "depot", &[("9", Some("anvil"), None)]);
+    load(engine, "depot", &[("9", Some("anvil"), None)]);
     things.resolve("model").unwrap();
     assert_eq!(identity(engine, "depot", "9"), Some(anvils));
 

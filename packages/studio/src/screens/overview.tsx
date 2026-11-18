@@ -98,7 +98,7 @@ function Store({ info, runs }: { info: Info; runs: RunEntry[] }) {
                   ),
                 number: true,
               },
-              { title: "Last ingested", cell: (source) => <When at={source.last_ingested_at} /> },
+              { title: "Last loaded", cell: (source) => <When at={source.last_loaded_at} /> },
             ]}
             rows={type.sources}
             rowKey={(source) => source.source}

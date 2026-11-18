@@ -159,7 +159,7 @@ fn resent_rows_create_no_records_and_no_operations() {
         ("batch-2-registry.csv", "registry"),
     ] {
         let rows = Rows::from_csv(companies().join(file)).unwrap();
-        let again = engine.ingest(source, "company", rows).unwrap();
+        let again = engine.load(source, "company", rows).unwrap();
         assert_eq!(again.inserted, 0, "{file}");
         assert_eq!(again.duplicates, again.received, "{file}");
     }
@@ -282,7 +282,7 @@ fn two_records_a_rule_keeps_apart_are_not_attached_to_the_same_identity() {
         &[vec![Some("c-1"), Some("Pioneer Supplies"), Some("GB")]],
     )
     .unwrap();
-    engine.ingest("crm", "company", crm).unwrap();
+    engine.load("crm", "company", crm).unwrap();
     resolve();
     let known = identity(&engine, "crm", "c-1").unwrap();
 
@@ -306,7 +306,7 @@ fn two_records_a_rule_keeps_apart_are_not_attached_to_the_same_identity() {
         ],
     )
     .unwrap();
-    engine.ingest("registry", "company", registry).unwrap();
+    engine.load("registry", "company", registry).unwrap();
     let report = resolve();
 
     // No identity holds two registry numbers.

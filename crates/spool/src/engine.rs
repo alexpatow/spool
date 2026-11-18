@@ -22,7 +22,7 @@ use crate::drafts::{self, DraftEntry, DraftFilter, DraftStatus, DraftSummary};
 use crate::error::{Error, Result};
 use crate::explain::{self, Explanation};
 use crate::features;
-use crate::ingest::{self, IngestReport};
+use crate::load::{self, LoadReport};
 use crate::lookup::{
     self, HistoryEntry, IdentityFilter, IdentitySummary, IdentityView, RecordEntry, RecordFilter,
     StoreInfo,
@@ -99,7 +99,7 @@ impl StrategyRef {
 }
 
 /// Which records a match run treats as new: those of one entity type
-/// ingested since the last match run of that type that succeeded.
+/// loaded since the last match run of that type that succeeded.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Scope {
     pub entity_type: EntityType,
@@ -193,7 +193,7 @@ pub struct TypeResolution {
     pub entity_type: EntityType,
     pub match_run: RunId,
     pub reconcile_run: RunId,
-    /// Records the run examined: those ingested since the last run, and
+    /// Records the run examined: those loaded since the last run, and
     /// those an earlier run left for review.
     pub new_records: u64,
     /// How many of them an earlier run had left for review.
@@ -404,7 +404,7 @@ struct MatchConfig {
     entity_type: EntityType,
     declaration_version: u32,
     manifest_hash: String,
-    /// New records are those ingested after this run.
+    /// New records are those loaded after this run.
     after_run: RunId,
     /// The review items that were open when the run began. Their records
     /// are examined again.
@@ -581,13 +581,13 @@ impl Engine {
     /// Stores rows from one source as records of one entity type and
     /// computes their feature rows. A row that is already known, by its
     /// source, key and content, creates nothing.
-    pub fn ingest(
+    pub fn load(
         &self,
         source: &str,
         entity_type: &str,
         rows: impl RecordBatchReader,
-    ) -> Result<IngestReport> {
-        self.lock().ingest(source, entity_type, rows)
+    ) -> Result<LoadReport> {
+        self.lock().load(source, entity_type, rows)
     }
 
     /// Takes back rows a source no longer holds, named by their keys. Every
@@ -595,7 +595,7 @@ impl Engine {
     /// identity, by one changeset under `actor`'s name. From then on no run
     /// examines the records, and a changeset that would give one an
     /// identity is refused, until the source sends the row again: an
-    /// ingest of the key, with the same content or other, brings every
+    /// load of the key, with the same content or other, brings every
     /// version back to the identity it left.
     ///
     /// A key the source has no row under is counted and changes nothing, so
@@ -614,7 +614,7 @@ impl Engine {
     }
 
     /// Starts a match run and generates its candidate pairs with the
-    /// project's block rules. The run examines the records ingested
+    /// project's block rules. The run examines the records loaded
     /// since the last match run of the type that succeeded, and again those
     /// of open review items.
     ///
@@ -793,13 +793,13 @@ impl Engine {
 
     /// Matches new records with a strategy, reconciles with the default
     /// policy, and commits or leaves a draft for review. A type is resolved
-    /// when it has newly ingested records or open review items, and
+    /// when it has newly loaded records or open review items, and
     /// always by a [rematch](ResolveOptions::rematch).
     ///
     /// The strategy is the built-in runner of the project's SQL rules, or
     /// user code the project holds, which runs as a process of its own.
     /// While it runs the engine is free: changesets are committed, rows are
-    /// ingested and reads are answered. What the user code hands back is
+    /// loaded and reads are answered. What the user code hands back is
     /// evidence, reconciled against the state there is when it finishes. A
     /// strategy that fails, or does not finish in time, fails its run and
     /// changes nothing.
@@ -955,7 +955,7 @@ impl Engine {
         })
     }
 
-    /// A record as it was ingested, or `None` if the store does not
+    /// A record as it was loaded, or `None` if the store does not
     /// hold it.
     pub fn record(&self, id: RecordId) -> Result<Option<RecordEntry>> {
         self.read(|conn| lookup::record(conn, id))
@@ -1424,25 +1424,25 @@ impl Inner {
         match_run(&self.store.conn, run)
     }
 
-    fn ingest(
+    fn load(
         &mut self,
         source: &str,
         entity_type: &str,
         rows: impl RecordBatchReader,
-    ) -> Result<IngestReport> {
+    ) -> Result<LoadReport> {
         if source.is_empty() {
-            return Err(Error::Ingest("the source needs a name".to_owned()));
+            return Err(Error::Load("the source needs a name".to_owned()));
         }
         let (manifest, entry, version) = self.declared(entity_type)?;
         let name = entry.name.clone();
         let declaration = entry.declaration.clone();
         let source = &manifest
             .source_of(source, entry)
-            .map_err(Error::Ingest)?
+            .map_err(Error::Load)?
             .clone();
 
         let run = self.start_run(
-            "ingest",
+            "load",
             None,
             &json!({ "source": source.name, "entity_type": name }),
         )?;
@@ -1454,7 +1454,7 @@ impl Inner {
 
             for incoming in rows {
                 let incoming = incoming?;
-                let staged = ingest::stage(source, &incoming, &mut seen, received as usize)?;
+                let staged = load::stage(source, &incoming, &mut seen, received as usize)?;
                 received += incoming.num_rows() as u64;
                 let Some(staged) = staged else { continue };
 
@@ -1476,12 +1476,12 @@ impl Inner {
                     }
                 };
                 if let Some(other) = clash {
-                    return Err(Error::Ingest(format!(
+                    return Err(Error::Load(format!(
                         "a row with the same source, key and content is already stored as entity type `{other}`"
                     )));
                 }
 
-                let stored = ingest::insert(&tx, name.as_str(), &source.name, now, run, staged)?;
+                let stored = load::insert(&tx, name.as_str(), &source.name, now, run, staged)?;
                 inserted += stored.inserted;
                 restored += stored.restored;
             }
@@ -1494,15 +1494,15 @@ impl Inner {
                 &features::of_run(&name, run),
             )?;
             if let Some(problem) = problem {
-                return Err(Error::Ingest(problem));
+                return Err(Error::Load(problem));
             }
             let superseded: i64 = tx.query_row(
                 "SELECT count(*) FROM spool.record
-                 WHERE ingest_run = ? AND supersedes IS NOT NULL",
+                 WHERE load_run = ? AND supersedes IS NOT NULL",
                 [run.0 as i64],
                 |row| row.get(0),
             )?;
-            let report = IngestReport {
+            let report = LoadReport {
                 run,
                 received,
                 inserted,
@@ -1529,17 +1529,17 @@ impl Inner {
         )
     }
 
-    /// Puts the records that came back in an ingest into the identity each
+    /// Puts the records that came back in a load into the identity each
     /// of them left, by one changeset, and says so in the run's report.
     ///
-    /// The ingest is already stored when this begins. Cut short in between,
+    /// The load is already stored when this begins. Cut short in between,
     /// the store holds records that came back and have no identity, and
     /// the next match run takes them as new.
     pub(crate) fn give_back(
         &mut self,
-        mut report: IngestReport,
+        mut report: LoadReport,
         reason: String,
-    ) -> Result<IngestReport> {
+    ) -> Result<LoadReport> {
         if report.restored == 0 {
             return Ok(report);
         }
@@ -1749,7 +1749,7 @@ impl Inner {
     }
 
     /// The last match run of an entity type that succeeded, or run 0. What
-    /// was ingested after it is new.
+    /// was loaded after it is new.
     fn last_match_run(&self, entity_type: &EntityType) -> Result<RunId> {
         let run: i64 = self.store.conn.query_row(
             "SELECT coalesce(max(run_id), 0) FROM spool.run
@@ -1932,11 +1932,11 @@ impl Inner {
             let evidence = inner.evidence(run, &config)?;
             let new_records = evidence.records.len() as u64;
             // A record that came back after its source had taken it back
-            // was ingested long ago too, and no run left it for review.
+            // was loaded long ago too, and no run left it for review.
             let reexamined = inner.count(&format!(
                 "SELECT count(*) FROM {} s
                  JOIN spool.record o ON o.record_id = s.record_id
-                 WHERE o.ingest_run <= {after_run}
+                 WHERE o.load_run <= {after_run}
                    AND s.record_id NOT IN ({restored})",
                 rules::SCOPE,
                 after_run = config.after_run,
@@ -2420,15 +2420,15 @@ impl Inner {
     }
 
     /// Whether a type has anything a run would examine: records
-    /// ingested since its last match run that succeeded, records that
+    /// loaded since its last match run that succeeded, records that
     /// came back since then after their source had taken them back, or open
     /// review items with records that wait for an identity.
     fn has_work(&self, entity_type: &EntityType) -> Result<bool> {
         let after_run = self.last_match_run(entity_type)?;
-        let ingested = self.count(&format!(
+        let loaded = self.count(&format!(
             "SELECT count(*) FROM spool.record
              WHERE entity_type = '{entity_type}'
-               AND (ingest_run > {after_run} OR (
+               AND (load_run > {after_run} OR (
                  record_id IN (
                    SELECT record_id FROM spool.retraction WHERE restored_run > {after_run})
                  AND record_id NOT IN (
@@ -2437,7 +2437,7 @@ impl Inner {
             rules::NOT_DISMISSED,
             retract::NOT_RETRACTED
         ))?;
-        Ok(ingested > 0 || !review::open_ids(&self.store.conn, entity_type)?.is_empty())
+        Ok(loaded > 0 || !review::open_ids(&self.store.conn, entity_type)?.is_empty())
     }
 
     /// Writes what a user-code strategy is given: the run's candidate pairs

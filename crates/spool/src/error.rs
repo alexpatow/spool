@@ -25,7 +25,10 @@ pub enum Error {
     #[error("{}: {message}", file.display())]
     Project { file: PathBuf, message: String },
 
-    #[error("the store has format version {found}, and this engine reads version {expected}")]
+    #[error(
+        "the store has format version {found}, and this engine reads only version {expected}: \
+         it does not convert a store, so load into a new one"
+    )]
     FormatVersion { found: String, expected: String },
 
     /// Another process has the store's file open. `holder` is that
@@ -60,8 +63,8 @@ pub enum Error {
     #[error("apply rejected: {0}")]
     Apply(String),
 
-    #[error("ingest rejected: {0}")]
-    Ingest(String),
+    #[error("load rejected: {0}")]
+    Load(String),
 
     #[error("retraction rejected: {0}")]
     Retract(String),

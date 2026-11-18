@@ -111,7 +111,7 @@ pub struct IdStability {
 /// what was committed after the later one.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Churn {
-    /// Records ingested between the two positions.
+    /// Records loaded between the two positions.
     pub new_records: u64,
     pub identities_created: u64,
     /// Identities that are merged at the later position by a merge made after
@@ -123,7 +123,7 @@ pub struct Churn {
     /// moves.
     pub records_reassigned: u64,
     /// The three counts per thousand new records. `None` when nothing
-    /// was ingested.
+    /// was loaded.
     pub created_per_thousand: Option<f64>,
     pub merged_per_thousand: Option<f64>,
     pub reassigned_per_thousand: Option<f64>,

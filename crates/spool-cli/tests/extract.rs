@@ -150,9 +150,9 @@ fn documents_are_stored_listed_and_read() {
             { "key": "a", "text": "🔨 Anvil and Hammer.", "uri": "https://notes.test/a" },
         ]),
     );
-    assert_eq!(run["kind"], "ingest");
+    assert_eq!(run["kind"], "load");
     assert_eq!(run["entity_type"], Value::Null);
-    let report = &run["ingest"];
+    let report = &run["load"];
     assert_eq!(
         (
             &report["received"],
@@ -176,7 +176,7 @@ fn documents_are_stored_listed_and_read() {
     assert_eq!(a["uri"], "https://notes.test/a");
     assert_eq!(a["length"], 19);
     assert_eq!(a["text"], Value::Null);
-    assert_eq!(a["ingest_run"], run["run"]);
+    assert_eq!(a["load_run"], run["run"]);
     assert_eq!(a["extractions"], json!([]));
 
     // One document is read with its text.
@@ -187,7 +187,7 @@ fn documents_are_stored_listed_and_read() {
 
     // A changed text under the same key is the document's next version.
     let run = add(&server, json!([{ "key": "a", "text": "Only an Anvil." }]));
-    assert_eq!(run["ingest"]["superseded"], 1);
+    assert_eq!(run["load"]["superseded"], 1);
     let versions = server.read("/v1/documents?key=a&source=notes");
     assert_eq!(versions["documents"].as_array().unwrap().len(), 2);
     let latest = server.read("/v1/documents?key=a&latest=true");
@@ -311,14 +311,14 @@ fn the_server_runs_the_projects_extractors_and_resolves_what_they_find() {
     assert_eq!(anvil["evidence"]["text"], "Anvil");
     assert_eq!(anvil["evidence"]["key"], "a");
     assert_eq!(anvil["evidence"]["extractor"], "words");
-    // The records were stored by an ingest run of the extractor's.
-    let stored = server.read(&format!("/v1/runs/{}", report["ingest_run"]))["run"].clone();
+    // The records were stored by a load run of the extractor's.
+    let stored = server.read(&format!("/v1/runs/{}", report["load_run"]))["run"].clone();
     assert_ne!(stored["run"], run["run"]);
-    assert_eq!(stored["kind"], "ingest");
+    assert_eq!(stored["kind"], "load");
     assert_eq!(stored["extractor"]["name"], "words");
 
     // Matching then treats them as any record: the two hammers are one.
-    let resolved = server.call("/v1/runs", json!({ "entity_type": "thing" }))["run"].clone();
+    let resolved = server.call("/v1/match", json!({ "entity_type": "thing" }))["run"].clone();
     assert_eq!(
         resolved["resolution"]["identities_created"], 2,
         "{resolved}"

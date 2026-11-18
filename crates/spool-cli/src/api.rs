@@ -30,11 +30,11 @@ pub const CSV: &str = "text/csv";
 /// The media type of CSV with tabs between the fields.
 pub const TSV: &str = "text/tab-separated-values";
 
-/// `POST /v1/ingest` with a JSON body. With an Arrow or a CSV body, the
+/// `POST /v1/load` with a JSON body. With an Arrow or a CSV body, the
 /// same fields other than `rows` are query parameters.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct IngestRequest {
+pub struct LoadRequest {
     /// The name of the source the rows come from, which the project
     /// declares in `sources/<name>.yaml`.
     pub source: String,
@@ -51,7 +51,7 @@ pub struct IngestRequest {
 ///
 /// Every version of each row stays as evidence and leaves its identity, by
 /// a changeset recorded under the caller. No run examines the records
-/// after that, until an ingest sends a row under the same key again.
+/// after that, until a load sends a row under the same key again.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RetractRequest {
@@ -70,13 +70,13 @@ pub struct RetractRequest {
     pub wait_ms: Option<u64>,
 }
 
-/// The query parameters of `POST /v1/ingest` with an Arrow body, or with a
+/// The query parameters of `POST /v1/load` with an Arrow body, or with a
 /// CSV body: `content-type: text/csv`, or `text/tab-separated-values` for
 /// tabs between the fields. The first line of CSV names the columns, every
 /// value is text, and an empty field is a missing value.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct IngestParams {
+pub struct LoadParams {
     pub source: String,
     pub entity_type: String,
     #[serde(default)]
@@ -84,7 +84,7 @@ pub struct IngestParams {
 }
 
 /// `POST /v1/documents`: store documents from one source, to be read by an
-/// extractor. The response is the ingest run that stored them.
+/// extractor. The response is the load run that stored them.
 ///
 /// One document can also be sent as it is: a body of UTF-8 text, such as
 /// `text/plain`, with `source`, `key` and optionally `uri` and `wait_ms` in
@@ -110,7 +110,7 @@ pub struct DocumentList {
 
 /// `POST /v1/extractions`: run one of the project's extractors over the
 /// documents it has not read. The response is the extract run. What it
-/// found is records, which `POST /v1/runs` then matches.
+/// found is records, which `POST /v1/match` then matches.
 ///
 /// The body may be left out: the project's only extractor then reads
 /// every document it has not read.
@@ -138,10 +138,10 @@ pub struct ExtractRequest {
     pub wait_ms: Option<u64>,
 }
 
-/// `POST /v1/runs`: match the new records of one entity type.
+/// `POST /v1/match`: match the new records of one entity type.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct StartRunRequest {
+pub struct MatchRequest {
     pub entity_type: EntityType,
     /// Who judges. Left out, or named `rules`, the server runs the
     /// project's SQL rules and reconciles. The name of one of the project's
@@ -580,13 +580,13 @@ pub struct TokenList {
 #[derive(JsonSchema)]
 #[allow(dead_code)]
 struct Wire {
-    ingest_request: IngestRequest,
+    load_request: LoadRequest,
     retract_request: RetractRequest,
     documents_request: DocumentsRequest,
     document_list: DocumentList,
     document_entry: DocumentEntry,
     extract_request: ExtractRequest,
-    start_run_request: StartRunRequest,
+    match_request: MatchRequest,
     run_response: RunResponse,
     run_list: RunList,
     judgements_request: JudgementsRequest,

@@ -127,7 +127,7 @@ impl News {
             .unwrap();
     }
 
-    fn add(&self, documents: &[(&str, &str)]) -> spool::IngestReport {
+    fn add(&self, documents: &[(&str, &str)]) -> spool::LoadReport {
         self.engine
             .add_documents("news", &documents_of(documents))
             .unwrap()
@@ -231,10 +231,10 @@ fn a_document_is_stored_once_and_a_changed_text_is_its_next_version() {
     );
     // The store needs no manifest to hold documents, and the call is a run.
     let run = engine.run(first.run).unwrap();
-    assert_eq!(run.kind, RunKind::Ingest);
+    assert_eq!(run.kind, RunKind::Load);
     assert_eq!(run.status, RunStatus::Succeeded);
     assert_eq!(run.entity_type, None);
-    assert_eq!(run.ingest, Some(first.clone()));
+    assert_eq!(run.load, Some(first.clone()));
 
     let again = engine
         .add_documents("news", &documents_of(&[("a", FIRST)]))
@@ -261,7 +261,7 @@ fn a_document_is_stored_once_and_a_changed_text_is_its_next_version() {
     assert_eq!(original.uri.as_deref(), Some("https://news.test/a"));
     assert_eq!(original.text.as_deref(), Some(FIRST));
     assert_eq!(original.length, FIRST.chars().count() as u64);
-    assert_eq!(original.ingest_run, first.run);
+    assert_eq!(original.load_run, first.run);
     assert_eq!(original.supersedes, None);
     assert_eq!(original.superseded_by, Some(id("a", edited)));
     assert!(original.extractions.is_empty());
@@ -343,7 +343,7 @@ fn an_extractor_is_one_the_project_has_and_needs_the_projects_files() {
             report.documents,
             report.mentions,
             report.inserted,
-            report.ingest_run
+            report.load_run
         ),
         (0, 0, 0, None)
     );
@@ -446,7 +446,7 @@ fn what_an_extractor_finds_is_records_and_resolves_like_rows() {
     assert_eq!(other[0].identity, None);
 
     // The extract run names the extractor and the hash of the file that
-    // ran, and the records were stored by an ingest run of their own.
+    // ran, and the records were stored by a load run of their own.
     let run = engine.run(report.run).unwrap();
     assert_eq!(run.kind, RunKind::Extract);
     assert_eq!(run.status, RunStatus::Succeeded);
@@ -456,12 +456,12 @@ fn what_an_extractor_finds_is_records_and_resolves_like_rows() {
         (named.name.as_str(), &named.version),
         ("names", &extractor.hash)
     );
-    let stored = engine.run(report.ingest_run.unwrap()).unwrap();
-    assert_eq!(stored.kind, RunKind::Ingest);
+    let stored = engine.run(report.load_run.unwrap()).unwrap();
+    assert_eq!(stored.kind, RunKind::Load);
     assert_eq!(stored.status, RunStatus::Succeeded);
     assert_eq!(stored.extractor.unwrap().name, "names");
-    assert_eq!(stored.ingest.as_ref().unwrap().inserted, 4);
-    assert_eq!(acme.ingest_run, report.ingest_run.unwrap());
+    assert_eq!(stored.load.as_ref().unwrap().inserted, 4);
+    assert_eq!(acme.load_run, report.load_run.unwrap());
 
     // The document says who read it.
     let read = engine.document(first).unwrap().extractions;
@@ -710,7 +710,7 @@ fn a_mention_the_engine_refuses_refuses_them_all() {
                 .is_empty()
         );
         assert!(
-            runs(engine, RunKind::Ingest)
+            runs(engine, RunKind::Load)
                 .iter()
                 .all(|run| run.extractor.is_none())
         );
@@ -763,7 +763,7 @@ fn a_mention_the_engine_refuses_refuses_them_all() {
     extractor("    assert task.entity_types == ['company']\n    return None");
     let report = news.extract("names").unwrap();
     assert_eq!(
-        (report.documents, report.mentions, report.ingest_run),
+        (report.documents, report.mentions, report.load_run),
         (1, 0, None)
     );
     assert_eq!(
@@ -975,7 +975,7 @@ def find(documents):
     fs::write(&go, "").unwrap();
     let report = extracting.join().unwrap().unwrap();
     assert_eq!((report.documents, report.mentions), (1, 1));
-    assert!(report.ingest_run.unwrap() > between);
+    assert!(report.load_run.unwrap() > between);
 
     // What the extractor found is new to the next resolve.
     let resolved = engine.resolve(&ResolveOptions::default()).unwrap();

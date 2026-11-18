@@ -17,18 +17,18 @@ fn things_server(dir: &Path) -> Server {
     Server::serve(&project, dir, 1)
 }
 
-/// Ingests things from the shop as `(id, code)` and resolves them.
+/// Loads things from the shop as `(id, code)` and resolves them.
 fn stock(server: &Server, things: &[(&str, &str)]) {
     let rows: Vec<Value> = things
         .iter()
         .map(|(id, code)| json!({ "id": id, "code": code }))
         .collect();
     let response = server.post(
-        "/v1/ingest",
+        "/v1/load",
         json!({ "source": "shop", "entity_type": "thing", "rows": rows }),
     );
     assert_eq!(response.ok()["run"]["status"], "succeeded");
-    let run = server.call("/v1/runs", json!({ "entity_type": "thing" }));
+    let run = server.call("/v1/match", json!({ "entity_type": "thing" }));
     assert_eq!(run["run"]["status"], "succeeded", "{run}");
 }
 
@@ -244,7 +244,7 @@ fn an_identity_is_split_and_a_constraint_keeps_the_sides_apart() {
         server.read("/v1/review?status=dismissed")["items"],
         json!([dismissed])
     );
-    let run = server.call("/v1/runs", json!({ "entity_type": "thing" }));
+    let run = server.call("/v1/match", json!({ "entity_type": "thing" }));
     assert_eq!(run["run"], Value::Null, "there is nothing to examine");
     assert_eq!(server.read("/v1/review?status=open")["items"], json!([]));
     assert_eq!(thing(&server, "4")["identity"], Value::Null);
@@ -287,12 +287,12 @@ fn a_row_that_changed_is_read_with_the_version_it_replaced() {
     let first = thing(&server, "1");
 
     let rows = json!([{ "id": "1", "code": "anvil", "colour": "black" }]);
-    let ingest = server.call(
-        "/v1/ingest",
+    let load = server.call(
+        "/v1/load",
         json!({ "source": "shop", "entity_type": "thing", "rows": rows }),
     );
-    assert_eq!(ingest["run"]["ingest"]["superseded"], 1);
-    server.call("/v1/runs", json!({ "entity_type": "thing" }));
+    assert_eq!(load["run"]["load"]["superseded"], 1);
+    server.call("/v1/match", json!({ "entity_type": "thing" }));
 
     let versions = server.read("/v1/records?source=shop&key=1");
     let versions = versions["records"].as_array().unwrap();

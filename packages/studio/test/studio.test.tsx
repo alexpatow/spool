@@ -141,13 +141,13 @@ describe("the door", () => {
 
       press("Add token");
       const adding = within(await screen.findByRole("dialog"));
-      fill("Name", "ingest", adding);
+      fill("Name", "load", adding);
       press("Add token", adding);
       const said = await screen.findByRole("status");
       const secret = said.querySelector("[data-part=secret] code")?.textContent ?? "";
       expect(secret).toMatch(/^spool_[0-9a-f]{64}$/);
-      await waitFor(() => expect(rowsOf(table).map((cells) => cells[0])).toEqual(["api", "ingest"]));
-      expect(rowsOf(table)[1]?.slice(1, 4)).toEqual(["agent:ingest", expect.stringMatching(/ by Ada$/), "Never"]);
+      await waitFor(() => expect(rowsOf(table).map((cells) => cells[0])).toEqual(["api", "load"]));
+      expect(rowsOf(table)[1]?.slice(1, 4)).toEqual(["agent:load", expect.stringMatching(/ by Ada$/), "Never"]);
 
       // What presents it is let in. The list does not show it.
       const agent = new SpoolClient({ url: server.url, token: secret });
@@ -158,7 +158,7 @@ describe("the door", () => {
       const revoking = within(await screen.findByRole("dialog"));
       press("Revoke", revoking);
       await waitFor(() => expect(rowsOf(table).map((cells) => cells[0])).toEqual(["api"]));
-      expect(screen.getByRole("status").textContent).toBe("Revoked ingest.");
+      expect(screen.getByRole("status").textContent).toBe("Revoked load.");
       expect(document.body.textContent).not.toContain(secret);
       expect(await agent.info().catch((error: unknown) => (error as { code: string }).code)).toBe("unauthorized");
     },
@@ -409,11 +409,11 @@ describe("company records a reviewer corrected", () => {
     open(server, "/runs");
     await heading("Runs");
     await screen.findByRole("table");
-    fireEvent.change(screen.getByLabelText("Kind"), { target: { value: "ingest" } });
-    expect(here()).toBe("/runs?kind=ingest");
+    fireEvent.change(screen.getByLabelText("Kind"), { target: { value: "load" } });
+    expect(here()).toBe("/runs?kind=load");
     await waitFor(() => expect(rowsOf(screen.getByRole("table"))).toHaveLength(4));
-    expect(rowsOf(screen.getByRole("table")).every((line) => line[1] === "ingest")).toBe(true);
-    expect((screen.getByLabelText("Kind") as HTMLSelectElement).value).toBe("ingest");
+    expect(rowsOf(screen.getByRole("table")).every((line) => line[1] === "load")).toBe(true);
+    expect((screen.getByLabelText("Kind") as HTMLSelectElement).value).toBe("load");
   });
 
   test("the identities are listed by what their records call them, with where the records came from", async () => {
@@ -650,7 +650,7 @@ describe("company records a reviewer corrected", () => {
     await waitFor(() => expect(rowsOf(screen.getByRole("table"))).toHaveLength(2));
   });
 
-  test("a record shows what was ingested and the review item it waits in", async () => {
+  test("a record shows what was loaded and the review item it waits in", async () => {
     const waiting = await row(server.client, "crm", "c-117");
     open(server, `/records/${waiting.id}`);
     await heading("Pioneer Supplies");

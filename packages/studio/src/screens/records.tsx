@@ -206,10 +206,10 @@ function RecordScreen({ record, review, document }: Loaded) {
           ["Source", <Source name={record.source} />],
           ["Key", record.key ? <Code>{record.key}</Code> : null],
           [
-            "Ingested",
+            "Loaded",
             <>
-              <When at={record.ingested_at} /> by{" "}
-              <Ref kind="run" id={record.ingest_run} label={`run ${record.ingest_run}`} />
+              <When at={record.loaded_at} /> by{" "}
+              <Ref kind="run" id={record.load_run} label={`run ${record.load_run}`} />
             </>,
           ],
           [

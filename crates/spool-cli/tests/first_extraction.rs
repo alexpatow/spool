@@ -488,7 +488,7 @@ found      3 records in 1 document: 3 new, 0 already held
         .body(b"We visited Tidewater Marine LLC.")
         .send()
         .ok();
-    assert_eq!(sent["run"]["ingest"]["inserted"], 1, "{sent}");
+    assert_eq!(sent["run"]["load"]["inserted"], 1, "{sent}");
     assert_eq!(
         extracted(&server, &project, &[]),
         "\
@@ -503,8 +503,8 @@ next       `spool match` places it in identities
     write(&project.join("notes-2.txt"), "Acorn Tools Ltd rang back.\n");
     let answered: Value =
         serde_json::from_str(&extracted(&server, &project, &["notes-2.txt", "--json"])).unwrap();
-    assert_eq!(answered["documents"]["kind"], "ingest", "{answered}");
-    assert_eq!(answered["documents"]["ingest"]["inserted"], 1);
+    assert_eq!(answered["documents"]["kind"], "load", "{answered}");
+    assert_eq!(answered["documents"]["load"]["inserted"], 1);
     assert_eq!(answered["extraction"]["kind"], "extract");
     assert_eq!(answered["extraction"]["status"], "succeeded");
     assert_eq!(answered["extraction"]["extractor"]["name"], "companies");
@@ -627,7 +627,7 @@ fn the_same_step_over_http_sends_the_file_as_it_is() {
     )
     .ok();
     assert_eq!(stored["run"]["status"], "succeeded", "{stored}");
-    assert_eq!(stored["run"]["ingest"]["inserted"], 1, "{stored}");
+    assert_eq!(stored["run"]["load"]["inserted"], 1, "{stored}");
     let documents = server.read("/v1/documents?source=notes");
     let document = &documents["documents"][0];
     assert_eq!(document["key"], "notes-1.txt");
@@ -699,7 +699,7 @@ fn the_same_step_over_http_sends_the_file_as_it_is() {
         .body(b"# Memo\n\nHalden Group Inc wrote.\n")
         .send()
         .ok();
-    assert_eq!(sent["run"]["ingest"]["inserted"], 1, "{sent}");
+    assert_eq!(sent["run"]["load"]["inserted"], 1, "{sent}");
     // And without one the body is JSON, as a browser sends it unless told
     // otherwise.
     let sent = server
@@ -708,7 +708,7 @@ fn the_same_step_over_http_sends_the_file_as_it_is() {
         .body(br#"{"source": "notes", "documents": [{"key": "fax.txt", "text": "A fax."}]}"#)
         .send()
         .ok();
-    assert_eq!(sent["run"]["ingest"]["inserted"], 1, "{sent}");
+    assert_eq!(sent["run"]["load"]["inserted"], 1, "{sent}");
     assert_eq!(
         text_plain("/v1/documents", b"A note.").error(400, "invalid"),
         "the body is not the JSON expected: expected value at line 1 column 1. To send one \

@@ -20,7 +20,7 @@ key.
 Every version of each row stays in the store as evidence, and leaves its
 identity by a changeset recorded under the caller. The identity keeps its ID
 and its other members. No run examines the records after that, and they
-cannot be given an identity, until the source sends the row again: ingesting
+cannot be given an identity, until the source sends the row again: loading
 a row under the same key, changed or not, brings every version back.
 
 A key the source has no row under changes nothing, so the same keys can be

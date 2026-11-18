@@ -104,7 +104,7 @@ pub struct ReviewEntry {
     pub id: u64,
     /// The run that raised it: a reconcile run. For a `possible_split`, the
     /// retract run that took back what held the records together, or the
-    /// ingest run that brought a record back to where what held it is
+    /// load run that brought a record back to where what held it is
     /// still gone.
     pub run: RunId,
     pub entity_type: EntityType,

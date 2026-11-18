@@ -21,10 +21,10 @@ export function copyProject(from: string): string {
   return to;
 }
 
-async function ingest(client: SpoolClient, file: string, source: string): Promise<void> {
+async function load(client: SpoolClient, file: string, source: string): Promise<void> {
   const rows = readCsv(join(companies, file));
-  const run = await client.ingest({ source, entity_type: "company", rows });
-  if (run.status !== "succeeded") throw new Error(`ingesting ${file} ${run.status}: ${run.error ?? ""}`);
+  const run = await client.load({ source, entity_type: "company", rows });
+  if (run.status !== "succeeded") throw new Error(`loading ${file} ${run.status}: ${run.error ?? ""}`);
 }
 
 export async function row(client: SpoolClient, source: string, key: string): Promise<RecordEntry> {
@@ -47,9 +47,9 @@ async function identityOf(client: SpoolClient, source: string, key: string): Pro
  * waits for a decision.
  */
 export async function seedCompanies(client: SpoolClient): Promise<void> {
-  await ingest(client, "batch-1-crm.csv", "crm");
-  await ingest(client, "batch-1-registry.csv", "registry");
-  await client.startRun({ entity_type: "company" });
+  await load(client, "batch-1-crm.csv", "crm");
+  await load(client, "batch-1-registry.csv", "registry");
+  await client.match({ entity_type: "company" });
 
   const atlas = await client.commit({
     reason: "same name, taken for one company",
@@ -89,10 +89,10 @@ export async function seedCompanies(client: SpoolClient): Promise<void> {
     ],
   });
 
-  await ingest(client, "batch-2-crm.csv", "crm");
-  await client.startRun({ entity_type: "company" });
-  await ingest(client, "batch-2-registry.csv", "registry");
-  await client.startRun({ entity_type: "company", commit: false });
+  await load(client, "batch-2-crm.csv", "crm");
+  await client.match({ entity_type: "company" });
+  await load(client, "batch-2-registry.csv", "registry");
+  await client.match({ entity_type: "company", commit: false });
 }
 
 /**
@@ -108,6 +108,6 @@ export async function seedNews(client: SpoolClient): Promise<void> {
     await client.addDocuments("news", documents);
     const run = await client.extract("suffix_ts");
     if (run.status !== "succeeded") throw new Error(`the extractor ${run.status}: ${run.error ?? ""}`);
-    await client.startRun({ entity_type: "company" });
+    await client.match({ entity_type: "company" });
   }
 }

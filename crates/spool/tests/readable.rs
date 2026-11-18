@@ -60,9 +60,9 @@ fn search(engine: &Engine, q: &str) -> Vec<String> {
 #[test]
 fn an_identity_is_called_what_most_of_its_members_are_and_says_where_they_came_from() {
     let engine = engine();
-    ingest(&engine, "shop", &[("1", Some("anvil"), Some("K7"))]);
+    load(&engine, "shop", &[("1", Some("anvil"), Some("K7"))]);
     engine
-        .ingest(
+        .load(
             "catalogue",
             "thing",
             json_rows(json!([
@@ -123,12 +123,12 @@ fn an_identity_is_called_what_most_of_its_members_are_and_says_where_they_came_f
         .collect();
     assert_eq!(sources, [("catalogue", 3, 0), ("shop", 1, 0)]);
     assert_eq!(
-        info.entity_types[0].sources[1].last_ingested_at,
+        info.entity_types[0].sources[1].last_loaded_at,
         engine
             .record(record_id(&engine, "shop", "1"))
             .unwrap()
             .unwrap()
-            .ingested_at
+            .loaded_at
     );
 }
 
@@ -136,13 +136,13 @@ fn an_identity_is_called_what_most_of_its_members_are_and_says_where_they_came_f
 fn of_labels_that_as_many_members_have_the_first_to_arrive_stands() {
     let engine = engine();
     engine
-        .ingest(
+        .load(
             "registry",
             "thing",
             json_rows(json!([{ "id": "1", "legal_name": "ANVIL WORKS LTD", "code": "K7" }])),
         )
         .unwrap();
-    ingest(&engine, "shop", &[("2", Some("Anvil Works"), Some("K7"))]);
+    load(&engine, "shop", &[("2", Some("Anvil Works"), Some("K7"))]);
     resolve(&engine);
     let works = identity(&engine, "shop", "2").unwrap();
     assert_eq!(works, identity(&engine, "registry", "1").unwrap());
@@ -152,7 +152,7 @@ fn of_labels_that_as_many_members_have_the_first_to_arrive_stands() {
     );
 
     // A second record that says the same as the later one outnumbers it.
-    ingest(&engine, "depot", &[("3", Some("Anvil Works"), Some("K7"))]);
+    load(&engine, "depot", &[("3", Some("Anvil Works"), Some("K7"))]);
     resolve(&engine);
     assert_eq!(
         engine.identity(works).unwrap().label.as_deref(),
@@ -161,7 +161,7 @@ fn of_labels_that_as_many_members_have_the_first_to_arrive_stands() {
 
     // An identity that was merged away is called what the one that stands
     // for it is called.
-    ingest(&engine, "shop", &[("4", Some("Hammer"), Some("H1"))]);
+    load(&engine, "shop", &[("4", Some("Hammer"), Some("H1"))]);
     resolve(&engine);
     let hammer = identity(&engine, "shop", "4").unwrap();
     engine
@@ -196,7 +196,7 @@ fn of_labels_that_as_many_members_have_the_first_to_arrive_stands() {
 fn a_search_finds_the_records_that_hold_every_word() {
     let engine = engine();
     engine
-        .ingest(
+        .load(
             "crm",
             "thing",
             json_rows(json!([
@@ -206,7 +206,7 @@ fn a_search_finds_the_records_that_hold_every_word() {
             ])))
         .unwrap();
     engine
-        .ingest(
+        .load(
             "registry",
             "thing",
             json_rows(json!([
@@ -290,7 +290,7 @@ fn a_search_finds_the_records_that_hold_every_word() {
 #[test]
 fn identities_are_listed_by_their_ids() {
     let engine = engine();
-    ingest(
+    load(
         &engine,
         "shop",
         &[
@@ -364,7 +364,7 @@ fn identities_are_listed_by_their_ids() {
 #[test]
 fn a_review_case_shows_the_records_the_identities_they_matched_and_what_was_judged() {
     let engine = engine();
-    ingest(
+    load(
         &engine,
         "shop",
         &[
@@ -374,7 +374,7 @@ fn a_review_case_shows_the_records_the_identities_they_matched_and_what_was_judg
         ],
     );
     resolve(&engine);
-    ingest(&engine, "depot", &[("9", Some("anvil"), Some("H1"))]);
+    load(&engine, "depot", &[("9", Some("anvil"), Some("H1"))]);
     resolve(&engine);
     let [item] = &engine.review_items(&ReviewFilter::open()).unwrap()[..] else {
         panic!("one open review item");
@@ -488,12 +488,12 @@ fn a_case_names_the_members_that_were_judged_before_the_others() {
         .iter()
         .map(|(id, name, code)| (id.as_str(), *name, *code))
         .collect();
-    ingest(&engine, "shop", &many);
-    ingest(&engine, "shop", &[("h", Some("hammer"), Some("H1"))]);
+    load(&engine, "shop", &many);
+    load(&engine, "shop", &[("h", Some("hammer"), Some("H1"))]);
     resolve(&engine);
-    ingest(&engine, "late", &[("z", Some("anvil"), None)]);
+    load(&engine, "late", &[("z", Some("anvil"), None)]);
     resolve(&engine);
-    ingest(&engine, "depot", &[("9", Some("hammer"), Some("H2"))]);
+    load(&engine, "depot", &[("9", Some("hammer"), Some("H2"))]);
     resolve(&engine);
     assert!(
         engine
@@ -503,7 +503,7 @@ fn a_case_names_the_members_that_were_judged_before_the_others() {
     );
 
     // A record that is an anvil by name and a hammer by code.
-    ingest(&engine, "depot", &[("10", Some("anvil"), Some("H1"))]);
+    load(&engine, "depot", &[("10", Some("anvil"), Some("H1"))]);
     resolve(&engine);
     let [item] = &engine.review_items(&ReviewFilter::open()).unwrap()[..] else {
         panic!("one open review item");
@@ -555,7 +555,7 @@ fn a_case_names_the_members_that_were_judged_before_the_others() {
 #[test]
 fn a_case_says_what_reviewers_decided_about_its_records() {
     let engine = engine();
-    ingest(
+    load(
         &engine,
         "shop",
         &[
@@ -567,7 +567,7 @@ fn a_case_says_what_reviewers_decided_about_its_records() {
         ],
     );
     resolve(&engine);
-    ingest(&engine, "depot", &[("9", Some("anvil"), Some("H1"))]);
+    load(&engine, "depot", &[("9", Some("anvil"), Some("H1"))]);
     resolve(&engine);
     let [item] = &engine.review_items(&ReviewFilter::open()).unwrap()[..] else {
         panic!("one open review item");

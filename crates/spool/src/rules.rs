@@ -34,10 +34,10 @@ pub(crate) const NOT_DISMISSED: &str = "record_id NOT IN (
     WHERE status = 'dismissed' AND kind <> 'possible_split')";
 
 /// Lists the records that are new to a run: those of the entity type
-/// that were ingested after `after_run` and before the run itself, those
+/// that were loaded after `after_run` and before the run itself, those
 /// that came back in that time after their source had taken them back, and
 /// those of the given review items that still have no identity. A rematch
-/// lists every record that was ingested before the run. The records of
+/// lists every record that was loaded before the run. The records of
 /// dismissed review items are never among them, nor are records that are
 /// taken back.
 pub(crate) fn create_scope(
@@ -57,8 +57,8 @@ pub(crate) fn create_scope(
         "CREATE OR REPLACE TEMP TABLE {SCOPE} AS
          SELECT record_id FROM (
            SELECT record_id FROM spool.record
-           WHERE entity_type = '{entity_type}' AND ingest_run < {run}
-             AND (ingest_run > {after_run} OR record_id IN ({restored}))
+           WHERE entity_type = '{entity_type}' AND load_run < {run}
+             AND (load_run > {after_run} OR record_id IN ({restored}))
            {under_review}
          ) WHERE {NOT_DISMISSED} AND {NOT_RETRACTED}",
         restored = retract::restored_between(after_run, run),

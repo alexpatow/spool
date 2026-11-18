@@ -14,7 +14,7 @@ fn companies() -> PathBuf {
     benchmarks().join("identity/companies-small")
 }
 
-/// The files of the company scenario, in the order it ingests them, in two
+/// The files of the company scenario, in the order it loads them, in two
 /// steps: `(file, source)`.
 const STEPS: [[(&str, &str); 2]; 2] = [
     [
@@ -58,11 +58,11 @@ fn run_companies(server: &Server, encoding: Encoding) {
             let rows = Rows::from_csv(companies().join(file)).unwrap();
             let response = match encoding {
                 Encoding::Arrow => server.post_arrow(
-                    &format!("/v1/ingest?source={source}&entity_type=company"),
+                    &format!("/v1/load?source={source}&entity_type=company"),
                     rows,
                 ),
                 Encoding::Json => server.post(
-                    "/v1/ingest",
+                    "/v1/load",
                     json!({
                         "source": source,
                         "entity_type": "company",
@@ -72,7 +72,7 @@ fn run_companies(server: &Server, encoding: Encoding) {
             };
             assert_eq!(response.ok()["run"]["status"], "succeeded");
         }
-        let run = server.call("/v1/runs", json!({ "entity_type": "company" }));
+        let run = server.call("/v1/match", json!({ "entity_type": "company" }));
         assert_eq!(run["run"]["status"], "succeeded", "{run}");
     }
 }
@@ -170,7 +170,7 @@ fn every_call_under_v1_needs_a_caller_the_server_knows() {
         }
     }
     let refused = server
-        .request("POST", "/v1/ingest")
+        .request("POST", "/v1/load")
         .without("Authorization")
         .json(&json!({ "source": "s", "entity_type": "thing", "rows": [{ "code": "a" }] }))
         .send();
@@ -219,7 +219,7 @@ fn failures_are_described_the_same_way_whatever_went_wrong() {
         .error(405, "invalid");
 
     let message = server
-        .request("POST", "/v1/runs")
+        .request("POST", "/v1/match")
         .body(b"{ not json")
         .send()
         .error(400, "invalid");
@@ -227,18 +227,18 @@ fn failures_are_described_the_same_way_whatever_went_wrong() {
     // A misspelt field is refused, not ignored: `comit` would otherwise commit.
     let message = server
         .post(
-            "/v1/runs",
+            "/v1/match",
             json!({ "entity_type": "thing", "comit": false }),
         )
         .error(400, "invalid");
     assert!(message.contains("comit"), "{message}");
     let message = server
-        .post("/v1/runs", json!({ "entity_type": "gadget" }))
+        .post("/v1/match", json!({ "entity_type": "gadget" }))
         .error(400, "invalid");
     assert!(message.contains("`gadget` is not declared"), "{message}");
     let message = server
         .post(
-            "/v1/ingest",
+            "/v1/load",
             json!({ "source": "s", "entity_type": "thing", "rows": [{ "code": { "nested": 1 } }] }),
         )
         .error(400, "invalid");
@@ -246,7 +246,7 @@ fn failures_are_described_the_same_way_whatever_went_wrong() {
     // An integer that would be stored as another number is refused.
     let message = server
         .post(
-            "/v1/ingest",
+            "/v1/load",
             json!({
                 "source": "s",
                 "entity_type": "thing",
@@ -257,18 +257,18 @@ fn failures_are_described_the_same_way_whatever_went_wrong() {
     assert!(message.contains("row 2"), "{message}");
     // A row that says nothing is still a row, and is counted.
     let report = server.call(
-        "/v1/ingest",
+        "/v1/load",
         json!({ "source": "s", "entity_type": "thing", "rows": [{}, { "name": null }] }),
     );
     assert_eq!(
         (
-            &report["run"]["ingest"]["received"],
-            &report["run"]["ingest"]["inserted"]
+            &report["run"]["load"]["received"],
+            &report["run"]["load"]["inserted"]
         ),
         (&json!(2), &json!(1))
     );
     server
-        .request("POST", "/v1/ingest?source=s&entity_type=thing")
+        .request("POST", "/v1/load?source=s&entity_type=thing")
         .header("Content-Type", ARROW)
         .body(b"not an arrow stream")
         .send()
@@ -629,12 +629,12 @@ fn a_call_that_outlasts_its_wait_answers_202_and_the_run_is_read_until_it_ends()
     let server = Server::serve(&project, dir.path(), 1);
 
     let response = server.post_arrow(
-        "/v1/ingest?source=bulk&entity_type=thing&wait_ms=0",
+        "/v1/load?source=bulk&entity_type=thing&wait_ms=0",
         many_things(30_000),
     );
     let accepted = response.expect(202);
     let run = accepted["run"]["run"].as_u64().unwrap();
-    assert_eq!(accepted["run"]["kind"], "ingest");
+    assert_eq!(accepted["run"]["kind"], "load");
     assert_eq!(accepted["run"]["status"], "running", "{accepted}");
     assert_eq!(accepted["run"]["finished_at"], Value::Null);
 
@@ -649,12 +649,12 @@ fn a_call_that_outlasts_its_wait_answers_202_and_the_run_is_read_until_it_ends()
     // A read with `wait_ms` answers when the run has ended.
     let finished = server.read(&format!("/v1/runs/{run}?wait_ms=120000"));
     assert_eq!(finished["run"]["status"], "succeeded", "{finished}");
-    assert_eq!(finished["run"]["ingest"]["inserted"], 30_000);
+    assert_eq!(finished["run"]["load"]["inserted"], 30_000);
     assert_eq!(server.read("/v1/runs?status=running")["runs"], json!([]));
 
     // The same for a resolve: with no wait it answers at once with the match
     // run, which goes on to commit.
-    let response = server.post("/v1/runs", json!({ "entity_type": "thing", "wait_ms": 0 }));
+    let response = server.post("/v1/match", json!({ "entity_type": "thing", "wait_ms": 0 }));
     let accepted = response.expect(202);
     let run = accepted["run"]["run"].as_u64().unwrap();
     assert_eq!(accepted["run"]["kind"], "match");
@@ -666,7 +666,7 @@ fn a_call_that_outlasts_its_wait_answers_202_and_the_run_is_read_until_it_ends()
     assert_eq!(server.read("/v1/info")["store"]["head"], 1);
 
     // A call that is given the time answers 200 with the finished run.
-    let response = server.post_arrow("/v1/ingest?source=more&entity_type=thing", many_things(10));
+    let response = server.post_arrow("/v1/load?source=more&entity_type=thing", many_things(10));
     assert_eq!(response.ok()["run"]["status"], "succeeded");
 }
 
@@ -680,10 +680,10 @@ fn a_server_told_to_stop_answers_whoever_waits_on_a_run_and_finishes_the_run() {
     let server = Server::serve(&project, dir.path(), 1);
     let (address, token) = (server.address.clone(), server.token().to_owned());
 
-    // An ingest that takes a while, which nobody waits for, and one client
+    // A load that takes a while, which nobody waits for, and one client
     // that asks to be told when it is done, however long that takes.
     let response = server.post_arrow(
-        "/v1/ingest?source=bulk&entity_type=thing&wait_ms=0",
+        "/v1/load?source=bulk&entity_type=thing&wait_ms=0",
         many_things(250_000),
     );
     let run = response.expect(202)["run"]["run"].as_u64().unwrap();
@@ -706,13 +706,13 @@ fn a_server_told_to_stop_answers_whoever_waits_on_a_run_and_finishes_the_run() {
     assert_eq!(answer["run"]["status"], "running", "{answer}");
 
     // The run is finished before the process ends: the store opens again
-    // and holds what was ingested.
+    // and holds what was loaded.
     let lines = server.stopped();
     assert_eq!(lines.last().map(String::as_str), Some("stopped"));
     let server = Server::serve(&project, dir.path(), 1);
     let finished = server.read(&format!("/v1/runs/{run}"));
     assert_eq!(finished["run"]["status"], "succeeded", "{finished}");
-    assert_eq!(finished["run"]["ingest"]["inserted"], 250_000);
+    assert_eq!(finished["run"]["load"]["inserted"], 250_000);
 }
 
 #[test]
@@ -745,9 +745,9 @@ fn a_server_told_to_stop_gives_an_unfinished_request_the_time_it_says_and_no_lon
     drop(unfinished);
 }
 
-fn ingest_things(server: &Server, source: &str, table: &[&[&str]]) {
+fn load_things(server: &Server, source: &str, table: &[&[&str]]) {
     let response = server.post(
-        "/v1/ingest",
+        "/v1/load",
         json!({
             "source": source,
             "entity_type": "thing",
@@ -758,7 +758,7 @@ fn ingest_things(server: &Server, source: &str, table: &[&[&str]]) {
 }
 
 fn two_anvils_and_a_hammer(server: &Server) {
-    ingest_things(
+    load_things(
         server,
         "shop",
         &[
@@ -790,7 +790,7 @@ fn a_draft_left_for_review_is_stored_listed_and_committed_when_approved() {
     two_anvils_and_a_hammer(&server);
 
     let run = server.call(
-        "/v1/runs",
+        "/v1/match",
         json!({ "entity_type": "thing", "commit": false }),
     );
     let run = &run["run"];
@@ -854,7 +854,7 @@ fn a_draft_nobody_commits_does_not_strand_its_records() {
     let leave = json!({ "entity_type": "thing", "commit": false });
 
     // Rejected: the next run examines the same records again.
-    let first = server.call("/v1/runs", leave.clone());
+    let first = server.call("/v1/match", leave.clone());
     let first_draft = first["run"]["resolution"]["draft"]
         .as_str()
         .unwrap()
@@ -872,14 +872,14 @@ fn a_draft_nobody_commits_does_not_strand_its_records() {
 
     // Left alone: a later run drafts again over everything still unassigned,
     // and the draft it replaces is marked as superseded.
-    let second = server.call("/v1/runs", leave.clone());
+    let second = server.call("/v1/match", leave.clone());
     let second_draft = second["run"]["resolution"]["draft"]
         .as_str()
         .unwrap()
         .to_owned();
     assert_eq!(second["run"]["resolution"]["new_records"], 3);
-    ingest_things(&server, "shop", &[&["id", "code"], &["4", "hammer"]]);
-    let third = server.call("/v1/runs", leave);
+    load_things(&server, "shop", &[&["id", "code"], &["4", "hammer"]]);
+    let third = server.call("/v1/match", leave);
     let third_draft = third["run"]["resolution"]["draft"]
         .as_str()
         .unwrap()
@@ -900,7 +900,7 @@ fn a_draft_nobody_commits_does_not_strand_its_records() {
     assert_eq!(open["drafts"][0]["id"], third_draft.as_str());
 
     // A run that commits takes everything, and leaves no draft open.
-    let committed = server.call("/v1/runs", json!({ "entity_type": "thing" }));
+    let committed = server.call("/v1/match", json!({ "entity_type": "thing" }));
     assert_eq!(committed["run"]["status"], "succeeded");
     assert_eq!(committed["run"]["resolution"]["records_assigned"], 4);
     assert_eq!(unassigned(&server), 0);
@@ -921,7 +921,7 @@ fn approving_a_draft_that_went_stale_is_rejected_and_names_the_operation() {
     two_anvils_and_a_hammer(&server);
 
     let run = server.call(
-        "/v1/runs",
+        "/v1/match",
         json!({ "entity_type": "thing", "commit": false }),
     );
     let draft = run["run"]["resolution"]["draft"]
@@ -1002,7 +1002,7 @@ fn text_column(batches: &[arrow::record_batch::RecordBatch], name: &str) -> Vec<
 fn a_caller_judges_the_candidates_of_a_run_step_by_step() {
     let dir = tempfile::tempdir().unwrap();
     let server = things_server(dir.path());
-    ingest_things(
+    load_things(
         &server,
         "shop",
         &[
@@ -1018,12 +1018,12 @@ fn a_caller_judges_the_candidates_of_a_run_step_by_step() {
     let strategy = json!({ "name": "coin-toss", "version": "2" });
     server
         .post(
-            "/v1/runs",
+            "/v1/match",
             json!({ "entity_type": "thing", "strategy": strategy, "commit": false }),
         )
         .error(400, "invalid");
     let run = server.call(
-        "/v1/runs",
+        "/v1/match",
         json!({ "entity_type": "thing", "strategy": strategy }),
     );
     assert_eq!(run["run"]["status"], "open", "{run}");
@@ -1175,7 +1175,7 @@ fn an_open_run_is_reconciled_at_once_by_default_or_cancelled() {
     let start = json!({ "entity_type": "thing", "strategy": strategy });
 
     // Cancelled: the run fails and its records wait for another.
-    let run = server.call("/v1/runs", start.clone())["run"]["run"]
+    let run = server.call("/v1/match", start.clone())["run"]["run"]
         .as_u64()
         .unwrap();
     let cancelled = server.call(&format!("/v1/runs/{run}/cancel"), json!({}));
@@ -1188,7 +1188,7 @@ fn an_open_run_is_reconciled_at_once_by_default_or_cancelled() {
 
     // Reconciled with no body and no judgements: every record gets an
     // identity of its own, committed.
-    let run = server.call("/v1/runs", start)["run"]["run"]
+    let run = server.call("/v1/match", start)["run"]["run"]
         .as_u64()
         .unwrap();
     let resolution = server
@@ -1496,7 +1496,7 @@ fn what_is_read_says_what_things_are_called_where_they_came_from_and_what_waits(
 fn a_pair_of_records_is_explained() {
     let dir = tempfile::tempdir().unwrap();
     let server = things_server(dir.path());
-    ingest_things(
+    load_things(
         &server,
         "shop",
         &[
@@ -1506,7 +1506,7 @@ fn a_pair_of_records_is_explained() {
             &["3", "anvil", "red"],
         ],
     );
-    server.call("/v1/runs", json!({ "entity_type": "thing" }));
+    server.call("/v1/match", json!({ "entity_type": "thing" }));
     let id = |key: &str| {
         server.read(&format!("/v1/records?source=shop&key={key}"))["records"][0]["id"]
             .as_str()
@@ -1590,15 +1590,15 @@ fn calls_made_at_once_are_all_served_and_writes_take_turns() {
                         .map(|row| json!({ "id": format!("{writer}-{row}"), "code": format!("{row}") }))
                         .collect();
                     let response = server.post(
-                        "/v1/ingest",
+                        "/v1/load",
                         json!({
                             "source": format!("source-{writer}"),
                             "entity_type": "thing",
                             "rows": rows,
                         }),
                     );
-                    assert_eq!(response.ok()["run"]["ingest"]["inserted"], 50);
-                    let run = server.call("/v1/runs", json!({ "entity_type": "thing" }));
+                    assert_eq!(response.ok()["run"]["load"]["inserted"], 50);
+                    let run = server.call("/v1/match", json!({ "entity_type": "thing" }));
                     assert_ne!(run["run"]["status"], "failed", "{run}");
                 })
             })
@@ -1621,7 +1621,7 @@ fn calls_made_at_once_are_all_served_and_writes_take_turns() {
 
     // Whatever order the writers came in, every record ends up in one
     // of fifty identities: one per code.
-    server.call("/v1/runs", json!({ "entity_type": "thing" }));
+    server.call("/v1/match", json!({ "entity_type": "thing" }));
     let info = server.read("/v1/info");
     let thing = &info["store"]["entity_types"][0];
     assert_eq!(thing["records"], 400);
@@ -1656,7 +1656,7 @@ fn a_first_line_of_too_many_columns_is_refused_at_once() {
     let server = things_server(dir.path());
     let csv = |body: &str| {
         server
-            .request("POST", "/v1/ingest?source=shop&entity_type=thing")
+            .request("POST", "/v1/load?source=shop&entity_type=thing")
             .header("Content-Type", "text/csv")
             .body(body.as_bytes())
             .send()
@@ -1689,7 +1689,7 @@ fn a_first_line_of_too_many_columns_is_refused_at_once() {
     );
     // The server goes on reading rows.
     let answer = csv("id,code\n1,anvil\n").ok();
-    assert_eq!(answer["run"]["ingest"]["inserted"], 1, "{answer}");
+    assert_eq!(answer["run"]["load"]["inserted"], 1, "{answer}");
 }
 
 #[test]
@@ -1698,7 +1698,7 @@ fn rows_are_taken_as_csv_and_as_tab_separated_text() {
     let server = things_server(dir.path());
     let csv = |query: &str, content_type: &str, body: &str| {
         server
-            .request("POST", &format!("/v1/ingest?{query}"))
+            .request("POST", &format!("/v1/load?{query}"))
             .header("Content-Type", content_type)
             .body(body.as_bytes())
             .send()
@@ -1710,8 +1710,8 @@ fn rows_are_taken_as_csv_and_as_tab_separated_text() {
     let body = "id,code,colour,name\n1,anvil,black,\"Anvil, large\"\n2,hammer,,\"\"\n";
     let answer = csv(shop, "text/csv", body).ok();
     assert_eq!(answer["run"]["status"], "succeeded");
-    assert_eq!(answer["run"]["ingest"]["received"], 2);
-    assert_eq!(answer["run"]["ingest"]["inserted"], 2);
+    assert_eq!(answer["run"]["load"]["received"], 2);
+    assert_eq!(answer["run"]["load"]["inserted"], 2);
     assert_eq!(
         held(&server, "shop"),
         [
@@ -1726,12 +1726,12 @@ fn rows_are_taken_as_csv_and_as_tab_separated_text() {
     // The same rows are the same records however they come: as CSV with
     // its character set named and Windows line ends, as tabs, and as JSON.
     let again = csv(shop, "text/csv; charset=utf-8", &body.replace('\n', "\r\n")).ok();
-    assert_eq!(again["run"]["ingest"]["duplicates"], 2, "{again}");
+    assert_eq!(again["run"]["load"]["duplicates"], 2, "{again}");
     let tabs = "id\tcode\tcolour\tname\n1\tanvil\tblack\tAnvil, large\n2\thammer\t\t\n";
     let again = csv(shop, "text/tab-separated-values", tabs).ok();
-    assert_eq!(again["run"]["ingest"]["duplicates"], 2, "{again}");
+    assert_eq!(again["run"]["load"]["duplicates"], 2, "{again}");
     let again = server.call(
-        "/v1/ingest",
+        "/v1/load",
         json!({
             "source": "shop",
             "entity_type": "thing",
@@ -1741,7 +1741,7 @@ fn rows_are_taken_as_csv_and_as_tab_separated_text() {
             ],
         }),
     );
-    assert_eq!(again["run"]["ingest"]["duplicates"], 2, "{again}");
+    assert_eq!(again["run"]["load"]["duplicates"], 2, "{again}");
     assert_eq!(held(&server, "shop").len(), 2);
 
     // What is wrong with a body is said with the line it is on.
@@ -1773,7 +1773,7 @@ fn rows_are_taken_as_csv_and_as_tab_separated_text() {
     let message = csv(shop, "text/csv", "id,code,price\n3,saw,12\n").error(400, "invalid");
     assert_eq!(
         message,
-        "ingest rejected: the rows have a column `price`, which sources/shop.yaml does not \
+        "load rejected: the rows have a column `price`, which sources/shop.yaml does not \
          list. It lists `id`, `code`, `colour`, `name`, `weight`. Add the column to that file to \
          keep it, or leave it out of the rows"
     );
@@ -1781,7 +1781,42 @@ fn rows_are_taken_as_csv_and_as_tab_separated_text() {
 
     // The first line alone is no rows, which is not a mistake.
     let none = csv(shop, "text/csv", "id,code\n").ok();
-    assert_eq!(none["run"]["ingest"]["received"], 0, "{none}");
+    assert_eq!(none["run"]["load"]["received"], 0, "{none}");
+}
+
+#[test]
+fn a_load_and_a_match_are_called_by_the_words_the_commands_have() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = things_server(dir.path());
+    let rows = json!({
+        "source": "shop",
+        "entity_type": "thing",
+        "rows": [{ "id": "1", "code": "anvil" }],
+    });
+
+    // The paths are the words of `spool load` and `spool match`, and what
+    // comes back is in those words too.
+    let loaded = server.call("/v1/load", rows.clone());
+    assert_eq!(loaded["run"]["kind"], "load");
+    assert_eq!(loaded["run"]["load"]["inserted"], 1);
+    let matched = server.call("/v1/match", json!({ "entity_type": "thing" }));
+    assert_eq!(matched["run"]["kind"], "match");
+    let record = server.read("/v1/records")["records"][0].clone();
+    assert_eq!(record["load_run"], loaded["run"]["run"]);
+    assert!(record["loaded_at"].is_string(), "{record}");
+    assert_eq!(
+        server.read("/v1/runs?kind=load")["runs"][0]["run"],
+        loaded["run"]["run"]
+    );
+
+    // Runs are read where they were, and nothing is started there.
+    server
+        .post("/v1/runs", json!({ "entity_type": "thing" }))
+        .error(405, "invalid");
+    server.get("/v1/match").error(405, "invalid");
+    // The words the calls had before are no longer answered.
+    server.post("/v1/ingest", rows).error(404, "not_found");
+    server.get("/v1/runs?kind=ingest").error(400, "invalid");
 }
 
 #[test]
@@ -1812,7 +1847,7 @@ fn an_answer_as_json_ends_with_a_newline() {
     };
     ends(server.get("/v1/info")).ok();
     ends(server.get("/v1/records")).ok();
-    ends(server.post("/v1/runs", json!({ "entity_type": "thing" }))).ok();
+    ends(server.post("/v1/match", json!({ "entity_type": "thing" }))).ok();
     ends(server.get("/v1/no-such-path")).error(404, "not_found");
     ends(server.get("/v1/runs/first")).error(400, "invalid");
     ends(Request::to(&server.address, "GET", "/v1/info").send()).error(401, "unauthorized");
@@ -1827,7 +1862,7 @@ fn an_answer_as_json_ends_with_a_newline() {
 fn records_are_listed_by_source_and_key_and_the_sources_are_named() {
     let dir = tempfile::tempdir().unwrap();
     let server = things_server(dir.path());
-    ingest_things(
+    load_things(
         &server,
         "shop",
         &[
@@ -1837,8 +1872,8 @@ fn records_are_listed_by_source_and_key_and_the_sources_are_named() {
             &["2", "two"],
         ],
     );
-    ingest_things(&server, "bulk", &[&["id", "code"], &["z", "zip"]]);
-    ingest_things(&server, "shop", &[&["id", "code"], &["10", "ten again"]]);
+    load_things(&server, "bulk", &[&["id", "code"], &["z", "zip"]]);
+    load_things(&server, "shop", &[&["id", "code"], &["10", "ten again"]]);
 
     // A source's rows are together, by key as text, and a row's versions
     // follow each other.

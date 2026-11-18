@@ -68,8 +68,8 @@ fn records(server: &Server, source: &str) -> Vec<(Value, Value)> {
         .collect()
 }
 
-fn ingest_runs(server: &Server) -> Vec<Value> {
-    server.read("/v1/runs?kind=ingest")["runs"]
+fn load_runs(server: &Server) -> Vec<Value> {
+    server.read("/v1/runs?kind=load")["runs"]
         .as_array()
         .unwrap()
         .clone()
@@ -152,8 +152,8 @@ next    `spool match` places them in identities
     assert_eq!(answer["rows"], 3);
     let runs = answer["runs"].as_array().unwrap();
     assert_eq!(runs.len(), 1, "{answer}");
-    assert_eq!(runs[0]["kind"], "ingest");
-    assert_eq!(runs[0]["ingest"]["duplicates"], 3);
+    assert_eq!(runs[0]["kind"], "load");
+    assert_eq!(runs[0]["load"]["duplicates"], 3);
     assert_eq!(
         runs[0],
         server.read(&format!("/v1/runs/{}", runs[0]["run"]))["run"]
@@ -178,7 +178,7 @@ fn an_empty_field_is_a_value_the_row_does_not_have() {
 
     // So the rule that keeps two countries apart says nothing about them:
     // with `""` for a country it would hold against every row that has one.
-    let matched = server.call("/v1/runs", json!({ "entity_type": "company" }));
+    let matched = server.call("/v1/match", json!({ "entity_type": "company" }));
     assert_eq!(
         matched["run"]["resolution"]["judgements"],
         json!({ "match": 3, "no_match": 0, "unsure": 0 })
@@ -301,8 +301,8 @@ next    `spool match` places them in identities
 "
     );
     assert_eq!(beside, "4 rows sent\n");
-    let runs = ingest_runs(&server);
-    let received: Vec<&Value> = runs.iter().map(|run| &run["ingest"]["received"]).collect();
+    let runs = load_runs(&server);
+    let received: Vec<&Value> = runs.iter().map(|run| &run["load"]["received"]).collect();
     assert_eq!(received, [&json!(2), &json!(4)], "the latest run first");
     assert_eq!(records(&server, "crm").len(), 6);
 
@@ -324,7 +324,7 @@ next    `spool match` places them in identities
         "id,name,country\nc-7,Fir Trading,GB\nc-8,Gorse Ltd,GB\nc-9,Hazel,GB,extra\n",
     );
     let complaint = refused(&server, &project, &["broken.csv", "--batch", "2"]);
-    let run = ingest_runs(&server)[0]["run"].clone();
+    let run = load_runs(&server)[0]["run"].clone();
     assert_eq!(
         complaint,
         format!(
@@ -340,14 +340,14 @@ next    `spool match` places them in identities
         &project.join("late.csv"),
         "id,name,country\nc-40,A,GB\nc-41,B,GB\nc-42,C,GB\nc-43,D,GB,extra\n",
     );
-    let before = ingest_runs(&server).len();
+    let before = load_runs(&server).len();
     let output = server
         .spool_in(&project, &["load", "late.csv", "--batch", "1"])
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
     let complaint = text(&output.stderr);
-    let runs = ingest_runs(&server);
+    let runs = load_runs(&server);
     assert_eq!(runs.len(), before + 3);
     // The latest run is listed first.
     let (first, last) = (runs[2]["run"].clone(), runs[0]["run"].clone());
@@ -444,7 +444,7 @@ fn load_says_what_is_wrong_with_the_file() {
     );
 
     // None of that started a run or stored a row.
-    assert_eq!(ingest_runs(&server), Vec::<Value>::new());
+    assert_eq!(load_runs(&server), Vec::<Value>::new());
     assert_eq!(records(&server, "crm"), Vec::new());
 
     // A file with the first line alone has nothing to load, and that is no
@@ -455,7 +455,7 @@ fn load_says_what_is_wrong_with_the_file() {
         printed,
         "loaded  0 rows: none.csv has no rows after its first line\n"
     );
-    assert_eq!(ingest_runs(&server), Vec::<Value>::new());
+    assert_eq!(load_runs(&server), Vec::<Value>::new());
 
     // Rows without the column that is the source's key are kept, and the
     // reader is told what they lack.
@@ -643,7 +643,7 @@ fn load_asks_which_source_and_type_when_the_project_has_several() {
         "the mapping of `person` has nothing for source `spare`: add it to \
          entities/person/entity.yaml"
     );
-    assert_eq!(ingest_runs(&server), Vec::<Value>::new());
+    assert_eq!(load_runs(&server), Vec::<Value>::new());
 
     // One of the two is enough where it leaves one choice of the other, and
     // the next step names the type, since `spool match` would ask.
@@ -710,7 +710,7 @@ next    `spool match --type company` places it in an identity
     // one entity type.
     assert_eq!(
         refused(&["rows.csv", "--source", "crm", "--type", "company"]),
-        "ingest rejected: a row with the same source, key and content is already stored as \
+        "load rejected: a row with the same source, key and content is already stored as \
          entity type `person`"
     );
 }
@@ -777,7 +777,7 @@ next    `spool match` places them in identities
          to Acorn Tools Ltd and runs`, which sources/notes.yaml does not list. It lists `name`. \
          Add the column to that file to keep it, or leave it out of the rows."
     );
-    assert_eq!(ingest_runs(&server).len(), 2);
+    assert_eq!(load_runs(&server).len(), 2);
 
     // Rows can be kept in a text file, and rows of the other source are
     // loaded as any are.

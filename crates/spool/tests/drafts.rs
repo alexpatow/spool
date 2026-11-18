@@ -17,7 +17,7 @@ fn leave_for_review() -> ResolveOptions {
 }
 
 fn two_anvils_and_a_hammer(engine: &Engine) {
-    ingest(
+    load(
         engine,
         "shop",
         &[
@@ -136,7 +136,7 @@ fn a_draft_nobody_commits_does_not_strand_its_records() {
         .unwrap();
 
     // Nobody decides. More arrives, and the next run commits.
-    ingest(&engine, "depot", &[("9", Some("anvil"), None)]);
+    load(&engine, "depot", &[("9", Some("anvil"), None)]);
     let report = engine.resolve(&ResolveOptions::default()).unwrap();
     let resolution = &report.resolved[0];
     assert_eq!(resolution.new_records, 4);
@@ -180,7 +180,7 @@ fn a_type_has_at_most_one_open_draft() {
     let first = engine.resolve(&leave_for_review()).unwrap().resolved[0]
         .draft
         .unwrap();
-    ingest(&engine, "depot", &[("9", Some("anvil"), None)]);
+    load(&engine, "depot", &[("9", Some("anvil"), None)]);
     let second = engine.resolve(&leave_for_review()).unwrap();
     let second = &second.resolved[0];
 

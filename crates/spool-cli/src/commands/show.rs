@@ -47,7 +47,7 @@ Options:
   --type <name>      only this entity type (runs, identities, records,
                      review, drafts)
   --status <status>  only this status (runs, review, drafts)
-  --kind <kind>      only runs of this kind: ingest, extract, match, reconcile,
+  --kind <kind>      only runs of this kind: load, extract, match, reconcile,
                      retract
   --source <name>    only this source (records, documents)
   --key <key>        only this key within its source (records, documents)
@@ -505,7 +505,7 @@ impl View<'_> {
         if let Some(error) = &run.error {
             rows.push(("error", error.clone()));
         }
-        if let Some(report) = &run.ingest {
+        if let Some(report) = &run.load {
             rows.push((
                 "rows",
                 format!(
@@ -571,8 +571,8 @@ impl View<'_> {
                     report.mentions, report.inserted, report.duplicates, report.superseded
                 ),
             ));
-            if let Some(ingest_run) = report.ingest_run {
-                rows.push(("stored by", format!("ingest run {ingest_run}")));
+            if let Some(load_run) = report.load_run {
+                rows.push(("stored by", format!("load run {load_run}")));
             }
         }
         let mut suggestions = Vec::new();
@@ -944,8 +944,8 @@ impl View<'_> {
             rows.push(("key", key.clone()));
         }
         rows.push((
-            "ingested",
-            format!("{} by run {}", when(&record.ingested_at), record.ingest_run),
+            "loaded",
+            format!("{} by run {}", when(&record.loaded_at), record.load_run),
         ));
         rows.push((
             "identity",
@@ -1103,12 +1103,8 @@ impl View<'_> {
         }
         rows.push(("characters", document.length.to_string()));
         rows.push((
-            "ingested",
-            format!(
-                "{} by run {}",
-                when(&document.ingested_at),
-                document.ingest_run
-            ),
+            "loaded",
+            format!("{} by run {}", when(&document.loaded_at), document.load_run),
         ));
         if let Some(earlier) = document.supersedes {
             rows.push(("replaces", earlier.to_string()));
@@ -1195,7 +1191,7 @@ impl View<'_> {
             (
                 "raised by",
                 match split {
-                    // A retract run, or the ingest run that brought a record back.
+                    // A retract run, or the load run that brought a record back.
                     true => format!("run {}", item.run),
                     false => format!("reconcile run {}", item.run),
                 },

@@ -25,7 +25,7 @@ fn by_hand() -> StrategyRef {
 }
 
 /// Rows that do something of the test's choosing before they are handed
-/// over, which is while the ingest run is in progress.
+/// over, which is while the load run is in progress.
 struct Held<F: FnMut()> {
     rows: spool::Rows,
     before: F,
@@ -49,16 +49,16 @@ impl<F: FnMut()> RecordBatchReader for Held<F> {
 #[test]
 fn a_run_records_what_it_reported() {
     let engine = engine();
-    let ingested = ingest(
+    let loaded = load(
         &engine,
         "shop",
         &[("1", Some("anvil"), None), ("2", Some("anvil"), None)],
     );
-    let record = engine.run(ingested.run).unwrap();
-    assert_eq!(record.kind, RunKind::Ingest);
+    let record = engine.run(loaded.run).unwrap();
+    assert_eq!(record.kind, RunKind::Load);
     assert_eq!(record.status, RunStatus::Succeeded);
     assert_eq!(record.entity_type, Some(thing_scope().entity_type));
-    assert_eq!(record.ingest, Some(ingested.clone()));
+    assert_eq!(record.load, Some(loaded.clone()));
     assert_eq!(record.resolution, None);
     assert_eq!(record.error, None);
     // The seeded clock starts at the beginning of 2026 and steps a second.
@@ -77,19 +77,19 @@ fn a_run_records_what_it_reported() {
     assert_eq!(record.resolution.as_ref(), Some(resolution));
     let record = engine.run(resolution.reconcile_run).unwrap();
     assert_eq!(record.kind, RunKind::Reconcile);
-    assert_eq!((record.ingest, record.resolution), (None, None));
+    assert_eq!((record.load, record.resolution), (None, None));
 
     // A run that fails says why.
     let undeclared =
         spool::Rows::from_text(&["id", "colour"], &[vec![Some("1"), Some("red")]]).unwrap();
-    let error = engine.ingest("shop", "thing", undeclared).unwrap_err();
+    let error = engine.load("shop", "thing", undeclared).unwrap_err();
     let failed = &engine
         .runs(&RunFilter {
             status: Some(RunStatus::Failed),
             ..RunFilter::default()
         })
         .unwrap()[0];
-    assert_eq!(failed.kind, RunKind::Ingest);
+    assert_eq!(failed.kind, RunKind::Load);
     assert_eq!(failed.error.as_deref(), Some(error.to_string().as_str()));
     assert!(failed.finished_at.is_some());
 
@@ -120,7 +120,7 @@ fn a_run_records_what_it_reported() {
 #[test]
 fn a_run_is_announced_before_its_work_is_done_and_reads_do_not_wait_for_it() {
     let engine = Arc::new(engine());
-    ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
+    load(&engine, "shop", &[("1", Some("anvil"), None)]);
     engine.resolve(&ResolveOptions::default()).unwrap();
 
     let announced = Arc::new(Mutex::new(Vec::new()));
@@ -133,18 +133,18 @@ fn a_run_is_announced_before_its_work_is_done_and_reads_do_not_wait_for_it() {
             let rows = Held {
                 rows: rows(&[("2", Some("anvil"), None)]),
                 before: move || {
-                    // The ingest holds the engine's write lock from here on.
+                    // The load holds the engine's write lock from here on.
                     let _ = reached.send(());
                     let _ = held.recv();
                 },
             };
             watch_runs(
                 move |run| announced.lock().unwrap().push(run),
-                || engine.ingest("depot", "thing", rows).unwrap(),
+                || engine.load("depot", "thing", rows).unwrap(),
             )
         });
 
-        // The ingest is in the middle of its work.
+        // The load is in the middle of its work.
         waiting.recv().unwrap();
         let [run] = announced.lock().unwrap()[..] else {
             panic!("one run announced");
@@ -168,7 +168,7 @@ fn a_run_is_announced_before_its_work_is_done_and_reads_do_not_wait_for_it() {
     });
 
     // Nothing is announced outside `watch_runs`.
-    ingest(&engine, "kiosk", &[("3", Some("anvil"), None)]);
+    load(&engine, "kiosk", &[("3", Some("anvil"), None)]);
     assert_eq!(announced.lock().unwrap().len(), 1);
 }
 
@@ -179,19 +179,19 @@ fn an_open_run_survives_a_restart_and_a_running_one_is_failed() {
     let (open, interrupted) = {
         let engine = Engine::open(&path, Options::seeded(1)).unwrap();
         engine.apply(&things()).unwrap();
-        ingest(
+        load(
             &engine,
             "shop",
             &[("1", Some("anvil"), None), ("2", Some("anvil"), None)],
         );
         let open = engine.begin_run(&by_hand(), &thing_scope()).unwrap();
 
-        // An ingest that never finishes, as far as the store can tell.
+        // A load that never finishes, as far as the store can tell.
         let rows = Held {
             rows: rows(&[("3", Some("hammer"), None)]),
             before: || resume_unwind(Box::new("simulated crash")),
         };
-        let crashed = catch_unwind(AssertUnwindSafe(|| engine.ingest("depot", "thing", rows)));
+        let crashed = catch_unwind(AssertUnwindSafe(|| engine.load("depot", "thing", rows)));
         assert!(crashed.is_err());
         let interrupted = RunId(open.0 + 1);
         assert_eq!(engine.run(interrupted).unwrap().status, RunStatus::Running);
@@ -241,7 +241,7 @@ fn an_open_run_survives_a_restart_and_a_running_one_is_failed() {
 #[test]
 fn a_cancelled_run_is_failed_and_its_records_are_still_new() {
     let engine = engine();
-    ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
+    load(&engine, "shop", &[("1", Some("anvil"), None)]);
     let run = engine.begin_run(&by_hand(), &thing_scope()).unwrap();
     engine.cancel_run(run).unwrap();
 
@@ -268,7 +268,7 @@ fn a_cancelled_run_is_failed_and_its_records_are_still_new() {
 #[test]
 fn changing_a_declaration_fails_the_runs_that_wait_on_the_old_one() {
     let engine = engine();
-    ingest(
+    load(
         &engine,
         "shop",
         &[("1", Some("anvil"), None), ("2", Some("Anvil"), None)],
@@ -313,7 +313,7 @@ fn changing_a_declaration_fails_the_runs_that_wait_on_the_old_one() {
 #[test]
 fn a_changed_declaration_that_breaks_its_contract_changes_nothing() {
     let engine = engine();
-    ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
+    load(&engine, "shop", &[("1", Some("anvil"), None)]);
     // A transform that cannot work on what is stored.
     let mut project = project_of(vec![EntityTypeSource {
         entity: entity(
@@ -372,6 +372,6 @@ fn an_engine_adopts_only_the_manifest_its_store_was_applied_with() {
 
     engine.adopt(&things()).unwrap();
     assert_eq!(engine.manifest().unwrap().hash, things().hash);
-    ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
+    load(&engine, "shop", &[("1", Some("anvil"), None)]);
     engine.resolve(&ResolveOptions::default()).unwrap();
 }

@@ -48,9 +48,9 @@ fn company_server(dir: &Path) -> Server {
             let file = companies().join(format!("batch-{batch}-{source}.csv"));
             let rows = json_rows(Rows::from_csv(file).unwrap());
             let body = json!({ "source": source, "entity_type": "company", "rows": rows });
-            server.call("/v1/ingest", body);
+            server.call("/v1/load", body);
         }
-        let run = server.call("/v1/runs", json!({ "entity_type": "company" }));
+        let run = server.call("/v1/match", json!({ "entity_type": "company" }));
         assert_eq!(run["run"]["status"], "succeeded", "{run}");
     }
     server
@@ -696,7 +696,7 @@ fn an_answer_too_large_for_a_model_is_refused_and_says_what_to_do() {
         .map(|row| json!({ "id": format!("k-{row}"), "code": format!("c-{row}"), "name": name }))
         .collect();
     server.call(
-        "/v1/ingest",
+        "/v1/load",
         json!({ "source": "bulk", "entity_type": "thing", "rows": rows }),
     );
 
@@ -720,7 +720,7 @@ fn a_change_whose_answer_is_too_large_is_still_answered_as_made() {
         .map(|row| json!({ "id": format!("k-{row}"), "code": format!("c-{row}") }))
         .collect();
     server.call(
-        "/v1/ingest",
+        "/v1/load",
         json!({ "source": "bulk", "entity_type": "thing", "rows": rows }),
     );
     let mut records: Vec<Value> = Vec::new();

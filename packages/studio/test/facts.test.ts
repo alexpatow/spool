@@ -15,8 +15,8 @@ function record(source: string, key: string, payload: unknown, more: Partial<Rec
     source,
     key,
     payload,
-    ingest_run: 1,
-    ingested_at: "2026-01-01T00:00:00Z",
+    load_run: 1,
+    loaded_at: "2026-01-01T00:00:00Z",
     ...more,
   } as RecordEntry;
 }

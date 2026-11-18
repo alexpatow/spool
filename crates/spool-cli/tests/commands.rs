@@ -28,9 +28,9 @@ fn serve_arguments<'a>(manifest: &'a Path, store: &'a Path, seed: &'a str) -> Ve
     ]
 }
 
-fn ingest(server: &Server, table: &[&[&str]]) {
+fn load(server: &Server, table: &[&[&str]]) {
     let response = server.post(
-        "/v1/ingest",
+        "/v1/load",
         json!({
             "source": "shop",
             "entity_type": "thing",
@@ -41,7 +41,7 @@ fn ingest(server: &Server, table: &[&[&str]]) {
 }
 
 fn resolve(server: &Server) -> Value {
-    server.call("/v1/runs", json!({ "entity_type": "thing" }))
+    server.call("/v1/match", json!({ "entity_type": "thing" }))
 }
 
 #[test]
@@ -448,7 +448,7 @@ fn apply_declares_types_and_rebuilds_the_features_of_a_changed_declaration() {
 
     // Put two records in, then change what a thing's code is.
     let server = Server::start(&serve_arguments(&manifest, &store, "1"));
-    ingest(&server, &[&["id", "code"], &["1", "anvil"]]);
+    load(&server, &[&["id", "code"], &["1", "anvil"]]);
     assert_eq!(
         resolve(&server)["run"]["resolution"]["identities_created"],
         1
@@ -469,7 +469,7 @@ fn apply_declares_types_and_rebuilds_the_features_of_a_changed_declaration() {
     let info = server.read("/v1/info");
     assert_eq!(info["store"]["entity_types"][0]["declaration_version"], 2);
     assert_eq!(info["store"]["entity_types"][0]["identities"], 1);
-    ingest(&server, &[&["id", "code"], &["2", "ANVIL"]]);
+    load(&server, &[&["id", "code"], &["2", "ANVIL"]]);
     let resolution = resolve(&server)["run"]["resolution"].clone();
     assert_eq!(resolution["identities_created"], 0, "{resolution}");
     assert_eq!(resolution["records_assigned"], 1, "{resolution}");
@@ -493,7 +493,7 @@ fn serve_sets_up_an_empty_store_and_refuses_one_applied_with_another_manifest() 
     // An empty store is set up from the manifest.
     let server = Server::start(&serve_arguments(&manifest, &store, "1"));
     let hash = server.read("/v1/info")["store"]["manifest_hash"].clone();
-    ingest(
+    load(
         &server,
         &[&["id", "code"], &["1", "anvil"], &["2", "anvil"]],
     );
@@ -550,14 +550,14 @@ fn a_run_cut_short_by_a_killed_server_is_recorded_as_failed() {
     let store = dir.path().join("store.duckdb");
 
     let server = Server::start(&serve_arguments(&manifest, &store, "1"));
-    ingest(&server, &[&["id", "code"], &["1", "anvil"]]);
+    load(&server, &[&["id", "code"], &["1", "anvil"]]);
     let ids: Vec<String> = (0..300_000).map(|index| format!("bulk-{index}")).collect();
     let bulk: Vec<Vec<Option<&str>>> = ids
         .iter()
         .map(|id| vec![Some(id.as_str()), Some(id.as_str())])
         .collect();
     let response = server.post_arrow(
-        "/v1/ingest?source=bulk&entity_type=thing&wait_ms=0",
+        "/v1/load?source=bulk&entity_type=thing&wait_ms=0",
         Rows::from_text(&["id", "code"], &bulk).unwrap(),
     );
     let accepted = response.expect(202);
@@ -608,7 +608,7 @@ fn dev_serves_a_project_directory_and_applies_changes_as_they_are_saved() {
     assert!(dir.path().join(".spool/dev.duckdb").is_file());
     let first = server.read("/v1/info")["store"]["manifest_hash"].clone();
 
-    ingest(&server, &[&["id", "code"], &["1", "anvil"]]);
+    load(&server, &[&["id", "code"], &["1", "anvil"]]);
     assert_eq!(
         resolve(&server)["run"]["resolution"]["identities_created"],
         1
@@ -621,7 +621,7 @@ fn dev_serves_a_project_directory_and_applies_changes_as_they_are_saved() {
     let second = server.read("/v1/info")["store"]["manifest_hash"].clone();
     assert_ne!(second, first);
     assert!(applied.contains(second.as_str().unwrap()), "{applied}");
-    ingest(&server, &[&["id", "code"], &["2", "ANVIL"]]);
+    load(&server, &[&["id", "code"], &["2", "ANVIL"]]);
     let resolution = resolve(&server)["run"]["resolution"].clone();
     assert_eq!(resolution["identities_created"], 0, "{resolution}");
     assert_eq!(resolution["records_assigned"], 1, "{resolution}");
@@ -639,7 +639,7 @@ fn dev_serves_a_project_directory_and_applies_changes_as_they_are_saved() {
     std::fs::write(&entity, thing_entity("{ from: code, transform: number }")).unwrap();
     server.complained("still running the last version that compiled");
     assert_eq!(server.read("/v1/info")["store"]["manifest_hash"], second);
-    ingest(&server, &[&["id", "code"], &["3", "Anvil"]]);
+    load(&server, &[&["id", "code"], &["3", "Anvil"]]);
     let resolution = resolve(&server)["run"]["resolution"].clone();
     assert_eq!(resolution["records_assigned"], 1, "{resolution}");
     assert_eq!(resolution["identities_created"], 0, "{resolution}");
@@ -659,7 +659,7 @@ fn dev_serves_a_project_directory_and_applies_changes_as_they_are_saved() {
     server.stop();
 }
 
-/// The rows of a sample file, as the objects `POST /v1/ingest` takes: the
+/// The rows of a sample file, as the objects `POST /v1/load` takes: the
 /// first line is the column names, and no value has a comma in it.
 fn sample_rows(file: &Path) -> Vec<Value> {
     let contents = read(file);
@@ -681,19 +681,19 @@ fn sample_rows(file: &Path) -> Vec<Value> {
 }
 
 /// Loads a sample file of a new project into its server, and returns what
-/// the ingest did.
+/// the load did.
 fn load_sample(server: &Server, file: &Path) -> Value {
     let loaded = server.call(
-        "/v1/ingest",
+        "/v1/load",
         json!({ "source": "crm", "entity_type": "company", "rows": sample_rows(file) }),
     );
     assert_eq!(loaded["run"]["status"], "succeeded", "{loaded}");
-    loaded["run"]["ingest"].clone()
+    loaded["run"]["load"].clone()
 }
 
 /// Matches the companies that were loaded, and returns what the run did.
 fn match_companies(server: &Server) -> Value {
-    let matched = server.call("/v1/runs", json!({ "entity_type": "company" }));
+    let matched = server.call("/v1/match", json!({ "entity_type": "company" }));
     assert_eq!(matched["run"]["status"], "succeeded", "{matched}");
     matched["run"]["resolution"].clone()
 }

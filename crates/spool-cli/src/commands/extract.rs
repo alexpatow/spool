@@ -106,7 +106,7 @@ pub fn extract(arguments: &[String]) -> Result<(), Failure> {
             as_json,
         )?;
         let report = run
-            .ingest
+            .load
             .as_ref()
             .ok_or_else(|| unreported(&run, "what it stored"))?;
         if !as_json {

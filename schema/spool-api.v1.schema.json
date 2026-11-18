@@ -567,12 +567,6 @@
         "id": {
           "$ref": "#/$defs/DocumentId"
         },
-        "ingest_run": {
-          "$ref": "#/$defs/RunId"
-        },
-        "ingested_at": {
-          "type": "string"
-        },
         "key": {
           "type": "string"
         },
@@ -581,6 +575,12 @@
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "load_run": {
+          "$ref": "#/$defs/RunId"
+        },
+        "loaded_at": {
+          "type": "string"
         },
         "source": {
           "type": "string"
@@ -626,8 +626,8 @@
         "source",
         "key",
         "length",
-        "ingested_at",
-        "ingest_run",
+        "loaded_at",
+        "load_run",
         "extractions"
       ],
       "type": "object"
@@ -694,7 +694,7 @@
     },
     "DocumentsRequest": {
       "additionalProperties": false,
-      "description": "`POST /v1/documents`: store documents from one source, to be read by an\nextractor. The response is the ingest run that stored them.\n\nOne document can also be sent as it is: a body of UTF-8 text, such as\n`text/plain`, with `source`, `key` and optionally `uri` and `wait_ms` in\nthe query string.",
+      "description": "`POST /v1/documents`: store documents from one source, to be read by an\nextractor. The response is the load run that stored them.\n\nOne document can also be sent as it is: a body of UTF-8 text, such as\n`text/plain`, with `source`, `key` and optionally `uri` and `wait_ms` in\nthe query string.",
       "properties": {
         "documents": {
           "items": {
@@ -1070,7 +1070,13 @@
           "minimum": 0,
           "type": "integer"
         },
-        "ingest_run": {
+        "inserted": {
+          "description": "Records created.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "load_run": {
           "anyOf": [
             {
               "$ref": "#/$defs/RunId"
@@ -1079,13 +1085,7 @@
               "type": "null"
             }
           ],
-          "description": "The ingest run the records were stored under. There is none\nwhen nothing was found."
-        },
-        "inserted": {
-          "description": "Records created.",
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
+          "description": "The load run the records were stored under. There is none\nwhen nothing was found."
         },
         "mentions": {
           "description": "Mentions it found.",
@@ -1115,7 +1115,7 @@
     },
     "ExtractRequest": {
       "additionalProperties": false,
-      "description": "`POST /v1/extractions`: run one of the project's extractors over the\ndocuments it has not read. The response is the extract run. What it\nfound is records, which `POST /v1/runs` then matches.\n\nThe body may be left out: the project's only extractor then reads\nevery document it has not read.",
+      "description": "`POST /v1/extractions`: run one of the project's extractors over the\ndocuments it has not read. The response is the extract run. What it\nfound is records, which `POST /v1/match` then matches.\n\nThe body may be left out: the project's only extractor then reads\nevery document it has not read.",
       "properties": {
         "again": {
           "default": null,
@@ -1367,7 +1367,7 @@
         },
         "label": {
           "default": null,
-          "description": "What a person would call it: the label most of its members have. Of\nlabels that as many have, the one that was ingested first. `None`\nwhen no member's payload names it. An identity with very many\nmembers is judged by the hundred that were ingested first.",
+          "description": "What a person would call it: the label most of its members have. Of\nlabels that as many have, the one that was loaded first. `None`\nwhen no member's payload names it. An identity with very many\nmembers is judged by the hundred that were loaded first.",
           "type": [
             "string",
             "null"
@@ -1452,114 +1452,6 @@
       "required": [
         "api",
         "store"
-      ],
-      "type": "object"
-    },
-    "IngestReport": {
-      "properties": {
-        "committed": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Committed"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "The changeset that put them back, if any went back."
-        },
-        "duplicates": {
-          "description": "Rows that were already known, or repeated within this call.",
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "inserted": {
-          "description": "Records created.",
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "possible_splits": {
-          "default": 0,
-          "description": "Identities a record went back to where nothing holds it with the\nrecords that are there: what joined them went through a record that\nis still taken back. Each has an open `possible_split` review item,\nwhich this run raised.",
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "received": {
-          "description": "Rows received.",
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "restored": {
-          "default": 0,
-          "description": "Records the source had taken back and holds again: every version\nof a row that was sent again, changed or not.",
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "returned": {
-          "default": 0,
-          "description": "Those of them that are back in the identity they left, or in the\none that stands for it now. The rest had none, or can no longer be\nthere, and are new to the next match run.",
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "run": {
-          "$ref": "#/$defs/RunId"
-        },
-        "superseded": {
-          "default": 0,
-          "description": "Records created as a new version of a row the source had sent\nbefore under the same key with other content.",
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "run",
-        "received",
-        "inserted",
-        "duplicates"
-      ],
-      "type": "object"
-    },
-    "IngestRequest": {
-      "additionalProperties": false,
-      "description": "`POST /v1/ingest` with a JSON body. With an Arrow or a CSV body, the\nsame fields other than `rows` are query parameters.",
-      "properties": {
-        "entity_type": {
-          "type": "string"
-        },
-        "rows": {
-          "description": "One object per row, with the columns the source declares. A column\nholds text, booleans or numbers.",
-          "items": {
-            "additionalProperties": true,
-            "type": "object"
-          },
-          "type": "array"
-        },
-        "source": {
-          "description": "The name of the source the rows come from, which the project\ndeclares in `sources/<name>.yaml`.",
-          "type": "string"
-        },
-        "wait_ms": {
-          "default": null,
-          "format": "uint64",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "source",
-        "entity_type",
-        "rows"
       ],
       "type": "object"
     },
@@ -1701,6 +1593,114 @@
         }
       ]
     },
+    "LoadReport": {
+      "properties": {
+        "committed": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Committed"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The changeset that put them back, if any went back."
+        },
+        "duplicates": {
+          "description": "Rows that were already known, or repeated within this call.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "inserted": {
+          "description": "Records created.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "possible_splits": {
+          "default": 0,
+          "description": "Identities a record went back to where nothing holds it with the\nrecords that are there: what joined them went through a record that\nis still taken back. Each has an open `possible_split` review item,\nwhich this run raised.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "received": {
+          "description": "Rows received.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "restored": {
+          "default": 0,
+          "description": "Records the source had taken back and holds again: every version\nof a row that was sent again, changed or not.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "returned": {
+          "default": 0,
+          "description": "Those of them that are back in the identity they left, or in the\none that stands for it now. The rest had none, or can no longer be\nthere, and are new to the next match run.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "run": {
+          "$ref": "#/$defs/RunId"
+        },
+        "superseded": {
+          "default": 0,
+          "description": "Records created as a new version of a row the source had sent\nbefore under the same key with other content.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "run",
+        "received",
+        "inserted",
+        "duplicates"
+      ],
+      "type": "object"
+    },
+    "LoadRequest": {
+      "additionalProperties": false,
+      "description": "`POST /v1/load` with a JSON body. With an Arrow or a CSV body, the\nsame fields other than `rows` are query parameters.",
+      "properties": {
+        "entity_type": {
+          "type": "string"
+        },
+        "rows": {
+          "description": "One object per row, with the columns the source declares. A column\nholds text, booleans or numbers.",
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "source": {
+          "description": "The name of the source the rows come from, which the project\ndeclares in `sources/<name>.yaml`.",
+          "type": "string"
+        },
+        "wait_ms": {
+          "default": null,
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "source",
+        "entity_type",
+        "rows"
+      ],
+      "type": "object"
+    },
     "LogEntry": {
       "description": "A committed changeset as the log holds it.",
       "properties": {
@@ -1718,6 +1718,57 @@
         "seq",
         "changeset",
         "content_hash"
+      ],
+      "type": "object"
+    },
+    "MatchRequest": {
+      "additionalProperties": false,
+      "description": "`POST /v1/match`: match the new records of one entity type.",
+      "properties": {
+        "commit": {
+          "default": null,
+          "description": "With a strategy the server runs: commit the draft (the default), or\nstore it for review. A run that waits for judgements is told this\nwhen it is reconciled.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "entity_type": {
+          "$ref": "#/$defs/EntityType"
+        },
+        "rematch": {
+          "default": null,
+          "description": "Match every record of the type again, not only the new ones.\nRecords that have an identity keep it: where the strategy\ndisagrees with the identities as they are, the run's `resolution`\nlists `suggestions`.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "strategy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StrategyRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Who judges. Left out, or named `rules`, the server runs the\nproject's SQL rules and reconciles. The name of one of the project's\nuser-code strategies runs that code on the server and reconciles;\n`GET /v1/info` lists them. Any other name starts a run that waits\nfor the caller's judgements: the server runs no code it was not\nbuilt with, whatever is named here.\n\nA `version` given with a project strategy must be the hash the\nproject was built with."
+        },
+        "wait_ms": {
+          "default": null,
+          "description": "How long the call waits for the run, in milliseconds. If the run is\nstill in progress then, the response has status 202 and the run as\nfar as it has got.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "entity_type"
       ],
       "type": "object"
     },
@@ -2682,7 +2733,7 @@
       "type": "object"
     },
     "RecordEntry": {
-      "description": "A record as it was ingested, and the identity it belongs to now.",
+      "description": "A record as it was loaded, and the identity it belongs to now.",
       "properties": {
         "entity_type": {
           "$ref": "#/$defs/EntityType"
@@ -2704,12 +2755,6 @@
           ],
           "description": "`None` while no changeset has placed it."
         },
-        "ingest_run": {
-          "$ref": "#/$defs/RunId"
-        },
-        "ingested_at": {
-          "type": "string"
-        },
         "key": {
           "description": "The row's key within its source, if it had one.",
           "type": [
@@ -2724,6 +2769,12 @@
             "string",
             "null"
           ]
+        },
+        "load_run": {
+          "$ref": "#/$defs/RunId"
+        },
+        "loaded_at": {
+          "type": "string"
         },
         "payload": {
           "description": "The attributes exactly as received."
@@ -2773,8 +2824,8 @@
         "entity_type",
         "source",
         "payload",
-        "ingested_at",
-        "ingest_run"
+        "loaded_at",
+        "load_run"
       ],
       "type": "object"
     },
@@ -2935,7 +2986,7 @@
     },
     "RetractRequest": {
       "additionalProperties": false,
-      "description": "`POST /v1/retract`: take back rows a source no longer holds. The\nresponse is the retract run, whose `retraction` says what it did.\n\nEvery version of each row stays as evidence and leaves its identity, by\na changeset recorded under the caller. No run examines the records\nafter that, until an ingest sends a row under the same key again.",
+      "description": "`POST /v1/retract`: take back rows a source no longer holds. The\nresponse is the retract run, whose `retraction` says what it did.\n\nEvery version of each row stays as evidence and leaves its identity, by\na changeset recorded under the caller. No run examines the records\nafter that, until a load sends a row under the same key again.",
       "properties": {
         "entity_type": {
           "type": "string"
@@ -3092,7 +3143,7 @@
         },
         "run": {
           "$ref": "#/$defs/RunId",
-          "description": "The run that raised it: a reconcile run. For a `possible_split`, the\nretract run that took back what held the records together, or the\ningest run that brought a record back to where what held it is\nstill gone."
+          "description": "The run that raised it: a reconcile run. For a `possible_split`, the\nretract run that took back what held the records together, or the\nload run that brought a record back to where what held it is\nstill gone."
         },
         "status": {
           "$ref": "#/$defs/ReviewStatus"
@@ -3312,7 +3363,7 @@
               "type": "null"
             }
           ],
-          "description": "The entity type an ingest, a match or a retract run is about."
+          "description": "The entity type a load, a match or a retract run is about."
         },
         "error": {
           "description": "Why a failed run failed.",
@@ -3343,7 +3394,7 @@
             }
           ],
           "default": null,
-          "description": "The extractor of an extract run, and of the ingest run that stored\nwhat it found."
+          "description": "The extractor of an extract run, and of the load run that stored\nwhat it found."
         },
         "finished_at": {
           "type": [
@@ -3351,19 +3402,19 @@
             "null"
           ]
         },
-        "ingest": {
+        "kind": {
+          "$ref": "#/$defs/RunKind"
+        },
+        "load": {
           "anyOf": [
             {
-              "$ref": "#/$defs/IngestReport"
+              "$ref": "#/$defs/LoadReport"
             },
             {
               "type": "null"
             }
           ],
-          "description": "What an ingest run reported when it finished. The run stored rows,\ndocuments, or the mentions an extract run found."
-        },
-        "kind": {
-          "$ref": "#/$defs/RunKind"
+          "description": "What a load run reported when it finished. The run stored rows,\ndocuments, or the mentions an extract run found."
         },
         "resolution": {
           "anyOf": [
@@ -3425,14 +3476,14 @@
       "type": "object"
     },
     "RunId": {
-      "description": "Identifies a run of the engine: an ingest, a match or a reconcile.",
+      "description": "Identifies a run of the engine: a load, a match or a reconcile.",
       "format": "uint64",
       "minimum": 0,
       "type": "integer"
     },
     "RunKind": {
       "enum": [
-        "ingest",
+        "load",
         "extract",
         "match",
         "reconcile",
@@ -3617,8 +3668,8 @@
     "SourceInfo": {
       "description": "What one source gave of an entity type.",
       "properties": {
-        "last_ingested_at": {
-          "description": "When the latest of them was ingested.",
+        "last_loaded_at": {
+          "description": "When the latest of them was loaded.",
           "type": "string"
         },
         "records": {
@@ -3648,7 +3699,7 @@
         "source",
         "records",
         "unassigned",
-        "last_ingested_at"
+        "last_loaded_at"
       ],
       "type": "object"
     },
@@ -3727,57 +3778,6 @@
       },
       "required": [
         "records"
-      ],
-      "type": "object"
-    },
-    "StartRunRequest": {
-      "additionalProperties": false,
-      "description": "`POST /v1/runs`: match the new records of one entity type.",
-      "properties": {
-        "commit": {
-          "default": null,
-          "description": "With a strategy the server runs: commit the draft (the default), or\nstore it for review. A run that waits for judgements is told this\nwhen it is reconciled.",
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
-        "entity_type": {
-          "$ref": "#/$defs/EntityType"
-        },
-        "rematch": {
-          "default": null,
-          "description": "Match every record of the type again, not only the new ones.\nRecords that have an identity keep it: where the strategy\ndisagrees with the identities as they are, the run's `resolution`\nlists `suggestions`.",
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
-        "strategy": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/StrategyRef"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Who judges. Left out, or named `rules`, the server runs the\nproject's SQL rules and reconciles. The name of one of the project's\nuser-code strategies runs that code on the server and reconciles;\n`GET /v1/info` lists them. Any other name starts a run that waits\nfor the caller's judgements: the server runs no code it was not\nbuilt with, whatever is named here.\n\nA `version` given with a project strategy must be the hash the\nproject was built with."
-        },
-        "wait_ms": {
-          "default": null,
-          "description": "How long the call waits for the run, in milliseconds. If the run is\nstill in progress then, the response has status 202 and the run as\nfar as it has got.",
-          "format": "uint64",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "entity_type"
       ],
       "type": "object"
     },
@@ -4143,7 +4143,7 @@
           "$ref": "#/$defs/RunId"
         },
         "new_records": {
-          "description": "Records the run examined: those ingested since the last run, and\nthose an earlier run left for review.",
+          "description": "Records the run examined: those loaded since the last run, and\nthose an earlier run left for review.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"

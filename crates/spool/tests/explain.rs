@@ -47,7 +47,7 @@ fn held(explanation: &Explanation, group: &str) -> Vec<(String, Option<bool>)> {
 #[test]
 fn a_match_is_explained_by_the_run_that_judged_it_and_the_rules_that_held() {
     let engine = engine();
-    ingest(
+    load(
         &engine,
         "shop",
         &[("1", Some("anvil"), None), ("2", Some("anvil"), None)],
@@ -149,7 +149,7 @@ fn a_match_is_explained_by_the_run_that_judged_it_and_the_rules_that_held() {
 #[test]
 fn two_members_that_were_never_compared_are_joined_through_others() {
     let engine = engine();
-    ingest(
+    load(
         &engine,
         "shop",
         &[
@@ -232,7 +232,7 @@ fn two_members_that_were_never_compared_are_joined_through_others() {
 #[test]
 fn a_no_match_rule_explains_why_two_stay_apart() {
     let engine = engine();
-    ingest(
+    load(
         &engine,
         "shop",
         &[
@@ -275,7 +275,7 @@ fn a_no_match_rule_explains_why_two_stay_apart() {
 #[test]
 fn what_a_reviewer_did_by_hand_is_told_apart_from_what_a_run_did() {
     let engine = engine();
-    ingest(
+    load(
         &engine,
         "shop",
         &[
@@ -361,13 +361,13 @@ fn what_a_reviewer_did_by_hand_is_told_apart_from_what_a_run_did() {
 #[test]
 fn an_record_left_for_review_is_explained_by_its_review_item() {
     let engine = engine();
-    ingest(
+    load(
         &engine,
         "shop",
         &[("1", Some("anvil"), None), ("3", None, Some("H1"))],
     );
     resolve(&engine);
-    ingest(&engine, "depot", &[("9", Some("anvil"), Some("H1"))]);
+    load(&engine, "depot", &[("9", Some("anvil"), Some("H1"))]);
     resolve(&engine);
     let waiting = record_id(&engine, "depot", "9");
 
@@ -417,9 +417,9 @@ fn an_record_left_for_review_is_explained_by_its_review_item() {
 #[test]
 fn a_later_version_of_a_row_is_linked_to_the_one_before() {
     let engine = engine();
-    ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
+    load(&engine, "shop", &[("1", Some("anvil"), None)]);
     resolve(&engine);
-    ingest(&engine, "shop", &[("1", Some("anvil, large"), None)]);
+    load(&engine, "shop", &[("1", Some("anvil, large"), None)]);
     resolve(&engine);
     let [earlier, later] = records(&engine, "shop", "1")[..] else {
         panic!("two versions");
@@ -441,7 +441,7 @@ fn a_later_version_of_a_row_is_linked_to_the_one_before() {
 #[test]
 fn the_rules_are_read_as_they_are_now_and_the_run_as_it_was() {
     let engine = engine();
-    ingest(
+    load(
         &engine,
         "shop",
         &[("1", Some("anvil"), None), ("2", Some("anvil"), None)],
@@ -486,7 +486,7 @@ fn the_rules_are_read_as_they_are_now_and_the_run_as_it_was() {
 #[test]
 fn a_draft_that_waits_or_was_rejected_explains_why_nothing_came_of_a_match() {
     let engine = engine();
-    ingest(
+    load(
         &engine,
         "shop",
         &[("1", Some("anvil"), None), ("2", Some("anvil"), None)],
@@ -524,7 +524,7 @@ fn a_draft_that_waits_or_was_rejected_explains_why_nothing_came_of_a_match() {
 #[test]
 fn a_run_reconciled_again_is_explained_by_its_latest_draft() {
     let engine = engine();
-    ingest(
+    load(
         &engine,
         "shop",
         &[("1", Some("anvil"), None), ("2", Some("anvil"), None)],
@@ -575,7 +575,7 @@ fn a_rule_that_cannot_be_applied_to_a_pair_does_not_end_the_explanation() {
     )];
     let engine = Engine::open_in_memory(Options::seeded(1)).unwrap();
     engine.apply(&manifest_of(vec![numbered])).unwrap();
-    ingest(
+    load(
         &engine,
         "shop",
         &[
@@ -619,7 +619,7 @@ fn a_rule_that_cannot_be_applied_to_a_pair_does_not_end_the_explanation() {
     );
 
     // A null feature is not a failure.
-    ingest(&engine, "shop", &[("5", None, None)]);
+    load(&engine, "shop", &[("5", None, None)]);
     let explanation = explain(&engine, ("shop", "1"), ("shop", "5"));
     let rules = explanation.rules.as_ref().unwrap();
     assert_eq!((rules.match_[0].holds, &rules.failed), (None, &None));
@@ -656,10 +656,10 @@ fn a_rule_that_cannot_be_applied_to_a_pair_does_not_end_the_explanation() {
 #[test]
 fn a_constraint_that_was_removed_leaves_two_together_with_nothing_between_them() {
     let engine = engine();
-    ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
+    load(&engine, "shop", &[("1", Some("anvil"), None)]);
     resolve(&engine);
     // Nothing about these tongs resembles the anvil.
-    ingest(&engine, "depot", &[("9", Some("tongs"), None)]);
+    load(&engine, "depot", &[("9", Some("tongs"), None)]);
     let (anvil, tongs) = (
         record_id(&engine, "shop", "1"),
         record_id(&engine, "depot", "9"),
@@ -706,7 +706,7 @@ fn a_constraint_that_was_removed_leaves_two_together_with_nothing_between_them()
 #[test]
 fn a_strategy_of_the_callers_own_is_explained_by_what_it_stored() {
     let engine = engine();
-    ingest(
+    load(
         &engine,
         "shop",
         &[
@@ -781,9 +781,9 @@ fn records_of_different_types_are_never_compared() {
     let mut widget = thing();
     widget.name = "widget".to_owned();
     engine.apply(&manifest_of(vec![thing(), widget])).unwrap();
-    ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
+    load(&engine, "shop", &[("1", Some("anvil"), None)]);
     engine
-        .ingest("shop", "widget", rows(&[("2", Some("anvil"), None)]))
+        .load("shop", "widget", rows(&[("2", Some("anvil"), None)]))
         .unwrap();
     resolve(&engine);
 
@@ -803,7 +803,7 @@ fn records_of_different_types_are_never_compared() {
 #[test]
 fn an_explanation_reads_the_rules_of_the_declaration_its_features_were_built_from() {
     let engine = engine();
-    ingest(
+    load(
         &engine,
         "shop",
         &[("1", Some("anvil"), None), ("2", Some("anvil"), None)],
@@ -864,7 +864,7 @@ fn an_explanation_reads_the_rules_of_the_declaration_its_features_were_built_fro
 #[test]
 fn an_explanation_is_about_two_records_the_store_holds() {
     let engine = engine();
-    ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
+    load(&engine, "shop", &[("1", Some("anvil"), None)]);
     let known = record_id(&engine, "shop", "1");
     let unknown: spool::core::RecordId =
         SeededIds::new(9).identity_id().to_string().parse().unwrap();
