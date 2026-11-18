@@ -42,6 +42,7 @@ export default defineConfig({
   server: {
     proxy: {
       "/v1": server,
+      "/auth": server,
       "/healthz": server,
     },
   },

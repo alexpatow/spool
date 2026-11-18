@@ -238,9 +238,8 @@ function Move({ record }: { record: RecordEntry }) {
         <Act
           label={from ? "Move" : "Assign"}
           title={`${from ? "Move" : "Assign"} ${record.label ?? recordName(record)}`}
-          who
           why="Reason"
-          act={async (client, { actor, reason, entered }) => {
+          act={async (client, { reason, entered }) => {
             const ops: Op[] = [];
             let to: string | null = null;
             if (where === "new") {
@@ -256,7 +255,7 @@ function Move({ record }: { record: RecordEntry }) {
             // Where it is now is what the reviewer saw: if that has changed
             // since, the engine rejects the move.
             ops.push({ op: "assign", record: record.id, from, to });
-            const committed = await client.commit({ actor, reason, ops });
+            const committed = await client.commit({ reason, ops });
             return (
               <>
                 {to === null ? "Unassigned" : from ? "Moved" : "Assigned"} at <At committed={committed} />.

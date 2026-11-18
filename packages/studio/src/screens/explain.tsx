@@ -39,6 +39,7 @@ import { recordName, plain } from "../format.ts";
 import { useLabels, useLoad, useStudio } from "../hooks.ts";
 import { href, navigate } from "../router.ts";
 import type { Route } from "../router.ts";
+import { Who } from "../who.tsx";
 
 export function Explain({ route }: { route: Route }) {
   const { a, b } = route.query;
@@ -297,11 +298,9 @@ function Constrain({ explanation }: { explanation: Explanation }) {
           <Act
             key={record.kind}
             label={`Remove ${record.kind}`}
-            who
             why="Reason"
-            act={async (client, { actor, reason }) => {
+            act={async (client, { reason }) => {
               const committed = await client.commit({
-                actor,
                 reason,
                 ops: [{ op: "unconstrain", kind: record.kind, a: record.a, b: record.b }],
               });
@@ -317,11 +316,10 @@ function Constrain({ explanation }: { explanation: Explanation }) {
         {inForce.length === 0 ? (
           <Act
             label="Add constraint"
-            who
             why="Reason"
-            act={async (client, { actor, reason, entered }) => {
+            act={async (client, { reason, entered }) => {
               const kind = String(entered.get("kind")) as ConstraintKind;
-              const committed = await client.commit({ actor, reason, ops: [{ op: "constrain", kind, a, b }] });
+              const committed = await client.commit({ reason, ops: [{ op: "constrain", kind, a, b }] });
               return (
                 <>
                   Added {kind} at <At committed={committed} />.
@@ -370,7 +368,7 @@ function Side({ title, letter, explained }: { title: string; letter: string; exp
             placed ? (
               <>
                 at <Ref kind="log" id={placed.seq} label={`log position ${placed.seq}`} /> by{" "}
-                <Code>{placed.actor}</Code>
+                <Who actor={placed.actor} />
                 {placed.run ? (
                   <>
                     , drafted by <Ref kind="run" id={placed.run} label={`reconcile run ${placed.run}`} />

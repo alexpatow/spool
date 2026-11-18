@@ -4,7 +4,7 @@
 
 import * as stylex from "@stylexjs/stylex";
 import { useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 
 import { SpoolError } from "./api.ts";
 import type { Committed, Op, SpoolClient } from "./api.ts";
@@ -22,8 +22,6 @@ export class Mistake extends Error {}
 
 /** What the reviewer entered with a change. */
 export interface Said {
-  /** `user:<name>`. Empty when the change does not ask who makes it. */
-  actor: string;
   /** Left out when none was entered. */
   reason?: string;
   /** Everything the form holds. */
@@ -42,11 +40,12 @@ export type Change = (client: SpoolClient, said: Said) => Promise<ReactNode>;
 export function Act({
   label,
   title,
+  confirm,
   about,
   variant = "outline",
   size = "default",
   icon,
-  who = false,
+  buttonStyle,
   why,
   look,
   children,
@@ -56,13 +55,14 @@ export function Act({
   label: string;
   /** What the dialog is called. Default: the label. */
   title?: string;
+  /** What the button that makes the change says. Default: the label. */
+  confirm?: string;
   /** What the change would do, said before it is made. */
   about?: ReactNode;
   variant?: ButtonVariant;
   size?: ButtonSize;
   icon?: ReactNode;
-  /** Whether the change is recorded under the reviewer's name. */
-  who?: boolean;
+  buttonStyle?: ComponentProps<typeof Button>["style"];
   /** The label of the field for a reason. Without one, no reason is asked for. */
   why?: string;
   /** A second button that changes nothing, and shows what it answers in the dialog. */
@@ -72,7 +72,7 @@ export function Act({
   act: Change;
   done: (said: ReactNode) => void;
 }) {
-  const { client, refresh, reviewer, remember } = useStudio();
+  const { client, refresh } = useStudio();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<unknown>(null);
@@ -80,13 +80,8 @@ export function Act({
 
   const said = (form: HTMLFormElement): Said => {
     const entered = new FormData(form);
-    const name = String(entered.get("reviewer") ?? "").trim();
-    if (who) {
-      if (name === "") throw new Mistake("Enter your name.");
-      remember(name);
-    }
     const reason = String(entered.get("reason") ?? "").trim();
-    return { actor: who ? `user:${name}` : "", reason: reason === "" ? undefined : reason, entered };
+    return { reason: reason === "" ? undefined : reason, entered };
   };
 
   // A second press that arrives before the buttons are shown as disabled
@@ -133,7 +128,7 @@ export function Act({
         setLooked(null);
       }}
     >
-      <Dialog.Trigger render={<Button variant={variant} size={size} />}>
+      <Dialog.Trigger render={<Button variant={variant} size={size} style={buttonStyle} />}>
         {icon}
         {label}
       </Dialog.Trigger>
@@ -154,11 +149,6 @@ export function Act({
             {about ? <Dialog.Description render={<div />}>{about}</Dialog.Description> : null}
           </Dialog.Header>
           {children}
-          {who ? (
-            <Labelled label="Your name">
-              <Input key={reviewer} name="reviewer" defaultValue={reviewer} spellCheck={false} autoComplete="off" />
-            </Labelled>
-          ) : null}
           {why ? (
             <Labelled label={why}>
               <Input name="reason" autoComplete="off" placeholder="Optional" />
@@ -184,7 +174,7 @@ export function Act({
               </Button>
             ) : null}
             <Button type="submit" variant={variant === "destructive" ? "destructive" : "default"} disabled={busy}>
-              {label}
+              {confirm ?? label}
             </Button>
           </Dialog.Footer>
         </form>

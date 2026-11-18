@@ -5,9 +5,10 @@ import { rmSync } from "node:fs";
 
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
-import { TOKEN, serve } from "../../client/test/server.ts";
-import type { Server } from "../../client/test/server.ts";
-import { App, TOKEN_KEY } from "../src/app.tsx";
+import { firstPerson, serve } from "../../client/test/server.ts";
+import type { Browser, Server } from "../../client/test/server.ts";
+import type { Person } from "../src/api.ts";
+import { App } from "../src/app.tsx";
 import { copyProject } from "./seed.ts";
 
 export const SEEDING = 120_000;
@@ -20,8 +21,8 @@ export function wrapped(call: (...args: Parameters<Fetch>) => ReturnType<Fetch>)
 }
 
 /** What a browser keeps, without a browser. */
-export function memory(token?: string) {
-  const kept = new Map<string, string>(token === undefined ? [] : [[TOKEN_KEY, token]]);
+export function memory() {
+  const kept = new Map<string, string>();
   return {
     getItem: (name: string) => kept.get(name) ?? null,
     setItem: (name: string, value: string) => void kept.set(name, value),
@@ -36,14 +37,26 @@ export const calls: string[] = [];
 let waiting = 0;
 let stirred = 0;
 
+// Who is signed in to each server that was started, by its address.
+const browsers = new Map<string, Browser>();
+
+/** Who the studio is opened as: the first person of the server, an admin. */
+export const signedIn = (server: Server): Person => browsers.get(server.url)!.person;
+
+/** How the log names what the studio changes. */
+export const author = (server: Server): string => `user:${signedIn(server).id}`;
+
+/** The `fetch` of a browser where the server's first person is signed in. */
 export const recording = wrapped((input, init) => {
-  calls.push(`${init?.method ?? "GET"} ${new URL(String(input)).pathname}`);
+  const url = new URL(String(input));
+  calls.push(`${init?.method ?? "GET"} ${url.pathname}`);
   const stir = () => {
     stirred = Date.now();
   };
   waiting++;
   stir();
-  return fetch(input, init).finally(() => {
+  const browser = browsers.get(url.origin);
+  return (browser ? browser.fetch(url, init ?? {}) : fetch(input, init)).finally(() => {
     waiting--;
     stir();
   });
@@ -63,13 +76,10 @@ export async function idle(): Promise<void> {
   });
 }
 
-/**
- * Opens the studio at an address, with the token already entered unless
- * `storage` says otherwise. `names` is where it keeps the reviewer's name.
- */
-export function open(server: Server, address: string, storage = memory(TOKEN), names = memory()) {
+/** Opens the studio at an address, as the server's first person. */
+export function open(server: Server, address: string, storage = memory()) {
   window.history.replaceState(null, "", address === "" ? "/" : address);
-  render(<App url={server.url} fetch={recording} storage={storage} names={names} />);
+  render(<App url={server.url} fetch={recording} storage={storage} />);
   return storage;
 }
 
@@ -122,12 +132,16 @@ export const parts = (name: string, within: ParentNode = document) => texts(`[da
 const servers: Server[] = [];
 const projects: string[] = [];
 
-/** Serves a copy of a scenario's project on a new store. */
-export async function start(scenario: string, seed: number): Promise<Server> {
+/**
+ * Serves a copy of a scenario's project on a new store, and makes its first
+ * account unless `people` is false.
+ */
+export async function start(scenario: string, seed: number, { people = true } = {}): Promise<Server> {
   const project = copyProject(scenario);
   projects.push(project);
   const server = await serve(project, seed);
   servers.push(server);
+  if (people) browsers.set(server.url, await firstPerson(server));
   return server;
 }
 

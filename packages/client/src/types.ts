@@ -10,6 +10,16 @@
 export type Actor = string;
 
 /**
+ * `POST /v1/people`: add a person. Only an admin may.
+ */
+export interface AddPersonRequest {
+  admin?: boolean | null;
+  name: string;
+  password: string;
+  username: string;
+}
+
+/**
  * A changeset the engine wrote for a caller, and its receipt.
  */
 export interface Authored {
@@ -62,6 +72,18 @@ export interface CaseConstraint {
 }
 
 /**
+ * `POST /v1/people/{id}`: change a person. Only an admin may. A field left
+ * out stays as it is. A new password, or turning the account off, signs
+ * the person out everywhere.
+ */
+export interface ChangePersonRequest {
+  active?: boolean | null;
+  admin?: boolean | null;
+  name?: string | null;
+  password?: string | null;
+}
+
+/**
  * An ordered list of operations that is applied atomically or not at all.
  */
 export interface Changeset {
@@ -96,14 +118,14 @@ export interface ChangesetList {
 }
 
 /**
- * `POST /v1/changesets`: a changeset to validate and commit.
+ * `POST /v1/changesets`: a changeset to validate and commit. Its author is
+ * whoever sends it: the person signed in, or the agent whose token it is.
  *
  * A caller that has read the state it is changing says so with `base`: a
  * merge is rejected if the members of either identity changed after it. A
  * caller that leaves `base` out is taken to have read the head of the log.
  */
 export interface CommitRequest {
-  actor: Actor;
   /**
    * The log position the author had read. Left out, the head of the log.
    */
@@ -180,7 +202,6 @@ export type ContentHash = string;
  * records.
  */
 export interface DismissRequest {
-  actor: Actor;
   reason?: string | null;
 }
 
@@ -347,7 +368,7 @@ export interface ErrorBody {
   rejections?: Rejection[] | null;
 }
 
-export type ErrorCode = "unauthorized" | "invalid" | "not_found" | "conflict" | "rejected" | "too_large" | "strategy_failed" | "extractor_failed" | "internal";
+export type ErrorCode = "unauthorized" | "forbidden" | "too_many_attempts" | "invalid" | "not_found" | "conflict" | "rejected" | "too_large" | "strategy_failed" | "extractor_failed" | "internal";
 
 /**
  * The body of every response that is not a success.
@@ -860,6 +881,39 @@ export interface PairJudgement {
 }
 
 /**
+ * `POST /auth/password`: change the caller's own password.
+ */
+export interface PasswordRequest {
+  current: string;
+  new: string;
+}
+
+/**
+ * Someone with an account on this server. The log names a person by `id`,
+ * as `user:<id>`.
+ */
+export interface Person {
+  /**
+   * May sign in. An account that is turned off keeps its name in the log.
+   */
+  active: boolean;
+  /**
+   * May add people and change their accounts.
+   */
+  admin: boolean;
+  id: string;
+  name: string;
+  username: string;
+}
+
+/**
+ * `GET /v1/people`: everyone with an account, in the order they were added.
+ */
+export interface PersonList {
+  people: Person[];
+}
+
+/**
  * The changeset that put a record where it is.
  */
 export interface Placement {
@@ -1318,6 +1372,42 @@ export type Runtime = "python" | "typescript";
 export type Seq = number;
 
 /**
+ * `GET /auth/session`: who the caller is signed in as.
+ */
+export interface SessionState {
+  /**
+   * A development server: nobody signs in, and whoever opens it is the
+   * `dev` account.
+   */
+  dev: boolean;
+  person?: Person | null;
+  /**
+   * Nobody has an account yet. The server printed a link when it started
+   * that makes the first one.
+   */
+  setup: boolean;
+}
+
+/**
+ * `POST /auth/setup`: make the first account, an admin, with the code from
+ * the link the server printed.
+ */
+export interface SetupRequest {
+  code: string;
+  name: string;
+  password: string;
+  username: string;
+}
+
+/**
+ * `POST /auth/sign-in`.
+ */
+export interface SignInRequest {
+  password: string;
+  username: string;
+}
+
+/**
  * How many records a source gave.
  */
 export interface SourceCount {
@@ -1368,7 +1458,6 @@ export interface SplitReport {
  * `POST /v1/identities/{identity}/split`: divide an identity in two.
  */
 export interface SplitRequest {
-  actor: Actor;
   /**
    * The log position the identity was read at. With it, the split is
    * refused if the identity's members changed after that: which side
@@ -1612,7 +1701,6 @@ export interface TypeResolution {
  * position with a new changeset.
  */
 export interface UndoRequest {
-  actor: Actor;
   /**
    * Commit the undo (the default), or only validate it and return it.
    */

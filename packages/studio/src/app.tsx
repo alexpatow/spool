@@ -8,8 +8,9 @@ import * as stylex from "@stylexjs/stylex";
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
+import { Act } from "./act.tsx";
 import { SpoolClient, SpoolError } from "./api.ts";
-import type { Fetch, Info } from "./api.ts";
+import type { Fetch, Info, Person, SessionState } from "./api.ts";
 import { Code, Failure, Labelled, Notice, Page, Quiet, Text } from "./components.tsx";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
@@ -29,7 +30,7 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "./components/ui/sidebar";
-import { StudioContext, useRoute } from "./hooks.ts";
+import { StudioContext, useRoute, useStudio } from "./hooks.ts";
 import {
   DarkModeIcon,
   DraftIcon,
@@ -40,14 +41,16 @@ import {
   LayoutDashboardIcon,
   LightModeIcon,
   LogIcon,
+  PasswordIcon,
+  PeopleIcon,
   RecordIcon,
   RefreshIcon,
   RunIcon,
   SearchIcon,
-  TokenIcon,
+  SignOutIcon,
 } from "./icons.tsx";
 import { Palette } from "./palette.tsx";
-import { href } from "./router.ts";
+import { here, href, parseAddress } from "./router.ts";
 import type { Route } from "./router.ts";
 import { Document, Documents } from "./screens/documents.tsx";
 import { Draft, Drafts } from "./screens/drafts.tsx";
@@ -56,21 +59,13 @@ import { Identities, Identity } from "./screens/identities.tsx";
 import { Changeset, Log } from "./screens/log.tsx";
 import { RecordPage, RecordsPage } from "./screens/records.tsx";
 import { Overview } from "./screens/overview.tsx";
+import { NewPassword, People, password, typed } from "./screens/people.tsx";
 import { ReviewItem, ReviewItems } from "./screens/review.tsx";
 import { Run, Runs } from "./screens/runs.tsx";
 import { colors, radius, spacing, typography } from "./styles/shelf/tokens.stylex";
 import { applyTheme } from "./styles/themes.ts";
 import type { Theme } from "./styles/themes.ts";
 import { tones } from "./styles/tones.stylex";
-
-/** Where the token is kept: for as long as the tab is open, and no longer. */
-export const TOKEN_KEY = "spool.token";
-
-/** The token of `spool dev`, which is tried when none was entered. */
-export const DEV_TOKEN = "dev";
-
-/** Where the reviewer's name is kept. It is no secret, so it outlives the tab. */
-export const REVIEWER_KEY = "spool.reviewer";
 
 /** Where it is kept whether the reader chose a light or a dark page. */
 export const THEME_KEY = "spool.theme";
@@ -80,19 +75,17 @@ type Kept = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 export interface AppProps {
   /** Where the server is. Default: where the page came from. */
   url?: string;
-  /** The `fetch` to call with. Default: the browser's. */
+  /** The `fetch` to call with. Default: the browser's, which sends the session cookie. */
   fetch?: Fetch;
-  /** Where the token is kept. Default: the tab's session storage. */
+  /** Where the reader's choices are kept. Default: the browser's local storage. */
   storage?: Kept;
-  /** Where the reviewer's name is kept. Default: the browser's local storage. */
-  names?: Kept;
 }
 
 type Connection =
   | { status: "checking" }
-  | { status: "ready"; info: Info }
-  /** The server refused the token. */
-  | { status: "refused" }
+  | { status: "ready"; me: Person; dev: boolean; info: Info; people: Person[] }
+  /** Nobody is signed in. With `setup`, nobody has an account yet either. */
+  | { status: "out"; setup: boolean }
   | { status: "failed"; error: unknown };
 
 /** Light or dark as the reader chose, or as their system is set when they have not. */
@@ -113,27 +106,39 @@ function useTheme(kept: Kept): [Theme, () => void] {
   ];
 }
 
-export function App({
-  url = window.location.origin,
-  fetch,
-  storage = window.sessionStorage,
-  names = window.localStorage,
-}: AppProps) {
-  const [token, setToken] = useState(() => storage.getItem(TOKEN_KEY) ?? DEV_TOKEN);
-  const [reviewer, setReviewer] = useState(() => names.getItem(REVIEWER_KEY) ?? "");
+export function App({ url = window.location.origin, fetch, storage = window.localStorage }: AppProps) {
   const [version, setVersion] = useState(0);
   const [connection, setConnection] = useState<Connection>({ status: "checking" });
-  const client = useMemo(() => new SpoolClient({ url, token, fetch }), [url, token, fetch]);
-  const [theme, toggleTheme] = useTheme(names);
+  const client = useMemo(() => {
+    const call: Fetch = fetch ?? ((input, init) => window.fetch(input, init));
+    return new SpoolClient({
+      url,
+      fetch: async (input, init) => {
+        const response = await call(input, init);
+        // The session ended while the studio was open: asking who is signed
+        // in shows the door.
+        if (response.status === 401 && input.pathname.startsWith("/v1/")) setVersion((before) => before + 1);
+        return response;
+      },
+    });
+  }, [url, fetch]);
+  const [theme, toggleTheme] = useTheme(storage);
 
   useEffect(() => {
     let current = true;
-    client.info().then(
-      (info) => current && setConnection({ status: "ready", info }),
+    const read = async (): Promise<Connection> => {
+      const { person, setup, dev } = await client.session();
+      if (!person) return { status: "out", setup };
+      const [info, people] = await Promise.all([client.info(), client.people()]);
+      return { status: "ready", me: person, dev, info, people };
+    };
+    read().then(
+      (read) => current && setConnection(read),
       (error: unknown) => {
         if (!current) return;
-        const refused = error instanceof SpoolError && error.code === "unauthorized";
-        setConnection(refused ? { status: "refused" } : { status: "failed", error });
+        // The session ended between one call and the next.
+        const out = error instanceof SpoolError && error.code === "unauthorized";
+        setConnection(out ? { status: "out", setup: false } : { status: "failed", error });
       },
     );
     return () => {
@@ -141,12 +146,11 @@ export function App({
     };
   }, [client, version]);
 
-  const connect = (entered: string) => {
-    storage.setItem(TOKEN_KEY, entered);
-    setConnection({ status: "checking" });
-    setToken(entered);
-    setVersion((before) => before + 1);
-  };
+  const refresh = () => setVersion((before) => before + 1);
+  const people = useMemo(
+    () => new Map(connection.status === "ready" ? connection.people.map((person) => [person.id, person]) : []),
+    [connection],
+  );
 
   if (connection.status === "checking") {
     return (
@@ -155,10 +159,23 @@ export function App({
       </Door>
     );
   }
-  if (connection.status === "refused") {
+  if (connection.status === "out") {
+    const entered = (state: SessionState) => {
+      if (!state.person) return;
+      // The link that made the first account has done its work.
+      if (parseAddress(here()).path[0] === "setup") window.history.replaceState(null, "", "/");
+      setConnection({ status: "checking" });
+      refresh();
+    };
     return (
       <Door url={url}>
-        <TokenForm guessed={storage.getItem(TOKEN_KEY) === null} connect={connect} />
+        {parseAddress(here()).path[0] === "setup" ? (
+          <SetupForm client={client} open={connection.setup} entered={entered} />
+        ) : connection.setup ? (
+          <Notice>No accounts yet. Open the setup link the server printed when it started.</Notice>
+        ) : (
+          <SignInForm client={client} entered={entered} />
+        )}
       </Door>
     );
   }
@@ -167,30 +184,31 @@ export function App({
       <Door url={url}>
         <Failure error={connection.error} />
         <div>
-          <Button variant="outline" onClick={() => setVersion((before) => before + 1)}>
+          <Button variant="outline" onClick={refresh}>
             Try again
           </Button>
         </div>
       </Door>
     );
   }
-  const refresh = () => setVersion((before) => before + 1);
-  const remember = (name: string) => {
-    names.setItem(REVIEWER_KEY, name);
-    setReviewer(name);
-  };
   return (
-    <StudioContext.Provider value={{ client, version, refresh, reviewer, remember, info: connection.info }}>
+    <StudioContext.Provider value={{ client, version, refresh, me: connection.me, people, info: connection.info }}>
       <Shell
         url={url}
         info={connection.info}
         refresh={refresh}
         theme={theme}
         toggleTheme={toggleTheme}
-        forget={() => {
-          storage.removeItem(TOKEN_KEY);
-          setConnection({ status: "refused" });
-        }}
+        signOut={
+          connection.dev
+            ? null
+            : () => {
+                client.signOut().then(
+                  () => setConnection({ status: "out", setup: false }),
+                  (error: unknown) => setConnection({ status: "failed", error }),
+                );
+              }
+        }
       />
     </StudioContext.Provider>
   );
@@ -227,31 +245,136 @@ function Door({ url, children }: { url: string; children: ReactNode }) {
   );
 }
 
-function TokenForm({ guessed, connect }: { guessed: boolean; connect: (token: string) => void }) {
+/** A form of the door: what it sends, and what the server said when it would not have it. */
+function DoorForm({
+  label,
+  send,
+  entered,
+  children,
+}: {
+  label: string;
+  send: (entered: FormData) => Promise<SessionState>;
+  entered: (state: SessionState) => void;
+  children: ReactNode;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<unknown>(null);
   return (
     <form
-      {...stylex.props(styles.tokenForm)}
+      {...stylex.props(styles.doorForm)}
       onSubmit={(event) => {
         event.preventDefault();
-        const entered = String(new FormData(event.currentTarget).get("token") ?? "").trim();
-        if (entered !== "") connect(entered);
+        if (busy) return;
+        setBusy(true);
+        setProblem(null);
+        send(new FormData(event.currentTarget)).then(entered, (error: unknown) => {
+          setBusy(false);
+          setProblem(error);
+        });
       }}
     >
-      {guessed ? (
-        <Text>
-          Enter the server's token (<Code>SPOOL_TOKEN</Code>).
-        </Text>
-      ) : (
-        <Notice tone="bad" role="alert">
-          Token rejected.
-        </Notice>
-      )}
-      <Labelled label="Token">
-        <Input name="token" type="password" autoComplete="off" autoFocus />
-      </Labelled>
-      <Button type="submit">Connect</Button>
-      <Quiet>Stored in this tab only.</Quiet>
+      {children}
+      {problem !== null ? <Failure error={problem} /> : null}
+      <Button type="submit" disabled={busy}>
+        {label}
+      </Button>
     </form>
+  );
+}
+
+function Username() {
+  return (
+    <Labelled label="Username">
+      <Input name="username" autoComplete="username" autoCapitalize="none" spellCheck={false} required autoFocus />
+    </Labelled>
+  );
+}
+
+function SignInForm({ client, entered }: { client: SpoolClient; entered: (state: SessionState) => void }) {
+  return (
+    <DoorForm label="Sign in" send={(form) => client.signIn(typed(form, "username"), password(form))} entered={entered}>
+      <Username />
+      <Labelled label="Password">
+        <Input name="password" type="password" autoComplete="current-password" required />
+      </Labelled>
+    </DoorForm>
+  );
+}
+
+/**
+ * Makes the first account. The address carries the code the server printed,
+ * after the `#`, where it is sent to no server and kept in no log.
+ */
+function SetupForm({
+  client,
+  open,
+  entered,
+}: {
+  client: SpoolClient;
+  /** Whether the server still has no accounts. */
+  open: boolean;
+  entered: (state: SessionState) => void;
+}) {
+  const code = window.location.hash.slice(1);
+  if (!open) {
+    return (
+      <>
+        <Notice>This server is already set up.</Notice>
+        <div>
+          <Button variant="outline" render={<a href="/" />}>
+            Sign in
+          </Button>
+        </div>
+      </>
+    );
+  }
+  return (
+    <DoorForm
+      label="Create admin account"
+      send={(form) =>
+        client.setUp({
+          code: code === "" ? typed(form, "code") : code,
+          username: typed(form, "username"),
+          name: typed(form, "name"),
+          password: password(form),
+        })
+      }
+      entered={entered}
+    >
+      <Text>The first account. It is an admin, and adds everyone else.</Text>
+      {code === "" ? (
+        <Labelled label="Setup code" hint="The part after # in the link the server printed.">
+          <Input name="code" autoComplete="off" spellCheck={false} required />
+        </Labelled>
+      ) : null}
+      <Labelled label="Name">
+        <Input name="name" autoComplete="name" required />
+      </Labelled>
+      <Username />
+      <NewPassword />
+    </DoorForm>
+  );
+}
+
+function ChangePassword() {
+  return (
+    <Act
+      label="Change password"
+      variant="ghost"
+      size="sm"
+      icon={<PasswordIcon />}
+      buttonStyle={styles.footButton}
+      act={async (client, { entered }) => {
+        await client.changePassword({ current: password(entered, "current"), new: password(entered) });
+        return null;
+      }}
+      done={() => {}}
+    >
+      <Labelled label="Current password">
+        <Input name="current" type="password" autoComplete="current-password" required />
+      </Labelled>
+      <NewPassword label="New password" />
+    </Act>
   );
 }
 
@@ -269,15 +392,17 @@ function Shell({
   refresh,
   theme,
   toggleTheme,
-  forget,
+  signOut,
 }: {
   url: string;
   info: Info;
   refresh: () => void;
   theme: Theme;
   toggleTheme: () => void;
-  forget: () => void;
+  /** Ends the session. Null on a development server, where there is none. */
+  signOut: (() => void) | null;
 }) {
+  const { me } = useStudio();
   const route = useRoute();
   const [finding, setFinding] = useState(false);
   const types = info.store.entity_types;
@@ -315,6 +440,10 @@ function Shell({
         { path: "runs", label: "Runs", icon: <RunIcon /> },
         { path: "log", label: "Log", icon: <LogIcon /> },
       ],
+    },
+    {
+      label: "Access",
+      entries: [{ path: "people", label: "People", icon: <PeopleIcon /> }],
     },
   ];
   const places = useMemo(
@@ -392,9 +521,17 @@ function Shell({
               <span {...stylex.props(styles.serverMark)} />
               <span {...stylex.props(styles.serverName)}>{url.replace(/^https?:\/\//, "")}</span>
             </div>
-            <Button variant="ghost" size="sm" onClick={forget} style={styles.footButton}>
-              <TokenIcon /> Change token
-            </Button>
+            <div data-part="me" title={me.username} {...stylex.props(styles.me)}>
+              {me.name}
+            </div>
+            {signOut ? (
+              <>
+                <ChangePassword />
+                <Button variant="ghost" size="sm" onClick={signOut} style={styles.footButton}>
+                  <SignOutIcon /> Sign out
+                </Button>
+              </>
+            ) : null}
           </Hidden>
         </SidebarFooter>
       </Sidebar>
@@ -457,6 +594,8 @@ function Screen({ route, types }: { route: Route; types: string[] }) {
       return id === undefined ? <Log /> : <Changeset id={id} />;
     case "explain":
       return id === undefined ? <Explain route={route} /> : <Nowhere />;
+    case "people":
+      return id === undefined ? <People /> : <Nowhere />;
     default:
       return <Nowhere />;
   }
@@ -522,7 +661,7 @@ const styles = stylex.create({
     letterSpacing: "-0.01em",
     lineHeight: typography.lineHeightLg,
   },
-  tokenForm: {
+  doorForm: {
     gap: spacing["4"],
     display: "flex",
     flexDirection: "column",
@@ -581,6 +720,13 @@ const styles = stylex.create({
   },
   serverName: {
     fontFamily: typography.fontFamilyMono,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  me: {
+    paddingInline: spacing["2"],
+    fontWeight: typography.fontWeightMedium,
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",

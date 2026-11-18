@@ -52,7 +52,6 @@ export interface ReviewerResult {
   faults: string[];
 }
 
-const ACTOR = "user:stress";
 const NOBODY = "00000000-0000-7000-8000-000000000000";
 
 /** The statuses that say the caller asked for something that cannot be done. */
@@ -188,7 +187,7 @@ export async function reviewer({
         const from = pick(ids);
         const into = pick(ids);
         if (from === undefined || into === undefined) return;
-        await client.commit({ actor: ACTOR, base: state.head, ops: [{ op: "merge", from, into }] });
+        await client.commit({ base: state.head, ops: [{ op: "merge", from, into }] });
       },
     ],
     [
@@ -200,7 +199,6 @@ export async function reviewer({
         const all = members(state, identity);
         const records = all.filter(() => below(2) === 0);
         await client.split(identity, {
-          actor: ACTOR,
           records: records.length > 0 ? records : all.slice(0, 1),
           keep_apart: below(2) === 0,
           ...(below(2) === 0 ? { base: state.head } : {}),
@@ -214,7 +212,7 @@ export async function reviewer({
         const [record, from] = pick([...state.placed]) ?? [];
         const to = pick([...state.identities.keys()]);
         if (record === undefined || to === undefined) return;
-        await client.commit({ actor: ACTOR, ops: [{ op: "assign", record, from, to }] });
+        await client.commit({ ops: [{ op: "assign", record, from, to }] });
       },
     ],
     [
@@ -223,7 +221,7 @@ export async function reviewer({
       async (state) => {
         const [record, from] = pick([...state.placed].filter(([, identity]) => identity !== null)) ?? [];
         if (record === undefined) return;
-        await client.commit({ actor: ACTOR, ops: [{ op: "assign", record, from, to: null }] });
+        await client.commit({ ops: [{ op: "assign", record, from, to: null }] });
       },
     ],
     [
@@ -234,7 +232,6 @@ export async function reviewer({
         if (record === undefined) return;
         const identity = (await client.mintIds({ identities: 1 })).identities[0]!;
         await client.commit({
-          actor: ACTOR,
           base: state.head,
           ops: [
             { op: "create_identity", identity, entity_type: "company" },
@@ -252,7 +249,7 @@ export async function reviewer({
         const b = pick(records);
         if (a === undefined || b === undefined) return;
         const kind = below(2) === 0 ? "cannot_link" : "must_link";
-        await client.commit({ actor: ACTOR, ops: [{ op: "constrain", a, b, kind }] });
+        await client.commit({ ops: [{ op: "constrain", a, b, kind }] });
       },
     ],
     [
@@ -262,7 +259,7 @@ export async function reviewer({
         if (state.head === 0) return;
         // Mostly something recent, which is more often still undoable.
         const back = below(2) === 0 ? below(Math.min(5, state.head)) : below(state.head);
-        await client.undo(state.head - back, { actor: ACTOR, commit: below(6) > 0 });
+        await client.undo(state.head - back, { commit: below(6) > 0 });
       },
     ],
     [
@@ -270,7 +267,7 @@ export async function reviewer({
       4,
       async () => {
         const item = pick(await client.reviewItems({ status: "open" }));
-        if (item !== undefined) await client.dismissReview(item.id, { actor: ACTOR, reason: "stress" });
+        if (item !== undefined) await client.dismissReview(item.id, { reason: "stress" });
       },
     ],
     [
@@ -279,7 +276,7 @@ export async function reviewer({
       async (state) => {
         const ids = [...state.identities.keys()];
         const ops: Op[] = [{ op: "merge", from: pick(ids) ?? NOBODY, into: pick(ids) ?? NOBODY }];
-        await client.commit({ actor: ACTOR, base: Math.max(0, state.head - 1 - below(4)), ops });
+        await client.commit({ base: Math.max(0, state.head - 1 - below(4)), ops });
       },
     ],
     [
@@ -297,7 +294,7 @@ export async function reviewer({
           [{ op: "create_identity", identity: real, entity_type: "company" }],
           [],
         ])!;
-        await client.commit({ actor: ACTOR, ops });
+        await client.commit({ ops });
         throw new Error(`the server took a changeset it had to refuse: ${JSON.stringify(ops)}`);
       },
     ],

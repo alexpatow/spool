@@ -1,9 +1,15 @@
 //! The HTTP API: a thin wrapper around one [`Engine`].
 //!
 //! The server is the only process that has the store open. Every path under
-//! `/v1` needs the bearer token. The studio at `/` does not: it is a page
-//! that holds nothing, and reads through `/v1` with the token it is given. Small values are JSON; candidates, judgements
-//! and rows to ingest can also cross as Arrow IPC streams.
+//! `/v1` needs a caller the server knows: a person who has signed in, whose
+//! browser carries a session cookie, or an agent with the bearer token. The
+//! paths under `/auth` sign a person in and out. The studio at `/` needs
+//! neither: it is a page that holds nothing, and reads through `/v1` as the
+//! person signed in. Small values are JSON; candidates, judgements and rows
+//! to ingest can also cross as Arrow IPC streams.
+//!
+//! A change is recorded under whoever made it. The server says who that is;
+//! a request cannot.
 //!
 //! The engine does its work on blocking threads. A call that only reads
 //! answers from committed state and does not wait for a run in progress.
@@ -20,9 +26,10 @@
 //! A call that finds the writer busy has no run to report until its own work
 //! starts, so it can wait longer than `wait_ms` for that.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::io::Cursor;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use arrow::ipc::reader::StreamReader;
@@ -30,16 +37,16 @@ use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatchReader;
 use axum::body::Bytes;
 use axum::extract::rejection::QueryRejection;
-use axum::extract::{DefaultBodyLimit, Path, Query, Request, State};
-use axum::http::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, WWW_AUTHENTICATE};
-use axum::http::{HeaderMap, HeaderValue, StatusCode};
+use axum::extract::{DefaultBodyLimit, Extension, Path, Query, Request, State};
+use axum::http::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HOST, ORIGIN, WWW_AUTHENTICATE};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use spool::core::{Changeset, DocumentId, EntityType, Policy, RunId, Seq};
+use spool::core::{Actor, Changeset, DocumentId, EntityType, Policy, RunId, Seq};
 use spool::{
     ConstraintFilter, Disposition, DocumentFilter, DraftFilter, DraftStatus, Engine,
     ExtractOptions, IdentityFilter, RecordFilter, ResolveOptions, ReviewFilter, ReviewStatus, Rows,
@@ -47,14 +54,19 @@ use spool::{
 };
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
+use tower_sessions::cookie::SameSite;
+use tower_sessions::cookie::time::Duration as SessionLength;
+use tower_sessions::{Expiry, Session, SessionManagerLayer};
 
+use crate::accounts::{Accounts, Change, MAX_USERNAME, PERSON, Refused};
 use crate::api::{
-    self, ARROW_STREAM, CandidateList, ChangesetList, CommitRequest, ConstraintList,
-    DismissRequest, DocumentList, DocumentsRequest, DraftList, ErrorBody, ErrorCode, ErrorResponse,
-    ExtractRequest, History, IdentitiesOfRequest, IdentitiesOfResponse, IdentityList, Info,
-    IngestParams, IngestRequest, JudgementsRequest, JudgementsResponse, MintRequest,
-    ReconcileRequest, RecordList, RejectDraftRequest, ReviewList, RunList, RunResponse,
-    SplitRequest, StartRunRequest, UndoRequest,
+    self, ARROW_STREAM, AddPersonRequest, CandidateList, ChangePersonRequest, ChangesetList,
+    CommitRequest, ConstraintList, DismissRequest, DocumentList, DocumentsRequest, DraftList,
+    ErrorBody, ErrorCode, ErrorResponse, ExtractRequest, History, IdentitiesOfRequest,
+    IdentitiesOfResponse, IdentityList, Info, IngestParams, IngestRequest, JudgementsRequest,
+    JudgementsResponse, MintRequest, PasswordRequest, Person, PersonList, ReconcileRequest,
+    RecordList, RejectDraftRequest, ReviewList, RunList, RunResponse, SessionState, SetupRequest,
+    SignInRequest, SplitRequest, StartRunRequest, UndoRequest,
 };
 use crate::studio;
 
@@ -71,19 +83,53 @@ const DEFAULT_PAGE: u64 = 100;
 /// The most IDs minted in one call.
 const MAX_MINTED: u32 = 10_000;
 
+/// How long a person stays signed in, counted from when they signed in: a
+/// session is written when it changes, not each time it is used.
+const SESSION_HOURS: i64 = 12;
+
+/// The name of the session cookie.
+const COOKIE: &str = "spool_session";
+
+/// How many wrong passwords one username may have within [`ATTEMPT_WINDOW`]
+/// before sign-in for it is refused until the window has passed.
+const MAX_ATTEMPTS: u32 = 10;
+const ATTEMPT_WINDOW: Duration = Duration::from_secs(15 * 60);
+
+/// The most usernames whose wrong passwords are counted at once. Anyone can
+/// try a username, so what is kept of the tries has to have an end.
+const MAX_ATTEMPTED: usize = 10_000;
+
+/// What the bearer token writes as.
+const TOKEN_ACTOR: &str = "api";
+
 #[derive(Clone, Debug)]
 pub struct ServerOptions {
-    /// The bearer token every call under `/v1` must carry.
-    pub token: String,
+    /// The people who may sign in, and their sessions.
+    pub accounts: Accounts,
+    /// A bearer token for callers that are not people. It writes as
+    /// `agent:api`, and cannot manage people.
+    pub token: Option<String>,
+    /// A caller that presents nothing is the `dev` account. For `spool dev`,
+    /// which listens on this machine only.
+    pub dev: bool,
+    /// The code that makes the first account, while nobody has one.
+    pub setup: Option<String>,
+    /// Whether browsers reach the server over HTTPS, and so whether the
+    /// session cookie is sent only over HTTPS.
+    pub https: bool,
     pub max_body_bytes: usize,
     /// Whether the server answers a browser at `/` with the studio.
     pub studio: bool,
 }
 
 impl ServerOptions {
-    pub fn new(token: impl Into<String>) -> Self {
+    pub fn new(accounts: Accounts) -> Self {
         Self {
-            token: token.into(),
+            accounts,
+            token: None,
+            dev: false,
+            setup: None,
+            https: true,
             max_body_bytes: DEFAULT_MAX_BODY_BYTES,
             studio: true,
         }
@@ -93,15 +139,110 @@ impl ServerOptions {
 #[derive(Clone)]
 struct App {
     engine: Arc<Engine>,
-    token: Arc<str>,
+    accounts: Accounts,
+    token: Option<Arc<str>>,
+    dev: bool,
+    setup: Arc<Mutex<Option<String>>>,
+    attempts: Attempts,
+}
+
+/// The wrong passwords lately tried for each username, and when the first of
+/// them was.
+#[derive(Clone, Default)]
+struct Attempts(Arc<Mutex<HashMap<String, (u32, Instant)>>>);
+
+impl Attempts {
+    fn held(&self) -> std::sync::MutexGuard<'_, HashMap<String, (u32, Instant)>> {
+        self.0.lock().unwrap_or_else(|held| held.into_inner())
+    }
+
+    /// Whether a username has had its tries for now.
+    fn barred(&self, username: &str) -> bool {
+        let mut held = self.held();
+        held.retain(|_, (_, first)| first.elapsed() < ATTEMPT_WINDOW);
+        held.get(username)
+            .is_some_and(|(wrong, _)| *wrong >= MAX_ATTEMPTS)
+    }
+
+    fn wrong(&self, username: String) {
+        let mut held = self.held();
+        if held.len() >= MAX_ATTEMPTED && !held.contains_key(&username) {
+            // Counting starts again sooner than it should, which is better
+            // than keeping every name anyone ever tried.
+            held.clear();
+        }
+        held.entry(username).or_insert((0, Instant::now())).0 += 1;
+    }
+
+    fn forget(&self, username: &str) {
+        self.held().remove(username);
+    }
+}
+
+/// Who is calling, and so who a change they make is recorded under.
+#[derive(Clone, Debug)]
+struct Caller {
+    actor: Actor,
+    /// The account, when the caller is a person.
+    person: Option<Person>,
+}
+
+impl Caller {
+    fn of(person: Person) -> Self {
+        Self {
+            actor: Actor::User(person.id.clone()),
+            person: Some(person),
+        }
+    }
+
+    /// The caller's own account.
+    fn person(&self) -> ApiResult<&Person> {
+        self.person.as_ref().ok_or_else(|| {
+            ApiError::new(
+                StatusCode::FORBIDDEN,
+                ErrorCode::Forbidden,
+                "this is for a person who has signed in, not for a token",
+            )
+        })
+    }
+
+    fn admin(&self) -> ApiResult<&Person> {
+        self.person()
+            .ok()
+            .filter(|person| person.admin)
+            .ok_or_else(|| {
+                ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    ErrorCode::Forbidden,
+                    "only an admin manages people",
+                )
+            })
+    }
 }
 
 /// The API over `engine`.
 pub fn router(engine: Arc<Engine>, options: &ServerOptions) -> Router {
     let app = App {
         engine,
-        token: Arc::from(options.token.as_str()),
+        accounts: options.accounts.clone(),
+        token: options.token.as_deref().map(Arc::from),
+        dev: options.dev,
+        setup: Arc::new(Mutex::new(options.setup.clone())),
+        attempts: Attempts::default(),
     };
+    let sessions = SessionManagerLayer::new(options.accounts.clone())
+        .with_name(COOKIE)
+        .with_http_only(true)
+        .with_same_site(SameSite::Lax)
+        .with_secure(options.https)
+        .with_expiry(Expiry::OnInactivity(SessionLength::hours(SESSION_HOURS)));
+    let auth = Router::new()
+        .route("/session", get(session_state))
+        .route("/sign-in", post(sign_in))
+        .route("/sign-out", post(sign_out))
+        .route("/setup", post(set_up))
+        .route("/password", post(change_password))
+        .fallback(not_found);
     let v1 = Router::new()
         .route("/info", get(info))
         .route("/ingest", post(ingest))
@@ -134,16 +275,21 @@ pub fn router(engine: Arc<Engine>, options: &ServerOptions) -> Router {
         .route("/review/{item}", get(read_review))
         .route("/review/{item}/case", get(review_case))
         .route("/review/{item}/dismiss", post(dismiss_review))
+        .route("/people", get(list_people).post(add_person))
+        .route("/people/{person}", post(change_person))
         .fallback(not_found)
         .layer(middleware::from_fn_with_state(app.clone(), authorize));
     let mut router = Router::new()
         .route("/healthz", get(health))
+        .nest("/auth", auth)
         .nest(&format!("/{}", api::VERSION), v1);
     if options.studio {
         router = router.merge(studio::routes());
     }
     router
         .fallback(not_found)
+        .layer(sessions)
+        .layer(middleware::from_fn(own_pages_only))
         .layer(DefaultBodyLimit::max(options.max_body_bytes))
         .layer(middleware::map_response(describe_failure))
         .with_state(app)
@@ -301,26 +447,283 @@ async fn not_found() -> ApiError {
     ApiError::not_found("there is nothing at this path")
 }
 
-// Authorisation
+impl From<Refused> for ApiError {
+    fn from(refused: Refused) -> Self {
+        let message = refused.to_string();
+        match refused {
+            Refused::Invalid(_) | Refused::WrongPassword => Self::invalid(message),
+            Refused::Unknown => Self::not_found(message),
+            Refused::Taken(_) | Refused::LastAdmin | Refused::NotEmpty => {
+                Self::new(StatusCode::CONFLICT, ErrorCode::Conflict, message)
+            }
+            Refused::Failed(_) => Self::internal(message),
+        }
+    }
+}
 
-async fn authorize(State(app): State<App>, request: Request, next: Next) -> Response {
-    let presented = request
-        .headers()
+// Who is calling
+
+/// Refuses a write that a page of another site sent. A browser says where a
+/// write comes from, and may send this server's cookie with it wherever that
+/// is; a caller that is not a browser says nothing and is let through.
+async fn own_pages_only(request: Request, next: Next) -> Response {
+    if !elsewhere(request.method(), request.headers()) {
+        return next.run(request).await;
+    }
+    ApiError::new(
+        StatusCode::FORBIDDEN,
+        ErrorCode::Forbidden,
+        "a change must come from this server's own pages",
+    )
+    .into_response()
+}
+
+/// Whether a request is a write that says it comes from another site.
+///
+/// A browser of the last few years says so itself, in `Sec-Fetch-Site`, and
+/// that holds whatever stands between it and this server. An older one names
+/// the page's origin, which is compared with the host the request was sent
+/// to.
+fn elsewhere(method: &Method, headers: &HeaderMap) -> bool {
+    if [Method::GET, Method::HEAD, Method::OPTIONS].contains(method) {
+        return false;
+    }
+    let header = |name: &str| headers.get(name).and_then(|value| value.to_str().ok());
+    if let Some(site) = header("sec-fetch-site") {
+        return !["same-origin", "none"].contains(&site);
+    }
+    let Some(origin) = header(ORIGIN.as_str()) else {
+        return false;
+    };
+    let from = origin.split_once("://").map_or(origin, |(_, host)| host);
+    header(HOST.as_str()) != Some(from)
+}
+
+async fn authorize(
+    State(app): State<App>,
+    session: Session,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    match caller(&app, &session, request.headers()).await {
+        Ok(caller) => {
+            request.extensions_mut().insert(caller);
+            next.run(request).await
+        }
+        Err(error) => error.into_response(),
+    }
+}
+
+fn unauthorized(message: &str) -> ApiError {
+    ApiError::new(StatusCode::UNAUTHORIZED, ErrorCode::Unauthorized, message)
+}
+
+/// The caller a request is from: the agent whose token it carries, or the
+/// person its session belongs to.
+async fn caller(app: &App, session: &Session, headers: &HeaderMap) -> ApiResult<Caller> {
+    let presented = headers
         .get(AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| {
             let (scheme, token) = value.split_once(' ')?;
             scheme.eq_ignore_ascii_case("bearer").then(|| token.trim())
         });
-    match presented {
-        Some(token) if same(token.as_bytes(), app.token.as_bytes()) => next.run(request).await,
-        _ => ApiError::new(
-            StatusCode::UNAUTHORIZED,
-            ErrorCode::Unauthorized,
-            "this server needs its bearer token: `Authorization: Bearer <token>`",
-        )
-        .into_response(),
+    if let Some(presented) = presented {
+        return match &app.token {
+            Some(token) if same(presented.as_bytes(), token.as_bytes()) => Ok(Caller {
+                actor: Actor::Agent(TOKEN_ACTOR.to_owned()),
+                person: None,
+            }),
+            _ => Err(unauthorized("that is not this server's token")),
+        };
     }
+    if let Some(person) = signed_in(app, session).await? {
+        return Ok(Caller::of(person));
+    }
+    if app.dev {
+        return Ok(Caller::of(people(app, Accounts::dev).await?));
+    }
+    Err(unauthorized(
+        "sign in, or send a token: `Authorization: Bearer <token>`",
+    ))
+}
+
+/// The person a session belongs to, if their account is still on.
+async fn signed_in(app: &App, session: &Session) -> ApiResult<Option<Person>> {
+    let Some(id) = session
+        .get::<String>(PERSON)
+        .await
+        .map_err(session_failed)?
+    else {
+        return Ok(None);
+    };
+    let person = people(app, move |accounts| accounts.get(&id)).await?;
+    Ok(person.filter(|person| person.active))
+}
+
+fn session_failed(error: tower_sessions::session::Error) -> ApiError {
+    ApiError::internal(format!("the session could not be read: {error}"))
+}
+
+/// Runs work on the accounts on a blocking thread: hashing a password takes
+/// a while.
+async fn people<T: Send + 'static>(
+    app: &App,
+    work: impl FnOnce(&Accounts) -> Result<T, Refused> + Send + 'static,
+) -> ApiResult<T> {
+    let accounts = app.accounts.clone();
+    match tokio::task::spawn_blocking(move || work(&accounts)).await {
+        Ok(result) => Ok(result?),
+        Err(_) => Err(ApiError::internal("the accounts stopped while working")),
+    }
+}
+
+/// Starts a session for `person`, with an ID nobody has seen before.
+async fn begin(session: &Session, person: &Person) -> ApiResult<()> {
+    session.cycle_id().await.map_err(session_failed)?;
+    session
+        .insert(PERSON, &person.id)
+        .await
+        .map_err(session_failed)
+}
+
+async fn session_state(State(app): State<App>, session: Session) -> ApiResult {
+    let mut person = signed_in(&app, &session).await?;
+    if person.is_none() && app.dev {
+        person = Some(people(&app, Accounts::dev).await?);
+    }
+    let setup = person.is_none() && people(&app, Accounts::is_empty).await?;
+    ok(SessionState {
+        person,
+        setup,
+        dev: app.dev,
+    })
+}
+
+/// What a call that signs someone in or out answers with.
+fn now(app: &App, person: Option<Person>) -> ApiResult {
+    ok(SessionState {
+        person,
+        setup: false,
+        dev: app.dev,
+    })
+}
+
+async fn sign_in(State(app): State<App>, session: Session, body: Bytes) -> ApiResult {
+    let request: SignInRequest = json_body(&body)?;
+    let username = request.username.trim().to_lowercase();
+    let wrong = || unauthorized("the username or the password is not right");
+    if username.len() > MAX_USERNAME {
+        return Err(wrong());
+    }
+    if app.attempts.barred(&username) {
+        return Err(ApiError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            ErrorCode::TooManyAttempts,
+            "too many wrong passwords for this username; wait a while and try again",
+        ));
+    }
+    let attempted = username.clone();
+    let person = people(&app, move |accounts| {
+        accounts.verify(&attempted, &request.password)
+    })
+    .await?;
+    let Some(person) = person else {
+        app.attempts.wrong(username);
+        return Err(wrong());
+    };
+    app.attempts.forget(&username);
+    begin(&session, &person).await?;
+    now(&app, Some(person))
+}
+
+async fn sign_out(State(app): State<App>, session: Session) -> ApiResult {
+    session.flush().await.map_err(session_failed)?;
+    now(&app, None)
+}
+
+/// Makes the first account. The code is the one the server printed when it
+/// started with no accounts, and it works once.
+async fn set_up(State(app): State<App>, session: Session, body: Bytes) -> ApiResult {
+    let request: SetupRequest = json_body(&body)?;
+    let right = {
+        let code = app.setup.lock().unwrap_or_else(|held| held.into_inner());
+        code.as_deref()
+            .is_some_and(|code| same(code.as_bytes(), request.code.trim().as_bytes()))
+    };
+    if !right {
+        return Err(unauthorized(
+            "that is not the code in the link this server printed when it started",
+        ));
+    }
+    let person = people(&app, move |accounts| {
+        accounts.first(&request.username, &request.name, &request.password)
+    })
+    .await?;
+    *app.setup.lock().unwrap_or_else(|held| held.into_inner()) = None;
+    begin(&session, &person).await?;
+    now(&app, Some(person))
+}
+
+async fn change_password(State(app): State<App>, session: Session, body: Bytes) -> ApiResult {
+    let request: PasswordRequest = json_body(&body)?;
+    let Some(person) = signed_in(&app, &session).await? else {
+        return Err(unauthorized("sign in first"));
+    };
+    let id = person.id.clone();
+    people(&app, move |accounts| {
+        accounts.change_password(&id, &request.current, &request.new)
+    })
+    .await?;
+    // Every session of theirs has ended. This one starts again.
+    begin(&session, &person).await?;
+    now(&app, Some(person))
+}
+
+async fn list_people(State(app): State<App>) -> ApiResult {
+    ok(PersonList {
+        people: people(&app, Accounts::list).await?,
+    })
+}
+
+async fn add_person(
+    State(app): State<App>,
+    Extension(caller): Extension<Caller>,
+    body: Bytes,
+) -> ApiResult {
+    caller.admin()?;
+    let request: AddPersonRequest = json_body(&body)?;
+    ok(people(&app, move |accounts| {
+        accounts.add(
+            &request.username,
+            &request.name,
+            &request.password,
+            request.admin.unwrap_or(false),
+        )
+    })
+    .await?)
+}
+
+async fn change_person(
+    State(app): State<App>,
+    Extension(caller): Extension<Caller>,
+    Path(person): Path<String>,
+    body: Bytes,
+) -> ApiResult {
+    caller.admin()?;
+    let request: ChangePersonRequest = json_body(&body)?;
+    ok(people(&app, move |accounts| {
+        accounts.change(
+            &person,
+            Change {
+                name: request.name,
+                password: request.password,
+                admin: request.admin,
+                active: request.active,
+            },
+        )
+    })
+    .await?)
 }
 
 /// Compares without stopping at the first difference, so that the time taken
@@ -828,7 +1231,11 @@ async fn reject_draft(State(app): State<App>, Path(draft): Path<String>, body: B
     .await?)
 }
 
-async fn commit(State(app): State<App>, body: Bytes) -> ApiResult {
+async fn commit(
+    State(app): State<App>,
+    Extension(caller): Extension<Caller>,
+    body: Bytes,
+) -> ApiResult {
     let request: CommitRequest = json_body(&body)?;
     ok(engine(&app, move |engine| {
         let id = match request.id {
@@ -842,7 +1249,7 @@ async fn commit(State(app): State<App>, body: Bytes) -> ApiResult {
         engine.commit(Changeset {
             id,
             base,
-            actor: request.actor,
+            actor: caller.actor,
             reason: request.reason,
             run: request.run,
             ops: request.ops,
@@ -851,13 +1258,18 @@ async fn commit(State(app): State<App>, body: Bytes) -> ApiResult {
     .await?)
 }
 
-async fn undo(State(app): State<App>, Path(seq): Path<String>, body: Bytes) -> ApiResult {
+async fn undo(
+    State(app): State<App>,
+    Extension(caller): Extension<Caller>,
+    Path(seq): Path<String>,
+    body: Bytes,
+) -> ApiResult {
     let seq = Seq(id(&seq, "a log position")?);
     let request: UndoRequest = json_body(&body)?;
     ok(engine(&app, move |engine| {
         engine.undo(
             seq,
-            request.actor,
+            caller.actor,
             request.reason,
             request.commit.unwrap_or(true),
         )
@@ -865,7 +1277,12 @@ async fn undo(State(app): State<App>, Path(seq): Path<String>, body: Bytes) -> A
     .await?)
 }
 
-async fn split(State(app): State<App>, Path(identity): Path<String>, body: Bytes) -> ApiResult {
+async fn split(
+    State(app): State<App>,
+    Extension(caller): Extension<Caller>,
+    Path(identity): Path<String>,
+    body: Bytes,
+) -> ApiResult {
     let identity = id(&identity, "an identity ID")?;
     let request: SplitRequest = json_body(&body)?;
     ok(engine(&app, move |engine| {
@@ -874,7 +1291,7 @@ async fn split(State(app): State<App>, Path(identity): Path<String>, body: Bytes
             &request.records,
             request.keep_apart.unwrap_or(true),
             request.base,
-            request.actor,
+            caller.actor,
             request.reason,
         )
     })
@@ -1141,13 +1558,14 @@ async fn review_case(State(app): State<App>, Path(item): Path<String>) -> ApiRes
 
 async fn dismiss_review(
     State(app): State<App>,
+    Extension(caller): Extension<Caller>,
     Path(item): Path<String>,
     body: Bytes,
 ) -> ApiResult {
     let item: u64 = id(&item, "a review item ID")?;
     let request: DismissRequest = json_body(&body)?;
     ok(engine(&app, move |engine| {
-        engine.dismiss_review(item, &request.actor, request.reason.as_deref())
+        engine.dismiss_review(item, &caller.actor, request.reason.as_deref())
     })
     .await?)
 }

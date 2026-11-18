@@ -5,11 +5,14 @@ import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 import { SpoolClient, SpoolError } from "../src/index.ts";
-import type { Changeset, RecordEntry, RunEntry } from "../src/index.ts";
+import type { CommitRequest, RecordEntry, RunEntry } from "../src/index.ts";
 import {
+  PASSWORD,
   TOKEN,
   companies,
+  cookies,
   copyProject,
+  firstPerson,
   hasUv,
   readCsv,
   serve,
@@ -213,11 +216,13 @@ describe("drafts", () => {
     // Someone commits the same assignments first, in a changeset of their own.
     const created = changeset.ops.flatMap((op) => (op.op === "create_identity" ? [op.identity] : []));
     const minted = await client.mintIds({ identities: created.length, changesets: 1 });
-    let theirs = JSON.stringify({ ...changeset, id: minted.changesets[0], actor: "user:someone", run: null });
+    // The author is whoever sends it.
+    const { actor: _, ...authored } = changeset;
+    let theirs = JSON.stringify({ ...authored, id: minted.changesets[0], run: null });
     created.forEach((identity, index) => {
       theirs = theirs.replaceAll(identity, minted.identities[index]!);
     });
-    expect((await client.commit(JSON.parse(theirs) as Changeset)).seq).toBe(1);
+    expect((await client.commit(JSON.parse(theirs) as CommitRequest)).seq).toBe(1);
 
     const failure = await failureOf(client.approveDraft(changeset.id));
     expect(failure.status).toBe(409);
@@ -231,7 +236,8 @@ describe("drafts", () => {
 });
 
 describe("a reviewer", () => {
-  const actor = "user:reviewer";
+  // What the test token writes as.
+  const actor = "agent:api";
 
   async function thing(client: SpoolClient, key: string) {
     const { records } = await client.records({ source: "shop", key });
@@ -256,7 +262,6 @@ describe("a reviewer", () => {
 
     // No ID and no base: the server mints one and takes the head of the log.
     const merged = await client.commit({
-      actor,
       reason: "one tool",
       ops: [{ op: "merge", from: anvil, into: hammer }],
     });
@@ -265,21 +270,21 @@ describe("a reviewer", () => {
     expect(await client.identity(anvil)).toMatchObject({ id: anvil, current: hammer });
     expect(await keys(client, anvil)).toEqual(["1", "2"]);
 
-    const preview = await client.undo(merged.seq, { actor, commit: false });
+    const preview = await client.undo(merged.seq, { commit: false });
     expect(preview.committed ?? null).toBeNull();
     expect(preview.changeset.ops.map((op) => op.op)).toEqual(["reinstate", "assign"]);
     expect((await client.changesets()).head).toBe(2);
 
-    const undone = await client.undo(merged.seq, { actor });
+    const undone = await client.undo(merged.seq, {});
     expect(undone.committed?.seq).toBe(3);
     expect(await client.identity(anvil)).toMatchObject({ id: anvil, current: anvil });
     expect(await keys(client, anvil)).toEqual(["1"]);
     expect(await keys(client, hammer)).toEqual(["2"]);
 
-    expect((await failureOf(client.undo(99, { actor }))).code).toBe("not_found");
+    expect((await failureOf(client.undo(99, {}))).code).toBe("not_found");
     // A merge written before the undo is stale, and says so.
     const stale = await failureOf(
-      client.commit({ actor, base: 1, ops: [{ op: "merge", from: anvil, into: hammer }] }),
+      client.commit({ base: 1, ops: [{ op: "merge", from: anvil, into: hammer }] }),
     );
     expect(stale.code).toBe("rejected");
     expect(stale.rejections[0]).toMatchObject({ op_index: 0, reason: { reason: "stale_merge" } });
@@ -298,9 +303,9 @@ describe("a reviewer", () => {
     const anvils = first.identity!;
     // Read now, the two named are the larger side and would keep the ID.
     const read = (await client.info()).store.head;
-    const grown = await client.commit({ actor, ops: [{ op: "merge", from: hammer.identity!, into: anvils }] });
+    const grown = await client.commit({ ops: [{ op: "merge", from: hammer.identity!, into: anvils }] });
 
-    const stale = await failureOf(client.split(anvils, { records: [first.id, second.id], base: read, actor }));
+    const stale = await failureOf(client.split(anvils, { records: [first.id, second.id], base: read }));
     expect(stale.status).toBe(409);
     expect(stale.code).toBe("conflict");
     expect(stale.message).toBe(
@@ -308,7 +313,7 @@ describe("a reviewer", () => {
     );
     expect(await keys(client, anvils)).toEqual(["1", "2", "3", "4"]);
 
-    const split = await client.split(anvils, { records: [first.id, second.id], base: grown.seq, actor });
+    const split = await client.split(anvils, { records: [first.id, second.id], base: grown.seq });
     expect([...split.moved].sort()).toEqual([first.id, second.id].sort());
     expect(await keys(client, anvils)).toEqual(["3", "4"]);
   });
@@ -324,7 +329,7 @@ describe("a reviewer", () => {
     const third = await thing(client, "3");
     const anvils = third.identity!;
 
-    const split = await client.split(anvils, { records: [third.id], actor, reason: "another anvil" });
+    const split = await client.split(anvils, { records: [third.id], reason: "another anvil" });
     expect(split).toMatchObject({ kept: anvils, moved: [third.id] });
     expect(await keys(client, anvils)).toEqual(["1", "2"]);
     expect(await keys(client, split.identity)).toEqual(["3"]);
@@ -338,7 +343,7 @@ describe("a reviewer", () => {
 
     // Merging the sides again would break the constraint.
     const merge = await failureOf(
-      client.commit({ actor, ops: [{ op: "merge", from: split.identity, into: anvils }] }),
+      client.commit({ ops: [{ op: "merge", from: split.identity, into: anvils }] }),
     );
     expect(merge.rejections[0]).toMatchObject({ reason: { reason: "constraint_violated" } });
 
@@ -428,17 +433,17 @@ describe("a reviewer", () => {
     expect((await failureOf(client.explain(first.id, unknown))).code).toBe("not_found");
     expect((await failureOf(client.explain(first.id, first.id))).code).toBe("invalid");
 
-    const dismissed = await client.dismissReview(item!.id, { actor, reason: "not ours" });
+    const dismissed = await client.dismissReview(item!.id, { reason: "not ours" });
     expect(dismissed).toMatchObject({ status: "dismissed", dismissed: { by: actor, reason: "not ours" } });
     expect(await client.reviewItems({ status: "open" })).toEqual([]);
     expect(await client.startRun({ entity_type: "thing" })).toBeNull();
     expect((await thing(client, "4")).identity ?? null).toBeNull();
-    expect((await failureOf(client.dismissReview(item!.id, { actor }))).code).toBe("conflict");
+    expect((await failureOf(client.dismissReview(item!.id, {}))).code).toBe("conflict");
     expect((await failureOf(client.reviewItem(999))).code).toBe("not_found");
 
     // Removing the constraint leaves it in the history.
     const { a, b } = constraints[0]!;
-    const removed = await client.commit({ actor, ops: [{ op: "unconstrain", kind: "cannot_link", a, b }] });
+    const removed = await client.commit({ ops: [{ op: "unconstrain", kind: "cannot_link", a, b }] });
     expect(await client.constraints()).toEqual([]);
     expect(await client.constraints({ removed: true })).toMatchObject([{ a, b, to: removed.seq }]);
   });
@@ -756,6 +761,42 @@ describe("calls that take a while", () => {
   });
 });
 
+describe("people", () => {
+  test("the first person sets the server up, adds another, and each writes under their own id", async () => {
+    const server = await thingsServer(21);
+    const nobody = new SpoolClient({ url: server.url, fetch: cookies() });
+    expect(await nobody.session()).toEqual({ person: null, setup: true, dev: false });
+    expect((await failureOf(nobody.info())).code).toBe("unauthorized");
+
+    const ada = await firstPerson(server);
+    expect(ada.person).toMatchObject({ username: "ada", admin: true, active: true });
+    expect(await ada.client.session()).toEqual({ person: ada.person, setup: false, dev: false });
+
+    const grace = await ada.client.addPerson({ username: "grace", name: "Grace", password: PASSWORD });
+    expect(grace.admin).toBe(false);
+    expect((await ada.client.people()).map((person) => person.username)).toEqual(["ada", "grace"]);
+
+    const hers = new SpoolClient({ url: server.url, fetch: cookies() });
+    expect((await failureOf(hers.signIn("grace", "not her password"))).code).toBe("unauthorized");
+    expect((await hers.signIn("grace", PASSWORD)).person).toEqual(grace);
+    expect((await failureOf(hers.addPerson({ username: "x", name: "X", password: PASSWORD }))).code).toBe("forbidden");
+    expect((await failureOf(server.client.changePerson(grace.id, { admin: true }))).code).toBe("forbidden");
+
+    const [identity] = (await hers.mintIds({ identities: 1 })).identities;
+    const made = await hers.commit({ ops: [{ op: "create_identity", identity: identity!, entity_type: "thing" }] });
+    const { changesets } = await hers.changesets({ after: made.seq - 1 });
+    expect(changesets[0]!.changeset.actor).toBe(`user:${grace.id}`);
+
+    // An account that is turned off is signed out, and cannot sign in.
+    await ada.client.changePerson(grace.id, { active: false });
+    expect((await failureOf(hers.info())).code).toBe("unauthorized");
+    expect((await failureOf(hers.signIn("grace", PASSWORD))).code).toBe("unauthorized");
+
+    await ada.client.signOut();
+    expect((await ada.client.session()).person).toBeNull();
+  });
+});
+
 describe("failures", () => {
   test("a wrong token is refused", async () => {
     const { url, client } = await thingsServer(7);
@@ -781,7 +822,6 @@ describe("failures", () => {
       client.commit({
         id: minted.changesets[0]!,
         base: 0,
-        actor: "user:test",
         ops: [
           { op: "create_identity", identity: minted.identities[0]!, entity_type: "thing" },
           { op: "assign", record: "00000000-0000-7000-8000-000000000002", to: minted.identities[0]! },

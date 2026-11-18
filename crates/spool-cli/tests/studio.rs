@@ -102,7 +102,7 @@ fn the_server_answers_a_browser_with_the_studio_and_asks_no_token_for_it() {
     fonts.sort_unstable();
     assert_eq!(named, fonts);
 
-    // What the store holds still needs the token.
+    // What the store holds needs a caller the server knows.
     server
         .request("GET", "/v1/info")
         .without("Authorization")
@@ -294,9 +294,14 @@ fn serve_can_be_told_not_to_serve_the_studio() {
     server.read("/v1/info");
     assert_eq!(server.get("/healthz").status, 200);
 
-    // It says nothing about a studio either.
+    // It says nothing about a studio either: the first account is made
+    // through the API.
     let printed = server.stopped();
-    assert_eq!(printed, ["stopped"]);
+    assert!(printed[0].starts_with("setup     "), "{printed:?}");
+    assert!(
+        printed.iter().all(|line| !line.contains("http://")),
+        "{printed:?}"
+    );
 }
 
 #[test]
@@ -312,10 +317,12 @@ fn dev_serves_the_studio_and_says_where() {
     let page = server.request("GET", "/").without("Authorization").send();
     assert_eq!(page.status, 200);
     assert!(page.body == built("index.html"));
-    // The token the studio tries before it asks for one is the one `dev` has.
-    assert_eq!(server.token, "dev");
-    assert!(text(&built("studio.js")).contains("spool.token"));
-    server.read("/v1/info");
+    // Nobody signs in to a development server.
+    let info = server
+        .request("GET", "/v1/info")
+        .without("Authorization")
+        .send();
+    assert_eq!(info.ok()["api"], "v1");
 }
 
 #[test]

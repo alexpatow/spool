@@ -325,7 +325,7 @@ fn explain_says_why_two_records_are_together_or_apart() {
     let identity = answer["left"]["record"]["identity"].as_str().unwrap();
     server.call(
         &format!("/v1/identities/{identity}/split"),
-        json!({ "records": [two], "actor": "user:reviewer", "reason": "a replica" }),
+        json!({ "records": [two], "reason": "a replica" }),
     );
     let split = shown(&server, &["explain", "shop:1", "shop:2"]);
     has(
@@ -336,7 +336,7 @@ fn explain_says_why_two_records_are_together_or_apart() {
     has(&split, "  cannot_link from log position 2");
     has(
         &split,
-        "`shop:2` was placed at log position 2 by `user:reviewer` (\"a replica\").",
+        "`shop:2` was placed at log position 2 by `agent:api` (\"a replica\").",
     );
     let identity = shown(&server, &["show", "identity", identity]);
     has(
@@ -345,7 +345,7 @@ fn explain_says_why_two_records_are_together_or_apart() {
     );
     assert!(identity.contains("\ncannot_link  "), "{identity}");
     assert!(
-        identity.contains("  user:reviewer  \"a replica\"\n"),
+        identity.contains("  agent:api  \"a replica\"\n"),
         "{identity}"
     );
     assert!(
@@ -663,14 +663,12 @@ fn a_merged_identity_is_shown_with_the_constraints_of_the_one_it_became() {
     server.call(
         "/v1/changesets",
         json!({
-            "actor": "user:reviewer",
             "ops": [{ "op": "constrain", "kind": "must_link", "a": one, "b": two }],
         }),
     );
     server.call(
         "/v1/changesets",
         json!({
-            "actor": "user:reviewer",
             "ops": [{ "op": "merge", "from": anvils, "into": hammers }],
         }),
     );

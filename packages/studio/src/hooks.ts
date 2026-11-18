@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
-import type { Info, Op, SpoolClient } from "./api.ts";
+import type { Info, Op, Person, SpoolClient } from "./api.ts";
 import { found } from "./find.ts";
 import { identitiesOf, recordName, recordsOf, tail } from "./format.ts";
 import { here, onMove, ownLink, navigate, parseAddress } from "./router.ts";
@@ -14,9 +14,10 @@ export interface Studio {
   version: number;
   /** Reads what is shown again, as after a change. */
   refresh(): void;
-  /** The name the reviewer last made a change under. Empty before the first. */
-  reviewer: string;
-  remember(reviewer: string): void;
+  /** Who is signed in. Their changes are recorded under their account. */
+  me: Person;
+  /** Everyone with an account, by its ID. */
+  people: Map<string, Person>;
   /** What the store held when it was last asked: its entity types, and how much of each. */
   info: Info;
 }

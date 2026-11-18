@@ -6,6 +6,7 @@ import type { LogEntry } from "../api.ts";
 import { Code, Fields, Id, Load, Notice, Ops, Page, PagedTable, Reason, Ref, Section, Text } from "../components.tsx";
 import { LogIcon, UndoIcon } from "../icons.tsx";
 import { useLoad, useOpNames, usePages } from "../hooks.ts";
+import { Who } from "../who.tsx";
 
 export function Log() {
   const pages = usePages(async (client, after) => {
@@ -19,7 +20,7 @@ export function Log() {
         pages={pages}
         columns={[
           { title: "Position", cell: (entry) => <Ref kind="log" id={entry.seq} /> },
-          { title: "Actor", cell: (entry) => <Code>{entry.changeset.actor}</Code> },
+          { title: "Actor", cell: (entry) => <Who actor={entry.changeset.actor} /> },
           { title: "Operations", cell: (entry) => entry.changeset.ops.length, number: true },
           {
             title: "Run",
@@ -46,7 +47,7 @@ function Entry({ entry }: { entry: LogEntry }) {
       <Fields
         rows={[
           ["Changeset", <Id value={entry.changeset.id} />],
-          ["Actor", <Code>{entry.changeset.actor}</Code>],
+          ["Actor", <Who actor={entry.changeset.actor} />],
           ["Reason", entry.changeset.reason ? <Reason>{entry.changeset.reason}</Reason> : null],
           [
             "Run",
@@ -80,12 +81,11 @@ function Undo({ seq }: { seq: number }) {
           label="Undo"
           icon={<UndoIcon />}
           title={`Undo log position ${seq}`}
-          who
           why="Reason"
           look={{
             label: "Preview",
-            act: async (client, { actor, reason }) => {
-              const { changeset } = await client.undo(seq, { actor, reason, commit: false });
+            act: async (client, { reason }) => {
+              const { changeset } = await client.undo(seq, { reason, commit: false });
               return (
                 <>
                   <Text>Would commit:</Text>
@@ -94,8 +94,8 @@ function Undo({ seq }: { seq: number }) {
               );
             },
           }}
-          act={async (client, { actor, reason }) => {
-            const { committed } = await client.undo(seq, { actor, reason });
+          act={async (client, { reason }) => {
+            const { committed } = await client.undo(seq, { reason });
             return committed ? (
               <>
                 Undone at <At committed={committed} />.

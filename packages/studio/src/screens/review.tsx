@@ -43,6 +43,7 @@ import { colors, radius, spacing, typography } from "../styles/shelf/tokens.styl
 import { tones } from "../styles/tones.stylex";
 import { foremost, tally } from "../verdicts.ts";
 import { identityName } from "./identities.tsx";
+import { Who } from "../who.tsx";
 
 const STATUSES: ReviewStatus[] = ["open", "resolved", "dismissed", "superseded"];
 
@@ -182,7 +183,7 @@ function Details({ item }: { item: ReviewEntry }) {
           "Dismissed by",
           item.dismissed ? (
             <>
-              <Code>{item.dismissed.by}</Code> at <When at={item.dismissed.at} />
+              <Who actor={item.dismissed.by} /> at <When at={item.dismissed.at} />
               {item.dismissed.reason ? (
                 <>
                   {" "}
@@ -286,10 +287,9 @@ function CaseCard({
             variant="ghost"
             title={`Dismiss review item ${item.id}`}
             about="Its records stay unassigned, and later runs skip them."
-            who
             why="Reason"
-            act={async (client, { actor, reason }) => {
-              await client.dismissReview(item.id, { actor, reason });
+            act={async (client, { reason }) => {
+              await client.dismissReview(item.id, { reason });
               return "Dismissed.";
             }}
             done={done}
@@ -323,7 +323,7 @@ function Outcome({ item }: { item: ReviewEntry }) {
         {item.dismissed ? (
           <>
             {" "}
-            by <Code>{item.dismissed.by}</Code> at <When at={item.dismissed.at} />
+            by <Who actor={item.dismissed.by} /> at <When at={item.dismissed.at} />
             {item.dismissed.reason ? (
               <>
                 {" "}
@@ -710,9 +710,8 @@ function Place({
       size="sm"
       variant={primary ? "default" : "outline"}
       title={waiting.length === 1 ? `Assign ${labelOf(waiting[0]!)}` : `Assign ${count(waiting.length, "record")}`}
-      who
       why="Reason"
-      act={async (client, { actor, reason, entered }) => {
+      act={async (client, { reason, entered }) => {
         const chosen = waiting.flatMap((record) => {
           const where = String(entered.get(`to-${record.id}`) ?? "");
           return where === "" ? [] : [{ record: record.id, to: where }];
@@ -729,7 +728,7 @@ function Place({
           }
           ops.push({ op: "assign", record: choice.record, from: null, to: identity });
         }
-        const committed = await client.commit({ actor, reason, ops });
+        const committed = await client.commit({ reason, ops });
         return (
           <>
             {count(chosen.length, "record")} assigned at <At committed={committed} />.
@@ -789,11 +788,9 @@ function MergeAndPlace({
       icon={<MergeIcon />}
       title={`Merge ${count(found.candidates.length, "identity")}`}
       about={`Merges ${others.map(({ identity }) => identityName(identity)).join(", ")} into ${identityName(into.identity)}, and assigns ${waiting.length === 1 ? recordName(waiting[0]!) : count(waiting.length, "record")} to it.`}
-      who
       why="Reason"
-      act={async (client, { actor, reason }) => {
+      act={async (client, { reason }) => {
         const committed = await client.commit({
-          actor,
           reason,
           base: head,
           ops: [

@@ -3,6 +3,7 @@
 //! JSON Schema that describes them, and the studio the server answers a
 //! browser with.
 
+pub mod accounts;
 pub mod api;
 pub mod server;
 pub mod studio;

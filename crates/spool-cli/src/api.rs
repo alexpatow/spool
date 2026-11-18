@@ -8,7 +8,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use spool::core::{
-    Actor, Changeset, ChangesetId, Committed, ConstraintEntry, DocumentId, EntityType, IdentityId,
+    Changeset, ChangesetId, Committed, ConstraintEntry, DocumentId, EntityType, IdentityId,
     LogEntry, Op, RecordId, Rejection, RunId, Seq, Verdict,
 };
 use spool::{
@@ -198,7 +198,8 @@ pub struct RejectDraftRequest {
     pub reason: Option<String>,
 }
 
-/// `POST /v1/changesets`: a changeset to validate and commit.
+/// `POST /v1/changesets`: a changeset to validate and commit. Its author is
+/// whoever sends it: the person signed in, or the agent whose token it is.
 ///
 /// A caller that has read the state it is changing says so with `base`: a
 /// merge is rejected if the members of either identity changed after it. A
@@ -214,7 +215,6 @@ pub struct CommitRequest {
     /// The log position the author had read. Left out, the head of the log.
     #[serde(default)]
     pub base: Option<Seq>,
-    pub actor: Actor,
     #[serde(default)]
     pub reason: Option<String>,
     #[serde(default)]
@@ -227,7 +227,6 @@ pub struct CommitRequest {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UndoRequest {
-    pub actor: Actor,
     #[serde(default)]
     pub reason: Option<String>,
     /// Commit the undo (the default), or only validate it and return it.
@@ -253,7 +252,6 @@ pub struct SplitRequest {
     /// members the identity has now.
     #[serde(default)]
     pub base: Option<Seq>,
-    pub actor: Actor,
     #[serde(default)]
     pub reason: Option<String>,
 }
@@ -268,7 +266,6 @@ pub struct ConstraintList {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DismissRequest {
-    pub actor: Actor,
     #[serde(default)]
     pub reason: Option<String>,
 }
@@ -356,8 +353,14 @@ pub struct ErrorBody {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
-    /// 401: the bearer token is missing or wrong.
+    /// 401: nobody is signed in and there is no token, or the username,
+    /// password or token is wrong.
     Unauthorized,
+    /// 403: the caller is known and may not do this: only an admin manages
+    /// people, and a write must come from the server's own pages.
+    Forbidden,
+    /// 429: too many wrong passwords for this username. Wait and try again.
+    TooManyAttempts,
     /// 400: the request cannot be read, or names something that is not
     /// declared.
     Invalid,
@@ -380,6 +383,91 @@ pub enum ErrorCode {
     ExtractorFailed,
     /// 500: the server failed.
     Internal,
+}
+
+/// Someone with an account on this server. The log names a person by `id`,
+/// as `user:<id>`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Person {
+    pub id: String,
+    pub username: String,
+    pub name: String,
+    /// May add people and change their accounts.
+    pub admin: bool,
+    /// May sign in. An account that is turned off keeps its name in the log.
+    pub active: bool,
+}
+
+/// `GET /auth/session`: who the caller is signed in as.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionState {
+    pub person: Option<Person>,
+    /// Nobody has an account yet. The server printed a link when it started
+    /// that makes the first one.
+    pub setup: bool,
+    /// A development server: nobody signs in, and whoever opens it is the
+    /// `dev` account.
+    pub dev: bool,
+}
+
+/// `POST /auth/sign-in`.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SignInRequest {
+    pub username: String,
+    pub password: String,
+}
+
+/// `POST /auth/setup`: make the first account, an admin, with the code from
+/// the link the server printed.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetupRequest {
+    pub code: String,
+    pub username: String,
+    pub name: String,
+    pub password: String,
+}
+
+/// `POST /auth/password`: change the caller's own password.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PasswordRequest {
+    pub current: String,
+    pub new: String,
+}
+
+/// `POST /v1/people`: add a person. Only an admin may.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AddPersonRequest {
+    pub username: String,
+    pub name: String,
+    pub password: String,
+    #[serde(default)]
+    pub admin: Option<bool>,
+}
+
+/// `POST /v1/people/{id}`: change a person. Only an admin may. A field left
+/// out stays as it is. A new password, or turning the account off, signs
+/// the person out everywhere.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ChangePersonRequest {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub password: Option<String>,
+    #[serde(default)]
+    pub admin: Option<bool>,
+    #[serde(default)]
+    pub active: Option<bool>,
+}
+
+/// `GET /v1/people`: everyone with an account, in the order they were added.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PersonList {
+    pub people: Vec<Person>,
 }
 
 /// Every type that crosses the API, so that one schema describes them all.
@@ -428,6 +516,13 @@ struct Wire {
     info: Info,
     error_response: ErrorResponse,
     changeset_id: ChangesetId,
+    session_state: SessionState,
+    sign_in_request: SignInRequest,
+    setup_request: SetupRequest,
+    password_request: PasswordRequest,
+    add_person_request: AddPersonRequest,
+    change_person_request: ChangePersonRequest,
+    person_list: PersonList,
 }
 
 /// The JSON Schema of the API: one definition per type, under `$defs`.
