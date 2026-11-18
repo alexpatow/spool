@@ -1082,6 +1082,107 @@ fn a_row_placed_more_than_once_in_a_changeset_is_refused_with_nothing_moved_alon
 }
 
 #[test]
+fn an_undo_that_was_returned_is_committed_as_it_was_returned() {
+    let engine = engine();
+    load(
+        &engine,
+        "shop",
+        &[("1", Some("anvil"), None), ("2", Some("hammer"), None)],
+    );
+    resolve(&engine);
+    let (anvil, hammer) = (
+        identity(&engine, "shop", "1").unwrap(),
+        identity(&engine, "shop", "2").unwrap(),
+    );
+    load(&engine, "shop", &[("1", Some("anvil"), Some("K9"))]);
+    resolve(&engine);
+    let (versions, _) = placed_versions(&engine);
+    let (first, second) = (versions[0], versions[1]);
+    author(
+        &engine,
+        vec![Op::Assign {
+            record: first,
+            from: Some(anvil),
+            to: Some(hammer),
+        }],
+    );
+    let moved = author(
+        &engine,
+        vec![Op::Assign {
+            record: second,
+            from: Some(anvil),
+            to: Some(hammer),
+        }],
+    );
+
+    let preview = engine.undo(moved.seq, reviewer(), None, false).unwrap();
+    assert!(preview.committed.is_none());
+    let committed = engine.commit(preview.changeset.clone()).unwrap();
+    let entry = engine.log().unwrap().pop().unwrap();
+    assert_eq!(entry.seq, committed.seq);
+    assert_eq!(entry.changeset.ops, preview.changeset.ops);
+    assert_eq!(placed_versions(&engine).1, [Some(hammer), Some(anvil)]);
+    engine.verify().unwrap();
+}
+
+#[test]
+fn a_draft_is_committed_as_it_was_stored() {
+    for approve in [true, false] {
+        let engine = engine();
+        load(
+            &engine,
+            "shop",
+            &[("1", Some("anvil"), None), ("2", Some("hammer"), None)],
+        );
+        resolve(&engine);
+        let (anvil, hammer) = (
+            identity(&engine, "shop", "1").unwrap(),
+            identity(&engine, "shop", "2").unwrap(),
+        );
+        // The draft places the new version with the earlier one, which is
+        // where it goes already, so the draft moves nothing along.
+        load(&engine, "shop", &[("1", Some("anvil"), Some("K9"))]);
+        let options = ResolveOptions {
+            leave_for_review: true,
+            ..ResolveOptions::default()
+        };
+        let report = engine.resolve(&options).unwrap();
+        let draft = engine.draft(report.resolved[0].draft.unwrap()).unwrap();
+        let (versions, _) = placed_versions(&engine);
+        assert_eq!(
+            draft.changeset.ops,
+            [Op::Assign {
+                record: versions[1],
+                from: None,
+                to: Some(anvil),
+            }]
+        );
+
+        // A reviewer then moves the earlier version, and the draft that is
+        // approved after that does not take it back.
+        author(
+            &engine,
+            vec![Op::Assign {
+                record: versions[0],
+                from: Some(anvil),
+                to: Some(hammer),
+            }],
+        );
+        let committed = match approve {
+            true => engine.approve_draft(draft.changeset.id).unwrap(),
+            false => engine
+                .commit_with_versions(draft.changeset.clone())
+                .unwrap(),
+        };
+        let entry = engine.log().unwrap().pop().unwrap();
+        assert_eq!(entry.seq, committed.seq);
+        assert_eq!(entry.changeset.ops, draft.changeset.ops);
+        assert_eq!(placed_versions(&engine).1, [Some(hammer), Some(anvil)]);
+        engine.verify().unwrap();
+    }
+}
+
+#[test]
 fn a_split_moves_the_versions_it_was_given_and_no_other() {
     let engine = engine();
     load(&engine, "shop", &[("1", Some("anvil"), None)]);

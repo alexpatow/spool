@@ -291,7 +291,7 @@
     },
     "CommitRequest": {
       "additionalProperties": false,
-      "description": "`POST /v1/changesets`: a changeset to validate and commit. Its author is\nwhoever sends it: the person signed in, or the agent whose token it is.\n\nA caller that has read the state it is changing says so with `base`: a\nmerge is rejected if the members of either identity changed after it. A\ncaller that leaves `base` out is taken to have read the head of the log.\n\nPlacing the latest version of a row moves its earlier versions along:\nthe server adds those moves to the changeset, and the log shows them.",
+      "description": "`POST /v1/changesets`: a changeset to validate and commit. Its author is\nwhoever sends it: the person signed in, or the agent whose token it is.\n\nA caller that has read the state it is changing says so with `base`: a\nmerge is rejected if the members of either identity changed after it. A\ncaller that leaves `base` out is taken to have read the head of the log.\n\nPlacing the latest version of a row moves its earlier versions along:\nthe server adds those moves to the changeset, and the log shows them.\nThe changeset of a stored draft is committed as it was stored.",
       "properties": {
         "base": {
           "anyOf": [
@@ -4243,7 +4243,7 @@
       "properties": {
         "commit": {
           "default": null,
-          "description": "Commit the undo (the default), or only validate it and return it.",
+          "description": "Commit the undo (the default), or only validate it and return it.\nAn undo is committed by asking for it again: sent to\n`POST /v1/changesets`, it is a changeset like any other, and the\nearlier versions of the rows it places move along.",
           "type": [
             "boolean",
             "null"

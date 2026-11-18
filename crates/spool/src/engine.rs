@@ -719,12 +719,23 @@ impl Engine {
         self.lock().cancel_run(run)
     }
 
-    /// Validates a changeset against current state and commits it. This is
-    /// the only way identity state changes, whoever wrote the changeset.
+    /// Validates a changeset against current state and commits it as it
+    /// is. This is the only way identity state changes, whoever wrote the
+    /// changeset.
     ///
     /// Committing the changeset of a stored draft approves the draft.
     pub fn commit(&self, changeset: Changeset) -> Result<Committed> {
-        self.lock().commit(changeset)
+        self.lock().commit(changeset, false)
+    }
+
+    /// Commits a changeset someone wrote, with the earlier versions of the
+    /// rows it places moved along with them, as [`author`](Self::author)
+    /// does. A changeset that carries the ID of a stored draft is committed
+    /// as it was stored. What was made to be committed as it is, such as an
+    /// undo that was returned without being committed, goes to
+    /// [`commit`](Self::commit).
+    pub fn commit_with_versions(&self, changeset: Changeset) -> Result<Committed> {
+        self.lock().commit(changeset, true)
     }
 
     /// Writes a changeset from operations and commits it. The engine mints
@@ -2283,7 +2294,7 @@ impl Inner {
         Ok(evidence)
     }
 
-    fn commit(&mut self, mut changeset: Changeset) -> Result<Committed> {
+    fn commit(&mut self, mut changeset: Changeset, mut along: bool) -> Result<Committed> {
         // A changeset that carries the ID of a stored draft is that draft or
         // it is refused: the ID is what a reviewer approved.
         if let Some(record) = drafts::get(&self.store.conn, changeset.id)? {
@@ -2306,9 +2317,12 @@ impl Inner {
                 // A committed draft is in the log, and the validator says so.
                 DraftStatus::Open | DraftStatus::Committed => {}
             }
+            along = false;
         }
-        let along = self.versions_along(&changeset)?;
-        changeset.ops.extend(along);
+        if along {
+            let along = self.versions_along(&changeset)?;
+            changeset.ops.extend(along);
+        }
         retract::refuse_placing(&self.store.conn, &changeset.ops)?;
         let validated = validate(&self.store, changeset)?;
         Ok(self.store.apply(validated)?)
@@ -2481,9 +2495,9 @@ impl Inner {
     }
 
     fn approve_draft(&mut self, draft: ChangesetId) -> Result<Committed> {
-        let mut changeset = self.open_draft(draft, "approved")?.changeset;
-        let along = self.versions_along(&changeset)?;
-        changeset.ops.extend(along);
+        // A draft is approved as it was stored and shown: the run that
+        // drafted it moved the earlier versions along already.
+        let changeset = self.open_draft(draft, "approved")?.changeset;
         retract::refuse_placing(&self.store.conn, &changeset.ops)?;
         let validated = validate(&self.store, changeset)?;
         Ok(self.store.apply(validated)?)

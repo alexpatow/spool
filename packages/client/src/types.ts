@@ -163,6 +163,7 @@ export interface ChangesetList {
  *
  * Placing the latest version of a row moves its earlier versions along:
  * the server adds those moves to the changeset, and the log shows them.
+ * The changeset of a stored draft is committed as it was stored.
  */
 export interface CommitRequest {
   /**
@@ -2003,6 +2004,9 @@ export interface TypeResolution {
 export interface UndoRequest {
   /**
    * Commit the undo (the default), or only validate it and return it.
+   * An undo is committed by asking for it again: sent to
+   * `POST /v1/changesets`, it is a changeset like any other, and the
+   * earlier versions of the rows it places move along.
    */
   commit?: boolean | null;
   reason?: string | null;
