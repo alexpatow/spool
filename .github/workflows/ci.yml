@@ -65,8 +65,7 @@ jobs:
         #
         # Cargo builds a dependency with the features that what is being
         # built asks of it, so each group has dependencies of its own to
-        # keep. `save` marks the job that keeps them. The stress tests also
-        # run Cargo themselves, for an example of `spool`.
+        # keep. `save` marks the job that keeps them.
         include:
           - name: engine 1/3
             cache: engine
@@ -93,8 +92,7 @@ jobs:
             packages: -p spool-cli
             tests: -E 'not (binary_id(spool-cli::stress) | binary_id(spool-cli::studio))' --partition slice:2/2
           - name: stress
-            cache: stress
-            save: true
+            cache: server
             packages: -p spool-cli --test stress
           - name: studio
             cache: server

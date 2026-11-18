@@ -366,6 +366,7 @@ fn the_studio_this_binary_serves_is_built_from_its_source_and_passes_its_tests()
     bun(&["run", "typecheck"]);
     // The files compiled into the binary are what the source builds to.
     bun(&["run", "check-build"]);
-    // Every screen is rendered against a real server of this binary.
-    bun(&["test"]);
+    // Every screen is rendered against a real server of this binary. The
+    // test files run side by side, each with servers of its own.
+    bun(&["run", "test", "--parallel"]);
 }

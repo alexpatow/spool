@@ -14,6 +14,7 @@ import { App, THEME_KEY } from "../src/app.tsx";
 import { here } from "../src/router.ts";
 import {
   SEEDING,
+  STOPPING,
   calls,
   counted,
   field,
@@ -38,7 +39,7 @@ afterEach(() => {
   window.history.replaceState(null, "", "/");
 });
 
-afterAll(stopAll);
+afterAll(stopAll, STOPPING);
 
 /** An identity where a screen read what it is called: its label, and the end of its ID. */
 const CALLED = / \(…[0-9a-f]{4}\)$/;

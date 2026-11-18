@@ -3,7 +3,7 @@
 
 import { rmSync } from "node:fs";
 
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { configure, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { firstPerson, serve } from "../../client/test/server.ts";
 import type { Browser, Server } from "../../client/test/server.ts";
@@ -12,6 +12,22 @@ import { App } from "../src/app.tsx";
 import { copyProject } from "./seed.ts";
 
 export const SEEDING = 120_000;
+
+/**
+ * How long the servers a test started may take to stop. One stops in a few
+ * hundredths of a second, and a machine that stood still while one did has
+ * held it for half a minute, which failed the test that had passed.
+ */
+export const STOPPING = 60_000;
+
+// A wait gives up after a second unless it is told otherwise. That is long
+// for a server on a quiet machine, and shorter than a machine that runs the
+// tests for everyone can stand still: a test has failed there on an answer
+// that came a little later. What is waited for is seen as soon as it is
+// there, so the room costs a test that passes nothing. A test may take
+// longer than its waits (`--timeout` in `package.json`), so that one whose
+// wait is never answered still fails on what it waited for.
+configure({ asyncUtilTimeout: 10_000 });
 
 type Fetch = typeof fetch;
 

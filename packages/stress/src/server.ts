@@ -164,20 +164,36 @@ export async function serve({ project, store, seed, args = [], build = true }: S
 
 /**
  * Checks a store no server has open, with the `verify` example of the
- * `spool` crate. Resolves to what it printed, and throws if the store does
- * not verify.
+ * `spool-cli` crate. Resolves to what it printed, and throws if the store
+ * does not verify.
  */
 export function verify(store: string): string {
-  // Built like the binary under test, so that nothing is compiled a second
-  // way only for this.
+  // Built like the binary under test and from the same package, so that
+  // nothing is compiled a second way only for this.
   const profile = binary().includes("/release/") ? ["--release"] : [];
   const result = Bun.spawnSync(
-    ["cargo", "run", ...profile, "--quiet", "--locked", "-p", "spool", "--example", "verify", "--", store],
-    { cwd: repository, stdout: "pipe", stderr: "pipe" },
+    ["cargo", "run", ...profile, "--quiet", "--locked", "-p", "spool-cli", "--example", "verify", "--", store],
+    { cwd: repository, env: withoutTheTestsOwn(process.env), stdout: "pipe", stderr: "pipe" },
   );
   const printed = `${result.stdout}${result.stderr}`.trim();
   if (result.exitCode !== 0) throw new Error(printed);
   return printed;
+}
+
+/**
+ * The environment without what Cargo tells a test about the package it is
+ * in. Run from a test of the workspace, these tests have that in theirs,
+ * and a build script that reads such a variable takes it for a change:
+ * `ring` does, and Cargo then builds it again with all that is built on it,
+ * the engine included, each time the stores are verified from a test.
+ */
+function withoutTheTestsOwn(env: NodeJS.ProcessEnv): Record<string, string> {
+  const own = /^(CARGO_(MANIFEST_|PKG_|CRATE_|BIN_|PRIMARY_PACKAGE$|TARGET_TMPDIR$)|OUT_DIR$)/;
+  const kept: Record<string, string> = {};
+  for (const [name, value] of Object.entries(env)) {
+    if (value !== undefined && !own.test(name)) kept[name] = value;
+  }
+  return kept;
 }
 
 /** Runs something and resolves to what it gave and the seconds it took. */

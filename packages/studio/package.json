@@ -11,7 +11,7 @@
     "build": "bun scripts/build.ts",
     "check-build": "bun scripts/build.ts --check",
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test --timeout 30000"
   },
   "dependencies": {
     "@base-ui/react": "1.9.0",

@@ -4,12 +4,12 @@ import { afterAll, expect, test } from "bun:test";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { SEEDING, start, stopAll } from "./harness.tsx";
+import { SEEDING, STOPPING, start, stopAll } from "./harness.tsx";
 import { companies } from "./seed.ts";
 
 const studio = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-afterAll(stopAll);
+afterAll(stopAll, STOPPING);
 
 test(
   "the demo fills only the server it started, not one that already listens where it was told to",

@@ -2,7 +2,7 @@
 //! a replay of the log, and that they hold what the validator guarantees.
 //!
 //! ```text
-//! cargo run --release -p spool --example verify -- <store>
+//! cargo run --release -p spool-cli --example verify -- <store>
 //! ```
 //!
 //! It is how the stress tests in `packages/stress` look at a store after the
