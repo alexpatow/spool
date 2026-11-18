@@ -438,14 +438,16 @@ impl<'a> Request<'a> {
         }
         head.push_str("\r\n");
         stream.write_all(head.as_bytes()).unwrap();
-        let sent = stream.write_all(&self.body);
-        // A server that answers before the body ends may close while the
-        // rest is on its way. Its answer is still there to read.
-        if !self.kept {
-            sent.unwrap();
-        }
+        stream.write_all(&self.body).unwrap();
         let mut raw = Vec::new();
         stream.read_to_end(&mut raw).unwrap();
+        // Some systems hand over what arrived before a reset and others
+        // throw it away, so a reset is a failure wherever this runs.
+        let reset = stream.take_error().unwrap();
+        assert!(
+            reset.is_none(),
+            "the connection did not end well: {reset:?}"
+        );
         Response::parse(&raw)
     }
 }

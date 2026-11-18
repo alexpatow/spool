@@ -302,6 +302,20 @@ fn failures_are_described_the_same_way_whatever_went_wrong() {
 /// A server in this process that reads bodies of up to 1,000 bytes, its
 /// address, and a token it takes. It stops when the runtime is dropped.
 fn small_bodied_server() -> (tokio::runtime::Runtime, String, String) {
+    let (runtime, address, token, _) = small_bodied_server_until(std::future::pending());
+    (runtime, address, token)
+}
+
+/// The same server, which also stops when `shutdown` completes, and what
+/// its serving ends with.
+fn small_bodied_server_until(
+    shutdown: impl Future<Output = ()> + Send + 'static,
+) -> (
+    tokio::runtime::Runtime,
+    String,
+    String,
+    tokio::task::JoinHandle<std::io::Result<()>>,
+) {
     use spool_cli::server::{ServerOptions, serve};
 
     let engine = Engine::open_in_memory(Options::seeded(1)).unwrap();
@@ -316,16 +330,10 @@ fn small_bodied_server() -> (tokio::runtime::Runtime, String, String) {
         max_body_bytes: 1_000,
         ..ServerOptions::new(accounts)
     };
-    runtime.spawn(async move {
-        serve(
-            listener,
-            std::sync::Arc::new(engine),
-            &options,
-            std::future::pending(),
-        )
-        .await
+    let serving = runtime.spawn(async move {
+        serve(listener, std::sync::Arc::new(engine), &options, shutdown).await
     });
-    (runtime, address, token)
+    (runtime, address, token, serving)
 }
 
 #[test]
@@ -443,6 +451,89 @@ fn a_client_is_told_when_its_connection_will_not_take_another_request() {
             assert!(!response.contains("connection: close"), "{response}");
         }
     }
+}
+
+#[test]
+fn a_client_refused_while_it_is_still_writing_reads_why() {
+    let (_runtime, address, token) = small_bodied_server();
+    let bearer = format!("Bearer {token}");
+    // More than a connection holds on its way, so the client is still
+    // writing when the server answers, and reads the answer only once it has
+    // written everything. A server that closed as soon as it had answered
+    // would stop the client in the middle of writing. It would also reset
+    // the connection, and some systems then throw away an answer that had
+    // arrived and was not yet read. So the server goes on reading, and the
+    // client writes to the end, reads the answer, and finds no reset.
+    let long = "x".repeat(16_000_000);
+    for (path, authorization, body, status, code) in [
+        (
+            "/auth/sign-in",
+            None,
+            json!({ "username": "ada", "password": long }),
+            413,
+            "too_large",
+        ),
+        (
+            "/v1/ids",
+            Some(&bearer),
+            json!({ "identities": 1, "padding": long }),
+            413,
+            "too_large",
+        ),
+        (
+            "/v1/ids",
+            None,
+            json!({ "identities": 1, "padding": long }),
+            401,
+            "unauthorized",
+        ),
+    ] {
+        // Once as a client that keeps its connections, and once as one that
+        // said it would close this one.
+        for kept in [true, false] {
+            let mut request = Request::to(&address, "POST", path).json(&body);
+            if kept {
+                request = request.kept();
+            }
+            if let Some(authorization) = authorization {
+                request = request.header("Authorization", authorization);
+            }
+            request.send().error(status, code);
+        }
+    }
+}
+
+#[test]
+fn a_client_that_was_refused_and_does_not_go_away_does_not_keep_the_server_from_stopping() {
+    use std::io::{Read, Write};
+
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let (runtime, address, _, serving) = small_bodied_server_until(async {
+        let _ = stopped.await;
+    });
+    // A megabyte is announced and refused. The client reads why, and then
+    // neither sends the megabyte nor closes, so the server is still waiting
+    // to read out the connection.
+    let mut stream = std::net::TcpStream::connect(&address).unwrap();
+    let head = format!(
+        "POST /v1/ids HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/json\r\nContent-Length: 1000000\r\n\r\n"
+    );
+    stream.write_all(head.as_bytes()).unwrap();
+    let mut answer = String::new();
+    stream.read_to_string(&mut answer).unwrap();
+    let answer = answer.to_ascii_lowercase();
+    assert!(answer.starts_with("http/1.1 401"), "{answer}");
+    assert!(answer.contains("connection: close"), "{answer}");
+
+    let asked = std::time::Instant::now();
+    stop.send(()).unwrap();
+    runtime.block_on(serving).unwrap().unwrap();
+    let took = asked.elapsed();
+    assert!(
+        took < std::time::Duration::from_secs(3),
+        "the server took {took:?} to stop"
+    );
+    drop(stream);
 }
 
 /// Many rows of the `thing` type, each with a code of its own.
