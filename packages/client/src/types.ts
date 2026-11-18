@@ -1890,6 +1890,10 @@ export interface TypeInfo {
    * Empty when the engine runs without a manifest.
    */
   features: FeatureColumn[];
+  /**
+   * Identities that hold a record. One whose records were all taken
+   * back is not counted: it is kept for them to come back to.
+   */
   identities: number;
   name: EntityType;
   /**
