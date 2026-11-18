@@ -17,7 +17,7 @@ The examples use the sample project with both of its files of rows loaded and ma
 {/* sample: new session */}
 
 ```sh
-spool init companies
+spool init companies --example companies
 cd companies
 ```
 
@@ -38,7 +38,7 @@ spool match
 
 ## A source is a file
 
-Each source is a YAML file under `sources/`, and the file's name is the source's name. It lists the columns a row may have and names the one that is the row's key. This is the one `spool init` wrote:
+Each source is a YAML file under `sources/`, and the file's name is the source's name. It lists the columns a row may have and names the one that is the row's key. This is the one `spool init --example companies` wrote:
 
 {/* sample: existing */}
 

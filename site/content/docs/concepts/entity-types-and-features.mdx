@@ -16,7 +16,7 @@ The examples use the sample project with both of its files of rows loaded and ma
 {/* sample: new session */}
 
 ```sh
-spool init companies
+spool init companies --example companies
 cd companies
 ```
 
@@ -37,7 +37,7 @@ spool match
 
 ## An entity type is a directory
 
-`entities/company/` declares the entity type `company`. This is the `entity.yaml` that `spool init` wrote:
+`entities/company/` declares the entity type `company`. This is the `entity.yaml` that `spool init --example companies` wrote:
 
 {/* sample: existing */}
 

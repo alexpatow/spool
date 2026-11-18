@@ -183,7 +183,7 @@ The steps of Getting started, done by a model over `/mcp` in November 2026: load
 
 **These sessions are a small local model's, and say nothing about Claude, Codex or ChatGPT.** No hosted model was called. The model is a 14-billion-parameter one that ran on the machine the server ran on. It is far weaker than the models those assistants use, and none of them has been run through these steps here. What follows shows that the tools can be driven from end to end, and what a refusal and a mistake look like.
 
-- **The project** is the one `spool init companies --entity company --source crm` writes, served by `spool dev`, with `samples/crm-1.csv` loaded and matched before the session.
+- **The project** is the sample one, which `spool init companies --example companies` writes, served by `spool dev`, with `samples/crm-1.csv` loaded and matched before the session.
 - **The client** is [MCPHost](https://github.com/mark3labs/mcphost) 0.34.0. It gives the model Spool's tools and a file reader of its own that reads only the project's directory. Spool has no tool that reads a file: the model reads it and sends the rows.
 - **The model** is `qwen2.5:14b`, run by Ollama 0.40.16 on four processor cores, at temperature 0.
 
@@ -234,7 +234,7 @@ The same prompt was given four times, each on a store that held only the rows of
 | "Load samples/crm-1.csv into Spool and match it. How many companies are there, and which rows are the same company?", on an empty store | Called `load_rows` with the source `crm-1` and no rows, which was refused with the name of the source to use. Read the file, loaded its six rows, matched, read the four identities, and answered rightly | The six rows, placed |
 | "Load samples/notes-1.txt into Spool as a document, run the extractor over it and match." | Did not read the file. Stored a text it made up under the file's name. Asked for an extractor named `default`, was refused with the name of the project's one, and ran that, which found nothing | A document that is not the file's, for good |
 
-The session with a document ran on a project with a source for notes and an extractor added by hand, because `spool init` did not write them then. It writes both now, with another extractor: a Python file that asks a small model.
+The session with a document ran on a project with a source for notes and an extractor added by hand, because `spool init` did not write them then. Its example `companies` has both now, with another extractor: a Python file that asks a small model.
 
 What these sessions show about the tools, whatever the model:
 

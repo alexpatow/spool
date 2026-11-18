@@ -9,7 +9,7 @@ Rows are one way records get into Spool. The other is text.
 - An **extractor** reads documents and reports each place where one names a thing of an entity type. A place is a **mention**: the document, where it starts and ends, and the attributes the extractor read off it, such as a name.
 - Each mention becomes a **record**. From there it is matched, placed in an identity, explained and corrected like a record that came from a row.
 
-An extractor is a Python file or a TypeScript file: code that the server runs as a child process. The one `spool init` writes asks a small model that runs on your machine and is fetched on the extractor's first run. [An extractor that asks a hosted model](#with-a-hosted-model) is your code, with your key.
+An extractor is a Python file or a TypeScript file: code that the server runs as a child process. The one `spool init --example companies` writes asks a small model that runs on your machine and is fetched on the extractor's first run. [An extractor that asks a hosted model](#with-a-hosted-model) is your code, with your key.
 
 ## Before you start
 
@@ -18,7 +18,7 @@ The examples use the sample project with its first file of rows loaded and match
 {/* sample: new session */}
 
 ```sh
-spool init companies
+spool init companies --example companies
 cd companies
 ```
 
@@ -71,7 +71,7 @@ mapping:
 
 A note says nothing about a country, so a record from one has none. The rule that keeps different countries apart does not hold against it.
 
-And an extractor, under `extractors/`. `spool init` writes all three.
+And an extractor, under `extractors/`. `spool init --example companies` writes all three.
 
 ## The sample extractor
 

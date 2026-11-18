@@ -72,7 +72,8 @@ Options:
 Strategies and extractors that are `.py` files run with `uv`, and `.ts` files
 with `bun`. SPOOL_UV and SPOOL_BUN name the commands if they are not on the
 search path. The server runs such a file only while it is the one the
-manifest was compiled from.
+manifest was compiled from. It is given the variables that the project's
+.env sets, except those that are set already where the server runs.
 
 The server stops on Ctrl-C or SIGTERM, and prints `stopping`. It takes no new
 request. Whoever waits on a run with `wait_ms` is answered at once, with the
@@ -118,7 +119,9 @@ Options:
 
 Strategies and extractors that are `.py` files run with `uv`, and `.ts` files
 with `bun`. SPOOL_UV and SPOOL_BUN name the commands if they are not on the
-search path.
+search path. They are given the variables that the project's .env sets,
+except those that are set already where the server runs, and the file is
+read again each time one starts.
 
 Ctrl-C stops it, the way `spool serve --help` says a server stops.
 ";
