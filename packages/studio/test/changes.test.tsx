@@ -21,6 +21,7 @@ import {
   server,
 } from "./changing.tsx";
 import { author, calls, counted, field, follow, heading, idle, open, parts, screens, texts } from "./harness.tsx";
+import { short } from "../src/format.ts";
 import { row } from "./seed.ts";
 
 aStoreForEachTest();
@@ -524,6 +525,46 @@ describe("a review item", () => {
     expect(gone.retracted).toBeTruthy();
   });
 
+  test("that names a record its source took back merges and places only the records that still wait", async () => {
+    const first = await row(server.client, "crm", "c-117");
+    await server.client.ingest({
+      source: "crm",
+      entity_type: "company",
+      rows: [{ ...(first.payload as Record<string, string>), id: "c-217" }],
+    });
+    await server.client.startRun({ entity_type: "company" });
+    const [raised] = await server.client.reviewItems({ status: "open" });
+    const second = await row(server.client, "crm", "c-217");
+    expect([...raised!.records].sort()).toEqual([first.id, second.id].sort());
+    await server.client.retract({ source: "crm", entity_type: "company", keys: ["c-217"] });
+    // The decision that kept the two identities apart is taken back, so the merge is offered.
+    const before = await allow();
+    const found = await server.client.reviewCase(raised!.id);
+    const [into, other] = [...found.candidates]
+      .sort((a, b) => b.identity.members - a.identity.members)
+      .map((candidate) => candidate.identity);
+
+    open(server, `/review/${raised!.id}`);
+    await heading(`Review item ${raised!.id}`);
+    await idle();
+    // The dialog says what the changeset will do: one record is placed, not two.
+    await asked("Merge identities");
+    expect(screen.getByRole("dialog").textContent).toContain("and assigns crm:c-117 to it.");
+    // A changeset that also placed the record that was taken back would be refused.
+    await make("Merge identities");
+    expect(await said()).toBe(`2 identities merged and 1 record assigned at log position ${before + 1}.`);
+    await waitFor(() => expect(field("Status")).toBe("resolved"));
+
+    expect((await entry(before + 1)).changeset.ops).toEqual([
+      { op: "merge", from: other!.id, into: into!.id },
+      { op: "assign", record: first.id, from: null, to: into!.id },
+    ]);
+    expect((await server.client.record(first.id)).identity).toBe(into!.id);
+    const gone = await server.client.record(second.id);
+    expect(gone.identity ?? null).toBeNull();
+    expect(gone.retracted).toBeTruthy();
+  });
+
   test("that someone else settled first says so", async () => {
     open(server, "/review/1");
     await item();
@@ -532,5 +573,146 @@ describe("a review item", () => {
     await make("Dismiss");
     expect(await refused()).toMatch(/^review item 1: /);
     expect(screen.queryByRole("status")).toBeNull();
+  });
+});
+
+describe("a review item that asks whether an identity is still one thing", () => {
+  /**
+   * Two companies that share an identity only through a third row, which
+   * has the name of one and the website of the other. The CRM then takes
+   * that row back.
+   */
+  async function heldByOne() {
+    await server.client.ingest({
+      source: "crm",
+      entity_type: "company",
+      rows: [
+        { id: "c-301", name: "Wren Works", website: "https://wren.example", country: "GB", city: "Leeds" },
+        { id: "c-302", name: "Tarn Tools", website: "https://tarn.example", country: "GB", city: "York" },
+        { id: "c-303", name: "Wren Works", website: "https://tarn.example", country: "GB", city: "York" },
+      ],
+    });
+    await server.client.startRun({ entity_type: "company" });
+    const [wren, tarn, bridge] = await Promise.all(["c-301", "c-302", "c-303"].map((key) => row(server.client, "crm", key)));
+    expect(wren!.identity).toBeTruthy();
+    expect([tarn!.identity, bridge!.identity]).toEqual([wren!.identity, wren!.identity]);
+    const taken = await server.client.retract({ source: "crm", entity_type: "company", keys: ["c-303"] });
+    expect(taken.retraction?.possible_splits).toBe(1);
+    const raised = (await server.client.reviewItems({ status: "open" })).find((item) => item.kind === "possible_split");
+    if (raised === undefined) throw new Error("the retraction raised no item");
+    calls.length = 0;
+    return { wren: wren!, tarn: tarn!, bridge: bridge!, identity: wren!.identity!, raised, taken, before: await head() };
+  }
+
+  /** The item's screen, once it shows what the item is decided from. */
+  async function shown(id: number) {
+    open(server, `/review/${id}`);
+    await heading(`Review item ${id}`);
+    const card = await screen.findByRole("article", { name: `Review item ${id}` });
+    await idle();
+    return card;
+  }
+
+  test("says what is asked, shows the groups beside the record that was taken back, and is answered by a split", async () => {
+    const { wren, tarn, bridge, identity, raised, taken, before } = await heldByOne();
+    expect(raised.identities).toEqual([identity]);
+    expect([...raised.records].sort()).toEqual([wren.id, tarn.id].sort());
+    const [first, second] = raised.groups!.map((group) => (group[0] === wren.id ? wren : tarn));
+
+    const { label } = await server.client.identity(identity);
+
+    const card = await shown(raised.id);
+    expect(field("Kind")).toBe("possible split");
+    expect(field("Run")).toBe(`run ${taken.run}`);
+    expect(within(card).getByRole("heading", { level: 2 }).textContent).toBe("Are these 2 records still one thing?");
+    expect(parts("why", card)).toEqual([
+      `They share ${label}. What held them together went through a record that its source took back. Each group still holds together. Nothing the store knows joins one group to another: no match found by a run, no must_link, and no decision by a reviewer or an agent.`,
+    ]);
+    expect(parts("record-kind", card)).toEqual(["Group 1", "Group 2", "Taken back by its source"]);
+    // What held them together is under the record that was taken back.
+    const found = parts("judgement", card);
+    expect(found).toHaveLength(2);
+    expect(found.some((line) => line.startsWith("matchwith crm:c-301 by same_name_and_country"))).toBe(true);
+    expect(found.some((line) => line.startsWith("matchwith crm:c-302 by same_domain"))).toBe(true);
+    expect(bridge.id).not.toBe(wren.id);
+
+    // Of two groups, splitting off either is the same split, so it is offered once.
+    expect(within(card).queryByRole("button", { name: "Split off group 1" })).toBeNull();
+    const dialog = await asked("Split off group 2");
+    expect(
+      dialog.getByText(`crm:${second!.key} moves to a new identity. The other 1 record stays in ${label}.`),
+    ).toBeTruthy();
+    expect(changes()).toEqual([]);
+    await make("Split off group 2", { Reason: "two companies at one address" });
+    const answer = await said();
+    const moved = (await server.client.record(second!.id)).identity!;
+    expect(moved).not.toBe(identity);
+    expect(answer).toBe(`Split at log position ${before + 1}: 1 record moved to ${short(moved)}.`);
+    await waitFor(() => expect(field("Status")).toBe("resolved"));
+    expect(field("Resolved at")).toBe(`log position ${before + 1}`);
+    expect(within(card).queryAllByRole("button", { name: /Split off|Keep as one|Dismiss/ })).toEqual([]);
+
+    expect((await server.client.record(first!.id)).identity).toBe(identity);
+    expect(changes()).toEqual([`POST /v1/identities/${identity}/split`]);
+    const made = await entry(before + 1);
+    expect(made.changeset.reason).toBe("two companies at one address");
+    // The two sides are kept apart, as the dialog offered.
+    const kept = made.changeset.ops.at(-1);
+    if (kept?.op !== "constrain") throw new Error("the split kept nothing apart");
+    expect(kept.kind).toBe("cannot_link");
+    expect([kept.a, kept.b].sort()).toEqual([wren.id, tarn.id].sort());
+  });
+
+  test("is answered by saying the groups are one thing", async () => {
+    const { wren, tarn, identity, raised, before } = await heldByOne();
+    await shown(raised.id);
+
+    const dialog = await asked("Keep as one");
+    expect(dialog.getByRole("heading").textContent).toBe("Keep as one identity");
+    await make("Keep as one", { Reason: "Wren trades as Tarn Tools" });
+    expect(await said()).toBe(`Kept as one identity at log position ${before + 1}.`);
+    await waitFor(() => expect(field("Status")).toBe("resolved"));
+
+    const [first, second] = raised.groups!.map((group) => group[0]!);
+    expect((await entry(before + 1)).changeset.ops).toEqual([
+      { op: "constrain", kind: "must_link", a: first!, b: second! },
+    ]);
+    expect((await server.client.record(wren.id)).identity).toBe(identity);
+    expect((await server.client.record(tarn.id)).identity).toBe(identity);
+    expect(changes()).toEqual(["POST /v1/changesets"]);
+  });
+
+  test("is dismissed and leaves the identity as it is", async () => {
+    const { wren, tarn, identity, raised, before } = await heldByOne();
+    await shown(raised.id);
+
+    const dialog = await asked("Dismiss");
+    expect(
+      dialog.getByText("The identity stays as it is, and nothing is recorded about whether its records are one thing."),
+    ).toBeTruthy();
+    await make("Dismiss", { Reason: "checked with the account owner" });
+    expect(await said()).toBe("Dismissed.");
+    await waitFor(() => expect(field("Status")).toBe("dismissed"));
+
+    expect(await head()).toBe(before);
+    expect((await server.client.record(wren.id)).identity).toBe(identity);
+    expect((await server.client.record(tarn.id)).identity).toBe(identity);
+    expect(changes()).toEqual([`POST /v1/review/${raised.id}/dismiss`]);
+  });
+
+  test("is named on the screens of its records and of the run that raised it", async () => {
+    const { wren, raised, taken } = await heldByOne();
+
+    open(server, `/records/${wren.id}`);
+    await heading("Wren Works");
+    await idle();
+    expect(parts("notice")).toContain(
+      `Its identity lost a record that its source took back. Review item ${raised.id} asks whether the records that are left are still one thing.`,
+    );
+
+    open(server, `/runs/${taken.run}`);
+    await heading(`Run ${taken.run}`);
+    await idle();
+    expect(field("Left for review")).toBe("1 identity with records that nothing holds together now. review");
   });
 });

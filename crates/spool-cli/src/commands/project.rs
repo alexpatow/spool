@@ -13,13 +13,16 @@ pub const INIT_USAGE: &str = "\
 Usage: spool init [<dir>] [options]
 
 Scaffolds a project: one source, one entity type with its features, a
-transform and two rules, to be replaced with your own.
+transform and three rules, to be replaced with your own. It also writes two
+files of sample rows under samples/, which the rules match as they stand.
 
   <dir>             the project directory (default: the current directory)
 
 Options:
-  --entity <name>   the entity type to scaffold (default: record)
-  --source <name>   the source to scaffold (default: example)
+  --entity <name>   the entity type to scaffold (default: company)
+  --source <name>   the source to scaffold (default: crm)
+
+The sample rows are companies, whatever the two are called.
 ";
 
 pub const INFO_USAGE: &str = "\
@@ -72,7 +75,7 @@ const SOURCE: &str = "\
 # A source of rows. `key` is the column that tells one row from another, and
 # `columns` is every column a row may have.
 key: id
-columns: [id, name]
+columns: [id, name, country]
 ";
 
 fn entity_yaml(source: &str) -> String {
@@ -82,12 +85,13 @@ fn entity_yaml(source: &str) -> String {
 # record is called by. `mapping` says, for each source, which column each
 # feature comes from, and the transform it goes through if it needs one.
 label: name
-features: [name, name_key]
+features: [name, name_key, country]
 
 mapping:
   {source}:
     name: name
     name_key: {{ from: name, transform: name_key }}
+    country: country
 "
     )
 }
@@ -99,15 +103,44 @@ lambda name: lower(trim(name))
 ";
 
 const BLOCK_RULE: &str = "\
--- A block rule says which pairs are worth comparing. `l` and `r` are two
--- rows of the feature table.
-l.name_key = r.name_key
+-- A block rule says which pairs are worth comparing: here, two names that
+-- begin with the same four characters. `l` and `r` are two rows of the
+-- feature table.
+left(l.name_key, 4) = left(r.name_key, 4)
 ";
 
 const MATCH_RULE: &str = "\
--- A match rule says a pair is the same thing. A file under rules/no_match/
--- says a pair is not, and wins over any match rule.
-l.name_key = r.name_key
+-- A match rule says a pair is the same thing: here, two names that are
+-- close. The similarity is 1 for equal names and 0 for names with nothing
+-- in common.
+jaro_winkler_similarity(l.name_key, r.name_key) >= 0.92
+";
+
+const NO_MATCH_RULE: &str = "\
+-- A no_match rule says a pair is not the same thing, and wins over any
+-- match rule. This one holds only when both rows have a country.
+l.country <> r.country
+";
+
+/// The sample rows. The first file has three spellings of one company, which
+/// the match rule joins, and one name in two countries, which the no_match
+/// rule keeps apart. The second has a misspelling of each of two companies
+/// of the first, and one company that is new.
+const FIRST_SAMPLE: &str = "\
+id,name,country
+c-1,Acorn Tools,GB
+c-2,ACORN TOOLS,GB
+c-3,Acorn Tools Ltd,GB
+c-4,Larkfield Logistics,GB
+c-5,Halden Group,GB
+c-6,Halden Group,US
+";
+
+const SECOND_SAMPLE: &str = "\
+id,name,country
+c-7,Larkfeild Logistics,GB
+c-8,Kestrel Analytics,US
+c-9,Acorn Tool,GB
 ";
 
 /// The default base image of a written Dockerfile.
@@ -250,6 +283,31 @@ fn write(path: &Path, contents: &str) -> Result<(), Failure> {
     std::fs::write(path, contents).map_err(|error| failed(format!("{}: {error}", path.display())))
 }
 
+/// A name that is a file name as it stands: what the project reader takes
+/// for a source.
+fn file_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+/// A path as a word of a shell command: as it is if it is plain, and
+/// between single quotes if not.
+fn shell_word(path: &Path) -> String {
+    let path = path.display().to_string();
+    let plain = !path.is_empty()
+        && !path.starts_with('-')
+        && path
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "/._-+".contains(c));
+    if plain {
+        path
+    } else {
+        format!("'{}'", path.replace('\'', "'\\''"))
+    }
+}
+
 pub fn init(arguments: &[String]) -> Result<(), Failure> {
     let arguments = super::arguments(
         arguments,
@@ -260,9 +318,15 @@ pub fn init(arguments: &[String]) -> Result<(), Failure> {
         },
     )?;
     let dir = arguments.project_dir();
-    let entity = arguments.value("--entity").unwrap_or("record");
+    let entity = arguments.value("--entity").unwrap_or("company");
     spool::core::EntityType::new(entity.to_owned())
         .map_err(|error| Failure::Usage(error.to_string()))?;
+    let source = arguments.value("--source").unwrap_or("crm");
+    if !file_name(source) {
+        return Err(Failure::Usage(format!(
+            "invalid source name {source:?}: use letters, digits, `_` and `-`"
+        )));
+    }
 
     let entities = dir.join("entities");
     if entities.exists() {
@@ -271,37 +335,101 @@ pub fn init(arguments: &[String]) -> Result<(), Failure> {
             entities.display()
         )));
     }
-    let source = arguments.value("--source").unwrap_or("example");
-    let source_file = dir.join("sources").join(format!("{source}.yaml"));
-    let transform_file = dir.join("transforms/name_key.sql");
-    for file in [&source_file, &transform_file] {
+    let entity_dir = format!("entities/{entity}");
+    let source_file = format!("sources/{source}.yaml");
+    let first_sample = format!("samples/{source}-1.csv");
+    let second_sample = format!("samples/{source}-2.csv");
+    let entity_file = format!("{entity_dir}/entity.yaml");
+    let entity_yaml = entity_yaml(source);
+    let rule = |file: &str| format!("{entity_dir}/rules/{file}");
+    let mut files = vec![
+        (source_file.clone(), SOURCE),
+        ("transforms/name_key.sql".to_owned(), TRANSFORM),
+        (entity_file.clone(), entity_yaml.as_str()),
+        (rule("block/name_prefix.sql"), BLOCK_RULE),
+        (rule("match/similar_name.sql"), MATCH_RULE),
+        (rule("no_match/different_country.sql"), NO_MATCH_RULE),
+        (first_sample.clone(), FIRST_SAMPLE),
+        (second_sample.clone(), SECOND_SAMPLE),
+    ];
+    // Nothing is written over, and nothing is written if anything would be.
+    for (file, _) in &files {
+        let file = dir.join(file);
         if file.exists() {
             return Err(failed(format!("{} already exists", file.display())));
         }
     }
-    let entity_dir = entities.join(entity);
-    write(&source_file, SOURCE)?;
-    write(&transform_file, TRANSFORM)?;
-    write(&entity_dir.join("entity.yaml"), &entity_yaml(source))?;
-    write(&entity_dir.join("rules/block/same_name.sql"), BLOCK_RULE)?;
-    write(&entity_dir.join("rules/match/same_name.sql"), MATCH_RULE)?;
-    let gitignore = dir.join(".gitignore");
-    if !gitignore.exists() {
-        write(&gitignore, ".spool/\n")?;
+    let ignores = !dir.join(".gitignore").exists();
+    if ignores {
+        files.push((".gitignore".to_owned(), ".spool/\n"));
+    }
+    for (file, contents) in &files {
+        write(&dir.join(file), contents)?;
     }
 
     // What was written has to be a project that builds.
     Manifest::load(&dir)?;
-    println!("created   {}", entity_dir.display());
-    println!(
-        "\nThe entity type `{entity}` takes rows from the source `{source}` and matches\n\
-         those whose `name` is the same but for case.\n\
-         Edit sources/{source}.yaml, entity.yaml and the rules to say what your rows\n\
-         hold and what makes two of them the same thing.\n\n  \
-         spool info    lists what the project declares\n  \
-         spool dev     runs the server on localhost and applies your changes as you save"
-    );
+
+    let mut written = vec![
+        (
+            source_file,
+            if source == "crm" {
+                "the columns of a CRM export".to_owned()
+            } else {
+                format!("the columns of a row from `{source}`")
+            },
+        ),
+        (
+            entity_file,
+            if entity == "company" {
+                "what companies are compared by".to_owned()
+            } else {
+                format!("what records of type `{entity}` are compared by")
+            },
+        ),
+        (
+            format!("{entity_dir}/rules/"),
+            "three rules, one line of SQL each".to_owned(),
+        ),
+        (
+            "transforms/name_key.sql".to_owned(),
+            "the lower-case name the rules compare".to_owned(),
+        ),
+        (first_sample, "six rows to load first".to_owned()),
+        (second_sample, "three more for later".to_owned()),
+    ];
+    if ignores {
+        written.push((
+            ".gitignore".to_owned(),
+            "keeps the server's data, .spool/, out of Git".to_owned(),
+        ));
+    }
+    let width = written
+        .iter()
+        .map(|(file, _)| file.chars().count())
+        .max()
+        .unwrap_or(0)
+        + 6;
+    println!("created   {}\n", dir.display());
+    for (file, holds) in &written {
+        println!("  {file:<width$}{holds}");
+    }
+    println!();
+    // The commands that come next run in the project.
+    if !is_current_dir(&dir) {
+        println!("  cd {}", shell_word(&dir));
+    }
+    println!("  {:<width$}runs the server on this machine", "spool dev");
     Ok(())
+}
+
+fn is_current_dir(dir: &Path) -> bool {
+    match (std::fs::canonicalize(dir), std::env::current_dir()) {
+        (Ok(dir), Ok(current)) => {
+            std::fs::canonicalize(current).is_ok_and(|current| current == dir)
+        }
+        _ => false,
+    }
 }
 
 pub fn info(arguments: &[String]) -> Result<(), Failure> {

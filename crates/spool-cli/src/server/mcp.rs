@@ -697,9 +697,12 @@ static TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
             "list_review_items",
             "List review items",
             Effect::Reads,
-            "The cases the server left for someone to decide: records it could not place \
-             because they match more than one identity, or because the evidence about them \
-             contradicts itself. Lists the open ones unless `status` says otherwise.",
+            "The cases the server left for someone to decide. `possible_merge` and \
+             `conflict` are records it could not place, because they match more than one \
+             identity or because the evidence about them contradicts itself. \
+             `possible_split` is an identity whose records nothing holds together since a \
+             source took back one of its rows: `groups` are the parts that still hold. \
+             Lists the open ones unless `status` says otherwise.",
         ),
         tool::<OneReviewItem>(
             "get_review_case",
@@ -711,7 +714,13 @@ static TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
              by assigning each record to an identity or merging the identities, or close it \
              with `dismiss_review_item`. Leave out a record whose `retracted` is set: its \
              source took it back, it does not wait for a decision, and a changeset that \
-             gives it an identity is refused.",
+             gives it an identity is refused. A `possible_split` is different: its records \
+             share one identity, in `candidates`, and `taken_back` has the records whose \
+             retraction left the question, with what was judged between them and the \
+             records that remain. If the groups are different things, divide the identity \
+             with `split_identity`, naming the records of one group. If they are one thing, \
+             record a `must_link` between a record of each group with `commit_changeset`, \
+             which closes the item, or close it with `dismiss_review_item`.",
         ),
         tool::<Constraints>(
             "list_constraints",
@@ -770,7 +779,8 @@ static TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
             "Dismiss a review item",
             Effect::Changes,
             "Close a review item without placing its records, when it needs no decision. \
-             The records stay without an identity. Recorded with who dismissed it and why.",
+             The records stay without an identity. Dismissing a `possible_split` leaves its \
+             identity as it is. Recorded with who dismissed it and why.",
         ),
     ]
 });

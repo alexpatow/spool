@@ -149,7 +149,10 @@ export function RecordPage({ id }: { id: string }) {
 function RecordScreen({ record, review, document }: Loaded) {
   const mention = mentionOf(record);
   const around = mention && document?.text ? excerpt(document.text, mention.start, mention.end) : null;
-  const waits = review.filter((item) => item.status === "open");
+  const open = review.filter((item) => item.status === "open");
+  // A `possible_split` is about the identity the record is in, not about a record that waits for one.
+  const waits = open.filter((item) => item.kind !== "possible_split");
+  const asks = open.filter((item) => item.kind === "possible_split");
   const labels = useLabels([record.identity]);
   return (
     <>
@@ -180,6 +183,20 @@ function RecordScreen({ record, review, document }: Loaded) {
               </span>
             ))}
             .
+          </span>
+        </Notice>
+      ) : null}
+      {asks.length > 0 ? (
+        <Notice tone="waits">
+          <span>
+            Its identity lost a record that its source took back.{" "}
+            {asks.map((item, index) => (
+              <span key={item.id}>
+                {index > 0 ? ", " : ""}
+                <Ref kind="review" id={item.id} label={`Review item ${item.id}`} />
+              </span>
+            ))}{" "}
+            asks whether the records that are left are still one thing.
           </span>
         </Notice>
       ) : null}

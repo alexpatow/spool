@@ -452,12 +452,13 @@ fn drafts_and_review_items_are_shown_with_what_they_hold() {
     let stuck = id_of(&server, "crm", "c-117");
 
     let review = shown(&server, &["show", "review", "--status", "open"]);
-    has(
-        &review,
-        "item  kind            status  type     holds     matched       raised by",
+    has(&review, "item  kind  status  type  raised by  about");
+    assert!(
+        review.contains("\n1     possible_merge  open    company  run "),
+        "{review}"
     );
     assert!(
-        review.contains("\n1     possible_merge  open    company  1 record  2 identities  run "),
+        review.ends_with("  1 record without an identity, which matched 2 identities\n"),
         "{review}"
     );
     assert_eq!(

@@ -702,6 +702,13 @@ export interface IngestReport {
    */
   inserted: number;
   /**
+   * Identities a record went back to where nothing holds it with the
+   * records that are there: what joined them went through a record that
+   * is still taken back. Each has an open `possible_split` review item,
+   * which this run raised.
+   */
+  possible_splits?: number;
+  /**
    * Rows received.
    */
   received: number;
@@ -907,7 +914,8 @@ export interface PairJudgement {
   detail?: unknown;
   /**
    * The identity `other` belongs to now: one of the candidates, unless
-   * `other` is another of the item's records. A candidate's members
+   * `other` is another of the item's records, or a record that was
+   * taken back, which has none. A candidate's members
    * are not all in the case, so this, not the members, says which
    * candidate a judgement is about.
    */
@@ -1229,6 +1237,13 @@ export interface RetractReport {
    */
   detached: number;
   /**
+   * Identities the records left whose remaining members nothing holds
+   * together any more, and that this run raised a `possible_split`
+   * review item for. One that already had an open item keeps it, and
+   * is not counted.
+   */
+  possible_splits?: number;
+  /**
    * Keys named, counting a key that was named twice once.
    */
   received: number;
@@ -1296,8 +1311,9 @@ export interface ReviewCase {
   item: ReviewEntry;
   /**
    * What the latest run to judge each pair made of it, for every pair of
-   * one of the item's records with another of them or with a member
-   * of a candidate. Only runs that were reconciled count.
+   * one of the item's records with another of them, with a member
+   * of a candidate, or with a record in `taken_back`. Only runs that
+   * were reconciled count.
    */
   judgements: PairJudgement[];
   /**
@@ -1307,6 +1323,14 @@ export interface ReviewCase {
    * identity is refused. The decision is about the others.
    */
   records: RecordEntry[];
+  /**
+   * Only a `possible_split` has these: the records that were taken out
+   * of the identity when their source took them back, and have not come
+   * back. What held the groups together went through them, and
+   * `judgements` has what was judged between them and the item's
+   * records.
+   */
+  taken_back?: RecordEntry[];
 }
 
 /**
@@ -1318,29 +1342,51 @@ export interface ReviewEntry {
    */
   dismissed?: Dismissal | null;
   entity_type: EntityType;
+  /**
+   * Only a `possible_split` has these: the records of its identity as
+   * the groups that are each still held together. Nothing the store
+   * knows says that two of the groups are one thing. While the item is
+   * open they are the identity's records as they are now; once it is
+   * closed, as they were last. The largest group is first.
+   */
+  groups?: RecordId[][];
   id: number;
   /**
    * The identities they matched. Empty when the conflict is among the
-   * records themselves.
+   * records themselves. For a `possible_split`, the one identity the
+   * records are in. While the item is open that is the identity as it is
+   * now: when the identity is merged into another, the item names the
+   * one that stands for both.
    */
   identities: IdentityId[];
   kind: ReviewKind;
   /**
-   * The records left without an identity.
+   * The records left without an identity. For a `possible_split`, the
+   * members of the identity that nothing holds together: every record
+   * in `groups`.
    */
   records: RecordId[];
   /**
    * Resolved: the changeset after which every record had an identity.
+   * For a `possible_split`, the changeset after which nothing was left
+   * to ask: it took the groups apart, or it added what holds them
+   * together, or it merged the identity with one whose item asks for
+   * both.
    */
   resolved_seq?: Seq | null;
   /**
-   * The reconcile run that raised it.
+   * The run that raised it: a reconcile run. For a `possible_split`, the
+   * retract run that took back what held the records together, or the
+   * ingest run that brought a record back to where what held it is
+   * still gone.
    */
   run: RunId;
   status: ReviewStatus;
   /**
    * Superseded: the reconcile run that raised it again in another form,
-   * or the retract run that took back the records it asked about.
+   * or the retract run that took back the records it asked about. For a
+   * `possible_split`, the reconcile run whose judgements hold the
+   * groups together.
    */
   superseded_by?: RunId | null;
 }
@@ -1361,7 +1407,7 @@ export type ReviewItem =
       records: RecordId[];
     };
 
-export type ReviewKind = "possible_merge" | "conflict";
+export type ReviewKind = "possible_merge" | "conflict" | "possible_split";
 
 export interface ReviewList {
   items: ReviewEntry[];
