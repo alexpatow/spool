@@ -13,8 +13,10 @@ repository = "https://github.com/alexpatow/spool"
 spool-core = { path = "crates/spool-core", version = "0.1.0" }
 spool = { path = "crates/spool", version = "0.1.0" }
 
-# The server's HTTP stack. Only spool-cli depends on it.
+# The server's HTTP stack. Only spool-cli depends on it. http-body is the
+# trait of a request's body, which the server wraps to see how far one was read.
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
+http-body = "1"
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 
 # People and their sessions. Only spool-cli depends on these. Accounts are
