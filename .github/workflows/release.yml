@@ -1,0 +1,222 @@
+name: Release
+
+# A release of Spool: the archives the install script downloads, the script,
+# their checksums, and the image that the Dockerfile of `spool build` starts
+# from.
+#
+# It starts when a tag such as v0.1.0 is pushed, and when it is started by
+# hand. It does not start for a push of commits or for a pull request: `push`
+# below names tags and no branches.
+#
+# Started by hand it builds and tests all of it and publishes nothing. What
+# it built is kept for a day with the run. Only the push of a tag publishes:
+# the image to ghcr.io/alexpatow/spool, and then the release on GitHub.
+#
+# The repository has to be public first. The install line downloads from the
+# release without signing in, and while the repository is private that
+# answers 404 to everyone but its owner, so `publish` refuses to run then.
+#
+# To release version 0.1.0:
+#
+#   1. `version` in Cargo.toml and VERSION in install.sh say 0.1.0, on main.
+#   2. Start this workflow by hand on main, and see it pass.
+#   3. git tag v0.1.0 && git push origin v0.1.0
+#   4. The first time only: the package `spool` on ghcr.io starts private
+#      whatever the repository is. Make it public under Package settings,
+#      or nobody else can pull the image.
+#
+# If `publish` fails part of the way, start that job again: pushing the image
+# twice changes nothing. If the release was already begun, delete the draft
+# it left before starting the job again.
+#
+# The jobs are free while the repository is public. While it is private a
+# minute of the macOS job costs ten times one of the Linux job.
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One release at a time, and one that has begun is not interrupted.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  IMAGE: ghcr.io/alexpatow/spool
+  # The tag that started this, or nothing when it was started by hand on a branch.
+  TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+
+jobs:
+  # Both Linux archives and the image come from one build of the Dockerfile,
+  # which compiles for arm64 on this x86-64 machine. What it builds for arm64
+  # runs here under emulation.
+  linux:
+    name: Linux archives and the image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      # Fails unless Cargo.toml, install.sh and the tag name one version.
+      - name: Check the version
+        run: release/version.sh "$TAG"
+
+      - name: Lint the scripts
+        run: shellcheck install.sh release/*.sh
+
+      - name: Emulate arm64
+        run: docker run --privileged --rm tonistiigi/binfmt --install arm64
+
+      - name: Build the archives and the image
+        run: release/linux.sh dist
+
+      - name: Install from the archive for x86-64
+        run: release/test-install.sh dist
+
+      - name: Install from the archive for arm64
+        run: release/test-install.sh dist buildpack-deps:bookworm-curl linux/arm64
+
+      - name: Run the image
+        run: release/test-image.sh dist
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux
+          path: |
+            dist/spool-*.tar.gz
+            dist/spool-*.tar.gz.sha256
+            dist/spool-image.tar
+          if-no-files-found: error
+          # All of it is compressed already.
+          compression-level: 0
+          retention-days: 1
+
+  # Built and run on a Mac. Compiling for macOS on Linux stops at the link,
+  # which needs Apple's SDK, and nothing on Linux can run the result, so an
+  # archive made there would be published without ever having started.
+  macos:
+    name: Apple silicon archive
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      # The oldest macOS the build runs on, which is also the oldest the
+      # DuckDB library does.
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check the version
+        run: release/version.sh "$TAG"
+
+      # `rust-version` in Cargo.toml, which is what the Dockerfile builds
+      # the Linux archives with.
+      - name: Install Rust
+        run: |
+          version=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)
+          rustup toolchain install "$version" --profile minimal
+          rustup default "$version"
+
+      - name: Build
+        env:
+          SPOOL_RELEASE_BUILD: "1"
+        run: cargo build --release --locked -p spool-cli
+
+      - name: Make the archive
+        run: |
+          library=$(find target -path '*/duckdb-download/*' -name libduckdb.dylib | head -n 1)
+          release/archive.sh aarch64-apple-darwin target/release/spool "$library" dist
+
+      - name: Install from the archive
+        run: release/test-install.sh dist
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos
+          path: |
+            dist/spool-*.tar.gz
+            dist/spool-*.tar.gz.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+  publish:
+    name: Publish
+    needs: [linux, macos]
+    if: github.event_name == 'push' && github.ref_type == 'tag' && github.repository == 'alexpatow/spool'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      packages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # Asked now and not read from the event, so that this job can be
+      # started again once the repository has been made public.
+      - name: Publish nothing while the repository is private
+        run: |
+          if [ "$(gh api "repos/$GITHUB_REPOSITORY" --jq .private)" != false ]; then
+            echo "::error::This repository is private, so nothing was published: the install line would answer 404. Make the repository public and start this job again."
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      # Each archive's checksum was taken on the machine that built it.
+      - name: Check the archives against their checksums
+        working-directory: dist
+        run: |
+          cat spool-*.tar.gz.sha256 > SHA256SUMS
+          cat SHA256SUMS
+          sha256sum --check --strict SHA256SUMS
+          if [ "$(wc -l < SHA256SUMS)" -ne 3 ]; then
+            echo "::error::A release has three archives, and SHA256SUMS lists $(wc -l < SHA256SUMS)."
+            exit 1
+          fi
+
+      # A version with a hyphen in it, such as 0.2.0-rc.1, is a prerelease:
+      # it is neither the image's `latest` nor the release that
+      # `releases/latest` names.
+      - name: Push the image
+        run: |
+          version=$(release/version.sh "$TAG")
+          skopeo login ghcr.io --username "$GITHUB_ACTOR" --password-stdin <<< "$GH_TOKEN"
+          skopeo copy --all oci-archive:dist/spool-image.tar "docker://$IMAGE:$version"
+          case "$version" in
+            *-*) ;;
+            *) skopeo copy --all "docker://$IMAGE:$version" "docker://$IMAGE:latest" ;;
+          esac
+
+      # `gh` keeps the release a draft until every file is there, so
+      # `releases/latest` never names one that lacks a file.
+      - name: Publish the release
+        run: |
+          version=$(release/version.sh "$TAG")
+          prerelease=
+          case "$version" in
+            *-*) prerelease=--prerelease ;;
+          esac
+          {
+            echo "Install on Linux, x86-64 or arm64, or on a Mac with Apple silicon:"
+            echo
+            echo '```sh'
+            echo "curl -fsSL https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/install.sh | sh"
+            echo '```'
+            echo
+            echo "The image is \`$IMAGE:$version\`. \`SHA256SUMS\` lists the checksum of each archive."
+          } > notes.md
+          # shellcheck disable=SC2086
+          gh release create "$TAG" --verify-tag --title "Spool $version" \
+            --notes-file notes.md --generate-notes $prerelease \
+            install.sh dist/SHA256SUMS dist/spool-*.tar.gz
