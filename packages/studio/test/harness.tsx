@@ -136,10 +136,14 @@ const projects: string[] = [];
  * Serves a copy of a scenario's project on a new store, and makes its first
  * account unless `people` is false.
  */
-export async function start(scenario: string, seed: number, { people = true } = {}): Promise<Server> {
+export async function start(
+  scenario: string,
+  seed: number,
+  { people = true, environment = {} }: { people?: boolean; environment?: Record<string, string> } = {},
+): Promise<Server> {
   const project = copyProject(scenario);
   projects.push(project);
-  const server = await serve(project, seed);
+  const server = await serve(project, seed, environment);
   servers.push(server);
   if (people) browsers.set(server.url, await firstPerson(server));
   return server;

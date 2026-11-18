@@ -64,7 +64,7 @@ fn the_first_account_is_made_with_the_link_the_server_printed_and_only_once() {
     let state = browse(&server, "GET", "/auth/session", "").send().ok();
     assert_eq!(
         state,
-        json!({ "person": null, "setup": true, "dev": false })
+        json!({ "person": null, "setup": true, "dev": false, "google": false })
     );
 
     let account =
@@ -92,7 +92,7 @@ fn the_first_account_is_made_with_the_link_the_server_printed_and_only_once() {
     let state = browse(&server, "GET", "/auth/session", "").send().ok();
     assert_eq!(
         state,
-        json!({ "person": null, "setup": false, "dev": false })
+        json!({ "person": null, "setup": false, "dev": false, "google": false })
     );
 }
 
@@ -305,7 +305,7 @@ fn a_store_that_was_developed_on_still_gets_its_first_account() {
     let state = browse(&server, "GET", "/auth/session", "").send().ok();
     assert_eq!(
         state,
-        json!({ "person": null, "setup": true, "dev": false })
+        json!({ "person": null, "setup": true, "dev": false, "google": false })
     );
     let (ada, id) = set_up(&server, &code);
 

@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use spool::{ApplyReport, Engine, Manifest, Options};
 use spool_cli::accounts;
+use spool_cli::google::{self, Google};
 use spool_cli::server::{self, ServerOptions};
 
 use super::manifest_path;
@@ -31,6 +32,13 @@ store, named after it: `spool.auth.sqlite` for `spool.duckdb`. While no admin
 can sign in, the server prints a link when it starts; whoever opens it makes
 the first account and is the admin, who adds everyone else.
 
+Passwords are for getting started. A server that people rely on should sign
+them in with Google: with SPOOL_GOOGLE_CLIENT_ID and SPOOL_GOOGLE_CLIENT_SECRET
+set to an OAuth client made in Google's console, the sign-in page offers it,
+and an admin adds a person by the email of their Google account, which is a
+Gmail address or one of an organisation's Google Workspace. The server prints
+the redirect URI to give that client when it starts.
+
 A caller that is not a person presents a token, which an admin makes on the
 studio's Tokens page and `spool token add` makes on this machine. What it
 changes is recorded under the token's name, as `agent:<name>`.
@@ -45,6 +53,10 @@ Options:
   --manifest <path>   the manifest to run on (default: .spool/manifest.json)
   --store <path>      the store's database file (default: $SPOOL_STORE)
   --listen <addr>     the address to listen on (default: 0.0.0.0:7765)
+  --public-url <url>  the address people reach the server by, such as
+                      https://spool.example.com (default: $SPOOL_PUBLIC_URL,
+                      or the address it listens on when that is on this
+                      machine only). Sign-in with Google comes back to it.
   --project <dir>     the project directory, where the strategy and extractor
                       files the manifest names are found (default: the
                       current directory)
@@ -139,6 +151,7 @@ pub fn serve(arguments: &[String]) -> Result<(), Failure> {
                 "--manifest",
                 "--store",
                 "--listen",
+                "--public-url",
                 "--seed",
                 "--project",
                 "--task-timeout",
@@ -149,6 +162,17 @@ pub fn serve(arguments: &[String]) -> Result<(), Failure> {
         },
     )?;
     let listen = listen_address(&arguments, &format!("0.0.0.0:{DEFAULT_PORT}"))?;
+    let reached = Reached {
+        at: public_url(&arguments)?,
+        google: GoogleClient::read()?,
+    };
+    if reached.google.is_some() && reached.at.is_none() && !listen.ip().is_loopback() {
+        return Err(Failure::Usage(
+            "sign-in with Google comes back to the address people reach this server by: \
+             pass it with `--public-url` or in SPOOL_PUBLIC_URL, such as https://spool.example.com"
+                .to_owned(),
+        ));
+    }
     let store = super::store_path(&arguments)?;
     let manifest_file = arguments
         .path("--manifest")
@@ -179,7 +203,7 @@ pub fn serve(arguments: &[String]) -> Result<(), Failure> {
         }
     }
     say!("manifest  {}", manifest.hash);
-    let accounts = super::open_accounts(&store)?;
+    let accounts = super::open_accounts(&store)?.with_google(reached.google.is_some());
     say!("accounts  {}", super::accounts_path(&store).display());
     let empty = accounts
         .needs_setup()
@@ -188,7 +212,72 @@ pub fn serve(arguments: &[String]) -> Result<(), Failure> {
     options.setup = empty.then(accounts::code);
     options.https = !(arguments.flag("--plain-http") || listen.ip().is_loopback());
     options.studio = !arguments.flag("--no-studio");
-    run(Arc::new(engine), listen, options)
+    run(Arc::new(engine), listen, options, reached)
+}
+
+/// How people reach a server, apart from the address it listens on.
+#[derive(Default)]
+struct Reached {
+    /// The address they type, if it is not the one the server listens on.
+    at: Option<String>,
+    /// The client the server is to Google, if it signs people in with it.
+    google: Option<GoogleClient>,
+}
+
+/// An OAuth client made in Google's console.
+struct GoogleClient {
+    id: String,
+    secret: String,
+    /// Where Google's sign-in is. A test names what stands in for it.
+    issuer: String,
+}
+
+impl GoogleClient {
+    fn read() -> Result<Option<Self>, Failure> {
+        let set = |name: &str| {
+            std::env::var(name)
+                .ok()
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+        };
+        const ID: &str = "SPOOL_GOOGLE_CLIENT_ID";
+        const SECRET: &str = "SPOOL_GOOGLE_CLIENT_SECRET";
+        match (set(ID), set(SECRET)) {
+            (Some(id), Some(secret)) => Ok(Some(Self {
+                id,
+                secret,
+                issuer: set("SPOOL_GOOGLE_ISSUER").unwrap_or_else(|| google::ISSUER.to_owned()),
+            })),
+            (None, None) => Ok(None),
+            (id, _) => {
+                let (has, lacks) = if id.is_some() {
+                    (ID, SECRET)
+                } else {
+                    (SECRET, ID)
+                };
+                Err(failed(format!(
+                    "sign-in with Google needs both {ID} and {SECRET}: {has} is set and {lacks} is not"
+                )))
+            }
+        }
+    }
+}
+
+fn public_url(arguments: &Arguments) -> Result<Option<String>, Failure> {
+    let given = arguments
+        .value("--public-url")
+        .map(str::to_owned)
+        .or_else(|| std::env::var("SPOOL_PUBLIC_URL").ok())
+        .map(|url| url.trim().trim_end_matches('/').to_owned())
+        .filter(|url| !url.is_empty());
+    match given {
+        Some(url) if !(url.starts_with("https://") || url.starts_with("http://")) => {
+            Err(Failure::Usage(format!(
+                "`--public-url` needs an address such as https://spool.example.com, not `{url}`"
+            )))
+        }
+        given => Ok(given),
+    }
 }
 
 pub fn dev(arguments: &[String]) -> Result<(), Failure> {
@@ -237,7 +326,7 @@ pub fn dev(arguments: &[String]) -> Result<(), Failure> {
 
     let watched = Arc::clone(&engine);
     std::thread::spawn(move || watch(&dir, &watched, seen));
-    run(engine, listen, options)
+    run(engine, listen, options, Reached::default())
 }
 
 fn print_applied(manifest: &Manifest, report: &ApplyReport) {
@@ -322,7 +411,12 @@ fn fingerprint(dir: &Path) -> u64 {
     hasher.finish()
 }
 
-fn run(engine: Arc<Engine>, listen: SocketAddr, options: ServerOptions) -> Result<(), Failure> {
+fn run(
+    engine: Arc<Engine>,
+    listen: SocketAddr,
+    mut options: ServerOptions,
+    reached: Reached,
+) -> Result<(), Failure> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -336,13 +430,26 @@ fn run(engine: Arc<Engine>, listen: SocketAddr, options: ServerOptions) -> Resul
             .map_err(|error| failed(error.to_string()))?;
         // Tests listen on port 0 and read the port from this line.
         say!("listening on http://{address}");
+        let at = reached.at.unwrap_or_else(|| format!("http://{address}"));
         if options.studio {
-            say!("studio    http://{address}/");
+            say!("studio    {at}/");
+        }
+        if let Some(client) = reached.google {
+            let google =
+                Google::new(&client.issuer, &client.id, &client.secret, &at).map_err(|error| {
+                    failed(format!("sign-in with Google cannot be set up: {error}"))
+                })?;
+            say!("google    {}", google.redirect());
+            say!(
+                "people sign in with Google: that address is the redirect URI of the OAuth \
+                 client in Google's console"
+            );
+            options.google = Some(google);
         }
         say!("mcp       http://{address}{}", server::MCP_PATH);
         match &options.setup {
             Some(code) if options.studio => {
-                say!("setup     http://{address}/setup#{code}");
+                say!("setup     {at}/setup#{code}");
                 say!(
                     "no admin can sign in yet: open that link, at the address people reach \
                      this server by, to make the first account"

@@ -18,6 +18,8 @@ export interface Studio {
   me: Person;
   /** Everyone with an account, by its ID. */
   people: Map<string, Person>;
+  /** Whether the server signs people in with Google. */
+  google: boolean;
   /** What the store held when it was last asked: its entity types, and how much of each. */
   info: Info;
 }

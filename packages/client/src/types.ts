@@ -10,12 +10,19 @@
 export type Actor = string;
 
 /**
- * `POST /v1/people`: add a person. Only an admin may.
+ * `POST /v1/people`: add a person. Only an admin may. They sign in with
+ * the password, with Google by the email, or with either: one of the two is
+ * needed, and the email alone only where the server signs people in with
+ * Google.
  */
 export interface AddPersonRequest {
   admin?: boolean | null;
+  /**
+   * The address of the Google account they sign in with.
+   */
+  email?: string | null;
   name: string;
-  password: string;
+  password?: string | null;
   username: string;
 }
 
@@ -97,11 +104,17 @@ export interface CaseConstraint {
 /**
  * `POST /v1/people/{id}`: change a person. Only an admin may. A field left
  * out stays as it is. A new password, or turning the account off, signs
- * the person out everywhere.
+ * the person out everywhere. Another email signs them out wherever they
+ * signed in with Google.
  */
 export interface ChangePersonRequest {
   active?: boolean | null;
   admin?: boolean | null;
+  /**
+   * The address of the Google account they sign in with. An empty one
+   * takes it away, for someone who has a password.
+   */
+  email?: string | null;
   name?: string | null;
   password?: string | null;
 }
@@ -924,8 +937,19 @@ export interface Person {
    * May add people and change their accounts.
    */
   admin: boolean;
+  /**
+   * The address of the Google account they sign in with, where the
+   * server signs people in with Google. `null` for someone who signs in
+   * with a password only.
+   */
+  email?: string | null;
   id: string;
   name: string;
+  /**
+   * Has a password to sign in with. Someone who has none signs in with
+   * Google.
+   */
+  password: boolean;
   username: string;
 }
 
@@ -1403,6 +1427,11 @@ export interface SessionState {
    * `dev` account.
    */
   dev: boolean;
+  /**
+   * The server signs people in with Google: `GET /auth/google` in a
+   * browser starts it.
+   */
+  google: boolean;
   person?: Person | null;
   /**
    * No admin can sign in yet. The server printed a link when it started

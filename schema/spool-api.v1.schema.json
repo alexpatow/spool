@@ -7,7 +7,7 @@
     },
     "AddPersonRequest": {
       "additionalProperties": false,
-      "description": "`POST /v1/people`: add a person. Only an admin may.",
+      "description": "`POST /v1/people`: add a person. Only an admin may. They sign in with\nthe password, with Google by the email, or with either: one of the two is\nneeded, and the email alone only where the server signs people in with\nGoogle.",
       "properties": {
         "admin": {
           "default": null,
@@ -16,11 +16,23 @@
             "null"
           ]
         },
+        "email": {
+          "default": null,
+          "description": "The address of the Google account they sign in with.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "name": {
           "type": "string"
         },
         "password": {
-          "type": "string"
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "username": {
           "type": "string"
@@ -28,8 +40,7 @@
       },
       "required": [
         "username",
-        "name",
-        "password"
+        "name"
       ],
       "type": "object"
     },
@@ -167,7 +178,7 @@
     },
     "ChangePersonRequest": {
       "additionalProperties": false,
-      "description": "`POST /v1/people/{id}`: change a person. Only an admin may. A field left\nout stays as it is. A new password, or turning the account off, signs\nthe person out everywhere.",
+      "description": "`POST /v1/people/{id}`: change a person. Only an admin may. A field left\nout stays as it is. A new password, or turning the account off, signs\nthe person out everywhere. Another email signs them out wherever they\nsigned in with Google.",
       "properties": {
         "active": {
           "default": null,
@@ -180,6 +191,14 @@
           "default": null,
           "type": [
             "boolean",
+            "null"
+          ]
+        },
+        "email": {
+          "default": null,
+          "description": "The address of the Google account they sign in with. An empty one\ntakes it away, for someone who has a password.",
+          "type": [
+            "string",
             "null"
           ]
         },
@@ -1975,11 +1994,22 @@
           "description": "May add people and change their accounts.",
           "type": "boolean"
         },
+        "email": {
+          "description": "The address of the Google account they sign in with, where the\nserver signs people in with Google. `null` for someone who signs in\nwith a password only.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "id": {
           "type": "string"
         },
         "name": {
           "type": "string"
+        },
+        "password": {
+          "description": "Has a password to sign in with. Someone who has none signs in with\nGoogle.",
+          "type": "boolean"
         },
         "username": {
           "type": "string"
@@ -1990,7 +2020,8 @@
         "username",
         "name",
         "admin",
-        "active"
+        "active",
+        "password"
       ],
       "type": "object"
     },
@@ -3271,6 +3302,10 @@
           "description": "A development server: nobody signs in, and whoever opens it is the\n`dev` account.",
           "type": "boolean"
         },
+        "google": {
+          "description": "The server signs people in with Google: `GET /auth/google` in a\nbrowser starts it.",
+          "type": "boolean"
+        },
         "person": {
           "anyOf": [
             {
@@ -3288,7 +3323,8 @@
       },
       "required": [
         "setup",
-        "dev"
+        "dev",
+        "google"
       ],
       "type": "object"
     },

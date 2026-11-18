@@ -3,9 +3,10 @@
 //! The server is the only process that has the store open. Every path under
 //! `/v1` needs a caller the server knows: a person who has signed in, whose
 //! browser carries a session cookie, or an agent that presents one of the
-//! server's tokens. The paths under `/auth` sign a person in and out. The studio at `/` needs
-//! neither: it is a page that holds nothing, and reads through `/v1` as the
-//! person signed in. Small values are JSON; candidates, judgements and rows
+//! server's tokens. The paths under `/auth` sign a person in and out, with a
+//! password or, where the server is a client of Google's, with Google. The
+//! studio at `/` needs neither: it is a page that holds nothing, and reads
+//! through `/v1` as the person signed in. Small values are JSON; candidates, judgements and rows
 //! to ingest can also cross as Arrow IPC streams.
 //!
 //! `/mcp` is the same API as tools for an assistant, over the Model Context
@@ -52,7 +53,10 @@ use arrow::record_batch::RecordBatchReader;
 use axum::body::Bytes;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{DefaultBodyLimit, Extension, Path, Query, Request, State};
-use axum::http::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HOST, ORIGIN, WWW_AUTHENTICATE};
+use axum::http::header::{
+    ACCEPT, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, COOKIE as COOKIES, HOST, LOCATION, ORIGIN,
+    SET_COOKIE, WWW_AUTHENTICATE,
+};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -68,11 +72,13 @@ use spool::{
 };
 use tokio::net::TcpListener;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
-use tower_sessions::cookie::SameSite;
 use tower_sessions::cookie::time::Duration as SessionLength;
+use tower_sessions::cookie::{Cookie, SameSite};
 use tower_sessions::{Expiry, Session, SessionManagerLayer};
 
-use crate::accounts::{Accounts, Change, Entered, MARK, MAX_USERNAME, PERSON, Refused};
+use crate::accounts::{
+    Accounts, Change, Entered, GOOGLE, MARK, MAX_USERNAME, New, PERSON, Refused,
+};
 use crate::api::{
     self, ARROW_STREAM, AddPersonRequest, AddTokenRequest, AddedToken, CandidateList,
     ChangePersonRequest, ChangesetList, CommitRequest, ConstraintList, DismissRequest,
@@ -83,6 +89,7 @@ use crate::api::{
     SessionState, SetupRequest, SignInRequest, SplitRequest, StartRunRequest, TokenList,
     UndoRequest,
 };
+use crate::google::{Failed, Google, Provider, Started};
 use crate::studio;
 
 mod local;
@@ -130,6 +137,22 @@ const MAX_AUTH_BODY_BYTES: usize = 64 * 1024;
 /// reaches the server could otherwise have it make as many as they sent.
 const MAX_HASHING: usize = 4;
 
+/// The name of the cookie that keeps a sign-in with Google while the
+/// browser is at Google.
+const GOOGLE_COOKIE: &str = "spool_google";
+
+/// How long someone has at Google before the sign-in has to start again.
+const GOOGLE_MINUTES: i64 = 10;
+
+/// The most questions asked of Google at once: who a code is for, and
+/// where its sign-in is while the server does not know. Each waits for
+/// Google, and anyone can have the server ask one.
+const MAX_ASKING: usize = 8;
+
+/// The longest address to go back to after signing in with Google. It
+/// travels in a cookie, which has little room.
+const MAX_NEXT_BYTES: usize = 1024;
+
 #[derive(Clone, Debug)]
 pub struct ServerOptions {
     /// The people who may sign in, and their sessions.
@@ -142,6 +165,9 @@ pub struct ServerOptions {
     /// Whether browsers reach the server over HTTPS, and so whether the
     /// session cookie is sent only over HTTPS.
     pub https: bool,
+    /// The client this server is to Google, if it signs people in with
+    /// Google. The accounts are told with [`Accounts::with_google`].
+    pub google: Option<Google>,
     pub max_body_bytes: usize,
     /// Whether the server answers a browser at `/` with the studio.
     pub studio: bool,
@@ -154,6 +180,7 @@ impl ServerOptions {
             dev: false,
             setup: None,
             https: true,
+            google: None,
             max_body_bytes: DEFAULT_MAX_BODY_BYTES,
             studio: true,
         }
@@ -168,6 +195,9 @@ struct App {
     setup: Arc<Mutex<Option<String>>>,
     attempts: Attempts,
     hashing: Arc<Semaphore>,
+    https: bool,
+    google: Option<Arc<Provider>>,
+    asking: Arc<Semaphore>,
 }
 
 /// The wrong passwords lately tried for each username, and when the first of
@@ -253,6 +283,9 @@ pub fn router(engine: Arc<Engine>, options: &ServerOptions) -> Router {
         setup: Arc::new(Mutex::new(options.setup.clone())),
         attempts: Attempts::default(),
         hashing: Arc::new(Semaphore::new(MAX_HASHING)),
+        https: options.https,
+        google: options.google.clone().map(Provider::new).map(Arc::new),
+        asking: Arc::new(Semaphore::new(MAX_ASKING)),
     };
     let sessions = SessionManagerLayer::new(options.accounts.clone())
         .with_name(COOKIE)
@@ -266,6 +299,8 @@ pub fn router(engine: Arc<Engine>, options: &ServerOptions) -> Router {
         .route("/sign-out", post(sign_out))
         .route("/setup", post(set_up))
         .route("/password", post(change_password))
+        .route("/google", get(google_start))
+        .route("/google/callback", get(google_callback))
         .fallback(not_found)
         .layer(DefaultBodyLimit::max(
             options.max_body_bytes.min(MAX_AUTH_BODY_BYTES),
@@ -499,9 +534,11 @@ impl From<Refused> for ApiError {
         match refused {
             Refused::Invalid(_) | Refused::WrongPassword => Self::invalid(message),
             Refused::Unknown | Refused::UnknownToken => Self::not_found(message),
-            Refused::Taken(_) | Refused::TokenTaken(_) | Refused::LastAdmin | Refused::SetUp => {
-                Self::new(StatusCode::CONFLICT, ErrorCode::Conflict, message)
-            }
+            Refused::Taken(_)
+            | Refused::EmailTaken(_)
+            | Refused::TokenTaken(_)
+            | Refused::LastAdmin
+            | Refused::SetUp => Self::new(StatusCode::CONFLICT, ErrorCode::Conflict, message),
             Refused::Failed(_) => Self::internal(message),
         }
     }
@@ -599,13 +636,26 @@ async fn caller(app: &App, session: &Session, headers: &HeaderMap) -> ApiResult<
 }
 
 /// The person a session belongs to, if their account is still on and has
-/// the password the session began with.
+/// what the session began with: the password, or the Google account.
 async fn signed_in(app: &App, session: &Session) -> ApiResult<Option<Person>> {
     let kept = |key| async move { session.get::<String>(key).await.map_err(session_failed) };
-    let (Some(id), Some(mark)) = (kept(PERSON).await?, kept(MARK).await?) else {
+    let Some(id) = kept(PERSON).await? else {
         return Ok(None);
     };
-    people(app, move |accounts| accounts.holder(&id, &mark)).await
+    if let Some(mark) = kept(MARK).await? {
+        return people(app, move |accounts| accounts.holder(&id, &mark)).await;
+    }
+    match kept(GOOGLE).await? {
+        // A server that no longer signs people in with Google has nobody
+        // signed in with it.
+        Some(bound) if app.google.is_some() => {
+            people(app, move |accounts| {
+                accounts.holder_with_google(&id, &bound)
+            })
+            .await
+        }
+        _ => Ok(None),
+    }
 }
 
 fn session_failed(error: tower_sessions::session::Error) -> ApiError {
@@ -648,11 +698,19 @@ async fn turn(app: &App) -> ApiResult<OwnedSemaphorePermit> {
         .map_err(|_| ApiError::internal("the accounts stopped while working"))
 }
 
-/// Starts a session for whoever `entered`, with an ID nobody has seen
-/// before.
-async fn begin(session: &Session, person: &str, mark: &str) -> ApiResult<()> {
+/// Starts a session for whoever entered, with an ID nobody has seen before.
+/// `with` is what they entered with, and so what the session lasts as long
+/// as: [`MARK`] and the mark of their password, or [`GOOGLE`] and the mark
+/// of their Google account.
+async fn begin(session: &Session, person: &str, with: (&str, &str)) -> ApiResult<()> {
     session.cycle_id().await.map_err(session_failed)?;
-    for (key, value) in [(PERSON, person), (MARK, mark)] {
+    for key in [MARK, GOOGLE] {
+        session
+            .remove::<String>(key)
+            .await
+            .map_err(session_failed)?;
+    }
+    for (key, value) in [(PERSON, person), with] {
         session.insert(key, value).await.map_err(session_failed)?;
     }
     Ok(())
@@ -668,6 +726,7 @@ async fn session_state(State(app): State<App>, session: Session) -> ApiResult {
         person,
         setup,
         dev: app.dev,
+        google: app.google.is_some(),
     })
 }
 
@@ -677,6 +736,7 @@ fn now(app: &App, person: Option<Person>) -> ApiResult {
         person,
         setup: false,
         dev: app.dev,
+        google: app.google.is_some(),
     })
 }
 
@@ -713,7 +773,7 @@ async fn sign_in(State(app): State<App>, session: Session, body: Bytes) -> ApiRe
         return Err(wrong());
     };
     app.attempts.forget(&username);
-    begin(&session, &person.id, &mark).await?;
+    begin(&session, &person.id, (MARK, &mark)).await?;
     now(&app, Some(person))
 }
 
@@ -741,7 +801,7 @@ async fn set_up(State(app): State<App>, session: Session, body: Bytes) -> ApiRes
     })
     .await?;
     *app.setup.lock().unwrap_or_else(|held| held.into_inner()) = None;
-    begin(&session, &person.id, &mark).await?;
+    begin(&session, &person.id, (MARK, &mark)).await?;
     now(&app, Some(person))
 }
 
@@ -756,8 +816,274 @@ async fn change_password(State(app): State<App>, session: Session, body: Bytes) 
     })
     .await?;
     // Every session of theirs has ended. This one starts again.
-    begin(&session, &person.id, &mark).await?;
+    begin(&session, &person.id, (MARK, &mark)).await?;
     now(&app, Some(person))
+}
+
+// Signing in with Google
+//
+// The browser is sent to Google and comes back with a code. What has to be
+// kept in between is kept by the browser, in a cookie: anyone can start a
+// sign-in, and a server that kept one for each would keep as many as anyone
+// cared to start.
+
+/// The name of the cookie that keeps a sign-in while the browser is at
+/// Google. Over HTTPS it is one only this host can have set.
+fn google_cookie(app: &App) -> String {
+    match app.https {
+        true => format!("__Host-{GOOGLE_COOKIE}"),
+        false => GOOGLE_COOKIE.to_owned(),
+    }
+}
+
+/// The header that has the browser keep `value` for a sign-in at Google, or
+/// with none, forget it.
+fn keep(app: &App, value: Option<&str>) -> HeaderValue {
+    let minutes = value.map_or(0, |_| GOOGLE_MINUTES);
+    let cookie = Cookie::build((google_cookie(app), value.unwrap_or("").to_owned()))
+        .path("/")
+        .http_only(true)
+        .same_site(SameSite::Lax)
+        .secure(app.https)
+        .max_age(SessionLength::minutes(minutes))
+        .build();
+    HeaderValue::from_str(&cookie.to_string()).expect("a cookie of hex and base64 is a header")
+}
+
+/// Sends the browser to `to`, and has it keep or forget a sign-in at Google.
+fn send_to(app: &App, to: &str, kept: Option<&str>) -> Response {
+    let Ok(to) = HeaderValue::from_str(to) else {
+        return ApiError::internal("the address to go to is not one").into_response();
+    };
+    let mut response = StatusCode::SEE_OTHER.into_response();
+    let headers = response.headers_mut();
+    headers.insert(LOCATION, to);
+    headers.insert(SET_COOKIE, keep(app, kept));
+    headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
+
+/// An address of this server's own pages to go back to: `next` if it is
+/// one, and the first page if it could lead anywhere else.
+fn own_page(next: Option<&str>) -> &str {
+    let own = |next: &&str| {
+        next.len() <= MAX_NEXT_BYTES
+            && next.starts_with('/')
+            && !next[1..].starts_with(['/', '\\'])
+            && !next.contains(|c: char| c.is_control() || c == '\\')
+    };
+    next.filter(own).unwrap_or("/")
+}
+
+/// Sends the browser back to the page it came from, which says why nobody
+/// was signed in: the studio reads `google` from its address.
+fn turned_away(app: &App, next: &str, why: &str) -> Response {
+    let (page, fragment) = next.split_once('#').unwrap_or((next, ""));
+    let joint = if page.contains('?') { '&' } else { '?' };
+    let fragment = match fragment {
+        "" => String::new(),
+        fragment => format!("#{fragment}"),
+    };
+    send_to(app, &format!("{page}{joint}google={why}{fragment}"), None)
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn unhex(text: &str) -> Option<String> {
+    let digits = text.as_bytes();
+    if !digits.len().is_multiple_of(2) {
+        return None;
+    }
+    let bytes = digits
+        .chunks(2)
+        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok())
+        .collect::<Option<Vec<u8>>>()?;
+    String::from_utf8(bytes).ok()
+}
+
+/// A sign-in at Google as the browser keeps it: what Google sends back,
+/// what its token repeats, what proves who asked, and where to go after.
+struct Kept {
+    state: String,
+    nonce: String,
+    verifier: String,
+    next: String,
+}
+
+impl Kept {
+    fn written(started: &Started, next: &str) -> String {
+        // The first three are base64 without a `.` in it.
+        format!(
+            "{}.{}.{}.{}",
+            started.state,
+            started.nonce,
+            started.verifier,
+            hex(next.as_bytes())
+        )
+    }
+
+    fn read(app: &App, headers: &HeaderMap) -> Option<Self> {
+        let name = google_cookie(app);
+        let value = headers
+            .get_all(COOKIES)
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .flat_map(Cookie::split_parse)
+            .filter_map(Result::ok)
+            .find(|cookie| cookie.name() == name)?
+            .value()
+            .to_owned();
+        let mut parts = value.split('.');
+        let kept = Kept {
+            state: parts.next()?.to_owned(),
+            nonce: parts.next()?.to_owned(),
+            verifier: parts.next()?.to_owned(),
+            next: unhex(parts.next()?)?,
+        };
+        (parts.next().is_none() && !kept.state.is_empty()).then_some(kept)
+    }
+}
+
+/// Says on the server's own output why a sign-in with Google failed: the
+/// person at the browser is told that it did, and whoever runs the server
+/// can do something about it.
+fn complain(failed: &Failed) {
+    use std::io::Write;
+    let _ = writeln!(
+        std::io::stderr(),
+        "spool: a sign-in with Google failed: {failed}"
+    );
+}
+
+async fn asked<T: Send + 'static>(
+    provider: &Arc<Provider>,
+    ask: impl FnOnce(&Provider) -> Result<T, Failed> + Send + 'static,
+) -> Result<T, Failed> {
+    let provider = Arc::clone(provider);
+    tokio::task::spawn_blocking(move || ask(&provider))
+        .await
+        .unwrap_or_else(|_| {
+            Err(Failed::Unreachable(
+                "the request to Google stopped".to_owned(),
+            ))
+        })
+}
+
+#[derive(serde::Deserialize)]
+struct GoogleStart {
+    /// The page to come back to.
+    next: Option<String>,
+}
+
+/// `GET /auth/google`: sends the browser to Google to sign in.
+async fn google_start(
+    State(app): State<App>,
+    start: Result<Query<GoogleStart>, QueryRejection>,
+) -> ApiResult {
+    let Some(provider) = &app.google else {
+        return Err(not_found().await);
+    };
+    let start = query(start)?;
+    let next = own_page(start.next.as_deref());
+    // Sending a browser there asks Google nothing once the server knows
+    // where its sign-in is. Until then, it is one of the questions the
+    // server has only so many of at once.
+    let asking = match provider.knows() {
+        true => None,
+        false => match Arc::clone(&app.asking).try_acquire_owned() {
+            Ok(permit) => Some(permit),
+            Err(_) => return Ok(turned_away(&app, next, "busy")),
+        },
+    };
+    let start = move |provider: &Provider| {
+        let _held = asking;
+        provider.start()
+    };
+    Ok(match asked(provider, start).await {
+        Ok(started) => send_to(&app, &started.url, Some(&Kept::written(&started, next))),
+        Err(failed) => {
+            complain(&failed);
+            turned_away(&app, next, "unreachable")
+        }
+    })
+}
+
+#[derive(serde::Deserialize)]
+struct GoogleBack {
+    code: Option<String>,
+    state: Option<String>,
+    error: Option<String>,
+}
+
+/// `GET /auth/google/callback`: where Google sends the browser back to.
+/// Signs in whoever Google says it is, if they have an account, and goes to
+/// the page the sign-in started from.
+async fn google_callback(
+    State(app): State<App>,
+    session: Session,
+    headers: HeaderMap,
+    back: Result<Query<GoogleBack>, QueryRejection>,
+) -> ApiResult {
+    let Some(provider) = &app.google else {
+        return Err(not_found().await);
+    };
+    let back = query(back)?;
+    // The browser that comes back is the one that was sent: it kept what
+    // Google repeats.
+    let kept = Kept::read(&app, &headers).filter(|kept| {
+        back.state
+            .as_deref()
+            .is_some_and(|state| same(state.as_bytes(), kept.state.as_bytes()))
+    });
+    let Some(kept) = kept else {
+        return Ok(turned_away(&app, "/", "expired"));
+    };
+    let next = own_page(Some(&kept.next));
+    let code = match (back.code, back.error.as_deref()) {
+        (Some(code), None) => code,
+        (_, Some("access_denied")) => return Ok(turned_away(&app, next, "cancelled")),
+        _ => return Ok(turned_away(&app, next, "failed")),
+    };
+    let Ok(permit) = Arc::clone(&app.asking).try_acquire_owned() else {
+        return Ok(turned_away(&app, next, "busy"));
+    };
+    let Kept {
+        nonce, verifier, ..
+    } = &kept;
+    let (nonce, verifier) = (nonce.clone(), verifier.clone());
+    let identity = asked(provider, move |provider| {
+        let _held = permit;
+        provider.finish(&code, &nonce, &verifier)
+    })
+    .await;
+    let identity = match identity {
+        Ok(identity) => identity,
+        Err(failed) => {
+            complain(&failed);
+            let why = match failed {
+                Failed::Unverified => "unverified",
+                Failed::Unreachable(_) => "unreachable",
+                Failed::Refused(_) => "failed",
+            };
+            return Ok(turned_away(&app, next, why));
+        }
+    };
+    // Without an address Google answers for, nobody is found by it.
+    let why = match identity.email {
+        Some(_) => "unknown",
+        None => "unvouched",
+    };
+    let entered = people(&app, move |accounts| {
+        accounts.enter_with_google(&identity.subject, identity.email.as_deref())
+    })
+    .await?;
+    let Some((person, bound)) = entered else {
+        return Ok(turned_away(&app, next, why));
+    };
+    begin(&session, &person.id, (GOOGLE, &bound)).await?;
+    Ok(send_to(&app, next, None))
 }
 
 async fn list_people(State(app): State<App>) -> ApiResult {
@@ -773,15 +1099,20 @@ async fn add_person(
 ) -> ApiResult {
     caller.admin()?;
     let request: AddPersonRequest = json_body(&body)?;
-    ok(hashing(&app, turn(&app).await?, move |accounts| {
-        accounts.add(
-            &request.username,
-            &request.name,
-            &request.password,
-            request.admin.unwrap_or(false),
-        )
+    let sets_password = request.password.is_some();
+    let add = move |accounts: &Accounts| {
+        accounts.add(New {
+            username: request.username,
+            name: request.name,
+            password: request.password,
+            email: request.email,
+            admin: request.admin.unwrap_or(false),
+        })
+    };
+    ok(match sets_password {
+        true => hashing(&app, turn(&app).await?, add).await?,
+        false => people(&app, add).await?,
     })
-    .await?)
 }
 
 async fn change_person(
@@ -795,6 +1126,7 @@ async fn change_person(
     let change = Change {
         name: request.name,
         password: request.password,
+        email: request.email,
         admin: request.admin,
         active: request.active,
     };

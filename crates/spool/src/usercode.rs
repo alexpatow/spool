@@ -54,6 +54,10 @@ use crate::project::{Extractor, FeatureColumn, Runtime, Strategy, strategy_hash}
 /// another version.
 pub(crate) const PROTOCOL: u32 = 1;
 
+/// What the server's environment holds that user code is not handed: a
+/// token of the API, and the secret of the server's client at Google.
+const WITHHELD: [&str; 2] = ["SPOOL_TOKEN", "SPOOL_GOOGLE_CLIENT_SECRET"];
+
 const PYTHON_HELPER: &str = include_str!("usercode/spool.py");
 const TYPESCRIPT_HELPER: &str = include_str!("usercode/spool.js");
 
@@ -207,8 +211,11 @@ impl UserCode {
         };
         command.current_dir(&self.project_dir);
         // User code runs with the service's permissions, and that is no
-        // reason to hand it a token this process was started with.
-        command.env_remove("SPOOL_TOKEN");
+        // reason to hand it a token this process was started with, or what
+        // makes the server a client of Google's.
+        for secret in WITHHELD {
+            command.env_remove(secret);
+        }
         match task {
             Some(task) => command.env("SPOOL_TASK_DIR", absolute(task)?),
             None => command.env_remove("SPOOL_TASK_DIR"),
@@ -689,7 +696,9 @@ mod tests {
             Some(dir.path().join("project").as_path())
         );
         let set = environment(&command);
-        assert!(set.contains(&("SPOOL_TOKEN".to_owned(), None)), "{set:?}");
+        for secret in WITHHELD {
+            assert!(set.contains(&(secret.to_owned(), None)), "{set:?}");
+        }
         assert!(set.contains(&(
             "SPOOL_TASK_DIR".to_owned(),
             Some(task.to_string_lossy().into_owned())
@@ -746,7 +755,9 @@ mod tests {
             set.contains(&("SPOOL_TASK_DIR".to_owned(), None)),
             "{set:?}"
         );
-        assert!(set.contains(&("SPOOL_TOKEN".to_owned(), None)));
+        for secret in WITHHELD {
+            assert!(set.contains(&(secret.to_owned(), None)), "{set:?}");
+        }
         let (_, path) = set.iter().find(|(name, _)| name == "NODE_PATH").unwrap();
         let first = std::env::split_paths(path.as_deref().unwrap())
             .next()

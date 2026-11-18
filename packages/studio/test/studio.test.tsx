@@ -7,7 +7,9 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 
 import { PASSWORD, cookies } from "../../client/test/server.ts";
 import type { Server } from "../../client/test/server.ts";
+import { standInForGoogle } from "../scripts/google-stand-in.ts";
 import { SpoolClient } from "../src/api.ts";
+import type { Fetch } from "../src/api.ts";
 import { App, THEME_KEY } from "../src/app.tsx";
 import { here } from "../src/router.ts";
 import {
@@ -158,6 +160,102 @@ describe("the door", () => {
       expect(screen.getByRole("status").textContent).toBe("Revoked ingest.");
       expect(document.body.textContent).not.toContain(secret);
       expect(await agent.info().catch((error: unknown) => (error as { code: string }).code)).toBe("unauthorized");
+    },
+    SEEDING,
+  );
+
+  test(
+    "someone an admin added by email signs in with Google, and has no password to change",
+    async () => {
+      const google = await standInForGoogle();
+      const server = await start(companies, 15, { environment: google.environment });
+      // A browser that keeps what it is given and follows nothing by itself.
+      const browser = () => {
+        const kept = new Map<string, string>();
+        const call: Fetch = async (input, init) => {
+          const headers = new Headers(init.headers);
+          if (kept.size > 0) headers.set("Cookie", [...kept].map(([name, value]) => `${name}=${value}`).join("; "));
+          const response = await fetch(input, { ...init, headers, redirect: "manual" });
+          for (const set of response.headers.getSetCookie()) {
+            const [name = "", value = ""] = set.split(";")[0]!.split("=", 2);
+            if (value === "") kept.delete(name);
+            else kept.set(name, value);
+          }
+          return response;
+        };
+        return call;
+      };
+      /** Presses "Sign in with Google", signs in at the stand-in as `email`, and returns where that leads. */
+      const throughGoogle = async (call: Fetch, link: string, email: string, personal = false) => {
+        const leaving = await call(new URL(link), { method: "GET" });
+        const at = new URL(leaving.headers.get("location")!);
+        expect(at.origin + at.pathname).toBe(`${google.issuer}/authorize`);
+        at.pathname = "/approve";
+        at.searchParams.set("email", email);
+        if (personal) at.searchParams.set("personal", "on");
+        const approved = await fetch(at, { redirect: "manual" });
+        const back = await call(new URL(approved.headers.get("location")!), { method: "GET" });
+        expect(back.status).toBe(303);
+        return back.headers.get("location");
+      };
+
+      // The door offers it, and comes back to the page it was opened at.
+      window.history.replaceState(null, "", "/people?page=1");
+      const hers = browser();
+      render(<App url={server.url} fetch={hers} storage={memory()} />);
+      const link = (await screen.findByText("Sign in with Google")).closest("a")!.href;
+      expect(link).toBe(`${server.url}/auth/google?next=${encodeURIComponent("/people?page=1")}`);
+      // Nobody added her yet, and the door says so when Google sends her back.
+      const refused = await throughGoogle(hers, link, "grace@example.com");
+      expect(refused).toBe("/people?page=1&google=unknown");
+      cleanup();
+      window.history.replaceState(null, "", refused!);
+      render(<App url={server.url} fetch={hers} storage={memory()} />);
+      expect((await screen.findByRole("alert")).textContent).toMatch(
+        /^No account here has that Google account's email/,
+      );
+      // What the server added to the address is not kept in it.
+      expect(here()).toBe("/people?page=1");
+      expect((await screen.findByText("Sign in with Google")).closest("a")!.href).toBe(link);
+      cleanup();
+
+      // Ada adds her, by her email and with no password.
+      open(server, "/people");
+      await heading("People");
+      const table = await screen.findByRole("table");
+      expect(rowsOf(table).map((cells) => cells.slice(0, 6))).toEqual([["Ada", "ada", "-", "Password", "Admin", "On"]]);
+      press("Add person");
+      const adding = within(await screen.findByRole("dialog"));
+      fill("Name", "Grace", adding);
+      fill("Username", "grace", adding);
+      press("Add person", adding);
+      expect((await adding.findByRole("alert")).textContent).toBe("Give an email, a password, or both.");
+      fill("Email", "Grace@example.com", adding);
+      press("Add person", adding);
+      await screen.findByRole("status");
+      await waitFor(() =>
+        expect(rowsOf(table)[1]?.slice(0, 6)).toEqual(["Grace", "grace", "grace@example.com", "Google", "-", "On"]),
+      );
+      cleanup();
+
+      // A Google account that someone made with her address is not hers for that.
+      const theirs = browser();
+      const unvouched = await throughGoogle(theirs, link, "grace@example.com", true);
+      expect(unvouched).toBe("/people?page=1&google=unvouched");
+      window.history.replaceState(null, "", unvouched!);
+      render(<App url={server.url} fetch={theirs} storage={memory()} />);
+      expect((await screen.findByRole("alert")).textContent).toMatch(/is not Google's to answer for/);
+      cleanup();
+
+      // Now Google's word is enough, and she is at the page she opened.
+      expect(await throughGoogle(hers, link, "grace@example.com")).toBe("/people?page=1");
+      window.history.replaceState(null, "", "/people?page=1");
+      render(<App url={server.url} fetch={hers} storage={memory()} />);
+      await heading("People");
+      expect(parts("me")).toEqual(["Grace"]);
+      expect(screen.getByRole("button", { name: "Sign out" })).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Change password" })).toBeNull();
+      await google.stop();
     },
     SEEDING,
   );
