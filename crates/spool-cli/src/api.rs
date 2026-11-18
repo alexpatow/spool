@@ -42,6 +42,13 @@ pub struct LoadRequest {
     /// One object per row, with the columns the source declares. A column
     /// holds text, booleans or numbers.
     pub rows: Vec<serde_json::Map<String, serde_json::Value>>,
+    /// Whether a row may replace one the store holds. Left out or `true`,
+    /// a row under a known key with other values becomes the next version
+    /// of that row. With `false` such a row is refused and the whole call
+    /// with it: nothing is stored, and the error names the keys. That is
+    /// for a caller that means to add rows and not to change any.
+    #[serde(default)]
+    pub replace: Option<bool>,
     #[serde(default)]
     pub wait_ms: Option<u64>,
 }
@@ -79,6 +86,8 @@ pub struct RetractRequest {
 pub struct LoadParams {
     pub source: String,
     pub entity_type: String,
+    #[serde(default)]
+    pub replace: Option<bool>,
     #[serde(default)]
     pub wait_ms: Option<u64>,
 }

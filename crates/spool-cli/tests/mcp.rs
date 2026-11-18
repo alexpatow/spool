@@ -893,6 +893,39 @@ fn rows_are_loaded_matched_and_taken_back_through_tools() {
     let record = tool(&server, "get_record", json!({ "record": id("2") }));
     assert!(record["identity"].is_string(), "{record}");
     assert!(record["retracted"].is_null(), "{record}");
+
+    // A row under a key the store holds, with other values, would replace
+    // that row. The tool refuses it unless the call says to, and the rows
+    // that came with it are not loaded either.
+    let held = || server.read("/v1/info")["store"]["entity_types"][0]["records"].clone();
+    let before = (held(), runs());
+    let rows = json!([
+        { "id": "4", "code": "hammer", "colour": "blue" },
+        { "id": "1", "code": "anvil", "colour": "black" },
+        { "id": "7", "code": "tongs", "colour": "black" },
+        { "id": "3", "code": "anvil", "colour": "green" },
+    ]);
+    let mut change = json!({ "source": "shop", "entity_type": "thing", "rows": rows });
+    let error = refused(&server, "load_rows", change.clone(), "invalid");
+    assert_eq!(
+        error["message"],
+        "load rejected: 2 rows have keys the store holds with other values: `3`, `4`. \
+         Nothing was loaded, because this load was not to replace rows. If the rows are \
+         meant to change, load again with `replace` set to true"
+    );
+    change["replace"] = json!(false);
+    refused(&server, "load_rows", change.clone(), "invalid");
+    assert_eq!(held(), before.0);
+    // Each refused load is a run that failed.
+    assert_eq!(runs(), before.1 + 2);
+    let by_key = server.read("/v1/records?source=shop&key=4");
+    assert_eq!(by_key["records"].as_array().unwrap().len(), 1, "{by_key}");
+    change["replace"] = json!(true);
+    let changed = tool(&server, "load_rows", change);
+    assert_eq!(changed["run"]["load"]["inserted"], 3, "{changed}");
+    assert_eq!(changed["run"]["load"]["superseded"], 2, "{changed}");
+    let by_key = server.read("/v1/records?source=shop&key=4");
+    assert_eq!(by_key["records"].as_array().unwrap().len(), 2, "{by_key}");
 }
 
 /// Takes a capitalised word to be a thing, with the word in lower case as

@@ -105,6 +105,8 @@ export type ArrowBody = Uint8Array | ArrayBuffer | Blob;
 export interface LoadArrowOptions {
   source: string;
   entity_type: string;
+  /** As `replace` of a `LoadRequest`. */
+  replace?: boolean;
   wait_ms?: number;
 }
 
@@ -236,7 +238,10 @@ export class SpoolClient {
 
   /**
    * Adds rows as records. A row that was loaded before, with the same
-   * source, key and contents, is not added again.
+   * source, key and contents, is not added again. A row under a known key
+   * with other contents becomes the next version of that row, unless
+   * `replace` is `false`: then the whole call is refused and the error
+   * names the keys.
    *
    * The run that comes back may still be `running` if the server's wait ran
    * out first: pass it to `waitForRun`.

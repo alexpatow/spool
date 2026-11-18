@@ -811,6 +811,14 @@ export interface LoadReport {
 export interface LoadRequest {
   entity_type: string;
   /**
+   * Whether a row may replace one the store holds. Left out or `true`,
+   * a row under a known key with other values becomes the next version
+   * of that row. With `false` such a row is refused and the whole call
+   * with it: nothing is stored, and the error names the keys. That is
+   * for a caller that means to add rows and not to change any.
+   */
+  replace?: boolean | null;
+  /**
    * One object per row, with the columns the source declares. A column
    * holds text, booleans or numbers.
    */
