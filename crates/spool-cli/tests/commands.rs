@@ -422,7 +422,7 @@ about 330 MB, most of it the model, and later runs fetch nothing.
         .current_dir(dir.path())
         .args(["init", "plain"])
         .env("PATH", &empty)
-        .env("HOME", &dir.path().join("nobody"))
+        .env("HOME", dir.path().join("nobody"))
         .env_remove("SPOOL_UV")
         .output()
         .unwrap();
