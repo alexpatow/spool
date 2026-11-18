@@ -48,6 +48,10 @@ pub struct RecordEntry {
     /// again with other content.
     #[serde(default)]
     pub superseded_by: Option<RecordId>,
+    /// The retract run in which its source took the row back, while that
+    /// stands. Such a record has no identity and is given none.
+    #[serde(default)]
+    pub retracted: Option<RunId>,
 }
 
 impl RecordEntry {
@@ -112,7 +116,8 @@ pub struct RecordFilter {
     /// payload, in the source's name or in the key. Letters match whatever
     /// their case and accents.
     pub q: Option<String>,
-    /// Only those without an identity.
+    /// Only those that wait for an identity: they have none, and their
+    /// source has not taken them back.
     pub unassigned: bool,
     /// Only those after this ID: the last one of the page before.
     pub after: Option<RecordId>,
@@ -279,8 +284,12 @@ pub struct TypeInfo {
     #[serde(default)]
     pub strategies: Vec<Strategy>,
     pub records: u64,
-    /// Records no changeset has placed.
+    /// Records that wait for an identity: no changeset has placed them,
+    /// and their source has not taken them back.
     pub unassigned: u64,
+    /// Records their source took back. They are counted in `records`.
+    #[serde(default)]
+    pub retracted: u64,
     /// The sources the records came from, by name.
     pub sources: Vec<SourceInfo>,
     pub identities: u64,
@@ -296,8 +305,11 @@ pub struct SourceInfo {
     pub source: String,
     /// Counting each version of a row.
     pub records: u64,
-    /// Those of them no changeset has placed.
+    /// Those of them that wait for an identity.
     pub unassigned: u64,
+    /// Those of them the source took back.
+    #[serde(default)]
+    pub retracted: u64,
     /// When the latest of them was ingested.
     pub last_ingested_at: String,
 }
@@ -314,11 +326,13 @@ const RECORD: &str = "
     SELECT o.record_id::VARCHAR, o.entity_type, o.source_id, o.source_key,
            o.payload::VARCHAR, o.evidence::VARCHAR, epoch_us(o.ingested_at), o.ingest_run,
            m.identity_id::VARCHAR, o.supersedes::VARCHAR, later.record_id::VARCHAR,
-           named.label
+           named.label, taken.retract_run
     FROM spool.record o
     LEFT JOIN spool.membership m ON m.record_id = o.record_id AND m.to_seq IS NULL
     LEFT JOIN spool.record later ON later.supersedes = o.record_id
-    LEFT JOIN spool.record_label named ON named.record_id = o.record_id";
+    LEFT JOIN spool.record_label named ON named.record_id = o.record_id
+    LEFT JOIN spool.retraction taken
+      ON taken.record_id = o.record_id AND taken.restored_run IS NULL";
 
 fn record_from_row(row: &duckdb::Row<'_>) -> Result<RecordEntry> {
     fn id<T>(row: &duckdb::Row<'_>, at: usize) -> Result<Option<T>>
@@ -344,6 +358,7 @@ fn record_from_row(row: &duckdb::Row<'_>) -> Result<RecordEntry> {
         identity: id(row, 8)?,
         supersedes: id(row, 9)?,
         superseded_by: id(row, 10)?,
+        retracted: row.get::<_, Option<i64>>(12)?.map(|run| RunId(run as u64)),
     })
 }
 
@@ -385,7 +400,7 @@ pub(crate) fn records(conn: &Connection, filter: &RecordFilter) -> Result<Vec<Re
            AND ($2::VARCHAR IS NULL OR o.source_id = $2::VARCHAR)
            AND ($3::VARCHAR IS NULL OR o.source_key = $3::VARCHAR)
            AND ($4::VARCHAR IS NULL OR o.record_id > $4::UUID)
-           AND (NOT $5::BOOLEAN OR m.identity_id IS NULL)
+           AND (NOT $5::BOOLEAN OR (m.identity_id IS NULL AND taken.record_id IS NULL))
            AND ($7::VARCHAR IS NULL
                 OR json_extract_string(o.evidence, '$.document') = $7::VARCHAR)
            AND ($8::VARCHAR IS NULL OR m.identity_id = $8::UUID)
@@ -712,13 +727,19 @@ pub(crate) fn info(conn: &Connection, manifest: Option<&Manifest>) -> Result<Sto
                 (SELECT count(*) FROM spool.record o
                  WHERE o.entity_type = t.entity_type AND NOT EXISTS (
                    SELECT 1 FROM spool.membership m
-                   WHERE m.record_id = o.record_id AND m.to_seq IS NULL)),
+                   WHERE m.record_id = o.record_id AND m.to_seq IS NULL)
+                   AND o.record_id NOT IN (
+                     SELECT record_id FROM spool.retraction WHERE restored_run IS NULL)),
                 (SELECT count(*) FROM spool.identity i
                  WHERE i.entity_type = t.entity_type AND i.merged_into IS NULL),
                 (SELECT count(*) FROM spool.review_item r
                  WHERE r.entity_type = t.entity_type AND r.status = 'open'),
                 (SELECT max(d.changeset_id::VARCHAR) FROM spool.draft d
-                 WHERE d.entity_type = t.entity_type AND d.status = 'open')
+                 WHERE d.entity_type = t.entity_type AND d.status = 'open'),
+                (SELECT count(*) FROM spool.record o
+                 JOIN spool.retraction taken
+                   ON taken.record_id = o.record_id AND taken.restored_run IS NULL
+                 WHERE o.entity_type = t.entity_type)
          FROM spool.entity_type t
          GROUP BY t.entity_type
          ORDER BY t.entity_type",
@@ -738,6 +759,7 @@ pub(crate) fn info(conn: &Connection, manifest: Option<&Manifest>) -> Result<Sto
                 .unwrap_or_default(),
             records: row.get::<_, i64>(2)? as u64,
             unassigned: row.get::<_, i64>(3)? as u64,
+            retracted: row.get::<_, i64>(7)? as u64,
             sources: Vec::new(),
             identities: row.get::<_, i64>(4)? as u64,
             open_review_items: row.get::<_, i64>(5)? as u64,
@@ -750,10 +772,13 @@ pub(crate) fn info(conn: &Connection, manifest: Option<&Manifest>) -> Result<Sto
         });
     }
     let mut statement = conn.prepare(
-        "SELECT o.entity_type, o.source_id, count(*), count(*) - count(m.record_id),
-                epoch_us(max(o.ingested_at))
+        "SELECT o.entity_type, o.source_id, count(*),
+                count(*) FILTER (WHERE m.record_id IS NULL AND taken.record_id IS NULL),
+                epoch_us(max(o.ingested_at)), count(taken.record_id)
          FROM spool.record o
          LEFT JOIN spool.membership m ON m.record_id = o.record_id AND m.to_seq IS NULL
+         LEFT JOIN spool.retraction taken
+           ON taken.record_id = o.record_id AND taken.restored_run IS NULL
          GROUP BY o.entity_type, o.source_id
          ORDER BY o.entity_type, o.source_id",
     )?;
@@ -768,6 +793,7 @@ pub(crate) fn info(conn: &Connection, manifest: Option<&Manifest>) -> Result<Sto
                 source: row.get(1)?,
                 records: row.get::<_, i64>(2)? as u64,
                 unassigned: row.get::<_, i64>(3)? as u64,
+                retracted: row.get::<_, i64>(5)? as u64,
                 last_ingested_at: rfc3339(row.get(4)?),
             });
         }

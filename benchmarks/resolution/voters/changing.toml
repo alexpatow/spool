@@ -1,0 +1,135 @@
+# North Carolina voters whose sources change: five sources of about 100,000
+# people each, then 100,000 more rows, then 50,000 rows that two of the
+# sources take back, then everything matched again, then 10,000 of the rows
+# sent again. See ../../datasets.toml.
+#
+# The store is verified after every step. After the rows are taken back and
+# after some come back, what the store holds is set against the same steps
+# in a store that was never sent the rows that are gone.
+
+project = "."
+
+[truth]
+column = "recid"
+
+# The tenth of the register whose number ends in 0, which is the same people
+# in every source: 500,323 records.
+[[step]]
+name = "five sources"
+
+[[step.ingest]]
+dataset = "ncvoters_5"
+member = "5Party-ocp20/ncvr_numrec_1000000_modrec_2_ocp_20_myp_0_nump_5.csv"
+source = "party_0"
+entity_type = "person"
+where = "recid::BIGINT % 10 = 0"
+
+[[step.ingest]]
+dataset = "ncvoters_5"
+member = "5Party-ocp20/ncvr_numrec_1000000_modrec_2_ocp_20_myp_1_nump_5.csv"
+source = "party_1"
+entity_type = "person"
+where = "recid::BIGINT % 10 = 0"
+
+[[step.ingest]]
+dataset = "ncvoters_5"
+member = "5Party-ocp20/ncvr_numrec_1000000_modrec_2_ocp_20_myp_2_nump_5.csv"
+source = "party_2"
+entity_type = "person"
+where = "recid::BIGINT % 10 = 0"
+
+[[step.ingest]]
+dataset = "ncvoters_5"
+member = "5Party-ocp20/ncvr_numrec_1000000_modrec_2_ocp_20_myp_3_nump_5.csv"
+source = "party_3"
+entity_type = "person"
+where = "recid::BIGINT % 10 = 0"
+
+[[step.ingest]]
+dataset = "ncvoters_5"
+member = "5Party-ocp20/ncvr_numrec_1000000_modrec_2_ocp_20_myp_4_nump_5.csv"
+source = "party_4"
+entity_type = "person"
+where = "recid::BIGINT % 10 = 0"
+
+# A fiftieth of the register that the first step left out, from every source.
+[[step]]
+name = "100,000 more"
+
+[[step.ingest]]
+dataset = "ncvoters_5"
+member = "5Party-ocp20/ncvr_numrec_1000000_modrec_2_ocp_20_myp_0_nump_5.csv"
+source = "party_0"
+entity_type = "person"
+where = "recid::BIGINT % 50 = 1"
+
+[[step.ingest]]
+dataset = "ncvoters_5"
+member = "5Party-ocp20/ncvr_numrec_1000000_modrec_2_ocp_20_myp_1_nump_5.csv"
+source = "party_1"
+entity_type = "person"
+where = "recid::BIGINT % 50 = 1"
+
+[[step.ingest]]
+dataset = "ncvoters_5"
+member = "5Party-ocp20/ncvr_numrec_1000000_modrec_2_ocp_20_myp_2_nump_5.csv"
+source = "party_2"
+entity_type = "person"
+where = "recid::BIGINT % 50 = 1"
+
+[[step.ingest]]
+dataset = "ncvoters_5"
+member = "5Party-ocp20/ncvr_numrec_1000000_modrec_2_ocp_20_myp_3_nump_5.csv"
+source = "party_3"
+entity_type = "person"
+where = "recid::BIGINT % 50 = 1"
+
+[[step.ingest]]
+dataset = "ncvoters_5"
+member = "5Party-ocp20/ncvr_numrec_1000000_modrec_2_ocp_20_myp_4_nump_5.csv"
+source = "party_4"
+entity_type = "person"
+where = "recid::BIGINT % 50 = 1"
+
+# Two sources each take back a quarter of what they sent in the first step,
+# and not the same people: most of them are still known from other sources.
+[[step]]
+name = "50,000 taken back"
+rebuild = true
+
+[[step.retract]]
+dataset = "ncvoters_5"
+member = "5Party-ocp20/ncvr_numrec_1000000_modrec_2_ocp_20_myp_0_nump_5.csv"
+source = "party_0"
+entity_type = "person"
+where = "recid::BIGINT % 40 = 0"
+
+[[step.retract]]
+dataset = "ncvoters_5"
+member = "5Party-ocp20/ncvr_numrec_1000000_modrec_2_ocp_20_myp_1_nump_5.csv"
+source = "party_1"
+entity_type = "person"
+where = "recid::BIGINT % 40 = 10"
+
+[[step]]
+name = "everything matched again"
+rematch = true
+
+# A fifth of the rows that were taken back are sent again, unchanged.
+[[step]]
+name = "10,000 come back"
+rebuild = true
+
+[[step.ingest]]
+dataset = "ncvoters_5"
+member = "5Party-ocp20/ncvr_numrec_1000000_modrec_2_ocp_20_myp_0_nump_5.csv"
+source = "party_0"
+entity_type = "person"
+where = "recid::BIGINT % 200 = 0"
+
+[[step.ingest]]
+dataset = "ncvoters_5"
+member = "5Party-ocp20/ncvr_numrec_1000000_modrec_2_ocp_20_myp_1_nump_5.csv"
+source = "party_1"
+entity_type = "person"
+where = "recid::BIGINT % 200 = 10"

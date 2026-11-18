@@ -13,9 +13,10 @@ pub const USAGE: &str = "\
 Usage: spool bench <scenario> [options]
 
 Runs a benchmark scenario: ingests each step's files, stores its documents and
-runs its extractors over them, applies its corrections, resolves, and scores
-committed state against the scenario's truth. A scenario with labelled
-mentions is also scored on what its extractors found.
+runs its extractors over them, takes back the rows it says a source no longer
+holds, applies its corrections, resolves, and scores committed state against
+the scenario's truth. A scenario with labelled mentions is also scored on what
+its extractors found. The store is verified after every step.
 
   <scenario>      a scenario.toml, or the directory that holds one
 
@@ -98,7 +99,15 @@ fn run(arguments: &Arguments, scenario: Scenario, user_code: UserCode) -> spool:
     let report = scenario.run(&engine, |step| print_step(&engine, step, arguments.list))?;
 
     if let Some(order) = &report.order_sensitivity {
-        println!("\n== the batches in reverse order, without corrections ==");
+        let taken = report.steps.iter().any(|step| !step.retract.is_empty());
+        println!(
+            "\n== the batches in reverse order, without corrections{} ==",
+            if taken {
+                " or the rows that were taken back"
+            } else {
+                ""
+            }
+        );
         println!(
             "  same group    {} of {} records ({})",
             order.same_group,
@@ -153,8 +162,15 @@ fn write_results(out: &Path, report: &BenchReport) -> spool::Result<()> {
 fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<()> {
     println!("\n== {} ==", step.name);
     for ingest in &step.ingest {
+        let back = match ingest.restored {
+            0 => String::new(),
+            restored => format!(
+                ", {restored} records came back, {} of them to the identity they left",
+                ingest.returned
+            ),
+        };
         println!(
-            "ingested  {} rows of `{}` from `{}`: {} new, {} already known",
+            "ingested  {} rows of `{}` from `{}`: {} new, {} already known{back}",
             ingest.received, ingest.entity_type, ingest.source, ingest.inserted, ingest.duplicates
         );
     }
@@ -172,6 +188,20 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
             extract.mentions,
             extract.inserted,
             extract.duplicates
+        );
+    }
+    for retract in &step.retract {
+        let unknown = match retract.unknown {
+            0 => String::new(),
+            unknown => format!(" ({unknown} keys unknown)"),
+        };
+        println!(
+            "took back {} rows of `{}` from `{}`{unknown}: {} records, {} of them left an identity",
+            retract.received - retract.unknown,
+            retract.entity_type,
+            retract.source,
+            retract.retracted,
+            retract.detached
         );
     }
     for correction in &step.corrections {
@@ -400,6 +430,35 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
             upgrade.suggested_merges,
             upgrade.suggested_splits,
             upgrade.applied_changes
+        );
+    }
+    if let Some(rebuild) = &step.rebuild {
+        println!(
+            "\nagainst the same steps without the rows that were taken back ({} records):",
+            rebuild.records
+        );
+        println!(
+            "  same group    {} of {} records ({})",
+            rebuild.same_group,
+            rebuild.records,
+            share(rebuild.agreement)
+        );
+        println!(
+            "  same pairs    {} in both, {} only here, {} only there ({})",
+            rebuild.pairs_in_both,
+            rebuild.pairs_only_kept,
+            rebuild.pairs_only_rebuilt,
+            share(rebuild.pair_agreement)
+        );
+        let there = &rebuild.metrics;
+        println!(
+            "  there         {} identities; pairs precision {}  recall {}  (F1 {}); {} false merges, {} false splits",
+            there.identities,
+            share(there.pairs.precision),
+            share(there.pairs.recall),
+            share(there.pairs.f1),
+            there.false_merges,
+            there.false_splits
         );
     }
     Ok(())

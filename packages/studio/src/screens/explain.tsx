@@ -7,7 +7,7 @@ import type { Comparison, ConstraintKind, Explained, Explanation, Link, RuleRead
 import {
   Code,
   Fields,
-  Identity,
+  Placed,
   Labelled,
   Lines,
   Load,
@@ -361,7 +361,7 @@ function Side({ title, letter, explained }: { title: string; letter: string; exp
           ["Entity type", record.entity_type],
           [
             "Identity",
-            record.identity ? <Identity id={record.identity} labels={labels} /> : <Word value="unassigned" />,
+            <Placed record={record} labels={labels} />,
           ],
           [
             "Assigned",

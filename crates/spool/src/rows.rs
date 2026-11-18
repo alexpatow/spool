@@ -272,6 +272,29 @@ impl Rows {
         let schema = Arc::new(self.schema.project(&keep)?);
         Ok((Self::new(schema, batches), pairs))
     }
+
+    /// Leaves out the rows whose value of `key_column` is one of `keys`.
+    pub(crate) fn without(
+        self,
+        key_column: &str,
+        keys: &std::collections::HashSet<String>,
+    ) -> Result<Self> {
+        let at = self
+            .schema
+            .index_of(key_column)
+            .map_err(|_| Error::Scenario(format!("the rows have no column `{key_column}`")))?;
+        let mut batches = Vec::new();
+        for batch in self.batches {
+            let array = duckdb::arrow::compute::cast(batch.column(at), &DataType::Utf8)?;
+            let kept: duckdb::arrow::array::BooleanArray =
+                duckdb::arrow::array::AsArray::as_string::<i32>(&array)
+                    .iter()
+                    .map(|key| Some(key.is_none_or(|key| !keys.contains(key))))
+                    .collect();
+            batches.push(duckdb::arrow::compute::filter_record_batch(&batch, &kept)?);
+        }
+        Ok(Self::new(self.schema, batches))
+    }
 }
 
 impl Iterator for Rows {

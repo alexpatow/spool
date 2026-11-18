@@ -649,6 +649,15 @@ fn summary(explanation: &Explanation) -> Vec<String> {
         )),
     }
 
+    for record in [left, right] {
+        if let Some(run) = record.retracted {
+            said.push(format!(
+                "`{}` was taken back by its source in run {run}: it was taken out of its identity, and no run examines it until the source sends the row again.",
+                name_of(record.id)
+            ));
+        }
+    }
+
     for (later, earlier) in [(right, left), (left, right)] {
         if later.supersedes == Some(earlier.id) {
             said.push(format!(

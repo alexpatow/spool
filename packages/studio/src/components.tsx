@@ -348,6 +348,7 @@ const TONES: Record<string, Tone> = {
   running: "waits",
   unsure: "waits",
   unassigned: "waits",
+  taken_back: "plain",
   possible_merge: "waits",
   failed: "bad",
   rejected: "bad",
@@ -478,6 +479,21 @@ export function LinkTo({
  * An identity where a screen holds only its ID: what it is called, when
  * that was read, with the end of its ID, since two may be called the same.
  */
+/**
+ * Where a record is: its identity, or that it waits for one, or that its
+ * source took it back and it waits for none.
+ */
+export function Placed({
+  record,
+  labels,
+}: {
+  record: { identity?: string | null; retracted?: number | null };
+  labels: Map<string, string>;
+}) {
+  if (record.identity) return <Identity id={record.identity} labels={labels} />;
+  return <Word value={record.retracted == null ? "unassigned" : "taken_back"} />;
+}
+
 export function Identity({ id, labels }: { id: string; labels: Map<string, string> }) {
   const label = labels.get(id);
   if (label === undefined) return <Ref kind="identity" id={id} />;

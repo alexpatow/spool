@@ -709,7 +709,9 @@ static TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
              the identities they matched with their records, what was judged between them, \
              and the constraints that limit the decision. Decide it with `commit_changeset`, \
              by assigning each record to an identity or merging the identities, or close it \
-             with `dismiss_review_item`.",
+             with `dismiss_review_item`. Leave out a record whose `retracted` is set: its \
+             source took it back, it does not wait for a decision, and a changeset that \
+             gives it an identity is refused.",
         ),
         tool::<Constraints>(
             "list_constraints",
