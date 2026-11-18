@@ -162,10 +162,19 @@ fn write_results(out: &Path, report: &BenchReport) -> spool::Result<()> {
 fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<()> {
     println!("\n== {} ==", step.name);
     for ingest in &step.ingest {
+        let review = match ingest.possible_splits {
+            0 => String::new(),
+            1 => {
+                "; 1 identity they went back to is put to a reviewer as a possible split".to_owned()
+            }
+            count => format!(
+                "; {count} identities they went back to are put to a reviewer as possible splits"
+            ),
+        };
         let back = match ingest.restored {
             0 => String::new(),
             restored => format!(
-                ", {restored} records came back, {} of them to the identity they left",
+                ", {restored} records came back, {} of them to the identity they left{review}",
                 ingest.returned
             ),
         };
@@ -195,8 +204,15 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
             0 => String::new(),
             unknown => format!(" ({unknown} keys unknown)"),
         };
+        let review = match retract.possible_splits {
+            0 => String::new(),
+            1 => "; 1 identity they left is put to a reviewer as a possible split".to_owned(),
+            count => {
+                format!("; {count} identities they left are put to a reviewer as possible splits")
+            }
+        };
         println!(
-            "took back {} rows of `{}` from `{}`{unknown}: {} records, {} of them left an identity",
+            "took back {} rows of `{}` from `{}`{unknown}: {} records, {} of them left an identity{review}",
             retract.received - retract.unknown,
             retract.entity_type,
             retract.source,
@@ -419,6 +435,16 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
             share(overrides.share)
         );
     }
+    if let Some(asked) = &step.possible_splits {
+        println!(
+            "  for review    {} possible splits open, about {} records; {} of them hold more than one thing by the truth",
+            asked.open, asked.records, asked.wrong
+        );
+        println!(
+            "                {} pairs asked about, {} of them two things by the truth",
+            asked.pairs, asked.wrong_pairs
+        );
+    }
     if let Some(upgrade) = &step.upgrade_stability {
         println!(
             "  upgrade       `{}` matched everything again: {} of {} records kept their identity ({}); \
@@ -450,6 +476,12 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
             rebuild.pairs_only_rebuilt,
             share(rebuild.pair_agreement)
         );
+        if step.possible_splits.is_some() {
+            println!(
+                "  asked about   {} of the {} pairs only here are put to a reviewer by an open `possible_split` item",
+                rebuild.pairs_only_kept_asked, rebuild.pairs_only_kept
+            );
+        }
         let there = &rebuild.metrics;
         println!(
             "  there         {} identities; pairs precision {}  recall {}  (F1 {}); {} false merges, {} false splits",

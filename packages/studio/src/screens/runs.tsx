@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 import type { RunEntry, RunKind, RunStatus } from "../api.ts";
 import {
   Code,
@@ -93,6 +95,17 @@ export function Run({ id }: { id: string }) {
   );
 }
 
+/** What a run says of the `possible_split` review items it raised, or `null` when it raised none. */
+function leftForReview(identities: number | undefined): ReactNode {
+  if (!identities) return null;
+  return (
+    <>
+      {count(identities, "identity")} with records that nothing holds together now.{" "}
+      <Onward path={["review"]}>review</Onward>
+    </>
+  );
+}
+
 function RunView({ run }: { run: RunEntry }) {
   const { ingest, extraction, resolution, retraction } = run;
   // The identities a strategy would merge or split are named by ID.
@@ -147,6 +160,7 @@ function RunView({ run }: { run: RunEntry }) {
                   ? `${count(ingest.restored, "record")} the source had taken back, ${ingest.returned ?? 0} of them to the identity they left`
                   : null,
               ],
+              ["Left for review", leftForReview(ingest.possible_splits)],
               [
                 "Committed",
                 ingest.committed ? (
@@ -166,6 +180,7 @@ function RunView({ run }: { run: RunEntry }) {
                 "Taken back",
                 `${count(retraction.retracted, "record")}, ${retraction.detached} of them left an identity`,
               ],
+              ["Left for review", leftForReview(retraction.possible_splits)],
               [
                 "Committed",
                 retraction.committed ? (

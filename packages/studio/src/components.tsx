@@ -350,6 +350,7 @@ const TONES: Record<string, Tone> = {
   unassigned: "waits",
   taken_back: "plain",
   possible_merge: "waits",
+  possible_split: "waits",
   failed: "bad",
   rejected: "bad",
   no_match: "bad",

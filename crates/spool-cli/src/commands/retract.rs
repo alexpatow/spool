@@ -149,6 +149,17 @@ pub fn retract(arguments: &[String]) -> Result<(), Failure> {
         ),
         None => println!("none of them had an identity"),
     }
+    if report.possible_splits > 0 {
+        println!(
+            "{} left for review: what held {} records together went through a record that was taken back. See `spool show review --status open`.",
+            plural(report.possible_splits, "identity was", "identities were"),
+            if report.possible_splits == 1 {
+                "its"
+            } else {
+                "their"
+            }
+        );
+    }
     if report.unknown > 0 {
         println!(
             "{}: `{source}` has no `{entity_type}` row under {}",
