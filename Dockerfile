@@ -51,6 +51,12 @@ LABEL org.opencontainers.image.title="Spool" \
       org.opencontainers.image.description="Extract, resolve and track entities." \
       org.opencontainers.image.source="https://github.com/alexpatow/spool" \
       org.opencontainers.image.licenses="MIT"
+# `spool` carries the certificates it trusts. A project's Python code does
+# not: it asks the system for them when it calls a model's API or fetches a
+# model's weights over HTTPS.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=build /out/bin/spool /usr/local/bin/spool
 COPY --from=build /out/lib/libduckdb.so /usr/local/lib/libduckdb.so
 COPY LICENSE release/LICENSE-duckdb /usr/local/share/doc/spool/
