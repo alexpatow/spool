@@ -631,7 +631,7 @@ A caller of `/v1` is a person or an agent, and the server says which made a chan
 - **An admin adds everyone else**, and can change a name, set a new password, make an admin and turn an account off. Nobody signs themselves up. An account is turned off, not deleted, so the log keeps a name for its ID, and one admin who can sign in always remains. Turning an account off, or changing its password, ends its sessions. A person changes their own password with the current one.
 - **An agent sends a bearer token**, `SPOOL_TOKEN`, which a server may be started without. It reads and writes as `agent:api` and cannot manage people. Tokens that are named, made and revoked in the studio are to replace it.
 - **A write must come from the server's own pages.** A browser can send the session cookie with a request that another site's page makes. A write whose `Sec-Fetch-Site` is not `same-origin`, or, from a browser that sends none, whose `Origin` is not the host it was sent to, is refused as `forbidden`. A caller that is not a browser sends neither header and is let through.
-- **`spool dev` has no sign-in.** Whoever opens it is the account `dev`, an admin with no password. Nobody signs in as it, so a store that was developed on and is then served still prints the link, and `dev` does not count as the admin who must remain. What `dev` changed keeps its name in the log.
+- **`spool dev` has no sign-in.** Whoever opens it is the account `dev`, an admin with no password, so it listens on a loopback address only and refuses any other. Nobody signs in as it, so a store that was developed on and is then served still prints the link, and `dev` does not count as the admin who must remain. What `dev` changed keeps its name in the log.
 - **Passwords are for getting started.** A deployment that people depend on should sign them in through an identity provider, so that leaving the organisation ends their access and a second factor is the provider's to require. Sign-in with Google is planned as the first, with a person still added by an admin beforehand.
 
 The paths that make a caller one are outside `/v1`: `GET /auth/session` says who is signed in and whether the server still waits for its first account, and `POST /auth/sign-in`, `/auth/sign-out`, `/auth/setup` and `/auth/password` do what they are called. The parts are `password-auth` for Argon2, `tower-sessions` for sessions and `rusqlite` for the file.
@@ -1025,7 +1025,7 @@ Accounts are `crates/spool-cli/src/accounts.rs` and the `/auth` and `/v1/people`
 - A sign-in beyond the passwords the server checks at once is turned away, and signing in works again afterwards.
 - A body too large to be about an account is refused unread.
 - A write that says it comes from another site is refused.
-- Nobody signs in to a development server, and its changes are the `dev` account's.
+- Nobody signs in to a development server, and its changes are the `dev` account's. It does not start on an address others reach (`crates/spool-cli/tests/cli.rs`).
 
 Beside the milestones, `packages/stress` puts a real server under load and abuse. Each part is a command for a run of any size, and runs in a small form with the tests (`crates/spool-cli/tests/stress.rs`, with `--include-ignored`). Every part ends with the server stopped and the store checked by `Engine::verify`, through the `verify` example of the `spool` crate:
 

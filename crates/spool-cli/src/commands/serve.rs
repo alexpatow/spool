@@ -66,14 +66,16 @@ did keeps running.
 
 Open the address it listens on in a browser for the studio, which shows what
 the store holds and takes changes. Nobody signs in: every change is recorded
-under an account called `dev`.
+under an account called `dev`, an admin. So it listens on this machine only;
+`spool serve` runs a server that others reach.
 
   <dir>               the project directory (default: the current directory)
 
 Options:
-  --listen <addr>     the address to listen on (default: 127.0.0.1:7765)
+  --listen <addr>     the loopback address to listen on (default: 127.0.0.1:7765)
   --store <path>      the store's database file (default: <dir>/.spool/dev.duckdb)
-  --token <token>     the bearer token (default: $SPOOL_TOKEN, or `dev`)
+  --token <token>     the bearer token of callers that are not a browser, which
+                      write as `agent:api` (default: $SPOOL_TOKEN, or `dev`)
   --task-timeout <s>  how long a user-code strategy or an extractor may run,
                       in seconds (default: 600)
   --tasks <dir>       where the task directories of user code are made
@@ -202,6 +204,14 @@ pub fn dev(arguments: &[String]) -> Result<(), Failure> {
     )?;
     let dir = arguments.project_dir();
     let listen = listen_address(&arguments, &format!("127.0.0.1:{DEFAULT_PORT}"))?;
+    // Whoever reaches a development server is its admin.
+    if !listen.ip().is_loopback() {
+        return Err(Failure::Usage(format!(
+            "`spool dev` has no sign-in, so it listens on this machine only: `--listen` needs \
+             an address such as 127.0.0.1:{DEFAULT_PORT}, not `{listen}`. `spool serve` runs a \
+             server that others reach, and they sign in to it."
+        )));
+    }
     let store = arguments
         .path("--store")
         .unwrap_or_else(|| dir.join(".spool").join("dev.duckdb"));

@@ -68,6 +68,15 @@ fn usage_is_printed_on_request_and_on_a_mistake() {
             "`--listen` needs an address",
         ),
         (&["dev", "--port", "1"], "unknown option `--port`"),
+        // Nobody signs in to it, so it is not for anyone else to reach.
+        (
+            &["dev", "--listen", "0.0.0.0:7765"],
+            "listens on this machine only",
+        ),
+        (
+            &["dev", "--listen", "192.168.1.20:7765"],
+            "listens on this machine only",
+        ),
         (
             &["show", "weather"],
             "`weather` is not something `show` shows",

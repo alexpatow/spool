@@ -118,8 +118,8 @@ pub struct ServerOptions {
     /// A bearer token for callers that are not people. It writes as
     /// `agent:api`, and cannot manage people.
     pub token: Option<String>,
-    /// A caller that presents nothing is the `dev` account. For `spool dev`,
-    /// which listens on this machine only.
+    /// A caller that presents nothing is the `dev` account, an admin. For
+    /// `spool dev`, which refuses to listen anywhere but on this machine.
     pub dev: bool,
     /// The code that makes the first account, while no admin can sign in.
     pub setup: Option<String>,
