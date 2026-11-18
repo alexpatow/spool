@@ -342,14 +342,15 @@ pub async fn serve(
     options: &ServerOptions,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> std::io::Result<()> {
-    let (connections, mut closed) = unread::Connections::of(listener);
+    let (connections, read_out) = unread::Connections::of(listener);
     let router = router(engine, options).into_make_service_with_connect_info::<unread::Unread>();
     axum::serve(connections, router)
         .with_graceful_shutdown(shutdown)
         .await?;
     // A connection that was answered with part of a request unread is read
-    // out before it closes. This ends when the last of them has closed.
-    closed.recv().await;
+    // out before it closes, so that its client reads the answer. Those get
+    // a moment to finish.
+    read_out.wait().await;
     Ok(())
 }
 

@@ -52,6 +52,11 @@ const MAX_DROPPED_BYTES: u64 = 1 << 30;
 const DROPPING_TIME: Duration = Duration::from_secs(30);
 const DROPPING_PAUSE: Duration = Duration::from_secs(5);
 
+/// How long a server that is stopping waits for connections that are still
+/// being read out. A client that has finished is done in this time, and one
+/// that has not does not keep the server from stopping.
+const STOPPING_WAIT: Duration = Duration::from_secs(1);
+
 /// Whether a connection was answered with part of a request unread. Its
 /// requests carry it, and say so; the connection reads it when it closes.
 #[derive(Clone, Default)]
@@ -71,11 +76,22 @@ pub(super) struct Connections {
 }
 
 impl Connections {
-    /// The connections of `listener`, and a receiver that ends when the
-    /// listener is gone and the last connection has closed.
-    pub(super) fn of(listener: TcpListener) -> (Self, mpsc::Receiver<()>) {
+    /// The connections of `listener`, and what waits for the last of them.
+    pub(super) fn of(listener: TcpListener) -> (Self, ReadOut) {
         let (closing, closed) = mpsc::channel(1);
-        (Self { listener, closing }, closed)
+        (Self { listener, closing }, ReadOut(closed))
+    }
+}
+
+/// Ends when the listener is gone and no connection is being read out.
+pub(super) struct ReadOut(mpsc::Receiver<()>);
+
+impl ReadOut {
+    /// Waits for the connections that are still being read out, for at most
+    /// [`STOPPING_WAIT`].
+    pub(super) async fn wait(mut self) {
+        // Nothing is ever sent: this ends when the last sender is dropped.
+        let _ = tokio::time::timeout(STOPPING_WAIT, self.0.recv()).await;
     }
 }
 
