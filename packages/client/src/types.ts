@@ -702,6 +702,13 @@ export interface IngestReport {
    */
   inserted: number;
   /**
+   * Identities a record went back to where nothing holds it with the
+   * records that are there: what joined them went through a record that
+   * is still taken back. Each has an open `possible_split` review item,
+   * which this run raised.
+   */
+  possible_splits?: number;
+  /**
    * Rows received.
    */
   received: number;
@@ -1231,8 +1238,9 @@ export interface RetractReport {
   detached: number;
   /**
    * Identities the records left whose remaining members nothing holds
-   * together any more. Each has an open `possible_split` review item,
-   * which this run raised.
+   * together any more, and that this run raised a `possible_split`
+   * review item for. One that already had an open item keeps it, and
+   * is not counted.
    */
   possible_splits?: number;
   /**
@@ -1335,10 +1343,11 @@ export interface ReviewEntry {
   dismissed?: Dismissal | null;
   entity_type: EntityType;
   /**
-   * Only a `possible_split` has these: its records as the groups that
-   * are each still held together, as they were when the item was raised.
-   * Nothing the store knows says that two of the groups are one thing.
-   * The largest group is first.
+   * Only a `possible_split` has these: the records of its identity as
+   * the groups that are each still held together. Nothing the store
+   * knows says that two of the groups are one thing. While the item is
+   * open they are the identity's records as they are now; once it is
+   * closed, as they were last. The largest group is first.
    */
   groups?: RecordId[][];
   id: number;
@@ -1363,17 +1372,18 @@ export interface ReviewEntry {
    */
   resolved_seq?: Seq | null;
   /**
-   * The run that raised it: a reconcile run, or for a `possible_split`
-   * the retract run that took back what held the records together.
+   * The run that raised it: a reconcile run. For a `possible_split`, the
+   * retract run that took back what held the records together, or the
+   * ingest run that brought a record back to where what held it is
+   * still gone.
    */
   run: RunId;
   status: ReviewStatus;
   /**
    * Superseded: the reconcile run that raised it again in another form,
    * or the retract run that took back the records it asked about. For a
-   * `possible_split`, the retract run that raised it again with other
-   * groups, or the reconcile run whose judgements hold the groups
-   * together.
+   * `possible_split`, the reconcile run whose judgements hold the
+   * groups together.
    */
   superseded_by?: RunId | null;
 }

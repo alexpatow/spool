@@ -900,7 +900,7 @@ function SplitCard({
             : takenBack.length === 1
               ? "What held them together went through a record that its source took back."
               : `What held them together went through ${count(takenBack.length, "record")} that their source took back.`}{" "}
-          Each group still holds together. Nothing the store knows joins one group to another: no match by the rules,
+          Each group still holds together. Nothing the store knows joins one group to another: no match found by a run,
           no must_link, and no decision by a reviewer or an agent.
         </p>
       </CardHead>
@@ -986,7 +986,7 @@ function SplitCard({
             ))}
             <ShelfTable.Row data-part="found" style={styles.row}>
               <ShelfTable.Head scope="row" style={[styles.cell, styles.rowName]}>
-                Judgements
+                Judgements across groups
               </ShelfTable.Head>
               {groups.map((_, index) => (
                 <ShelfTable.Cell key={index} style={[styles.cell, styles.value]}>

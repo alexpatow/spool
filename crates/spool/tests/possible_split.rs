@@ -367,7 +367,7 @@ fn a_changeset_that_does_not_answer_the_item_leaves_it_open() {
     // A run that places an unrelated record.
     ingest(&engine, "yard", &[("7", Some("wrench"), None)]);
     resolve(&engine);
-    assert_eq!(open(&engine), [item.clone()]);
+    assert_eq!(open(&engine), std::slice::from_ref(&item));
 
     // A reviewer's changeset about other records.
     let wrench = record_id(&engine, "yard", "7");
@@ -379,7 +379,7 @@ fn a_changeset_that_does_not_answer_the_item_leaves_it_open() {
             b: held.anvil,
         }],
     );
-    assert_eq!(open(&engine), [item.clone()]);
+    assert_eq!(open(&engine), std::slice::from_ref(&item));
 
     // A retraction that names none of its records.
     retract(&engine, "yard", &["7"]);
@@ -531,7 +531,7 @@ fn another_retraction_keeps_the_item_with_the_groups_that_are_left() {
 
     // The same retraction again changes nothing.
     assert_eq!(retract(&engine, "kiosk", &["1"]).possible_splits, 0);
-    assert_eq!(open(&engine), [before.clone()]);
+    assert_eq!(open(&engine), std::slice::from_ref(&before));
 
     // The yard's anvil goes too. The question stands, about fewer records:
     // it is the same item, in step with the identity.
@@ -728,7 +728,7 @@ fn an_explanation_of_two_of_its_records_names_the_item() {
     let (held, item) = asked(&engine);
 
     let explanation = engine.explain(held.anvil, held.mallet).unwrap();
-    assert_eq!(explanation.review_items, [item.clone()]);
+    assert_eq!(explanation.review_items, std::slice::from_ref(&item));
     let said = explanation.summary.join("\n");
     assert!(
         said.contains(&format!(

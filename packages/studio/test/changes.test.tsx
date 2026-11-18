@@ -626,7 +626,7 @@ describe("a review item that asks whether an identity is still one thing", () =>
     expect(field("Run")).toBe(`run ${taken.run}`);
     expect(within(card).getByRole("heading", { level: 2 }).textContent).toBe("Are these 2 records still one thing?");
     expect(parts("why", card)).toEqual([
-      `They share ${label}. What held them together went through a record that its source took back. Each group still holds together. Nothing the store knows joins one group to another: no match by the rules, no must_link, and no decision by a reviewer or an agent.`,
+      `They share ${label}. What held them together went through a record that its source took back. Each group still holds together. Nothing the store knows joins one group to another: no match found by a run, no must_link, and no decision by a reviewer or an agent.`,
     ]);
     expect(parts("record-kind", card)).toEqual(["Group 1", "Group 2", "Taken back by its source"]);
     // What held them together is under the record that was taken back.

@@ -538,7 +538,7 @@ identity     {identity}
 Are these records still one thing?
 They share an identity, and a record that held them together was taken back by its source.
 Each group below still holds together. Nothing the store knows joins one group to another:
-no match by the rules, no `must_link`, and no decision by a reviewer or an agent.
+no match found by a run, no `must_link`, and no decision by a reviewer or an agent.
 
 group 1
   {}  shop:{}  still in the identity

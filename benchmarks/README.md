@@ -73,19 +73,23 @@ where = "recid::BIGINT % 40 = 0"
 
 The store is verified after every step, and the scenario fails at the first step that leaves it inconsistent. From a retraction on, the truth is scored on the rows the sources still hold. A step with `rebuild = true` also runs the steps so far in a second store that is never sent the rows that are gone, and reports how far the two agree: the share of records grouped with the same records in both, and the pairs that are together in one and not in the other.
 
-On the same machine, in 222 seconds and 2.1 GB:
+On the same machine, in 216 seconds and 2.2 GB:
 
-| Step | Records the sources hold | Pair precision | Pair recall | Kept their identity | Same group as resolved afresh | Pairs only here | Pairs only there |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| five sources | 500,323 | 0.988 | 0.881 | | | | |
-| 100,000 more | 600,094 | 0.986 | 0.882 | 500,122 of 500,122 | | | |
-| 50,000 taken back | 549,978 | 0.986 | 0.882 | 549,757 of 599,854 | 549,799 of 549,978 | 142 | 0 |
-| everything matched again | 549,978 | 0.986 | 0.882 | 549,787 of 549,787 | | | |
-| 10,000 come back | 559,990 | 0.986 | 0.883 | 549,787 of 549,787 | 559,837 of 559,990 | 125 | 0 |
+| Step | Records the sources hold | Pair precision | Pair recall | Kept their identity | Same group as resolved afresh | Pairs only here | Of them, put to a reviewer as a possible split | Pairs only there |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| five sources | 500,323 | 0.988 | 0.881 | | | | | |
+| 100,000 more | 600,094 | 0.986 | 0.882 | 500,122 of 500,122 | | | | |
+| 50,000 taken back | 549,978 | 0.986 | 0.882 | 549,757 of 599,854 | 549,799 of 549,978 | 142 | 142 | 0 |
+| everything matched again | 549,978 | 0.986 | 0.882 | 549,787 of 549,787 | | | | |
+| 10,000 come back | 559,990 | 0.986 | 0.883 | 549,787 of 549,787 | 559,837 of 559,990 | 125 | 119 | 0 |
 
 Taking back 50,116 records took 50,097 of them out of an identity and changed nothing else: the records that kept their identity are all the others. Of the 10,012 records that came back, 10,009 went back to the identity they had left, and the other three had none when they were taken back. No identity was created for a row that came back.
 
-The 142 pairs are what a retraction leaves behind. Two records that were matched only through a third stay in one identity when the third is taken back, because the engine does not take an identity apart on its own. Resolved afresh, they would be two identities. Matching everything again does not find them: it suggested no split, since no rule says the two differ, only that nothing joins them any more. On this data 111 of the 142 are pairs of one person, so the store that kept them has the higher recall (0.8824 against 0.8821), and 31 are wrong merges that nothing reports.
+The 142 pairs are what a retraction leaves behind. Two records that were matched only through a third stay in one identity when the third is taken back, because the engine does not take an identity apart on its own. Resolved afresh, they would be two identities. Matching everything again does not find them: it suggested no split, since no rule says the two differ, only that nothing joins them any more.
+
+The run that takes the rows back does find them. For each identity it took a record out of, it works out which of the records that are left still hold together, and where they fall into more than one group it leaves a `possible_split` review item that names the identity and the groups. The two retractions left 70 items about 179 records, and the pairs of records in different groups of an item are the 142 pairs and no others. On this data 111 of the 142 are pairs of one person, so the store that kept them has the higher recall (0.8824 against 0.8821), and 31 are wrong merges, in 6 of the 70 identities. Nothing is split until a reviewer says so, and all 31 are in front of one.
+
+When 10,000 of the rows come back, 13 of the items close on their own, because the record that held their groups together is in the identity again. One item is opened: a record went back to an identity that it had been joined to through a record that is still gone. The 58 items open at the end ask about 119 of the 125 pairs that only this store has. The other six are one identity of four records, and they are not a join that went stale. The four match each other, and were left for review in the first step because a fifth record matched two of them and not a third. They got their identity while the fifth was taken back. The fifth came back, and is in an open `conflict` item that names the identity.
 
 The order of arrival is tried at the end on the rows the sources still hold: with the steps in reverse, 559,952 of 559,990 records are grouped as they are with the steps as written.
 

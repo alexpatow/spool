@@ -1445,6 +1445,13 @@
           "minimum": 0,
           "type": "integer"
         },
+        "possible_splits": {
+          "default": 0,
+          "description": "Identities a record went back to where nothing holds it with the\nrecords that are there: what joined them went through a record that\nis still taken back. Each has an open `possible_split` review item,\nwhich this run raised.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "received": {
           "description": "Rows received.",
           "format": "uint64",
@@ -2854,7 +2861,7 @@
         },
         "possible_splits": {
           "default": 0,
-          "description": "Identities the records left whose remaining members nothing holds\ntogether any more. Each has an open `possible_split` review item,\nwhich this run raised.",
+          "description": "Identities the records left whose remaining members nothing holds\ntogether any more, and that this run raised a `possible_split`\nreview item for. One that already had an open item keeps it, and\nis not counted.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -3005,7 +3012,7 @@
         },
         "groups": {
           "default": [],
-          "description": "Only a `possible_split` has these: its records as the groups that\nare each still held together, as they were when the item was raised.\nNothing the store knows says that two of the groups are one thing.\nThe largest group is first.",
+          "description": "Only a `possible_split` has these: the records of its identity as\nthe groups that are each still held together. Nothing the store\nknows says that two of the groups are one thing. While the item is\nopen they are the identity's records as they are now; once it is\nclosed, as they were last. The largest group is first.",
           "items": {
             "items": {
               "$ref": "#/$defs/RecordId"
@@ -3049,7 +3056,7 @@
         },
         "run": {
           "$ref": "#/$defs/RunId",
-          "description": "The run that raised it: a reconcile run, or for a `possible_split`\nthe retract run that took back what held the records together."
+          "description": "The run that raised it: a reconcile run. For a `possible_split`, the\nretract run that took back what held the records together, or the\ningest run that brought a record back to where what held it is\nstill gone."
         },
         "status": {
           "$ref": "#/$defs/ReviewStatus"
@@ -3063,7 +3070,7 @@
               "type": "null"
             }
           ],
-          "description": "Superseded: the reconcile run that raised it again in another form,\nor the retract run that took back the records it asked about. For a\n`possible_split`, the retract run that raised it again with other\ngroups, or the reconcile run whose judgements hold the groups\ntogether."
+          "description": "Superseded: the reconcile run that raised it again in another form,\nor the retract run that took back the records it asked about. For a\n`possible_split`, the reconcile run whose judgements hold the\ngroups together."
         }
       },
       "required": [

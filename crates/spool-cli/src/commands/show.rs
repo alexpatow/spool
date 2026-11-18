@@ -1432,7 +1432,7 @@ fn possible_split(item: &ReviewEntry, records: &[RecordEntry], taken_back: &[Rec
     println!(
         "Each group below still holds together. Nothing the store knows joins one group to another:"
     );
-    println!("no match by the rules, no `must_link`, and no decision by a reviewer or an agent.");
+    println!("no match found by a run, no `must_link`, and no decision by a reviewer or an agent.");
     for (number, group) in item.groups.iter().enumerate() {
         println!("\ngroup {}", number + 1);
         let rows: Vec<Vec<String>> = group
