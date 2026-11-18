@@ -1,0 +1,298 @@
+---
+title: Identities
+description: An identity is a minted ID and the records that belong to it. IDs are never reused, every change is a changeset in a log, and a merge, a split and an undo are changesets too.
+---
+
+An **identity** is one real-world thing as Spool knows it: an ID, an entity type, and the records that belong to it. The ID is what other systems store.
+
+This page says what holds for every identity, and shows a merge, the merged ID still answering, an undo, a split and a constraint. Each is a call you can paste.
+
+## Before you start
+
+The examples use the sample project with both of its files of rows loaded and matched, which is where [Getting started](/docs/getting-started) ends. If you have that project and its server is running, use it. If not, this makes it:
+
+{/* sample: new session */}
+
+```sh
+spool init companies
+cd companies
+```
+
+{/* sample: background */}
+
+```sh
+spool dev
+```
+
+Leave that running. In a second terminal, in the `companies` directory:
+
+```sh
+spool load samples/crm-1.csv
+spool match
+spool load samples/crm-2.csv
+spool match
+```
+
+Then load two more rows, which the examples below correct:
+
+```csv title="crm-3.csv"
+id,name,country
+c-10,Acorn Tooling,GB
+c-11,The Halden Group,GB
+```
+
+```sh
+spool load crm-3.csv
+spool match
+```
+
+Acorn Tooling joined Acorn Tools, because the names are close. The Halden Group got an identity of its own, because the rule that picks pairs to compare looks at the first four letters. [Matching](/docs/concepts/matching#what-a-match-does) explains both.
+
+## What an identity is
+
+Identity IDs are minted, so yours differ from the ones on this page. The commands here keep each ID in a shell variable, so that they can be pasted as they are:
+
+```sh
+ACORN=$(spool show records crm:c-1 | awk '/^identity/ {print $2}')
+spool show identities $ACORN
+```
+
+```text title="Output"
+identity    01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+type        company
+created at  log position 1
+
+record                                source and key  since
+31075f20-6900-838b-f5af-f8c6576744a4  crm:c-3         log position 1
+34c3d52d-e53b-1559-7404-1892fb1fd4e3  crm:c-9         log position 2
+875986b9-a764-1450-33d1-2d4612fb4daa  crm:c-10        log position 3
+a780fcfe-cb2f-21dd-25ea-11db898fd6a2  crm:c-2         log position 1
+ab8e9d59-0aaa-96b9-ddb7-db0bff7a9356  crm:c-1         log position 1
+
+history
+  1  2026-11-18T17:12:43Z  engine  reconcile run 3  "reconcile new records"
+      create company identity 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+      place record 31075f20-6900-838b-f5af-f8c6576744a4 in 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+      place record a780fcfe-cb2f-21dd-25ea-11db898fd6a2 in 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+      place record ab8e9d59-0aaa-96b9-ddb7-db0bff7a9356 in 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+  2  2026-11-18T17:12:43Z  engine  reconcile run 6  "reconcile new records"
+      place record 34c3d52d-e53b-1559-7404-1892fb1fd4e3 in 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+  3  2026-11-18T17:12:43Z  engine  reconcile run 9  "reconcile new records"
+      place record 875986b9-a764-1450-33d1-2d4612fb4daa in 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+```
+
+An identity has no attributes of its own. It has no name, address or "golden record". It is the set of records, and each record keeps what its source said. The name an identity is shown by is the label most of its records have.
+
+Three things hold for every identity:
+
+- **The ID is minted, not derived.** It is a UUID made when the identity is created. It does not depend on the records or on the rules, so a better rule cannot change it.
+- **The ID is never deleted or reused.** An identity that is merged into another stays, as a pointer to the one that took its place.
+- **A record belongs to at most one identity.** Belonging to none is allowed, and means nothing has decided yet.
+
+## The log
+
+Identities change in one way only: a **changeset** is committed. A changeset is an ordered list of operations with an author and a reason, applied all at once or not at all. The log of changesets is the source of truth.
+
+```sh
+spool show log
+```
+
+```text title="Output"
+position  actor   operations  from             reason
+1         engine  10          reconcile run 3  reconcile new records
+2         engine  4           reconcile run 6  reconcile new records
+3         engine  3           reconcile run 9  reconcile new records
+```
+
+Every changeset so far was written by a match. `actor` says who committed it: `engine` for a run, `user:<id>` for a person, `agent:<name>` for a caller with a token.
+
+There are six operations: `create_identity`, `assign`, `merge`, `reinstate`, `constrain` and `unconstrain`. [The HTTP API](/docs/api#changesets) has the form of each. Each one says what it expects to find, and that is checked when the changeset is committed. An `assign`, for example, names the identity the record is in now, as `from`, and is refused if the record has moved since. A changeset that fails a check is refused whole, and the answer names the operation.
+
+People and agents write changesets too: with `POST /v1/changesets`, from the studio, or through the [MCP](/docs/mcp) tool `commit_changeset`. They pass the same checks as a run's.
+
+## Merge
+
+The Halden Group and Halden Group, both in GB, are one company. A merge is a changeset with one operation:
+
+```sh
+HALDEN=$(spool show records crm:c-5 | awk '/^identity/ {print $2}')
+THE_HALDEN=$(spool show records crm:c-11 | awk '/^identity/ {print $2}')
+curl -s -X POST http://127.0.0.1:7765/v1/changesets -d '{"reason": "The Halden Group is Halden Group", "ops": [{"op": "merge", "from": "'$THE_HALDEN'", "into": "'$HALDEN'"}]}'
+```
+
+```text title="Output"
+{"seq":4,"changeset":"01a1efa5-8239-7189-a210-85dff7279251","content_hash":"d70a7bb572452adcfbc7d675a01225c1a2b01d74864d3beda1d5b6ae01be5cf1"}
+```
+
+`seq` is the position in the log it was committed at. `crm:c-11` now has the identity of `crm:c-5`:
+
+```sh
+spool show records crm:c-11
+```
+
+```text title="Output"
+record    2c53c39b-ba40-34f1-5a6c-f335adbe639c
+type      company
+source    crm
+key       c-11
+ingested  2026-11-18T17:12:43Z by run 7
+identity  01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae
+
+payload
+  country  GB
+  id       c-11
+  name     The Halden Group
+```
+
+## The old ID still answers
+
+Something may have stored the ID that was merged away. Asking for it leads to the identity that took its place:
+
+```sh
+spool show identities $THE_HALDEN
+```
+
+```text title="Output"
+identity     01a1efa5-8185-7558-9c57-8a3662b3284c
+merged into  01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae
+type         company
+created at   log position 3
+
+record                                source and key  since
+2c53c39b-ba40-34f1-5a6c-f335adbe639c  crm:c-11        log position 4
+38f040c9-82b9-2f94-813b-697309e52dab  crm:c-5         log position 1
+
+history
+  3  2026-11-18T17:12:43Z  engine  reconcile run 9  "reconcile new records"
+      create company identity 01a1efa5-8185-7558-9c57-8a3662b3284c
+      place record 2c53c39b-ba40-34f1-5a6c-f335adbe639c in 01a1efa5-8185-7558-9c57-8a3662b3284c
+  4  2026-11-18T17:12:43Z  user:01a1efa5-800f-7661-b8c0-9b47e1bb3341  "The Halden Group is Halden Group"
+      merge 01a1efa5-8185-7558-9c57-8a3662b3284c into 01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae
+```
+
+Nothing that stored the old ID is left pointing at nothing. [Using the IDs](/docs/using-the-ids) shows the same lookup over HTTP, and how a system that stores IDs learns of a merge.
+
+In the studio the same merge is a button on an identity's screen.
+
+## Undo
+
+A change is taken back with a new changeset, which the server works out from the log. History is not rewritten. The merge is the last line of `spool show log`, and it is undone by its position:
+
+```sh
+MERGE=$(spool show log | tail -n 1 | awk '{print $1}')
+curl -s -X POST http://127.0.0.1:7765/v1/changesets/$MERGE/undo -d '{"reason": "merged too early"}'
+```
+
+```text title="Output"
+{"changeset":{"id":"01a1efa5-82a5-71d7-a6ca-21e1c08fea9e","base":4,"actor":"user:01a1efa5-800f-7661-b8c0-9b47e1bb3341","reason":"merged too early","run":null,"ops":[{"op":"reinstate","identity":"01a1efa5-8185-7558-9c57-8a3662b3284c"},{"op":"assign","record":"2c53c39b-ba40-34f1-5a6c-f335adbe639c","from":"01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae","to":"01a1efa5-8185-7558-9c57-8a3662b3284c"}]},"committed":{"seq":5,"changeset":"01a1efa5-82a5-71d7-a6ca-21e1c08fea9e","content_hash":"333dbfa6e8a6b52253c3a4dcb1ba17bfe85a2fdbd60dc760299ebb2b65518105"}}
+```
+
+```sh
+spool show records crm:c-11
+```
+
+```text title="Output"
+record    2c53c39b-ba40-34f1-5a6c-f335adbe639c
+type      company
+source    crm
+key       c-11
+ingested  2026-11-18T17:12:43Z by run 7
+identity  01a1efa5-8185-7558-9c57-8a3662b3284c
+
+payload
+  country  GB
+  id       c-11
+  name     The Halden Group
+```
+
+The identity that was merged away is active again, under the ID it always had, and its record is back in it. An undo is checked against the state as it is now. If later changes mean it no longer applies, it is refused and nothing is undone by halves. With `"commit": false` the call only returns the changeset the undo would be.
+
+## Split
+
+Say Acorn Tooling is not Acorn Tools. There is no split operation: a split is a new identity and the `assign` operations that move records into it, in one changeset. The server writes that changeset when you name the records of one side, by their record IDs:
+
+```sh
+TOOLING=$(spool show records crm:c-10 | awk '/^record/ {print $2}')
+curl -s -X POST http://127.0.0.1:7765/v1/identities/$ACORN/split -d '{"records": ["'$TOOLING'"], "reason": "Acorn Tooling is another company"}'
+```
+
+```text title="Output"
+{"kept":"01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada","identity":"01a1efa5-82f4-7467-ac1b-3da52d79dbc8","moved":["875986b9-a764-1450-33d1-2d4612fb4daa"],"changeset":{"id":"01a1efa5-82f4-7467-ac1b-3da66a6859ae","base":5,"actor":"user:01a1efa5-800f-7661-b8c0-9b47e1bb3341","reason":"Acorn Tooling is another company","run":null,"ops":[{"op":"create_identity","identity":"01a1efa5-82f4-7467-ac1b-3da52d79dbc8","entity_type":"company"},{"op":"assign","record":"875986b9-a764-1450-33d1-2d4612fb4daa","from":"01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada","to":"01a1efa5-82f4-7467-ac1b-3da52d79dbc8"},{"op":"constrain","kind":"cannot_link","a":"875986b9-a764-1450-33d1-2d4612fb4daa","b":"31075f20-6900-838b-f5af-f8c6576744a4"}]},"committed":{"seq":6,"changeset":"01a1efa5-82f4-7467-ac1b-3da66a6859ae","content_hash":"6d31cf9a5d53caeaea37c8f8dec86260f3ce9bd8ffde9911ac90f6ab3a2f46bd"}}
+```
+
+```sh
+spool show identities $ACORN
+```
+
+```text title="Output"
+identity    01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+type        company
+created at  log position 1
+
+record                                source and key  since
+31075f20-6900-838b-f5af-f8c6576744a4  crm:c-3         log position 1
+34c3d52d-e53b-1559-7404-1892fb1fd4e3  crm:c-9         log position 2
+a780fcfe-cb2f-21dd-25ea-11db898fd6a2  crm:c-2         log position 1
+ab8e9d59-0aaa-96b9-ddb7-db0bff7a9356  crm:c-1         log position 1
+
+constraint   between                               and                                   since
+cannot_link  31075f20-6900-838b-f5af-f8c6576744a4  875986b9-a764-1450-33d1-2d4612fb4daa  log position 6
+
+history
+  1  2026-11-18T17:12:43Z  engine  reconcile run 3  "reconcile new records"
+      create company identity 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+      place record 31075f20-6900-838b-f5af-f8c6576744a4 in 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+      place record a780fcfe-cb2f-21dd-25ea-11db898fd6a2 in 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+      place record ab8e9d59-0aaa-96b9-ddb7-db0bff7a9356 in 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+  2  2026-11-18T17:12:43Z  engine  reconcile run 6  "reconcile new records"
+      place record 34c3d52d-e53b-1559-7404-1892fb1fd4e3 in 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+  3  2026-11-18T17:12:43Z  engine  reconcile run 9  "reconcile new records"
+      place record 875986b9-a764-1450-33d1-2d4612fb4daa in 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+  6  2026-11-18T17:12:44Z  user:01a1efa5-800f-7661-b8c0-9b47e1bb3341  "Acorn Tooling is another company"
+      move record 875986b9-a764-1450-33d1-2d4612fb4daa from 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada to 01a1efa5-82f4-7467-ac1b-3da52d79dbc8
+```
+
+The larger side keeps the ID, and the side you did not name keeps it on a tie, so Acorn Tools kept its identity and `crm:c-10` moved to a new one. The split also recorded a `cannot_link` constraint between the two sides, so that a later match does not put them back together. Pass `"keep_apart": false` to leave that out.
+
+A system that stored Acorn's ID for `crm:c-10` now holds the wrong one, and nothing tells it. It finds out by reading the log. [Using the IDs](/docs/using-the-ids#follow-the-log) shows how.
+
+## Constraints
+
+A constraint is a decision that outranks the rules. `cannot_link` between two records means no changeset may leave them in one identity. `must_link` means they must share one. A match treats a constraint as a judgement that wins: a `must_link` reads as `match` and a `cannot_link` as `no_match`.
+
+The two Halden Groups in different countries are kept apart by a rule today. A constraint keeps them apart whatever the rules become:
+
+```sh
+GB=$(spool show records crm:c-5 | awk '/^record/ {print $2}')
+US=$(spool show records crm:c-6 | awk '/^record/ {print $2}')
+curl -s -X POST http://127.0.0.1:7765/v1/changesets -d '{"reason": "separate legal entities", "ops": [{"op": "constrain", "kind": "cannot_link", "a": "'$GB'", "b": "'$US'"}]}'
+```
+
+```text title="Output"
+{"seq":7,"changeset":"01a1efa5-8358-743c-9fc6-fac999fdaa4f","content_hash":"9b1ab005c425ddd81c5b1ee95101788266b244020147781da5cd9d0ce4c8f5e4"}
+```
+
+A changeset that would break a constraint in force is refused, whoever wrote it. Try to merge the two:
+
+```sh
+HALDEN_US=$(spool show records crm:c-6 | awk '/^identity/ {print $2}')
+curl -s -X POST http://127.0.0.1:7765/v1/changesets -d '{"reason": "one group", "ops": [{"op": "merge", "from": "'$HALDEN_US'", "into": "'$HALDEN'"}]}'
+```
+
+```text title="Output"
+{"error":{"code":"rejected","message":"changeset rejected: operation 0 (merge): records 34a5d12a-11a0-e461-c6e4-0576f546d165 and 38f040c9-82b9-2f94-813b-697309e52dab have a cannot_link constraint, and would both belong to identity 01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae","rejections":[{"op_index":0,"op":{"op":"merge","from":"01a1ef8e-5a8d-76d4-acb6-2bb65a02262a","into":"01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae"},"reason":{"reason":"constraint_violated","kind":"cannot_link","a":"34a5d12a-11a0-e461-c6e4-0576f546d165","b":"38f040c9-82b9-2f94-813b-697309e52dab","identity_a":"01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae","identity_b":"01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae"}}]}}
+```
+
+## What does not change an identity
+
+- Loading rows. A new record has no identity until a match or a changeset places it.
+- Changing features, transforms or rules. Features are computed again, and IDs stay.
+- A rematch. It reports suggestions.
+- Taking a row back. The record leaves its identity, and the identity keeps its ID. When that leaves nothing holding the identity's other records together, a [review item](/docs/concepts/review#a-possible-split) asks whether to split it. Nothing is split automatically.
+
+## What identities do not have
+
+- The command line cannot change identities. A merge, a split or a constraint is an HTTP call, a button in the studio, or an MCP tool.
+- A call that changes an identity takes its ID, not a record's `source:key`, and a changeset names records by their record IDs. You look them up first, as above.
+- An identity has no computed attributes. There is no merged "best" name or address, only the label.
+- An identity cannot be deleted.

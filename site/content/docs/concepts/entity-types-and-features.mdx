@@ -1,0 +1,306 @@
+---
+title: Entity types and features
+description: An entity type is a directory that says what its records are compared by, and how each source's columns become those features.
+---
+
+An **entity type** is a kind of thing you want one ID for: a company, a person, a product. Spool ships none. A project declares its own, and two projects need not agree on what a company looks like.
+
+A **feature** is a value that records of that type are compared by. Sources name their columns differently and write values differently, so rules never read raw rows. They read features, which every source is mapped onto.
+
+This page adds a second source to the sample project, with features of its own, and shows what happens to identities when a declaration changes.
+
+## Before you start
+
+The examples use the sample project with both of its files of rows loaded and matched, which is where [Getting started](/docs/getting-started) ends. If you have that project and its server is running, use it. If not, this makes it:
+
+{/* sample: new session */}
+
+```sh
+spool init companies
+cd companies
+```
+
+{/* sample: background */}
+
+```sh
+spool dev
+```
+
+Leave that running. In a second terminal, in the `companies` directory:
+
+```sh
+spool load samples/crm-1.csv
+spool match
+spool load samples/crm-2.csv
+spool match
+```
+
+## An entity type is a directory
+
+`entities/company/` declares the entity type `company`. This is the `entity.yaml` that `spool init` wrote:
+
+{/* sample: existing */}
+
+```yaml title="entities/company/entity.yaml"
+# `features` is what records are compared by, and `label` is the feature a
+# record is called by. `mapping` says, for each source, which column each
+# feature comes from, and the transform it goes through if it needs one.
+label: name
+features: [name, name_key, country]
+
+mapping:
+  crm:
+    name: name
+    name_key: { from: name, transform: name_key }
+    country: country
+  notes:
+    name: name
+    name_key: { from: name, transform: name_key }
+```
+
+- **`features`**: the columns of the type's feature table, which is what rules read.
+- **`label`**: the feature a record is called by when it is shown to a person.
+- **`mapping`**: for each source, where each feature comes from.
+
+The steps below add a company registry as a second source, and two features: `domain`, from a website, and `founded`, a date.
+
+## Add transforms
+
+A transform is a file under `transforms/`, named for the transform. It holds `lambda`, the names of its arguments, and one DuckDB expression over them:
+
+```sql title="transforms/domain_of.sql"
+-- "https://www.acorn.example/about" becomes "acorn.example".
+lambda website: nullif(regexp_extract(lower(website), '^(?:https?://)?(?:www\.)?([^/:?#]+)', 1), '')
+```
+
+```sql title="transforms/founded_date.sql"
+-- A date, or nothing when the text is not one.
+lambda founded: try_cast(founded AS DATE)
+```
+
+A transform sees only the values it is given from one record. It cannot read a table. Every value reaches it as text, whatever type the row had. What it returns is the feature's type: `domain_of` gives text and `founded_date` gives a date, which a rule can then compare as a date.
+
+## Add a source, and a column
+
+```yaml title="sources/registry.yaml"
+key: number
+columns: [number, legal_name, country, founded]
+```
+
+```yaml title="sources/crm.yaml"
+key: id
+columns: [id, name, country, website]
+```
+
+## Map both sources
+
+```yaml title="entities/company/entity.yaml"
+label: name
+features: [name, name_key, country, domain, founded]
+
+mapping:
+  crm:
+    name: name
+    name_key: { from: name, transform: name_key }
+    country: country
+    domain: { from: website, transform: domain_of }
+  notes:
+    name: name
+    name_key: { from: name, transform: name_key }
+  registry:
+    name: legal_name
+    name_key: { from: legal_name, transform: name_key }
+    country: { from: country, transform: upper }
+    founded: { from: founded, transform: founded_date }
+```
+
+How to read a mapping:
+
+- `name: name` takes the column as it is.
+- `{ from: website, transform: domain_of }` passes the column through a transform. `from` can be a list of columns for a transform with several arguments.
+- A transform with no file in `transforms/` is the DuckDB function of that name. `upper` is one.
+- A feature that a source does not map is empty for that source's records. The registry has no website, so its records have no `domain`. Every feature has to be mapped by at least one source.
+
+`spool dev` applied each file as it was saved. `spool info` shows the result:
+
+```sh
+spool info
+```
+
+```text title="Output"
+project   .
+manifest  85a148971796ac164c9c609e858124a4d21283b71a810f7c0930f459493acba2
+
+entity type `company`
+  features  record_id UUID, name VARCHAR, name_key VARCHAR, country VARCHAR, domain VARCHAR, founded DATE
+  label     name
+  sources   crm, notes, registry
+  block     name_prefix
+  no_match  different_country
+  match     similar_name
+
+extractor `companies` (pattern, extractors/companies.yaml)
+```
+
+## Load the new source
+
+```csv title="registry.csv"
+number,legal_name,country,founded
+X001,ACORN TOOLS LIMITED,gb,1987-03-02
+X002,Larkfield Logistics,gb,1999-11-20
+```
+
+The project now has two sources, so `spool load` has to be told which one the file is from:
+
+```sh
+spool load registry.csv --source registry
+spool match
+```
+
+```text title="Output"
+source  registry
+type    company
+read    2 rows from registry.csv
+loaded  2 new, 0 already held, 0 new versions
+next    `spool match` places them in identities
+run         8
+type        company
+examined    2 records
+candidates  6 pairs
+judgements  3 match, 0 no_match
+placed      2 records, 0 identities created
+left out    0 records in 0 review items
+```
+
+```sh
+spool show records --source registry
+```
+
+{/* sample: without record column */}
+
+```text title="Output"
+source and key  name                 identity
+registry:X001   ACORN TOOLS LIMITED  01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+registry:X002   Larkfield Logistics  01a1ef8e-5a8d-76d4-acb6-2bb802d5ca25
+```
+
+That is the listing without its first column, of record IDs. Both registry rows joined an identity that CRM rows had started, and those identities have the IDs they had before.
+
+## What changing a declaration does
+
+When `entity.yaml` or a transform it uses changes, the feature table is computed again from the stored rows. `spool dev` printed `rebuilt company` when it did so. That is possible because records keep their rows as they arrived.
+
+It changes no identity. Identities refer to records, not to features, so every ID stays where it was. Records that were already placed are also not matched again. [Matching](/docs/concepts/matching#rules-that-get-better) says what to do when a better feature would have matched differently.
+
+`spool explain` shows the features of two records side by side, as they are now:
+
+```sh
+spool explain crm:c-1 registry:X001
+```
+
+```text title="Output"
+`registry:X001` and `crm:c-1` belong to the same identity, 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada.
+Run 8 (strategy `rules`) made them a candidate pair (block rule `name_prefix`) and gave no judgement.
+Nothing links the two directly. They are joined through 1 other member: `registry:X001` → 31075f20-6900-838b-f5af-f8c6576744a4 (`match` in run 8) → `crm:c-1` (`match` in run 2).
+`registry:X001` was placed at log position 3 by `engine` (reconcile run 9, "reconcile new records").
+`crm:c-1` was placed at log position 1 by `engine` (reconcile run 3, "reconcile new records").
+By the rules as they are now, block rule `name_prefix` makes them a candidate pair and no `no_match` or `match` rule holds, so they would get no judgement.
+
+left   32edb5c4-9bd7-9633-f683-c99b029df37b  registry:X001  identity 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+right  ab8e9d59-0aaa-96b9-ddb7-db0bff7a9356  crm:c-1        identity 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+
+features
+            left                 right
+  country   GB                   GB
+  domain    -                    -
+  founded   1987-03-02           -
+  name      ACORN TOOLS LIMITED  Acorn Tools
+  name_key  acorn tools limited  acorn tools
+
+rules as they are now
+  block     name_prefix        holds
+  no_match  different_country  does not hold
+  match     similar_name       does not hold
+
+runs that compared them
+  run 8  rules  succeeded  block: name_prefix  no judgement
+
+what joins them
+  32edb5c4-9bd7-9633-f683-c99b029df37b and 31075f20-6900-838b-f5af-f8c6576744a4: match in run 8
+  31075f20-6900-838b-f5af-f8c6576744a4 and ab8e9d59-0aaa-96b9-ddb7-db0bff7a9356: match in run 2
+```
+
+The CRM rows have no website yet and no founding date, so the `domain` of both and the `founded` of `crm:c-1` are empty, shown as `-`. The first lines also say how the two came to share an identity: no rule matched them directly, and each matched `crm:c-3`, Acorn Tools Ltd.
+
+## What is checked
+
+A mistake in these files is found when the project is read, not when rows arrive. `spool info`, `spool build` and `spool dev` all refuse:
+
+- a mapping that names a source with no file,
+- a column the source does not list,
+- a transform given the wrong number of columns,
+- a transform or rule that DuckDB cannot prepare.
+
+For example, with `legal_name` misspelt as `legal_nmae` in the mapping of `name`:
+
+```yaml title="entities/company/entity.yaml"
+label: name
+features: [name, name_key, country, domain, founded]
+
+mapping:
+  crm:
+    name: name
+    name_key: { from: name, transform: name_key }
+    country: country
+    domain: { from: website, transform: domain_of }
+  notes:
+    name: name
+    name_key: { from: name, transform: name_key }
+  registry:
+    name: legal_nmae
+    name_key: { from: legal_name, transform: name_key }
+    country: { from: country, transform: upper }
+    founded: { from: founded, transform: founded_date }
+```
+
+{/* sample: fails */}
+
+```sh
+spool info
+```
+
+```text title="Output"
+spool: ./entities/company/entity.yaml: mapping of `name` from `registry`: `legal_nmae` is not a column of sources/registry.yaml
+```
+
+`spool dev` says the same when the file is saved, and keeps running the last version that worked. Put the name right again:
+
+```yaml title="entities/company/entity.yaml"
+label: name
+features: [name, name_key, country, domain, founded]
+
+mapping:
+  crm:
+    name: name
+    name_key: { from: name, transform: name_key }
+    country: country
+    domain: { from: website, transform: domain_of }
+  notes:
+    name: name
+    name_key: { from: name, transform: name_key }
+  registry:
+    name: legal_name
+    name_key: { from: legal_name, transform: name_key }
+    country: { from: country, transform: upper }
+    founded: { from: founded, transform: founded_date }
+```
+
+## Names
+
+The names of sources, entity types, transforms and rules come from file and directory names. Use lowercase letters, digits and underscores, starting with a letter: that is accepted for every kind of name. An entity type's name may have 48 characters at most.
+
+## What a declaration cannot do
+
+- A feature is computed by a SQL expression, not by your own code. A normaliser that needs a lookup table or a library has to run before the rows are sent.
+- An entity type cannot be declared through the API. It is a change to the project, which `spool dev` applies as you save and [`spool build` and `spool apply`](/docs/deploying) apply to a deployed server.
+- Rules compare records of one entity type. Nothing matches a company against a person.

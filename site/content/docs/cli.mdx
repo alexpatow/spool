@@ -1,0 +1,390 @@
+---
+title: Command line
+description: Every spool command, what it takes and what it prints.
+---
+
+`spool` is one binary. Three of its commands run a server, and the rest either work on a project directory or call a running server over HTTP. `spool <command> --help` prints what this page says about a command.
+
+| Command | What it does | Works on |
+| --- | --- | --- |
+| [`spool init`](#spool-init) | Makes a project with sample rows | A directory |
+| [`spool info`](#spool-info) | Lists what a project declares and checks its SQL | A directory |
+| [`spool dev`](#spool-dev) | Runs the server on this machine and applies file changes as they are saved | A directory |
+| [`spool load`](#spool-load) | Loads a file of rows | A running server |
+| [`spool extract`](#spool-extract) | Stores a text file as a document and runs an extractor | A running server |
+| [`spool match`](#spool-match) | Matches the records that are new | A running server |
+| [`spool show`](#spool-show) | Shows runs, records, identities, documents, review items, drafts and the log | A running server |
+| [`spool explain`](#spool-explain) | Says why two records share an identity, or why they do not | A running server |
+| [`spool retract`](#spool-retract) | Takes back rows a source no longer holds | A running server |
+| [`spool build`](#spool-build) | Checks a project and compiles it into a manifest | A directory |
+| [`spool apply`](#spool-apply) | Applies a manifest to a store | A store file |
+| [`spool serve`](#spool-serve) | Runs the server from a manifest and a store | A store file |
+| [`spool token`](#spool-token) | Makes, lists and revokes tokens | A store file |
+| [`spool schema`](#spool-schema) | Prints the JSON Schema of the API | Nothing |
+| [`spool bench`](#spool-bench) | Runs a benchmark scenario | A directory |
+
+The commands that call a server take `--url` (default `$SPOOL_URL`, or `http://127.0.0.1:7765`), `--token` (default `$SPOOL_TOKEN`; `spool dev` asks for none) and `--json`, which prints what the server answered.
+
+The command line cannot merge, split, undo, decide a review item or approve a draft. Those are calls of [the HTTP API](/docs/api), buttons in the studio, and [MCP](/docs/mcp) tools.
+
+## spool init
+
+`spool init [<dir>] [--entity <name>] [--source <name>]`
+
+Makes a project in `<dir>`, or in the current directory: one source, one entity type with its features, a transform, three rules, and two files of sample rows that the rules match as they stand. The entity type is `company` and the source `crm` unless the options say otherwise. The sample rows are companies whatever the two are called.
+
+{/* sample: new session */}
+
+```sh
+spool init companies
+cd companies
+```
+
+```text title="Output"
+created   companies
+
+  sources/crm.yaml                   the columns of a CRM export
+  sources/notes.yaml                 what a record found in a note may say
+  entities/company/entity.yaml       what companies are compared by
+  entities/company/rules/            three rules, one line of SQL each
+  transforms/name_key.sql            the lower-case name the rules compare
+  extractors/companies.yaml          a pattern that finds company names in text
+  samples/crm-1.csv                  six rows to load first
+  samples/crm-2.csv                  three more for later
+  samples/notes-1.txt                a call note that names three companies
+  .gitignore                         keeps the server's data, .spool/, out of Git
+
+  cd companies
+  spool dev                          runs the server on this machine
+  spool load samples/crm-1.csv       loads the first rows
+  spool extract samples/notes-1.txt  finds the companies in the note
+```
+
+## spool info
+
+`spool info [<dir>] [--json]`
+
+Lists the project's sources, entity types, features, rules, strategies and extractors, and checks every SQL file on the way. It needs no server.
+
+```sh
+spool info
+```
+
+```text title="Output"
+project   .
+manifest  69d04c84c6018350830cc7fd7b9a40e38ca7a2929fa9d925d80712fb086f558b
+
+entity type `company`
+  features  record_id UUID, name VARCHAR, name_key VARCHAR, country VARCHAR
+  label     name
+  sources   crm, notes
+  block     name_prefix
+  no_match  different_country
+  match     similar_name
+
+extractor `companies` (pattern, extractors/companies.yaml)
+```
+
+## spool dev
+
+`spool dev [<dir>] [--listen <addr>] [--store <path>] [--task-timeout <s>] [--tasks <dir>]`
+
+Runs the server from a project directory, with its data in `.spool/dev.duckdb`. A change to the project's files is applied as it is saved. A change that does not compile is reported, and the last version that did keeps running.
+
+It listens on `127.0.0.1:7765`, on this machine only. Nobody signs in and a caller needs no token: every change is recorded under one account, an admin. `spool serve` is the server that others reach.
+
+{/* sample: background */}
+
+```sh
+spool dev
+```
+
+```text title="Output"
+project   .
+store     ./.spool/dev.duckdb
+applied   69d04c84c6018350830cc7fd7b9a40e38ca7a2929fa9d925d80712fb086f558b (declared company)
+accounts  ./.spool/dev.auth.sqlite
+listening on http://127.0.0.1:7765
+studio    http://127.0.0.1:7765/
+mcp       http://127.0.0.1:7765/mcp
+```
+
+One server runs on a store at a time. A second `spool dev` on the same project is refused:
+
+{/* sample: fails */}
+
+```sh
+spool dev
+```
+
+```text title="Output"
+spool: the store ./.spool/dev.duckdb is open in another process (PID 3635), most likely a `spool dev` that is already running on this project.
+One server runs on a store at a time. Use the one that is running, or stop it with Ctrl-C and start this one again.
+```
+
+So is one on another project while the first has the port:
+
+```sh
+spool init ../other
+```
+
+{/* sample: fails */}
+
+```sh
+spool dev ../other
+```
+
+```text title="Output"
+project   ../other
+store     ../other/.spool/dev.duckdb
+applied   69d04c84c6018350830cc7fd7b9a40e38ca7a2929fa9d925d80712fb086f558b (declared company)
+accounts  ../other/.spool/dev.auth.sqlite
+spool: cannot listen on 127.0.0.1:7765: something else is listening there, perhaps a `spool dev` on another project.
+Give this one another port by adding `--listen 127.0.0.1:7766` to the command, and point the commands that call it there with SPOOL_URL=http://127.0.0.1:7766.
+```
+
+Ctrl-C stops it. It finishes the runs it was given first.
+
+## spool load
+
+`spool load <file> [--source <name>] [--type <name>]`
+
+Loads a CSV file of rows into a source. The source may be left out when the project has one, or when the file is named after it: `crm-1.csv` and `crm.csv` are rows of `crm`. The entity type may be left out when one takes rows from the source. Loading does not match. A row that is already held adds nothing, and a row whose content changed under the same key is stored as a new version.
+
+```sh
+spool load samples/crm-1.csv
+```
+
+```text title="Output"
+source  crm
+type    company
+read    6 rows from samples/crm-1.csv
+loaded  6 new, 0 already held, 0 new versions
+next    `spool match` places them in identities
+```
+
+## spool extract
+
+`spool extract [<file>...] [--source <name>] [--extractor <name>] [--again]`
+
+Stores each file as a document, then runs an extractor over the documents it has not read. A document's key is its file's name. With no file it runs the extractor over the documents that are stored. The source is chosen as `spool load` chooses it, and `--extractor` may be left out when the project has one. `--again` reads every document again. [Extraction](/docs/concepts/extraction) explains what an extractor is.
+
+```sh
+spool extract samples/notes-1.txt
+```
+
+```text title="Output"
+source     notes
+read       1 document from samples/notes-1.txt
+loaded     1 new, 0 already held, 0 new versions
+extractor  companies
+found      3 records in 1 document: 3 new, 0 already held
+
+  company  Acorn Tools Ltd          notes-1.txt[54-69]
+  company  Larkfield Logistics Ltd  notes-1.txt[119-142]
+  company  Brightwater Foods Ltd    notes-1.txt[179-200]
+
+next       `spool match` places them in identities
+```
+
+## spool match
+
+`spool match [--type <name>] [--rematch]`
+
+Starts a match of the records no match has examined yet, waits for it, and prints its report. `--rematch` examines every record again against the rules as they are now. A rematch suggests merges and makes none.
+
+```sh
+spool match
+```
+
+```text title="Output"
+run         5
+type        company
+examined    9 records
+candidates  8 pairs
+judgements  7 match, 1 no_match
+placed      9 records, 5 identities created
+left out    0 records in 0 review items
+```
+
+## spool show
+
+`spool show [<what> [<id>]] [options]`
+
+Without `<what>` it prints the entity types and how much there is of each:
+
+```sh
+spool show
+```
+
+```text title="Output"
+server     http://127.0.0.1:7765
+api        v1, engine 0.1.0, store format 9
+manifest   69d04c84c6018350830cc7fd7b9a40e38ca7a2929fa9d925d80712fb086f558b
+head       log position 1
+documents  1
+
+entity type `company`
+  records     9, 0 without an identity
+  identities  5
+  review      0 items open
+
+extractor `companies` (typescript, extractors/companies.ts)
+```
+
+| `<what>` | Lists | With an ID |
+| --- | --- | --- |
+| `runs [<run>]` | The latest runs | One run and what it reported |
+| `records [<record>]` | Records | One record with its payload and evidence |
+| `identities [<identity>]` | Identities | One identity with its records, constraints and history |
+| `documents [<document>]` | Documents | One document with its text |
+| `review [<item>]` | Review items | One item with its records |
+| `drafts [<draft>]` | Drafts | One draft with the changeset it would commit |
+| `log` | The changeset log | |
+
+A record is named by its ID or as `<source>:<key>`, which names the latest version of that row.
+
+| Option | Meaning | Applies to |
+| --- | --- | --- |
+| `--type <name>` | Only this entity type | runs, identities, records, review, drafts |
+| `--status <status>` | Only this status | runs, review, drafts |
+| `--kind <kind>` | Only runs of this kind: `ingest`, `extract`, `match`, `reconcile`, `retract` | runs |
+| `--source <name>` | Only this source | records, documents |
+| `--key <key>` | Only this key within its source | records, documents |
+| `--document <id>` | Only the records found in this document | records |
+| `--unassigned` | Only records that wait for an identity | records |
+| `--latest` | Only the version of each document that nothing replaced | documents |
+| `--after <id>` | Continue a list after this ID, or the log after this position | lists |
+| `--limit <n>` | List at most this many | lists |
+
+```sh
+spool show runs
+```
+
+```text title="Output"
+run  kind       status     about           started
+6    reconcile  succeeded                  2026-11-18T17:32:37Z
+5    match      succeeded  company, rules  2026-11-18T17:32:37Z
+4    ingest     succeeded  companies       2026-11-18T17:32:37Z
+3    extract    succeeded  companies       2026-11-18T17:32:37Z
+2    ingest     succeeded                  2026-11-18T17:32:37Z
+1    ingest     succeeded  company         2026-11-18T17:32:37Z
+```
+
+```sh
+spool show identities
+```
+
+```text title="Output"
+identity                              name                   type     members  created at
+01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada  Acorn Tools Ltd        company  4        log position 1
+01a1ef8e-5a8d-76d4-acb6-2bb65a02262a  Halden Group           company  1        log position 1
+01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae  Halden Group           company  1        log position 1
+01a1efb7-b9f5-767c-9e5a-ab081d67c071  Brightwater Foods Ltd  company  1        log position 1
+01a1ef8e-5a8d-76d4-acb6-2bb802d5ca25  Larkfield Logistics    company  2        log position 1
+```
+
+```sh
+spool show log
+```
+
+```text title="Output"
+position  actor   operations  from             reason
+1         engine  14          reconcile run 6  reconcile new records
+```
+
+## spool explain
+
+`spool explain <record> <record>`
+
+Says where each record is and what placed it there, what each run that compared them concluded, the constraints and review items that name them, and what the rules say about the pair as it is now.
+
+```sh
+spool explain crm:c-1 crm:c-2
+```
+
+```text title="Output"
+`crm:c-2` and `crm:c-1` belong to the same identity, 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada.
+Run 5 (strategy `rules`) judged them `match` (match rule `similar_name` held).
+Both were placed at log position 1 by `engine` (reconcile run 6, "reconcile new records").
+By the rules as they are now, block rule `name_prefix` makes them a candidate pair and match rule `similar_name` holds, so they would be judged `match`.
+
+left   a780fcfe-cb2f-21dd-25ea-11db898fd6a2  crm:c-2  identity 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+right  ab8e9d59-0aaa-96b9-ddb7-db0bff7a9356  crm:c-1  identity 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+
+features
+            left         right
+  country   GB           GB
+  name      ACORN TOOLS  Acorn Tools
+  name_key  acorn tools  acorn tools
+
+rules as they are now
+  block     name_prefix        holds
+  no_match  different_country  does not hold
+  match     similar_name       holds
+
+runs that compared them
+  run 5  rules  succeeded  block: name_prefix  match
+```
+
+## spool retract
+
+`spool retract --source <name> --type <name> [<key>...] [--keys <file>] [--reason <text>]`
+
+Takes back rows a source no longer holds, by their keys. `--keys` names a file with one key on each line, and `-` reads standard input. The rows are taken back, not erased: every version stays in the store, leaves its identity by a changeset, and is examined by no later run. The identity keeps its ID and its other records. Loading a row under the same key again brings every version back. A key the source has no row under changes nothing.
+
+```sh
+spool retract --source crm --type company c-6 --reason "deleted in the CRM"
+```
+
+```text title="Output"
+run 7: 1 key named, 1 record taken back
+1 record left an identity, by the changeset at log position 2
+```
+
+## spool build
+
+`spool build [<dir>] [--base-image <image>] [--install]`
+
+Checks the project and compiles it into `.spool/manifest.json`, which is what `spool serve` reads. It writes a Dockerfile if the project has none. `--install` starts each strategy and extractor once so that `uv` and `bun` fetch what they depend on.
+
+## spool apply
+
+`spool apply [<dir>] --store <path> [--manifest <path>]`
+
+Applies a manifest to a store: declares new entity types, and computes the feature table again for each type whose declaration changed. Identities are not touched. The server must not be running on the store. The store is created if it does not exist.
+
+## spool serve
+
+`spool serve [--manifest <path>] [--store <path>] [--listen <addr>] [--public-url <url>] [--project <dir>] [--no-studio] [--plain-http] [--task-timeout <s>] [--tasks <dir>]`
+
+Runs the server that others reach. It listens on `0.0.0.0:7765`, and every caller is a person who signed in or a program with a token. [Deploying](/docs/deploying) goes through it.
+
+## spool token
+
+`spool token add <name> --store <path>`, `spool token list --store <path> [--json]`, `spool token revoke <name> --store <path>`
+
+Makes, lists and revokes the tokens of a server, on the server's machine, whether or not the server is running. `add` prints the token once and nothing else. A caller sends it as `Authorization: Bearer <token>`, and what it changes is recorded as `agent:<name>`.
+
+## spool schema
+
+`spool schema`
+
+Prints the JSON Schema of every value the API takes and returns.
+
+## spool bench
+
+`spool bench <scenario> [--db <path>] [--seed <n>] [--out <path>] [--list <n>] [--strategy <name>]`
+
+Runs a benchmark scenario from the repository: loads each step's files, matches, and scores the identities against the scenario's truth. The [benchmarks](https://github.com/alexpatow/spool/tree/main/benchmarks) say what each scenario measures.
+
+## Environment
+
+| Variable | Meaning |
+| --- | --- |
+| `SPOOL_URL` | The server the calling commands reach |
+| `SPOOL_TOKEN` | A token for it |
+| `SPOOL_STORE` | The store file of `serve`, `apply` and `token` |
+| `SPOOL_PUBLIC_URL` | The address people reach `spool serve` by |
+| `SPOOL_GOOGLE_CLIENT_ID`, `SPOOL_GOOGLE_CLIENT_SECRET` | Sign-in with Google for `spool serve` |
+| `SPOOL_UV`, `SPOOL_BUN` | The `uv` and `bun` commands, if they are not on the search path |

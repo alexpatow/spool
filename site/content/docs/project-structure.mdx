@@ -1,0 +1,272 @@
+---
+title: Project structure
+description: Every file a Spool project can hold, with an example of each, the keys it takes, and how a file's path becomes its name.
+---
+
+A Spool project is a directory, meant to be kept in Git. It declares where records come from, what kinds of thing they describe and how those are matched. `spool dev` reads it as you save, and `spool build` compiles it into the one file a deployed server reads.
+
+This page is a reference: every file a project can hold, with an example of each and a link to the page that explains it. The examples are the files `spool init` writes, and two that it does not.
+
+{/* sample: new session */}
+
+```sh
+spool init companies
+cd companies
+```
+
+## The directory
+
+```text
+companies/
+├── sources/
+│   ├── crm.yaml                    the source `crm`: its key and its columns
+│   └── notes.yaml                  the source `notes`: what a record from a note may say
+├── transforms/
+│   └── name_key.sql                the transform `name_key`: one SQL expression
+├── entities/
+│   └── company/                    the entity type `company`
+│       ├── entity.yaml             its features, and how each source maps onto them
+│       ├── rules/
+│       │   ├── block/              which pairs are compared
+│       │   │   └── name_prefix.sql
+│       │   ├── match/              which pairs are the same thing
+│       │   │   └── similar_name.sql
+│       │   └── no_match/           which pairs are not
+│       │       └── different_country.sql
+│       ├── strategies/             optional: matching written in Python or TypeScript
+│       └── extract.md              optional: what an extractor is told about the type
+├── extractors/
+│   └── companies.yaml              the extractor `companies`: a pattern
+├── samples/                        sample rows and a sample note. Not read by the server
+├── .gitignore
+└── .spool/                         the development store and the compiled manifest. Not committed
+```
+
+## The path is the name
+
+Nothing is registered by hand. `entities/company/` declares the entity type `company`. `entities/company/rules/match/similar_name.sql` is its match rule `similar_name`. `sources/crm.yaml` is the source `crm`. Renaming a file renames the thing.
+
+Use lowercase letters, digits and underscores, starting with a letter: that is accepted for every kind of name. An entity type's name may have 48 characters at most.
+
+## Source files
+
+`sources/<source>.yaml`. Explained in [Records and sources](/docs/concepts/records-and-sources).
+
+{/* sample: existing */}
+
+```yaml title="sources/crm.yaml"
+# A source of rows. `key` is the column that tells one row from another, and
+# `columns` is every column a row may have.
+key: id
+columns: [id, name, country]
+```
+
+| Key | Meaning |
+| --- | --- |
+| `columns` | Every column a row may have. A row with another column is refused. Required |
+| `key` | The column that tells one row from another. Required for a source of rows. A source of documents has none: its records are keyed by where they were found |
+| `evidence` | A column of JSON text that says where a row was found. It is kept as the record's evidence and is not part of what is compared. Optional |
+
+There are no other keys, and a file with one is refused.
+
+{/* sample: existing */}
+
+```yaml title="sources/notes.yaml"
+# Call notes. The columns are what a record found in a note may say: the
+# attributes an extractor gives it.
+columns: [name]
+```
+
+## Transform files
+
+`transforms/<transform>.sql`. The word `lambda`, the names of the arguments, and one DuckDB expression that turns column values into a feature. Lines that start with `--` are comments. A transform with no file is the DuckDB function of that name, such as `upper`. Explained in [Entity types and features](/docs/concepts/entity-types-and-features).
+
+{/* sample: existing */}
+
+```sql title="transforms/name_key.sql"
+-- A transform is `lambda`, the names of its arguments, and a DuckDB
+-- expression over them.
+lambda name: lower(trim(name))
+```
+
+## Entity type files
+
+`entities/<type>/entity.yaml`. Explained in [Entity types and features](/docs/concepts/entity-types-and-features).
+
+{/* sample: existing */}
+
+```yaml title="entities/company/entity.yaml"
+# `features` is what records are compared by, and `label` is the feature a
+# record is called by. `mapping` says, for each source, which column each
+# feature comes from, and the transform it goes through if it needs one.
+label: name
+features: [name, name_key, country]
+
+mapping:
+  crm:
+    name: name
+    name_key: { from: name, transform: name_key }
+    country: country
+  notes:
+    name: name
+    name_key: { from: name, transform: name_key }
+```
+
+| Key | Meaning |
+| --- | --- |
+| `features` | The columns of the type's feature table, which is what rules read |
+| `label` | The feature a record is called by when it is shown |
+| `mapping` | For each source, where each feature comes from: a column, or `{ from: <column>, transform: <transform> }`. `from` may be a list of columns for a transform with several arguments. A feature a source does not map is empty for its records |
+
+There are no other keys, and a file with one is refused.
+
+## Rule files
+
+`entities/<type>/rules/<kind>/<rule>.sql`. One SQL condition over two rows of the type's feature table, `l` and `r`. The directory is the kind of rule. Explained in [Matching](/docs/concepts/matching).
+
+| Directory | A rule there says |
+| --- | --- |
+| `rules/block/` | This pair is worth comparing |
+| `rules/match/` | This pair is the same thing |
+| `rules/no_match/` | This pair is not the same thing. It wins over every match rule |
+
+{/* sample: existing */}
+
+```sql title="entities/company/rules/block/name_prefix.sql"
+-- A block rule says which pairs are worth comparing: here, two names that
+-- begin with the same four characters. `l` and `r` are two rows of the
+-- feature table.
+left(l.name_key, 4) = left(r.name_key, 4)
+```
+
+{/* sample: existing */}
+
+```sql title="entities/company/rules/match/similar_name.sql"
+-- A match rule says a pair is the same thing: here, two names that are
+-- close. The similarity is 1 for equal names and 0 for names with nothing
+-- in common.
+jaro_winkler_similarity(l.name_key, r.name_key) >= 0.92
+```
+
+{/* sample: existing */}
+
+```sql title="entities/company/rules/no_match/different_country.sql"
+-- A no_match rule says a pair is not the same thing, and wins over any
+-- match rule. This one holds only when both rows have a country.
+l.country <> r.country
+```
+
+## Extractors
+
+`extractors/<name>.yaml`, `.py` or `.ts`. An extractor finds records in documents. Explained in [Extraction](/docs/concepts/extraction), which writes one of each kind.
+
+{/* sample: existing */}
+
+```yaml title="extractors/companies.yaml"
+entity_type: company
+attribute: name
+pattern: '(?:[A-Z][A-Za-z]+ )+(?:Ltd|Inc|LLC|GmbH|plc)\b'
+```
+
+| Key of a pattern | Meaning |
+| --- | --- |
+| `entity_type` | The type of thing each match is |
+| `pattern` | A regular expression, in the syntax of Rust's `regex` crate |
+| `attribute` | The column of the source that the matched text goes into |
+
+A `.py` file is run with [uv](https://docs.astral.sh/uv/) and a `.ts` file with [Bun](https://bun.sh), as a child process of the server.
+
+`entities/<type>/extract.md` is prose: what a thing of this type is and how to quote it. An extractor written in code can read it, to tell a language model what to look for. [Extraction](/docs/concepts/extraction#with-a-model) has one.
+
+## Strategies
+
+`entities/<type>/strategies/<name>.py` or `.ts`. A strategy is matching written in code, for what SQL conditions cannot say: a trained model, a library, a call to a service. It is given the features of the records, new and known, and answers with judgements. Spool turns those into identities by the same fixed rules as for its own. A directory of the same name beside the file holds whatever else it needs.
+
+```py title="entities/company/strategies/same_key.py"
+"""Judges two records a match when their name keys are equal."""
+
+from spool import strategy
+
+
+@strategy
+def judge(features):
+    rows = features.to_pylist()
+    judged = []
+    for new in rows:
+        if not new["is_new"]:
+            continue
+        for other in rows:
+            # Each pair once: a new record with every known one, and with every new one before it.
+            if other["record_id"] == new["record_id"] or (other["is_new"] and other["record_id"] > new["record_id"]):
+                continue
+            if other["name_key"] == new["name_key"]:
+                judged.append({"left_id": new["record_id"], "right_id": other["record_id"], "verdict": "match", "score": 1.0})
+    return judged
+```
+
+`features` is an Arrow table with a row for each record of the type: its features, `record_id`, `is_new`, and `identity_id` for a record that has one. A judgement names two records and gives a verdict, `match`, `no_match` or `unsure`, with an optional `score` and `detail`.
+
+A match uses a strategy when it is started with its name:
+
+{/* sample: background */}
+
+```sh
+spool dev
+```
+
+```sh
+spool load samples/crm-1.csv
+curl -s -X POST http://127.0.0.1:7765/v1/runs -d '{"entity_type": "company", "strategy": {"name": "same_key"}, "wait_ms": 60000}'
+```
+
+```sh
+spool show records
+```
+
+{/* sample: without record column */}
+
+```text title="Output"
+source and key  name                 identity
+crm:c-1         Acorn Tools          01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+crm:c-2         ACORN TOOLS          01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+crm:c-3         Acorn Tools Ltd      01a1efb8-e2d8-7626-9770-de4fd562e3dd
+crm:c-4         Larkfield Logistics  01a1ef8e-5a8d-76d4-acb6-2bb802d5ca25
+crm:c-5         Halden Group         01a1ef8e-5a8d-76d4-acb6-2bb65a02262a
+crm:c-6         Halden Group         01a1ef8e-5a8d-76d4-acb6-2bb65a02262a
+```
+
+Equal keys are a weaker rule than close names, so "Acorn Tools Ltd" is alone here. A strategy replaces the rules, the country rule among them, so the two Halden Groups are one. `spool info` lists what the project declares:
+
+```sh
+spool info
+```
+
+```text title="Output"
+project   .
+manifest  3510ed2f10cf81a0e15b25b760a429c216db2aa0210d94a2f92133b11ed1493e
+
+entity type `company`
+  features  record_id UUID, name VARCHAR, name_key VARCHAR, country VARCHAR
+  label     name
+  sources   crm, notes
+  block     name_prefix
+  no_match  different_country
+  match     similar_name
+  strategy  same_key (python, entities/company/strategies/same_key.py)
+
+extractor `companies` (pattern, extractors/companies.yaml)
+```
+
+The repository has a strategy that runs Splink, in [`benchmarks/resolution/people`](https://github.com/alexpatow/spool/tree/main/benchmarks/resolution/people/entities/person/strategies).
+
+## What Spool writes
+
+**`.spool/`** holds what is made from the project and is not committed. `spool init` puts it in `.gitignore`. `spool dev` keeps its store there, as `dev.duckdb`, with the accounts file beside it, and `spool build` writes the manifest there. [Deploying](/docs/deploying) covers `spool build` and `spool apply`.
+
+Every run records the hash of the manifest it ran with, so a judgement can be traced to the version of the project that produced it. `spool info` and `spool dev` print that hash.
+
+## What is ignored
+
+A file in the project's directories that this version does not use is listed by `spool info` under `not used by this version`, and has no effect. Files at the root of the project, such as a README, and the `samples/` directory are not read at all.
+
+[The command line](/docs/cli) lists the commands that read a project.
