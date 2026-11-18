@@ -167,6 +167,15 @@ function RunView({ run }: { run: RunEntry }) {
                 `${count(retraction.retracted, "record")}, ${retraction.detached} of them left an identity`,
               ],
               [
+                "Left for review",
+                retraction.possible_splits ? (
+                  <>
+                    {count(retraction.possible_splits, "identity")} with records that nothing holds together now.{" "}
+                    <Onward path={["review"]}>review</Onward>
+                  </>
+                ) : null,
+              ],
+              [
                 "Committed",
                 retraction.committed ? (
                   <Ref

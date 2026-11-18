@@ -18,6 +18,7 @@ import {
   Code,
   Fields,
   Filters,
+  Flag,
   Labelled,
   Load,
   Onward,
@@ -33,10 +34,10 @@ import {
 } from "../components.tsx";
 import { Button } from "../components/ui/button";
 import * as ShelfTable from "../components/ui/table";
-import { facts, fieldsOf, latest, same, valueOf } from "../facts.ts";
+import { facts, fieldsOf, latest, same, sourcesOf, valueOf } from "../facts.ts";
 import { count, recordName, short } from "../format.ts";
 import { useLoad, useNames, useStudio } from "../hooks.ts";
-import { CheckIcon, InboxIcon, MergeIcon, PlusIcon } from "../icons.tsx";
+import { CheckIcon, InboxIcon, MergeIcon, PlusIcon, SplitIcon } from "../icons.tsx";
 import { href } from "../router.ts";
 import type { Route } from "../router.ts";
 import { colors, radius, spacing, typography } from "../styles/shelf/tokens.stylex";
@@ -152,7 +153,11 @@ function Case({
       {({ head, found }) => (
         <>
           {detail ? <Details item={found.item} /> : null}
-          <CaseCard found={found} head={head} linked={linked} done={done} />
+          {found.item.kind === "possible_split" ? (
+            <SplitCard found={found} head={head} linked={linked} done={done} />
+          ) : (
+            <CaseCard found={found} head={head} linked={linked} done={done} />
+          )}
         </>
       )}
     </Load>
@@ -166,7 +171,14 @@ function Details({ item }: { item: ReviewEntry }) {
         ["Kind", <Word value={item.kind} />],
         ["Status", <Word value={item.status} />],
         ["Entity type", item.entity_type],
-        ["Run", <Ref kind="run" id={item.run} label={`reconcile run ${item.run}`} />],
+        [
+          "Run",
+          <Ref
+            kind="run"
+            id={item.run}
+            label={`${item.kind === "possible_split" ? "retract" : "reconcile"} run ${item.run}`}
+          />,
+        ],
         [
           "Resolved at",
           item.resolved_seq ? (
@@ -176,7 +188,11 @@ function Details({ item }: { item: ReviewEntry }) {
         [
           "Superseded by",
           item.superseded_by ? (
-            <Ref kind="run" id={item.superseded_by} label={`reconcile run ${item.superseded_by}`} />
+            <Ref
+              kind="run"
+              id={item.superseded_by}
+              label={`${item.kind === "possible_split" ? "" : "reconcile "}run ${item.superseded_by}`}
+            />
           ) : null,
         ],
         [
@@ -233,6 +249,7 @@ function ruled({ candidates, constraints }: ReviewCase, waiting: RecordEntry[]):
 
 /** What the item is about, in a line. */
 function asked({ item, records, candidates }: ReviewCase): string {
+  if (item.kind === "possible_split") return `Are these ${count(records.length, "record")} still one thing?`;
   const what = records.length === 1 ? labelOf(records[0]!) : count(records.length, "record");
   return item.kind === "possible_merge"
     ? `${what} matched ${count(candidates.length, "identity")}`
@@ -258,19 +275,7 @@ function CaseCard({
   const rules = ruled(found, waiting);
   return (
     <article aria-label={`Review item ${item.id}`} {...stylex.props(styles.card)}>
-      <header {...stylex.props(styles.cardHead)}>
-        <div {...stylex.props(styles.meta)}>
-          {linked ? <Ref kind="review" id={item.id} label={`Item ${item.id}`} /> : <span>Item {item.id}</span>}
-          <Word value={item.kind} />
-          {open ? null : <Word value={item.status} />}
-          <span>{item.entity_type}</span>
-          <span>
-            <Ref kind="run" id={item.run} label={`run ${item.run}`} />
-          </span>
-        </div>
-        <h2 {...stylex.props(styles.question)}>{asked(found)}</h2>
-        {open ? null : <Outcome item={item} />}
-      </header>
+      <CardHead found={found} linked={linked} />
       <Compare found={found} open={open} waiting={waiting} rules={rules} done={done} />
       {open ? (
         <footer {...stylex.props(styles.cardFoot)}>
@@ -298,6 +303,28 @@ function CaseCard({
         </footer>
       ) : null}
     </article>
+  );
+}
+
+/** What every card starts with: which item it is, what it asks, and what became of it. */
+function CardHead({ found, linked, children }: { found: ReviewCase; linked: boolean; children?: ReactNode }) {
+  const { item } = found;
+  const open = item.status === "open";
+  return (
+    <header {...stylex.props(styles.cardHead)}>
+      <div {...stylex.props(styles.meta)}>
+        {linked ? <Ref kind="review" id={item.id} label={`Item ${item.id}`} /> : <span>Item {item.id}</span>}
+        <Word value={item.kind} />
+        {open ? null : <Word value={item.status} />}
+        <span>{item.entity_type}</span>
+        <span>
+          <Ref kind="run" id={item.run} label={`run ${item.run}`} />
+        </span>
+      </div>
+      <h2 {...stylex.props(styles.question)}>{asked(found)}</h2>
+      {children}
+      {open ? null : <Outcome item={item} />}
+    </header>
   );
 }
 
@@ -818,6 +845,292 @@ function MergeAndPlace({
   );
 }
 
+/** A judgement as the other record of its pair reads it. */
+const turned = (judgement: PairJudgement): PairJudgement => ({
+  ...judgement,
+  record: judgement.other,
+  other: judgement.record,
+});
+
+/**
+ * A `possible_split`: an identity that lost a record its source took back,
+ * and whose records nothing the store knows holds together since. The
+ * groups that still hold are side by side, a field to a row, with the
+ * records that were taken back beside them. Under each group is the
+ * decision that splits it off.
+ */
+function SplitCard({
+  found,
+  head,
+  linked,
+  done,
+}: {
+  found: ReviewCase;
+  /** Where the log ended before the case was read. */
+  head: number;
+  linked: boolean;
+  done: (said: ReactNode) => void;
+}) {
+  const { item, records, candidates, judgements, constraints } = found;
+  const takenBack = found.taken_back ?? [];
+  const open = item.status === "open";
+  const identity = candidates[0]?.identity;
+  const byId = new Map(records.map((record) => [record.id, record]));
+  const groups = (item.groups ?? []).map((group) => group.flatMap((id) => byId.get(id) ?? []));
+  // A record that has left the identity since is not part of a decision about it.
+  const still = groups.map((group) => group.filter((record) => identity && record.identity === identity.id));
+  const left = still.filter((group) => group.length > 0);
+  const groupOf = new Map(groups.flatMap((group, index) => group.map((record) => [record.id, index] as const)));
+  const named = new Map([...records, ...takenBack].map((record) => [record.id, recordName(record)]));
+  const names = useNames(
+    constraints.flatMap((constraint) => [constraint.a, constraint.b]),
+    named,
+  );
+  const fields = fieldsOf([...records, ...takenBack]);
+  const said = groups.map((group) => facts(latest(group)));
+  const [apart, setApart] = useState(true);
+  return (
+    <article aria-label={`Review item ${item.id}`} {...stylex.props(styles.card)}>
+      <CardHead found={found} linked={linked}>
+        <p data-part="why" {...stylex.props(styles.why)}>
+          They share{" "}
+          {identity ? <Ref kind="identity" id={identity.id} label={identityName(identity)} /> : "an identity"}.{" "}
+          {takenBack.length === 0
+            ? "A record that held them together was taken back by its source."
+            : takenBack.length === 1
+              ? "What held them together went through a record that its source took back."
+              : `What held them together went through ${count(takenBack.length, "record")} that their source took back.`}{" "}
+          Each group still holds together. Nothing the store knows joins one group to another: no match by the rules,
+          no must_link, and no decision by a reviewer or an agent.
+        </p>
+      </CardHead>
+      <div {...stylex.props(styles.compare)}>
+        <ShelfTable.Root aria-label={`Review item ${item.id}`}>
+          <ShelfTable.Header>
+            <ShelfTable.Row style={styles.row}>
+              <ShelfTable.Head style={[styles.cell, styles.corner]} />
+              {groups.map((group, index) => (
+                <ShelfTable.Head key={index} scope="col" style={[styles.cell, styles.column]}>
+                  <span data-part="record-kind" {...stylex.props(styles.columnKind)}>
+                    Group {index + 1}
+                    {still[index]!.length === 0 ? ", no longer in the identity" : ""}
+                  </span>
+                  {group.map((record) => (
+                    <span key={record.id} {...stylex.props(styles.columnName)}>
+                      <Ref kind="record" id={record.id} label={labelOf(record)} />
+                    </span>
+                  ))}
+                  <span {...stylex.props(styles.columnMeta)}>
+                    {count(group.length, "record")}
+                    <Sources sources={sourcesOf(group)} />
+                    {group.length === 1 ? <Code>{named.get(group[0]!.id)}</Code> : null}
+                  </span>
+                </ShelfTable.Head>
+              ))}
+              {takenBack.map((record) => (
+                <ShelfTable.Head key={record.id} scope="col" style={[styles.cell, styles.column, styles.waits]}>
+                  <span data-part="record-kind" {...stylex.props(styles.columnKind)}>
+                    Taken back by its source
+                  </span>
+                  <span {...stylex.props(styles.columnName)}>
+                    <Ref kind="record" id={record.id} label={labelOf(record)} />
+                  </span>
+                  <span {...stylex.props(styles.columnMeta)}>
+                    <Source name={record.source} />
+                    <Code>{named.get(record.id)}</Code>
+                    {record.retracted != null ? (
+                      <Ref kind="run" id={record.retracted} label={`run ${record.retracted}`} />
+                    ) : null}
+                  </span>
+                </ShelfTable.Head>
+              ))}
+            </ShelfTable.Row>
+          </ShelfTable.Header>
+          <ShelfTable.Body>
+            {fields.map((field) => (
+              <ShelfTable.Row key={field} data-field={field} style={styles.row}>
+                <ShelfTable.Head scope="row" style={[styles.cell, styles.fieldName]}>
+                  {field}
+                </ShelfTable.Head>
+                {groups.map((_, index) => {
+                  const held = said[index]!.find((fact) => fact.field === field)?.values ?? [];
+                  return (
+                    <ShelfTable.Cell key={index} style={[styles.cell, styles.value]}>
+                      {held.length === 0 ? (
+                        <Value value={null} />
+                      ) : (
+                        held
+                          .slice(0, MOST_VALUES)
+                          .map((value) => (
+                            <Value
+                              key={value.value}
+                              value={value.value}
+                              times={held.length > 1 ? value.records.length : undefined}
+                            />
+                          ))
+                      )}
+                      {held.length > MOST_VALUES ? (
+                        <span data-part="more" {...stylex.props(styles.none)}>
+                          +{held.length - MOST_VALUES} more
+                        </span>
+                      ) : null}
+                    </ShelfTable.Cell>
+                  );
+                })}
+                {takenBack.map((record) => (
+                  <ShelfTable.Cell key={record.id} style={[styles.cell, styles.value, styles.waits]}>
+                    <Value value={valueOf(record, field)} />
+                  </ShelfTable.Cell>
+                ))}
+              </ShelfTable.Row>
+            ))}
+            <ShelfTable.Row data-part="found" style={styles.row}>
+              <ShelfTable.Head scope="row" style={[styles.cell, styles.rowName]}>
+                Judgements
+              </ShelfTable.Head>
+              {groups.map((_, index) => (
+                <ShelfTable.Cell key={index} style={[styles.cell, styles.value]}>
+                  {/* Under a group: what was judged between it and another group. */}
+                  <Judgements
+                    judgements={judgements.flatMap((judgement) => {
+                      const [mine, theirs] = [groupOf.get(judgement.record), groupOf.get(judgement.other)];
+                      if (mine === undefined || theirs === undefined || mine === theirs) return [];
+                      return mine === index ? [judgement] : theirs === index ? [turned(judgement)] : [];
+                    })}
+                    named={named}
+                  />
+                </ShelfTable.Cell>
+              ))}
+              {takenBack.map((record) => (
+                <ShelfTable.Cell key={record.id} style={[styles.cell, styles.value, styles.waits]}>
+                  {/* Under a record that was taken back: what it was judged against the records that remain. */}
+                  <Judgements
+                    judgements={judgements.filter((judgement) => judgement.other === record.id).map(turned)}
+                    named={named}
+                  />
+                </ShelfTable.Cell>
+              ))}
+            </ShelfTable.Row>
+            {constraints.length > 0 ? (
+              <ShelfTable.Row data-part="decided" style={styles.row}>
+                <ShelfTable.Head scope="row" style={[styles.cell, styles.rowName]}>
+                  Constraints
+                </ShelfTable.Head>
+                {groups.map((_, index) => (
+                  <ShelfTable.Cell key={index} style={[styles.cell, styles.value]}>
+                    <Constraints
+                      constraints={constraints.filter(({ a, b }) => groupOf.get(a) === index || groupOf.get(b) === index)}
+                      names={names}
+                    />
+                  </ShelfTable.Cell>
+                ))}
+                {takenBack.map((record) => (
+                  <ShelfTable.Cell key={record.id} style={[styles.cell, styles.value, styles.waits]} />
+                ))}
+              </ShelfTable.Row>
+            ) : null}
+            {open && identity && left.length > 1 ? (
+              <ShelfTable.Row style={[styles.row, styles.decide]}>
+                <ShelfTable.Head scope="row" style={[styles.cell, styles.rowName]}>
+                  Different things
+                </ShelfTable.Head>
+                {groups.map((_, index) => {
+                  const side = still[index]!;
+                  const rest = left.reduce((sum, group) => sum + group.length, 0) - side.length;
+                  // Of two groups, splitting off either is the same split, so it is offered once.
+                  const offered = side.length > 0 && (left.length > 2 || side !== left[0]);
+                  // The engine leaves the larger side under the identity's ID.
+                  const would =
+                    side.length > rest
+                      ? `The other ${count(rest, "record")} of ${identityName(identity)} ${rest === 1 ? "moves" : "move"} to a new identity. Group ${index + 1} keeps this one.`
+                      : `${side.length === 1 ? recordName(side[0]!) : `The ${count(side.length, "record")} of group ${index + 1}`} ${side.length === 1 ? "moves" : "move"} to a new identity. The other ${count(rest, "record")} ${rest === 1 ? "stays" : "stay"} in ${identityName(identity)}.`;
+                  return (
+                    <ShelfTable.Cell key={index} style={styles.cell}>
+                      {offered ? (
+                        <Act
+                          label={`Split off group ${index + 1}`}
+                          icon={<SplitIcon />}
+                          size="sm"
+                          variant="default"
+                          title={`Split off group ${index + 1}`}
+                          about={would}
+                          why="Reason"
+                          act={async (client, { reason }) => {
+                            const report = await client.split(identity.id, {
+                              reason,
+                              base: head,
+                              records: side.map((record) => record.id),
+                              keep_apart: apart,
+                            });
+                            return (
+                              <>
+                                Split at <At committed={report.committed} />:{" "}
+                                {count(report.moved.length, "record")} moved to{" "}
+                                <Ref kind="identity" id={report.identity} />.
+                              </>
+                            );
+                          }}
+                          done={done}
+                        >
+                          <Flag label="Keep the two sides apart in later runs" checked={apart} onChange={setApart} />
+                        </Act>
+                      ) : null}
+                    </ShelfTable.Cell>
+                  );
+                })}
+                {takenBack.map((record) => (
+                  <ShelfTable.Cell key={record.id} style={[styles.cell, styles.waits]} />
+                ))}
+              </ShelfTable.Row>
+            ) : null}
+          </ShelfTable.Body>
+        </ShelfTable.Root>
+      </div>
+      {open ? (
+        <footer {...stylex.props(styles.cardFoot)}>
+          {identity && left.length > 1 ? (
+            <Act
+              label="Keep as one"
+              icon={<CheckIcon />}
+              title="Keep as one identity"
+              about={`Records that a record of each group must share an identity (must_link), so the groups hold together and the question is answered.`}
+              why="Reason"
+              act={async (client, { reason }) => {
+                const [first, ...others] = left;
+                const committed = await client.commit({
+                  reason,
+                  base: head,
+                  ops: others.map(
+                    (group): Op => ({ op: "constrain", kind: "must_link", a: first![0]!.id, b: group[0]!.id }),
+                  ),
+                });
+                return (
+                  <>
+                    Kept as one identity at <At committed={committed} />.
+                  </>
+                );
+              }}
+              done={done}
+            />
+          ) : null}
+          <Act
+            label="Dismiss"
+            variant="ghost"
+            title={`Dismiss review item ${item.id}`}
+            about="The identity stays as it is, and nothing is recorded about whether its records are one thing."
+            why="Reason"
+            act={async (client, { reason }) => {
+              await client.dismissReview(item.id, { reason });
+              return "Dismissed.";
+            }}
+            done={done}
+          />
+        </footer>
+      ) : null}
+    </article>
+  );
+}
+
 const styles = stylex.create({
   narrow: {
     gap: spacing["4"],
@@ -881,6 +1194,13 @@ const styles = stylex.create({
     fontWeight: typography.fontWeightSemibold,
     letterSpacing: "-0.01em",
     lineHeight: typography.lineHeightBase,
+  },
+  why: {
+    margin: 0,
+    color: colors.mutedForeground,
+    fontSize: typography.fontSizeSm,
+    lineHeight: typography.lineHeightSm,
+    maxWidth: "46rem",
   },
   apart: {
     color: colors.mutedForeground,

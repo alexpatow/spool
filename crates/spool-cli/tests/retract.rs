@@ -458,3 +458,150 @@ fn spool_show_says_what_was_taken_back() {
     let overview = said(&server, &["show"]);
     has(&overview, "records     3, 0 without an identity");
 }
+
+/// An anvil and a mallet that share an identity only through a third row,
+/// which has the code of one and the colour of the other.
+fn held_by_one(dir: &Path) -> Server {
+    let project = dir.join("project");
+    write_things(&project);
+    for part in ["block", "match"] {
+        std::fs::write(
+            project.join(format!("entities/thing/rules/{part}/same_colour.sql")),
+            "l.colour = r.colour\n",
+        )
+        .unwrap();
+    }
+    let server = Server::serve(&project, dir, 1);
+    ingest(
+        &server,
+        &[
+            &["id", "code", "colour"],
+            &["1", "anvil", ""],
+            &["2", "mallet", "blue"],
+            &["3", "anvil", "blue"],
+        ],
+    );
+    resolve(&server);
+    server
+}
+
+#[test]
+fn an_identity_that_a_retraction_left_without_what_held_it_together_is_shown_for_review() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = held_by_one(dir.path());
+    let identity = record(&server, "1")["identity"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(record(&server, "2")["identity"], identity.as_str());
+    let id = |key: &str| record(&server, key)["id"].as_str().unwrap().to_owned();
+
+    let printed = said(
+        &server,
+        &["retract", "--source", "shop", "--type", "thing", "3"],
+    );
+    let run = server.read("/v1/runs?kind=retract")["runs"][0].clone();
+    assert_eq!(run["retraction"]["possible_splits"], 1);
+    let number = run["run"].as_u64().unwrap();
+    assert_eq!(
+        printed.lines().last().unwrap(),
+        "1 identity was left for review: what held its records together went through a record that was taken back. See `spool show review --status open`."
+    );
+    let shown = said(&server, &["show", "run", &number.to_string()]);
+    has(
+        &shown,
+        "left for review  1 identity with records that nothing holds together now (`possible_split`)",
+    );
+
+    let list = said(&server, &["show", "review", "--status", "open"]);
+    has(
+        &list,
+        &format!(
+            "1 possible_split open thing run {number} 2 records of one identity in 2 groups that nothing holds together"
+        ),
+    );
+    let item = said(&server, &["show", "review", "1"]);
+    let (first, second) = match id("1") < id("2") {
+        true => (("1", id("1")), ("2", id("2"))),
+        false => (("2", id("2")), ("1", id("1"))),
+    };
+    assert_eq!(
+        item,
+        format!(
+            "review item  1
+kind         possible_split
+status       open
+type         thing
+raised by    retract run {number}
+identity     {identity}
+
+Are these records still one thing?
+They share an identity, and a record that held them together was taken back by its source.
+Each group below still holds together. Nothing the store knows joins one group to another:
+no match by the rules, no `must_link`, and no decision by a reviewer or an agent.
+
+group 1
+  {}  shop:{}  still in the identity
+
+group 2
+  {}  shop:{}  still in the identity
+
+taken back by their source, and no longer in the identity
+  {}  shop:3  in run {number}
+
+what answers it
+  they are different things  split the identity: POST /v1/identities/{identity}/split with the records of a group
+  they are one thing         say so with a `must_link` between a record of each group: POST /v1/changesets
+  leave it as it is          dismiss the item: POST /v1/review/1/dismiss
+The review screen of the studio does each of these.
+",
+            first.1,
+            first.0,
+            second.1,
+            second.0,
+            id("3"),
+        )
+    );
+    let bundle: Value =
+        serde_json::from_str(&said(&server, &["show", "review", "1", "--json"])).unwrap();
+    assert_eq!(bundle["item"], server.read("/v1/review/1"));
+    assert_eq!(bundle["taken_back"][0]["id"], id("3").as_str());
+
+    has(
+        &said(&server, &["show", "record", "shop:1"]),
+        "review item 1 (possible_split, open)",
+    );
+    let explanation = said(&server, &["explain", "shop:1", "shop:2"]);
+    assert!(
+        explanation.contains(
+            "\nReview item 1 (`possible_split`) is open and names `shop:1`, `shop:2`: they share an identity, and what held them together went through a record that its source took back. Nothing the store knows says they are one thing now. Whether to split the identity is left to a reviewer.\n"
+        ),
+        "{explanation}"
+    );
+
+    // Splitting the identity answers the item, and nothing is left to do.
+    let split = server.call(
+        &format!("/v1/identities/{identity}/split"),
+        json!({ "records": [second.1] }),
+    );
+    let item = said(&server, &["show", "review", "1"]);
+    has(&item, "status       resolved");
+    has(
+        &item,
+        &format!("resolved at  log position {}", split["committed"]["seq"]),
+    );
+    assert!(!item.contains("what answers it"), "{item}");
+    has(
+        &item,
+        &format!(
+            "{}  shop:{}  now in identity {}",
+            second.1,
+            second.0,
+            record(&server, second.0)["identity"].as_str().unwrap()
+        ),
+    );
+    assert_eq!(
+        said(&server, &["show", "review", "--status", "open"]),
+        "no review items\n"
+    );
+}

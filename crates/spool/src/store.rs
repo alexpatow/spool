@@ -1130,7 +1130,10 @@ mod tests {
                 .execute_batch(
                     "DROP TABLE spool.retraction;
                      DROP VIEW spool.review_open;
-                     ALTER TABLE spool.review_item DROP COLUMN groups;",
+                     ALTER TABLE spool.review_item DROP COLUMN groups;
+                     CREATE VIEW spool.review_open AS
+                       SELECT review_id, run_id, entity_type, kind, record_ids, identity_ids
+                       FROM spool.review_item WHERE status = 'open';",
                 )
                 .unwrap();
             schema::set_meta(&store.conn, "format_version", "7").unwrap();
@@ -1166,6 +1169,9 @@ mod tests {
                 .execute_batch(&format!(
                     "DROP VIEW spool.review_open;
                      ALTER TABLE spool.review_item DROP COLUMN groups;
+                     CREATE VIEW spool.review_open AS
+                       SELECT review_id, run_id, entity_type, kind, record_ids, identity_ids
+                       FROM spool.review_item WHERE status = 'open';
                      {item})"
                 ))
                 .unwrap();
@@ -1192,6 +1198,14 @@ mod tests {
             .unwrap();
         let items = review::list(&store.conn, &review::ReviewFilter::default()).unwrap();
         assert_eq!(items[1].groups.len(), 2);
+        // The view that was there still reads the table.
+        let open: i64 = store
+            .conn
+            .query_row("SELECT count(*) FROM spool.review_open", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(open, 2);
     }
 
     #[test]

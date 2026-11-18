@@ -1958,7 +1958,7 @@
               "type": "null"
             }
           ],
-          "description": "The identity `other` belongs to now: one of the candidates, unless\n`other` is another of the item's records. A candidate's members\nare not all in the case, so this, not the members, says which\ncandidate a judgement is about."
+          "description": "The identity `other` belongs to now: one of the candidates, unless\n`other` is another of the item's records, or a record that was\ntaken back, which has none. A candidate's members\nare not all in the case, so this, not the members, says which\ncandidate a judgement is about."
         },
         "other": {
           "$ref": "#/$defs/RecordId",
@@ -2852,6 +2852,13 @@
           "minimum": 0,
           "type": "integer"
         },
+        "possible_splits": {
+          "default": 0,
+          "description": "Identities the records left whose remaining members nothing holds\ntogether any more. Each has an open `possible_split` review item,\nwhich this run raised.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "received": {
           "description": "Keys named, counting a key that was named twice once.",
           "format": "uint64",
@@ -2947,7 +2954,7 @@
           "$ref": "#/$defs/ReviewEntry"
         },
         "judgements": {
-          "description": "What the latest run to judge each pair made of it, for every pair of\none of the item's records with another of them or with a member\nof a candidate. Only runs that were reconciled count.",
+          "description": "What the latest run to judge each pair made of it, for every pair of\none of the item's records with another of them, with a member\nof a candidate, or with a record in `taken_back`. Only runs that\nwere reconciled count.",
           "items": {
             "$ref": "#/$defs/PairJudgement"
           },
@@ -2955,6 +2962,14 @@
         },
         "records": {
           "description": "The records the item names, as they are now, in the item's\norder. One with `retracted` set was taken back by its source: it\ndoes not wait for a decision, and a changeset that gives it an\nidentity is refused. The decision is about the others.",
+          "items": {
+            "$ref": "#/$defs/RecordEntry"
+          },
+          "type": "array"
+        },
+        "taken_back": {
+          "default": [],
+          "description": "Only a `possible_split` has these: the records that were taken out\nof the identity when their source took them back, and have not come\nback. What held the groups together went through them, and\n`judgements` has what was judged between them and the item's\nrecords.",
           "items": {
             "$ref": "#/$defs/RecordEntry"
           },
@@ -2988,13 +3003,24 @@
         "entity_type": {
           "$ref": "#/$defs/EntityType"
         },
+        "groups": {
+          "default": [],
+          "description": "Only a `possible_split` has these: its records as the groups that\nare each still held together, as they were when the item was raised.\nNothing the store knows says that two of the groups are one thing.\nThe largest group is first.",
+          "items": {
+            "items": {
+              "$ref": "#/$defs/RecordId"
+            },
+            "type": "array"
+          },
+          "type": "array"
+        },
         "id": {
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "identities": {
-          "description": "The identities they matched. Empty when the conflict is among the\nrecords themselves.",
+          "description": "The identities they matched. Empty when the conflict is among the\nrecords themselves. For a `possible_split`, the one identity the\nrecords are in.",
           "items": {
             "$ref": "#/$defs/IdentityId"
           },
@@ -3004,7 +3030,7 @@
           "$ref": "#/$defs/ReviewKind"
         },
         "records": {
-          "description": "The records left without an identity.",
+          "description": "The records left without an identity. For a `possible_split`, the\nmembers of the identity that nothing holds together: every record\nin `groups`.",
           "items": {
             "$ref": "#/$defs/RecordId"
           },
@@ -3019,11 +3045,11 @@
               "type": "null"
             }
           ],
-          "description": "Resolved: the changeset after which every record had an identity."
+          "description": "Resolved: the changeset after which every record had an identity.\nFor a `possible_split`, the changeset after which nothing was left\nto ask: it took the groups apart, or it added what holds them\ntogether."
         },
         "run": {
           "$ref": "#/$defs/RunId",
-          "description": "The reconcile run that raised it."
+          "description": "The run that raised it: a reconcile run, or for a `possible_split`\nthe retract run that took back what held the records together."
         },
         "status": {
           "$ref": "#/$defs/ReviewStatus"
@@ -3037,7 +3063,7 @@
               "type": "null"
             }
           ],
-          "description": "Superseded: the reconcile run that raised it again in another form,\nor the retract run that took back the records it asked about."
+          "description": "Superseded: the reconcile run that raised it again in another form,\nor the retract run that took back the records it asked about. For a\n`possible_split`, the retract run that raised it again with other\ngroups, or the reconcile run whose judgements hold the groups\ntogether."
         }
       },
       "required": [
@@ -3123,6 +3149,11 @@
         {
           "const": "conflict",
           "description": "The evidence about the records contradicts itself.",
+          "type": "string"
+        },
+        {
+          "const": "possible_split",
+          "description": "The records share an identity, and nothing the store knows holds\nthem together any more: what did was a record its source took back.\nThey may be more than one thing.",
           "type": "string"
         }
       ]
