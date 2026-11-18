@@ -35,7 +35,7 @@ fn metrics_match_a_hand_scored_partition() {
         .iter()
         .map(|name| (*name, Some(*name), None))
         .collect();
-    ingest(&engine, "shop", &things);
+    load(&engine, "shop", &things);
     let o = |name: &str| record_id(&engine, "shop", name);
 
     // Identities:    i1 {o1 o2}   i2 {o3}   i3 {o4 o5}   and o6 has none
@@ -132,7 +132,7 @@ fn scored(groups: &[&[&str]], truth: &[(&str, &str)]) -> spool::Metrics {
         .iter()
         .map(|(name, _)| (*name, Some(*name), None))
         .collect();
-    ingest(&engine, "shop", &things);
+    load(&engine, "shop", &things);
 
     let mut ids = SeededIds::new(42);
     let mut ops = Vec::new();
@@ -228,7 +228,7 @@ fn an_empty_truth_has_no_ratios() {
 /// that back at 3, and merged them again at 4.
 fn merged_undone_and_merged_again(engine: &Engine, steps: usize) {
     let reviewer = || Actor::User("reviewer".to_owned());
-    ingest(
+    load(
         engine,
         "shop",
         &[("1", Some("anvil"), None), ("2", Some("hammer"), None)],
@@ -326,7 +326,7 @@ fn id_stability_follows_the_redirects_of_the_later_position() {
 fn id_stability_follows_a_chain_of_merges_as_far_as_it_went_by_then() {
     use spool::core::Seq;
     let engine = engine();
-    ingest(
+    load(
         &engine,
         "shop",
         &[

@@ -47,9 +47,9 @@ fn read(path: &Path) -> String {
     std::fs::read_to_string(path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
 }
 
-fn ingest(server: &Server, table: &[&[&str]]) {
+fn load(server: &Server, table: &[&[&str]]) {
     let response = server.post(
-        "/v1/ingest",
+        "/v1/load",
         json!({
             "source": "shop",
             "entity_type": "thing",
@@ -182,7 +182,7 @@ fn the_server_runs_the_projects_strategies_and_no_other_code() {
     assert_eq!(by_code["runtime"], "python");
 
     // The rules keep the blue anvil apart from the red ones.
-    ingest(
+    load(
         &server,
         &[
             &["id", "code", "colour"],
@@ -191,7 +191,7 @@ fn the_server_runs_the_projects_strategies_and_no_other_code() {
             &["3", "anvil", "blue"],
         ],
     );
-    let run = server.call("/v1/runs", json!({ "entity_type": "thing" }))["run"].clone();
+    let run = server.call("/v1/match", json!({ "entity_type": "thing" }))["run"].clone();
     assert_eq!(run["status"], "succeeded", "{run}");
     assert_eq!(thing(&server)["identities"], 2);
 
@@ -199,7 +199,7 @@ fn the_server_runs_the_projects_strategies_and_no_other_code() {
     // nothing.
     let head = server.read("/v1/info")["store"]["head"].clone();
     let run = server.call(
-        "/v1/runs",
+        "/v1/match",
         json!({ "entity_type": "thing", "strategy": { "name": "by_code" }, "rematch": true }),
     )["run"]
         .clone();
@@ -216,7 +216,7 @@ fn the_server_runs_the_projects_strategies_and_no_other_code() {
     assert_eq!(server.read("/v1/info")["store"]["head"], head);
 
     // A version that is not the one the project was built with is refused.
-    ingest(
+    load(
         &server,
         &[
             &["id", "code", "colour"],
@@ -226,7 +226,7 @@ fn the_server_runs_the_projects_strategies_and_no_other_code() {
     );
     let refused = server
         .post(
-            "/v1/runs",
+            "/v1/match",
             json!({ "entity_type": "thing", "strategy": { "name": "by_code", "version": "1" } }),
         )
         .error(400, "invalid");
@@ -235,7 +235,7 @@ fn the_server_runs_the_projects_strategies_and_no_other_code() {
     // A strategy that fails is a failed run, and nothing changed.
     let failed = server
         .post(
-            "/v1/runs",
+            "/v1/match",
             json!({ "entity_type": "thing", "strategy": { "name": "broken" } }),
         )
         .error(500, "strategy_failed");
@@ -255,7 +255,7 @@ fn the_server_runs_the_projects_strategies_and_no_other_code() {
 
     // The strategy joins the two hammers the rules would have kept apart.
     let run = server.call(
-        "/v1/runs",
+        "/v1/match",
         json!({ "entity_type": "thing", "strategy": { "name": "by_code" } }),
     )["run"]
         .clone();
@@ -266,9 +266,9 @@ fn the_server_runs_the_projects_strategies_and_no_other_code() {
 
     // A name the project does not have starts a run that waits for the
     // caller's judgements: the server runs nothing for it.
-    ingest(&server, &[&["id", "code", "colour"], &["6", "saw", "red"]]);
+    load(&server, &[&["id", "code", "colour"], &["6", "saw", "red"]]);
     let run = server.call(
-        "/v1/runs",
+        "/v1/match",
         json!({ "entity_type": "thing", "strategy": { "name": "mine" } }),
     )["run"]
         .clone();
@@ -284,7 +284,7 @@ fn the_server_runs_the_projects_strategies_and_no_other_code() {
     write_strategy(&project, "by_code.py", &format!("{BY_CODE}\n# edited\n"));
     let changed = server
         .post(
-            "/v1/runs",
+            "/v1/match",
             json!({ "entity_type": "thing", "strategy": { "name": "by_code" } }),
         )
         .error(500, "strategy_failed");
@@ -341,7 +341,7 @@ fn dev_runs_a_strategy_as_it_was_last_saved() {
     .unwrap();
     let first = thing(&server)["strategies"][0]["hash"].clone();
 
-    ingest(
+    load(
         &server,
         &[
             &["id", "code", "colour"],
@@ -350,7 +350,7 @@ fn dev_runs_a_strategy_as_it_was_last_saved() {
         ],
     );
     let start = json!({ "entity_type": "thing", "strategy": { "name": "by_code" } });
-    let run = server.call("/v1/runs", start.clone())["run"].clone();
+    let run = server.call("/v1/match", start.clone())["run"].clone();
     assert_eq!(run["resolution"]["identities_created"], 1, "{run}");
 
     // The saved file is the strategy from then on.
@@ -362,11 +362,11 @@ fn dev_runs_a_strategy_as_it_was_last_saved() {
     server.printed("applied");
     let second = thing(&server)["strategies"][0]["hash"].clone();
     assert_ne!(second, first);
-    ingest(
+    load(
         &server,
         &[&["id", "code", "colour"], &["3", "anvil", "red"]],
     );
-    let run = server.call("/v1/runs", start)["run"].clone();
+    let run = server.call("/v1/match", start)["run"].clone();
     assert_eq!(run["strategy"]["version"], second);
     assert_eq!(run["resolution"]["identities_created"], 1, "{run}");
     assert_eq!(thing(&server)["identities"], 2);

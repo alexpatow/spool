@@ -3,7 +3,7 @@
 //! Spool turns records about the same real-world thing into one durable
 //! identity. A project declares what its sources send and its entity types
 //! as files: per type, its features, how each source's columns become them,
-//! and SQL rules. The engine ingests records, matches new ones
+//! and SQL rules. The engine loads records, matches new ones
 //! against what it holds, and changes identity state only by committing
 //! changesets.
 //!
@@ -16,7 +16,7 @@
 //! # fn main() -> spool::Result<()> {
 //! let engine = Engine::open("spool.duckdb", Options::default())?;
 //! engine.apply(&Manifest::load("my-project")?)?;
-//! engine.ingest("crm", "company", rows())?;
+//! engine.load("crm", "company", rows())?;
 //! let report = engine.resolve(&ResolveOptions::default())?;
 //! # Ok(())
 //! # }
@@ -33,7 +33,7 @@ mod engine;
 mod error;
 mod explain;
 mod features;
-mod ingest;
+mod load;
 mod lookup;
 mod metrics;
 mod possible_split;
@@ -73,7 +73,7 @@ pub use explain::{
     Comparison, Explained, Explanation, Link, LinkKind, Outcome, Placement, RecordedJudgement,
     RuleReading, RuleResult,
 };
-pub use ingest::IngestReport;
+pub use load::LoadReport;
 pub use lookup::{
     DeclaredSource, HistoryEntry, IdentityFilter, IdentitySummary, IdentityView, Member,
     RecordEntry, RecordFilter, SourceCount, SourceInfo, StoreInfo, TypeInfo,

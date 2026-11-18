@@ -41,69 +41,69 @@ export interface HostileResult {
 
 function all(token: string): Case[] {
   const cases: Case[] = [];
-  const ingest = (name: string, status: number, body: unknown) =>
-    cases.push({ name: `ingest: ${name}`, status, method: "POST", path: "/v1/ingest", body });
+  const load = (name: string, status: number, body: unknown) =>
+    cases.push({ name: `load: ${name}`, status, method: "POST", path: "/v1/load", body });
   const ok = { source: "crm", entity_type: "company" };
   const sql = `x'; DROP TABLE spool.record; --`;
   const long = "a".repeat(1_000_000);
 
-  ingest("ok row", 200, { ...ok, rows: [{ id: "1", name: "Acme Ltd", country: "GB" }] });
-  ingest("no rows", 200, { ...ok, rows: [] });
-  ingest("rows not objects", 400, { ...ok, rows: [1, "a", null] });
-  ingest("row is array", 400, { ...ok, rows: [[1, 2]] });
-  ingest("nested object value", 400, { ...ok, rows: [{ id: "2", name: { a: 1 } }] });
-  ingest("array value", 400, { ...ok, rows: [{ id: "3", name: ["a", "b"] }] });
-  ingest("null value", 200, { ...ok, rows: [{ id: "4", name: null }] });
-  ingest("number and bool values", 200, { ...ok, rows: [{ id: "5", name: 12, country: true, city: 1.5e300 }] });
-  ingest("key missing in a row", 200, { ...ok, rows: [{ name: "No Key" }] });
-  ingest("key null", 200, { ...ok, rows: [{ id: null, name: "Null Key" }] });
-  ingest("key empty", 200, { ...ok, rows: [{ id: "", name: "Empty Key" }] });
-  ingest("key number", 200, { ...ok, rows: [{ id: 7, name: "Number Key" }] });
-  ingest("key number vs text 7", 200, { ...ok, rows: [{ id: "7", name: "Number Key" }] });
-  ingest("key bool", 200, { ...ok, rows: [{ id: true, name: "Bool Key" }] });
-  ingest("key float", 200, {
+  load("ok row", 200, { ...ok, rows: [{ id: "1", name: "Acme Ltd", country: "GB" }] });
+  load("no rows", 200, { ...ok, rows: [] });
+  load("rows not objects", 400, { ...ok, rows: [1, "a", null] });
+  load("row is array", 400, { ...ok, rows: [[1, 2]] });
+  load("nested object value", 400, { ...ok, rows: [{ id: "2", name: { a: 1 } }] });
+  load("array value", 400, { ...ok, rows: [{ id: "3", name: ["a", "b"] }] });
+  load("null value", 200, { ...ok, rows: [{ id: "4", name: null }] });
+  load("number and bool values", 200, { ...ok, rows: [{ id: "5", name: 12, country: true, city: 1.5e300 }] });
+  load("key missing in a row", 200, { ...ok, rows: [{ name: "No Key" }] });
+  load("key null", 200, { ...ok, rows: [{ id: null, name: "Null Key" }] });
+  load("key empty", 200, { ...ok, rows: [{ id: "", name: "Empty Key" }] });
+  load("key number", 200, { ...ok, rows: [{ id: 7, name: "Number Key" }] });
+  load("key number vs text 7", 200, { ...ok, rows: [{ id: "7", name: "Number Key" }] });
+  load("key bool", 200, { ...ok, rows: [{ id: true, name: "Bool Key" }] });
+  load("key float", 200, {
     ...ok,
     rows: [
       { id: 1.0, name: "Float Key" },
       { id: 1, name: "Int Key" },
     ],
   });
-  ingest("duplicate keys in batch same", 200, {
+  load("duplicate keys in batch same", 200, {
     ...ok,
     rows: [
       { id: "d", name: "Dup" },
       { id: "d", name: "Dup" },
     ],
   });
-  ingest("duplicate keys in batch differ", 200, {
+  load("duplicate keys in batch differ", 200, {
     ...ok,
     rows: [
       { id: "e", name: "Dup One" },
       { id: "e", name: "Dup Two" },
     ],
   });
-  ingest("key column named in the call", 400, { ...ok, key: "id", rows: [{ id: "k2" }] });
-  ingest("key 1MB", 200, { ...ok, rows: [{ id: long, name: "Long Key" }] });
-  ingest("value 1MB", 200, { ...ok, rows: [{ id: "long", name: long }] });
-  ingest("key with NUL", 200, { ...ok, rows: [{ id: "a\u0000b", name: "Nul Key" }] });
-  ingest("value with NUL", 200, { ...ok, rows: [{ id: "nul", name: "Nul\u0000Value" }] });
-  ingest("key sql", 200, { ...ok, rows: [{ id: sql, name: sql }] });
-  ingest("key unicode", 200, { ...ok, rows: [{ id: "ключ-🚀-鍵", name: "Société 🚀 GmbH" }] });
+  load("key column named in the call", 400, { ...ok, key: "id", rows: [{ id: "k2" }] });
+  load("key 1MB", 200, { ...ok, rows: [{ id: long, name: "Long Key" }] });
+  load("value 1MB", 200, { ...ok, rows: [{ id: "long", name: long }] });
+  load("key with NUL", 200, { ...ok, rows: [{ id: "a\u0000b", name: "Nul Key" }] });
+  load("value with NUL", 200, { ...ok, rows: [{ id: "nul", name: "Nul\u0000Value" }] });
+  load("key sql", 200, { ...ok, rows: [{ id: sql, name: sql }] });
+  load("key unicode", 200, { ...ok, rows: [{ id: "ключ-🚀-鍵", name: "Société 🚀 GmbH" }] });
   // A column the source's file does not list is refused, whatever its name.
-  ingest("column not declared", 400, { ...ok, rows: [{ id: "c0", colour: "x" }] });
-  ingest("column name empty", 400, { ...ok, rows: [{ id: "c1", "": "x" }] });
-  ingest("column name sql", 400, { ...ok, rows: [{ id: "c2", [sql]: "x" }] });
-  ingest("column name with quote and dot", 400, { ...ok, rows: [{ id: "c3", 'a"b.c$[0]': "x" }] });
-  ingest("column name NUL", 400, { ...ok, rows: [{ id: "c4", "a\u0000b": "x" }] });
-  ingest("2000 columns", 400, {
+  load("column not declared", 400, { ...ok, rows: [{ id: "c0", colour: "x" }] });
+  load("column name empty", 400, { ...ok, rows: [{ id: "c1", "": "x" }] });
+  load("column name sql", 400, { ...ok, rows: [{ id: "c2", [sql]: "x" }] });
+  load("column name with quote and dot", 400, { ...ok, rows: [{ id: "c3", 'a"b.c$[0]': "x" }] });
+  load("column name NUL", 400, { ...ok, rows: [{ id: "c4", "a\u0000b": "x" }] });
+  load("2000 columns", 400, {
     ...ok,
     rows: [Object.fromEntries([["id", "wide"], ...Array.from({ length: 2000 }, (_, i) => [`col${i}`, "v"])])],
   });
-  ingest("rows with different columns", 200, {
+  load("rows with different columns", 200, {
     ...ok,
     rows: [{ id: "m1", name: "A" }, { id: "m2", website: "b.example" }, { id: "m3" }],
   });
-  ingest("rows with one column of mixed types", 400, {
+  load("rows with one column of mixed types", 400, {
     ...ok,
     rows: [
       { id: "t1", name: "A" },
@@ -111,120 +111,120 @@ function all(token: string): Case[] {
       { id: "t3", name: true },
     ],
   });
-  ingest("source empty", 400, { ...ok, source: "", rows: [{ id: "s1" }] });
+  load("source empty", 400, { ...ok, source: "", rows: [{ id: "s1" }] });
   // A source the project does not declare is refused, whatever its name.
-  ingest("source not declared", 400, { ...ok, source: "erp", rows: [{ id: "s0", name: "Erp" }] });
-  ingest("source sql", 400, { ...ok, source: sql, rows: [{ id: "s2", name: "Sql Source" }] });
-  ingest("source with colon", 400, { ...ok, source: "a:b", rows: [{ id: "s3:x", name: "Colon" }] });
-  ingest("source with a path", 400, { ...ok, source: "../crm", rows: [{ id: "s3" }] });
-  ingest("source 100k long", 400, { ...ok, source: "s".repeat(100_000), rows: [{ id: "s4" }] });
-  ingest("source NUL", 400, { ...ok, source: "a\u0000b", rows: [{ id: "s5" }] });
-  ingest("source number", 400, { ...ok, source: 5, rows: [{ id: "s6" }] });
-  ingest("entity type unknown", 400, { ...ok, entity_type: "person", rows: [{ id: "u1" }] });
-  ingest("entity type sql", 400, { ...ok, entity_type: sql, rows: [{ id: "u2" }] });
-  ingest("entity type upper", 400, { ...ok, entity_type: "Company", rows: [{ id: "u3" }] });
-  ingest("unknown field", 400, { ...ok, rows: [{ id: "f1" }], extra: 1 });
+  load("source not declared", 400, { ...ok, source: "erp", rows: [{ id: "s0", name: "Erp" }] });
+  load("source sql", 400, { ...ok, source: sql, rows: [{ id: "s2", name: "Sql Source" }] });
+  load("source with colon", 400, { ...ok, source: "a:b", rows: [{ id: "s3:x", name: "Colon" }] });
+  load("source with a path", 400, { ...ok, source: "../crm", rows: [{ id: "s3" }] });
+  load("source 100k long", 400, { ...ok, source: "s".repeat(100_000), rows: [{ id: "s4" }] });
+  load("source NUL", 400, { ...ok, source: "a\u0000b", rows: [{ id: "s5" }] });
+  load("source number", 400, { ...ok, source: 5, rows: [{ id: "s6" }] });
+  load("entity type unknown", 400, { ...ok, entity_type: "person", rows: [{ id: "u1" }] });
+  load("entity type sql", 400, { ...ok, entity_type: sql, rows: [{ id: "u2" }] });
+  load("entity type upper", 400, { ...ok, entity_type: "Company", rows: [{ id: "u3" }] });
+  load("unknown field", 400, { ...ok, rows: [{ id: "f1" }], extra: 1 });
   // `scans` is a source whose file names `ev` as its evidence column.
   const scans = { source: "scans", entity_type: "company" };
-  ingest("evidence not json", 400, { ...scans, rows: [{ id: "ev1", ev: "not json" }] });
-  ingest("evidence json", 200, { ...scans, rows: [{ id: "ev2", ev: '{"page": 3}' }] });
-  ingest("evidence without a key", 400, { ...scans, rows: [{ ev: '{"page": 3}' }] });
-  ingest("evidence column named in the call", 400, { ...ok, evidence: "ev", rows: [{ id: "ev3" }] });
-  ingest("wait_ms negative", 400, { ...ok, wait_ms: -1, rows: [{ id: "w1" }] });
-  ingest("wait_ms huge", 400, { ...ok, wait_ms: 1e30, rows: [{ id: "w2" }] });
-  ingest("wait_ms u64 max", 400, { ...ok, wait_ms: 18446744073709551615, rows: [{ id: "w3" }] });
+  load("evidence not json", 400, { ...scans, rows: [{ id: "ev1", ev: "not json" }] });
+  load("evidence json", 200, { ...scans, rows: [{ id: "ev2", ev: '{"page": 3}' }] });
+  load("evidence without a key", 400, { ...scans, rows: [{ ev: '{"page": 3}' }] });
+  load("evidence column named in the call", 400, { ...ok, evidence: "ev", rows: [{ id: "ev3" }] });
+  load("wait_ms negative", 400, { ...ok, wait_ms: -1, rows: [{ id: "w1" }] });
+  load("wait_ms huge", 400, { ...ok, wait_ms: 1e30, rows: [{ id: "w2" }] });
+  load("wait_ms u64 max", 400, { ...ok, wait_ms: 18446744073709551615, rows: [{ id: "w3" }] });
   cases.push({
-    name: "ingest: not json",
+    name: "load: not json",
     status: 400,
     method: "POST",
-    path: "/v1/ingest",
+    path: "/v1/load",
     raw: "{",
     headers: { "content-type": "application/json" },
   });
   cases.push({
-    name: "ingest: empty body",
+    name: "load: empty body",
     status: 400,
     method: "POST",
-    path: "/v1/ingest",
+    path: "/v1/load",
     raw: "",
     headers: { "content-type": "application/json" },
   });
   cases.push({
-    name: "ingest: json top-level array",
+    name: "load: json top-level array",
     status: 400,
     method: "POST",
-    path: "/v1/ingest",
+    path: "/v1/load",
     raw: "[]",
     headers: { "content-type": "application/json" },
   });
   cases.push({
-    name: "ingest: invalid utf-8",
+    name: "load: invalid utf-8",
     status: 400,
     method: "POST",
-    path: "/v1/ingest",
+    path: "/v1/load",
     raw: new Uint8Array([0x7b, 0x22, 0xff, 0xfe, 0x22, 0x7d]),
     headers: { "content-type": "application/json" },
   });
   cases.push({
-    name: "ingest: lone surrogate",
+    name: "load: lone surrogate",
     status: 400,
     method: "POST",
-    path: "/v1/ingest",
+    path: "/v1/load",
     raw: '{"source":"crm","entity_type":"company","rows":[{"id":"\\ud800"}]}',
     headers: { "content-type": "application/json" },
   });
   cases.push({
-    name: "ingest: deep nesting",
+    name: "load: deep nesting",
     status: 400,
     method: "POST",
-    path: "/v1/ingest",
+    path: "/v1/load",
     raw: '{"source":"crm","entity_type":"company","rows":[{"id":' + "[".repeat(100_000) + "]".repeat(100_000) + "}]}",
     headers: { "content-type": "application/json" },
   });
   cases.push({
-    name: "ingest: duplicate json keys",
+    name: "load: duplicate json keys",
     status: 200,
     method: "POST",
-    path: "/v1/ingest",
+    path: "/v1/load",
     raw: '{"source":"crm","entity_type":"company","rows":[{"id":"dk","name":"A","name":"B"}]}',
     headers: { "content-type": "application/json" },
   });
   cases.push({
-    name: "ingest: big integer",
+    name: "load: big integer",
     status: 200,
     method: "POST",
-    path: "/v1/ingest",
+    path: "/v1/load",
     raw: '{"source":"crm","entity_type":"company","rows":[{"id":"big","name":123456789012345678901234567890123456789012345678901234567890}]}',
     headers: { "content-type": "application/json" },
   });
   cases.push({
-    name: "ingest: arrow garbage",
+    name: "load: arrow garbage",
     status: 400,
     method: "POST",
-    path: "/v1/ingest?source=crm&entity_type=company",
+    path: "/v1/load?source=crm&entity_type=company",
     raw: "not arrow",
     headers: { "content-type": "application/vnd.apache.arrow.stream" },
   });
   cases.push({
-    name: "ingest: arrow empty",
+    name: "load: arrow empty",
     status: 400,
     method: "POST",
-    path: "/v1/ingest?source=crm&entity_type=company",
+    path: "/v1/load?source=crm&entity_type=company",
     raw: "",
     headers: { "content-type": "application/vnd.apache.arrow.stream" },
   });
   cases.push({
-    name: "ingest: no content type",
+    name: "load: no content type",
     status: 200,
     method: "POST",
-    path: "/v1/ingest",
+    path: "/v1/load",
     raw: JSON.stringify({ ...ok, rows: [{ id: "nct" }] }),
   });
   cases.push({
-    name: "ingest: text/plain",
+    name: "load: text/plain",
     status: 200,
     method: "POST",
-    path: "/v1/ingest",
+    path: "/v1/load",
     raw: JSON.stringify({ ...ok, rows: [{ id: "tp" }] }),
     headers: { "content-type": "text/plain" },
   });
@@ -388,7 +388,7 @@ function all(token: string): Case[] {
     cases.push({ name: `${method} /v1/info`, status: 405, method, path: "/v1/info" });
   cases.push({ name: "HEAD /v1/info", status: 200, method: "HEAD", path: "/v1/info" });
   cases.push({ name: "POST /v1/info", status: 405, method: "POST", path: "/v1/info", body: {} });
-  cases.push({ name: "GET /v1/ingest", status: 405, path: "/v1/ingest" });
+  cases.push({ name: "GET /v1/load", status: 405, path: "/v1/load" });
 
   // Changes.
   const nil = "00000000-0000-0000-0000-000000000000";
@@ -483,13 +483,13 @@ function all(token: string): Case[] {
   change("mint: zero", 200, "/v1/ids", {});
   change("mint: float", 400, "/v1/ids", { identities: 1.5 });
   change("dismiss: unknown", 404, "/v1/review/999/dismiss", {});
-  change("run: unknown type", 400, "/v1/runs", { entity_type: "person" });
-  change("run: strategy name sql", 200, "/v1/runs", { entity_type: "company", strategy: { name: sql } });
-  change("run: strategy name long", 200, "/v1/runs", {
+  change("run: unknown type", 400, "/v1/match", { entity_type: "person" });
+  change("run: strategy name sql", 200, "/v1/match", { entity_type: "company", strategy: { name: sql } });
+  change("run: strategy name long", 200, "/v1/match", {
     entity_type: "company",
     strategy: { name: "s".repeat(100_000) },
   });
-  change("run: wrong version of project strategy", 400, "/v1/runs", {
+  change("run: wrong version of project strategy", 400, "/v1/match", {
     entity_type: "company",
     strategy: { name: "in_python", version: "nope" },
   });
@@ -580,7 +580,7 @@ export async function hostile(log: (line: string) => void = () => {}): Promise<H
     }
 
     // The server still does its work, and what it stored is sound.
-    const run = await server.client.startRun({ entity_type: "company" });
+    const run = await server.client.match({ entity_type: "company" });
     if (run?.status !== "succeeded") faults.push(`a match run afterwards ${run?.status}: ${run?.error ?? ""}`);
     const code = await server.stop();
     if (code !== 0) faults.push(`the server stopped with code ${code}: ${server.complaints()}`);

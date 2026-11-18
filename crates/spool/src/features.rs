@@ -142,14 +142,14 @@ pub(crate) fn drop_table(conn: &Connection, entity_type: &EntityType) -> Result<
     Ok(())
 }
 
-/// The records of one ingest run, as a filter on `spool.record`: those
+/// The records of one load run, as a filter on `spool.record`: those
 /// it created, and those that came back in it after their source had taken
 /// them back.
-pub(crate) fn of_run(entity_type: &EntityType, ingest_run: RunId) -> String {
+pub(crate) fn of_run(entity_type: &EntityType, load_run: RunId) -> String {
     format!(
         "entity_type = '{entity_type}'
-         AND (ingest_run = {ingest_run} OR record_id IN ({}))",
-        retract::restored_in(ingest_run)
+         AND (ingest_run = {load_run} OR record_id IN ({}))",
+        retract::restored_in(load_run)
     )
 }
 

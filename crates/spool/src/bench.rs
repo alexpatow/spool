@@ -1134,7 +1134,7 @@ impl Scenario {
         if let Some(keys) = without.get(&(ingest.entity_type.clone(), ingest.source.clone())) {
             rows = rows.without(key, keys)?;
         }
-        let report = engine.ingest(&ingest.source, &ingest.entity_type, rows)?;
+        let report = engine.load(&ingest.source, &ingest.entity_type, rows)?;
         Ok(IngestSummary {
             source: ingest.source.clone(),
             entity_type: ingest.entity_type.clone(),

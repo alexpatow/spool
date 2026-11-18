@@ -58,13 +58,13 @@ fn joined(mut ids: Vec<String>) -> String {
 /// Two identities, `by_name` and `by_code`, and a record `depot:9`
 /// that matches both and is left for review.
 fn ambiguous(engine: &Engine) -> (IdentityId, IdentityId) {
-    ingest(
+    load(
         engine,
         "shop",
         &[("1", Some("anvil"), None), ("2", None, Some("K7"))],
     );
     resolve(engine);
-    ingest(engine, "depot", &[("9", Some("anvil"), Some("K7"))]);
+    load(engine, "depot", &[("9", Some("anvil"), Some("K7"))]);
     resolve(engine);
     (
         identity(engine, "shop", "1").unwrap(),
@@ -139,7 +139,7 @@ fn an_record_left_for_review_is_examined_again_by_later_runs() {
 
     // A later batch has nothing to say about it. The run reaches the same
     // conclusion, and the item stays as it was.
-    ingest(&engine, "shop", &[("3", Some("chisel"), None)]);
+    load(&engine, "shop", &[("3", Some("chisel"), None)]);
     let report = resolve(&engine);
     let resolved = &report.resolved[0];
     assert_eq!((resolved.new_records, resolved.reexamined), (2, 1));
@@ -165,7 +165,7 @@ fn an_record_left_for_review_is_examined_again_by_later_runs() {
     );
     assert_eq!(open_reviews(&engine), 1);
 
-    // Nothing new was ingested, and the next run still examines it. It now
+    // Nothing new was loaded, and the next run still examines it. It now
     // matches one identity, so it is assigned and the item is resolved.
     let report = resolve(&engine);
     let resolved = &report.resolved[0];
@@ -182,7 +182,7 @@ fn an_record_left_for_review_is_examined_again_by_later_runs() {
     assert_eq!(after[0].run_id, first[0].run_id);
     assert_eq!(open_reviews(&engine), 0);
 
-    // With nothing ingested and nothing under review, there is nothing to do.
+    // With nothing loaded and nothing under review, there is nothing to do.
     assert!(resolve(&engine).resolved.is_empty());
     assert_eq!(engine.head().unwrap(), head);
     engine.verify().unwrap();
@@ -231,7 +231,7 @@ fn an_item_raised_again_in_another_form_supersedes_the_old_one() {
     let waiting = record_id(&engine, "depot", "9");
 
     // A second record that matches the first, and the same two identities.
-    ingest(&engine, "yard", &[("4", Some("anvil"), Some("K7"))]);
+    load(&engine, "yard", &[("4", Some("anvil"), Some("K7"))]);
     let report = resolve(&engine);
     let also_waiting = record_id(&engine, "yard", "4");
     assert_eq!(report.resolved[0].records_unassigned, 2);
@@ -280,13 +280,13 @@ fn an_item_raised_again_in_another_form_supersedes_the_old_one() {
 #[test]
 fn two_new_records_a_rule_keeps_apart_do_not_join_the_same_identity() {
     let engine = engine();
-    ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
+    load(&engine, "shop", &[("1", Some("anvil"), None)]);
     resolve(&engine);
     let anvil = identity(&engine, "shop", "1").unwrap();
 
     // Both match shop:1 by name, which has no code. Their codes differ, so
     // the `different_code` rule says they are not the same thing.
-    ingest(
+    load(
         &engine,
         "depot",
         &[
@@ -360,14 +360,14 @@ fn two_new_records_a_rule_keeps_apart_do_not_join_the_same_identity() {
 #[test]
 fn a_conflict_is_stored_with_the_identity_it_concerns() {
     let engine = engine();
-    ingest(
+    load(
         &engine,
         "shop",
         &[("1", Some("anvil"), Some("A")), ("2", Some("anvil"), None)],
     );
     resolve(&engine);
     // Matches shop:2 by name, and cannot be shop:1 because the codes differ.
-    ingest(&engine, "depot", &[("9", Some("anvil"), Some("B"))]);
+    load(&engine, "depot", &[("9", Some("anvil"), Some("B"))]);
     resolve(&engine);
 
     let items = stored(&engine);
@@ -386,13 +386,13 @@ fn a_conflict_is_stored_with_the_identity_it_concerns() {
 #[test]
 fn a_draft_that_is_not_committed_still_records_what_it_left_out() {
     let engine = engine();
-    ingest(
+    load(
         &engine,
         "shop",
         &[("1", Some("anvil"), None), ("2", None, Some("K7"))],
     );
     resolve(&engine);
-    ingest(&engine, "depot", &[("9", Some("anvil"), Some("K7"))]);
+    load(&engine, "depot", &[("9", Some("anvil"), Some("K7"))]);
 
     let scope = spool::Scope::new(spool::core::EntityType::new("thing").unwrap());
     let run = engine

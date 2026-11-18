@@ -1,6 +1,6 @@
 [package]
 name = "spool"
-description = "The Spool engine: DuckDB store, project discovery, ingest, the built-in rule runner and metrics."
+description = "The Spool engine: DuckDB store, project discovery, load, the built-in rule runner and metrics."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

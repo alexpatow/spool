@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::{engine, identity, ingest, members, record_id};
+use common::{engine, identity, load, members, record_id};
 use spool::core::{Actor, EntityType, Op, Policy};
 use spool::{
     Disposition, Engine, ResolveOptions, Rows, RunStatus, Scope, StrategyRef, SuggestedMerge,
@@ -25,7 +25,7 @@ fn rematch() -> ResolveOptions {
 /// hammers with different codes, which the rules keep apart.
 fn workshop() -> Engine {
     let engine = engine();
-    ingest(
+    load(
         &engine,
         "shop",
         &[
@@ -302,7 +302,7 @@ fn a_strategy_the_project_does_not_have_starts_nothing() {
     );
 
     // Naming the built-in strategy is the same as naming none.
-    ingest(&engine, "shop", &[("7", Some("anvil"), Some("K1"))]);
+    load(&engine, "shop", &[("7", Some("anvil"), Some("K1"))]);
     let report = engine
         .resolve(&ResolveOptions::with_strategy("rules"))
         .unwrap();

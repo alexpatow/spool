@@ -8,9 +8,9 @@ use std::process::Output;
 use serde_json::{Value, json};
 use support::*;
 
-fn ingest(server: &Server, table: &[&[&str]]) -> Value {
+fn load(server: &Server, table: &[&[&str]]) -> Value {
     let response = server.post(
-        "/v1/ingest",
+        "/v1/load",
         json!({
             "source": "shop",
             "entity_type": "thing",
@@ -23,7 +23,7 @@ fn ingest(server: &Server, table: &[&[&str]]) -> Value {
 }
 
 fn resolve(server: &Server) -> Value {
-    let run = server.call("/v1/runs", json!({ "entity_type": "thing" }))["run"].clone();
+    let run = server.call("/v1/match", json!({ "entity_type": "thing" }))["run"].clone();
     assert_eq!(run["status"], "succeeded");
     run
 }
@@ -37,7 +37,7 @@ fn workshop(dir: &Path) -> Server {
     let project = dir.join("project");
     write_things(&project);
     let server = Server::serve(&project, dir, 1);
-    ingest(
+    load(
         &server,
         &[
             &["id", "code"],
@@ -166,22 +166,22 @@ fn a_row_is_taken_back_over_the_api_and_comes_back_when_it_is_sent_again() {
 
     // It is no work for a run: none is started for it.
     assert_eq!(
-        server.call("/v1/runs", json!({ "entity_type": "thing" }))["run"],
+        server.call("/v1/match", json!({ "entity_type": "thing" }))["run"],
         Value::Null
     );
 
     // Sent again, it is back in the identity it left, by a changeset of
-    // the engine's that the ingest run names.
-    let again = ingest(&server, &[&["id", "code"], &["2", "anvil"]]);
-    assert_eq!(again["ingest"]["inserted"], 0);
-    assert_eq!(again["ingest"]["duplicates"], 1);
-    assert_eq!(again["ingest"]["restored"], 1);
-    assert_eq!(again["ingest"]["returned"], 1);
+    // the engine's that the load run names.
+    let again = load(&server, &[&["id", "code"], &["2", "anvil"]]);
+    assert_eq!(again["load"]["inserted"], 0);
+    assert_eq!(again["load"]["duplicates"], 1);
+    assert_eq!(again["load"]["restored"], 1);
+    assert_eq!(again["load"]["returned"], 1);
     assert_eq!(record(&server, "2")["retracted"], Value::Null);
     assert_eq!(record(&server, "2")["identity"], identity.as_str());
     let log = server.read("/v1/changesets")["changesets"].clone();
     let entry = log.as_array().unwrap().last().unwrap();
-    assert_eq!(entry["seq"], again["ingest"]["committed"]["seq"]);
+    assert_eq!(entry["seq"], again["load"]["committed"]["seq"]);
     assert_eq!(entry["changeset"]["actor"], "engine");
     assert_eq!(
         entry["changeset"]["reason"],
@@ -193,10 +193,10 @@ fn a_row_is_taken_back_over_the_api_and_comes_back_when_it_is_sent_again() {
     );
     // Reading the run again says the same.
     let read = server.read(&format!("/v1/runs/{}", again["run"]));
-    assert_eq!(read["run"]["ingest"], again["ingest"]);
+    assert_eq!(read["run"]["load"], again["load"]);
     // It has its identity, so no run is started for it.
     assert_eq!(
-        server.call("/v1/runs", json!({ "entity_type": "thing" }))["run"],
+        server.call("/v1/match", json!({ "entity_type": "thing" }))["run"],
         Value::Null
     );
 }
@@ -442,7 +442,7 @@ fn spool_show_says_what_was_taken_back() {
     let unassigned = said(&server, &["show", "records", "--unassigned"]);
     assert_eq!(unassigned, "no records\n");
 
-    let run = ingest(&server, &[&["id", "code"], &["2", "anvil"]]);
+    let run = load(&server, &[&["id", "code"], &["2", "anvil"]]);
     let shown = said(&server, &["show", "run", &run["run"].to_string()]);
     has(
         &shown,
@@ -451,7 +451,7 @@ fn spool_show_says_what_was_taken_back() {
     assert!(
         shown.contains(&format!(
             "\ncommitted  log position {}, changeset ",
-            run["ingest"]["committed"]["seq"]
+            run["load"]["committed"]["seq"]
         )),
         "{shown}"
     );
@@ -472,7 +472,7 @@ fn held_by_one(dir: &Path) -> Server {
         .unwrap();
     }
     let server = Server::serve(&project, dir, 1);
-    ingest(
+    load(
         &server,
         &[
             &["id", "code", "colour"],
@@ -621,7 +621,7 @@ fn a_row_that_comes_back_where_what_held_it_is_still_gone_is_left_for_review() {
     let server = Server::serve(&project, dir.path(), 1);
     // Two anvils, a blue anvil, and a blue mallet: only the blue anvil says
     // the mallet belongs with the anvils.
-    ingest(
+    load(
         &server,
         &[
             &["id", "code", "colour"],
@@ -647,12 +647,12 @@ fn a_row_that_comes_back_where_what_held_it_is_still_gone_is_left_for_review() {
 
     // The mallet is sent again and goes back to the anvils, where nothing
     // holds it now.
-    let run = ingest(
+    let run = load(
         &server,
         &[&["id", "code", "colour"], &["4", "mallet", "blue"]],
     );
-    assert_eq!(run["ingest"]["returned"], 1);
-    assert_eq!(run["ingest"]["possible_splits"], 1);
+    assert_eq!(run["load"]["returned"], 1);
+    assert_eq!(run["load"]["possible_splits"], 1);
     assert_eq!(record(&server, "4")["identity"], identity);
     let shown = said(&server, &["show", "run", &run["run"].to_string()]);
     has(

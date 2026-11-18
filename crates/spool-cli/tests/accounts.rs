@@ -443,30 +443,30 @@ fn an_admin_makes_tokens_and_each_writes_under_its_own_name() {
     let sign_in = json!({ "username": "bob", "password": "another long one" });
     let bob = cookie(&post(&server, "/auth/sign-in", "", sign_in));
 
-    let added = post(&server, "/v1/tokens", &ada, json!({ "name": "Ingest" })).ok();
+    let added = post(&server, "/v1/tokens", &ada, json!({ "name": "Load" })).ok();
     let secret = added["secret"].as_str().unwrap().to_owned();
     assert!(secret.starts_with("spool_"), "{secret}");
-    assert_eq!(added["token"]["name"], "ingest");
+    assert_eq!(added["token"]["name"], "load");
     assert_eq!(added["token"]["created_by"], id.as_str());
     assert_eq!(added["token"]["last_used_at"], Value::Null);
     let token_id = added["token"]["id"].as_str().unwrap();
 
     // A name is one token's, and is what the log will say.
-    post(&server, "/v1/tokens", &ada, json!({ "name": "ingest" })).error(409, "conflict");
-    for name in ["", "two words", "agent:ingest"] {
+    post(&server, "/v1/tokens", &ada, json!({ "name": "load" })).error(409, "conflict");
+    for name in ["", "two words", "agent:load"] {
         post(&server, "/v1/tokens", &ada, json!({ "name": name })).error(400, "invalid");
     }
 
     // What it changes is recorded under its name.
     let wrote = author(&server, &secret);
-    assert_eq!(wrote, "agent:ingest");
+    assert_eq!(wrote, "agent:load");
 
     // The list says it was used, and never what the token is. The token the
     // tests call with was made on this machine, by nobody.
     let listed = browse(&server, "GET", "/v1/tokens", &ada).send();
     assert!(!text(&listed.body).contains(&secret));
     let listed = listed.ok();
-    assert_eq!(token_names(&listed), ["api", "ingest"]);
+    assert_eq!(token_names(&listed), ["api", "load"]);
     assert_eq!(listed["tokens"][0]["created_by"], Value::Null);
     assert!(listed["tokens"][1]["last_used_at"].is_string(), "{listed}");
 
@@ -496,7 +496,7 @@ fn an_admin_makes_tokens_and_each_writes_under_its_own_name() {
 
     // A revoked token is refused from then on, and the others are not.
     let revoked = post(&server, &revoke, &ada, json!({})).ok();
-    assert_eq!(revoked["name"], "ingest");
+    assert_eq!(revoked["name"], "load");
     present(&server, "GET", "/v1/info", &secret)
         .send()
         .error(401, "unauthorized");

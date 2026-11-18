@@ -40,7 +40,7 @@ fn thing_type() -> EntityType {
 /// matches both and goes to review.
 fn populated() -> Engine {
     let engine = engine();
-    ingest(
+    load(
         &engine,
         "shop",
         &[
@@ -50,7 +50,7 @@ fn populated() -> Engine {
         ],
     );
     engine.resolve(&ResolveOptions::default()).unwrap();
-    ingest(&engine, "depot", &[("9", Some("anvil"), Some("H1"))]);
+    load(&engine, "depot", &[("9", Some("anvil"), Some("H1"))]);
     engine.resolve(&ResolveOptions::default()).unwrap();
     engine
 }
@@ -76,7 +76,7 @@ fn an_record_is_found_by_its_id_and_by_its_source_and_key() {
     assert_eq!(entry.payload, json!({ "id": "1", "name": "anvil" }));
     assert_eq!(entry.evidence, None);
     assert_eq!(entry.identity, identity(&engine, "shop", "1"));
-    assert_eq!(entry.ingest_run.0, 1);
+    assert_eq!(entry.load_run.0, 1);
 
     // A caller knows its rows by source and key; the engine knows the ID.
     let found = engine.records(&RecordFilter::keyed("shop", "1")).unwrap();
@@ -129,7 +129,7 @@ fn an_record_is_found_by_its_id_and_by_its_source_and_key() {
 #[test]
 fn records_are_listed_by_source_and_key() {
     let engine = engine();
-    ingest(
+    load(
         &engine,
         "shop",
         &[
@@ -138,11 +138,11 @@ fn records_are_listed_by_source_and_key() {
             ("2", Some("two"), None),
         ],
     );
-    ingest(&engine, "depot", &[("z", Some("last of the depot"), None)]);
+    load(&engine, "depot", &[("z", Some("last of the depot"), None)]);
     // A second version of a row, and rows that have no key.
-    ingest(&engine, "shop", &[("10", Some("ten again"), None)]);
+    load(&engine, "shop", &[("10", Some("ten again"), None)]);
     engine
-        .ingest(
+        .load(
             "shop",
             "thing",
             json_rows(json!([{ "name": "keyless" }, { "name": "keyless too" }])),
@@ -158,7 +158,7 @@ fn records_are_listed_by_source_and_key() {
             (
                 record.source.as_str(),
                 record.key.as_deref(),
-                record.ingest_run.0,
+                record.load_run.0,
             )
         })
         .collect();
@@ -237,7 +237,7 @@ fn mentions_are_listed_by_their_document_and_their_place_in_it() {
         })
     };
     engine
-        .ingest(
+        .load(
             "notes",
             "thing",
             json_rows(json!([
@@ -471,7 +471,7 @@ fn a_log_position_no_log_reaches_has_nothing_after_it_and_nothing_at_it() {
 fn rows_given_as_json_keep_their_types() {
     let engine = engine();
     engine
-        .ingest(
+        .load(
             "till",
             "thing",
             json_rows(json!([
@@ -502,7 +502,7 @@ fn rows_given_as_json_keep_their_types() {
     // A row is the same record whatever it arrives with: on its own,
     // the price column is whole numbers; above, it was not.
     let report = engine
-        .ingest(
+        .load(
             "till",
             "thing",
             json_rows(json!([{ "id": 1, "name": "anvil", "price": 12, "stocked": true }])),
@@ -511,9 +511,7 @@ fn rows_given_as_json_keep_their_types() {
     assert_eq!((report.inserted, report.duplicates), (0, 1));
 
     // No rows at all is not an error.
-    let report = engine
-        .ingest("till", "thing", json_rows(json!([])))
-        .unwrap();
+    let report = engine.load("till", "thing", json_rows(json!([]))).unwrap();
     assert_eq!(report.received, 0);
 }
 
@@ -526,7 +524,7 @@ fn a_snapshot_read_while_changesets_commit_is_of_one_log_position() {
         .iter()
         .map(|key| (key.as_str(), Some(key.as_str()), None))
         .collect();
-    ingest(&engine, "shop", &things);
+    load(&engine, "shop", &things);
     let unassigned: Vec<_> = keys
         .iter()
         .map(|key| record_id(&engine, "shop", key))
@@ -581,7 +579,7 @@ fn a_snapshot_read_while_changesets_commit_is_of_one_log_position() {
 fn json_rows_without_a_value_are_rows_all_the_same() {
     let engine = engine();
     let report = engine
-        .ingest("till", "thing", json_rows(json!([{}, { "name": null }])))
+        .load("till", "thing", json_rows(json!([{}, { "name": null }])))
         .unwrap();
     assert_eq!(
         (report.received, report.inserted, report.duplicates),
@@ -591,7 +589,7 @@ fn json_rows_without_a_value_are_rows_all_the_same() {
 
     // A column is every key that occurs, with a value or without.
     let report = engine
-        .ingest(
+        .load(
             "till",
             "thing",
             json_rows(json!([{ "id": null, "name": null }])),
@@ -631,21 +629,20 @@ fn json_integers_are_kept_exactly_or_refused() {
 
     // Below that, an integer beside a fraction is the integer it was.
     let engine = engine();
-    let ingest =
-        |rows: serde_json::Value| engine.ingest("scale", "thing", json_rows(rows)).unwrap();
-    ingest(json!([
+    let load = |rows: serde_json::Value| engine.load("scale", "thing", json_rows(rows)).unwrap();
+    load(json!([
         { "id": "1", "weight": 0.5 },
         { "id": "2", "weight": 9007199254740991u64 },
     ]));
-    let report = ingest(json!([{ "id": "2", "weight": 9007199254740991u64 }]));
+    let report = load(json!([{ "id": "2", "weight": 9007199254740991u64 }]));
     assert_eq!((report.inserted, report.duplicates), (0, 1));
 
     // On their own, integers are exact as far as 64 bits go, signed or not.
-    ingest(json!([
+    load(json!([
         { "id": "3", "weight": 9007199254740993u64 },
         { "id": "4", "weight": i64::MIN },
     ]));
-    ingest(json!([
+    load(json!([
         { "id": "5", "weight": u64::MAX },
         { "id": "6", "weight": 7 },
     ]));
@@ -662,7 +659,7 @@ fn json_integers_are_kept_exactly_or_refused() {
     assert_eq!(weight("4"), "-9223372036854775808");
     assert_eq!(weight("5"), "18446744073709551615");
     assert_eq!(weight("6"), "7");
-    let report = ingest(json!([{ "id": "6", "weight": 7 }]));
+    let report = load(json!([{ "id": "6", "weight": 7 }]));
     assert_eq!((report.inserted, report.duplicates), (0, 1));
 
     // A column cannot hold both a negative integer and one past the signed

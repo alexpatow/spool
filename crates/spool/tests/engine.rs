@@ -34,23 +34,23 @@ fn judgements(rows: &[(String, String, &str)]) -> Rows {
     Rows::from_text(&["left_id", "right_id", "verdict"], &rows).unwrap()
 }
 
-// Ingest
+// Load
 
 #[test]
-fn ingest_stores_each_row_once() {
+fn load_stores_each_row_once() {
     let engine = engine();
     let batch = [
         ("1", Some("anvil"), Some("A")),
         ("2", Some("bellows"), None),
         ("1", Some("anvil"), Some("A")),
     ];
-    let first = ingest(&engine, "shop", &batch);
+    let first = load(&engine, "shop", &batch);
     assert_eq!(
         (first.received, first.inserted, first.duplicates),
         (3, 2, 1)
     );
 
-    let again = ingest(&engine, "shop", &batch);
+    let again = load(&engine, "shop", &batch);
     assert_eq!(
         (again.received, again.inserted, again.duplicates),
         (3, 0, 3)
@@ -67,34 +67,34 @@ fn ingest_stores_each_row_once() {
 #[test]
 fn an_record_id_ignores_column_order_and_empty_columns() {
     let engine = engine();
-    ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
+    load(&engine, "shop", &[("1", Some("anvil"), None)]);
 
     let reordered = Rows::from_text(&["name", "id"], &[vec![Some("anvil"), Some("1")]]).unwrap();
-    let report = engine.ingest("shop", "thing", reordered).unwrap();
+    let report = engine.load("shop", "thing", reordered).unwrap();
     assert_eq!((report.inserted, report.duplicates), (0, 1));
 }
 
 #[test]
 fn a_changed_row_or_another_source_is_another_record() {
     let engine = engine();
-    ingest(&engine, "shop", &[("1", Some("anvil"), Some("A"))]);
+    load(&engine, "shop", &[("1", Some("anvil"), Some("A"))]);
 
-    let changed = ingest(&engine, "shop", &[("1", Some("anvil, large"), Some("A"))]);
+    let changed = load(&engine, "shop", &[("1", Some("anvil, large"), Some("A"))]);
     assert_eq!(changed.inserted, 1);
     assert_eq!(records(&engine, "shop", "1").len(), 2);
 
-    let elsewhere = ingest(&engine, "depot", &[("1", Some("anvil"), Some("A"))]);
+    let elsewhere = load(&engine, "depot", &[("1", Some("anvil"), Some("A"))]);
     assert_eq!(elsewhere.inserted, 1);
 }
 
 #[test]
-fn ingest_needs_an_applied_manifest_and_a_declared_type() {
+fn load_needs_an_applied_manifest_and_a_declared_type() {
     let bare = Engine::open_in_memory(Options::seeded(1)).unwrap();
-    let error = bare.ingest("shop", "thing", rows(&[])).unwrap_err();
+    let error = bare.load("shop", "thing", rows(&[])).unwrap_err();
     assert!(matches!(error, Error::NoManifest), "{error}");
 
     let engine = engine();
-    let error = engine.ingest("shop", "gadget", rows(&[])).unwrap_err();
+    let error = engine.load("shop", "gadget", rows(&[])).unwrap_err();
     assert!(matches!(error, Error::UndeclaredType(name) if name == "gadget"));
 }
 
@@ -117,11 +117,9 @@ fn evidence_is_stored_beside_the_payload_and_needs_a_key() {
         .unwrap()
     };
 
-    let error = engine
-        .ingest("report", "thing", mentions(None))
-        .unwrap_err();
+    let error = engine.load("report", "thing", mentions(None)).unwrap_err();
     assert!(
-        matches!(&error, Error::Ingest(message) if message.contains("evidence")),
+        matches!(&error, Error::Load(message) if message.contains("evidence")),
         "{error}"
     );
     assert_eq!(count(&engine, "SELECT count(*) FROM spool.record"), 0);
@@ -134,7 +132,7 @@ fn evidence_is_stored_beside_the_payload_and_needs_a_key() {
     );
 
     engine
-        .ingest("report", "thing", mentions(Some("p3:120-125")))
+        .load("report", "thing", mentions(Some("p3:120-125")))
         .unwrap();
     assert_eq!(
         select(
@@ -150,7 +148,7 @@ fn evidence_is_stored_beside_the_payload_and_needs_a_key() {
 
     // The same words at another place in the document are another record.
     let report = engine
-        .ingest("report", "thing", mentions(Some("p9:14-19")))
+        .load("report", "thing", mentions(Some("p9:14-19")))
         .unwrap();
     assert_eq!(report.inserted, 1);
 }
@@ -163,13 +161,13 @@ fn a_known_row_cannot_arrive_as_another_entity_type() {
         ..thing()
     };
     engine.apply(&manifest_of(vec![thing(), widget])).unwrap();
-    ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
+    load(&engine, "shop", &[("1", Some("anvil"), None)]);
 
     let error = engine
-        .ingest("shop", "widget", rows(&[("1", Some("anvil"), None)]))
+        .load("shop", "widget", rows(&[("1", Some("anvil"), None)]))
         .unwrap_err();
     assert!(
-        matches!(&error, Error::Ingest(message) if message.contains("`thing`")),
+        matches!(&error, Error::Load(message) if message.contains("`thing`")),
         "{error}"
     );
 }
@@ -179,7 +177,7 @@ fn a_known_row_cannot_arrive_as_another_entity_type() {
 #[test]
 fn resolve_gives_matching_records_one_identity() {
     let engine = engine();
-    ingest(
+    load(
         &engine,
         "shop",
         &[
@@ -233,11 +231,11 @@ fn resolve_gives_matching_records_one_identity() {
 fn resent_rows_create_no_records_and_no_operations() {
     let engine = engine();
     let batch = [("1", Some("anvil"), None), ("2", Some("anvil"), None)];
-    ingest(&engine, "shop", &batch);
+    load(&engine, "shop", &batch);
     resolve(&engine);
     let (head, log) = (engine.head().unwrap(), engine.log().unwrap());
 
-    let again = ingest(&engine, "shop", &batch);
+    let again = load(&engine, "shop", &batch);
     assert_eq!(again.inserted, 0);
     let report = resolve(&engine);
 
@@ -256,7 +254,7 @@ fn resent_rows_create_no_records_and_no_operations() {
 #[test]
 fn identities_keep_their_ids_and_gain_members() {
     let engine = engine();
-    ingest(
+    load(
         &engine,
         "shop",
         &[("1", Some("anvil"), None), ("2", Some("bellows"), None)],
@@ -265,7 +263,7 @@ fn identities_keep_their_ids_and_gain_members() {
     let before = engine.snapshot().unwrap();
     let anvil = identity(&engine, "shop", "1").unwrap();
 
-    ingest(
+    load(
         &engine,
         "depot",
         &[("7", Some("anvil"), None), ("8", Some("chisel"), None)],
@@ -296,7 +294,7 @@ fn identities_keep_their_ids_and_gain_members() {
 #[test]
 fn an_record_matching_two_identities_is_left_for_review() {
     let engine = engine();
-    ingest(
+    load(
         &engine,
         "shop",
         &[("1", Some("anvil"), None), ("2", None, Some("K7"))],
@@ -308,7 +306,7 @@ fn an_record_matching_two_identities_is_left_for_review() {
     );
     let head = engine.head().unwrap();
 
-    ingest(&engine, "depot", &[("9", Some("anvil"), Some("K7"))]);
+    load(&engine, "depot", &[("9", Some("anvil"), Some("K7"))]);
     let report = resolve(&engine);
 
     let resolved = &report.resolved[0];
@@ -336,10 +334,10 @@ fn an_record_matching_two_identities_is_left_for_review() {
 #[test]
 fn a_no_match_keeps_an_record_out_of_an_identity() {
     let engine = engine();
-    ingest(&engine, "shop", &[("1", Some("anvil"), Some("A"))]);
+    load(&engine, "shop", &[("1", Some("anvil"), Some("A"))]);
     resolve(&engine);
 
-    ingest(&engine, "depot", &[("9", Some("anvil"), Some("B"))]);
+    load(&engine, "depot", &[("9", Some("anvil"), Some("B"))]);
     let report = resolve(&engine);
 
     assert_eq!(report.resolved[0].judgements.no_match, 1);
@@ -353,7 +351,7 @@ fn a_no_match_keeps_an_record_out_of_an_identity() {
 #[test]
 fn contradictory_evidence_about_one_identity_is_left_for_review() {
     let engine = engine();
-    ingest(
+    load(
         &engine,
         "shop",
         &[("1", Some("anvil"), Some("A")), ("2", Some("anvil"), None)],
@@ -362,7 +360,7 @@ fn contradictory_evidence_about_one_identity_is_left_for_review() {
     let anvil = identity(&engine, "shop", "1").unwrap();
 
     // Matches shop:2 by name, and cannot be shop:1 because the codes differ.
-    ingest(&engine, "depot", &[("9", Some("anvil"), Some("B"))]);
+    load(&engine, "depot", &[("9", Some("anvil"), Some("B"))]);
     let report = resolve(&engine);
 
     assert_eq!(
@@ -383,9 +381,9 @@ fn entity_types_are_resolved_apart() {
         ..thing()
     };
     engine.apply(&manifest_of(vec![thing(), widget])).unwrap();
-    ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
+    load(&engine, "shop", &[("1", Some("anvil"), None)]);
     engine
-        .ingest("shop", "widget", rows(&[("2", Some("anvil"), None)]))
+        .load("shop", "widget", rows(&[("2", Some("anvil"), None)]))
         .unwrap();
 
     let only_widgets = ResolveOptions {
@@ -418,7 +416,7 @@ fn entity_types_are_resolved_apart() {
 #[test]
 fn an_external_strategy_fills_a_run_and_nothing_changes_until_commit() {
     let engine = engine();
-    ingest(
+    load(
         &engine,
         "shop",
         &[
@@ -521,7 +519,7 @@ fn an_external_strategy_fills_a_run_and_nothing_changes_until_commit() {
 #[test]
 fn a_run_records_the_project_version_it_read() {
     let engine = engine();
-    ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
+    load(&engine, "shop", &[("1", Some("anvil"), None)]);
     engine.begin_run(&by_hand(), &thing_scope()).unwrap();
 
     assert_eq!(
@@ -537,13 +535,13 @@ fn a_run_records_the_project_version_it_read() {
 #[test]
 fn judgements_must_name_known_records_and_a_new_one() {
     let engine = engine();
-    ingest(
+    load(
         &engine,
         "shop",
         &[("1", Some("anvil"), None), ("2", Some("anvil"), None)],
     );
     resolve(&engine);
-    ingest(&engine, "depot", &[("9", Some("anvil"), None)]);
+    load(&engine, "depot", &[("9", Some("anvil"), None)]);
     let run = engine.begin_run(&by_hand(), &thing_scope()).unwrap();
 
     let id = |source: &str, key: &str| record_id(&engine, source, key).to_string();
@@ -624,11 +622,11 @@ fn judgements_must_name_known_records_and_a_new_one() {
 #[test]
 fn a_stale_draft_is_rejected_and_names_the_operation() {
     let engine = engine();
-    ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
+    load(&engine, "shop", &[("1", Some("anvil"), None)]);
     resolve(&engine);
     let anvil = identity(&engine, "shop", "1").unwrap();
 
-    ingest(&engine, "depot", &[("9", Some("anvil"), None)]);
+    load(&engine, "depot", &[("9", Some("anvil"), None)]);
     let run = engine
         .begin_run(&StrategyRef::rules(), &thing_scope())
         .unwrap();
@@ -712,7 +710,7 @@ fn a_stale_draft_is_rejected_and_names_the_operation() {
 // The store
 
 fn two_batches(engine: &Engine) {
-    ingest(
+    load(
         engine,
         "shop",
         &[
@@ -722,7 +720,7 @@ fn two_batches(engine: &Engine) {
         ],
     );
     resolve(engine);
-    ingest(
+    load(
         engine,
         "depot",
         &[("7", Some("bellows"), None), ("8", Some("chisel"), None)],
@@ -874,8 +872,8 @@ fn state_survives_reopening_and_a_changed_declaration() {
     );
     engine.verify().unwrap();
 
-    // The entity view follows the new columns, and later ingests use them.
-    ingest(&engine, "kiosk", &[("1", Some("anvil"), None)]);
+    // The entity view follows the new columns, and later loads use them.
+    load(&engine, "kiosk", &[("1", Some("anvil"), None)]);
     resolve(&engine);
     assert_eq!(identity(&engine, "kiosk", "1"), anvil);
     assert_eq!(
@@ -897,7 +895,7 @@ fn state_survives_reopening_and_a_changed_declaration() {
         3
     );
 
-    ingest(&engine, "depot", &[("9", Some("anvil"), None)]);
+    load(&engine, "depot", &[("9", Some("anvil"), None)]);
     resolve(&engine);
     assert_eq!(identity(&engine, "depot", "9"), anvil);
     engine.verify().unwrap();
@@ -906,7 +904,7 @@ fn state_survives_reopening_and_a_changed_declaration() {
 #[test]
 fn query_runs_selects_only() {
     let engine = engine();
-    ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
+    load(&engine, "shop", &[("1", Some("anvil"), None)]);
 
     for statement in [
         "DELETE FROM spool.record",

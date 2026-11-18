@@ -55,8 +55,8 @@ pub struct DocumentEntry {
     /// The text. Left out of a list of documents.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
-    pub ingested_at: String,
-    pub ingest_run: RunId,
+    pub loaded_at: String,
+    pub load_run: RunId,
     /// The version of the document this one replaced: what the source held
     /// under the same key before.
     pub supersedes: Option<DocumentId>,
@@ -161,9 +161,12 @@ pub struct ExtractReport {
     /// Records created as a new version of a mention that was known
     /// with other attributes.
     pub superseded: u64,
-    /// The ingest run the records were stored under. There is none
+    /// The load run the records were stored under. There is none
     /// when nothing was found.
-    pub ingest_run: Option<RunId>,
+    // A store keeps the report of a run, and one written before the field
+    // had this name has it as `ingest_run`.
+    #[serde(alias = "ingest_run")]
+    pub load_run: Option<RunId>,
 }
 
 impl ExtractReport {
@@ -175,7 +178,7 @@ impl ExtractReport {
             inserted: 0,
             duplicates: 0,
             superseded: 0,
-            ingest_run: None,
+            load_run: None,
         }
     }
 }
@@ -280,8 +283,8 @@ fn entry(row: &duckdb::Row<'_>) -> Result<DocumentEntry> {
         uri: row.get(3)?,
         length: row.get::<_, i64>(4)? as u64,
         text: None,
-        ingested_at: rfc3339(row.get(5)?),
-        ingest_run: RunId(row.get::<_, i64>(6)? as u64),
+        loaded_at: rfc3339(row.get(5)?),
+        load_run: RunId(row.get::<_, i64>(6)? as u64),
         supersedes: id(7)?,
         superseded_by: id(8)?,
         extractions: Vec::new(),
@@ -546,6 +549,15 @@ fn canonical(attributes: Option<&str>) -> Result<String, String> {
 mod tests {
     use super::*;
     use crate::project::Runtime;
+
+    #[test]
+    fn a_report_kept_under_the_older_name_of_the_load_run_is_read() {
+        let kept = r#"{"run":2,"documents":1,"mentions":3,"inserted":3,"duplicates":0,"superseded":0,"ingest_run":3}"#;
+        let report: ExtractReport = serde_json::from_str(kept).unwrap();
+        assert_eq!(report.load_run, Some(RunId(3)));
+        let written = serde_json::to_string(&report).unwrap();
+        assert!(written.ends_with(r#""load_run":3}"#), "{written}");
+    }
 
     fn extractor() -> Extractor {
         Extractor {

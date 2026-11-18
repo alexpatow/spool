@@ -15,7 +15,7 @@
 //!
 //! A retraction ends when the source sends the row again, changed or not.
 //! Every version comes back, to the identity it left: what put it there
-//! still holds, whether a run did or a reviewer. The ingest commits one
+//! still holds, whether a run did or a reviewer. The load commits one
 //! `assign` per record for it, as the engine. A record that had no
 //! identity, or that can no longer be where it was, is new to the next
 //! match run. Both the retraction and its end are kept in
@@ -65,7 +65,7 @@ pub struct RetractReport {
 pub(crate) const NOT_RETRACTED: &str = "record_id NOT IN (
     SELECT record_id FROM spool.retraction WHERE restored_run IS NULL)";
 
-/// A query for the records that came back in an ingest run after `after`
+/// A query for the records that came back in a load run after `after`
 /// and before `before`.
 pub(crate) fn restored_between(after: RunId, before: RunId) -> String {
     format!(
@@ -74,7 +74,7 @@ pub(crate) fn restored_between(after: RunId, before: RunId) -> String {
     )
 }
 
-/// A query for the records that came back in one ingest run.
+/// A query for the records that came back in one load run.
 pub(crate) fn restored_in(run: RunId) -> String {
     format!("SELECT record_id FROM spool.retraction WHERE restored_run = {run}")
 }
@@ -225,7 +225,7 @@ pub(crate) const WAITING: &str = "
             SELECT record_id FROM spool.retraction WHERE restored_run IS NULL)";
 
 /// Ends the retraction of every version of the rows that are staged for an
-/// ingest: the source holds them again. Returns how many records came
+/// load: the source holds them again. Returns how many records came
 /// back.
 pub(crate) fn restore(
     conn: &Connection,
@@ -234,7 +234,7 @@ pub(crate) fn restore(
     run: RunId,
     staged: &RecordBatch,
 ) -> Result<u64> {
-    // Most ingests find nothing here, and this is one cheap look.
+    // Most loads find nothing here, and this is one cheap look.
     let any: bool = conn.query_row(
         "SELECT count(*) > 0 FROM spool.retraction WHERE restored_run IS NULL",
         [],
@@ -260,7 +260,7 @@ pub(crate) fn restore(
     Ok(restored as u64)
 }
 
-/// The operations that put the records that came back in the ingest run
+/// The operations that put the records that came back in the load run
 /// `run` into the identity each of them left, or into the one that stands
 /// for it now, ordered by record. A record that had no identity when it was
 /// taken back has none here.

@@ -7,13 +7,13 @@
 //
 // `spool bench` downloads the scenario's public data, scores the result
 // against the truth, and leaves a store. A server opens that store and is
-// read from end to end, which gives the rows of each ingest run and who
+// read from end to end, which gives the rows of each load run and who
 // each record was placed with. A second server with a new store is then
 // sent those rows and asked to match where the first run matched. It is
 // read from end to end too, its calls are checked against each other, and
 // both stores are verified.
 //
-// Only ingests and matches by the rules are replayed. A scenario with
+// Only loads and matches by the rules are replayed. A scenario with
 // corrections, documents, a strategy of its own or rows that are taken back
 // is refused.
 
@@ -28,7 +28,7 @@ import { binary, scratch, serve, storeSize, timed, verify } from "./server.ts";
 import { faults } from "./state.ts";
 import type { State } from "./state.ts";
 
-/** The most rows one call of `POST /v1/ingest` carries. */
+/** The most rows one call of `POST /v1/load` carries. */
 const CHUNK = 100_000;
 const PAGE = 1000;
 
@@ -74,7 +74,7 @@ interface Everything {
   state: State;
   /** The name each record has in both stores, by record ID. */
   names: Map<string, string>;
-  /** The rows of each ingest run, in the order they are listed. */
+  /** The rows of each load run, in the order they are listed. */
   rows: Map<number, { source: string; entity_type: string; rows: Row[] }>;
 }
 
@@ -97,9 +97,9 @@ async function everything(client: SpoolClient, keepRows: boolean): Promise<Every
       versions.set(row, version);
       names.set(record.id, version === 1 ? row : `${row} (version ${version})`);
       if (keepRows) {
-        const run = rows.get(record.ingest_run) ?? { source: record.source, entity_type: record.entity_type, rows: [] };
+        const run = rows.get(record.load_run) ?? { source: record.source, entity_type: record.entity_type, rows: [] };
         run.rows.push(record.payload as Row);
-        rows.set(record.ingest_run, run);
+        rows.set(record.load_run, run);
       }
     }
     if (page.next == null) break;
@@ -241,7 +241,7 @@ export async function replay(
     for (const run of runs) {
       const replayable =
         run.kind === "reconcile" ||
-        (run.kind === "ingest" && run.extractor == null) ||
+        (run.kind === "load" && run.extractor == null) ||
         (run.kind === "match" && (run.strategy == null || run.strategy.name === "rules"));
       if (!replayable || run.status !== "succeeded") {
         throw new Error(`run ${run.run} is a ${run.kind} run that ${run.status}, which is not replayed`);
@@ -262,27 +262,27 @@ export async function replay(
     try {
       const { client } = server;
       for (const run of runs) {
-        if (run.kind === "ingest") {
+        if (run.kind === "load") {
           const sent = reference.rows.get(run.run);
           if (sent === undefined) continue;
           reference.rows.delete(run.run);
           const [, seconds] = await timed(async () => {
             for (let from = 0; from < sent.rows.length; from += CHUNK) {
-              const ingest = await finished(
+              const load = await finished(
                 client,
-                await client.ingest({
+                await client.load({
                   source: sent.source,
                   entity_type: sent.entity_type,
                   rows: sent.rows.slice(from, from + CHUNK),
                 }),
               );
-              if (ingest?.status !== "succeeded") throw new Error(`ingest ${ingest?.status}: ${ingest?.error ?? ""}`);
+              if (load?.status !== "succeeded") throw new Error(`load ${load?.status}: ${load?.error ?? ""}`);
             }
           });
-          record(`ingest ${sent.source}`, seconds, server.memory(), store, `${sent.rows.length} rows`);
+          record(`load ${sent.source}`, seconds, server.memory(), store, `${sent.rows.length} rows`);
         } else if (run.kind === "match") {
           const [match, seconds] = await timed(async () =>
-            finished(client, await client.startRun({ entity_type: run.entity_type! })),
+            finished(client, await client.match({ entity_type: run.entity_type! })),
           );
           if (match !== null && match.status !== "succeeded") {
             throw new Error(`the match run ${match.status}: ${match.error ?? ""}`);

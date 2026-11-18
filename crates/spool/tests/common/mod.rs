@@ -8,7 +8,7 @@ use spool::arrow::array::{Array, AsArray};
 use spool::arrow::record_batch::RecordBatch;
 use spool::core::{IdentityId, RecordId};
 use spool::{
-    Engine, EntityTypeSource, IngestReport, Manifest, Options, Project, Rows, SqlFile, YamlFile,
+    Engine, EntityTypeSource, LoadReport, Manifest, Options, Project, Rows, SqlFile, YamlFile,
 };
 
 /// The repository's `benchmarks` directory.
@@ -104,13 +104,13 @@ pub fn rows(rows: &[(&str, Option<&str>, Option<&str>)]) -> Rows {
     Rows::from_text(&["id", "name", "code"], &rows).unwrap()
 }
 
-/// Ingests `(id, name, code)` rows as things, keyed by `id`.
-pub fn ingest(
+/// Loads `(id, name, code)` rows as things, keyed by `id`.
+pub fn load(
     engine: &Engine,
     source: &str,
     things: &[(&str, Option<&str>, Option<&str>)],
-) -> IngestReport {
-    engine.ingest(source, "thing", rows(things)).unwrap()
+) -> LoadReport {
+    engine.load(source, "thing", rows(things)).unwrap()
 }
 
 pub fn cell(batch: &RecordBatch, column: usize, row: usize) -> Option<String> {
@@ -142,7 +142,7 @@ pub fn count(engine: &Engine, sql: &str) -> u64 {
 }
 
 /// The records a source holds under a key. There is more than one when
-/// the row changed between ingests.
+/// the row changed between loads.
 pub fn records(engine: &Engine, source: &str, key: &str) -> Vec<RecordId> {
     select(
         engine,

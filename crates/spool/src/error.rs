@@ -60,8 +60,8 @@ pub enum Error {
     #[error("apply rejected: {0}")]
     Apply(String),
 
-    #[error("ingest rejected: {0}")]
-    Ingest(String),
+    #[error("load rejected: {0}")]
+    Load(String),
 
     #[error("retraction rejected: {0}")]
     Retract(String),

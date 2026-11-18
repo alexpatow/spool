@@ -119,19 +119,19 @@ describe("a record", () => {
     expect(field("Committed")).toBe(`log position ${run.retraction!.committed!.seq}`);
 
     // Sent again, the row is back, and its run says so.
-    const again = await server.client.ingest({
+    const again = await server.client.load({
       source: "crm",
       entity_type: "company",
       rows: [taken.payload as Record<string, string>],
     });
-    expect(again.ingest?.restored).toBe(1);
+    expect(again.load?.restored).toBe(1);
     cleanup();
     open(server, `/runs/${again.run}`);
     await heading(`Run ${again.run}`);
     await waitFor(() =>
       expect(field("Came back")).toBe("1 record the source had taken back, 1 of them to the identity they left"),
     );
-    expect(field("Committed")).toBe(`log position ${again.ingest!.committed!.seq}`);
+    expect(field("Committed")).toBe(`log position ${again.load!.committed!.seq}`);
     cleanup();
     open(server, `/records/${taken.id}`);
     await heading("Atlas Trading");

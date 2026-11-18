@@ -22,7 +22,7 @@ use crate::retract;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct IngestReport {
+pub struct LoadReport {
     pub run: RunId,
     /// Rows received.
     pub received: u64,
@@ -85,7 +85,7 @@ pub(crate) fn stage(
                     .collect::<Vec<_>>()
                     .join(", "),
             };
-            return Err(Error::Ingest(format!(
+            return Err(Error::Load(format!(
                 "the rows have a column `{}`, which sources/{}.yaml does not list. \
                  It lists {listed}. Add the column to that file to keep it, or leave it out of the rows",
                 field.name(),
@@ -112,7 +112,7 @@ pub(crate) fn stage(
 
     for row in 0..incoming.num_rows() {
         let row_number = first_row + row + 1;
-        let fail = |message: String| Error::Ingest(format!("row {row_number}: {message}"));
+        let fail = |message: String| Error::Load(format!("row {row_number}: {message}"));
 
         let mut payload = BTreeMap::new();
         let mut key = None;

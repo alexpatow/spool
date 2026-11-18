@@ -1000,7 +1000,7 @@ impl IdentityStore for DuckStore {
 }
 
 /// Used by tests in this crate to put records in a store without going
-/// through ingest.
+/// through load.
 #[cfg(test)]
 pub(crate) fn insert_records(conn: &Connection, records: &[(RecordId, EntityType)]) -> Result<()> {
     for (id, entity_type) in records {

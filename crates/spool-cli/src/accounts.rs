@@ -1244,16 +1244,16 @@ mod tests {
     fn a_token_is_known_by_what_it_is_and_named_in_what_it_does() {
         let accounts = Accounts::in_memory();
         let ada = accounts.first("ada", "Ada", PASSWORD).unwrap().person;
-        let (token, secret) = accounts.add_token(" Ingest ", Some(&ada.id)).unwrap();
-        assert_eq!(token.name, "ingest");
+        let (token, secret) = accounts.add_token(" Load ", Some(&ada.id)).unwrap();
+        assert_eq!(token.name, "load");
         assert_eq!(token.created_by.as_deref(), Some(ada.id.as_str()));
         assert_eq!(token.last_used_at, None);
         assert!(secret.starts_with(TOKEN_PREFIX) && secret.len() == TOKEN_PREFIX.len() + 64);
 
-        assert_eq!(accounts.agent(&secret).unwrap().as_deref(), Some("ingest"));
+        assert_eq!(accounts.agent(&secret).unwrap().as_deref(), Some("load"));
         for wrong in [
             "",
-            "ingest",
+            "load",
             TOKEN_PREFIX,
             &secret[..secret.len() - 1],
             &format!("{secret}0"),
@@ -1276,10 +1276,10 @@ mod tests {
     #[test]
     fn a_token_has_a_name_of_its_own() {
         let accounts = Accounts::in_memory();
-        accounts.add_token("ingest", None).unwrap();
+        accounts.add_token("load", None).unwrap();
         assert_eq!(
-            accounts.add_token("INGEST", None).unwrap_err(),
-            Refused::TokenTaken("ingest".to_owned())
+            accounts.add_token("LOAD", None).unwrap_err(),
+            Refused::TokenTaken("load".to_owned())
         );
         for name in ["", " ", "two words", "agent:api", &"a".repeat(65)] {
             let refused = accounts.add_token(name, None).unwrap_err();
@@ -1295,16 +1295,16 @@ mod tests {
                 .map(|token| token.name)
                 .collect::<Vec<_>>()
         };
-        assert_eq!(names(accounts.tokens().unwrap()), ["ingest", "review-bot"]);
+        assert_eq!(names(accounts.tokens().unwrap()), ["load", "review-bot"]);
         assert_eq!(other.created_by, None);
     }
 
     #[test]
     fn a_revoked_token_is_no_longer_one() {
         let accounts = Accounts::in_memory();
-        let (first, secret) = accounts.add_token("ingest", None).unwrap();
+        let (first, secret) = accounts.add_token("load", None).unwrap();
         let (_, other) = accounts.add_token("review-bot", None).unwrap();
-        assert_eq!(accounts.revoke_token(&first.id).unwrap().name, "ingest");
+        assert_eq!(accounts.revoke_token(&first.id).unwrap().name, "load");
         assert_eq!(accounts.agent(&secret).unwrap(), None);
         assert_eq!(
             accounts.agent(&other).unwrap().as_deref(),
@@ -1313,9 +1313,9 @@ mod tests {
         assert_eq!(accounts.revoke_token(&first.id), Err(Refused::UnknownToken));
 
         // The name is free again, and the token that had it stays revoked.
-        let (_, next) = accounts.add_token("ingest", None).unwrap();
+        let (_, next) = accounts.add_token("load", None).unwrap();
         assert_eq!(accounts.agent(&secret).unwrap(), None);
-        assert_eq!(accounts.agent(&next).unwrap().as_deref(), Some("ingest"));
+        assert_eq!(accounts.agent(&next).unwrap().as_deref(), Some("load"));
         assert_eq!(
             accounts.revoke_token_named(" Review-Bot ").unwrap().name,
             "review-bot"

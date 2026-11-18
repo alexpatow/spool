@@ -380,14 +380,14 @@ describe("a review item", () => {
       name: "Pioneer Supplies",
       country: "GB",
     }));
-    const ingested = await server.client.ingest({ source: "crm", entity_type: "company", rows });
-    expect(ingested.status).toBe("succeeded");
+    const loaded = await server.client.load({ source: "crm", entity_type: "company", rows });
+    expect(loaded.status).toBe("succeeded");
     const added = await Promise.all(rows.map(({ id }) => row(server.client, "crm", id)));
     await server.client.commit({
       reason: "branches of the Leeds company",
       ops: added.map((record) => ({ op: "assign", record: record.id, from: null, to: into.id })),
     });
-    await server.client.startRun({ entity_type: "company" });
+    await server.client.match({ entity_type: "company" });
 
     const found = await server.client.reviewCase(1);
     expect(found.item.status).toBe("open");
@@ -482,12 +482,12 @@ describe("a review item", () => {
   test("that names a record its source took back places only the records that still wait", async () => {
     // The same company under a second key: the two rows are held back together.
     const first = await row(server.client, "crm", "c-117");
-    await server.client.ingest({
+    await server.client.load({
       source: "crm",
       entity_type: "company",
       rows: [{ ...(first.payload as Record<string, string>), id: "c-217" }],
     });
-    await server.client.startRun({ entity_type: "company" });
+    await server.client.match({ entity_type: "company" });
     const [raised] = await server.client.reviewItems({ status: "open" });
     const second = await row(server.client, "crm", "c-217");
     expect([...raised!.records].sort()).toEqual([first.id, second.id].sort());
@@ -527,12 +527,12 @@ describe("a review item", () => {
 
   test("that names a record its source took back merges and places only the records that still wait", async () => {
     const first = await row(server.client, "crm", "c-117");
-    await server.client.ingest({
+    await server.client.load({
       source: "crm",
       entity_type: "company",
       rows: [{ ...(first.payload as Record<string, string>), id: "c-217" }],
     });
-    await server.client.startRun({ entity_type: "company" });
+    await server.client.match({ entity_type: "company" });
     const [raised] = await server.client.reviewItems({ status: "open" });
     const second = await row(server.client, "crm", "c-217");
     expect([...raised!.records].sort()).toEqual([first.id, second.id].sort());
@@ -583,7 +583,7 @@ describe("a review item that asks whether an identity is still one thing", () =>
    * that row back.
    */
   async function heldByOne() {
-    await server.client.ingest({
+    await server.client.load({
       source: "crm",
       entity_type: "company",
       rows: [
@@ -592,7 +592,7 @@ describe("a review item that asks whether an identity is still one thing", () =>
         { id: "c-303", name: "Wren Works", website: "https://tarn.example", country: "GB", city: "York" },
       ],
     });
-    await server.client.startRun({ entity_type: "company" });
+    await server.client.match({ entity_type: "company" });
     const [wren, tarn, bridge] = await Promise.all(["c-301", "c-302", "c-303"].map((key) => row(server.client, "crm", key)));
     expect(wren!.identity).toBeTruthy();
     expect([tarn!.identity, bridge!.identity]).toEqual([wren!.identity, wren!.identity]);

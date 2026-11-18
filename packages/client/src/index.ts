@@ -30,7 +30,7 @@ import type {
   IdentityList,
   IdentityView,
   Info,
-  IngestRequest,
+  LoadRequest,
   Judgement,
   MintedIds,
   NewDocument,
@@ -53,7 +53,7 @@ import type {
   SetupRequest,
   SplitReport,
   SplitRequest,
-  StartRunRequest,
+  MatchRequest,
   Token,
   TokenList,
   TypeResolution,
@@ -102,7 +102,7 @@ export class SpoolError extends Error {
 /** Arrow IPC stream bytes, however the caller holds them. */
 export type ArrowBody = Uint8Array | ArrayBuffer | Blob;
 
-export interface IngestArrowOptions {
+export interface LoadArrowOptions {
   source: string;
   entity_type: string;
   wait_ms?: number;
@@ -232,23 +232,23 @@ export class SpoolClient {
     }
   }
 
-  // Ingest
+  // Load
 
   /**
-   * Adds rows as records. A row that was ingested before, with the same
+   * Adds rows as records. A row that was loaded before, with the same
    * source, key and contents, is not added again.
    *
    * The run that comes back may still be `running` if the server's wait ran
    * out first: pass it to `waitForRun`.
    */
-  async ingest(request: IngestRequest): Promise<RunEntry> {
-    const { run } = await this.json<{ run: RunEntry }>("POST", "/v1/ingest", { json: request });
+  async load(request: LoadRequest): Promise<RunEntry> {
+    const { run } = await this.json<{ run: RunEntry }>("POST", "/v1/load", { json: request });
     return run;
   }
 
-  /** As `ingest`, with the rows as an Arrow IPC stream. */
-  async ingestArrow(options: IngestArrowOptions, rows: ArrowBody): Promise<RunEntry> {
-    const { run } = await this.json<{ run: RunEntry }>("POST", "/v1/ingest", {
+  /** As `load`, with the rows as an Arrow IPC stream. */
+  async loadArrow(options: LoadArrowOptions, rows: ArrowBody): Promise<RunEntry> {
+    const { run } = await this.json<{ run: RunEntry }>("POST", "/v1/load", {
       query: { ...options },
       arrow: rows,
     });
@@ -259,9 +259,9 @@ export class SpoolClient {
    * Takes back rows a source no longer holds, named by their keys. Every
    * version of each row stays as evidence and leaves its identity, by a
    * changeset recorded under the caller, and no run examines it after
-   * that. Ingesting a row under the same key brings every version back,
-   * to the identity it left: the ingest run's `ingest.returned` counts
-   * them, and `ingest.committed` is the changeset that did it.
+   * that. Loading a row under the same key brings every version back,
+   * to the identity it left: the load run's `load.returned` counts
+   * them, and `load.committed` is the changeset that did it.
    *
    * The run that comes back is a retract run, and its `retraction` says
    * how many records were taken back. A key the source has no row under is
@@ -278,7 +278,7 @@ export class SpoolClient {
    * Stores documents from one source, for an extractor to read. A document
    * that was stored before, with the same source, key and text, is not
    * stored again, and a changed text under the same key is the document's
-   * next version. The run that comes back is an ingest run.
+   * next version. The run that comes back is a load run.
    */
   async addDocuments(source: string, documents: NewDocument[], options: { wait_ms?: number } = {}): Promise<RunEntry> {
     const { run } = await this.json<{ run: RunEntry }>("POST", "/v1/documents", {
@@ -300,7 +300,7 @@ export class SpoolClient {
   /**
    * Runs one of the project's extractors, which `info` lists, over the
    * latest version of every document it has not read. What it finds is
-   * stored as records, which `startRun` then matches like any other;
+   * stored as records, which `match` then matches like any other;
    * `extraction` on the run that comes back counts them.
    *
    * The run may still be `running` if the server's wait ran out first: pass
@@ -334,8 +334,8 @@ export class SpoolClient {
    * candidates, submit judgements, and reconcile it. The server runs no
    * code a caller sends.
    */
-  async startRun(request: StartRunRequest): Promise<RunEntry | null> {
-    const { run } = await this.json<{ run: RunEntry | null }>("POST", "/v1/runs", { json: request });
+  async match(request: MatchRequest): Promise<RunEntry | null> {
+    const { run } = await this.json<{ run: RunEntry | null }>("POST", "/v1/match", { json: request });
     return run;
   }
 

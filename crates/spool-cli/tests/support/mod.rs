@@ -642,7 +642,7 @@ pub fn arrow_stream(rows: Rows) -> Vec<u8> {
     writer.into_inner().unwrap()
 }
 
-/// Rows as the JSON objects `POST /v1/ingest` takes. A missing value is left
+/// Rows as the JSON objects `POST /v1/load` takes. A missing value is left
 /// out of its object.
 pub fn json_rows(rows: Rows) -> Vec<Value> {
     use arrow::array::{Array, AsArray};

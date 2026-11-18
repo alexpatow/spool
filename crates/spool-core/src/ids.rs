@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 /// Identifies a record. Derived from the record's source, its key
-/// within that source and its content, so ingesting the same thing twice
+/// within that source and its content, so loading the same thing twice
 /// yields the same ID.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(from = "Uuid", into = "Uuid")]
@@ -177,7 +177,7 @@ impl fmt::Display for Seq {
     }
 }
 
-/// Identifies a run of the engine: an ingest, a match or a reconcile.
+/// Identifies a run of the engine: a load, a match or a reconcile.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]

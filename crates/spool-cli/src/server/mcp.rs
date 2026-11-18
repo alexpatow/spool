@@ -398,7 +398,7 @@ struct SearchRecords {
     #[serde(default)]
     source: Option<String>,
     /// Only the records a source holds under this key. There is more than
-    /// one when the row changed between ingests.
+    /// one when the row changed between loads.
     #[serde(default)]
     key: Option<String>,
     /// Only the records that belong to this identity now.

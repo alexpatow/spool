@@ -32,7 +32,7 @@ CREATE TABLE spool.record (
 CREATE TABLE spool.retraction (        -- rows a source took back; kept. One is in force while restored_run IS NULL
   record_id    UUID   NOT NULL,        -- a record the source no longer holds: it stays as evidence and has no identity
   retract_run  BIGINT NOT NULL,        -- the retract run that took it back
-  restored_run BIGINT,                 -- the ingest run in which the source sent the row again
+  restored_run BIGINT,                 -- the load run in which the source sent the row again
   detached_seq BIGINT                  -- the log position of the changeset that took it out of its identity, if it had one
 );
 
@@ -75,7 +75,7 @@ CREATE TABLE spool.run (               -- also the task record a client reads
   started_at       TIMESTAMPTZ NOT NULL,
   finished_at      TIMESTAMPTZ,
   error            VARCHAR,              -- failed: why
-  result           JSON                  -- what the run reported: an ingest's, an extraction's or a retraction's counts, a match run's resolution
+  result           JSON                  -- what the run reported: a load's, an extraction's or a retraction's counts, a match run's resolution
 );
 
 CREATE TABLE spool.candidate (         -- per run, disposable

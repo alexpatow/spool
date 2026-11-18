@@ -51,7 +51,7 @@ fn open(path: &Path, seed: u64, remaining: &Arc<AtomicI64>) -> Engine {
 /// first two, a new thing, and one that matches the other two identities and
 /// goes to review.
 fn first_batch(engine: &Engine) {
-    ingest(
+    load(
         engine,
         "shop",
         &[
@@ -65,7 +65,7 @@ fn first_batch(engine: &Engine) {
 }
 
 fn second_batch(engine: &Engine) {
-    ingest(
+    load(
         engine,
         "depot",
         &[

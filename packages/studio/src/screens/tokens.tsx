@@ -86,7 +86,7 @@ function Add({ done }: { done: (said: ReactNode) => void }) {
           autoCapitalize="none"
           maxLength={64}
           pattern="[A-Za-z0-9._\-]+"
-          placeholder="ingest"
+          placeholder="load"
           required
         />
       </Labelled>

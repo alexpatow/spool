@@ -51,7 +51,7 @@ fn set(members: &[&str]) -> std::collections::BTreeSet<String> {
 
 /// An anvil and a hammer from the shop: two identities.
 fn anvil_and_hammer(engine: &Engine) -> (IdentityId, IdentityId) {
-    ingest(
+    load(
         engine,
         "shop",
         &[("1", Some("anvil"), None), ("2", Some("hammer"), None)],
@@ -93,7 +93,7 @@ fn a_merge_moves_the_members_and_the_merged_id_still_answers() {
     engine.verify().unwrap();
 
     // Nothing joins a merged identity.
-    ingest(&engine, "depot", &[("9", Some("tongs"), None)]);
+    load(&engine, "depot", &[("9", Some("tongs"), None)]);
     let tongs = record_id(&engine, "depot", "9");
     let error = engine
         .author(
@@ -120,13 +120,13 @@ fn merging_the_identities_of_a_review_item_lets_the_next_run_place_its_record() 
     let engine = engine();
     // An anvil known by name, a thing known by code, and a record that
     // has the name of one and the code of the other.
-    ingest(
+    load(
         &engine,
         "shop",
         &[("1", Some("anvil"), None), ("2", None, Some("K7"))],
     );
     resolve(&engine);
-    ingest(&engine, "depot", &[("9", Some("anvil"), Some("K7"))]);
+    load(&engine, "depot", &[("9", Some("anvil"), Some("K7"))]);
     let report = resolve(&engine);
     let (by_name, by_code) = (
         identity(&engine, "shop", "1").unwrap(),
@@ -167,7 +167,7 @@ fn a_merge_written_before_a_member_arrived_is_rejected() {
     };
     // Before it is committed, the anvil gains a member the reviewer has not
     // seen.
-    ingest(&engine, "depot", &[("9", Some("anvil"), None)]);
+    load(&engine, "depot", &[("9", Some("anvil"), None)]);
     resolve(&engine);
     let changed = engine.head().unwrap();
 
@@ -196,7 +196,7 @@ fn undoing_a_merge_brings_the_identity_back_with_the_members_it_had() {
     let (anvil, hammer) = anvil_and_hammer(&engine);
     let merged = author(&engine, vec![merge(anvil, hammer)]).seq;
     // After the merge, the survivor gains a member of its own.
-    ingest(&engine, "depot", &[("9", Some("hammer"), None)]);
+    load(&engine, "depot", &[("9", Some("hammer"), None)]);
     resolve(&engine);
     assert_eq!(
         members(&engine, hammer),
@@ -287,7 +287,7 @@ fn an_undo_that_cannot_be_made_says_why() {
 
 /// Three anvils the rules put in one identity.
 fn three_anvils(engine: &Engine) -> IdentityId {
-    ingest(
+    load(
         engine,
         "shop",
         &[
@@ -348,7 +348,7 @@ fn a_split_gives_the_smaller_side_a_new_identity_and_keeps_the_sides_apart() {
     ));
     // And the rules do not either: a new anvil matches both sides, and is
     // left for review.
-    ingest(&engine, "depot", &[("9", Some("anvil"), None)]);
+    load(&engine, "depot", &[("9", Some("anvil"), None)]);
     let report = resolve(&engine);
     assert_eq!(report.resolved[0].records_assigned, 0);
     assert!(matches!(
@@ -386,7 +386,7 @@ fn the_larger_side_of_a_split_keeps_the_id_whichever_side_was_named() {
 fn a_split_that_cannot_be_made_says_why() {
     let engine = engine();
     let anvils = three_anvils(&engine);
-    ingest(&engine, "depot", &[("9", Some("hammer"), None)]);
+    load(&engine, "depot", &[("9", Some("hammer"), None)]);
     resolve(&engine);
     let hammer = identity(&engine, "depot", "9").unwrap();
     let all: Vec<_> = ["1", "2", "3"]
@@ -423,7 +423,7 @@ fn a_split_based_on_a_log_position_is_refused_when_the_members_changed_after_it(
     // Whoever asks for the split read three members: the two they name are
     // the larger side, and would keep the ID.
     let read = engine.head().unwrap();
-    ingest(&engine, "depot", &[("9", Some("hammer"), None)]);
+    load(&engine, "depot", &[("9", Some("hammer"), None)]);
     resolve(&engine);
     let hammer = identity(&engine, "depot", "9").unwrap();
     let elsewhere = engine.head().unwrap();
@@ -464,7 +464,7 @@ fn a_split_based_on_a_log_position_is_made_when_only_other_identities_changed_af
     let engine = engine();
     let anvils = three_anvils(&engine);
     let read = engine.head().unwrap();
-    ingest(&engine, "depot", &[("9", Some("hammer"), None)]);
+    load(&engine, "depot", &[("9", Some("hammer"), None)]);
     resolve(&engine);
     assert!(engine.head().unwrap() > read);
 
@@ -487,13 +487,13 @@ fn a_split_based_on_a_log_position_is_made_when_only_other_identities_changed_af
 #[test]
 fn a_cannot_link_keeps_a_new_record_out_of_the_identity_the_rules_chose() {
     let engine = engine();
-    ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
+    load(&engine, "shop", &[("1", Some("anvil"), None)]);
     resolve(&engine);
     let anvil = identity(&engine, "shop", "1").unwrap();
 
     // A second anvil arrives, and before any run looks at it someone says it
     // is not the first one.
-    ingest(&engine, "depot", &[("9", Some("anvil"), None)]);
+    load(&engine, "depot", &[("9", Some("anvil"), None)]);
     author(
         &engine,
         vec![constrain(
@@ -516,13 +516,13 @@ fn a_cannot_link_keeps_a_new_record_out_of_the_identity_the_rules_chose() {
 #[test]
 fn a_cannot_link_against_one_member_of_a_matched_identity_is_left_for_review() {
     let engine = engine();
-    ingest(
+    load(
         &engine,
         "shop",
         &[("1", Some("anvil"), None), ("2", Some("anvil"), None)],
     );
     resolve(&engine);
-    ingest(&engine, "depot", &[("9", Some("anvil"), None)]);
+    load(&engine, "depot", &[("9", Some("anvil"), None)]);
     author(
         &engine,
         vec![constrain(
@@ -547,7 +547,7 @@ fn a_must_link_places_a_new_record_the_rules_would_not() {
     let engine = engine();
     let (anvil, hammer) = anvil_and_hammer(&engine);
     // Nothing about these tongs resembles the anvil.
-    ingest(&engine, "depot", &[("9", Some("tongs"), None)]);
+    load(&engine, "depot", &[("9", Some("tongs"), None)]);
     let tongs = record_id(&engine, "depot", "9");
     author(
         &engine,
@@ -619,14 +619,14 @@ fn a_must_link_places_a_new_record_the_rules_would_not() {
 #[test]
 fn a_changed_row_supersedes_the_one_before_and_keeps_its_identity() {
     let engine = engine();
-    ingest(&engine, "shop", &[("1", Some("anvil"), Some("K1"))]);
+    load(&engine, "shop", &[("1", Some("anvil"), Some("K1"))]);
     resolve(&engine);
     let anvil = identity(&engine, "shop", "1").unwrap();
     let first = record_id(&engine, "shop", "1");
 
     // The shop renames the row and gives it another code. No rule connects
     // the new version with the old one: the row's key does.
-    let report = ingest(&engine, "shop", &[("1", Some("hammer"), Some("K2"))]);
+    let report = load(&engine, "shop", &[("1", Some("hammer"), Some("K2"))]);
     assert_eq!((report.inserted, report.superseded), (1, 1));
     let report = resolve(&engine);
     assert_eq!(report.resolved[0].candidates, 0);
@@ -643,7 +643,7 @@ fn a_changed_row_supersedes_the_one_before_and_keeps_its_identity() {
     assert_eq!(engine.identity(anvil).unwrap().members.len(), 2);
 
     // The same content again is the same record, and nothing new.
-    let report = ingest(&engine, "shop", &[("1", Some("hammer"), Some("K2"))]);
+    let report = load(&engine, "shop", &[("1", Some("hammer"), Some("K2"))]);
     assert_eq!((report.inserted, report.superseded), (0, 0));
     engine.verify().unwrap();
 }
@@ -651,8 +651,8 @@ fn a_changed_row_supersedes_the_one_before_and_keeps_its_identity() {
 #[test]
 fn versions_sent_in_one_call_follow_each_other_in_row_order() {
     let engine = engine();
-    ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
-    let report = ingest(
+    load(&engine, "shop", &[("1", Some("anvil"), None)]);
+    let report = load(
         &engine,
         "shop",
         &[
@@ -663,7 +663,7 @@ fn versions_sent_in_one_call_follow_each_other_in_row_order() {
     );
     assert_eq!((report.inserted, report.superseded), (3, 2));
     // The same key at another source is another row.
-    let report = ingest(&engine, "depot", &[("1", Some("bellows"), None)]);
+    let report = load(&engine, "depot", &[("1", Some("bellows"), None)]);
     assert_eq!(report.superseded, 0);
 
     let chain = select(
@@ -700,7 +700,7 @@ fn versions_sent_in_one_call_follow_each_other_in_row_order() {
 #[test]
 fn a_new_version_that_matches_another_identity_is_left_for_review() {
     let engine = engine();
-    ingest(
+    load(
         &engine,
         "shop",
         &[("1", Some("anvil"), None), ("2", Some("hammer"), None)],
@@ -713,7 +713,7 @@ fn a_new_version_that_matches_another_identity_is_left_for_review() {
 
     // Row 1 now reads like row 2. Its key says it is still the anvil, the
     // rules say it is the hammer, and deciding would merge the two.
-    ingest(&engine, "shop", &[("1", Some("hammer"), None)]);
+    load(&engine, "shop", &[("1", Some("hammer"), None)]);
     let report = resolve(&engine);
     assert_eq!(report.resolved[0].records_assigned, 0);
     let items = engine.review_items(&ReviewFilter::open()).unwrap();
@@ -729,13 +729,13 @@ fn a_new_version_that_matches_another_identity_is_left_for_review() {
 #[test]
 fn a_dismissed_review_item_is_closed_and_not_examined_again() {
     let engine = engine();
-    ingest(
+    load(
         &engine,
         "shop",
         &[("1", Some("anvil"), None), ("2", None, Some("K7"))],
     );
     resolve(&engine);
-    ingest(&engine, "depot", &[("9", Some("anvil"), Some("K7"))]);
+    load(&engine, "depot", &[("9", Some("anvil"), Some("K7"))]);
     resolve(&engine);
     let waiting = record_id(&engine, "depot", "9");
     let item = engine
@@ -775,7 +775,7 @@ fn a_dismissed_review_item_is_closed_and_not_examined_again() {
 #[test]
 fn a_dismissed_review_item_stays_closed_when_its_run_never_committed() {
     let engine = engine();
-    ingest(
+    load(
         &engine,
         "shop",
         &[("1", Some("anvil"), None), ("2", None, Some("K7"))],
@@ -784,7 +784,7 @@ fn a_dismissed_review_item_stays_closed_when_its_run_never_committed() {
     // One record fits both identities, and one is new. The run's draft is
     // left for review, so the run has not succeeded and both records are
     // still new to the next one.
-    ingest(
+    load(
         &engine,
         "depot",
         &[
@@ -827,7 +827,7 @@ fn every_kind_of_change_survives_a_rebuild_and_a_reopen() {
         let engine = Engine::open(&path, Options::seeded(1)).unwrap();
         engine.apply(&things()).unwrap();
         let anvils = three_anvils(&engine);
-        ingest(
+        load(
             &engine,
             "depot",
             &[("8", Some("hammer"), None), ("9", Some("tongs"), None)],
@@ -865,7 +865,7 @@ fn every_kind_of_change_survives_a_rebuild_and_a_reopen() {
                 b: pair.0,
             }],
         );
-        ingest(&engine, "shop", &[("2", Some("anvil, large"), None)]);
+        load(&engine, "shop", &[("2", Some("anvil, large"), None)]);
         resolve(&engine);
         engine.verify().unwrap();
 

@@ -22,7 +22,7 @@ import { count } from "../format.ts";
 import { useLabels, useLoad } from "../hooks.ts";
 import type { Route } from "../router.ts";
 
-const KINDS: RunKind[] = ["ingest", "extract", "match", "reconcile", "retract"];
+const KINDS: RunKind[] = ["load", "extract", "match", "reconcile", "retract"];
 const STATUSES: RunStatus[] = ["running", "open", "drafted", "succeeded", "failed"];
 const STEP = 100;
 
@@ -107,7 +107,7 @@ function leftForReview(identities: number | undefined): ReactNode {
 }
 
 function RunView({ run }: { run: RunEntry }) {
-  const { ingest, extraction, resolution, retraction } = run;
+  const { load, extraction, resolution, retraction } = run;
   // The identities a strategy would merge or split are named by ID.
   const labels = useLabels([
     ...(resolution?.suggestions?.merges.flatMap((merge) => merge.identities) ?? []),
@@ -146,25 +146,25 @@ function RunView({ run }: { run: RunEntry }) {
           {run.error}
         </Notice>
       ) : null}
-      {ingest ? (
-        <Section title="Ingest">
+      {load ? (
+        <Section title="Load">
           <Fields
             rows={[
               [
                 "Rows",
-                `${ingest.received} received: ${ingest.inserted} new, ${ingest.duplicates} duplicates, ${ingest.superseded ?? 0} new versions`,
+                `${load.received} received: ${load.inserted} new, ${load.duplicates} duplicates, ${load.superseded ?? 0} new versions`,
               ],
               [
                 "Came back",
-                ingest.restored
-                  ? `${count(ingest.restored, "record")} the source had taken back, ${ingest.returned ?? 0} of them to the identity they left`
+                load.restored
+                  ? `${count(load.restored, "record")} the source had taken back, ${load.returned ?? 0} of them to the identity they left`
                   : null,
               ],
-              ["Left for review", leftForReview(ingest.possible_splits)],
+              ["Left for review", leftForReview(load.possible_splits)],
               [
                 "Committed",
-                ingest.committed ? (
-                  <Ref kind="log" id={ingest.committed.seq} label={`log position ${ingest.committed.seq}`} />
+                load.committed ? (
+                  <Ref kind="log" id={load.committed.seq} label={`log position ${load.committed.seq}`} />
                 ) : null,
               ],
             ]}
@@ -205,9 +205,9 @@ function RunView({ run }: { run: RunEntry }) {
                 `${extraction.mentions} found: ${extraction.inserted} new, ${extraction.duplicates} duplicates, ${extraction.superseded} new versions`,
               ],
               [
-                "Ingest run",
-                extraction.ingest_run ? (
-                  <Ref kind="run" id={extraction.ingest_run} label={`ingest run ${extraction.ingest_run}`} />
+                "Load run",
+                extraction.load_run ? (
+                  <Ref kind="run" id={extraction.load_run} label={`load run ${extraction.load_run}`} />
                 ) : null,
               ],
             ]}

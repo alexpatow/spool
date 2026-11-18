@@ -11,7 +11,7 @@ use spool_core::{Committed, ContentHash, EntityType, RunId, Seq, StateError};
 use crate::documents::{ExtractReport, ExtractorRef};
 use crate::engine::{StrategyRef, TypeResolution};
 use crate::error::{Error, Result};
-use crate::ingest::IngestReport;
+use crate::load::LoadReport;
 use crate::retract::RetractReport;
 use crate::store::parse;
 use crate::time::rfc3339;
@@ -20,7 +20,7 @@ use crate::time::rfc3339;
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum RunKind {
-    Ingest,
+    Load,
     Extract,
     Match,
     Reconcile,
@@ -30,11 +30,20 @@ pub enum RunKind {
 impl RunKind {
     pub const fn as_str(self) -> &'static str {
         match self {
-            RunKind::Ingest => "ingest",
+            RunKind::Load => "load",
             RunKind::Extract => "extract",
             RunKind::Match => "match",
             RunKind::Reconcile => "reconcile",
             RunKind::Retract => "retract",
+        }
+    }
+
+    /// The kind as the store holds it. A load is `ingest` there: the store
+    /// had the word before the API changed it, and its format is as it was.
+    pub(crate) const fn stored(self) -> &'static str {
+        match self {
+            RunKind::Load => "ingest",
+            other => other.as_str(),
         }
     }
 }
@@ -100,11 +109,11 @@ pub struct RunEntry {
     pub run: RunId,
     pub kind: RunKind,
     pub status: RunStatus,
-    /// The entity type an ingest, a match or a retract run is about.
+    /// The entity type a load, a match or a retract run is about.
     pub entity_type: Option<EntityType>,
     /// The strategy of a match run.
     pub strategy: Option<StrategyRef>,
-    /// The extractor of an extract run, and of the ingest run that stored
+    /// The extractor of an extract run, and of the load run that stored
     /// what it found.
     #[serde(default)]
     pub extractor: Option<ExtractorRef>,
@@ -112,9 +121,9 @@ pub struct RunEntry {
     pub finished_at: Option<String>,
     /// Why a failed run failed.
     pub error: Option<String>,
-    /// What an ingest run reported when it finished. The run stored rows,
+    /// What a load run reported when it finished. The run stored rows,
     /// documents, or the mentions an extract run found.
-    pub ingest: Option<IngestReport>,
+    pub load: Option<LoadReport>,
     /// What an extract run reported when it finished.
     #[serde(default)]
     pub extraction: Option<ExtractReport>,
@@ -165,7 +174,7 @@ fn entry(row: &duckdb::Row<'_>) -> Result<RunEntry> {
         message: format!("its recorded {what} cannot be read"),
     };
     let kind = match row.get::<_, String>(1)?.as_str() {
-        "ingest" => RunKind::Ingest,
+        "ingest" => RunKind::Load,
         "extract" => RunKind::Extract,
         "match" => RunKind::Match,
         "reconcile" => RunKind::Reconcile,
@@ -173,11 +182,11 @@ fn entry(row: &duckdb::Row<'_>) -> Result<RunEntry> {
         _ => return Err(unreadable("kind")),
     };
     let result: Option<String> = row.get(9)?;
-    let (mut ingest, mut extraction, mut resolution, mut retraction) = (None, None, None, None);
+    let (mut load, mut extraction, mut resolution, mut retraction) = (None, None, None, None);
     if let Some(result) = &result {
         match kind {
-            RunKind::Ingest => {
-                ingest = Some(serde_json::from_str(result).map_err(|_| unreadable("result"))?);
+            RunKind::Load => {
+                load = Some(serde_json::from_str(result).map_err(|_| unreadable("result"))?);
             }
             RunKind::Extract => {
                 extraction = Some(serde_json::from_str(result).map_err(|_| unreadable("result"))?);
@@ -226,7 +235,7 @@ fn entry(row: &duckdb::Row<'_>) -> Result<RunEntry> {
         started_at: rfc3339(row.get(6)?),
         finished_at: row.get::<_, Option<i64>>(7)?.map(rfc3339),
         error: row.get(8)?,
-        ingest,
+        load,
         extraction,
         resolution,
         retraction,
@@ -255,7 +264,7 @@ pub(crate) fn list(conn: &Connection, filter: &RunFilter) -> Result<Vec<RunEntry
          LIMIT $4"
     ))?;
     let mut rows = statement.query(params![
-        filter.kind.map(RunKind::as_str),
+        filter.kind.map(RunKind::stored),
         filter.status.map(RunStatus::as_str),
         filter.entity_type.as_ref().map(EntityType::as_str),
         filter.limit.min(i64::MAX as u64) as i64,

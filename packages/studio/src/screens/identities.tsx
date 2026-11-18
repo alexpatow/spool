@@ -221,13 +221,13 @@ function IdentityScreen({ head, view, records, constraints, history }: Loaded) {
               },
             },
             {
-              title: "Ingested",
+              title: "Loaded",
               cell: (member) => {
                 const record = byId.get(member.record);
                 return record ? (
                   <>
-                    <When at={record.ingested_at} /> by{" "}
-                    <Ref kind="run" id={record.ingest_run} label={`run ${record.ingest_run}`} />
+                    <When at={record.loaded_at} /> by{" "}
+                    <Ref kind="run" id={record.load_run} label={`run ${record.load_run}`} />
                   </>
                 ) : null;
               },
