@@ -2049,7 +2049,7 @@ async fn commit(
             Some(base) => base,
             None => engine.head()?,
         };
-        engine.commit(Changeset {
+        engine.commit_with_versions(Changeset {
             id,
             base,
             actor: caller.actor,

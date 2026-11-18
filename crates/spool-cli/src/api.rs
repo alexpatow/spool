@@ -256,6 +256,10 @@ pub struct RejectDraftRequest {
 /// A caller that has read the state it is changing says so with `base`: a
 /// merge is rejected if the members of either identity changed after it. A
 /// caller that leaves `base` out is taken to have read the head of the log.
+///
+/// Placing the latest version of a row moves its earlier versions along:
+/// the server adds those moves to the changeset, and the log shows them.
+/// The changeset of a stored draft is committed as it was stored.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CommitRequest {
@@ -282,6 +286,9 @@ pub struct UndoRequest {
     #[serde(default)]
     pub reason: Option<String>,
     /// Commit the undo (the default), or only validate it and return it.
+    /// An undo is committed by asking for it again: sent to
+    /// `POST /v1/changesets`, it is a changeset like any other, and the
+    /// earlier versions of the rows it places move along.
     #[serde(default)]
     pub commit: Option<bool>,
 }

@@ -22,6 +22,7 @@ use crate::drafts::{self, DraftEntry, DraftFilter, DraftStatus, DraftSummary};
 use crate::error::{Error, Result};
 use crate::explain::{self, Explanation};
 use crate::features;
+use crate::following::following;
 use crate::load::{self, LoadReport};
 use crate::lookup::{
     self, HistoryEntry, IdentityFilter, IdentitySummary, IdentityView, LoggedChangeset,
@@ -206,6 +207,11 @@ pub struct TypeResolution {
     pub judgements: JudgementCounts,
     pub identities_created: u64,
     pub records_assigned: u64,
+    /// Earlier versions of the rows the run placed, moved along with them
+    /// from another identity or from none. They are not counted in
+    /// `records_assigned`.
+    #[serde(default)]
+    pub versions_moved: u64,
     /// Examined records left without an identity. Each is named in
     /// `review`.
     pub records_unassigned: u64,
@@ -713,12 +719,23 @@ impl Engine {
         self.lock().cancel_run(run)
     }
 
-    /// Validates a changeset against current state and commits it. This is
-    /// the only way identity state changes, whoever wrote the changeset.
+    /// Validates a changeset against current state and commits it as it
+    /// is. This is the only way identity state changes, whoever wrote the
+    /// changeset.
     ///
     /// Committing the changeset of a stored draft approves the draft.
     pub fn commit(&self, changeset: Changeset) -> Result<Committed> {
-        self.lock().commit(changeset)
+        self.lock().commit(changeset, false)
+    }
+
+    /// Commits a changeset someone wrote, with the earlier versions of the
+    /// rows it places moved along with them, as [`author`](Self::author)
+    /// does. A changeset that carries the ID of a stored draft is committed
+    /// as it was stored. What was made to be committed as it is, such as an
+    /// undo that was returned without being committed, goes to
+    /// [`commit`](Self::commit).
+    pub fn commit_with_versions(&self, changeset: Changeset) -> Result<Committed> {
+        self.lock().commit(changeset, true)
     }
 
     /// Writes a changeset from operations and commits it. The engine mints
@@ -728,7 +745,7 @@ impl Engine {
     /// should be, writes the changeset itself and calls
     /// [`commit`](Self::commit).
     pub fn author(&self, actor: Actor, reason: Option<String>, ops: Vec<Op>) -> Result<Authored> {
-        self.lock().author(actor, reason, ops, true)
+        self.lock().author(actor, reason, ops, true, true)
     }
 
     /// Takes back the changeset at a log position with a new changeset, which
@@ -1268,6 +1285,47 @@ fn id_error(error: impl std::error::Error + Send + Sync + 'static) -> Error {
 }
 
 impl Inner {
+    /// The moves that take the earlier versions of the rows `changeset`
+    /// places along with them, as far as the state allows: a move it
+    /// refuses, such as one a constraint forbids, is left out. Nothing when
+    /// the state refuses the changeset's own operations, so that the
+    /// refusal is theirs alone, or when it still refuses a move once those
+    /// it named are left out, so it is validated with the moves twice at
+    /// most.
+    fn versions_along(&self, changeset: &Changeset) -> Result<Vec<Op>> {
+        let own = changeset.ops.len();
+        let mut along = following(&self.store.conn, &changeset.ops)?;
+        let mut rounds = 0;
+        while !along.is_empty() {
+            if rounds == 2 {
+                return Ok(Vec::new());
+            }
+            rounds += 1;
+            let mut whole = changeset.clone();
+            whole.ops.extend(along.iter().cloned());
+            let rejections = match validate(&self.store, whole) {
+                Ok(_) => break,
+                Err(ValidationError::Rejected(rejections)) => rejections,
+                Err(_) => return Ok(Vec::new()),
+            };
+            let refused: HashSet<usize> = rejections
+                .iter()
+                .filter_map(|rejection| rejection.op_index)
+                .filter(|index| *index >= own)
+                .map(|index| index - own)
+                .collect();
+            if refused.is_empty() {
+                return Ok(Vec::new());
+            }
+            let mut at = 0;
+            along.retain(|_| {
+                at += 1;
+                !refused.contains(&(at - 1))
+            });
+        }
+        Ok(along)
+    }
+
     fn apply(&mut self, manifest: &Manifest) -> Result<ApplyReport> {
         let now = self.store.clock.now_micros();
         let mut report = ApplyReport {
@@ -2010,6 +2068,9 @@ impl Inner {
                     _ => {}
                 }
             }
+            let along = inner.versions_along(&draft.changeset)?;
+            let versions_moved = along.len() as u64;
+            draft.changeset.ops.extend(along);
             let held = then == Disposition::LeaveForReview && !draft.changeset.ops.is_empty();
             let report = TypeResolution {
                 entity_type: entity_type.clone(),
@@ -2027,6 +2088,7 @@ impl Inner {
                 },
                 identities_created,
                 records_assigned,
+                versions_moved,
                 records_unassigned: new_records - records_assigned,
                 review: draft.review.clone(),
                 committed: None,
@@ -2232,7 +2294,7 @@ impl Inner {
         Ok(evidence)
     }
 
-    fn commit(&mut self, changeset: Changeset) -> Result<Committed> {
+    fn commit(&mut self, mut changeset: Changeset, mut along: bool) -> Result<Committed> {
         // A changeset that carries the ID of a stored draft is that draft or
         // it is refused: the ID is what a reviewer approved.
         if let Some(record) = drafts::get(&self.store.conn, changeset.id)? {
@@ -2255,6 +2317,11 @@ impl Inner {
                 // A committed draft is in the log, and the validator says so.
                 DraftStatus::Open | DraftStatus::Committed => {}
             }
+            along = false;
+        }
+        if along {
+            let along = self.versions_along(&changeset)?;
+            changeset.ops.extend(along);
         }
         retract::refuse_placing(&self.store.conn, &changeset.ops)?;
         let validated = validate(&self.store, changeset)?;
@@ -2267,8 +2334,9 @@ impl Inner {
         reason: Option<String>,
         ops: Vec<Op>,
         commit: bool,
+        along: bool,
     ) -> Result<Authored> {
-        let changeset = Changeset {
+        let mut changeset = Changeset {
             id: lock(&self.ids).changeset_id(),
             base: self.store.head()?,
             actor,
@@ -2276,6 +2344,10 @@ impl Inner {
             run: None,
             ops,
         };
+        if along {
+            let along = self.versions_along(&changeset)?;
+            changeset.ops.extend(along);
+        }
         retract::refuse_placing(&self.store.conn, &changeset.ops)?;
         let validated = validate(&self.store, changeset.clone())?;
         let committed = match commit {
@@ -2305,7 +2377,9 @@ impl Inner {
             return Err(Error::NothingToUndo(seq));
         }
         let reason = reason.unwrap_or_else(|| format!("undo of the changeset at position {seq}"));
-        self.author(actor, Some(reason), ops, commit)
+        // An undo puts back what the changeset moved and nothing else: a
+        // version it left where it was stays there.
+        self.author(actor, Some(reason), ops, commit, false)
     }
 
     fn split(
@@ -2395,7 +2469,9 @@ impl Inner {
                 });
             }
         }
-        let authored = self.author(actor, reason, ops, true)?;
+        // A split moves the records it was given and no other: the
+        // reviewer named both sides, versions of one row included.
+        let authored = self.author(actor, reason, ops, true, false)?;
         Ok(SplitReport {
             kept: identity,
             identity: new,
@@ -2419,9 +2495,11 @@ impl Inner {
     }
 
     fn approve_draft(&mut self, draft: ChangesetId) -> Result<Committed> {
-        let record = self.open_draft(draft, "approved")?;
-        retract::refuse_placing(&self.store.conn, &record.changeset.ops)?;
-        let validated = validate(&self.store, record.changeset)?;
+        // A draft is approved as it was stored and shown: the run that
+        // drafted it moved the earlier versions along already.
+        let changeset = self.open_draft(draft, "approved")?.changeset;
+        retract::refuse_placing(&self.store.conn, &changeset.ops)?;
+        let validated = validate(&self.store, changeset)?;
         Ok(self.store.apply(validated)?)
     }
 

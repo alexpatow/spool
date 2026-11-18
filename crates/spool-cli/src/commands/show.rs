@@ -594,14 +594,7 @@ impl View<'_> {
                     report.judgements.match_, report.judgements.no_match, report.judgements.unsure
                 ),
             ));
-            rows.push((
-                "placed",
-                format!(
-                    "{}, {} created",
-                    count(report.records_assigned, "record"),
-                    count(report.identities_created, "identity")
-                ),
-            ));
+            rows.push(("placed", placed(report)));
             rows.push((
                 "left out",
                 format!(
@@ -1811,6 +1804,22 @@ fn read_by(document: &DocumentEntry) -> String {
             .collect::<Vec<_>>()
             .join(", "),
     }
+}
+
+/// What a match run placed, and the earlier versions it moved along.
+pub(super) fn placed(report: &spool::TypeResolution) -> String {
+    let mut placed = format!(
+        "{}, {} created",
+        count(report.records_assigned, "record"),
+        count(report.identities_created, "identity")
+    );
+    if report.versions_moved > 0 {
+        placed += &format!(
+            ", {} moved along",
+            count(report.versions_moved, "earlier version")
+        );
+    }
+    placed
 }
 
 pub(super) fn count(number: u64, what: &str) -> String {

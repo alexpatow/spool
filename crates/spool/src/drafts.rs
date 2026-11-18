@@ -81,6 +81,8 @@ pub struct DraftSummary {
     pub status: DraftStatus,
     pub operations: u64,
     pub identities_created: u64,
+    /// The records it would place or move, the earlier versions of rows
+    /// it places included.
     pub records_assigned: u64,
     /// Committed: its position in the log.
     pub committed_seq: Option<Seq>,

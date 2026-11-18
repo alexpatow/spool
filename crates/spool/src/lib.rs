@@ -33,6 +33,7 @@ mod engine;
 mod error;
 mod explain;
 mod features;
+mod following;
 mod load;
 mod lookup;
 mod metrics;

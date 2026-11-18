@@ -160,6 +160,10 @@ export interface ChangesetList {
  * A caller that has read the state it is changing says so with `base`: a
  * merge is rejected if the members of either identity changed after it. A
  * caller that leaves `base` out is taken to have read the head of the log.
+ *
+ * Placing the latest version of a row moves its earlier versions along:
+ * the server adds those moves to the changeset, and the log shows them.
+ * The changeset of a stored draft is committed as it was stored.
  */
 export interface CommitRequest {
   /**
@@ -399,6 +403,10 @@ export interface DraftSummary {
    * The reconcile run that drafted it.
    */
   reconcile_run: RunId;
+  /**
+   * The records it would place or move, the earlier versions of rows
+   * it places included.
+   */
   records_assigned: number;
   /**
    * Rejected: when.
@@ -1981,6 +1989,12 @@ export interface TypeResolution {
    * both have an identity.
    */
   suggestions?: Suggestions | null;
+  /**
+   * Earlier versions of the rows the run placed, moved along with them
+   * from another identity or from none. They are not counted in
+   * `records_assigned`.
+   */
+  versions_moved?: number;
 }
 
 /**
@@ -1990,6 +2004,9 @@ export interface TypeResolution {
 export interface UndoRequest {
   /**
    * Commit the undo (the default), or only validate it and return it.
+   * An undo is committed by asking for it again: sent to
+   * `POST /v1/changesets`, it is a changeset like any other, and the
+   * earlier versions of the rows it places move along.
    */
   commit?: boolean | null;
   reason?: string | null;
