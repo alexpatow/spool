@@ -45,7 +45,7 @@ curl -s 'http://127.0.0.1:7765/v1/records?source=crm&key=c-7'
 ```
 
 ```text title="Output"
-{"records":[{"id":"bdbab4b2-e260-2b34-b08f-3fae6a2018a9","entity_type":"company","source":"crm","key":"c-7","payload":{"country":"GB","id":"c-7","name":"Larkfeild Logistics"},"label":"Larkfeild Logistics","evidence":null,"ingested_at":"2026-11-18T17:18:25.790965Z","ingest_run":4,"identity":"01a1ef8e-5a8d-76d4-acb6-2bb802d5ca25","supersedes":null,"superseded_by":null,"retracted":null}],"next":null}
+{"records":[{"id":"bdbab4b2-e260-2b34-b08f-3fae6a2018a9","entity_type":"company","source":"crm","key":"c-7","payload":{"country":"GB","id":"c-7","name":"Larkfeild Logistics"},"label":"Larkfeild Logistics","evidence":null,"loaded_at":"2026-11-18T21:49:05.335185Z","load_run":4,"identity":"01a1efc6-41cd-775d-8758-e733aa086f7d","supersedes":null,"superseded_by":null,"retracted":null}],"next":null}
 ```
 
 `identity` is the answer. It is `null` for a record that no match has placed yet, or that waits in a review item. A key whose row changed has one record for each version, and each has an identity.
@@ -61,8 +61,8 @@ record    bdbab4b2-e260-2b34-b08f-3fae6a2018a9
 type      company
 source    crm
 key       c-7
-ingested  2026-11-18T17:18:25Z by run 4
-identity  01a1ef8e-5a8d-76d4-acb6-2bb802d5ca25
+loaded    2026-11-18T21:49:05Z by run 4
+identity  01a1efc6-41cd-775d-8758-e733aa086f7d
 
 payload
   country  GB
@@ -81,7 +81,7 @@ curl -s -X POST http://127.0.0.1:7765/v1/records/identities -d '{"records": ["'$
 ```
 
 ```text title="Output"
-{"identities":["01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada","01a1ef8e-5f06-7397-9a0c-445aaacfd3fe"]}
+{"identities":["01a1efc6-41cd-775d-8758-e7300637659a","01a1efc6-42c0-7776-b736-83fde0cb4498"]}
 ```
 
 It takes record IDs and not `source:key`, so a caller that holds only keys lists the records of a source first: `GET /v1/records?source=crm&limit=1000`, then `after=<next>` for the following page.
@@ -101,7 +101,7 @@ curl -s http://127.0.0.1:7765/v1/identities/$KESTREL
 ```
 
 ```text title="Output"
-{"id":"01a1ef8e-5f06-7397-9a0c-445aaacfd3fe","current":"01a1ef8e-5a8d-76d4-acb6-2bb802d5ca25","entity_type":"company","label":"Larkfield Logistics","created":2,"members":[{"record":"4b1bc703-9041-0989-d0eb-4df5e9eae0f2","source":"crm","key":"c-4","since":1},{"record":"7da2b0d2-3601-e533-efa5-e1068cce5344","source":"crm","key":"c-8","since":3},{"record":"bdbab4b2-e260-2b34-b08f-3fae6a2018a9","source":"crm","key":"c-7","since":2}]}
+{"id":"01a1efc6-42c0-7776-b736-83fde0cb4498","current":"01a1efc6-41cd-775d-8758-e733aa086f7d","entity_type":"company","label":"Larkfield Logistics","created":2,"members":[{"record":"4b1bc703-9041-0989-d0eb-4df5e9eae0f2","source":"crm","key":"c-4","since":1},{"record":"7da2b0d2-3601-e533-efa5-e1068cce5344","source":"crm","key":"c-8","since":3},{"record":"bdbab4b2-e260-2b34-b08f-3fae6a2018a9","source":"crm","key":"c-7","since":2}]}
 ```
 
 The old ID still answers. `id` is the ID that was asked for, `current` is the identity that took its place, and the records are that identity's. A system that stored the old ID stores `current` in its place. Until it does, lookups by the old ID keep working.
@@ -115,7 +115,7 @@ curl -s 'http://127.0.0.1:7765/v1/changesets?after=2'
 ```
 
 ```text title="Output"
-{"changesets":[{"seq":3,"changeset":{"id":"01a1efaa-bb04-772b-9298-199688250576","base":2,"actor":"user:01a1efaa-b967-7385-876b-97d8dd4710fa","reason":"an example of a merge","run":null,"ops":[{"op":"merge","from":"01a1ef8e-5f06-7397-9a0c-445aaacfd3fe","into":"01a1ef8e-5a8d-76d4-acb6-2bb802d5ca25"}]},"content_hash":"2ddecf637e7d0b43faf1a7a0be11e5849a8227fb2bb354e554d6c8bffec02cf7"}],"head":3}
+{"changesets":[{"seq":3,"changeset":{"id":"01a1f0a8-29d3-73c2-bdf9-ba39307ffdce","base":2,"actor":"user:01a1f0a8-28ad-7645-929c-9605cdf00bc4","reason":"an example of a merge","run":null,"ops":[{"op":"merge","from":"01a1efc6-42c0-7776-b736-83fde0cb4498","into":"01a1efc6-41cd-775d-8758-e733aa086f7d"}]},"content_hash":"bf700d416238efff21597374c5ec44eb018849908e67ce7a5404486fbd82bb93","started_by":null}],"head":3}
 ```
 
 `head` is the last position there is. Each operation says what changed:
@@ -141,7 +141,7 @@ curl -s 'http://127.0.0.1:7765/v1/changesets?after=3'
 ```
 
 ```text title="Output"
-{"changesets":[{"seq":4,"changeset":{"id":"01a1efaa-bb33-7581-a896-6c12d4427836","base":3,"actor":"user:01a1efaa-b967-7385-876b-97d8dd4710fa","reason":"that was only an example","run":null,"ops":[{"op":"reinstate","identity":"01a1ef8e-5f06-7397-9a0c-445aaacfd3fe"},{"op":"assign","record":"7da2b0d2-3601-e533-efa5-e1068cce5344","from":"01a1ef8e-5a8d-76d4-acb6-2bb802d5ca25","to":"01a1ef8e-5f06-7397-9a0c-445aaacfd3fe"}]},"content_hash":"d5498ae193b83d74bc8983d4e674865c903a44d16c7e3195640550079c0f3c54"}],"head":4}
+{"changesets":[{"seq":4,"changeset":{"id":"01a1f0a8-2a06-7027-9fd8-1ef410fb54ac","base":3,"actor":"user:01a1f0a8-28ad-7645-929c-9605cdf00bc4","reason":"that was only an example","run":null,"ops":[{"op":"reinstate","identity":"01a1efc6-42c0-7776-b736-83fde0cb4498"},{"op":"assign","record":"7da2b0d2-3601-e533-efa5-e1068cce5344","from":"01a1efc6-41cd-775d-8758-e733aa086f7d","to":"01a1efc6-42c0-7776-b736-83fde0cb4498"}]},"content_hash":"529193eda6b7eff9ecd1e8deb6525006efa07fd3bb6e221490e6cb9179b9f790","started_by":null}],"head":4}
 ```
 
 ## What changes an ID, and what does not

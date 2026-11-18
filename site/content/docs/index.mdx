@@ -10,7 +10,7 @@ Spool pulls records out of text and rows, decides which are the same real-world 
 Spool is one server. It is written in Rust and keeps its data in one file of [DuckDB](https://duckdb.org), a database that runs inside the server's process. It is driven by a project, which is a directory of YAML and SQL files that you keep in Git.
 
 1. **A project is a directory.** Sources, features, rules and extractors are files, and a file's path is its name. [Project structure](/docs/project-structure)
-2. **Records come from rows or from text.** A row of a source becomes a record. A document is stored, and an extractor finds the places where it names a thing: each place becomes a record. An extractor is a pattern that Spool runs itself, or your own code in Python or TypeScript, which the server runs as a child process. A record is never changed, and loading it twice does nothing. [Records and sources](/docs/concepts/records-and-sources), [Extraction](/docs/concepts/extraction)
+2. **Records come from rows or from text.** A row of a source becomes a record. A document is stored, and an extractor finds the places where it names a thing: each place becomes a record. An extractor is code in Python or TypeScript, which the server runs as a child process. The one a new project has asks a small model that runs on your machine. A record is never changed, and loading it twice does nothing. [Records and sources](/docs/concepts/records-and-sources), [Extraction](/docs/concepts/extraction)
 3. **Records are compared by features.** Each source's columns are mapped onto the features of an entity type, such as `company`, that you declare. [Entity types and features](/docs/concepts/entity-types-and-features)
 4. **Rules judge pairs.** A match compares what is new with what is known and records a judgement for each pair: `match` or `no_match`. A rule is a SQL condition over two records. [Matching](/docs/concepts/matching)
 5. **Judgements become identities.** New records join an identity or start one. A match never merges or splits identities that exist. Every change is an entry in a log, with an author and a reason, and can be undone. [Identities](/docs/concepts/identities)
@@ -68,6 +68,6 @@ If that is not you, [Limits](/docs/limits) says what Spool is not meant for, and
 
 Spool's first commit was on 14 November 2026. It is version 0.1.0, under the MIT licence, and formats and the API can still change.
 
-Every command on these pages is run by a script, [`site/scripts/check-samples.ts`](https://github.com/alexpatow/spool/blob/main/site/scripts/check-samples.ts), against a build of the source, and the output shown is compared with what was printed. It is run by hand before a page changes.
+Every command on these pages is run by a script, [`site/scripts/check-samples.ts`](https://github.com/alexpatow/spool/blob/main/site/scripts/check-samples.ts), against a build of the source, and the output shown is compared with what was printed. It is run by hand before a page changes. Where a page runs the sample extractor, the script puts a file that needs no model in its place, unless it is told to run the model, and what is printed is the same.
 
 The source is at [github.com/alexpatow/spool](https://github.com/alexpatow/spool).

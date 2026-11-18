@@ -44,7 +44,8 @@ spool match
 ```yaml title="entities/company/entity.yaml"
 # `features` is what records are compared by, and `label` is the feature a
 # record is called by. `mapping` says, for each source, which column each
-# feature comes from, and the transform it goes through if it needs one.
+# feature comes from, and the transform it goes through if it needs one. A
+# record found in a note has no country.
 label: name
 features: [name, name_key, country]
 
@@ -129,7 +130,7 @@ spool info
 
 ```text title="Output"
 project   .
-manifest  85a148971796ac164c9c609e858124a4d21283b71a810f7c0930f459493acba2
+manifest  1b5bcad3e1423fb5c73a2c77100fc5f66acd8b6741243207eb33ac0d9682fedd
 
 entity type `company`
   features  record_id UUID, name VARCHAR, name_key VARCHAR, country VARCHAR, domain VARCHAR, founded DATE
@@ -139,7 +140,7 @@ entity type `company`
   no_match  different_country
   match     similar_name
 
-extractor `companies` (pattern, extractors/companies.yaml)
+extractor `companies` (python, extractors/companies.py)
 ```
 
 ## Load the new source
@@ -158,33 +159,25 @@ spool match
 ```
 
 ```text title="Output"
-source  registry
-type    company
-read    2 rows from registry.csv
-loaded  2 new, 0 already held, 0 new versions
+loaded  2 rows into source `registry`, type `company`: 2 new
 next    `spool match` places them in identities
-run         8
-type        company
-examined    2 records
-candidates  6 pairs
+run         8, type `company`
+examined    2 records, 6 candidate pairs
 judgements  3 match, 0 no_match
 placed      2 records, 0 identities created
-left out    0 records in 0 review items
 ```
 
 ```sh
 spool show records --source registry
 ```
 
-{/* sample: without record column */}
-
 ```text title="Output"
 source and key  name                 identity
-registry:X001   ACORN TOOLS LIMITED  01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
-registry:X002   Larkfield Logistics  01a1ef8e-5a8d-76d4-acb6-2bb802d5ca25
+registry:X001   ACORN TOOLS LIMITED  01a1efc6-41cd-775d-8758-e7300637659a
+registry:X002   Larkfield Logistics  01a1efc6-41cd-775d-8758-e733aa086f7d
 ```
 
-That is the listing without its first column, of record IDs. Both registry rows joined an identity that CRM rows had started, and those identities have the IDs they had before.
+Both registry rows joined an identity that CRM rows had started, and those identities have the IDs they had before.
 
 ## What changing a declaration does
 
@@ -199,15 +192,15 @@ spool explain crm:c-1 registry:X001
 ```
 
 ```text title="Output"
-`registry:X001` and `crm:c-1` belong to the same identity, 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada.
+`registry:X001` and `crm:c-1` belong to the same identity, 01a1efc6-41cd-775d-8758-e7300637659a.
 Run 8 (strategy `rules`) made them a candidate pair (block rule `name_prefix`) and gave no judgement.
 Nothing links the two directly. They are joined through 1 other member: `registry:X001` → 31075f20-6900-838b-f5af-f8c6576744a4 (`match` in run 8) → `crm:c-1` (`match` in run 2).
 `registry:X001` was placed at log position 3 by `engine` (reconcile run 9, "reconcile new records").
 `crm:c-1` was placed at log position 1 by `engine` (reconcile run 3, "reconcile new records").
 By the rules as they are now, block rule `name_prefix` makes them a candidate pair and no `no_match` or `match` rule holds, so they would get no judgement.
 
-left   32edb5c4-9bd7-9633-f683-c99b029df37b  registry:X001  identity 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
-right  ab8e9d59-0aaa-96b9-ddb7-db0bff7a9356  crm:c-1        identity 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+left   32edb5c4-9bd7-9633-f683-c99b029df37b  registry:X001  identity 01a1efc6-41cd-775d-8758-e7300637659a
+right  ab8e9d59-0aaa-96b9-ddb7-db0bff7a9356  crm:c-1        identity 01a1efc6-41cd-775d-8758-e7300637659a
 
 features
             left                 right

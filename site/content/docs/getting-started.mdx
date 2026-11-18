@@ -7,8 +7,9 @@ This page installs Spool, makes a project with sample rows, matches them, shows 
 
 ## What you need
 
-- Linux on x86-64 or arm64, or macOS on Apple silicon. There is no Windows build.
-- `curl`.
+- Linux on x86-64 or arm64 with version 2.34 or later of the GNU C library, or macOS on Apple silicon. There is no build for Windows, for a Mac with an Intel processor, or for Alpine, whose C library is musl.
+- `curl` and `tar`.
+- For the step that reads a text, [`uv`](https://docs.astral.sh/uv/), which runs the sample extractor. Every other step works without it.
 
 ## Install
 
@@ -18,7 +19,7 @@ This page installs Spool, makes a project with sample rows, matches them, shows 
 curl -fsSL https://github.com/alexpatow/spool/releases/latest/download/install.sh | sh
 ```
 
-The script downloads the release for your machine, checks it against its checksum, unpacks it under `~/.local/share/spool/0.1.0` and links `~/.local/bin/spool`. It needs no root and changes nothing else. To do it by hand, download `spool-0.1.0-<target>.tar.gz` from the [release](https://github.com/alexpatow/spool/releases/tag/v0.1.0), unpack it and put its `bin` directory on your search path. Keep `bin` and `lib` together: the binary loads the DuckDB library from `../lib`.
+The script downloads the release for your machine, checks it against its checksum, unpacks it under `~/.local/share/spool/0.1.0` and links `~/.local/bin/spool`. It needs no root and changes nothing else: if `~/.local/bin` is not on your search path, it prints the line that adds it and edits no file. To do it by hand, download `spool-0.1.0-<target>.tar.gz` from the [release](https://github.com/alexpatow/spool/releases/tag/v0.1.0), unpack it and put its `bin` directory on your search path. Keep `bin` and `lib` together: the binary loads the DuckDB library from `../lib`.
 
 ```sh
 spool --version
@@ -43,7 +44,7 @@ created   companies
   entities/company/entity.yaml       what companies are compared by
   entities/company/rules/            three rules, one line of SQL each
   transforms/name_key.sql            the lower-case name the rules compare
-  extractors/companies.yaml          a pattern that finds company names in text
+  extractors/companies.py            finds company names in text, with a small model
   samples/crm-1.csv                  six rows to load first
   samples/crm-2.csv                  three more for later
   samples/notes-1.txt                a call note that names three companies
@@ -51,8 +52,11 @@ created   companies
 
   cd companies
   spool dev                          runs the server on this machine
-  spool load samples/crm-1.csv       loads the first rows
+  spool load samples/crm-1.csv       loads the first rows, from a second terminal
   spool extract samples/notes-1.txt  finds the companies in the note
+
+The extractor is a Python file, which Spool runs with `uv`. Its first run fetches
+about 330 MB, most of it the model, and later runs fetch nothing.
 ```
 
 A project is a directory of files that you keep in Git. This one declares a source of rows, `crm`, a source of documents, `notes`, and one entity type, `company`. An entity type is a kind of thing you want one ID for. The sample rows:
@@ -80,7 +84,7 @@ spool dev
 ```text title="Output"
 project   .
 store     ./.spool/dev.duckdb
-applied   7e7d66320c2599ececa81aaa5885550a150b4b93f3cca956ee3deefba46921fd (declared company)
+applied   d7d4b712d86302152897a67a5924cd1c2e26594e049685c2f007177e20633946 (declared company)
 accounts  ./.spool/dev.auth.sqlite
 listening on http://127.0.0.1:7765
 studio    http://127.0.0.1:7765/
@@ -98,26 +102,23 @@ spool load samples/crm-1.csv
 ```
 
 ```text title="Output"
-source  crm
-type    company
-read    6 rows from samples/crm-1.csv
-loaded  6 new, 0 already held, 0 new versions
+loaded  6 rows into source `crm`, type `company`: 6 new
 next    `spool match` places them in identities
 ```
 
 Each row is now a record. Loading does not match, and loading the same file again adds nothing.
 
-The same over HTTP. The API calls loading "ingest":
+The same over HTTP:
 
-{/* sample: not built ingest-csv; after */}
+{/* sample: after */}
 
 ```sh
-curl -s -X POST 'http://127.0.0.1:7765/v1/ingest?source=crm&entity_type=company' -H 'content-type: text/csv' --data-binary @samples/crm-1.csv
+curl -s -X POST 'http://127.0.0.1:7765/v1/load?source=crm&entity_type=company' -H 'content-type: text/csv' --data-binary @samples/crm-1.csv
 ```
 
 The same as an MCP tool call, with one object for each row:
 
-{/* sample: not built mcp-load-rows; after */}
+{/* sample: after */}
 
 ```json title="MCP tool call"
 { "name": "load_rows", "arguments": { "source": "crm", "entity_type": "company",
@@ -131,13 +132,10 @@ spool match
 ```
 
 ```text title="Output"
-run         2
-type        company
-examined    6 records
-candidates  4 pairs
+run         2, type `company`
+examined    6 records, 4 candidate pairs
 judgements  3 match, 1 no_match
 placed      6 records, 4 identities created
-left out    0 records in 0 review items
 ```
 
 A match run compares the records that are new, with each other and with the ones it has placed before, and puts each in an identity. Four pairs were worth comparing. Three were judged the same company and one was not.
@@ -145,12 +143,10 @@ A match run compares the records that are new, with each other and with the ones
 The same over HTTP, where a match is a run:
 
 ```sh
-curl -s -X POST http://127.0.0.1:7765/v1/runs -d '{"entity_type": "company"}'
+curl -s -X POST http://127.0.0.1:7765/v1/match -d '{"entity_type": "company"}'
 ```
 
 The same as an MCP tool call:
-
-{/* sample: not built mcp-run-match */}
 
 ```json title="MCP tool call"
 { "name": "run_match", "arguments": { "entity_type": "company" } }
@@ -162,21 +158,17 @@ The same as an MCP tool call:
 spool show records
 ```
 
-{/* sample: without record column */}
-
 ```text title="Output"
 source and key  name                 identity
-crm:c-1         Acorn Tools          01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
-crm:c-2         ACORN TOOLS          01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
-crm:c-3         Acorn Tools Ltd      01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
-crm:c-4         Larkfield Logistics  01a1ef8e-5a8d-76d4-acb6-2bb802d5ca25
-crm:c-5         Halden Group         01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae
-crm:c-6         Halden Group         01a1ef8e-5a8d-76d4-acb6-2bb65a02262a
+crm:c-1         Acorn Tools          01a1efc6-41cd-775d-8758-e7300637659a
+crm:c-2         ACORN TOOLS          01a1efc6-41cd-775d-8758-e7300637659a
+crm:c-3         Acorn Tools Ltd      01a1efc6-41cd-775d-8758-e7300637659a
+crm:c-4         Larkfield Logistics  01a1efc6-41cd-775d-8758-e733aa086f7d
+crm:c-5         Halden Group         01a1efc6-41cd-775d-8758-e7329447fd9a
+crm:c-6         Halden Group         01a1efc6-41cd-775d-8758-e731c61371cb
 ```
 
-That is the listing without its first column, which holds each record's own ID and is left out here to fit.
-
-An identity is one company, with its ID and the records that belong to it. The three spellings of Acorn Tools have one identity. Its ID, in the last column, is the company's ID, and it is what other systems store. Yours differs from this one, because an identity's ID is minted when the identity is created. A record's ID is derived from its source, its key and its content, so yours are the same as the ones on these pages.
+An identity is one company, with its ID and the records that belong to it. The three spellings of Acorn Tools have one identity. Its ID, in the last column, is the company's ID, and it is what other systems store. Yours differs from this one, because an identity's ID is minted when the identity is created. A record has an ID of its own as well, which `spool show records --ids` lists. It is derived from the record's source, its key and its content, so yours are the same as the ones on these pages.
 
 The same over HTTP:
 
@@ -197,13 +189,13 @@ spool explain crm:c-5 crm:c-6
 ```
 
 ```text title="Output"
-`crm:c-6` belongs to identity 01a1ef8e-5a8d-76d4-acb6-2bb65a02262a and `crm:c-5` to identity 01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae.
+`crm:c-6` belongs to identity 01a1efc6-41cd-775d-8758-e731c61371cb and `crm:c-5` to identity 01a1efc6-41cd-775d-8758-e7329447fd9a.
 Run 2 (strategy `rules`) judged them `no_match` (no_match rule `different_country` held).
 Both were placed at log position 1 by `engine` (reconcile run 3, "reconcile new records").
 By the rules as they are now, block rule `name_prefix` makes them a candidate pair and no_match rule `different_country` holds, so they would be judged `no_match`.
 
-left   34a5d12a-11a0-e461-c6e4-0576f546d165  crm:c-6  identity 01a1ef8e-5a8d-76d4-acb6-2bb65a02262a
-right  38f040c9-82b9-2f94-813b-697309e52dab  crm:c-5  identity 01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae
+left   34a5d12a-11a0-e461-c6e4-0576f546d165  crm:c-6  identity 01a1efc6-41cd-775d-8758-e731c61371cb
+right  38f040c9-82b9-2f94-813b-697309e52dab  crm:c-5  identity 01a1efc6-41cd-775d-8758-e7329447fd9a
 
 features
             left          right
@@ -245,15 +237,11 @@ A rule is a SQL condition over two records, `l` and `r`. [Matching](/docs/concep
 
 The same over HTTP:
 
-{/* sample: not built explain-by-key */}
-
 ```sh
 curl -s 'http://127.0.0.1:7765/v1/explain?a=crm:c-5&b=crm:c-6'
 ```
 
 The same as an MCP tool call:
-
-{/* sample: not built explain-by-key */}
 
 ```json title="MCP tool call"
 { "name": "explain_pair", "arguments": { "a": "crm:c-5", "b": "crm:c-6" } }
@@ -278,37 +266,29 @@ spool match
 ```
 
 ```text title="Output"
-source  crm
-type    company
-read    3 rows from samples/crm-2.csv
-loaded  3 new, 0 already held, 0 new versions
+loaded  3 rows into source `crm`, type `company`: 3 new
 next    `spool match` places them in identities
-run         5
-type        company
-examined    3 records
-candidates  4 pairs
+run         5, type `company`
+examined    3 records, 4 candidate pairs
 judgements  4 match, 0 no_match
 placed      3 records, 1 identity created
-left out    0 records in 0 review items
 ```
 
 ```sh
 spool show records
 ```
 
-{/* sample: without record column */}
-
 ```text title="Output"
 source and key  name                 identity
-crm:c-1         Acorn Tools          01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
-crm:c-2         ACORN TOOLS          01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
-crm:c-3         Acorn Tools Ltd      01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
-crm:c-4         Larkfield Logistics  01a1ef8e-5a8d-76d4-acb6-2bb802d5ca25
-crm:c-5         Halden Group         01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae
-crm:c-6         Halden Group         01a1ef8e-5a8d-76d4-acb6-2bb65a02262a
-crm:c-7         Larkfeild Logistics  01a1ef8e-5a8d-76d4-acb6-2bb802d5ca25
-crm:c-8         Kestrel Analytics    01a1ef8e-5f06-7397-9a0c-445aaacfd3fe
-crm:c-9         Acorn Tool           01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+crm:c-1         Acorn Tools          01a1efc6-41cd-775d-8758-e7300637659a
+crm:c-2         ACORN TOOLS          01a1efc6-41cd-775d-8758-e7300637659a
+crm:c-3         Acorn Tools Ltd      01a1efc6-41cd-775d-8758-e7300637659a
+crm:c-4         Larkfield Logistics  01a1efc6-41cd-775d-8758-e733aa086f7d
+crm:c-5         Halden Group         01a1efc6-41cd-775d-8758-e7329447fd9a
+crm:c-6         Halden Group         01a1efc6-41cd-775d-8758-e731c61371cb
+crm:c-7         Larkfeild Logistics  01a1efc6-41cd-775d-8758-e733aa086f7d
+crm:c-8         Kestrel Analytics    01a1efc6-42c0-7776-b736-83fde0cb4498
+crm:c-9         Acorn Tool           01a1efc6-41cd-775d-8758-e7300637659a
 ```
 
 "Acorn Tool" and "Larkfeild Logistics" joined the identities that existed, and those kept their IDs. Kestrel Analytics is new and got a new one. Nothing that was placed before moved.
@@ -327,13 +307,66 @@ whether we work with Brightwater Foods Ltd, their new supplier.
 
 {/* sample: existing */}
 
-```yaml title="extractors/companies.yaml"
-entity_type: company
-attribute: name
-pattern: '(?:[A-Z][A-Za-z]+ )+(?:Ltd|Inc|LLC|GmbH|plc)\b'
+```python title="extractors/companies.py"
+# /// script
+# requires-python = ">=3.10,<3.13"
+# dependencies = ["fast-gliner>=0.4.1,<0.5"]
+# ///
+"""Finds the companies a document names, with a small model that runs here.
+
+An extractor reads documents and says where they name something, and each
+thing it finds becomes a record. Spool runs this file with `uv`, which
+installs what the lines above list. The first run fetches about 330 MB, most
+of it the model, and later runs fetch nothing. No document leaves this
+machine and there is no key to set.
+"""
+
+import sys
+
+from fast_gliner import FastGLiNER
+from spool import extractor
+
+# What to look for. On the left is the word the model is given, and the word
+# decides what is found: "company" misses most universities, parties and
+# charities, and "organization" finds them. Any word will do, "person" or
+# "medicine" as well. On the right is the entity type of this project that
+# such a find becomes a record of.
+LOOK_FOR = {"company": "company"}
+
+# GLiNER small: 245 MB, Apache-2.0, at the version it was tried with.
+MODEL = "onnx-community/gliner_small-v2.1"
+WEIGHTS = "onnx/model_q4f16.onnx"
+VERSION = "8142fb00740ccea973e64b1272949ff48653df5e"
+
+
+def load():
+    """The model: read from this machine if it is here, and fetched if not."""
+    files = {"onnx_path": WEIGHTS, "allow_patterns": ["*.json", WEIGHTS], "revision": VERSION}
+    try:
+        return FastGLiNER.from_pretrained(MODEL, local_files_only=True, **files)
+    except FileNotFoundError:
+        print(f"Fetching the model {MODEL} (245 MB), once.", file=sys.stderr)
+        return FastGLiNER.from_pretrained(MODEL, **files)
+
+
+# Loaded as the file starts, so that `spool build --install` fetches it too.
+model = load()
+
+
+@extractor
+def find(document):
+    # The model reads 384 words at a time and ignores the rest, so a long
+    # document is read in pieces.
+    for piece in document.pieces(300):
+        for found in model.predict_entities(piece.text, list(LOOK_FOR)):
+            # The model counts in bytes, and Spool in characters.
+            start = len(piece.text.encode()[: found["start"]].decode())
+            end = start + len(found["text"])
+            # `name` is a column of sources/notes.yaml.
+            yield piece.mention(LOOK_FOR[found["label"]], start, end, name=found["text"])
 ```
 
-This extractor is a pattern, which Spool runs itself: no model, no key and nothing to install. A run of capitalised words that ends in a legal form is a company, and the text it matched is the record's `name`.
+This extractor is a Python file, which Spool runs with `uv`. It asks a small model, which runs on this machine, where the text names a company, and the text it found is the record's `name`. No document leaves the machine and there is no key to set. The first run fetches about 330 MB, most of it the model, and later runs fetch nothing.
 
 ```sh
 spool extract samples/notes-1.txt
@@ -346,9 +379,9 @@ loaded     1 new, 0 already held, 0 new versions
 extractor  companies
 found      3 records in 1 document: 3 new, 0 already held
 
-  company  Acorn Tools Ltd          notes-1.txt[54-69]
-  company  Larkfield Logistics Ltd  notes-1.txt[119-142]
-  company  Brightwater Foods Ltd    notes-1.txt[179-200]
+  company  Acorn Tools Ltd          notes:notes-1.txt[54-69]
+  company  Larkfield Logistics Ltd  notes:notes-1.txt[119-142]
+  company  Brightwater Foods Ltd    notes:notes-1.txt[179-200]
 
 next       `spool match` places them in identities
 ```
@@ -360,39 +393,30 @@ spool match
 ```
 
 ```text title="Output"
-run         10
-type        company
-examined    3 records
-candidates  6 pairs
+run         10, type `company`
+examined    3 records, 6 candidate pairs
 judgements  6 match, 0 no_match
 placed      3 records, 1 identity created
-left out    0 records in 0 review items
 ```
 
 ```sh
 spool show records --source notes
 ```
 
-{/* sample: without record column */}
-
 ```text title="Output"
 source and key              name                     identity
-notes:notes-1.txt[54-69]    Acorn Tools Ltd          01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
-notes:notes-1.txt[119-142]  Larkfield Logistics Ltd  01a1ef8e-5a8d-76d4-acb6-2bb802d5ca25
-notes:notes-1.txt[179-200]  Brightwater Foods Ltd    01a1efb4-93c3-7745-8408-dcbf0c81e6f3
+notes:notes-1.txt[54-69]    Acorn Tools Ltd          01a1efc6-41cd-775d-8758-e7300637659a
+notes:notes-1.txt[119-142]  Larkfield Logistics Ltd  01a1efc6-41cd-775d-8758-e733aa086f7d
+notes:notes-1.txt[179-200]  Brightwater Foods Ltd    01a1efc6-43a9-7403-b9f6-1f8ee76184ed
 ```
 
 "Acorn Tools Ltd" in the note has the ID that the CRM rows for Acorn Tools have, and Larkfield Logistics has its own. Nothing held Brightwater Foods, so it got a new ID. `spool show records <record>` prints the sentence a record was found in.
 
 The same over HTTP, in two calls: store the document, then run the extractor.
 
-{/* sample: not built documents-text */}
-
 ```sh
 curl -s -X POST 'http://127.0.0.1:7765/v1/documents?source=notes&key=notes-1.txt' -H 'content-type: text/plain' --data-binary @samples/notes-1.txt
 ```
-
-{/* sample: not built extract-only */}
 
 ```sh
 curl -s -X POST http://127.0.0.1:7765/v1/extractions -d '{}'
@@ -400,20 +424,16 @@ curl -s -X POST http://127.0.0.1:7765/v1/extractions -d '{}'
 
 The same as MCP tool calls:
 
-{/* sample: not built mcp-load-documents */}
-
 ```json title="MCP tool call"
 { "name": "load_documents", "arguments": { "source": "notes",
   "documents": [ { "key": "notes-1.txt", "text": "Call with Dana Reyes on 12 November. ..." } ] } }
 ```
 
-{/* sample: not built mcp-run-extraction */}
-
 ```json title="MCP tool call"
 { "name": "run_extraction", "arguments": { "extractor": "companies" } }
 ```
 
-A pattern finds only what is written the way it expects: "Acorn Tools" without "Ltd" is missed. The next step up is an extractor that asks a language model. That is a Python or TypeScript file in `extractors/`, which Spool runs with `uv` or `bun`, so one of those has to be installed for it. [Extraction](/docs/concepts/extraction) writes one.
+The word the model is given decides what it finds: `LOOK_FOR` in the file gives it "company", and another word finds other things. An extractor is a Python or TypeScript file in `extractors/`, which Spool runs with `uv` or `bun`, so one of those has to be installed for it. [Extraction](/docs/concepts/extraction) writes one.
 
 ## Connect an agent
 

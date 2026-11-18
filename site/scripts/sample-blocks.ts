@@ -44,8 +44,7 @@ export function blocksOf(lines: string[]): Block[] {
 }
 
 const DIRECTIVES = [
-  "new session", "stop servers", "background", "existing", "after", "not built", "skip",
-  "without record column", "fails",
+  "new session", "stop servers", "background", "existing", "after", "not built", "skip", "fails",
 ];
 
 /**
@@ -81,18 +80,4 @@ export function shellVariables(set: string): Map<string, string> {
     if (quotes % 2 === 0) found.set(pair[1] ?? "", value);
   }
   return found;
-}
-
-/**
- * What was printed, with the first column of its listing of records cut off:
- * the column headed `record`, which holds an ID of 36 characters. Lines before
- * the listing, and after an empty line that ends it, are left as they are.
- */
-export function withoutRecordColumn(lines: string[]): string[] {
-  const header = lines.findIndex((line) => /^record {2,}\S/.test(line));
-  if (header === -1) return lines;
-  const width = /^record {2,}/.exec(lines[header] ?? "")?.[0].length ?? 0;
-  let end = lines.findIndex((line, index) => index > header && line === "");
-  if (end === -1) end = lines.length;
-  return lines.map((line, index) => (index >= header && index < end ? line.slice(width) : line));
 }

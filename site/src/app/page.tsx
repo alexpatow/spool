@@ -26,7 +26,7 @@ spool show identities`;
 
 const does = [
   "Takes rows from several sources and keeps each one as it arrived.",
-  "Finds records in text with a pattern, or with code of yours in Python or TypeScript, and keeps where in the text each one was found.",
+  "Finds records in text with an extractor, which is code in Python or TypeScript, and keeps where in the text each one was found.",
   "Matches records with rules you write in SQL, kept as files in Git.",
   "Gives each real-world thing an ID that later runs and better rules do not change.",
   "Records every merge, split and correction in a log, with an author, a reason and an undo.",

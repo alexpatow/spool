@@ -3,11 +3,11 @@ title: MCP
 description: The tools an agent has at /mcp, a call of each, how to connect Claude Code and Codex, and what an agent cannot do.
 ---
 
-The server answers the [Model Context Protocol](https://modelcontextprotocol.io) at `/mcp`, in the same process as the HTTP API and the studio. An agent that is pointed at it can look things up and change identities.
+The server answers the [Model Context Protocol](https://modelcontextprotocol.io) at `/mcp`, in the same process as the HTTP API and the studio. An agent that is pointed at it can load rows and documents, run the project's extractors, match what was loaded, look things up and change identities.
 
 - **A tool is a call of the HTTP API.** It answers what the API answers and is refused what the API refuses.
 - **The caller is whoever the server says it is.** With `spool dev` that is the `dev` account. With `spool serve` it is the token the agent presents, and what it changes is recorded as `agent:<name>`. No tool has an argument that names the author of a change.
-- **Every change says why.** The tools that write require a `reason`, which the log keeps beside the change.
+- **A change made under the caller's name says why.** The tools that change identities or take rows back require a `reason`, which the log keeps beside the change. A load, an extraction and a match take none: the run records who started it.
 - **Nothing is kept between requests.** The transport is Streamable HTTP without sessions, and every answer is one JSON response.
 
 The tool calls on this page are what an agent sends. Each block is the `params` of a `tools/call` request, and each was run against the server as shown.
@@ -94,17 +94,18 @@ Each is marked read-only for the client.
 
 | Tool | What it answers | The same as |
 | --- | --- | --- |
-| `describe_store` | The entity types, their features and sources, counts, and the head of the log | `GET /v1/info` |
+| `describe_store` | The entity types and their features, the sources the project declares with their columns, the extractors, counts, and the head of the log | `GET /v1/info` |
 | `search_identities` | Identities by words in their records, by type or by ID | `GET /v1/identities` |
 | `get_identity` | One identity and its records | `GET /v1/identities/{id}` |
 | `get_identity_history` | Every change that touched an identity | `GET /v1/identities/{id}/history` |
 | `search_records` | Records by words, source, key or identity, with their values | `GET /v1/records` |
 | `get_record` | One record | `GET /v1/records/{id}` |
-| `explain_pair` | Why two records share an identity, or why they do not | `GET /v1/explain` |
+| `explain_pair` | Why two records share an identity, or why they do not. A record is named by its ID, as `source:key`, or, for one an extractor found, as the lists name it | `GET /v1/explain` |
 | `list_review_items` | The cases left for someone to decide, the open ones by default | `GET /v1/review` |
 | `get_review_case` | One review item with what is needed to decide it | `GET /v1/review/{id}/case` |
 | `list_constraints` | The `must_link` and `cannot_link` decisions in force | `GET /v1/constraints` |
 | `list_changesets` | The log after a position | `GET /v1/changesets` |
+| `get_run` | One run: whether it is running, and what it reported | `GET /v1/runs/{run}` |
 | `mint_identity_ids` | New identity IDs for a `create_identity` operation | `POST /v1/ids` |
 
 An agent usually starts by asking what the store holds:
@@ -114,7 +115,7 @@ An agent usually starts by asking what the store holds:
 ```
 
 ```text title="Output"
-{"api":"v1","store":{"engine_version":"0.1.0","format_version":"9","manifest_hash":"69d04c84c6018350830cc7fd7b9a40e38ca7a2929fa9d925d80712fb086f558b","head":2,"entity_types":[{"name":"company","declaration_version":1,"features":[{"name":"record_id","data_type":"UUID"},{"name":"name","data_type":"VARCHAR"},{"name":"name_key","data_type":"VARCHAR"},{"name":"country","data_type":"VARCHAR"}],"strategies":[],"records":10,"unassigned":1,"retracted":0,"sources":[{"source":"crm","records":10,"unassigned":1,"retracted":0,"last_ingested_at":"2026-11-18T17:32:35.913630Z"}],"identities":5,"open_review_items":1,"open_draft":null}],"extractors":[{"name":"companies","runtime":"typescript","file":"extractors/companies.ts","hash":"f1e0ac57efcfebc529f7742e04465e37be7208fa1ef2cbefc2a799cc482e11f6"}],"documents":0}}
+{"api":"v1","store":{"engine_version":"0.1.0","format_version":"11","manifest_hash":"d7d4b712d86302152897a67a5924cd1c2e26594e049685c2f007177e20633946","head":2,"entity_types":[{"name":"company","declaration_version":1,"features":[{"name":"record_id","data_type":"UUID"},{"name":"name","data_type":"VARCHAR"},{"name":"name_key","data_type":"VARCHAR"},{"name":"country","data_type":"VARCHAR"}],"strategies":[],"records":10,"unassigned":1,"retracted":0,"sources":[{"source":"crm","records":10,"unassigned":1,"retracted":0,"last_loaded_at":"2026-11-18T21:55:15.653351Z"}],"identities":5,"open_review_items":1,"open_draft":null}],"sources":[{"name":"crm","key":"id","columns":["id","name","country"],"entity_types":["company"]},{"name":"notes","key":null,"columns":["name"],"entity_types":["company"]}],"extractors":[{"name":"companies","runtime":"python","file":"extractors/companies.py","hash":"eacb9397cacc366a1cd065d8f328039484a5e5d4fbf49b8ca1f2a3cbd34f8c92"}],"documents":0}}
 ```
 
 Identities are found by words in their records:
@@ -124,7 +125,7 @@ Identities are found by words in their records:
 ```
 
 ```text title="Output"
-{"identities":[{"id":"01a1ef8e-5f06-7397-9a0c-445aaacfd3fe","entity_type":"company","label":"Kestrel Analytics","created":2,"members":1,"sources":[{"source":"crm","records":1}]}],"next":null}
+{"identities":[{"id":"01a1efc6-42c0-7776-b736-83fde0cb4498","entity_type":"company","label":"Kestrel Analytics","created":2,"members":1,"sources":[{"source":"crm","records":1}]}],"next":null}
 ```
 
 Records are found by source and key, which is how an agent gets from the key a person names to the record ID the other tools take:
@@ -134,7 +135,7 @@ Records are found by source and key, which is how an agent gets from the key a p
 ```
 
 ```text title="Output"
-{"records":[{"id":"38f040c9-82b9-2f94-813b-697309e52dab","entity_type":"company","source":"crm","key":"c-5","payload":{"country":"GB","id":"c-5","name":"Halden Group"},"label":"Halden Group","evidence":null,"ingested_at":"2026-11-18T17:17:44.707102Z","ingest_run":1,"identity":"01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae","supersedes":null,"superseded_by":null,"retracted":null}],"next":null}
+{"records":[{"id":"38f040c9-82b9-2f94-813b-697309e52dab","entity_type":"company","source":"crm","key":"c-5","payload":{"country":"GB","id":"c-5","name":"Halden Group"},"label":"Halden Group","evidence":null,"loaded_at":"2026-11-18T21:48:44.236810Z","load_run":1,"identity":"01a1efc6-41cd-775d-8758-e7329447fd9a","supersedes":null,"superseded_by":null,"retracted":null}],"next":null}
 ```
 
 The calls below use IDs from this project. To run them yourself, these put the IDs in shell variables, and the tool calls show the variable where the ID goes:
@@ -171,7 +172,7 @@ What is waiting for a decision, and one case with what is needed to decide it:
 ```
 
 ```text title="Output"
-{"items":[{"id":1,"run":9,"entity_type":"company","kind":"possible_merge","records":["621ab95e-5f9e-6b91-e660-455831fe854a"],"identities":["01a1ef8e-5a8d-76d4-acb6-2bb65a02262a","01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae"],"groups":[],"status":"open","resolved_seq":null,"superseded_by":null,"dismissed":null}]}
+{"items":[{"id":1,"run":9,"entity_type":"company","kind":"possible_merge","records":["621ab95e-5f9e-6b91-e660-455831fe854a"],"identities":["01a1efc6-41cd-775d-8758-e731c61371cb","01a1efc6-41cd-775d-8758-e7329447fd9a"],"groups":[],"status":"open","resolved_seq":null,"superseded_by":null,"dismissed":null}]}
 ```
 
 ```json title="MCP tool call"
@@ -203,6 +204,8 @@ Each is marked as a change, so a client can ask the person first.
 | `undo_changeset` | Takes back one committed changeset, or shows what would | `POST /v1/changesets/{seq}/undo` |
 | `dismiss_review_item` | Closes a review item without placing its records | `POST /v1/review/{id}/dismiss` |
 
+Five more load, extract, match and take rows back. They are [further down](#tools-that-load-extract-and-match).
+
 `commit_changeset` takes the operations of [the HTTP API](/docs/api#changesets). Here the agent records that the two Halden Groups are different companies, so that no later rule or reviewer merges them:
 
 ```json title="MCP tool call"
@@ -233,7 +236,7 @@ Each is marked as a change, so a client can ask the person first.
 ```
 
 ```text title="Output"
-{"changeset":{"id":"01a1efaa-1bbb-76a6-b283-aa33afb97d01","base":4,"actor":"user:01a1efaa-197e-7416-ae89-ff8443116831","reason":"checking what an undo would do","run":null,"ops":[{"op":"unconstrain","kind":"cannot_link","a":"34c3d52d-e53b-1559-7404-1892fb1fd4e3","b":"31075f20-6900-838b-f5af-f8c6576744a4"},{"op":"assign","record":"34c3d52d-e53b-1559-7404-1892fb1fd4e3","from":"01a1efaa-1bb2-75f1-9128-9fba66f13c89","to":"01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada"}]},"committed":null}
+{"changeset":{"id":"01a1f0a2-34c3-73a7-844e-eb8ac6aab102","base":4,"actor":"user:01a1f0a2-3336-72d8-8d23-74f15ece6783","reason":"checking what an undo would do","run":null,"ops":[{"op":"unconstrain","kind":"cannot_link","a":"34c3d52d-e53b-1559-7404-1892fb1fd4e3","b":"31075f20-6900-838b-f5af-f8c6576744a4"},{"op":"assign","record":"34c3d52d-e53b-1559-7404-1892fb1fd4e3","from":"01a1f0a2-34bb-729b-bdb0-e47ff384bcb8","to":"01a1efc6-41cd-775d-8758-e7300637659a"}]},"committed":null}
 ```
 
 ```json title="MCP tool call"
@@ -253,41 +256,31 @@ spool show log --after 2
 ```
 
 ```text title="Output"
-position  actor                                      operations  from  reason
-3         user:01a1efaa-197e-7416-ae89-ff8443116831  1           -     registered in different countries, with different company numbers
-4         user:01a1efaa-197e-7416-ae89-ff8443116831  3           -     Acorn Tool is a hardware shop in Leeds, not Acorn Tools
-5         user:01a1efaa-197e-7416-ae89-ff8443116831  2           -     the shop is a branch of Acorn Tools after all
+position  actor                                      operations  from  started by  reason
+3         user:01a1f0a2-3336-72d8-8d23-74f15ece6783  1           -     -           registered in different countries, with different company numbers
+4         user:01a1f0a2-3336-72d8-8d23-74f15ece6783  3           -     -           Acorn Tool is a hardware shop in Leeds, not Acorn Tools
+5         user:01a1f0a2-3336-72d8-8d23-74f15ece6783  2           -     -           the shop is a branch of Acorn Tools after all
 ```
 
 ## Tools that load, extract and match
-
-{/* sample: not built mcp-load-rows */}
 
 ```json title="MCP tool call"
 { "name": "load_rows", "arguments": { "source": "crm", "entity_type": "company",
   "rows": [ { "id": "c-20", "name": "Kestrel Analytics Inc", "country": "US" } ] } }
 ```
 
-{/* sample: not built mcp-run-match */}
-
 ```json title="MCP tool call"
 { "name": "run_match", "arguments": { "entity_type": "company" } }
 ```
 
-{/* sample: not built mcp-get-run */}
-
 ```json title="MCP tool call"
-{ "name": "get_run", "arguments": { "run": 12 } }
+{ "name": "get_run", "arguments": { "run": 11 } }
 ```
-
-{/* sample: not built mcp-load-documents */}
 
 ```json title="MCP tool call"
 { "name": "load_documents", "arguments": { "source": "notes",
   "documents": [ { "key": "notes-2.txt", "text": "Dana called again. Acorn Tools Ltd are moving their account next quarter." } ] } }
 ```
-
-{/* sample: not built mcp-run-extraction */}
 
 ```json title="MCP tool call"
 { "name": "run_extraction", "arguments": { "extractor": "companies" } }
@@ -295,18 +288,30 @@ position  actor                                      operations  from  reason
 
 | Tool | What it does | The same as |
 | --- | --- | --- |
-| `load_rows` | Loads rows as objects into a source | `POST /v1/ingest` |
+| `load_rows` | Loads rows as objects into a source | `POST /v1/load` |
 | `load_documents` | Stores texts as documents of a source | `POST /v1/documents` |
 | `run_extraction` | Runs an extractor over the documents it has not read | `POST /v1/extractions` |
-| `run_match` | Starts a match and answers its run | `POST /v1/runs` |
-| `get_run` | A run and its report | `GET /v1/runs/{run}` |
+| `run_match` | Places the records no match has examined, and commits the result | `POST /v1/match` |
+| `retract_rows` | Takes rows back by their keys: they leave their identities and stay in the store | `POST /v1/retract` |
+
+Each answers with its run. A run that is still going after 30 seconds is answered as `running`, and `get_run` reads it later: with `wait_ms`, it waits up to 60 seconds for the run to finish.
+
+Where these differ from the HTTP API:
+
+- **`load_rows` does not replace a row unless it is told to.** A row with a key the store holds and other values is refused, and the whole call with it, unless the call has `"replace": true`. `POST /v1/load` replaces the row.
+- **`load_rows` reads an empty value as a missing one**, as `spool load` reads an empty field. `POST /v1/load` with rows as JSON stores `""` as text.
+- **`load_documents` refuses a source the project does not declare.** `POST /v1/documents` stores the document.
+- **`run_extraction` needs no `extractor`** when the project has only one.
+- **`run_match` always commits.** It takes `rematch` and `strategy`, which is `rules` or a strategy of the project, and no `commit`.
+- **`retract_rows` requires a `reason`.** The other four take none.
 
 ## What an agent cannot do
 
 - **Approve or reject a draft.** Drafts exist so that a person decides. That stays in the studio and on `/v1`.
 - **Add people or make tokens.**
 - **Change a project's files.** Rules, features and sources are files in Git, and the server reads them. An agent that edits them does so as any editor of the repository would.
-- **Write as someone else, or without a reason.** Both are refused.
+- **Write as someone else, or change an identity without a reason.** Both are refused.
+- **List or read documents.** An agent stores them and runs an extractor over them, and reads what was found as records.
 - **Leave a match as a draft.** A match an agent starts commits, as `spool match` does. To hold a match for approval, start it over HTTP with `"commit": false`. [Review](/docs/concepts/review#drafts) shows how.
 
 ## Limits

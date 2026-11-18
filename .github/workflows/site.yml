@@ -116,6 +116,15 @@ jobs:
         working-directory: site
         run: bun install --frozen-lockfile
 
+      # The pages run extractors that are Python files, which the server
+      # runs with uv. The sample extractor asks a model that its first run
+      # fetches. The script puts a file that needs no model in its place
+      # unless SPOOL_TEST_MODEL is set, and it is not set here, so this job
+      # fetches no model.
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: "0.13.8"
+
       - name: Run the samples
         working-directory: site
         run: bun run check:samples

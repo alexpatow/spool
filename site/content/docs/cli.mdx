@@ -31,7 +31,7 @@ The command line cannot merge, split, undo, decide a review item or approve a dr
 
 `spool init [<dir>] [--entity <name>] [--source <name>]`
 
-Makes a project in `<dir>`, or in the current directory: one source, one entity type with its features, a transform, three rules, and two files of sample rows that the rules match as they stand. The entity type is `company` and the source `crm` unless the options say otherwise. The sample rows are companies whatever the two are called.
+Makes a project in `<dir>`, or in the current directory: a source of rows and a source of documents, one entity type with its features, a transform, three rules and an extractor. Under `samples/` it writes two files of rows, which the rules match as they stand, and a document, in which the extractor finds three records. The entity type is `company` and the source of rows `crm` unless the options say otherwise, and the source of documents is `notes`. The sample rows and the document are about companies whatever the two are called.
 
 {/* sample: new session */}
 
@@ -48,7 +48,7 @@ created   companies
   entities/company/entity.yaml       what companies are compared by
   entities/company/rules/            three rules, one line of SQL each
   transforms/name_key.sql            the lower-case name the rules compare
-  extractors/companies.yaml          a pattern that finds company names in text
+  extractors/companies.py            finds company names in text, with a small model
   samples/crm-1.csv                  six rows to load first
   samples/crm-2.csv                  three more for later
   samples/notes-1.txt                a call note that names three companies
@@ -56,8 +56,11 @@ created   companies
 
   cd companies
   spool dev                          runs the server on this machine
-  spool load samples/crm-1.csv       loads the first rows
+  spool load samples/crm-1.csv       loads the first rows, from a second terminal
   spool extract samples/notes-1.txt  finds the companies in the note
+
+The extractor is a Python file, which Spool runs with `uv`. Its first run fetches
+about 330 MB, most of it the model, and later runs fetch nothing.
 ```
 
 ## spool info
@@ -72,7 +75,7 @@ spool info
 
 ```text title="Output"
 project   .
-manifest  69d04c84c6018350830cc7fd7b9a40e38ca7a2929fa9d925d80712fb086f558b
+manifest  d7d4b712d86302152897a67a5924cd1c2e26594e049685c2f007177e20633946
 
 entity type `company`
   features  record_id UUID, name VARCHAR, name_key VARCHAR, country VARCHAR
@@ -82,7 +85,7 @@ entity type `company`
   no_match  different_country
   match     similar_name
 
-extractor `companies` (pattern, extractors/companies.yaml)
+extractor `companies` (python, extractors/companies.py)
 ```
 
 ## spool dev
@@ -102,7 +105,7 @@ spool dev
 ```text title="Output"
 project   .
 store     ./.spool/dev.duckdb
-applied   69d04c84c6018350830cc7fd7b9a40e38ca7a2929fa9d925d80712fb086f558b (declared company)
+applied   d7d4b712d86302152897a67a5924cd1c2e26594e049685c2f007177e20633946 (declared company)
 accounts  ./.spool/dev.auth.sqlite
 listening on http://127.0.0.1:7765
 studio    http://127.0.0.1:7765/
@@ -137,7 +140,7 @@ spool dev ../other
 ```text title="Output"
 project   ../other
 store     ../other/.spool/dev.duckdb
-applied   69d04c84c6018350830cc7fd7b9a40e38ca7a2929fa9d925d80712fb086f558b (declared company)
+applied   d7d4b712d86302152897a67a5924cd1c2e26594e049685c2f007177e20633946 (declared company)
 accounts  ../other/.spool/dev.auth.sqlite
 spool: cannot listen on 127.0.0.1:7765: something else is listening there, perhaps a `spool dev` on another project.
 Give this one another port by adding `--listen 127.0.0.1:7766` to the command, and point the commands that call it there with SPOOL_URL=http://127.0.0.1:7766.
@@ -147,19 +150,16 @@ Ctrl-C stops it. It finishes the runs it was given first.
 
 ## spool load
 
-`spool load <file> [--source <name>] [--type <name>]`
+`spool load <file> [--source <name>] [--type <name>] [--delimiter <c>] [--batch <n>]`
 
-Loads a CSV file of rows into a source. The source may be left out when the project has one, or when the file is named after it: `crm-1.csv` and `crm.csv` are rows of `crm`. The entity type may be left out when one takes rows from the source. Loading does not match. A row that is already held adds nothing, and a row whose content changed under the same key is stored as a new version.
+Loads a CSV file of rows into a source. `-` in place of the file reads standard input, and a file whose name ends in `.tsv` or `.tab` has tabs between its fields. The source may be left out when the project has one, or when the file is named after it: `crm-1.csv` and `crm.csv` are rows of `crm`. Failing both, it is the source that lists most of the file's columns. The entity type may be left out when one takes rows from the source. Loading does not match. A row that is already held adds nothing, and a row whose content changed under the same key is stored as a new version.
 
 ```sh
 spool load samples/crm-1.csv
 ```
 
 ```text title="Output"
-source  crm
-type    company
-read    6 rows from samples/crm-1.csv
-loaded  6 new, 0 already held, 0 new versions
+loaded  6 rows into source `crm`, type `company`: 6 new
 next    `spool match` places them in identities
 ```
 
@@ -167,7 +167,7 @@ next    `spool match` places them in identities
 
 `spool extract [<file>...] [--source <name>] [--extractor <name>] [--again]`
 
-Stores each file as a document, then runs an extractor over the documents it has not read. A document's key is its file's name. With no file it runs the extractor over the documents that are stored. The source is chosen as `spool load` chooses it, and `--extractor` may be left out when the project has one. `--again` reads every document again. [Extraction](/docs/concepts/extraction) explains what an extractor is.
+Stores each file as a document, then runs an extractor over the documents it has not read. A document's key is its file's name. With no file it runs the extractor over the documents that are stored. The source is chosen as `spool load` chooses it, and `--extractor` may be left out when the project has one. `--again` reads every document again. An extractor's first run may fetch what it depends on, as the sample extractor fetches its model. [Extraction](/docs/concepts/extraction) explains what an extractor is.
 
 ```sh
 spool extract samples/notes-1.txt
@@ -180,31 +180,28 @@ loaded     1 new, 0 already held, 0 new versions
 extractor  companies
 found      3 records in 1 document: 3 new, 0 already held
 
-  company  Acorn Tools Ltd          notes-1.txt[54-69]
-  company  Larkfield Logistics Ltd  notes-1.txt[119-142]
-  company  Brightwater Foods Ltd    notes-1.txt[179-200]
+  company  Acorn Tools Ltd          notes:notes-1.txt[54-69]
+  company  Larkfield Logistics Ltd  notes:notes-1.txt[119-142]
+  company  Brightwater Foods Ltd    notes:notes-1.txt[179-200]
 
 next       `spool match` places them in identities
 ```
 
 ## spool match
 
-`spool match [--type <name>] [--rematch]`
+`spool match [--type <name>] [--rematch] [--strategy <name>]`
 
-Starts a match of the records no match has examined yet, waits for it, and prints its report. `--rematch` examines every record again against the rules as they are now. A rematch suggests merges and makes none.
+Starts a match of the records no match has examined yet, waits for it, and prints its report. `--rematch` examines every record again against the rules as they are now. A rematch suggests merges and makes none. `--strategy` says who judges: `rules`, which is the default, or one of the project's strategies for the type.
 
 ```sh
 spool match
 ```
 
 ```text title="Output"
-run         5
-type        company
-examined    9 records
-candidates  8 pairs
+run         5, type `company`
+examined    9 records, 8 candidate pairs
 judgements  7 match, 1 no_match
 placed      9 records, 5 identities created
-left out    0 records in 0 review items
 ```
 
 ## spool show
@@ -219,8 +216,8 @@ spool show
 
 ```text title="Output"
 server     http://127.0.0.1:7765
-api        v1, engine 0.1.0, store format 9
-manifest   69d04c84c6018350830cc7fd7b9a40e38ca7a2929fa9d925d80712fb086f558b
+api        v1, engine 0.1.0, store format 11
+manifest   d7d4b712d86302152897a67a5924cd1c2e26594e049685c2f007177e20633946
 head       log position 1
 documents  1
 
@@ -229,7 +226,7 @@ entity type `company`
   identities  5
   review      0 items open
 
-extractor `companies` (typescript, extractors/companies.ts)
+extractor `companies` (python, extractors/companies.py)
 ```
 
 | `<what>` | Lists | With an ID |
@@ -242,18 +239,19 @@ extractor `companies` (typescript, extractors/companies.ts)
 | `drafts [<draft>]` | Drafts | One draft with the changeset it would commit |
 | `log` | The changeset log | |
 
-A record is named by its ID or as `<source>:<key>`, which names the latest version of that row.
+A record is named by its ID or as `<source>:<key>`, which names the latest version of that row. A record found in a document is named as the lists name it, `<source>:<document>[<start>-<end>]`.
 
 | Option | Meaning | Applies to |
 | --- | --- | --- |
 | `--type <name>` | Only this entity type | runs, identities, records, review, drafts |
 | `--status <status>` | Only this status | runs, review, drafts |
-| `--kind <kind>` | Only runs of this kind: `ingest`, `extract`, `match`, `reconcile`, `retract` | runs |
+| `--kind <kind>` | Only runs of this kind: `load`, `extract`, `match`, `reconcile`, `retract` | runs |
 | `--source <name>` | Only this source | records, documents |
 | `--key <key>` | Only this key within its source | records, documents |
 | `--document <id>` | Only the records found in this document | records |
 | `--unassigned` | Only records that wait for an identity | records |
 | `--latest` | Only the version of each document that nothing replaced | documents |
+| `--ids` | List each record's ID as well | records |
 | `--after <id>` | Continue a list after this ID, or the log after this position | lists |
 | `--limit <n>` | List at most this many | lists |
 
@@ -262,13 +260,13 @@ spool show runs
 ```
 
 ```text title="Output"
-run  kind       status     about           started
-6    reconcile  succeeded                  2026-11-18T17:32:37Z
-5    match      succeeded  company, rules  2026-11-18T17:32:37Z
-4    ingest     succeeded  companies       2026-11-18T17:32:37Z
-3    extract    succeeded  companies       2026-11-18T17:32:37Z
-2    ingest     succeeded                  2026-11-18T17:32:37Z
-1    ingest     succeeded  company         2026-11-18T17:32:37Z
+run  kind       status     about           started by                                 started
+6    reconcile  succeeded                  user:01a1f0a3-6d74-7231-b6c6-61d78b04fd97  2026-11-18T21:50:05Z
+5    match      succeeded  company, rules  user:01a1f0a3-6d74-7231-b6c6-61d78b04fd97  2026-11-18T21:50:05Z
+4    load       succeeded  companies       user:01a1f0a3-6d74-7231-b6c6-61d78b04fd97  2026-11-18T21:50:05Z
+3    extract    succeeded  companies       user:01a1f0a3-6d74-7231-b6c6-61d78b04fd97  2026-11-18T21:50:04Z
+2    load       succeeded                  user:01a1f0a3-6d74-7231-b6c6-61d78b04fd97  2026-11-18T21:50:04Z
+1    load       succeeded  company         user:01a1f0a3-6d74-7231-b6c6-61d78b04fd97  2026-11-18T21:50:04Z
 ```
 
 ```sh
@@ -276,12 +274,12 @@ spool show identities
 ```
 
 ```text title="Output"
-identity                              name                   type     members  created at
-01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada  Acorn Tools Ltd        company  4        log position 1
-01a1ef8e-5a8d-76d4-acb6-2bb65a02262a  Halden Group           company  1        log position 1
-01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae  Halden Group           company  1        log position 1
-01a1efb7-b9f5-767c-9e5a-ab081d67c071  Brightwater Foods Ltd  company  1        log position 1
-01a1ef8e-5a8d-76d4-acb6-2bb802d5ca25  Larkfield Logistics    company  2        log position 1
+identity                              name                   members  created at
+01a1efc6-41cd-775d-8758-e7300637659a  Acorn Tools Ltd        4        log position 1
+01a1efc6-41cd-775d-8758-e731c61371cb  Halden Group           1        log position 1
+01a1efc6-41cd-775d-8758-e7329447fd9a  Halden Group           1        log position 1
+01a1efc6-43a9-7403-b9f6-1f8ee76184ed  Brightwater Foods Ltd  1        log position 1
+01a1efc6-41cd-775d-8758-e733aa086f7d  Larkfield Logistics    2        log position 1
 ```
 
 ```sh
@@ -289,8 +287,8 @@ spool show log
 ```
 
 ```text title="Output"
-position  actor   operations  from             reason
-1         engine  14          reconcile run 6  reconcile new records
+position  actor   operations  from             started by                                 reason
+1         engine  14          reconcile run 6  user:01a1f0a3-6d74-7231-b6c6-61d78b04fd97  reconcile new records
 ```
 
 ## spool explain
@@ -304,13 +302,13 @@ spool explain crm:c-1 crm:c-2
 ```
 
 ```text title="Output"
-`crm:c-2` and `crm:c-1` belong to the same identity, 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada.
+`crm:c-2` and `crm:c-1` belong to the same identity, 01a1efc6-41cd-775d-8758-e7300637659a.
 Run 5 (strategy `rules`) judged them `match` (match rule `similar_name` held).
 Both were placed at log position 1 by `engine` (reconcile run 6, "reconcile new records").
 By the rules as they are now, block rule `name_prefix` makes them a candidate pair and match rule `similar_name` holds, so they would be judged `match`.
 
-left   a780fcfe-cb2f-21dd-25ea-11db898fd6a2  crm:c-2  identity 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
-right  ab8e9d59-0aaa-96b9-ddb7-db0bff7a9356  crm:c-1  identity 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+left   a780fcfe-cb2f-21dd-25ea-11db898fd6a2  crm:c-2  identity 01a1efc6-41cd-775d-8758-e7300637659a
+right  ab8e9d59-0aaa-96b9-ddb7-db0bff7a9356  crm:c-1  identity 01a1efc6-41cd-775d-8758-e7300637659a
 
 features
             left         right
@@ -346,7 +344,7 @@ run 7: 1 key named, 1 record taken back
 
 `spool build [<dir>] [--base-image <image>] [--install]`
 
-Checks the project and compiles it into `.spool/manifest.json`, which is what `spool serve` reads. It writes a Dockerfile if the project has none. `--install` starts each strategy and extractor once so that `uv` and `bun` fetch what they depend on.
+Checks the project and compiles it into `.spool/manifest.json`, which is what `spool serve` reads. It writes a Dockerfile if the project has none. `--install` starts each strategy and extractor once so that `uv` and `bun` fetch what they depend on, a model that one loads as it starts with it.
 
 ## spool apply
 
@@ -374,7 +372,7 @@ Prints the JSON Schema of every value the API takes and returns.
 
 ## spool bench
 
-`spool bench <scenario> [--db <path>] [--seed <n>] [--out <path>] [--list <n>] [--strategy <name>]`
+`spool bench <scenario> [--db <path>] [--seed <n>] [--out <path>] [--list <n>] [--strategy <name>] [--task-timeout <s>] [--tasks <dir>]`
 
 Runs a benchmark scenario from the repository: loads each step's files, matches, and scores the identities against the scenario's truth. A scenario with documents is also scored on what its extractors found, and on extraction and matching together. The [benchmarks](https://github.com/alexpatow/spool/tree/main/benchmarks) say what each scenario measures.
 
