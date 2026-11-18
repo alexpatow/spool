@@ -18,7 +18,7 @@ export function llmsIndex(): string {
     `- All pages in one file: ${absoluteUrl("/llms-full.txt")}`,
     `- Source code: ${site.repository}`,
     "",
-    "Spool is early. Nothing is published yet, so it is built from source, and the Limits page says what it does not do.",
+    "Spool is early: these pages are for version 0.1.0, which Getting started installs from its release, and the Limits page says what it does not do.",
   ];
 
   for (const group of navGroups()) {
