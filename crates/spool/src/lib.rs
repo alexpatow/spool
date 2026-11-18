@@ -37,6 +37,7 @@ mod ingest;
 mod lookup;
 mod metrics;
 mod project;
+mod retract;
 mod review;
 mod rows;
 mod rules;
@@ -53,8 +54,8 @@ pub use duckdb::arrow;
 pub use spool_core as core;
 
 pub use bench::{
-    BenchReport, CorrectionSummary, DocumentsSummary, ExtractSummary, IngestSummary, Scenario,
-    StepReport,
+    BenchReport, CorrectionSummary, DocumentsSummary, ExtractSummary, IngestSummary,
+    RetractSummary, Scenario, StepReport,
 };
 pub use documents::{
     DocumentEntry, DocumentExtraction, DocumentFilter, ExtractOptions, ExtractReport, ExtractorRef,
@@ -78,12 +79,13 @@ pub use lookup::{
 };
 pub use metrics::{
     BCubed, Churn, ExtractionMetrics, IdStability, Metrics, OrderSensitivity, OverridePersistence,
-    PairMetrics, SplitRecovery, UpgradeStability,
+    PairMetrics, Rebuild, SplitRecovery, UpgradeStability,
 };
 pub use project::{
     Declaration, EntityTypeManifest, EntityTypeSource, Extractor, FeatureColumn, Manifest, Project,
     Rule, RuleSet, Runtime, Source, SqlFile, Strategy, StrategySource, Transform, YamlFile,
 };
+pub use retract::RetractReport;
 pub use review::{
     CASE_MEMBERS, Candidate, CaseConstraint, Dismissal, PairJudgement, ReviewCase, ReviewEntry,
     ReviewFilter, ReviewKind, ReviewStatus,

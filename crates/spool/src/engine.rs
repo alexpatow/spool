@@ -15,7 +15,7 @@ use spool_core::{
     EntityType, EvidenceSummary, IdGenerator, IdentityId, IdentityLink, IdentityState,
     IdentityStatus, IdentityStore, LogEntry, MemoryState, NewPair, NewRecord, Op, Policy,
     RandomIds, RecordId, ReviewItem, RunId, SeededIds, Seq, Snapshot, StepClock, SystemClock,
-    Verdict, inverse, reconcile, validate,
+    ValidationError, Verdict, inverse, reconcile, validate,
 };
 
 use crate::drafts::{self, DraftEntry, DraftFilter, DraftStatus, DraftSummary};
@@ -29,6 +29,7 @@ use crate::lookup::{
 };
 use crate::metrics::{self, Churn, IdStability, Metrics};
 use crate::project::{EntityTypeManifest, Manifest, Strategy, hash_json};
+use crate::retract::{self, RetractReport};
 use crate::review::{self, ReviewCase, ReviewEntry, ReviewFilter};
 use crate::rows::Rows;
 use crate::rules;
@@ -573,6 +574,29 @@ impl Engine {
         rows: impl RecordBatchReader,
     ) -> Result<IngestReport> {
         self.lock().ingest(source, entity_type, rows)
+    }
+
+    /// Takes back rows a source no longer holds, named by their keys. Every
+    /// version of each row stays in the store as evidence and leaves its
+    /// identity, by one changeset under `actor`'s name. From then on no run
+    /// examines the records, and a changeset that would give one an
+    /// identity is refused, until the source sends the row again: an
+    /// ingest of the key, with the same content or other, brings every
+    /// version back to the identity it left.
+    ///
+    /// A key the source has no row under is counted and changes nothing, so
+    /// the same retraction can be sent twice. A row without a key cannot be
+    /// taken back.
+    pub fn retract(
+        &self,
+        source: &str,
+        entity_type: &str,
+        keys: &[String],
+        actor: Actor,
+        reason: Option<String>,
+    ) -> Result<RetractReport> {
+        self.lock()
+            .retract(source, entity_type, keys, actor, reason)
     }
 
     /// Starts a match run and generates its candidate pairs with the
@@ -1402,11 +1426,11 @@ impl Inner {
             None,
             &json!({ "source": source.name, "entity_type": name }),
         )?;
-        self.in_run(run, |inner| {
+        let report = self.in_run(run, |inner| {
             let now = inner.store.clock.now_micros();
             let tx = inner.store.conn.transaction()?;
             let mut seen = HashSet::new();
-            let (mut received, mut inserted) = (0u64, 0u64);
+            let (mut received, mut inserted, mut restored) = (0u64, 0u64, 0u64);
 
             for incoming in rows {
                 let incoming = incoming?;
@@ -1437,8 +1461,9 @@ impl Inner {
                     )));
                 }
 
-                inserted +=
-                    ingest::insert(&tx, name.as_str(), &source.name, now, run, staged)?;
+                let stored = ingest::insert(&tx, name.as_str(), &source.name, now, run, staged)?;
+                inserted += stored.inserted;
+                restored += stored.restored;
             }
 
             let problem = features::fill(
@@ -1463,8 +1488,160 @@ impl Inner {
                 inserted,
                 duplicates: received - inserted,
                 superseded: superseded as u64,
+                restored,
+                returned: 0,
+                committed: None,
             };
             let finished = inner.store.clock.now_micros();
+            tx.execute(
+                "UPDATE spool.run
+                 SET status = 'succeeded', finished_at = make_timestamptz(?), result = ?::JSON
+                 WHERE run_id = ?",
+                params![finished, json!(report).to_string(), run.0 as i64],
+            )?;
+            tx.commit()?;
+            Ok(report)
+        })?;
+        self.give_back(
+            report,
+            format!("source `{}` sent the rows again", source.name),
+        )
+    }
+
+    /// Puts the records that came back in an ingest into the identity each
+    /// of them left, by one changeset, and says so in the run's report.
+    ///
+    /// The ingest is already stored when this begins. Cut short in between,
+    /// the store holds records that came back and have no identity, and
+    /// the next match run takes them as new.
+    pub(crate) fn give_back(
+        &mut self,
+        mut report: IngestReport,
+        reason: String,
+    ) -> Result<IngestReport> {
+        if report.restored == 0 {
+            return Ok(report);
+        }
+        let mut ops = retract::returning(&self.store.conn, report.run)?;
+        // A record cannot go back where a constraint that was made
+        // meanwhile forbids it. It is left out, and the rest go back.
+        let committed = loop {
+            if ops.is_empty() {
+                return Ok(report);
+            }
+            let changeset = Changeset {
+                id: lock(&self.ids).changeset_id(),
+                base: self.store.head()?,
+                actor: Actor::Engine,
+                reason: Some(reason.clone()),
+                run: None,
+                ops: ops.clone(),
+            };
+            match validate(&self.store, changeset) {
+                Ok(validated) => break self.store.apply(validated)?,
+                Err(ValidationError::Rejected(rejections)) => {
+                    let refused: HashSet<usize> = rejections
+                        .iter()
+                        .filter_map(|rejection| rejection.op_index)
+                        .collect();
+                    if refused.is_empty() {
+                        return Ok(report);
+                    }
+                    let mut at = 0;
+                    ops.retain(|_| {
+                        at += 1;
+                        !refused.contains(&(at - 1))
+                    });
+                }
+                Err(error) => return Err(error.into()),
+            }
+        };
+        report.returned = ops.len() as u64;
+        report.committed = Some(committed);
+        self.store.conn.execute(
+            "UPDATE spool.run SET result = ?::JSON WHERE run_id = ?",
+            params![json!(report).to_string(), report.run.0 as i64],
+        )?;
+        Ok(report)
+    }
+
+    fn retract(
+        &mut self,
+        source: &str,
+        entity_type: &str,
+        keys: &[String],
+        actor: Actor,
+        reason: Option<String>,
+    ) -> Result<RetractReport> {
+        if keys.is_empty() {
+            return Err(Error::Retract("no keys were named".to_owned()));
+        }
+        let (manifest, entry, _) = self.declared(entity_type)?;
+        let name = entry.name.clone();
+        let source = manifest
+            .source_of(source, entry)
+            .map_err(Error::Retract)?
+            .name
+            .clone();
+
+        let run = self.start_run(
+            "retract",
+            None,
+            &json!({ "source": source, "entity_type": name, "reason": reason }),
+        )?;
+        self.in_run(run, |inner| {
+            let named = retract::name(&inner.store.conn, &name, &source, keys)?;
+
+            // First the records leave their identities, and only then are
+            // they recorded as taken back. Cut short in between, the store
+            // holds records without an identity, which is a state it
+            // can be in, and the same retraction sent again finishes the
+            // work. What it then no longer knows is the identity they left,
+            // so when they come back they are new to the next match run.
+            let members = retract::members(&inner.store.conn)?;
+            let detached = members.len() as u64;
+            let committed = if members.is_empty() {
+                None
+            } else {
+                let changeset = Changeset {
+                    id: lock(&inner.ids).changeset_id(),
+                    base: inner.store.head()?,
+                    actor,
+                    reason: reason
+                        .or_else(|| Some(format!("source `{source}` took the rows back"))),
+                    // A changeset names the reconcile run that drafted it,
+                    // and none drafted this one. The run names the
+                    // changeset instead.
+                    run: None,
+                    ops: members
+                        .into_iter()
+                        .map(|(record, identity)| Op::Assign {
+                            record,
+                            from: Some(identity),
+                            to: None,
+                        })
+                        .collect(),
+                };
+                let validated = validate(&inner.store, changeset)?;
+                Some(inner.store.apply(validated)?)
+            };
+
+            let finished = inner.store.clock.now_micros();
+            let tx = inner.store.conn.transaction()?;
+            let retracted = retract::record(
+                &tx,
+                &name,
+                run,
+                committed.as_ref().map(|committed| committed.seq),
+            )?;
+            let report = RetractReport {
+                run,
+                received: named.received,
+                unknown: named.unknown,
+                retracted,
+                detached,
+                committed,
+            };
             tx.execute(
                 "UPDATE spool.run
                  SET status = 'succeeded', finished_at = make_timestamptz(?), result = ?::JSON
@@ -1707,12 +1884,16 @@ impl Inner {
         let (draft, mut report) = self.in_run(reconcile_run, |inner| {
             let evidence = inner.evidence(run, &config)?;
             let new_records = evidence.records.len() as u64;
+            // A record that came back after its source had taken it back
+            // was ingested long ago too, and no run left it for review.
             let reexamined = inner.count(&format!(
                 "SELECT count(*) FROM {} s
                  JOIN spool.record o ON o.record_id = s.record_id
-                 WHERE o.ingest_run <= {}",
+                 WHERE o.ingest_run <= {after_run}
+                   AND s.record_id NOT IN ({restored})",
                 rules::SCOPE,
-                config.after_run
+                after_run = config.after_run,
+                restored = retract::restored_between(config.after_run, run),
             ))?;
             let mut draft = {
                 let mut ids = lock(&inner.ids);
@@ -1961,6 +2142,7 @@ impl Inner {
                 DraftStatus::Open | DraftStatus::Committed => {}
             }
         }
+        retract::refuse_placing(&self.store.conn, &changeset.ops)?;
         let validated = validate(&self.store, changeset)?;
         Ok(self.store.apply(validated)?)
     }
@@ -1980,6 +2162,7 @@ impl Inner {
             run: None,
             ops,
         };
+        retract::refuse_placing(&self.store.conn, &changeset.ops)?;
         let validated = validate(&self.store, changeset.clone())?;
         let committed = match commit {
             true => Some(self.store.apply(validated)?),
@@ -2123,6 +2306,7 @@ impl Inner {
 
     fn approve_draft(&mut self, draft: ChangesetId) -> Result<Committed> {
         let record = self.open_draft(draft, "approved")?;
+        retract::refuse_placing(&self.store.conn, &record.changeset.ops)?;
         let validated = validate(&self.store, record.changeset)?;
         Ok(self.store.apply(validated)?)
     }
@@ -2170,15 +2354,22 @@ impl Inner {
     }
 
     /// Whether a type has anything a run would examine: records
-    /// ingested since its last match run that succeeded, or open review
-    /// items.
+    /// ingested since its last match run that succeeded, records that
+    /// came back since then after their source had taken them back, or open
+    /// review items.
     fn has_work(&self, entity_type: &EntityType) -> Result<bool> {
         let after_run = self.last_match_run(entity_type)?;
         let ingested = self.count(&format!(
             "SELECT count(*) FROM spool.record
-             WHERE entity_type = '{entity_type}' AND ingest_run > {after_run}
-               AND {}",
-            rules::NOT_DISMISSED
+             WHERE entity_type = '{entity_type}'
+               AND (ingest_run > {after_run} OR (
+                 record_id IN (
+                   SELECT record_id FROM spool.retraction WHERE restored_run > {after_run})
+                 AND record_id NOT IN (
+                   SELECT record_id FROM spool.membership WHERE to_seq IS NULL)))
+               AND {} AND {}",
+            rules::NOT_DISMISSED,
+            retract::NOT_RETRACTED
         ))?;
         Ok(ingested > 0 || !review::open_ids(&self.store.conn, entity_type)?.is_empty())
     }
@@ -2387,13 +2578,52 @@ impl Inner {
                     .to_owned(),
             ),
             (
-                "open review items whose records all have an identity".to_owned(),
-                "SELECT count(*) FROM spool.review_item i
-                 WHERE i.status = 'open' AND NOT EXISTS (
-                   SELECT 1 FROM (SELECT unnest(i.record_ids) AS record_id) o
-                   WHERE NOT EXISTS (
-                     SELECT 1 FROM spool.membership m
-                     WHERE m.record_id = o.record_id AND m.to_seq IS NULL))"
+                "open review items none of whose records waits for an identity".to_owned(),
+                format!(
+                    "SELECT count(*) FROM spool.review_item i
+                     WHERE i.status = 'open' AND i.review_id NOT IN ({})",
+                    retract::WAITING
+                ),
+            ),
+            (
+                "records that were taken back and belong to an identity".to_owned(),
+                "SELECT count(*) FROM spool.retraction t
+                 JOIN spool.membership m ON m.record_id = t.record_id AND m.to_seq IS NULL
+                 WHERE t.restored_run IS NULL"
+                    .to_owned(),
+            ),
+            (
+                "records that are taken back more than once".to_owned(),
+                "SELECT count(*) FROM (
+                   SELECT record_id FROM spool.retraction WHERE restored_run IS NULL
+                   GROUP BY 1 HAVING count(*) > 1)"
+                    .to_owned(),
+            ),
+            (
+                "retractions of records the store does not hold".to_owned(),
+                "SELECT count(*) FROM spool.retraction t
+                 WHERE NOT EXISTS (
+                   SELECT 1 FROM spool.record o WHERE o.record_id = t.record_id)"
+                    .to_owned(),
+            ),
+            (
+                "retractions that name a changeset that did not take the record out of an identity"
+                    .to_owned(),
+                "SELECT count(*) FROM spool.retraction t
+                 WHERE t.detached_seq IS NOT NULL AND NOT EXISTS (
+                   SELECT 1 FROM spool.membership m
+                   WHERE m.record_id = t.record_id AND m.to_seq = t.detached_seq)"
+                    .to_owned(),
+            ),
+            (
+                "open drafts that place a record that was taken back".to_owned(),
+                "SELECT count(*) FROM spool.draft d
+                 WHERE d.status = 'open' AND EXISTS (
+                   SELECT 1 FROM spool.draft_op o
+                   JOIN spool.retraction t
+                     ON t.record_id = o.record_id AND t.restored_run IS NULL
+                   WHERE o.changeset_id = d.changeset_id AND o.kind = 'assign'
+                     AND o.identity_id IS NOT NULL)"
                     .to_owned(),
             ),
         ];
@@ -2466,6 +2696,14 @@ impl Inner {
                     "SELECT count(*) FROM (
                        SELECT record_id FROM spool.features_{entity_type}
                        GROUP BY 1 HAVING count(*) > 1)"
+                ),
+            ));
+            checks.push((
+                format!("`{entity_type}` records that were taken back and have a feature row"),
+                format!(
+                    "SELECT count(*) FROM spool.features_{entity_type} f
+                     JOIN spool.retraction t
+                       ON t.record_id = f.record_id AND t.restored_run IS NULL"
                 ),
             ));
         }

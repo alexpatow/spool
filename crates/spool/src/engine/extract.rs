@@ -173,6 +173,9 @@ impl Inner {
                 inserted,
                 duplicates: received - inserted,
                 superseded: superseded as u64,
+                restored: 0,
+                returned: 0,
+                committed: None,
             };
             let finished = inner.store.clock.now_micros();
             tx.execute(
@@ -323,13 +326,15 @@ impl Inner {
                 &json!({ "extract_run": run, "extractor": reference }),
             )?),
         };
-        let store = |inner: &mut Self| -> Result<ExtractReport> {
+        let store = |inner: &mut Self| -> Result<(ExtractReport, Option<IngestReport>)> {
             let now = inner.store.clock.now_micros();
             let tx = inner.store.conn.transaction()?;
-            let mut inserted = 0;
+            let (mut inserted, mut restored) = (0, 0);
             if let Some(ingest_run) = ingest_run {
                 for ((entity_type, source), staged) in grouped(&staged)? {
-                    inserted += ingest::insert(&tx, entity_type, source, now, ingest_run, staged)?;
+                    let stored = ingest::insert(&tx, entity_type, source, now, ingest_run, staged)?;
+                    inserted += stored.inserted;
+                    restored += stored.restored;
                 }
                 for (name, declaration, version) in declared.values() {
                     let problem = features::fill(
@@ -386,17 +391,20 @@ impl Inner {
             let finish = "UPDATE spool.run
                  SET status = 'succeeded', finished_at = make_timestamptz(?), result = ?::JSON
                  WHERE run_id = ?";
-            if let Some(ingest_run) = ingest_run {
-                let stored = IngestReport {
-                    run: ingest_run,
-                    received: mentions,
-                    inserted,
-                    duplicates: mentions - inserted,
-                    superseded: superseded as u64,
-                };
+            let stored = ingest_run.map(|ingest_run| IngestReport {
+                run: ingest_run,
+                received: mentions,
+                inserted,
+                duplicates: mentions - inserted,
+                superseded: superseded as u64,
+                restored,
+                returned: 0,
+                committed: None,
+            });
+            if let Some(stored) = &stored {
                 tx.execute(
                     finish,
-                    params![finished, json!(stored).to_string(), ingest_run.0 as i64],
+                    params![finished, json!(stored).to_string(), stored.run.0 as i64],
                 )?;
             }
             tx.execute(
@@ -404,12 +412,18 @@ impl Inner {
                 params![finished, json!(report).to_string(), run.0 as i64],
             )?;
             tx.commit()?;
-            Ok(report)
+            Ok((report, stored))
         };
-        let report = match ingest_run {
+        let (report, stored) = match ingest_run {
             Some(ingest_run) => self.in_run(ingest_run, store),
             None => store(self),
         }?;
+        if let Some(stored) = stored {
+            self.give_back(
+                stored,
+                format!("extractor `{}` found the rows again", extractor.name),
+            )?;
+        }
         self.store
             .conn
             .execute_batch(&format!("DROP TABLE IF EXISTS {TASK}"))?;

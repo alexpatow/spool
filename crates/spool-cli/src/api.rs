@@ -39,6 +39,30 @@ pub struct IngestRequest {
     pub wait_ms: Option<u64>,
 }
 
+/// `POST /v1/retract`: take back rows a source no longer holds. The
+/// response is the retract run, whose `retraction` says what it did.
+///
+/// Every version of each row stays as evidence and leaves its identity, by
+/// a changeset recorded under the caller. No run examines the records
+/// after that, until an ingest sends a row under the same key again.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RetractRequest {
+    /// The name of the source that held the rows.
+    pub source: String,
+    pub entity_type: String,
+    /// The keys of the rows, as the source's key column gave them. A key
+    /// the source has no row under is counted as unknown and changes
+    /// nothing.
+    pub keys: Vec<String>,
+    /// Why, for the log. It is the reason of the changeset that detaches
+    /// the records.
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub wait_ms: Option<u64>,
+}
+
 /// The query parameters of `POST /v1/ingest` with an Arrow body.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -538,6 +562,7 @@ pub struct TokenList {
 #[allow(dead_code)]
 struct Wire {
     ingest_request: IngestRequest,
+    retract_request: RetractRequest,
     documents_request: DocumentsRequest,
     document_list: DocumentList,
     document_entry: DocumentEntry,

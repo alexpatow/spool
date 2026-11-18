@@ -478,6 +478,52 @@ describe("a review item", () => {
     expect(changes()).toEqual(["POST /v1/review/1/dismiss"]);
   });
 
+  test("that names a record its source took back places only the records that still wait", async () => {
+    // The same company under a second key: the two rows are held back together.
+    const first = await row(server.client, "crm", "c-117");
+    await server.client.ingest({
+      source: "crm",
+      entity_type: "company",
+      rows: [{ ...(first.payload as Record<string, string>), id: "c-217" }],
+    });
+    await server.client.startRun({ entity_type: "company" });
+    const [raised] = await server.client.reviewItems({ status: "open" });
+    const second = await row(server.client, "crm", "c-217");
+    expect([...raised!.records].sort()).toEqual([first.id, second.id].sort());
+
+    // The CRM takes the second row back. The item stays open for the first.
+    await server.client.retract({ source: "crm", entity_type: "company", keys: ["c-217"] });
+    const found = await server.client.reviewCase(raised!.id);
+    expect(found.item.status).toBe("open");
+    const [, other] = found.candidates.map((candidate) => candidate.identity);
+    const before = await head();
+
+    open(server, `/review/${raised!.id}`);
+    await heading(`Review item ${raised!.id}`);
+    const card = within(await screen.findByRole("article", { name: `Review item ${raised!.id}` }));
+    await idle();
+    // The card says which of the two still waits.
+    expect(parts("record-kind")).toEqual(["Unassigned record", "Taken back by its source"]);
+
+    // Only the record that waits is offered a place: the engine would refuse the other one.
+    const dialog = await asked(`Assign to ${other!.label}`);
+    expect(dialog.getByRole("heading").textContent).toBe("Assign Pioneer Supplies");
+    expect(dialog.getByLabelText("crm:c-117")).toBeTruthy();
+    expect(dialog.queryByLabelText("crm:c-217")).toBeNull();
+    await make(`Assign to ${other!.label}`);
+    expect(await said()).toBe(`1 record assigned at log position ${before + 1}.`);
+    await waitFor(() => expect(field("Status")).toBe("resolved"));
+    expect(card.queryAllByRole("button")).toEqual([]);
+
+    expect((await server.client.record(first.id)).identity).toBe(other!.id);
+    expect((await entry(before + 1)).changeset.ops).toEqual([
+      { op: "assign", record: first.id, from: null, to: other!.id },
+    ]);
+    const gone = await server.client.record(second.id);
+    expect(gone.identity ?? null).toBeNull();
+    expect(gone.retracted).toBeTruthy();
+  });
+
   test("that someone else settled first says so", async () => {
     open(server, "/review/1");
     await item();

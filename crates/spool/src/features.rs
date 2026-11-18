@@ -7,6 +7,7 @@ use spool_core::{EntityType, RunId};
 
 use crate::error::Result;
 use crate::project::{Declaration, FeatureColumn, Transform};
+use crate::retract::{self, NOT_RETRACTED};
 
 /// The feature table of an entity type. The name is safe to splice into SQL
 /// because [`EntityType`] allows only lowercase letters, digits and `_`.
@@ -16,10 +17,11 @@ pub(crate) fn table(entity_type: &EntityType) -> String {
 
 /// The features query, reading from the records that `scope` selects.
 /// Inside the query, `record` is the engine's view of the type's
-/// records.
+/// records. A record its source took back is not among them: it has no
+/// feature row.
 fn select(query: &str, scope: &str) -> String {
     format!(
-        "WITH record AS (SELECT * FROM spool.record WHERE {scope})
+        "WITH record AS (SELECT * FROM spool.record WHERE ({scope}) AND {NOT_RETRACTED})
          SELECT * FROM (\n{query}\n) AS features"
     )
 }
@@ -140,9 +142,15 @@ pub(crate) fn drop_table(conn: &Connection, entity_type: &EntityType) -> Result<
     Ok(())
 }
 
-/// The records of one ingest run, as a filter on `spool.record`.
+/// The records of one ingest run, as a filter on `spool.record`: those
+/// it created, and those that came back in it after their source had taken
+/// them back.
 pub(crate) fn of_run(entity_type: &EntityType, ingest_run: RunId) -> String {
-    format!("entity_type = '{entity_type}' AND ingest_run = {ingest_run}")
+    format!(
+        "entity_type = '{entity_type}'
+         AND (ingest_run = {ingest_run} OR record_id IN ({}))",
+        retract::restored_in(ingest_run)
+    )
 }
 
 /// Every record of an entity type, as a filter on `spool.record`.

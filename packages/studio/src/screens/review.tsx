@@ -253,7 +253,8 @@ function CaseCard({
 }) {
   const { item, records, candidates } = found;
   const open = item.status === "open";
-  const waiting = records.filter((record) => !record.identity);
+  // A record its source took back does not wait: the engine refuses it an identity.
+  const waiting = records.filter((record) => !record.identity && record.retracted == null);
   const rules = ruled(found, waiting);
   return (
     <article aria-label={`Review item ${item.id}`} {...stylex.props(styles.card)}>
@@ -399,7 +400,9 @@ function Compare({
             <ShelfTable.Head style={[styles.cell, styles.corner]} />
             {records.map((record) => (
               <ShelfTable.Head key={record.id} scope="col" style={[styles.cell, styles.column, styles.waits]}>
-                <span {...stylex.props(styles.columnKind)}>{record.identity ? "Record" : "Unassigned record"}</span>
+                <span data-part="record-kind" {...stylex.props(styles.columnKind)}>
+                  {record.identity ? "Record" : record.retracted != null ? "Taken back by its source" : "Unassigned record"}
+                </span>
                 <span {...stylex.props(styles.columnName)}>
                   <Ref kind="record" id={record.id} label={labelOf(record)} />
                 </span>

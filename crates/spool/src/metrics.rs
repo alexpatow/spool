@@ -166,6 +166,57 @@ pub struct OrderSensitivity {
     pub pair_agreement: Option<f64>,
 }
 
+/// How the identities of a store that rows were taken back from compare
+/// with those of a store that was never sent them: the same steps in the
+/// same order, without the rows the sources have taken back as things
+/// stand, and without the scenario's corrections. The records compared are
+/// those the sources still hold, and one without an identity is a group of
+/// its own.
+///
+/// The two differ where a row that is gone was what joined two that are
+/// left: the store keeps them together, as it never parts an identity on
+/// its own, and the rebuild never puts them together.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Rebuild {
+    pub records: u64,
+    /// Records grouped with the same records in both.
+    pub same_group: u64,
+    pub agreement: Option<f64>,
+    /// Pairs of records that share an identity in both.
+    pub pairs_in_both: u64,
+    /// Pairs that share an identity in the store and not in the rebuild.
+    pub pairs_only_kept: u64,
+    /// Pairs that share an identity in the rebuild and not in the store.
+    pub pairs_only_rebuilt: u64,
+    /// Pairs in both, of those in either.
+    pub pair_agreement: Option<f64>,
+    /// The rebuild against the truth, to set beside the step's own.
+    pub metrics: Metrics,
+}
+
+impl Rebuild {
+    /// Compares the grouping a store kept with the one a rebuild gives the
+    /// same records, each a list of `(record, group)`.
+    pub(crate) fn between(
+        kept: &[(String, String)],
+        rebuilt: &[(String, String)],
+        metrics: Metrics,
+    ) -> Self {
+        let compared = Compared::between(kept, rebuilt);
+        let in_either = compared.in_first + compared.in_second - compared.in_both;
+        Self {
+            records: compared.records,
+            same_group: compared.same_group,
+            agreement: ratio(compared.same_group as f64, compared.records as f64),
+            pairs_in_both: compared.in_both,
+            pairs_only_kept: compared.in_first - compared.in_both,
+            pairs_only_rebuilt: compared.in_second - compared.in_both,
+            pair_agreement: ratio(compared.in_both as f64, in_either as f64),
+            metrics,
+        }
+    }
+}
+
 /// What matching everything again with a strategy did to the identities
 /// that existed. This is the cost of changing strategy: how many
 /// records kept their identity ID, and how much of what the strategy
@@ -232,6 +283,33 @@ impl OrderSensitivity {
     /// Compares two groupings of the same records, each a list of
     /// `(record, group)`.
     pub(crate) fn between(first: &[(String, String)], second: &[(String, String)]) -> Self {
+        let compared = Compared::between(first, second);
+        let in_either = compared.in_first + compared.in_second - compared.in_both;
+        Self {
+            records: compared.records,
+            same_group: compared.same_group,
+            agreement: ratio(compared.same_group as f64, compared.records as f64),
+            pairs_in_both: compared.in_both,
+            pairs_in_either: in_either,
+            pair_agreement: ratio(compared.in_both as f64, in_either as f64),
+        }
+    }
+}
+
+/// Two groupings of the same records, set against each other.
+struct Compared {
+    records: u64,
+    /// Records grouped with the same records in both.
+    same_group: u64,
+    /// Pairs of records that share a group in both, in the first and in
+    /// the second.
+    in_both: u64,
+    in_first: u64,
+    in_second: u64,
+}
+
+impl Compared {
+    fn between(first: &[(String, String)], second: &[(String, String)]) -> Self {
         use std::collections::{BTreeSet, HashMap};
 
         fn groups(partition: &[(String, String)]) -> HashMap<&str, BTreeSet<&str>> {
@@ -260,18 +338,12 @@ impl OrderSensitivity {
                 same_group += 1;
             }
         }
-        let in_both: u64 = cells.values().map(|size| pairs(*size)).sum();
-        let in_first: u64 = first_groups.values().map(|group| pairs(group.len())).sum();
-        let in_second: u64 = second_groups.values().map(|group| pairs(group.len())).sum();
-        let in_either = in_first + in_second - in_both;
-        let records = first.len() as u64;
         Self {
-            records,
+            records: first.len() as u64,
             same_group,
-            agreement: ratio(same_group as f64, records as f64),
-            pairs_in_both: in_both,
-            pairs_in_either: in_either,
-            pair_agreement: ratio(in_both as f64, in_either as f64),
+            in_both: cells.values().map(|size| pairs(*size)).sum(),
+            in_first: first_groups.values().map(|group| pairs(group.len())).sum(),
+            in_second: second_groups.values().map(|group| pairs(group.len())).sum(),
         }
     }
 }

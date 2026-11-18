@@ -1115,6 +1115,35 @@ mod tests {
     }
 
     #[test]
+    fn a_store_of_the_format_before_retractions_is_brought_up_to_date() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("store.duckdb");
+        {
+            let store =
+                DuckStore::open(Some(&path), Box::new(StepClock::new(0, 1_000_000))).unwrap();
+            // What a store of format 7 looked like: everything but the
+            // retractions.
+            store
+                .conn
+                .execute_batch("DROP TABLE spool.retraction")
+                .unwrap();
+            schema::set_meta(&store.conn, "format_version", "7").unwrap();
+        }
+        let store = DuckStore::open(Some(&path), Box::new(StepClock::new(0, 1))).unwrap();
+        assert_eq!(
+            schema::meta(&store.conn, "format_version").unwrap(),
+            Some(schema::FORMAT_VERSION.to_owned())
+        );
+        let retractions: i64 = store
+            .conn
+            .query_row("SELECT count(*) FROM spool.retraction", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(retractions, 0);
+    }
+
+    #[test]
     fn a_store_with_another_format_version_is_refused() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("store.duckdb");

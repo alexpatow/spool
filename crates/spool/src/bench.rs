@@ -74,6 +74,37 @@
 //! extractor made up has no true entity and is not scored there, so the two
 //! scores do not leak into each other.
 //!
+//! A step can take rows back, as a source does that no longer holds them:
+//!
+//! ```toml
+//! [[step]]
+//! name = "struck off"
+//! rebuild = true                # compare what is left with resolving it afresh
+//!
+//! [[step.retract]]
+//! source = "registry"
+//! entity_type = "company"
+//! keys = ["X0000017"]           # the keys of the rows
+//!
+//! [[step.retract]]
+//! source = "crm"
+//! entity_type = "company"
+//! file = "closed-accounts.csv"  # or: the rows of a file or a `dataset`,
+//! where = "closed = 'yes'"      # read as an ingest reads them, for their keys
+//! ```
+//!
+//! Rows are taken back after the step's files are ingested and before its
+//! corrections. From then on the scenario is scored on the rows the sources
+//! still hold. A step with `rebuild = true` also runs the steps so far in a
+//! store of its own, without the rows that are taken back as things stand
+//! and without the corrections, and reports how its identities differ from
+//! those of the store that held the rows and lost them. A mention that is
+//! taken back is extracted there too, since it is in a document, and is
+//! taken back before anything is matched with it.
+//!
+//! The store is verified after every step, and the scenario fails at the
+//! first step that leaves it inconsistent.
+//!
 //! A step resolves with its own `strategy`, or else with the scenario's
 //! top-level `strategy`, or else with the built-in `rules`. A step with
 //! `rematch = true` matches everything again, which is what switching
@@ -114,10 +145,11 @@ use crate::engine::{
 use crate::error::{Error, Result};
 use crate::lookup::{RecordEntry, RecordFilter};
 use crate::metrics::{
-    Churn, ExtractionMetrics, IdStability, Metrics, OrderSensitivity, OverridePersistence,
+    Churn, ExtractionMetrics, IdStability, Metrics, OrderSensitivity, OverridePersistence, Rebuild,
     SplitRecovery, UpgradeStability,
 };
 use crate::project::Manifest;
+use crate::retract::NOT_RETRACTED;
 use crate::rows::Rows;
 use crate::usercode::UserCode;
 
@@ -168,14 +200,67 @@ struct StepSpec {
     documents: Vec<DocumentsSpec>,
     #[serde(default)]
     extract: Vec<ExtractSpec>,
+    #[serde(default)]
+    retract: Vec<RetractSpec>,
     #[serde(default, rename = "correct")]
     corrections: Vec<CorrectionSpec>,
+    /// Whether what the step leaves is compared with resolving the rows
+    /// the sources still hold in a store of their own.
+    #[serde(default)]
+    rebuild: bool,
 }
 
 impl StepSpec {
     /// Whether the step brings anything new into the store.
     fn feeds(&self) -> bool {
         !self.ingest.is_empty() || !self.documents.is_empty() || !self.extract.is_empty()
+    }
+}
+
+/// Rows a source takes back: their keys, or the rows of a file, which are
+/// read as an ingest reads them and name the rows by the source's key
+/// column.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RetractSpec {
+    keys: Option<Vec<String>>,
+    file: Option<PathBuf>,
+    dataset: Option<String>,
+    /// The file to read within a dataset that is an archive.
+    member: Option<String>,
+    /// A SQL condition on the file's columns. Only the rows it holds for
+    /// are taken back.
+    #[serde(rename = "where")]
+    only: Option<String>,
+    source: String,
+    entity_type: String,
+}
+
+impl RetractSpec {
+    fn check(&self) -> std::result::Result<(), String> {
+        let named = [
+            self.keys.is_some(),
+            self.file.is_some(),
+            self.dataset.is_some(),
+        ];
+        if named.iter().filter(|named| **named).count() != 1 {
+            return Err(
+                "a retraction needs exactly one of `keys`, `file` and `dataset`".to_owned(),
+            );
+        }
+        if self.member.is_some() && self.dataset.is_none() {
+            return Err(
+                "`member` names a file within a `dataset`, and the retraction has none".to_owned(),
+            );
+        }
+        if self.only.is_some() && self.keys.is_some() {
+            return Err(
+                "`where` chooses among the rows of a `file` or a `dataset`, and the retraction \
+                 names `keys`"
+                    .to_owned(),
+            );
+        }
+        Ok(())
     }
 }
 
@@ -340,12 +425,16 @@ pub struct StepReport {
     /// The extractions the step ran, after its documents were stored.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extract: Vec<ExtractSummary>,
+    /// The rows the step took back, after its files were ingested.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub retract: Vec<RetractSummary>,
     /// The corrections the step applied, in order, before it resolved.
     pub corrections: Vec<CorrectionSummary>,
     pub resolve: ResolveReport,
     /// The log position after the step.
     pub head: Seq,
-    /// Committed state against the truth for everything ingested so far.
+    /// Committed state against the truth for everything ingested so far
+    /// that its source has not taken back.
     pub metrics: Metrics,
     /// The mentions extracted so far against the labelled ones. Only a
     /// scenario with labelled mentions has it.
@@ -363,6 +452,10 @@ pub struct StepReport {
     /// What matching everything again did to existing identities. Only a
     /// step with `rematch = true` has it.
     pub upgrade_stability: Option<UpgradeStability>,
+    /// What the step left against the rows the sources still hold resolved
+    /// in a store of their own. Only a step with `rebuild = true` has it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rebuild: Option<Rebuild>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -374,6 +467,32 @@ pub struct IngestSummary {
     pub duplicates: u64,
     /// Rows that replaced an earlier version of the same key.
     pub superseded: u64,
+    /// Records that came back: their source had taken them back, and sent
+    /// a row under their key again.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub restored: u64,
+    /// Those of them that went back to the identity they left.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub returned: u64,
+}
+
+fn is_zero(count: &u64) -> bool {
+    *count == 0
+}
+
+/// Rows one source took back in a step.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RetractSummary {
+    pub source: String,
+    pub entity_type: String,
+    /// Keys that were named.
+    pub received: u64,
+    /// Those the source had no row under.
+    pub unknown: u64,
+    /// Records taken back: every version of each row.
+    pub retracted: u64,
+    /// Those that had an identity, and left it.
+    pub detached: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -576,6 +695,15 @@ impl Scenario {
                     return Err(invalid(format!("two corrections are named `{name}`")));
                 }
             }
+            for (index, retract) in step.retract.iter().enumerate() {
+                retract.check().map_err(|message| {
+                    invalid(format!(
+                        "step `{}`, retraction {}: {message}",
+                        step.name,
+                        index + 1
+                    ))
+                })?;
+            }
             for ingest in &step.ingest {
                 if ingest.file.is_some() == ingest.dataset.is_some() {
                     return Err(invalid(format!(
@@ -668,15 +796,23 @@ impl Scenario {
     }
 
     /// Feeds the engine what a step brings: its files, then its documents,
-    /// then its extractions.
-    fn feed(&self, engine: &Engine, step: &StepSpec, truth: &mut Truth) -> Result<Fed> {
+    /// then its extractions. The rows in `without` are left out of the
+    /// files.
+    fn feed(
+        &self,
+        engine: &Engine,
+        step: &StepSpec,
+        truth: &mut Truth,
+        without: &Gone,
+    ) -> Result<Fed> {
         let mut fed = Fed {
             ingest: Vec::new(),
             documents: Vec::new(),
             extract: Vec::new(),
         };
         for ingest in &step.ingest {
-            fed.ingest.push(self.ingest(engine, ingest, truth)?);
+            fed.ingest
+                .push(self.ingest(engine, ingest, truth, without)?);
         }
         for documents in &step.documents {
             let read = read_documents(&self.dir.join(&documents.dir))?;
@@ -718,31 +854,60 @@ impl Scenario {
     /// before it has fetched anything.
     pub fn check(&self) -> Result<Manifest> {
         let manifest = Manifest::load(self.project_dir())?;
+        // The rows a step reads: what they are read for, and where from.
+        struct Read<'a> {
+            what: &'a str,
+            source: &'a str,
+            entity_type: &'a str,
+            file: Option<&'a PathBuf>,
+            dataset: Option<&'a String>,
+            member: Option<&'a str>,
+        }
         for step in &self.spec.steps {
-            for ingest in &step.ingest {
+            let ingests = step.ingest.iter().map(|ingest| Read {
+                what: "ingest",
+                source: &ingest.source,
+                entity_type: &ingest.entity_type,
+                file: ingest.file.as_ref(),
+                dataset: ingest.dataset.as_ref(),
+                member: ingest.member.as_deref(),
+            });
+            let retractions = step.retract.iter().map(|retract| Read {
+                what: "retraction",
+                source: &retract.source,
+                entity_type: &retract.entity_type,
+                file: retract.file.as_ref(),
+                dataset: retract.dataset.as_ref(),
+                member: retract.member.as_deref(),
+            });
+            for read in ingests.chain(retractions) {
                 let invalid = |message: String| {
                     Error::Scenario(format!(
-                        "step `{}`, the ingest from `{}`: {message}",
-                        step.name, ingest.source
+                        "step `{}`, the {} from `{}`: {message}",
+                        step.name, read.what, read.source
                     ))
                 };
                 let Some(entity_type) = manifest
                     .entity_types
                     .iter()
-                    .find(|entity_type| entity_type.name.as_str() == ingest.entity_type)
+                    .find(|entity_type| entity_type.name.as_str() == read.entity_type)
                 else {
                     return Err(invalid(format!(
                         "the project has no entity type `{}`",
-                        ingest.entity_type
+                        read.entity_type
                     )));
                 };
-                if !entity_type.sources.contains(&ingest.source) {
+                if !entity_type
+                    .sources
+                    .iter()
+                    .any(|source| source == read.source)
+                {
                     return Err(invalid(format!(
                         "the mapping of `{}` has no block for the source",
-                        ingest.entity_type
+                        read.entity_type
                     )));
                 }
-                match (&ingest.file, &ingest.dataset) {
+                match (read.file, read.dataset) {
                     (Some(file), _) => {
                         let path = self.dir.join(file);
                         if !path.is_file() {
@@ -750,7 +915,7 @@ impl Scenario {
                         }
                     }
                     (None, Some(dataset)) => {
-                        find_dataset(&self.dir, dataset, ingest.member.as_deref())
+                        find_dataset(&self.dir, dataset, read.member)
                             .map_err(|error| invalid(error.to_string()))?;
                     }
                     (None, None) => {}
@@ -779,9 +944,20 @@ impl Scenario {
         let mut truth = self.truth()?;
         let mut tracked = Tracked::default();
         let mut steps = Vec::new();
-        for step in &self.spec.steps {
+        for (at, step) in self.spec.steps.iter().enumerate() {
             let before = engine.head()?;
-            let fed = self.feed(engine, step, &mut truth)?;
+            let fed = self.feed(engine, step, &mut truth, &Gone::new())?;
+            let mut retract = Vec::new();
+            for (index, retraction) in step.retract.iter().enumerate() {
+                let summary = self.take_back(engine, retraction).map_err(|error| {
+                    Error::Scenario(format!(
+                        "step `{}`, retraction {}: {error}",
+                        step.name,
+                        index + 1
+                    ))
+                })?;
+                retract.push(summary);
+            }
             let mut corrections = Vec::new();
             for (index, correction) in step.corrections.iter().enumerate() {
                 let summary =
@@ -824,6 +1000,7 @@ impl Scenario {
                 ingest: fed.ingest,
                 documents: fed.documents,
                 extract: fed.extract,
+                retract,
                 corrections,
                 resolve,
                 head,
@@ -834,12 +1011,21 @@ impl Scenario {
                 split_recovery,
                 override_persistence,
                 upgrade_stability,
+                rebuild: match step.rebuild {
+                    true => Some(self.rebuild(engine, &manifest, &self.spec.steps[..=at])?),
+                    false => None,
+                },
             };
+            engine.verify().map_err(|error| {
+                Error::Scenario(format!(
+                    "step `{}` left a store that does not verify: {error}",
+                    step.name
+                ))
+            })?;
             after_step(&report)?;
             steps.push(report);
         }
 
-        engine.verify()?;
         Ok(BenchReport {
             scenario: self.name.clone(),
             engine_version: env!("CARGO_PKG_VERSION").to_owned(),
@@ -849,44 +1035,71 @@ impl Scenario {
         })
     }
 
-    /// Ingests one file of a step, and adds the truth it carries.
+    /// The column a source declares as its key, which is how truth is
+    /// joined to records and how a retraction names rows.
+    fn key_of(engine: &Engine, source: &str) -> Result<String> {
+        engine
+            .manifest()
+            .and_then(|manifest| manifest.source(source)?.key.clone())
+            .ok_or_else(|| {
+                Error::Scenario(format!(
+                    "source `{source}` needs a sources/{source}.yaml with a `key`, which is how truth is joined to records"
+                ))
+            })
+    }
+
+    /// The rows of a file of the scenario or of a dataset, for which `only`
+    /// holds.
+    fn rows(
+        &self,
+        source: &str,
+        file: Option<&PathBuf>,
+        dataset: Option<&String>,
+        member: Option<&str>,
+        only: Option<&str>,
+    ) -> Result<Rows> {
+        let path = match (file, dataset) {
+            (Some(file), _) => self.dir.join(file),
+            (None, Some(dataset)) => fetch_dataset(&self.dir, dataset, member)?,
+            (None, None) => unreachable!("checked when the scenario was loaded"),
+        };
+        match only {
+            None => Rows::from_csv(&path),
+            Some(condition) => Rows::from_csv_where(&path, condition).map_err(|error| {
+                Error::Scenario(format!(
+                    "the rows of `{source}` where `{condition}`: {error}"
+                ))
+            }),
+        }
+    }
+
+    /// Ingests one file of a step, and adds the truth it carries. The rows
+    /// in `without` are left out.
     fn ingest(
         &self,
         engine: &Engine,
         ingest: &IngestSpec,
         truth: &mut Truth,
+        without: &Gone,
     ) -> Result<IngestSummary> {
-        let path = match (&ingest.file, &ingest.dataset) {
-            (Some(file), _) => self.dir.join(file),
-            (None, Some(dataset)) => fetch_dataset(&self.dir, dataset, ingest.member.as_deref())?,
-            (None, None) => unreachable!("checked when the scenario was loaded"),
-        };
-        // Truth is joined to records by the key the source declares.
-        let key = engine
-            .manifest()
-            .and_then(|manifest| manifest.source(&ingest.source)?.key.clone())
-            .ok_or_else(|| {
-                Error::Scenario(format!(
-                    "source `{}` needs a sources/{}.yaml with a `key`, which is how truth is joined to records",
-                    ingest.source, ingest.source
-                ))
-            })?;
+        let key = Self::key_of(engine, &ingest.source)?;
         let key = key.as_str();
-        let mut rows = match &ingest.only {
-            None => Rows::from_csv(&path)?,
-            Some(condition) => Rows::from_csv_where(&path, condition).map_err(|error| {
-                Error::Scenario(format!(
-                    "the rows of `{}` where `{condition}`: {error}",
-                    ingest.source
-                ))
-            })?,
-        };
+        let mut rows = self.rows(
+            &ingest.source,
+            ingest.file.as_ref(),
+            ingest.dataset.as_ref(),
+            ingest.member.as_deref(),
+            ingest.only.as_deref(),
+        )?;
         if let Some(column) = &self.spec.truth.column {
             let (rest, pairs) = rows.take_column(column, key)?;
             rows = rest;
             for (key, entity) in pairs {
                 truth.entities.insert((ingest.source.clone(), key), entity);
             }
+        }
+        if let Some(keys) = without.get(&(ingest.entity_type.clone(), ingest.source.clone())) {
+            rows = rows.without(key, keys)?;
         }
         let report = engine.ingest(&ingest.source, &ingest.entity_type, rows)?;
         Ok(IngestSummary {
@@ -896,12 +1109,130 @@ impl Scenario {
             inserted: report.inserted,
             duplicates: report.duplicates,
             superseded: report.superseded,
+            restored: report.restored,
+            returned: report.returned,
         })
     }
 
-    /// Runs the steps that ingest anything in reverse, without corrections,
-    /// and compares the grouping that leaves with the one the written order
-    /// leaves. `engine` holds the scenario as it was just run.
+    /// Takes back the rows one retraction of a step names.
+    fn take_back(&self, engine: &Engine, retract: &RetractSpec) -> Result<RetractSummary> {
+        let keys = match &retract.keys {
+            Some(keys) => keys.clone(),
+            None => {
+                let key = Self::key_of(engine, &retract.source)?;
+                let rows = self.rows(
+                    &retract.source,
+                    retract.file.as_ref(),
+                    retract.dataset.as_ref(),
+                    retract.member.as_deref(),
+                    retract.only.as_deref(),
+                )?;
+                let (_, pairs) = rows.take_column(&key, &key)?;
+                pairs.into_iter().map(|(key, _)| key).collect()
+            }
+        };
+        if keys.is_empty() {
+            return Err(Error::Scenario(format!(
+                "the retraction from `{}` names no rows",
+                retract.source
+            )));
+        }
+        let report = engine.retract(
+            &retract.source,
+            &retract.entity_type,
+            &keys,
+            Actor::Agent("benchmark".to_owned()),
+            None,
+        )?;
+        Ok(RetractSummary {
+            source: retract.source.clone(),
+            entity_type: retract.entity_type.clone(),
+            received: report.received,
+            unknown: report.unknown,
+            retracted: report.retracted,
+            detached: report.detached,
+        })
+    }
+
+    /// Runs steps in a store of their own, without the rows in `without`
+    /// and without corrections: each batch with the strategy it was written
+    /// with, and no rematch. The scenario's own engine says how user code
+    /// is run.
+    ///
+    /// The mentions in `without` are extracted here as they were there, and
+    /// are taken back before the step is resolved, so they are records of
+    /// this store that no run examines.
+    fn replay<'a>(
+        &self,
+        engine: &Engine,
+        manifest: &Manifest,
+        steps: impl Iterator<Item = &'a StepSpec>,
+        without: &Gone,
+    ) -> Result<(Engine, Truth)> {
+        let replayed = Engine::open_in_memory(Options::seeded(0))?;
+        replayed.apply(manifest)?;
+        if let Some(user_code) = engine.user_code() {
+            replayed.set_user_code(user_code.as_ref().clone());
+        }
+        let mut truth = self.truth()?;
+        // In an order that does not change from one run to the next.
+        let mut gone: Vec<_> = without.iter().collect();
+        gone.sort_by_key(|(named, _)| *named);
+        for step in steps {
+            self.feed(&replayed, step, &mut truth, without)?;
+            // A row of a file is left out before it is ingested. A mention
+            // is what an extractor finds in a document, and cannot be left
+            // out, so it is taken back before anything is matched with it:
+            // it gets no identity, and counts for nothing, as a row that
+            // was never sent.
+            if !step.extract.is_empty() {
+                for ((entity_type, source), keys) in &gone {
+                    let mut keys: Vec<String> = keys.iter().cloned().collect();
+                    keys.sort();
+                    replayed.retract(
+                        source,
+                        entity_type,
+                        &keys,
+                        Actor::Agent("benchmark".to_owned()),
+                        None,
+                    )?;
+                }
+            }
+            replayed.resolve(&ResolveOptions::with_strategy(self.strategy(step)))?;
+        }
+        Ok((replayed, truth))
+    }
+
+    /// Compares what `engine` holds after `steps` with the same steps run
+    /// in a store that is never sent the rows the sources have taken back.
+    fn rebuild(&self, engine: &Engine, manifest: &Manifest, steps: &[StepSpec]) -> Result<Rebuild> {
+        let gone = gone(engine)?;
+        let batches = steps.iter().filter(|step| step.feeds());
+        let (rebuilt, truth) = self.replay(engine, manifest, batches, &gone)?;
+        let (kept, afresh) = (grouping(engine)?, grouping(&rebuilt)?);
+        // Both are in the order of their record IDs, which say what a
+        // record holds: the two stores must hold the same rows.
+        let same = kept.len() == afresh.len()
+            && kept
+                .iter()
+                .zip(&afresh)
+                .all(|((one, _), (other, _))| one == other);
+        if !same {
+            return Err(Error::Scenario(format!(
+                "the store holds {} records its sources have not taken back, and the same steps \
+                 without the rows that were taken back give {} records, or others",
+                kept.len(),
+                afresh.len()
+            )));
+        }
+        let metrics = rebuilt.score(truth_relation(&rebuilt, &truth.entities)?)?;
+        Ok(Rebuild::between(&kept, &afresh, metrics))
+    }
+
+    /// Runs the steps that ingest anything in reverse, without corrections
+    /// and without the rows that are taken back at the end, and compares
+    /// the grouping that leaves with the one the written order leaves.
+    /// `engine` holds the scenario as it was just run.
     fn order_sensitivity(
         &self,
         engine: &Engine,
@@ -911,48 +1242,60 @@ impl Scenario {
         if batches.len() < 2 {
             return Ok(None);
         }
-        let replay = |steps: &mut dyn Iterator<Item = &&StepSpec>| -> Result<_> {
-            let replayed = Engine::open_in_memory(Options::seeded(0))?;
-            replayed.apply(manifest)?;
-            if let Some(user_code) = engine.user_code() {
-                replayed.set_user_code(user_code.as_ref().clone());
-            }
-            let mut truth = self.truth()?;
-            for step in steps {
-                self.feed(&replayed, step, &mut truth)?;
-                // The batch with the strategy it was written with, and no
-                // rematch: this measures the order of arrival alone.
-                replayed.resolve(&ResolveOptions::with_strategy(self.strategy(step)))?;
-            }
+        let gone = gone(engine)?;
+        // This measures the order of arrival alone.
+        let replay = |steps: &mut dyn Iterator<Item = &StepSpec>| -> Result<_> {
+            let (replayed, _) = self.replay(engine, manifest, steps, &gone)?;
             grouping(&replayed)
         };
         // The engine holds the written order as it is unless the scenario
         // did more than ingest and resolve.
-        let corrected = self
-            .spec
-            .steps
-            .iter()
-            .any(|step| !step.corrections.is_empty() || step.rematch);
+        let corrected =
+            self.spec.steps.iter().any(|step| {
+                !step.corrections.is_empty() || step.rematch || !step.retract.is_empty()
+            });
         let written = if corrected {
-            replay(&mut batches.iter())?
+            replay(&mut batches.iter().copied())?
         } else {
             grouping(engine)?
         };
-        let reversed = replay(&mut batches.iter().rev())?;
+        let reversed = replay(&mut batches.iter().rev().copied())?;
         Ok(Some(OrderSensitivity::between(&written, &reversed)))
     }
 }
 
-/// Every record with the group it is in: its identity, or itself when
-/// it has none.
+/// The rows the sources have taken back as things stand: their keys, by
+/// entity type and source.
+type Gone = HashMap<(String, String), HashSet<String>>;
+
+fn gone(engine: &Engine) -> Result<Gone> {
+    let batches = engine.query(&format!(
+        "SELECT DISTINCT entity_type, source_id, source_key FROM spool.record
+         WHERE source_key IS NOT NULL AND NOT ({NOT_RETRACTED})"
+    ))?;
+    let mut gone = Gone::new();
+    for batch in &batches {
+        let column = |index: usize| batch.column(index).as_string::<i32>();
+        let (types, sources, keys) = (column(0), column(1), column(2));
+        for row in 0..batch.num_rows() {
+            gone.entry((types.value(row).to_owned(), sources.value(row).to_owned()))
+                .or_default()
+                .insert(keys.value(row).to_owned());
+        }
+    }
+    Ok(gone)
+}
+
+/// Every record its source has not taken back, with the group it is in:
+/// its identity, or itself when it has none.
 fn grouping(engine: &Engine) -> Result<Vec<(String, String)>> {
-    let batches = engine.query(
+    let batches = engine.query(&format!(
         "SELECT o.record_id::VARCHAR,
                 coalesce(m.identity_id::VARCHAR, 'unassigned:' || o.record_id::VARCHAR)
-         FROM spool.record o
+         FROM (SELECT record_id FROM spool.record WHERE {NOT_RETRACTED}) o
          LEFT JOIN spool.membership m ON m.record_id = o.record_id AND m.to_seq IS NULL
-         ORDER BY o.record_id",
-    )?;
+         ORDER BY o.record_id"
+    ))?;
     let mut groups = Vec::new();
     for batch in &batches {
         let column = |index: usize| batch.column(index).as_string::<i32>();
@@ -1129,10 +1472,12 @@ fn held(engine: &Engine, tracked: &Tracked) -> Result<(SplitRecovery, OverridePe
 /// The truth relation `(record_id, true_entity)` for the records
 /// the store holds, joined to the truth by source and key.
 fn truth_relation(engine: &Engine, truth: &HashMap<(String, String), String>) -> Result<Rows> {
-    let records = engine.query(
+    // A record its source took back is no longer something to be right
+    // or wrong about.
+    let records = engine.query(&format!(
         "SELECT record_id::VARCHAR, source_id, source_key
-         FROM spool.record WHERE source_key IS NOT NULL",
-    )?;
+         FROM spool.record WHERE source_key IS NOT NULL AND {NOT_RETRACTED}"
+    ))?;
     let mut rows: Vec<(String, &str)> = Vec::new();
     for batch in &records {
         let column = |index: usize| batch.column(index).as_string::<i32>();

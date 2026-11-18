@@ -4,7 +4,7 @@
 
 import { describe, expect, test } from "bun:test";
 
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 
 import {
   aStoreForEachTest,
@@ -19,7 +19,7 @@ import {
   said,
   server,
 } from "./changing.tsx";
-import { author, counted, field, heading, idle, open, texts } from "./harness.tsx";
+import { author, counted, field, heading, idle, open, rowsOf, texts } from "./harness.tsx";
 import { companies, row } from "./seed.ts";
 
 aStoreForEachTest();
@@ -82,6 +82,61 @@ describe("a record", () => {
     expect(answer).toContain("Nothing was changed.");
     expect((await server.client.record(moved.id)).identity).toBe(other.identity!);
     expect(await head()).toBe(8);
+  });
+
+  test("that its source took back says so, and is not offered an identity", async () => {
+    const taken = await row(server.client, "crm", "c-108");
+    const run = await server.client.retract({ source: "crm", entity_type: "company", keys: ["c-108"] });
+    expect(run.retraction).toMatchObject({ retracted: 1, detached: 1 });
+
+    // It has no features while it is gone, so it is called by its source and key.
+    open(server, `/records/${taken.id}`);
+    await heading("crm:c-108");
+    await waitFor(() => expect(field("Identity")).toBe("taken back"));
+    expect(document.body.textContent).toContain(
+      `Taken back by its source in run ${run.run}. It has no identity, and no run examines it, until the source sends the row again.`,
+    );
+    await idle();
+    // The engine would refuse it an identity, so none is offered.
+    expect(screen.queryByRole("heading", { name: "Assign" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Move" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Assign" })).toBeNull();
+
+    // It is not among the records that wait for an identity.
+    cleanup();
+    open(server, "/records?source=crm&key=c-108");
+    await heading("Records");
+    await waitFor(() => expect(rowsOf(screen.getByRole("table")).map((line) => line[5])).toEqual(["taken back"]));
+
+    // The run says what it took back, and where the records left their identities.
+    cleanup();
+    open(server, `/runs/${run.run}`);
+    await heading(`Run ${run.run}`);
+    await screen.findByText("Retraction");
+    expect(field("Kind")).toBe("retract");
+    expect(field("Keys")).toBe("1 named, 0 unknown");
+    expect(field("Taken back")).toBe("1 record, 1 of them left an identity");
+    expect(field("Committed")).toBe(`log position ${run.retraction!.committed!.seq}`);
+
+    // Sent again, the row is back, and its run says so.
+    const again = await server.client.ingest({
+      source: "crm",
+      entity_type: "company",
+      rows: [taken.payload as Record<string, string>],
+    });
+    expect(again.ingest?.restored).toBe(1);
+    cleanup();
+    open(server, `/runs/${again.run}`);
+    await heading(`Run ${again.run}`);
+    await waitFor(() =>
+      expect(field("Came back")).toBe("1 record the source had taken back, 1 of them to the identity they left"),
+    );
+    expect(field("Committed")).toBe(`log position ${again.ingest!.committed!.seq}`);
+    cleanup();
+    open(server, `/records/${taken.id}`);
+    await heading("Atlas Trading");
+    await waitFor(() => expect(field("Identity")).toBe(`Atlas Trading${taken.identity!.slice(-4)}`));
+    await screen.findByRole("heading", { name: "Move" });
   });
 });
 

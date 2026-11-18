@@ -11,7 +11,7 @@ target/release/spool bench benchmarks/resolution/music/200k.toml
 | --- | --- | --- |
 | `identity/companies-small` | 39 invented company records in two batches | The hard cases of company identity, small enough to read, with scripted corrections |
 | `resolution/people` | Splink's `fake_1000`, and a committed sample of ten rows | A second entity type, and a Splink strategy beside the rules |
-| `resolution/voters` | North Carolina voters, five sources of up to 1,000,000 | Scale: millions of records, few attributes, light errors |
+| `resolution/voters` | North Carolina voters, five sources of up to 1,000,000 | Scale: millions of records, few attributes, light errors. Sources that take rows back and send them again |
 | `resolution/music` | MusicBrainz songs, five sources, up to 1,937,500 records | Sources that write the same thing in five ways, and heavy errors |
 | `extraction/company-news` | Ten invented news items | Extraction from text, scored apart from resolution |
 
@@ -54,6 +54,41 @@ The rules of both projects were written against the truth of a small part and th
 
 What the rules cannot say is in the numbers too. A voter source holds no person twice, and a rule cannot use that, because it sees the features of two records and not their sources.
 
+## Data that changes
+
+A source does not only add rows. `resolution/voters/changing.toml` begins with five sources of about 100,000 voters each, adds 100,000 rows, has two of the sources take 50,000 rows back, matches everything again, and has 10,000 of the rows sent again. A step takes rows back with `[[step.retract]]`, which names them by their keys, or by the rows of a file or a dataset as an ingest reads them:
+
+```toml
+[[step]]
+name = "50,000 taken back"
+rebuild = true
+
+[[step.retract]]
+dataset = "ncvoters_5"
+member = "5Party-ocp20/ncvr_numrec_1000000_modrec_2_ocp_20_myp_0_nump_5.csv"
+source = "party_0"
+entity_type = "person"
+where = "recid::BIGINT % 40 = 0"
+```
+
+The store is verified after every step, and the scenario fails at the first step that leaves it inconsistent. From a retraction on, the truth is scored on the rows the sources still hold. A step with `rebuild = true` also runs the steps so far in a second store that is never sent the rows that are gone, and reports how far the two agree: the share of records grouped with the same records in both, and the pairs that are together in one and not in the other.
+
+On the same machine, in 222 seconds and 2.1 GB:
+
+| Step | Records the sources hold | Pair precision | Pair recall | Kept their identity | Same group as resolved afresh | Pairs only here | Pairs only there |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| five sources | 500,323 | 0.988 | 0.881 | | | | |
+| 100,000 more | 600,094 | 0.986 | 0.882 | 500,122 of 500,122 | | | |
+| 50,000 taken back | 549,978 | 0.986 | 0.882 | 549,757 of 599,854 | 549,799 of 549,978 | 142 | 0 |
+| everything matched again | 549,978 | 0.986 | 0.882 | 549,787 of 549,787 | | | |
+| 10,000 come back | 559,990 | 0.986 | 0.883 | 549,787 of 549,787 | 559,837 of 559,990 | 125 | 0 |
+
+Taking back 50,116 records took 50,097 of them out of an identity and changed nothing else: the records that kept their identity are all the others. Of the 10,012 records that came back, 10,009 went back to the identity they had left, and the other three had none when they were taken back. No identity was created for a row that came back.
+
+The 142 pairs are what a retraction leaves behind. Two records that were matched only through a third stay in one identity when the third is taken back, because the engine does not take an identity apart on its own. Resolved afresh, they would be two identities. Matching everything again does not find them: it suggested no split, since no rule says the two differ, only that nothing joins them any more. On this data 111 of the 142 are pairs of one person, so the store that kept them has the higher recall (0.8824 against 0.8821), and 31 are wrong merges that nothing reports.
+
+The order of arrival is tried at the end on the rows the sources still hold: with the steps in reverse, 559,952 of 559,990 records are grouped as they are with the steps as written.
+
 ## Over HTTP
 
 `spool bench` uses the engine in its own process. `packages/stress/src/replay.ts` runs a scenario that way, then sends the same rows to a server in the same runs, reads both stores from end to end, and fails unless the two agree on who is with whom:
@@ -63,4 +98,4 @@ cd packages/stress
 bun src/replay.ts ../../benchmarks/resolution/voters/5x500k.toml
 ```
 
-`music/20k.toml` is replayed in the tests. The larger scenarios are run by hand.
+`music/20k.toml` is replayed in the tests. The larger scenarios are run by hand. A scenario that takes rows back is not replayed: the store keeps which records were taken back, and not which keys each call named.

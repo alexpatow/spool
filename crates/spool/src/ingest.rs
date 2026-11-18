@@ -13,11 +13,12 @@ use duckdb::vtab::arrow::ArrowBatchRegistration;
 use duckdb::{Connection, params};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use spool_core::{RecordId, RunId};
+use spool_core::{Committed, RecordId, RunId};
 
 use crate::batch::{Column, batch};
 use crate::error::{Error, Result};
 use crate::project::Source;
+use crate::retract;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -33,6 +34,26 @@ pub struct IngestReport {
     /// before under the same key with other content.
     #[serde(default)]
     pub superseded: u64,
+    /// Records the source had taken back and holds again: every version
+    /// of a row that was sent again, changed or not.
+    #[serde(default)]
+    pub restored: u64,
+    /// Those of them that are back in the identity they left, or in the
+    /// one that stands for it now. The rest had none, or can no longer be
+    /// there, and are new to the next match run.
+    #[serde(default)]
+    pub returned: u64,
+    /// The changeset that put them back, if any went back.
+    #[serde(default)]
+    pub committed: Option<Committed>,
+}
+
+/// What storing one staged batch did.
+pub(crate) struct Stored {
+    /// Records created.
+    pub inserted: u64,
+    /// Records that had been taken back and came back.
+    pub restored: u64,
 }
 
 /// The rows of one incoming batch that were not seen earlier in this call,
@@ -143,12 +164,14 @@ pub(crate) fn stage(
     ])?))
 }
 
-/// Stores staged records of one entity type from one source, and
-/// returns how many were new.
+/// Stores staged records of one entity type from one source.
 ///
 /// A new record under a key the source has used before is the next
 /// version of that row or mention. It supersedes the latest version the
 /// store holds, or the one before it in the batch.
+///
+/// A row the source had taken back is held again, with every version of
+/// it, whether or not it came with new content.
 pub(crate) fn insert(
     conn: &Connection,
     entity_type: &str,
@@ -156,7 +179,8 @@ pub(crate) fn insert(
     now: i64,
     run: RunId,
     staged: RecordBatch,
-) -> Result<u64> {
+) -> Result<Stored> {
+    let restored = retract::restore(conn, entity_type, source, run, &staged)?;
     let inserted = conn.execute(
         "INSERT INTO spool.record
          SELECT n.record_id, $1, $2, n.source_key,
@@ -189,7 +213,10 @@ pub(crate) fn insert(
             &ArrowBatchRegistration::new(staged)
         ],
     )?;
-    Ok(inserted as u64)
+    Ok(Stored {
+        inserted: inserted as u64,
+        restored,
+    })
 }
 
 /// Reads one Arrow column as JSON values. Text, booleans and numbers keep
