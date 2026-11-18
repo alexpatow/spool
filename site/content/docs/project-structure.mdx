@@ -254,7 +254,7 @@ The repository has a strategy that runs Splink, in [`benchmarks/resolution/peopl
 OPENAI_API_KEY=sk-...
 ```
 
-Spool reads `.env` each time it starts an extractor or a strategy, so a change needs no restart, and hands the code each variable it sets. A variable that is set already where Spool runs keeps its value, and so do the ones Spool sets for the code itself. Spool's own token and the secret of its Google client are never handed on, whatever `.env` says. No value is printed: a line that is wrong is reported by its number. A line is `NAME=value`, and may start with `export `. A value in single or double quotes is what is between them, and one without ends before ` #`. Lines that start with `#` are comments. Spool itself does not read `.env`: `SPOOL_URL`, `SPOOL_TOKEN` and the rest are set where it runs.
+An extractor or a strategy runs in the project directory, with the environment Spool was started with. Spool reads `.env` each time it starts one, so a change needs no restart, and adds each variable it sets. A variable that is set already where Spool runs keeps its value, and so do the ones Spool sets for the code itself. Spool's own token and the secret of its Google client are never handed on, whatever `.env` says. No value is printed: a line that is wrong is reported by its number. A line is `NAME=value`, and may start with `export `. A value in single or double quotes is what is between them, and one without ends before ` #`. Lines that start with `#` are comments. Spool itself does not read `.env`: `SPOOL_URL`, `SPOOL_TOKEN` and the rest are set where it runs.
 
 ## What Spool writes
 
