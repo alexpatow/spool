@@ -1562,9 +1562,65 @@ fn a_pair_of_records_is_explained() {
     server
         .get(&format!("/v1/explain?a={first}"))
         .error(400, "invalid");
-    server
+    let message = server
         .get(&format!("/v1/explain?a={first}&b=nothing"))
         .error(400, "invalid");
+    assert!(message.contains("<source>:<key>"), "{message}");
+
+    // A record is named by its source and key as well. That is the row the
+    // source holds under the key now, whatever it held before.
+    assert_eq!(server.read("/v1/explain?a=shop:1&b=shop:2"), explanation);
+    assert_eq!(
+        server.read(&format!("/v1/explain?a=shop:3&b={first}")),
+        server.read(&format!("/v1/explain?a={red}&b={first}"))
+    );
+    let message = server
+        .get("/v1/explain?a=shop:1&b=shop:9")
+        .error(404, "not_found");
+    assert_eq!(
+        message,
+        "there is no record with key `9` from source `shop`"
+    );
+    let unknown = server
+        .get("/v1/explain?a=shop:1&b=shed:2")
+        .error(404, "not_found");
+    assert!(
+        unknown.starts_with(
+            "there is no record with key `2` from source `shed`: the project's sources are `"
+        ),
+        "{unknown}"
+    );
+    assert!(unknown.contains("`shop`"), "{unknown}");
+    load_things(
+        &server,
+        "shop",
+        &[
+            &["id", "code", "colour"],
+            &["2", "anvil", "blue"],
+            &["a:b", "anvil", "black"],
+        ],
+    );
+    let versions = server.read("/v1/records?source=shop&key=2");
+    let versions = versions["records"].as_array().unwrap();
+    assert_eq!(versions.len(), 2);
+    let latest = versions
+        .iter()
+        .find(|version| version["superseded_by"].is_null())
+        .unwrap();
+    assert_eq!(latest["payload"]["colour"], "blue");
+    let by_key = server.read("/v1/explain?a=shop:1&b=shop:2");
+    let (left, right) = (&by_key["left"]["record"], &by_key["right"]["record"]);
+    assert!(
+        left["id"] == latest["id"] || right["id"] == latest["id"],
+        "{by_key}"
+    );
+    // A key may have a colon in it: the first one ends the source's name.
+    let colon = server.read("/v1/explain?a=shop:1&b=shop:a:b");
+    let keys = [
+        &colon["left"]["record"]["key"],
+        &colon["right"]["record"]["key"],
+    ];
+    assert!(keys.contains(&&json!("a:b")), "{colon}");
 
     // Review items are listed by a record they name.
     assert_eq!(

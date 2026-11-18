@@ -20,9 +20,9 @@ use std::sync::{Arc, LazyLock};
 
 use axum::body::{Bytes, to_bytes};
 use axum::extract::{Extension, Path, Query, State};
-use axum::http::StatusCode;
 use axum::http::header::{ALLOW, CONTENT_TYPE};
 use axum::http::request::Parts;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use rmcp::handler::server::tool::schema_for_input;
 use rmcp::model::{
@@ -38,16 +38,17 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use spool::ReviewStatus;
 use spool::core::{EntityType, IdentityId, Op, RecordId, Seq};
+use spool::{NewDocument, ReviewStatus, StrategyRef};
 
 use super::{
     ApiError, ApiResult, App, Caller, ConstraintsQuery, ExplainQuery, IdentitiesQuery, LogQuery,
-    RecordsQuery, ReviewQuery, ServerOptions,
+    RecordsQuery, ReviewQuery, ServerOptions, WaitQuery,
 };
 use crate::api::{
-    CommitRequest, DismissRequest, ErrorBody, ErrorCode, ErrorResponse, MintRequest, SplitRequest,
-    UndoRequest,
+    CommitRequest, DismissRequest, DocumentsRequest, ErrorBody, ErrorCode, ErrorResponse,
+    ExtractRequest, LoadParams, LoadRequest, MatchRequest, MintRequest, RetractRequest,
+    SplitRequest, UndoRequest,
 };
 
 /// The largest request the endpoint reads. A request is a tool call, and the
@@ -76,14 +77,33 @@ const DEFAULT_LIMIT: u64 = 20;
 /// The most IDs `mint_identity_ids` mints in one call.
 const MAX_MINTED: u32 = 100;
 
+/// The longest `get_run` waits for a run that is still in progress. A
+/// client gives up on a call that takes much longer.
+const MAX_RUN_WAIT_MS: u64 = 60_000;
+
 /// What a client is told about the server when it connects. A client may
 /// show the model only the beginning, so the first paragraph stands alone.
 const INSTRUCTIONS: &str = "\
 Spool resolves records from many sources into identities: one identity for \
 each real-world thing, holding every record that refers to it. Use these \
-tools to find an identity and the records behind it, to see why two records \
-are or are not the same thing, and to correct identities. Start with \
-`describe_store`, which lists the entity types and sources this store has.
+tools to load rows and documents and match what they hold, to find an \
+identity and the records behind it, to see why two records are or are not \
+the same thing, and to correct identities. Start with `describe_store`, \
+which lists the entity types this store has and the sources each takes \
+rows from.
+
+Loading and matching: `load_rows` stores rows from one source as records, \
+and `run_match` then places the records no run has examined: each joins the \
+identity it matches or gets a new one, and identities that exist keep their \
+IDs. `describe_store` names each source the project declares in `sources`, \
+with its columns and the entity types it sends rows of. A row that was loaded stays in the store: nothing \
+deletes it, and `retract_rows` takes it out of its identity and keeps it. \
+So load what you were asked to load and nothing else.
+
+Text is the other way in: `load_documents` stores documents, and \
+`run_extraction` has one of the project's extractors, which \
+`describe_store` lists, read them. Each place where a document names \
+something becomes a record, and `run_match` places those as it places rows.
 
 Looking things up: `search_identities` and `search_records` find by words; \
 `get_identity` lists an identity's records and `search_records` with \
@@ -199,6 +219,9 @@ impl ServerHandler for Tools {
             ));
         };
         let reads = tool.annotations.and_then(|told| told.read_only_hint) == Some(true);
+        // What a tool looked up can be asked for again in smaller parts,
+        // all but a run, which is one thing.
+        let in_parts = reads && request.name != "get_run";
         // The server authorized the request before it came here and left
         // who it is from with the request.
         let caller = context
@@ -211,14 +234,14 @@ impl ServerHandler for Tools {
             })?;
         let arguments = request.arguments.unwrap_or_default();
         let result = self.call(&request.name, arguments, caller).await;
-        Ok(answer(result, reads).await.into())
+        Ok(answer(result, in_parts).await.into())
     }
 }
 
 /// The result of a tool: the JSON the API answers with, as text. A failure
 /// is a result too, with the API's error in it, so that the model reads why
 /// and can put it right.
-async fn answer(result: ApiResult, reads: bool) -> CallToolResult {
+async fn answer(result: ApiResult, in_parts: bool) -> CallToolResult {
     let response = match result {
         Ok(response) => response,
         Err(error) => return refused(error),
@@ -231,8 +254,7 @@ async fn answer(result: ApiResult, reads: bool) -> CallToolResult {
     };
     let body = match body.len() > MAX_RESULT_BYTES {
         false => body.to_vec(),
-        // What a tool looked up can be asked for again, in smaller parts.
-        true if reads || !succeeded => {
+        true if in_parts || !succeeded => {
             return refused(ApiError::new(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 ErrorCode::TooLarge,
@@ -244,7 +266,8 @@ async fn answer(result: ApiResult, reads: bool) -> CallToolResult {
             ));
         }
         // What a tool changed is changed, and saying that the call failed
-        // would be untrue. The answer is returned without its large parts.
+        // would be untrue. The answer is returned without its large parts,
+        // and so is a run, which cannot be asked for in parts.
         true => shortened(&body),
     };
     match String::from_utf8(body) {
@@ -254,31 +277,62 @@ async fn answer(result: ApiResult, reads: bool) -> CallToolResult {
     }
 }
 
-/// An answer too large to return, without the fields that make it so: the
-/// receipt of a change is small, and the changeset it committed is not.
+/// An answer too large to return, without the parts that make it so: the
+/// receipt of a change is small and the changeset it committed is not, and a
+/// run's counts are small and the list of what it left for review is not.
 fn shortened(body: &[u8]) -> Vec<u8> {
-    let mut left_out = Vec::new();
-    let mut answer = match serde_json::from_slice(body) {
+    let whole = match serde_json::from_slice(body) {
         Ok(Value::Object(answer)) => answer,
         _ => JsonObject::new(),
     };
-    answer.retain(|name, value| {
-        let small = serde_json::to_vec(value).is_ok_and(|value| value.len() <= MAX_FIELD_BYTES);
-        if !small {
-            left_out.push(Value::String(name.clone()));
-        }
-        small
-    });
+    let mut left_out = Vec::new();
+    let mut answer = whole.clone();
+    prune(&mut answer, "", true, &mut left_out);
+    // An object can be large by the number of its fields. Then nothing of
+    // a large field is kept.
+    let room = MAX_RESULT_BYTES - 2 * MAX_FIELD_BYTES;
+    if size(&answer) + size(&left_out) > room {
+        left_out.clear();
+        answer = whole;
+        prune(&mut answer, "", false, &mut left_out);
+    }
+    if size(&answer) + size(&left_out) > room {
+        answer.clear();
+        left_out = vec![Value::String("every field".to_owned())];
+    }
     answer.insert("left_out".to_owned(), Value::Array(left_out));
     answer.insert(
         "note".to_owned(),
         Value::String(
-            "The call succeeded. Its answer was too large to return whole, so the fields named \
-             in `left_out` are missing. `get_identity` and `search_records` read what it left."
+            "The call succeeded. Its answer was too large to return whole, so the parts named \
+             in `left_out` are missing. `get_identity`, `search_records` and \
+             `list_review_items` read what the store holds now."
                 .to_owned(),
         ),
     );
     serde_json::to_vec(&Value::Object(answer)).unwrap_or_default()
+}
+
+/// Takes the large fields out of an object and names each in `left_out` by
+/// its path. With `within`, a large object is kept, without its own large
+/// fields.
+fn prune(object: &mut JsonObject, path: &str, within: bool, left_out: &mut Vec<Value>) {
+    object.retain(|name, field| {
+        if size(field) <= MAX_FIELD_BYTES {
+            return true;
+        }
+        let at = format!("{path}{name}");
+        match field {
+            Value::Object(inner) if within => {
+                prune(inner, &format!("{at}."), within, left_out);
+                true
+            }
+            _ => {
+                left_out.push(Value::String(at));
+                false
+            }
+        }
+    });
 }
 
 fn refused(error: ApiError) -> CallToolResult {
@@ -429,10 +483,122 @@ struct OneRecord {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct Pair {
-    /// One record. The order of the two does not matter.
-    a: RecordId,
-    /// The other record.
-    b: RecordId,
+    /// One record: its ID, or `<source>:<key>`, such as `crm:c-1`, which
+    /// names the row its source holds under that key now. What an extractor
+    /// found in a document is also named by its place, as
+    /// `<source>:<document key>[<start>-<end>]`. The order of the two does
+    /// not matter.
+    a: String,
+    /// The other record, named the same way.
+    b: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct OneRun {
+    /// The `run` of the run: a number.
+    run: u64,
+    /// If the run is still in progress, wait up to this many milliseconds
+    /// for it to finish. Not at all unless given, 60000 at most.
+    #[serde(default)]
+    wait_ms: Option<u64>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct LoadRows {
+    /// The name of the source the rows come from. The project declares its
+    /// sources: `describe_store` lists them in `sources`, each with its
+    /// columns and the entity types it sends rows of.
+    source: String,
+    /// The entity type the rows are records of.
+    entity_type: String,
+    /// One object for each row, such as
+    /// `{"id": "c-1", "name": "Acorn Tools", "country": "GB"}`. Its fields
+    /// are columns the source declares, and a column it does not declare
+    /// is refused. A value is text, a number or a boolean. The source's
+    /// `key` column tells one row from another: give it in every row.
+    rows: Vec<JsonObject>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct LoadDocuments {
+    /// The name of the source the documents come from. The records an
+    /// extractor finds in them have the same source, so it has to be one
+    /// the project declares: `describe_store` lists them in `sources`.
+    source: String,
+    /// The documents, such as
+    /// `[{"key": "notes-1.txt", "text": "Call with Dana Reyes on ..."}]`.
+    documents: Vec<Document>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct Document {
+    /// What tells this document from the others of its source, such as
+    /// the name of its file, a URL or a message ID.
+    key: String,
+    /// The document, whole, as plain text. Turn a PDF or a web page into
+    /// text first.
+    text: String,
+    /// Where the source keeps the document, if that is worth showing to
+    /// someone who reads what was found in it.
+    #[serde(default)]
+    uri: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct RunExtraction {
+    /// The name of one of the project's extractors, which `describe_store`
+    /// lists in `extractors`.
+    extractor: String,
+    /// Read only the documents of this source.
+    #[serde(default)]
+    source: Option<String>,
+    /// Read the documents this extractor has read before as well. False
+    /// unless given.
+    #[serde(default)]
+    again: Option<bool>,
+    /// Read at most this many documents, oldest first. Every document the
+    /// extractor has not read, unless given.
+    #[serde(default)]
+    limit: Option<u64>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct RunMatch {
+    /// The entity type whose records are matched.
+    entity_type: EntityType,
+    /// Match every record of the type again, not only those no run has
+    /// examined. Records that have an identity keep it: where the rules
+    /// now disagree with the identities, the run's `resolution` lists
+    /// `suggestions` and changes nothing. Records that have none, such as
+    /// those of a match run that was undone, are placed. False unless
+    /// given.
+    #[serde(default)]
+    rematch: Option<bool>,
+    /// The name of one of the project's strategies for the type, which
+    /// `describe_store` lists. Left out, the project's SQL rules judge.
+    #[serde(default)]
+    strategy: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct RetractRows {
+    /// The name of the source that held the rows.
+    source: String,
+    /// The entity type the rows are records of.
+    entity_type: String,
+    /// The keys of the rows, as the source's key column gave them. A key
+    /// the source has no row under is counted as `unknown` and changes
+    /// nothing.
+    keys: Vec<String>,
+    /// Why, in a sentence. It is kept in the log beside the change.
+    reason: String,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -635,10 +801,12 @@ static TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
             "describe_store",
             "Describe the store",
             Effect::Reads,
-            "What this Spool store holds: its entity types with their features and sources, \
-             how many records and identities each has, how many review items are open, and \
-             `head`, the position of the last change. Use this first, to learn the entity \
-             type and source names the other tools take.",
+            "What this Spool store holds: its entity types with their features and how \
+             many records and identities each has; in `sources`, the sources the project \
+             declares, each with its key column, its columns and the entity types it sends \
+             rows of; in `extractors`, the project's extractors; how many review items are \
+             open; and `head`, the position of the last change. Use this first, to learn \
+             the entity type and source names the other tools take.",
         ),
         tool::<SearchIdentities>(
             "search_identities",
@@ -690,8 +858,9 @@ static TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
             Effect::Reads,
             "Why two records share an identity, or why they do not: what the project's \
              rules say about the pair, what each match run judged, and the constraints \
-             between them. Use this before merging or splitting, and when asked why two \
-             things were or were not treated as the same.",
+             between them. Each record is named by its ID or as `<source>:<key>`. Use this \
+             before merging or splitting, and when asked why two things were or were not \
+             treated as the same.",
         ),
         tool::<ReviewItems>(
             "list_review_items",
@@ -738,12 +907,102 @@ static TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
              why, and its operations. `head` is the position of the last one. Use this to \
              see what changed since a position you read before.",
         ),
+        tool::<OneRun>(
+            "get_run",
+            "Get a run",
+            Effect::Reads,
+            "One run by its number: whether it is `running`, `succeeded` or `failed`, and \
+             what it reported. A load reports in `load` how many rows or documents were \
+             new; an extraction reports in `extraction` the documents it read and the \
+             records it found; a match run reports in `resolution` how many records it \
+             examined, the pairs it judged, the identities it created, and what it left \
+             for review. Use this after `load_rows`, `run_extraction` or `run_match` \
+             answered with a run that was still `running`, with `wait_ms` to wait for it.",
+        ),
         tool::<MintIdentityIds>(
             "mint_identity_ids",
             "Mint identity IDs",
             Effect::Reads,
             "New identity IDs for a `create_identity` operation. An ID that is never used \
              costs nothing. Changes nothing in the store.",
+        ),
+        tool::<LoadRows>(
+            "load_rows",
+            "Load rows",
+            Effect::Changes,
+            "Load rows from one source into the store, as records of one entity type. \
+             Send the rows as they are in the file or message you were given: read it \
+             first, and never make a row up. `describe_store` lists the project's sources \
+             in `sources`, each with the columns a row may have. A row the store already \
+             holds, with the same key and the same values, adds nothing, so loading the \
+             same rows twice is safe. A row with a known key and other values replaces \
+             the row the store held under that key, and loading the old values again \
+             does not put them back: `superseded` in the answer counts such rows, and is \
+             0 unless a row was meant to change. Loading does not match: follow it with \
+             `run_match`. A loaded row is kept for good and nothing deletes \
+             it, so load only what the person asked for; `retract_rows` takes a row back, \
+             which removes it from its identity and keeps it as evidence. This is for a \
+             few thousand rows at most: a call is 4 MiB at most, and a pipeline loads \
+             more with `POST /v1/load`. Returns the run that stored the rows, whose \
+             `load` counts them.",
+        ),
+        tool::<LoadDocuments>(
+            "load_documents",
+            "Load documents",
+            Effect::Changes,
+            "Store documents from one source, as text, for an extractor to read. Send \
+             each as it is in the file or message you were given: read it first, and never \
+             make one up. A document is told from another by its `key`, such as the name \
+             of its file. The same key with the same text adds nothing, so loading a \
+             document twice is safe, and the same key with other text becomes the new \
+             version of that document. Storing a document finds nothing in it: follow \
+             this with `run_extraction`, and that with `run_match`. A stored document is \
+             kept for good and nothing deletes it, so load only what the person asked \
+             for. A call is 4 MiB at most, and a pipeline loads more with \
+             `POST /v1/documents`. Returns the run that stored the documents, whose \
+             `load` counts them.",
+        ),
+        tool::<RunExtraction>(
+            "run_extraction",
+            "Run an extractor",
+            Effect::Changes,
+            "Run one of the project's extractors over the documents it has not read. Each \
+             place where a document names something becomes a record of the document's \
+             source, which keeps the document and the characters it was found at as its \
+             evidence. The server runs the project's own extractor and nothing a caller \
+             sends. An extractor may ask a language model, which takes time and can cost \
+             money: `limit` says how many documents it reads at most. Extraction does not \
+             match: follow it with `run_match` for the entity type of the records. What \
+             was found is kept, as loaded rows are, and `retract_rows` takes a record \
+             back by its key. Returns the run, whose `extraction` counts the documents \
+             read and the records found. If its `status` is still `running`, read it with \
+             `get_run`.",
+        ),
+        tool::<RunMatch>(
+            "run_match",
+            "Run a match",
+            Effect::Changes,
+            "Match the records of one entity type that no run has examined, and commit the \
+             result: each record joins the identity it matches or gets a new one, and \
+             identities that existed keep their IDs. A record that matches more than one \
+             identity, or that the evidence contradicts itself about, is left as a review \
+             item. The change is one changeset in the log, which `undo_changeset` takes \
+             back. Returns the run, whose `resolution` has the counts; `run` is null when \
+             there was nothing to match. If its `status` is still `running`, read it with \
+             `get_run`.",
+        ),
+        tool::<RetractRows>(
+            "retract_rows",
+            "Take rows back",
+            Effect::Changes,
+            "Take back rows a source no longer holds, or that were loaded by mistake, by \
+             their keys. Every version of each row leaves its identity and is examined by \
+             no later run. The rows are not deleted: they stay in the store as evidence, \
+             marked as retracted. Loading a row under the same key again ends the \
+             retraction and puts its records back in the identity they left. A record an \
+             extractor found in a document is taken back the same way, by the `key` \
+             `search_records` shows for it. Returns the run, whose `retraction` counts \
+             what was taken back.",
         ),
         tool::<CommitChangeset>(
             "commit_changeset",
@@ -786,6 +1045,52 @@ static TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
 });
 
 impl Tools {
+    /// The strategy a match run is asked for by name, which has to be one
+    /// the server runs. The API takes any other name as that of a strategy
+    /// the caller runs, and starts a run that waits for its judgements;
+    /// no tool sends any, so such a run would wait for good.
+    fn strategy(&self, entity_type: &EntityType, name: String) -> ApiResult<StrategyRef> {
+        let manifest = self.app.engine.manifest();
+        let known = name == StrategyRef::RULES
+            || manifest
+                .as_deref()
+                .and_then(|manifest| manifest.entity_type(entity_type.as_str()))
+                .is_some_and(|entry| entry.strategy(&name).is_some());
+        match known {
+            true => Ok(StrategyRef {
+                name,
+                version: None,
+            }),
+            false => Err(ApiError::invalid(format!(
+                "the project has no strategy `{}` for `{entity_type}`: `describe_store` lists \
+                 the strategies of each entity type, and `rules` is always one",
+                beginning(&name)
+            ))),
+        }
+    }
+
+    /// Refuses documents from a source the project does not declare. The
+    /// API stores them, and then refuses every record an extractor finds
+    /// in them, so they would stay in the store for good and give nothing.
+    fn declared(&self, source: &str) -> ApiResult<()> {
+        let Some(manifest) = self.app.engine.manifest() else {
+            return Ok(());
+        };
+        if manifest.source(source).is_some() {
+            return Ok(());
+        }
+        let sources: Vec<String> = manifest
+            .sources
+            .iter()
+            .map(|declared| format!("`{}`", declared.name))
+            .collect();
+        Err(ApiError::invalid(format!(
+            "source `{}` is not declared: the project's sources are {}",
+            beginning(source),
+            sources.join(", ")
+        )))
+    }
+
     /// Runs a tool: reads its arguments and calls the handler of the path
     /// that does the same.
     async fn call(&self, tool: &str, given: JsonObject, caller: Caller) -> ApiResult {
@@ -842,8 +1147,8 @@ impl Tools {
             "explain_pair" => {
                 let asked: Pair = arguments(tool, given)?;
                 let query = ExplainQuery {
-                    a: asked.a.to_string(),
-                    b: asked.b.to_string(),
+                    a: asked.a,
+                    b: asked.b,
                 };
                 super::explain(app, Ok(Query(query))).await
             }
@@ -877,6 +1182,13 @@ impl Tools {
                 };
                 super::list_changesets(app, Ok(Query(query))).await
             }
+            "get_run" => {
+                let asked: OneRun = arguments(tool, given)?;
+                let query = WaitQuery {
+                    wait_ms: asked.wait_ms.map(|wait| wait.min(MAX_RUN_WAIT_MS)),
+                };
+                super::read_run(app, Path(asked.run.to_string()), Ok(Query(query))).await
+            }
             "mint_identity_ids" => {
                 let asked: MintIdentityIds = arguments(tool, given)?;
                 let count = asked.count.unwrap_or(1);
@@ -890,6 +1202,76 @@ impl Tools {
                     changesets: 0,
                 };
                 super::mint_ids(app, body(&request)?).await
+            }
+            "load_rows" => {
+                let asked: LoadRows = arguments(tool, given)?;
+                // The path takes its rows as JSON or as Arrow, and reads
+                // these parameters only beside Arrow.
+                let beside = LoadParams {
+                    source: asked.source.clone(),
+                    entity_type: asked.entity_type.clone(),
+                    wait_ms: None,
+                };
+                let request = LoadRequest {
+                    source: asked.source,
+                    entity_type: asked.entity_type,
+                    rows: asked.rows,
+                    wait_ms: None,
+                };
+                super::load(app, Ok(Query(beside)), HeaderMap::new(), body(&request)?).await
+            }
+            "load_documents" => {
+                let asked: LoadDocuments = arguments(tool, given)?;
+                self.declared(&asked.source)?;
+                let documents = asked.documents.into_iter().map(|document| NewDocument {
+                    key: document.key,
+                    uri: document.uri,
+                    text: document.text,
+                });
+                let request = DocumentsRequest {
+                    source: asked.source,
+                    documents: documents.collect(),
+                    wait_ms: None,
+                };
+                super::add_documents(app, body(&request)?).await
+            }
+            "run_extraction" => {
+                let asked: RunExtraction = arguments(tool, given)?;
+                let request = ExtractRequest {
+                    extractor: asked.extractor,
+                    source: asked.source,
+                    again: asked.again,
+                    limit: asked.limit,
+                    wait_ms: None,
+                };
+                super::extract(app, body(&request)?).await
+            }
+            "run_match" => {
+                let asked: RunMatch = arguments(tool, given)?;
+                let strategy = match asked.strategy {
+                    Some(name) => Some(self.strategy(&asked.entity_type, name)?),
+                    None => None,
+                };
+                let request = MatchRequest {
+                    entity_type: asked.entity_type,
+                    strategy,
+                    // A draft would wait for an approval no tool gives.
+                    commit: None,
+                    rematch: asked.rematch,
+                    wait_ms: None,
+                };
+                super::start_match(app, body(&request)?).await
+            }
+            "retract_rows" => {
+                let asked: RetractRows = arguments(tool, given)?;
+                let request = RetractRequest {
+                    source: asked.source,
+                    entity_type: asked.entity_type,
+                    keys: asked.keys,
+                    reason: Some(asked.reason),
+                    wait_ms: None,
+                };
+                super::retract(app, caller, body(&request)?).await
             }
             "commit_changeset" => {
                 let asked: CommitChangeset = arguments(tool, given)?;
