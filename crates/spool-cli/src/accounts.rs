@@ -309,10 +309,15 @@ impl Accounts {
         password_auth::verify_password(current, &stored).map_err(|_| Refused::WrongPassword)?;
         let hash = hashed(new)?;
         let connection = self.connection();
-        connection.execute(
-            "UPDATE person SET password = ? WHERE id = ?",
-            params![hash, id],
+        // Only over the password that was checked: one an admin set in the
+        // meantime stays.
+        let changed = connection.execute(
+            "UPDATE person SET password = ? WHERE id = ? AND password = ?",
+            params![hash, id, stored],
         )?;
+        if changed == 0 {
+            return Err(Refused::WrongPassword);
+        }
         end_sessions(&connection, id)?;
         Ok(mark(&hash))
     }
