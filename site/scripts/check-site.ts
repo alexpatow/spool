@@ -17,7 +17,7 @@
  *   - every link to a page of this site resolves, and so does its `#fragment`
  *   - `/llms.txt` lists every page, and `/llms-full.txt` holds every page
  *   - `/sitemap.xml` lists every page
- *   - every page, and the home page, has what a link preview reads: a
+ *   - every page, the home page and the explainer have what a link preview reads: a
  *     canonical link and an `og:url` to itself, a title, a description, and
  *     a card at an absolute address that answers with a PNG
  */
@@ -158,6 +158,9 @@ function linksOf(html: string): string[] {
   );
 }
 
+/** The pages that are not in the docs: the front page and the explainer. */
+const others = ["/", "/explained"];
+
 async function checkBuilt(pages: Page[]) {
   if (!existsSync(join(siteDir, ".next/BUILD_ID"))) {
     fail("site", "not built: run `bun run build` first, or pass --source");
@@ -281,9 +284,12 @@ async function checkBuilt(pages: Page[]) {
       if (!inIndex.has(`${page.url}.md`)) fail("/llms.txt", `does not list ${page.url}`);
       if (!inSitemap.has(page.url)) fail("/sitemap.xml", `does not list ${page.url}`);
     }
+    for (const path of others) {
+      if (!inSitemap.has(path)) fail("/sitemap.xml", `does not list ${path}`);
+    }
 
     // Links and images, from every page and from the home page.
-    for (const from of ["/", ...pages.map((page) => page.url)]) {
+    for (const from of [...others, ...pages.map((page) => page.url)]) {
       const html = await get(from);
       for (const match of html.body.matchAll(/<img\s[^>]*?\ssrc="([^"]+)"/g)) {
         const src = (match[1] ?? "").replaceAll("&amp;", "&");
@@ -306,7 +312,7 @@ async function checkBuilt(pages: Page[]) {
     }
 
     // What X, Slack, LinkedIn, Discord and iMessage read when a page is shared.
-    for (const from of ["/", ...pages.map((page) => page.url)]) {
+    for (const from of [...others, ...pages.map((page) => page.url)]) {
       const { body } = await get(from);
       const meta = metaOf(body);
       const self = (address: string | undefined) => pathOf(address ?? "").replace(/^$/, "/") === from;

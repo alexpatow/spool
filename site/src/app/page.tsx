@@ -2,12 +2,12 @@ import * as stylex from "@stylexjs/stylex";
 import type { Metadata } from "next";
 import Link from "next/link";
 
-import { Wordmark } from "@/components/brand";
 import { CodeBlock } from "@/components/code-block";
 import { FirstScreen } from "@/components/first-screen";
-import { SiteLinks } from "@/components/site-links";
+import { SiteHeader } from "@/components/site-header";
 import { Button } from "@/components/ui/button";
 import * as Typography from "@/components/ui/typography";
+import { explainer } from "@/lib/explainer";
 import { sharing, siteCardPath } from "@/lib/sharing";
 import { site } from "@/lib/site";
 import { layout, breakpoints } from "@/styles/layout.stylex";
@@ -55,38 +55,13 @@ export const metadata: Metadata = sharing({
 export default function Home() {
   return (
     <div {...stylex.props(styles.page)}>
-      <header {...stylex.props(styles.header)}>
-        <div {...stylex.props(styles.headerInner)}>
-          <Link href="/" {...stylex.props(styles.wordmark)}>
-            <Wordmark />
-          </Link>
-          <nav aria-label="Site" {...stylex.props(styles.nav)}>
-            <Button variant="ghost" size="sm" nativeButton={false} render={<Link href="/docs" />}>
-              Docs
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              nativeButton={false}
-              render={<Link href="/docs/getting-started" />}
-            >
-              Getting started
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              nativeButton={false}
-              render={<Link href="/docs/limits" />}
-            >
-              Limits
-            </Button>
-          </nav>
-          <SiteLinks />
-        </div>
-      </header>
+      <SiteHeader />
 
       <main {...stylex.props(styles.main)}>
         <section {...stylex.props(styles.hero)}>
+          <Link href={explainer.path} {...stylex.props(styles.newcomer)}>
+            New to this? <span {...stylex.props(styles.newcomerTitle)}>{explainer.title}</span>
+          </Link>
           <Typography.H1 style={styles.title}>{site.headline}</Typography.H1>
           <Typography.P style={styles.lead}>{site.summary}</Typography.P>
           <div {...stylex.props(styles.actions)}>
@@ -184,35 +159,30 @@ const styles = stylex.create({
     flexDirection: "column",
     minHeight: "100svh",
   },
-  header: {
-    borderBottomColor: colors.border,
-    borderBottomStyle: "solid",
-    borderBottomWidth: 1,
-  },
-  headerInner: {
-    gap: spacing["6"],
-    marginInline: "auto",
-    paddingInline: {
-      default: "2.5rem",
-      [breakpoints.mobile]: spacing["4"],
+  newcomer: {
+    gap: spacing["2"],
+    marginBottom: "1.75rem",
+    paddingBlock: spacing["1.5"],
+    paddingInline: spacing["3"],
+    alignItems: "baseline",
+    borderColor: {
+      default: colors.border,
+      ":hover": linen.thread,
     },
-    alignItems: "center",
-    boxSizing: "border-box",
-    display: "flex",
-    height: layout.headerHeight,
-    maxWidth: layout.pageWidth,
-  },
-  wordmark: {
+    borderStyle: "solid",
+    borderWidth: 1,
+    color: colors.mutedForeground,
+    display: "inline-flex",
+    flexWrap: "wrap",
+    fontSize: "0.8125rem",
+    justifyContent: "center",
+    lineHeight: "1.25rem",
     textDecoration: "none",
-    color: colors.foreground,
-    display: "flex",
+    transitionDuration: "150ms",
+    transitionProperty: "border-color",
   },
-  nav: {
-    display: {
-      default: "flex",
-      [breakpoints.mobile]: "none",
-    },
-    flexGrow: 1,
+  newcomerTitle: {
+    color: linen.thread,
   },
   main: {
     marginInline: "auto",
