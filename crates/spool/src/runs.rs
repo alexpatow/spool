@@ -124,6 +124,11 @@ pub struct RunEntry {
     /// What a retract run reported when it finished.
     #[serde(default)]
     pub retraction: Option<RetractReport>,
+    /// The last line the run's code has written to its standard error,
+    /// while a strategy or an extractor is running. Left out otherwise:
+    /// a run that has ended says how in `status` and `error`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub said: Option<String>,
 }
 
 /// Which runs to list. The default lists the latest runs of every kind.
@@ -205,6 +210,7 @@ fn entry(row: &duckdb::Row<'_>) -> Result<RunEntry> {
         }
     }
     Ok(RunEntry {
+        said: None,
         run,
         kind,
         status: RunStatus::from_stored(&row.get::<_, String>(2)?)?,

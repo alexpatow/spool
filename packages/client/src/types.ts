@@ -569,10 +569,9 @@ export interface ExtractRequest {
 }
 
 /**
- * An extractor: what reads documents and says where they mention entities.
- * One that is user code is a file the engine runs as a child process, only
- * while the file still has this hash. One that is a pattern is run by the
- * engine itself, from what the manifest holds.
+ * An extractor: a file the engine runs as a child process, which reads
+ * documents and says where they mention entities. The engine runs the file
+ * only while it still has this hash.
  */
 export interface Extractor {
   /**
@@ -586,10 +585,6 @@ export interface Extractor {
    */
   hash: string;
   name: string;
-  /**
-   * What a pattern extractor looks for. User code has none.
-   */
-  pattern?: Pattern | null;
   runtime: Runtime;
 }
 
@@ -979,28 +974,6 @@ export interface PairJudgement {
 export interface PasswordRequest {
   current: string;
   new: string;
-}
-
-/**
- * What a pattern extractor looks for: every place in a document that the
- * regular expression matches is a mention of the entity type.
- */
-export interface Pattern {
-  /**
-   * The attribute that holds the whole of the matched text, if it is
-   * kept.
-   */
-  attribute?: string | null;
-  /**
-   * The entity type of what it finds.
-   */
-  entity_type: string;
-  /**
-   * The regular expression, in the syntax of Rust's `regex` crate. Each
-   * of its named groups that took part in a match is an attribute of the
-   * mention, under the group's name.
-   */
-  pattern: string;
 }
 
 /**
@@ -1555,6 +1528,12 @@ export interface RunEntry {
    */
   retraction?: RetractReport | null;
   run: RunId;
+  /**
+   * The last line the run's code has written to its standard error,
+   * while a strategy or an extractor is running. Left out otherwise:
+   * a run that has ended says how in `status` and `error`.
+   */
+  said?: string | null;
   started_at: string;
   status: RunStatus;
   /**
@@ -1596,7 +1575,7 @@ export type RunStatus = "running" | "open" | "drafted" | "succeeded" | "failed";
  * What runs a strategy's or an extractor's file. The file's extension
  * decides.
  */
-export type Runtime = "python" | "typescript" | "pattern";
+export type Runtime = "python" | "typescript";
 
 /**
  * A position in the changeset log. The first committed changeset is 1, and 0

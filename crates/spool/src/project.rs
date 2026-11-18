@@ -25,8 +25,7 @@
 //! │           └── nearest.ts      the strategy `nearest`, run with `bun`
 //! └── extractors/
 //!     ├── names.py                user code: the extractor `names`, which finds mentions in documents
-//!     ├── names/                  files that belong to `names`
-//!     └── codes.yaml              the extractor `codes`: a pattern, which the engine runs itself
+//!     └── names/                  files that belong to `names`
 //! ```
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -127,7 +126,7 @@ pub struct Manifest {
     #[serde(default)]
     pub sources: Vec<Source>,
     pub entity_types: Vec<EntityTypeManifest>,
-    /// The project's extractors. Left out of the JSON when there are none.
+    /// User-code extractors. Left out of the JSON when there are none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extractors: Vec<Extractor>,
     pub hash: String,
@@ -155,10 +154,9 @@ pub struct EntityTypeManifest {
     pub extract: Option<String>,
 }
 
-/// An extractor: what reads documents and says where they mention entities.
-/// One that is user code is a file the engine runs as a child process, only
-/// while the file still has this hash. One that is a pattern is run by the
-/// engine itself, from what the manifest holds.
+/// An extractor: a file the engine runs as a child process, which reads
+/// documents and says where they mention entities. The engine runs the file
+/// only while it still has this hash.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Extractor {
@@ -170,33 +168,6 @@ pub struct Extractor {
     /// SHA-256 of the file and of every file in the directory that shares
     /// its name. It is recorded as the extractor's version with each run.
     pub hash: String,
-    /// What a pattern extractor looks for. User code has none.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pattern: Option<Pattern>,
-}
-
-/// What a pattern extractor looks for: every place in a document that the
-/// regular expression matches is a mention of the entity type.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct Pattern {
-    /// The entity type of what it finds.
-    pub entity_type: String,
-    /// The regular expression, in the syntax of Rust's `regex` crate. Each
-    /// of its named groups that took part in a match is an attribute of the
-    /// mention, under the group's name.
-    pub pattern: String,
-    /// The attribute that holds the whole of the matched text, if it is
-    /// kept.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub attribute: Option<String>,
-}
-
-impl Pattern {
-    /// The compiled expression.
-    pub(crate) fn regex(&self) -> std::result::Result<regex::Regex, regex::Error> {
-        regex::Regex::new(&self.pattern)
-    }
 }
 
 /// A strategy that is user code: a file the engine runs as a child process.
@@ -224,13 +195,9 @@ pub enum Runtime {
     Python,
     /// A `.ts` file, run with `bun run`.
     Typescript,
-    /// A `.yaml` file under `extractors/`: a pattern, which the engine runs
-    /// itself. No strategy is one.
-    Pattern,
 }
 
 impl Runtime {
-    /// What runs a file of user code.
     fn of(path: &Path) -> Option<Self> {
         match path.extension()?.to_str()? {
             "py" => Some(Runtime::Python),
@@ -239,26 +206,28 @@ impl Runtime {
         }
     }
 
-    /// What runs a file under `extractors/`.
-    fn of_extractor(path: &Path) -> Option<Self> {
-        match path.extension()?.to_str()? {
-            "yaml" => Some(Runtime::Pattern),
-            _ => Self::of(path),
-        }
-    }
-
     pub const fn as_str(self) -> &'static str {
         match self {
             Runtime::Python => "python",
             Runtime::Typescript => "typescript",
-            Runtime::Pattern => "pattern",
         }
     }
 
-    /// Whether a file of this kind is the project's code, which runs as a
-    /// process of its own.
-    pub const fn is_user_code(self) -> bool {
-        !matches!(self, Runtime::Pattern)
+    /// The command that installs what runs files of this kind, on Linux
+    /// and macOS.
+    pub const fn install_command(self) -> &'static str {
+        match self {
+            Runtime::Python => "curl -LsSf https://astral.sh/uv/install.sh | sh",
+            Runtime::Typescript => "curl -fsSL https://bun.sh/install | bash",
+        }
+    }
+
+    /// The page that says how else to install it.
+    pub const fn install_page(self) -> &'static str {
+        match self {
+            Runtime::Python => "https://docs.astral.sh/uv/getting-started/installation/",
+            Runtime::Typescript => "https://bun.sh/docs/installation",
+        }
     }
 }
 
@@ -523,8 +492,7 @@ impl Project {
                         }
                     }
                     "strategies" if child.is_dir() => {
-                        source.strategies =
-                            user_code(root, &child, Runtime::of, &mut project.ignored)?;
+                        source.strategies = user_code(root, &child, &mut project.ignored)?;
                     }
                     _ => project.ignored.push(child),
                 }
@@ -533,12 +501,7 @@ impl Project {
         }
         let extractors = root.join("extractors");
         if extractors.is_dir() {
-            project.extractors = user_code(
-                root,
-                &extractors,
-                Runtime::of_extractor,
-                &mut project.ignored,
-            )?;
+            project.extractors = user_code(root, &extractors, &mut project.ignored)?;
         }
         Ok(project)
     }
@@ -716,20 +679,11 @@ impl Project {
                     extractor.name
                 )));
             }
-            let pattern = match extractor.runtime {
-                Runtime::Pattern => {
-                    let yaml = std::fs::read_to_string(&extractor.path)
-                        .map_err(Error::io(&extractor.path))?;
-                    Some(pattern_of(&yaml, &sources, &entity_types).map_err(invalid)?)
-                }
-                Runtime::Python | Runtime::Typescript => None,
-            };
             extractors.push(Extractor {
                 name: extractor.name.clone(),
                 runtime: extractor.runtime,
                 file: extractor.file.clone(),
                 hash: extractor.hash.clone(),
-                pattern,
             });
         }
         extractors.sort_by(|a, b| a.name.cmp(&b.name));
@@ -851,87 +805,6 @@ fn source_of(file: &YamlFile) -> Result<Source, String> {
         evidence: written.evidence,
         columns: written.columns,
     })
-}
-
-/// A pattern extractor's file, as written.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PatternYaml {
-    entity_type: String,
-    pattern: String,
-    #[serde(default)]
-    attribute: Option<String>,
-}
-
-/// Checks a pattern extractor's file against the entity types and sources
-/// of the project: a mistake in it fails here, not when a document is read.
-fn pattern_of(
-    yaml: &str,
-    sources: &[Source],
-    entity_types: &[EntityTypeManifest],
-) -> Result<Pattern, String> {
-    let written: PatternYaml = serde_saphyr::from_str(yaml).map_err(|error| error.to_string())?;
-    let entity_type = entity_types
-        .iter()
-        .find(|entity_type| entity_type.name.as_str() == written.entity_type)
-        .ok_or_else(|| {
-            format!(
-                "the project declares no entity type `{}`",
-                written.entity_type
-            )
-        })?;
-    let pattern = Pattern {
-        entity_type: written.entity_type,
-        pattern: written.pattern,
-        attribute: written.attribute,
-    };
-    let regex = pattern.regex().map_err(|error| {
-        format!("the pattern is not a regular expression Spool can run: {error}")
-    })?;
-    if regex.is_match("") {
-        return Err(
-            "the pattern matches text of no length, so it would find something at every \
-             character"
-                .to_owned(),
-        );
-    }
-    let groups: Vec<&str> = regex.capture_names().flatten().collect();
-    if let Some(attribute) = &pattern.attribute
-        && groups.contains(&attribute.as_str())
-    {
-        return Err(format!(
-            "`{attribute}` is the attribute of the whole match and the name of a group of the \
-             pattern; it can be one of them"
-        ));
-    }
-    let attributes: Vec<&str> = pattern
-        .attribute
-        .as_deref()
-        .into_iter()
-        .chain(groups)
-        .collect();
-    if attributes.is_empty() {
-        return Err(
-            "what the pattern finds would say nothing: name the `attribute` that holds the \
-             matched text, or a group in the pattern, as in `(?P<name>...)`"
-                .to_owned(),
-        );
-    }
-    // A mention may say only what its document's source lists. Which source
-    // that is is known when a document is read: here, one has to exist.
-    for attribute in attributes {
-        let listed = sources.iter().any(|source| {
-            entity_type.sources.contains(&source.name)
-                && source.columns.iter().any(|column| column == attribute)
-        });
-        if !listed {
-            return Err(format!(
-                "attribute `{attribute}` is not a column of any source that `{}` is mapped from",
-                entity_type.name
-            ));
-        }
-    }
-    Ok(pattern)
 }
 
 /// A transform's file: `lambda` and the names of its arguments, a colon, and
@@ -1198,25 +1071,19 @@ fn entity_of(
     })
 }
 
-/// The strategies or the extractors of a directory: every file that
-/// `runtime` knows how to run, each with the directory of the same name if
-/// there is one. Anything else in the directory is not used.
-fn user_code(
-    root: &Path,
-    dir: &Path,
-    runtime: fn(&Path) -> Option<Runtime>,
-    ignored: &mut Vec<PathBuf>,
-) -> Result<Vec<StrategySource>> {
+/// The user-code files of a directory: every `.py` and `.ts` file, each
+/// with the directory of the same name if there is one. Anything else in the
+/// directory is not used.
+fn user_code(root: &Path, dir: &Path, ignored: &mut Vec<PathBuf>) -> Result<Vec<StrategySource>> {
     let files = list(dir)?;
     let mut found = Vec::new();
-    let of = runtime;
     for file in &files {
-        let runtime = of(file).filter(|_| file.is_file());
+        let runtime = Runtime::of(file).filter(|_| file.is_file());
         let Some(runtime) = runtime else {
             let owned = file.is_dir()
                 && files.iter().any(|other| {
                     other.is_file()
-                        && of(other).is_some_and(Runtime::is_user_code)
+                        && Runtime::of(other).is_some()
                         && other.file_stem() == file.file_name()
                 });
             if !owned {

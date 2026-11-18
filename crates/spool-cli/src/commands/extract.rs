@@ -23,6 +23,10 @@ source, and the next match run places them in identities.
 With no file, the extractor reads the documents the server holds and it has
 not read.
 
+An extractor's first run may fetch what it depends on, a model for one. When
+a run takes more than a few seconds, the command says on standard error which
+file is running, and what the file says as it goes.
+
   <file>               a file of UTF-8 text
 
 Options:
@@ -40,6 +44,13 @@ Options:
 
 /// The most records that are listed.
 const LISTED: usize = 20;
+
+/// How long an extraction is waited for in silence. One that takes longer
+/// is followed: what its extractor says is printed as it says it.
+const QUIET_MS: u64 = 3_000;
+
+/// How often a running extractor is asked what it has said.
+const ASK_MS: u64 = 1_000;
 
 /// The most of a found text that a line shows, in characters.
 const SHOWN: usize = 60;
@@ -74,7 +85,7 @@ pub fn extract(arguments: &[String]) -> Result<(), Failure> {
     let extractor = extractor(&info.extractors, arguments.value("--extractor"))?;
     let source = source_of(&info.sources, arguments.value("--source"), &files)?;
     if let Some(source) = &source {
-        readable(&info.sources, source, extractor)?;
+        readable(&info.sources, source)?;
     }
     let as_json = arguments.flag("--json");
 
@@ -118,19 +129,16 @@ pub fn extract(arguments: &[String]) -> Result<(), Failure> {
         loaded = answer;
     }
 
-    let (answer, run) = finish(
-        &remote,
-        remote.post(
-            "/extractions",
-            &json!({
-                "extractor": extractor.name,
-                "source": source,
-                "again": arguments.flag("--again"),
-                "wait_ms": WAIT_MS,
-            }),
-        )?,
-        as_json,
+    let started = remote.post(
+        "/extractions",
+        &json!({
+            "extractor": extractor.name,
+            "source": source,
+            "again": arguments.flag("--again"),
+            "wait_ms": QUIET_MS,
+        }),
     )?;
+    let (answer, run) = finish(&remote, follow(&remote, started, extractor)?, as_json)?;
     if as_json {
         print_json(&json!({ "documents": loaded["run"], "extraction": answer["run"] }));
         return Ok(());
@@ -316,11 +324,7 @@ fn source_of(
 /// before anything is stored: what an extractor finds is a record of an
 /// entity type, and the type's mapping has to say what it reads from the
 /// source.
-fn readable(
-    sources: &[DeclaredSource],
-    source: &str,
-    extractor: &Extractor,
-) -> Result<(), Failure> {
+fn readable(sources: &[DeclaredSource], source: &str) -> Result<(), Failure> {
     let Some(declared) = sources.iter().find(|declared| declared.name == source) else {
         return Ok(());
     };
@@ -330,22 +334,43 @@ fn readable(
              a record. Add the source to the `mapping` in an entities/<type>/entity.yaml."
         )));
     }
-    // A pattern finds one type. User code says the type of each thing it
-    // finds, which is known when it has run.
-    if let Some(pattern) = &extractor.pattern
-        && !declared
-            .entity_types
-            .iter()
-            .any(|reader| reader.as_str() == pattern.entity_type)
-    {
-        return Err(Failure::Failed(format!(
-            "`{}` finds records of type `{type}`, and the mapping of `{type}` has nothing for \
-             source `{source}`: add it to entities/{type}/entity.yaml",
-            extractor.name,
-            type = pattern.entity_type
-        )));
-    }
     Ok(())
+}
+
+/// Waits for an extraction that did not end at once, and prints what its
+/// extractor says while it runs: the first run of a Python file takes as
+/// long as its downloads, and this is all there is to see of them. Returns
+/// the server's answer once the run has ended.
+///
+/// The lines go to standard error, so that what is printed to standard
+/// output is the same for a run that took long.
+fn follow(remote: &Remote, mut answer: Value, extractor: &Extractor) -> Result<Value, Failure> {
+    let mut last: Option<String> = None;
+    let mut announced = false;
+    loop {
+        if answer["run"].is_null() {
+            return Ok(answer);
+        }
+        let run: RunEntry = typed(&answer["run"])?;
+        if run.status != RunStatus::Running {
+            return Ok(answer);
+        }
+        if !announced {
+            eprintln!("running    {}", extractor.file);
+            announced = true;
+        }
+        if let Some(said) = run.said
+            && last.as_ref() != Some(&said)
+        {
+            eprintln!("           {said}");
+            last = Some(said);
+        }
+        answer = remote.get(
+            &format!("/runs/{}", run.run),
+            &[("wait_ms", ASK_MS.to_string())],
+            || format!("the server no longer has run {}", run.run),
+        )?;
+    }
 }
 
 /// Waits for the run a call started, and fails as the run did.

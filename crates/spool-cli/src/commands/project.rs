@@ -18,6 +18,10 @@ replaced with your own. Under samples/ it writes two files of rows, which the
 rules match as they stand, and a document, in which the extractor finds
 three records.
 
+The extractor is a Python file that finds names with a small model, which
+runs on this machine. Spool runs it with `uv`, and `spool init` says how to
+install `uv` if it is not here. Nothing else in the project needs it.
+
   <dir>             the project directory (default: the current directory)
 
 Options:
@@ -45,16 +49,18 @@ pub const BUILD_USAGE: &str = "\
 Usage: spool build [<dir>] [options]
 
 Checks the project and compiles it into .spool/manifest.json. The server
-reads the manifest, and the strategy files it names. Writes a Dockerfile if
-the project has none.
+reads the manifest, and the strategy and extractor files it names. Writes a
+Dockerfile if the project has none.
 
   <dir>                  the project directory (default: the current directory)
 
 Options:
   --base-image <image>   the image the written Dockerfile starts from
-  --install              start each user-code strategy once with nothing to
-                         do, so that `uv` and `bun` fetch what it depends on
-                         and a file that cannot start is found now
+  --install              start each user-code strategy and extractor once
+                         with nothing to do, so that `uv` and `bun` fetch
+                         what it depends on, a model it loads as it starts
+                         is fetched too, and a file that cannot start is
+                         found now
 
 SPOOL_UV and SPOOL_BUN name `uv` and `bun` if they are not on the search path.
 ";
@@ -113,21 +119,67 @@ mapping:
     )
 }
 
-fn extractor_yaml(entity: &str) -> String {
+/// What the sample extractor's first run fetches: its packages and its
+/// model's weights.
+const FIRST_RUN: &str = "about 330 MB";
+
+fn extractor_py(entity: &str) -> String {
     format!(
         "\
-# An extractor reads documents and says where they name something. This one
-# is a pattern, which Spool runs itself: every place the pattern matches
-# becomes a record of `entity_type`, and the text there is its `attribute`.
-#
-# The pattern takes a run of capitalised words that ends in a legal form,
-# such as Ltd, to be a name. It misses a name written without one, and takes
-# a capitalised word before a name to be part of it. An extractor that asks
-# a language model instead is a Python or TypeScript file in this directory:
-# examples/extractors/model.ts in Spool's repository is one to copy.
-entity_type: {entity}
-attribute: name
-pattern: '(?:[A-Z][A-Za-z]+ )+(?:Ltd|Inc|LLC|GmbH|plc)\\b'
+# /// script
+# requires-python = \">=3.10,<3.13\"
+# dependencies = [\"fast-gliner>=0.4.1,<0.5\"]
+# ///
+\"\"\"Finds the companies a document names, with a small model that runs here.
+
+An extractor reads documents and says where they name something, and each
+thing it finds becomes a record. Spool runs this file with `uv`, which
+installs what the lines above list. The first run fetches {FIRST_RUN}, most
+of it the model, and later runs fetch nothing. No document leaves this
+machine and there is no key to set.
+\"\"\"
+
+import sys
+
+from fast_gliner import FastGLiNER
+from spool import extractor
+
+# What to look for. On the left are the words the model is given, and any
+# will do: \"person\" or \"medicine\" as well as \"company\". On the right is
+# the entity type of this project that such a find becomes a record of.
+LOOK_FOR = {{\"company\": \"{entity}\"}}
+
+# GLiNER small: 245 MB, Apache-2.0, at the version it was tried with.
+MODEL = \"onnx-community/gliner_small-v2.1\"
+WEIGHTS = \"onnx/model_q4f16.onnx\"
+VERSION = \"8142fb00740ccea973e64b1272949ff48653df5e\"
+
+
+def load():
+    \"\"\"The model: read from this machine if it is here, and fetched if not.\"\"\"
+    files = {{\"onnx_path\": WEIGHTS, \"allow_patterns\": [\"*.json\", WEIGHTS], \"revision\": VERSION}}
+    try:
+        return FastGLiNER.from_pretrained(MODEL, local_files_only=True, **files)
+    except FileNotFoundError:
+        print(f\"Fetching the model {{MODEL}} (245 MB), once.\", file=sys.stderr)
+        return FastGLiNER.from_pretrained(MODEL, **files)
+
+
+# Loaded as the file starts, so that `spool build --install` fetches it too.
+model = load()
+
+
+@extractor
+def find(document):
+    # The model reads 384 words at a time and ignores the rest, so a long
+    # document is read in pieces.
+    for piece in document.pieces(300):
+        for found in model.predict_entities(piece.text, list(LOOK_FOR)):
+            # The model counts in bytes, and Spool in characters.
+            start = len(piece.text.encode()[: found[\"start\"]].decode())
+            end = start + len(found[\"text\"])
+            # `name` is a column of sources/{DOCUMENTS}.yaml.
+            yield piece.mention(LOOK_FOR[found[\"label\"]], start, end, name=found[\"text\"])
 "
     )
 }
@@ -248,8 +300,12 @@ fn dockerfile_with_user_code(base_image: &str, python: bool, typescript: bool) -
     let mut environment = String::new();
     if python {
         runtimes.push_str(&format!("COPY --from={UV_IMAGE} /uv /usr/local/bin/uv\n"));
+        // A model's weights go where its library keeps what it fetched,
+        // which is under the home directory unless it is told otherwise,
+        // and the home of the user `spool` is the volume.
         environment.push_str(
-            "ENV UV_CACHE_DIR=/spool/cache/uv UV_PYTHON_INSTALL_DIR=/spool/cache/python\n",
+            "ENV UV_CACHE_DIR=/spool/cache/uv UV_PYTHON_INSTALL_DIR=/spool/cache/python \\\n    \
+             XDG_CACHE_HOME=/spool/cache\n",
         );
     }
     if typescript {
@@ -259,7 +315,9 @@ fn dockerfile_with_user_code(base_image: &str, python: bool, typescript: bool) -
         environment.push_str("ENV BUN_INSTALL_CACHE_DIR=/spool/cache/bun\n");
     }
     let offline = if python {
-        "\n# Everything was fetched above: a run does not wait for the network.\nENV UV_OFFLINE=1\n"
+        "\n# Everything was fetched above: a run does not wait for the network, and a\n\
+         # model that came from Hugging Face is read from the image.\n\
+         ENV UV_OFFLINE=1 HF_HUB_OFFLINE=1\n"
     } else {
         ""
     };
@@ -268,8 +326,8 @@ fn dockerfile_with_user_code(base_image: &str, python: bool, typescript: bool) -
 # Written by `spool build`. It belongs to this project: edit it as you need.
 #
 # The image holds the spool binary, this project's manifest, and the strategy
-# files the manifest names with what runs them. The store is not in the
-# image: it is a file on the volume at /data.
+# and extractor files the manifest names with what runs them. The store is
+# not in the image: it is a file on the volume at /data.
 #
 #   docker build -t my-spool .
 #   docker run -p 7765:7765 -v spool-data:/data my-spool
@@ -302,8 +360,8 @@ WORKDIR /spool/project
 ENV SPOOL_STORE=/data/spool.duckdb
 {environment}VOLUME /data
 USER spool
-# Starts each strategy once with nothing to do, which fetches what it depends
-# on into the image.
+# Starts each strategy and extractor once with nothing to do, which fetches
+# what it depends on into the image, and a model it loads as it starts.
 RUN spool build --install
 {offline}EXPOSE 7765
 CMD [\"serve\", \"--listen\", \"0.0.0.0:7765\"]
@@ -397,10 +455,10 @@ pub fn init(arguments: &[String]) -> Result<(), Failure> {
     let entity_yaml = entity_yaml(source);
     // Named after what it finds, as a person would say it.
     let extractor_file = match entity {
-        "company" => "extractors/companies.yaml".to_owned(),
-        other => format!("extractors/{other}.yaml"),
+        "company" => "extractors/companies.py".to_owned(),
+        other => format!("extractors/{other}.py"),
     };
-    let extractor_yaml = extractor_yaml(entity);
+    let extractor_py = extractor_py(entity);
     let rule = |file: &str| format!("{entity_dir}/rules/{file}");
     let mut files = vec![
         (source_file.clone(), SOURCE),
@@ -410,7 +468,7 @@ pub fn init(arguments: &[String]) -> Result<(), Failure> {
         (rule("block/name_prefix.sql"), BLOCK_RULE),
         (rule("match/similar_name.sql"), MATCH_RULE),
         (rule("no_match/different_country.sql"), NO_MATCH_RULE),
-        (extractor_file.clone(), extractor_yaml.as_str()),
+        (extractor_file.clone(), extractor_py.as_str()),
         (first_sample.clone(), FIRST_SAMPLE),
         (second_sample.clone(), SECOND_SAMPLE),
         (sample_document.clone(), SAMPLE_DOCUMENT),
@@ -465,9 +523,9 @@ pub fn init(arguments: &[String]) -> Result<(), Failure> {
         (
             extractor_file,
             if entity == "company" {
-                "a pattern that finds company names in text".to_owned()
+                "finds company names in text, with a small model".to_owned()
             } else {
-                format!("a pattern that finds records of type `{entity}` in text")
+                format!("finds records of type `{entity}` in text, with a small model")
             },
         ),
         (first_sample.clone(), "six rows to load first".to_owned()),
@@ -520,6 +578,18 @@ pub fn init(arguments: &[String]) -> Result<(), Failure> {
     }
     for (command, does) in &commands {
         println!("  {command:<width$}{does}");
+    }
+    // Said before the step that needs it, and not by a run that fails: the
+    // rows load and match without `uv`.
+    println!(
+        "\nThe extractor is a Python file, which Spool runs with `uv`. Its first run fetches\n\
+         {FIRST_RUN}, most of it the model, and later runs fetch nothing."
+    );
+    if !super::user_code(&arguments, &dir)?.installed(Runtime::Python) {
+        println!(
+            "`uv` is not installed here. Before `spool extract`, install it:\n\n  {}",
+            Runtime::Python.install_command()
+        );
     }
     Ok(())
 }
@@ -690,8 +760,6 @@ pub fn build(arguments: &[String]) -> Result<(), Failure> {
         .iter()
         .flat_map(|entity_type| &entity_type.strategies)
         .collect();
-    // What the image needs something installed for. A pattern is run by
-    // the server itself.
     let runtimes: Vec<Runtime> = strategies
         .iter()
         .map(|strategy| strategy.runtime)
@@ -701,7 +769,6 @@ pub fn build(arguments: &[String]) -> Result<(), Failure> {
                 .iter()
                 .map(|extractor| extractor.runtime),
         )
-        .filter(|runtime| runtime.is_user_code())
         .collect();
     let uses = |runtime: Runtime| runtimes.contains(&runtime);
 
@@ -737,11 +804,7 @@ pub fn build(arguments: &[String]) -> Result<(), Failure> {
             user_code.install(strategy)?;
             println!("starts    {}", strategy.file);
         }
-        for extractor in manifest
-            .extractors
-            .iter()
-            .filter(|extractor| extractor.runtime.is_user_code())
-        {
+        for extractor in &manifest.extractors {
             user_code.install(extractor)?;
             println!("starts    {}", extractor.file);
         }

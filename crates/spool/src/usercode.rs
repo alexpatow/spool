@@ -31,20 +31,19 @@
 //! fails leaves its directory behind to be looked at; one that succeeds is
 //! removed.
 //!
-//! An extractor that is a pattern is not user code, and nothing here runs
-//! it: the engine reads the documents itself.
-//!
 //! A `.py` file runs with `uv run` and a `.ts` file with `bun run`. Each
 //! finds a module that hides the files from the code's author: `spool` in
 //! Python and `spool-strategy` in TypeScript. This crate carries both and
 //! writes them out beside the tasks. The TypeScript one is built from
 //! `packages/strategy`.
 
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::json;
@@ -155,7 +154,51 @@ pub struct UserCode {
     pub uv: OsString,
     /// The `bun` command, which runs `.ts` files.
     pub bun: OsString,
+    /// The runs whose code is running now. Copies of this share it.
+    pub running: Running,
 }
+
+/// The runs whose code is running now, and where each writes what it says.
+#[derive(Clone, Debug, Default)]
+pub struct Running(Arc<Mutex<HashMap<RunId, PathBuf>>>);
+
+impl Running {
+    fn held(&self) -> std::sync::MutexGuard<'_, HashMap<RunId, PathBuf>> {
+        self.0.lock().unwrap_or_else(|held| held.into_inner())
+    }
+
+    /// The last whole line the code of a run has written to its standard
+    /// error, while it runs: `None` for a run whose code is not running,
+    /// and for code that has finished no line yet.
+    ///
+    /// A progress bar writes over itself with carriage returns and ends its
+    /// line when it is done, so one that is still moving is not a line yet,
+    /// and what was said before it stands. Only the end of what was written
+    /// is read.
+    pub fn said(&self, run: RunId) -> Option<String> {
+        let log = self.held().get(&run).cloned()?;
+        last_line(&String::from_utf8_lossy(&end_of(&log).ok()?))
+    }
+}
+
+/// The last line of a text that is ended by a line feed and is not blank,
+/// as a terminal would show it: what follows its last carriage return.
+fn last_line(text: &str) -> Option<String> {
+    let (whole, _) = text.rsplit_once('\n')?;
+    let line = whole
+        .lines()
+        .filter_map(|line| {
+            line.rsplit('\r')
+                .map(str::trim)
+                .find(|part| !part.is_empty())
+        })
+        .next_back()?;
+    // A line this long is cut to what a terminal has room for.
+    Some(line.chars().take(SAID).collect())
+}
+
+/// The most that is passed on of a line that user code wrote.
+const SAID: usize = 200;
 
 impl UserCode {
     pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(600);
@@ -170,6 +213,7 @@ impl UserCode {
             timeout: Self::DEFAULT_TIMEOUT,
             uv: "uv".into(),
             bun: "bun".into(),
+            running: Running::default(),
         }
     }
 
@@ -186,20 +230,21 @@ impl UserCode {
         let mut command = match code.runtime {
             Runtime::Python => {
                 let mut command = Command::new(self.program(code.runtime));
-                // The helper reads and writes Parquet with pyarrow, so it is
-                // the launcher that asks for it, not every file of user code.
+                // `uv` is left to say what it downloads: the first run of a
+                // file can take minutes, and that is all there is to see.
+                command.arg("run");
                 // `--isolated` keeps the packages of the system's Python out:
                 // without it `uv` runs a file that names no dependencies in
                 // that Python as it is, and pyarrow fails beside a NumPy
-                // older than it was built for.
-                command.args([
-                    "run",
-                    "--quiet",
-                    "--isolated",
-                    "--with",
-                    "pyarrow",
-                    "--script",
-                ]);
+                // older than it was built for. A file that names its
+                // dependencies runs apart in any case, and `uv` warns that
+                // the option does nothing.
+                if !names_dependencies(&file) {
+                    command.arg("--isolated");
+                }
+                // The helper reads and writes Parquet with pyarrow, so it is
+                // the launcher that asks for it, not every file of user code.
+                command.args(["--with", "pyarrow", "--script"]);
                 command.arg(&file);
                 command.env(
                     "PYTHONPATH",
@@ -221,11 +266,6 @@ impl UserCode {
                 command.arg(&file);
                 command.env("NODE_PATH", search_path(&helpers.join("node"), "NODE_PATH"));
                 command
-            }
-            Runtime::Pattern => {
-                return Err(code.fail(
-                    "it is a pattern, which the engine runs itself: no command runs it".to_owned(),
-                ));
             }
         };
         command.current_dir(&self.project_dir);
@@ -282,7 +322,6 @@ impl UserCode {
         let (named, installed): (&OsString, &[&str]) = match runtime {
             Runtime::Python => (&self.uv, &[".local/bin", ".cargo/bin"]),
             Runtime::Typescript => (&self.bun, &[".bun/bin"]),
-            Runtime::Pattern => return OsString::new(),
         };
         if found(named) {
             return named.clone();
@@ -301,37 +340,34 @@ impl UserCode {
             .map_or_else(|| named.clone(), PathBuf::into_os_string)
     }
 
+    /// Whether what runs files of a runtime is installed here.
+    pub fn installed(&self, runtime: Runtime) -> bool {
+        found(&self.program(runtime))
+    }
+
     /// Why nothing here can run the code, if nothing can: what runs its
     /// language is not installed. `None` for code that can be started.
     fn cannot_run(&self, code: &Code) -> Option<String> {
-        let (language, program, install, variable) = match code.runtime {
-            Runtime::Python => (
-                "Python",
-                "uv",
-                "https://docs.astral.sh/uv/getting-started/installation/",
-                "SPOOL_UV",
-            ),
-            Runtime::Typescript => (
-                "TypeScript",
-                "bun",
-                "https://bun.sh/docs/installation",
-                "SPOOL_BUN",
-            ),
-            Runtime::Pattern => return None,
-        };
-        let named = self.program(code.runtime);
-        if found(&named) {
+        if self.installed(code.runtime) {
             return None;
         }
+        let (language, program, variable) = match code.runtime {
+            Runtime::Python => ("Python", "uv", "SPOOL_UV"),
+            Runtime::Typescript => ("TypeScript", "bun", "SPOOL_BUN"),
+        };
+        let named = self.program(code.runtime);
         let looked = match named == *program {
             true => String::new(),
             false => format!(" It was looked for as `{}`.", named.to_string_lossy()),
         };
         Some(format!(
             "it is a {language} file, and Spool runs those with `{program}`, which is not \
-             installed where Spool runs.{looked} Install {program} there ({install}) and try \
-             again. If it is installed where the search path does not reach, set {variable} to \
-             it where Spool is started"
+             installed where Spool runs.{looked} Install it there and run this again:\n\n  \
+             {}\n\nSpool finds it where that puts it, with no restart. Other ways to install \
+             it: {}. If it is installed where the search path does not reach, set {variable} \
+             to it where Spool is started",
+            code.runtime.install_command(),
+            code.runtime.install_page(),
         ))
     }
 
@@ -459,6 +495,7 @@ pub(crate) struct ExtractType<'a> {
 /// that works in it.
 pub(crate) struct Task {
     pub dir: PathBuf,
+    run: RunId,
     code: Code,
     command: Command,
     user_code: UserCode,
@@ -550,6 +587,7 @@ impl Task {
         Ok(Self {
             command: user_code.command(code.clone(), Some(&dir))?,
             dir,
+            run,
             code,
             user_code: user_code.clone(),
             output,
@@ -592,7 +630,12 @@ impl Task {
         self.command.stderr(log("stderr.log")?);
 
         let program = self.command.get_program().to_string_lossy().into_owned();
-        let finished = run(&mut self.command, timeout).map_err(|error| {
+        // While the code runs, what it says can be asked for.
+        let running = self.user_code.running.clone();
+        running.held().insert(self.run, self.dir.join("stderr.log"));
+        let finished = run(&mut self.command, timeout);
+        running.held().remove(&self.run);
+        let finished = finished.map_err(|error| {
             self.fail(format!(
                 "`{program}`, which runs {} {}, could not be started: {error}",
                 self.code.runtime,
@@ -647,20 +690,29 @@ fn seconds(duration: Duration) -> String {
     }
 }
 
+/// The end of a file: its last 4,096 bytes, or all of it if it is shorter.
+fn end_of(path: &Path) -> std::io::Result<Vec<u8>> {
+    const BYTES: u64 = 4096;
+    let mut file = std::fs::File::open(path)?;
+    let length = file.metadata()?.len();
+    file.seek(SeekFrom::Start(length.saturating_sub(BYTES)))?;
+    let mut end = Vec::new();
+    file.take(BYTES).read_to_end(&mut end)?;
+    Ok(end)
+}
+
+/// Whether a Python file names what it depends on, in a block of comments
+/// that begins `# /// script`, which is how `uv` reads it.
+fn names_dependencies(file: &Path) -> bool {
+    std::fs::read_to_string(file)
+        .is_ok_and(|text| text.lines().any(|line| line.trim_end() == "# /// script"))
+}
+
 /// The last lines of a log, for an error message. Only the end of the file
 /// is read: user code can write as much as the disk holds before it fails.
 fn tail(path: &Path) -> String {
-    const BYTES: u64 = 4096;
     const LINES: usize = 20;
-    let read = || -> std::io::Result<Vec<u8>> {
-        let mut file = std::fs::File::open(path)?;
-        let length = file.metadata()?.len();
-        file.seek(SeekFrom::Start(length.saturating_sub(BYTES)))?;
-        let mut end = Vec::new();
-        file.take(BYTES).read_to_end(&mut end)?;
-        Ok(end)
-    };
-    let Ok(end) = read() else {
+    let Ok(end) = end_of(path) else {
         return String::new();
     };
     let text = String::from_utf8_lossy(&end);
@@ -788,12 +840,32 @@ mod tests {
         let file = dir
             .path()
             .join("project/entities/thing/strategies/model.py");
+        // `uv` is not told to be quiet: what it downloads is all there is
+        // to see of a first run.
         assert_eq!(
             arguments(&command),
             [
                 "run",
-                "--quiet",
                 "--isolated",
+                "--with",
+                "pyarrow",
+                "--script",
+                file.to_str().unwrap()
+            ]
+        );
+        // A file that names what it depends on runs apart in any case, and
+        // `uv` warns about an option that does nothing.
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(
+            &file,
+            "# /// script\n# dependencies = [\"numpy\"]\n# ///\nimport numpy\n",
+        )
+        .unwrap();
+        let command = user_code.command(&python, Some(&task)).unwrap();
+        assert_eq!(
+            arguments(&command),
+            [
+                "run",
                 "--with",
                 "pyarrow",
                 "--script",
@@ -887,7 +959,6 @@ mod tests {
                 runtime,
                 file: file.to_owned(),
                 hash: strategy_hash(&project.join(file)).unwrap(),
-                pattern: None,
             })
         };
         let python = code(Runtime::Python, "extractors/names.py");
@@ -900,28 +971,33 @@ mod tests {
             bun: dir.path().join("bin/bun").into(),
             ..UserCode::new(&project)
         };
-        let message = nowhere.check(&python).unwrap_err().to_string();
-        for part in [
-            "extractor `names`: it is a Python file, and Spool runs those with `uv`, which is \
-             not installed where Spool runs.",
-            "Install uv there (https://docs.astral.sh/uv/getting-started/installation/) and try \
-             again.",
-            "set SPOOL_UV to it where Spool is started",
-        ] {
-            assert!(message.contains(part), "no `{part}` in: {message}");
-        }
+        assert!(!nowhere.installed(Runtime::Python));
+        let looked = dir.path().join("bin/uv");
+        assert_eq!(
+            nowhere.check(&python).unwrap_err().to_string(),
+            format!(
+                "extractor `names`: it is a Python file, and Spool runs those with `uv`, which \
+                 is not installed where Spool runs. It was looked for as `{}`. Install it there \
+                 and run this again:\n\n  curl -LsSf https://astral.sh/uv/install.sh | sh\n\n\
+                 Spool finds it where that puts it, with no restart. Other ways to install it: \
+                 https://docs.astral.sh/uv/getting-started/installation/. If it is installed \
+                 where the search path does not reach, set SPOOL_UV to it where Spool is started",
+                looked.display()
+            )
+        );
         let message = nowhere.check(&typescript).unwrap_err().to_string();
         for part in [
             "it is a TypeScript file, and Spool runs those with `bun`, which is not installed \
              where Spool runs.",
-            "Install bun there (https://bun.sh/docs/installation) and try again.",
+            "\n\n  curl -fsSL https://bun.sh/install | bash\n\n",
+            "https://bun.sh/docs/installation",
             "SPOOL_BUN",
         ] {
             assert!(message.contains(part), "no `{part}` in: {message}");
         }
         // The same when it is asked to fetch what the code depends on.
         let message = nowhere.install(python.clone()).unwrap_err().to_string();
-        assert!(message.contains("Install uv"), "{message}");
+        assert!(message.contains("astral.sh/uv/install.sh"), "{message}");
 
         // A file that is there and cannot be executed is not the command.
         std::fs::create_dir_all(dir.path().join("bin")).unwrap();
@@ -933,11 +1009,53 @@ mod tests {
         std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
         std::fs::set_permissions(dir.path().join("bin/uv"), permissions).unwrap();
         nowhere.check(&python).unwrap();
+        assert!(nowhere.installed(Runtime::Python));
+    }
 
-        // A pattern is run by the engine, and needs neither.
-        let pattern = code(Runtime::Pattern, "extractors/codes.yaml");
-        nowhere.check(&pattern).unwrap();
-        assert!(nowhere.command(pattern, None).is_err());
+    #[test]
+    fn what_running_code_said_last_is_its_last_whole_line() {
+        assert_eq!(last_line(""), None);
+        assert_eq!(last_line("not a line yet"), None);
+        assert_eq!(last_line("one\n").as_deref(), Some("one"));
+        assert_eq!(last_line("one\ntwo\n\n  \n").as_deref(), Some("two"));
+        // A line that is not ended yet is not said yet.
+        assert_eq!(last_line("one\ntwo").as_deref(), Some("one"));
+        // A progress bar writes over itself until it is done. While it
+        // moves, what was said before it stands, and when it is done it is
+        // a line as a terminal shows it.
+        let bar = "Fetching the model, once.\n\rFetching:   0%\rFetching:  40%";
+        assert_eq!(last_line(bar).as_deref(), Some("Fetching the model, once."));
+        let done = format!("{bar}\rFetching: 100%\n");
+        assert_eq!(last_line(&done).as_deref(), Some("Fetching: 100%"));
+        // A line that no terminal has room for is cut.
+        let long = "é".repeat(1000) + "\n";
+        assert_eq!(last_line(&long).unwrap().chars().count(), SAID);
+
+        // Only a run whose code is running says anything.
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("stderr.log");
+        let running = Running::default();
+        assert_eq!(running.said(RunId(7)), None);
+        running.held().insert(RunId(7), log.clone());
+        // Its log may not be there yet, or be empty.
+        assert_eq!(running.said(RunId(7)), None);
+        std::fs::write(&log, "Downloading pyarrow (52.5MiB)\n Downloaded pyarrow\n").unwrap();
+        assert_eq!(
+            running.said(RunId(7)).as_deref(),
+            Some("Downloaded pyarrow")
+        );
+        assert_eq!(running.said(RunId(8)), None);
+        // A copy of the user code shares what is running.
+        let user_code = UserCode {
+            running: running.clone(),
+            ..UserCode::new(dir.path())
+        };
+        assert_eq!(
+            user_code.clone().running.said(RunId(7)).as_deref(),
+            Some("Downloaded pyarrow")
+        );
+        running.held().remove(&RunId(7));
+        assert_eq!(user_code.running.said(RunId(7)), None);
     }
 
     #[test]

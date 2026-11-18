@@ -1165,7 +1165,7 @@
       "type": "object"
     },
     "Extractor": {
-      "description": "An extractor: what reads documents and says where they mention entities.\nOne that is user code is a file the engine runs as a child process, only\nwhile the file still has this hash. One that is a pattern is run by the\nengine itself, from what the manifest holds.",
+      "description": "An extractor: a file the engine runs as a child process, which reads\ndocuments and says where they mention entities. The engine runs the file\nonly while it still has this hash.",
       "properties": {
         "file": {
           "description": "The file, as a path from the project directory with `/` between its\nparts.",
@@ -1177,17 +1177,6 @@
         },
         "name": {
           "type": "string"
-        },
-        "pattern": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Pattern"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "What a pattern extractor looks for. User code has none."
         },
         "runtime": {
           "$ref": "#/$defs/Runtime"
@@ -2060,31 +2049,6 @@
       "required": [
         "current",
         "new"
-      ],
-      "type": "object"
-    },
-    "Pattern": {
-      "description": "What a pattern extractor looks for: every place in a document that the\nregular expression matches is a mention of the entity type.",
-      "properties": {
-        "attribute": {
-          "description": "The attribute that holds the whole of the matched text, if it is\nkept.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "entity_type": {
-          "description": "The entity type of what it finds.",
-          "type": "string"
-        },
-        "pattern": {
-          "description": "The regular expression, in the syntax of Rust's `regex` crate. Each\nof its named groups that took part in a match is an attribute of the\nmention, under the group's name.",
-          "type": "string"
-        }
-      },
-      "required": [
-        "entity_type",
-        "pattern"
       ],
       "type": "object"
     },
@@ -3427,6 +3391,13 @@
         "run": {
           "$ref": "#/$defs/RunId"
         },
+        "said": {
+          "description": "The last line the run's code has written to its standard error,\nwhile a strategy or an extractor is running. Left out otherwise:\na run that has ended says how in `status` and `error`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "started_at": {
           "type": "string"
         },
@@ -3540,11 +3511,6 @@
         {
           "const": "typescript",
           "description": "A `.ts` file, run with `bun run`.",
-          "type": "string"
-        },
-        {
-          "const": "pattern",
-          "description": "A `.yaml` file under `extractors/`: a pattern, which the engine runs\nitself. No strategy is one.",
           "type": "string"
         }
       ]

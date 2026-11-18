@@ -553,7 +553,6 @@ mod tests {
             runtime: Runtime::Python,
             file: "extractors/names.py".to_owned(),
             hash: "abc".to_owned(),
-            pattern: None,
         }
     }
 

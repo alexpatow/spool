@@ -70,6 +70,19 @@ last character, so `document.text[start:end]` is the text of the mention.
 knows what it found and not where. An attribute is text, a boolean or a
 number.
 
+A model that runs on this machine reads only so many words at once, and
+ignores the rest of a longer text without saying so. `document.pieces(words)`
+gives the text in pieces it can read whole:
+
+    for piece in document.pieces(300):
+        for start, end in model.find(piece.text):
+            yield piece.mention("company", start, end, name=piece.text[start:end])
+
+`piece.mention` takes positions in `piece.text`. Each piece shares its last
+words with the next, so that a name cut off at the end of one is whole in the
+other, and what is found in those words is found twice. `piece.mention` gives
+`None` for one of the two, and an extractor may yield `None`.
+
 Each mention becomes a record of its entity type, whose source is the
 document's. An extractor says what a document mentions. It cannot say that
 two mentions are the same thing: the type's rules and strategies decide that.
@@ -83,9 +96,10 @@ from __future__ import annotations
 import inspect
 import json
 import os
+import re
 from pathlib import Path
 
-__all__ = ["PROTOCOL", "Document", "ExtractTask", "Task", "extractor", "strategy"]
+__all__ = ["PROTOCOL", "Document", "ExtractTask", "Piece", "Task", "extractor", "strategy"]
 
 #: The version of the task directory's layout this module reads and writes.
 PROTOCOL = 1
@@ -322,6 +336,73 @@ class Document:
             at = self.text.find(quote, at + len(quote))
         return places
 
+    def pieces(self, words, shared=None):
+        """The text in pieces of at most `words` words, as a list of `Piece`.
+
+        For a model that reads only so much at once. A punctuation mark
+        counts as a word, which is how such models count. Each piece shares
+        its last `shared` words with the next: an eighth of `words` unless
+        it is given. A text that fits is one piece, and one with no words in
+        it is none.
+        """
+        if isinstance(words, bool) or not isinstance(words, int) or words < 1:
+            raise ValueError(f"`words` is how many words a piece may have, and it is {words!r}")
+        if shared is None:
+            shared = words // 8
+        if isinstance(shared, bool) or not isinstance(shared, int) or not 0 <= shared < words:
+            raise ValueError(
+                f"`shared` is how many of its {words} words a piece shares with the next, "
+                f"and it is {shared!r}"
+            )
+        spans = [found.span() for found in _WORD.finditer(self.text)]
+        pieces = []
+        first = 0
+        while spans:
+            last = min(first + words, len(spans))
+            # What is found in shared words belongs to the piece that has
+            # more of the text around it: the halves meet in the middle.
+            start = 0 if first == 0 else spans[first][0]
+            own = 0 if first == 0 else spans[first + shared // 2][0]
+            if last == len(spans):
+                pieces.append(Piece(self, start, len(self.text), own, len(self.text) + 1))
+                break
+            until = spans[last - (shared - shared // 2)][0]
+            pieces.append(Piece(self, start, spans[last - 1][1], own, until))
+            first += words - shared
+        return pieces
+
+
+#: A word, or a mark that is not part of one.
+_WORD = re.compile(r"\w+(?:[-_]\w+)*|\S")
+
+
+class Piece:
+    """A part of a document's text: what `Document.pieces` gives."""
+
+    __slots__ = ("document", "start", "text", "_own")
+
+    def __init__(self, document, start, end, own, until):
+        self.document = document
+        #: Where the piece starts in the document's text.
+        self.start = start
+        self.text = document.text[start:end]
+        self._own = (own, until)
+
+    def __repr__(self):
+        return f"Piece(start={self.start}, {len(self.text)} characters)"
+
+    def mention(self, entity_type, start, end, **attributes):
+        """A mention of an `entity_type` at `piece.text[start:end]`.
+
+        `None` if it starts in words this piece shares with another, on the
+        side of the other: that piece has the same mention, with more of
+        the text around it.
+        """
+        start, end = self.start + start, self.start + end
+        if not self._own[0] <= start < self._own[1]:
+            return None
+        return self.document.mention(entity_type, start, end, **attributes)
+
 
 class ExtractTask:
     """One extract run's task: the documents, and where the mentions go."""
@@ -393,6 +474,8 @@ def extractor(function):
     if "document" in names:
         for document in task.documents:
             for mention in function(document=document, **given) or ():
+                if mention is None:
+                    continue
                 # A mention made by hand need not say which document it is in.
                 if isinstance(mention, dict) and mention.get("document_id") is None:
                     mention = {**mention, "document_id": document.id}
@@ -400,7 +483,7 @@ def extractor(function):
     else:
         if "documents" in names:
             given["documents"] = task.documents
-        found = list(function(**given) or ())
+        found = [mention for mention in function(**given) or () if mention is not None]
     task.write(found)
     return function
 
