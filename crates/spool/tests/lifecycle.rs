@@ -1044,6 +1044,32 @@ fn an_undo_leaves_an_earlier_version_where_the_changeset_found_it() {
 }
 
 #[test]
+fn a_split_moves_the_versions_it_was_given_and_no_other() {
+    let engine = engine();
+    load(&engine, "shop", &[("1", Some("anvil"), None)]);
+    resolve(&engine);
+    let anvil = identity(&engine, "shop", "1").unwrap();
+    for name in ["anvil mk2", "anvil mk3"] {
+        load(&engine, "shop", &[("1", Some(name), None)]);
+        resolve(&engine);
+    }
+    let (versions, identities) = placed_versions(&engine);
+    assert_eq!(identities, [Some(anvil); 3]);
+
+    // The reviewer splits the latest version from the two before it.
+    let split = engine
+        .split(anvil, &versions[2..], false, None, reviewer(), None)
+        .unwrap();
+    assert_eq!(split.kept, anvil);
+    assert_eq!(split.moved, versions[2..]);
+    assert_eq!(
+        placed_versions(&engine).1,
+        [Some(anvil), Some(anvil), Some(split.identity)]
+    );
+    engine.verify().unwrap();
+}
+
+#[test]
 fn a_run_that_places_a_new_version_takes_along_an_earlier_one_that_waits() {
     let engine = engine();
     load(
@@ -1077,8 +1103,12 @@ fn a_run_that_places_a_new_version_takes_along_an_earlier_one_that_waits() {
     let report = engine.resolve(&options).unwrap();
     let resolution = &report.resolved[0];
     assert_eq!(
-        (resolution.new_records, resolution.records_assigned),
-        (1, 1)
+        (
+            resolution.new_records,
+            resolution.records_assigned,
+            resolution.versions_moved
+        ),
+        (1, 1, 1)
     );
     let draft = engine.draft(resolution.draft.unwrap()).unwrap();
     let (versions, _) = placed_versions(&engine);

@@ -5,7 +5,7 @@ use serde_json::json;
 use spool::{RunStatus, StrategyRef};
 
 use super::remote::{self, Remote, WAIT_MS, print_json, unsuccessful};
-use super::show::{count, fields};
+use super::show::{count, fields, placed};
 use crate::Failure;
 use crate::args::Spec;
 
@@ -185,14 +185,7 @@ pub fn run(arguments: &[String]) -> Result<(), Failure> {
             format!("{examined}, {}", count(report.candidates, "candidate pair")),
         ),
         ("judgements", judgements),
-        (
-            "placed",
-            format!(
-                "{}, {} created",
-                count(report.records_assigned, "record"),
-                count(report.identities_created, "identity")
-            ),
-        ),
+        ("placed", placed(&report)),
     ];
     if report.records_unassigned > 0 || !report.review.is_empty() {
         rows.push((

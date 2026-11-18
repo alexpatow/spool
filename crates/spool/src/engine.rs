@@ -207,6 +207,10 @@ pub struct TypeResolution {
     pub judgements: JudgementCounts,
     pub identities_created: u64,
     pub records_assigned: u64,
+    /// Earlier versions of the rows the run placed, moved along with them
+    /// from another identity or from none. They are not counted in
+    /// `records_assigned`.
+    pub versions_moved: u64,
     /// Examined records left without an identity. Each is named in
     /// `review`.
     pub records_unassigned: u64,
@@ -2046,6 +2050,7 @@ impl Inner {
                 }
             }
             let along = inner.versions_along(&draft.changeset)?;
+            let versions_moved = along.len() as u64;
             draft.changeset.ops.extend(along);
             let held = then == Disposition::LeaveForReview && !draft.changeset.ops.is_empty();
             let report = TypeResolution {
@@ -2064,6 +2069,7 @@ impl Inner {
                 },
                 identities_created,
                 records_assigned,
+                versions_moved,
                 records_unassigned: new_records - records_assigned,
                 review: draft.review.clone(),
                 committed: None,
@@ -2441,7 +2447,9 @@ impl Inner {
                 });
             }
         }
-        let authored = self.author(actor, reason, ops, true, true)?;
+        // A split moves the records it was given and no other: the
+        // reviewer named both sides, versions of one row included.
+        let authored = self.author(actor, reason, ops, true, false)?;
         Ok(SplitReport {
             kept: identity,
             identity: new,

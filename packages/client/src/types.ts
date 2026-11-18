@@ -402,6 +402,10 @@ export interface DraftSummary {
    * The reconcile run that drafted it.
    */
   reconcile_run: RunId;
+  /**
+   * The records it would place or move, the earlier versions of rows
+   * it places included.
+   */
   records_assigned: number;
   /**
    * Rejected: when.
@@ -1984,6 +1988,12 @@ export interface TypeResolution {
    * both have an identity.
    */
   suggestions?: Suggestions | null;
+  /**
+   * Earlier versions of the rows the run placed, moved along with them
+   * from another identity or from none. They are not counted in
+   * `records_assigned`.
+   */
+  versions_moved: number;
 }
 
 /**
