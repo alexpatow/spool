@@ -325,7 +325,7 @@ export interface DocumentExtraction {
 }
 
 /**
- * Identifies one version of a document. Derived by the engine from the document's source, key and text.
+ * Identifies one version of a document. Derived by the engine from the document's source, key and text, and for a version that holds a text the document held before, from the version it follows as well.
  */
 export type DocumentId = string;
 
@@ -765,7 +765,8 @@ export interface LoadReport {
    */
   committed?: Committed | null;
   /**
-   * Rows that were already known, or repeated within this call.
+   * Rows that brought nothing new: a row that says what its key holds
+   * already, and a row without a key that the store has.
    */
   duplicates: number;
   /**
@@ -797,7 +798,8 @@ export interface LoadReport {
   run: RunId;
   /**
    * Records created as a new version of a row the source had sent
-   * before under the same key with other content.
+   * before under the same key with other content. A row that says again
+   * what an earlier version of it said, with another since, is one.
    */
   superseded?: number;
 }
@@ -1238,7 +1240,7 @@ export interface RecordEntry {
 }
 
 /**
- * Identifies a record. Derived by the engine from the record's source, key and content.
+ * Identifies a record. Derived by the engine from the record's source, key and content, and for a version that holds what its row held before, from the version it follows as well.
  */
 export type RecordId = string;
 

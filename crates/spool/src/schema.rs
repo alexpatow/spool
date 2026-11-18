@@ -17,7 +17,7 @@ CREATE TABLE spool.meta (key VARCHAR NOT NULL, value VARCHAR NOT NULL);
 -- Evidence
 
 CREATE TABLE spool.record (
-  record_id      UUID        NOT NULL, -- first 128 bits of sha256(source_id, source_key, canonical payload)
+  record_id      UUID        NOT NULL, -- first 128 bits of sha256(source_id, source_key, canonical payload); of that and `supersedes` for a version that holds a payload its key held before
   entity_type    VARCHAR     NOT NULL, -- a declared type
   source_id      VARCHAR     NOT NULL,
   source_key     VARCHAR,              -- key within the source: a row key, or an extracted mention's locator
@@ -37,7 +37,7 @@ CREATE TABLE spool.retraction (        -- rows a source took back; kept. One is 
 );
 
 CREATE TABLE spool.document (          -- text a source holds, kept so that what a mention was found in can be read
-  document_id UUID        NOT NULL,    -- first 128 bits of sha256(source_id, source_key, text)
+  document_id UUID        NOT NULL,    -- first 128 bits of sha256(source_id, source_key, text); of that and `supersedes` for a version that holds a text its key held before
   source_id   VARCHAR     NOT NULL,
   source_key  VARCHAR     NOT NULL,    -- the document's key within the source
   supersedes  UUID,                    -- previous version of the same (source_id, source_key)

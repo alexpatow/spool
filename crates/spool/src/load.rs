@@ -19,6 +19,7 @@ use crate::batch::{Column, batch};
 use crate::error::{Error, Result};
 use crate::project::Source;
 use crate::retract;
+use crate::versions;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -28,10 +29,12 @@ pub struct LoadReport {
     pub received: u64,
     /// Records created.
     pub inserted: u64,
-    /// Rows that were already known, or repeated within this call.
+    /// Rows that brought nothing new: a row that says what its key holds
+    /// already, and a row without a key that the store has.
     pub duplicates: u64,
     /// Records created as a new version of a row the source had sent
-    /// before under the same key with other content.
+    /// before under the same key with other content. A row that says again
+    /// what an earlier version of it said, with another since, is one.
     #[serde(default)]
     pub superseded: u64,
     /// Records the source had taken back and holds again: every version
@@ -62,9 +65,11 @@ pub(crate) struct Stored {
     pub restored: u64,
 }
 
-/// The rows of one incoming batch that were not seen earlier in this call,
-/// as a batch of `ord`, `record_id`, `source_key`, `payload` and
-/// `evidence`. `ord` is the row's position in the call.
+/// The rows of one incoming batch, as a batch of `ord`, `record_id`,
+/// `source_key`, `payload` and `evidence`. `ord` is the row's position in
+/// the call, and `record_id` the ID derived from its content. A row without
+/// a key that was sent earlier in this call is left out; a row with one is
+/// a version of its key, and [`insert`] decides what it is the version of.
 ///
 /// The rows may have only the columns the source lists. The source's key
 /// column stays part of the payload; its evidence column does not.
@@ -158,7 +163,7 @@ pub(crate) fn stage(
         let payload = serde_json::to_string(&payload)
             .map_err(|error| fail(format!("the payload cannot be encoded: {error}")))?;
         let id = RecordId::derive(&source.name, key.as_deref(), &payload);
-        if seen.insert(id) {
+        if key.is_some() || seen.insert(id) {
             ords.push(row_number as i64);
             ids.push(Some(id.to_string()));
             keys.push(key);
@@ -181,9 +186,12 @@ pub(crate) fn stage(
 
 /// Stores staged records of one entity type from one source.
 ///
-/// A new record under a key the source has used before is the next
-/// version of that row or mention. It supersedes the latest version the
-/// store holds, or the one before it in the batch.
+/// A row under a key the source has used before, with content other than
+/// the key holds now, is the next version of that row or mention. It
+/// supersedes the latest version the store holds, or the one before it in
+/// the batch. That is so for content the key held earlier too: a row that
+/// changes and changes back has a version for each step. See
+/// [`versions`](crate::versions).
 ///
 /// A row the source had taken back is held again, with every version of
 /// it, whether or not it came with new content.
@@ -196,36 +204,51 @@ pub(crate) fn insert(
     staged: RecordBatch,
 ) -> Result<Stored> {
     let restored = retract::restore(conn, entity_type, source, run, &staged)?;
-    let inserted = conn.execute(
-        "INSERT INTO spool.record
-         SELECT n.record_id, $1, $2, n.source_key,
-                CASE WHEN n.source_key IS NOT NULL THEN coalesce(
-                  lag(n.record_id) OVER (PARTITION BY n.source_key ORDER BY n.ord),
-                  latest.record_id) END,
-                n.payload::JSON, n.evidence::JSON, NULL, make_timestamptz($3), $4
-         FROM (
-           SELECT s.record_id::UUID AS record_id, s.source_key,
-                  s.payload, s.evidence, s.ord
-           FROM arrow($5) s
-           WHERE NOT EXISTS (
-             SELECT 1 FROM spool.record o
-             WHERE o.record_id = s.record_id::UUID)
-         ) n
+    let mut statement = conn.prepare(
+        "SELECT s.ord, known.record_id IS NOT NULL,
+                latest.record_id::VARCHAR, latest.supersedes::VARCHAR
+         FROM arrow($3) s
+         LEFT JOIN spool.record known ON known.record_id = s.record_id::UUID
          LEFT JOIN (
-           SELECT o.source_key, o.record_id
+           SELECT o.source_key, o.record_id, o.supersedes
            FROM spool.record o
            WHERE o.entity_type = $1 AND o.source_id = $2
              AND o.source_key IS NOT NULL
              AND NOT EXISTS (
                SELECT 1 FROM spool.record later
                WHERE later.supersedes = o.record_id)
-         ) latest ON latest.source_key = n.source_key",
+         ) latest ON latest.source_key = s.source_key
+         WHERE known.record_id IS NOT NULL OR latest.record_id IS NOT NULL",
+    )?;
+    let held = statement.query(params![
+        entity_type,
+        source,
+        &ArrowBatchRegistration::new(staged.clone())
+    ])?;
+    let versions = versions::of_staged(&staged, "record_id", held, RecordId::held_again)?;
+    if versions.is_empty() {
+        return Ok(Stored {
+            inserted: 0,
+            restored,
+        });
+    }
+    let stored = versions::to_store(
+        &staged,
+        "record_id",
+        &versions,
+        &["source_key", "payload", "evidence"],
+    )?;
+    let inserted = conn.execute(
+        "INSERT INTO spool.record
+         SELECT n.record_id::UUID, $1, $2, n.source_key, n.supersedes::UUID,
+                n.payload::JSON, n.evidence::JSON, NULL, make_timestamptz($3), $4
+         FROM arrow($5) n",
         params![
             entity_type,
             source,
             now,
             run.0 as i64,
-            &ArrowBatchRegistration::new(staged)
+            &ArrowBatchRegistration::new(stored)
         ],
     )?;
     Ok(Stored {

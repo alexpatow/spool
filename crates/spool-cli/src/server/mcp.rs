@@ -937,8 +937,9 @@ static TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
              holds, with the same key and the same values, adds nothing, so loading the \
              same rows twice is safe. A row with a known key and other values replaces \
              the row the store held under that key, and loading the old values again \
-             does not put them back: `superseded` in the answer counts such rows, and is \
-             0 unless a row was meant to change. Loading does not match: follow it with \
+             puts them back as one more version, so an older file loaded after a newer \
+             one undoes what the newer one changed: `superseded` in the answer counts \
+             such rows, and is 0 unless a row was meant to change. Loading does not match: follow it with \
              `run_match`. A loaded row is kept for good and nothing deletes \
              it, so load only what the person asked for; `retract_rows` takes a row back, \
              which removes it from its identity and keeps it as evidence. This is for a \
