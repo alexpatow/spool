@@ -18,7 +18,7 @@ use spool_core::{
 
 use crate::batch::{Column, batch, id_list};
 use crate::drafts;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::review;
 use crate::schema;
 
@@ -43,7 +43,8 @@ impl DuckStore {
             // between the database and the schema. Attaching under a fixed
             // name avoids that whatever the file is called.
             let file = path.to_string_lossy().replace('\'', "''");
-            conn.execute_batch(&format!("ATTACH '{file}' AS {CATALOG}; USE {CATALOG};"))?;
+            conn.execute_batch(&format!("ATTACH '{file}' AS {CATALOG}; USE {CATALOG};"))
+                .map_err(|error| in_use(path, error))?;
         }
         // Timestamps are stored as instants. A fixed session zone keeps their
         // text form the same on every machine.
@@ -357,6 +358,35 @@ impl DuckStore {
         tx.commit()?;
         Ok(Seq(seq as u64))
     }
+}
+
+/// What opening the file at `path` failed with. DuckDB lets one process
+/// write to a database file, and refuses a second in words of its own: the
+/// file, the program and process that has it, and a page of DuckDB's
+/// documentation. That refusal becomes [`Error::StoreInUse`], and anything
+/// else stays as it is.
+fn in_use(path: &Path, error: duckdb::Error) -> Error {
+    match lock_holder(&error.to_string()) {
+        Some(holder) => Error::StoreInUse {
+            path: path.to_owned(),
+            holder,
+        },
+        None => error.into(),
+    }
+}
+
+/// Reads DuckDB's refusal of a file that another process has. `None` if
+/// `message` is not that refusal, and `Some(None)` if it is and does not
+/// say which process: the system does not always tell.
+fn lock_holder(message: &str) -> Option<Option<u32>> {
+    let (_, held) = message.split_once("Could not set lock on file")?;
+    // The file's path comes first and may hold anything, so the process is
+    // read from the end.
+    let holder = held
+        .rsplit_once("(PID ")
+        .and_then(|(_, rest)| rest.split_once(')'))
+        .and_then(|(pid, _)| pid.trim().parse().ok());
+    Some(holder)
 }
 
 /// A new connection to the database of `conn`, set up like the one a store
@@ -1141,6 +1171,36 @@ mod tests {
             })
             .unwrap();
         assert_eq!(retractions, 0);
+    }
+
+    #[test]
+    fn a_refusal_of_a_store_another_process_has_is_told_from_other_failures() {
+        // What DuckDB says on Linux, and the same without the process.
+        let refusal = "IO Error: Could not set lock on file \"/tmp/a (PID 1)/dev.duckdb\": \
+                       Conflicting lock is held in /usr/local/bin/spool (PID 7989). \
+                       See also https://duckdb.org/docs/current/connect/concurrency";
+        assert_eq!(lock_holder(refusal), Some(Some(7989)));
+        assert_eq!(
+            lock_holder(
+                "IO Error: Could not set lock on file \"dev.duckdb\": Conflicting lock is held"
+            ),
+            Some(None)
+        );
+        assert_eq!(
+            lock_holder("IO Error: Cannot open file \"dev.duckdb\": Permission denied"),
+            None
+        );
+
+        let error = || duckdb::Error::InvalidParameterName(refusal.to_owned());
+        assert!(matches!(
+            in_use(Path::new("dev.duckdb"), error()),
+            Error::StoreInUse { path, holder: Some(7989) } if path == Path::new("dev.duckdb")
+        ));
+        let other = duckdb::Error::InvalidParameterName("no such thing".to_owned());
+        assert!(matches!(
+            in_use(Path::new("dev.duckdb"), other),
+            Error::Duckdb(duckdb::Error::InvalidParameterName(_))
+        ));
     }
 
     #[test]

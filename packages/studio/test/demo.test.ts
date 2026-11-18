@@ -23,7 +23,7 @@ test(
     });
     const [code, printed] = await Promise.all([demo.exited, new Response(demo.stderr).text()]);
 
-    expect(printed).toContain("Address already in use");
+    expect(printed).toContain("something else is listening there");
     const { store } = await server.client.info();
     expect(store.entity_types.map((type) => type.records)).toEqual([0]);
     expect(store.head).toBe(0);
