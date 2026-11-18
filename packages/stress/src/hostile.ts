@@ -323,6 +323,12 @@ function all(token: string): Case[] {
   asNobody("setup: no code", 401, "/auth/setup", { code: "", ...person });
   asNobody("password: nobody", 401, "/auth/password", { current: "x", new: person.password });
   asNobody("sign out: nobody", 200, "/auth/sign-out", {});
+  // This server signs nobody in with Google, whatever is sent to where one that does takes it.
+  asNobody("google: not set up", 404, "/auth/google?next=/");
+  asNobody("google: a next of 32k", 404, `/auth/google?next=/${"a".repeat(32_000)}`);
+  asNobody("google: a callback nobody began", 404, "/auth/google/callback?code=x&state=y", undefined, {
+    cookie: "spool_google=y.n.v.2f",
+  });
   cases.push({ name: "people: the token adds one", status: 403, method: "POST", path: "/v1/people", body: person });
   cases.push({
     name: "people: the token makes an admin",

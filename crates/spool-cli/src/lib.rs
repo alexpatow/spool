@@ -5,5 +5,6 @@
 
 pub mod accounts;
 pub mod api;
+pub mod google;
 pub mod server;
 pub mod studio;

@@ -12,7 +12,16 @@ import { UserPlusIcon } from "../icons.tsx";
 export const MIN_PASSWORD = 12;
 
 /** A field for a password that is being set, not asked for. */
-export function NewPassword({ label = "Password", optional = false }: { label?: string; optional?: boolean }) {
+export function NewPassword({
+  label = "Password",
+  optional = false,
+  empty = "Unchanged",
+}: {
+  label?: string;
+  optional?: boolean;
+  /** What leaving it empty comes to, when it may be left empty. */
+  empty?: string;
+}) {
   return (
     <Labelled label={label}>
       <Input
@@ -21,10 +30,34 @@ export function NewPassword({ label = "Password", optional = false }: { label?: 
         autoComplete="new-password"
         minLength={MIN_PASSWORD}
         required={!optional}
-        placeholder={optional ? "Unchanged" : `${MIN_PASSWORD} characters or more`}
+        placeholder={optional ? empty : `${MIN_PASSWORD} characters or more`}
       />
     </Labelled>
   );
+}
+
+/** The email of the Google account someone signs in with. */
+function Email({ of }: { of?: Person }) {
+  return (
+    <Labelled label="Email" hint="Of the Google account they sign in with.">
+      <Input
+        name="email"
+        type="email"
+        defaultValue={of?.email ?? ""}
+        autoComplete="off"
+        spellCheck={false}
+        autoCapitalize="none"
+        placeholder="None: signs in with a password"
+      />
+    </Labelled>
+  );
+}
+
+/** The ways an account can be signed in to. */
+function signsInWith(person: Person): string {
+  if (person.password && person.email) return "Password or Google";
+  if (person.password) return "Password";
+  return person.email ? "Google" : "-";
 }
 
 /** What was typed in a field, without the space around it. */
@@ -38,7 +71,7 @@ export function password(entered: FormData, field = "password"): string {
 }
 
 export function People() {
-  const { me } = useStudio();
+  const { me, google } = useStudio();
   const [done, setDone] = useState<ReactNode>(null);
   const people = useLoad((client) => client.people());
   return (
@@ -50,6 +83,13 @@ export function People() {
             columns={[
               { title: "Name", cell: (person) => person.name },
               { title: "Username", cell: (person) => <Code>{person.username}</Code> },
+              // Where nobody signs in with Google, everyone has a password and no more.
+              ...(google || rows.some((person) => person.email)
+                ? [
+                    { title: "Email", cell: (person: Person) => person.email ?? "-" },
+                    { title: "Signs in with", cell: signsInWith },
+                  ]
+                : []),
               {
                 title: "Role",
                 cell: (person) => (person.admin ? <Word value="admin" label="Admin" tone="plain" /> : "-"),
@@ -68,7 +108,11 @@ export function People() {
                     {
                       title: "",
                       cell: (person: Person) => (
-                        <Edit key={`${person.admin}-${person.active}`} person={person} done={setDone} />
+                        <Edit
+                          key={`${person.admin}-${person.active}-${person.email}-${person.password}`}
+                          person={person}
+                          done={setDone}
+                        />
                       ),
                     },
                   ]
@@ -86,6 +130,7 @@ export function People() {
 }
 
 function Add({ done }: { done: (said: ReactNode) => void }) {
+  const { google } = useStudio();
   const [admin, setAdmin] = useState(false);
   return (
     <Act
@@ -93,10 +138,14 @@ function Add({ done }: { done: (said: ReactNode) => void }) {
       variant="default"
       icon={<UserPlusIcon />}
       act={async (client, { entered }) => {
+        const email = typed(entered, "email");
+        const secret = password(entered);
+        if (email === "" && secret === "") throw new Mistake("Give an email, a password, or both.");
         const person = await client.addPerson({
           username: typed(entered, "username"),
           name: typed(entered, "name"),
-          password: password(entered),
+          ...(email === "" ? {} : { email }),
+          ...(secret === "" ? {} : { password: secret }),
           admin,
         });
         setAdmin(false);
@@ -110,13 +159,16 @@ function Add({ done }: { done: (said: ReactNode) => void }) {
       <Labelled label="Username">
         <Input name="username" autoComplete="off" spellCheck={false} autoCapitalize="none" required />
       </Labelled>
-      <NewPassword />
+      {google ? <Email /> : null}
+      <NewPassword optional={google} empty="None: signs in with Google" />
       <Flag label="Admin" checked={admin} onChange={setAdmin} />
     </Act>
   );
 }
 
 function Edit({ person, done }: { person: Person; done: (said: ReactNode) => void }) {
+  const { google } = useStudio();
+  const emailed = google || Boolean(person.email);
   const [admin, setAdmin] = useState(person.admin);
   const [active, setActive] = useState(person.active);
   return (
@@ -130,6 +182,9 @@ function Edit({ person, done }: { person: Person; done: (said: ReactNode) => voi
         const name = typed(entered, "name");
         if (name !== person.name) change.name = name;
         if (password(entered) !== "") change.password = password(entered);
+        if (emailed && typed(entered, "email").toLowerCase() !== (person.email ?? "")) {
+          change.email = typed(entered, "email");
+        }
         if (admin !== person.admin) change.admin = admin;
         if (active !== person.active) change.active = active;
         if (Object.keys(change).length === 0) throw new Mistake("Nothing was changed.");
@@ -141,7 +196,8 @@ function Edit({ person, done }: { person: Person; done: (said: ReactNode) => voi
       <Labelled label="Name">
         <Input name="name" defaultValue={person.name} autoComplete="off" required />
       </Labelled>
-      <NewPassword label="New password" optional />
+      {emailed ? <Email of={person} /> : null}
+      <NewPassword label="New password" optional empty={person.password ? "Unchanged" : "None"} />
       <Flag label="Admin" checked={admin} onChange={setAdmin} />
       <Flag label="Can sign in" checked={active} onChange={setActive} />
     </Act>

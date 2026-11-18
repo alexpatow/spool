@@ -397,6 +397,13 @@ pub struct Person {
     pub admin: bool,
     /// May sign in. An account that is turned off keeps its name in the log.
     pub active: bool,
+    /// The address of the Google account they sign in with, where the
+    /// server signs people in with Google. `null` for someone who signs in
+    /// with a password only.
+    pub email: Option<String>,
+    /// Has a password to sign in with. Someone who has none signs in with
+    /// Google.
+    pub password: bool,
 }
 
 /// `GET /auth/session`: who the caller is signed in as.
@@ -409,6 +416,9 @@ pub struct SessionState {
     /// A development server: nobody signs in, and whoever opens it is the
     /// `dev` account.
     pub dev: bool,
+    /// The server signs people in with Google: `GET /auth/google` in a
+    /// browser starts it.
+    pub google: bool,
 }
 
 /// `POST /auth/sign-in`.
@@ -438,20 +448,28 @@ pub struct PasswordRequest {
     pub new: String,
 }
 
-/// `POST /v1/people`: add a person. Only an admin may.
+/// `POST /v1/people`: add a person. Only an admin may. They sign in with
+/// the password, with Google by the email, or with either: one of the two is
+/// needed, and the email alone only where the server signs people in with
+/// Google.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AddPersonRequest {
     pub username: String,
     pub name: String,
-    pub password: String,
+    #[serde(default)]
+    pub password: Option<String>,
+    /// The address of the Google account they sign in with.
+    #[serde(default)]
+    pub email: Option<String>,
     #[serde(default)]
     pub admin: Option<bool>,
 }
 
 /// `POST /v1/people/{id}`: change a person. Only an admin may. A field left
 /// out stays as it is. A new password, or turning the account off, signs
-/// the person out everywhere.
+/// the person out everywhere. Another email signs them out wherever they
+/// signed in with Google.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ChangePersonRequest {
@@ -459,6 +477,10 @@ pub struct ChangePersonRequest {
     pub name: Option<String>,
     #[serde(default)]
     pub password: Option<String>,
+    /// The address of the Google account they sign in with. An empty one
+    /// takes it away, for someone who has a password.
+    #[serde(default)]
+    pub email: Option<String>,
     #[serde(default)]
     pub admin: Option<bool>,
     #[serde(default)]

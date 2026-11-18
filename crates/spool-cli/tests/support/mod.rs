@@ -33,6 +33,10 @@ pub fn spool() -> Command {
         "SPOOL_TOKEN",
         "SPOOL_STORE",
         "SPOOL_URL",
+        "SPOOL_PUBLIC_URL",
+        "SPOOL_GOOGLE_CLIENT_ID",
+        "SPOOL_GOOGLE_CLIENT_SECRET",
+        "SPOOL_GOOGLE_ISSUER",
     ] {
         command.env_remove(name);
     }
@@ -216,8 +220,14 @@ impl Server {
 
     /// As `start`. `Err` if the process stopped instead of listening.
     pub fn start_with(arguments: &[&str]) -> Result<Server, Stopped> {
+        Self::start_in(arguments, &[])
+    }
+
+    /// As `start_with`, with `environment` set for the server.
+    pub fn start_in(arguments: &[&str], environment: &[(&str, &str)]) -> Result<Server, Stopped> {
         let mut command = spool();
         command
+            .envs(environment.iter().copied())
             .args(arguments)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -479,10 +489,16 @@ impl Response {
     }
 
     pub fn header(&self, name: &str) -> Option<&str> {
+        self.all(name).into_iter().next()
+    }
+
+    /// Every header of a name, for one a response may have several of.
+    pub fn all(&self, name: &str) -> Vec<&str> {
         self.headers
             .iter()
-            .find(|(existing, _)| existing == name)
+            .filter(|(existing, _)| existing == name)
             .map(|(_, value)| value.as_str())
+            .collect()
     }
 
     pub fn json(&self) -> Value {

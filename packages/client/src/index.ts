@@ -574,6 +574,18 @@ export class SpoolClient {
   }
 
   /**
+   * The address a browser opens to sign in with Google, where `session()`
+   * says the server offers it. Google sends the browser back signed in, to
+   * `next`, a path of the server's own pages; or, if it let nobody in, to
+   * `next` with the reason in `google`: `unknown` when no account has the
+   * email, `unverified`, `cancelled`, `expired`, `unreachable`, `busy` or
+   * `failed`.
+   */
+  googleSignIn(next = "/"): string {
+    return `${this.url}/auth/google?next=${encodeURIComponent(next)}`;
+  }
+
+  /**
    * Makes the first account, an admin, and signs in as it. The code is the
    * one in the link the server printed when it started with no admin who
    * could sign in.
@@ -593,14 +605,18 @@ export class SpoolClient {
     return people;
   }
 
-  /** Adds a person. Only an admin may. */
+  /**
+   * Adds a person. Only an admin may. They sign in with the password, with
+   * Google by the email, or with either.
+   */
   addPerson(request: AddPersonRequest): Promise<Person> {
     return this.json("POST", "/v1/people", { json: request });
   }
 
   /**
-   * Changes a person: their name, password, whether they are an admin, and
-   * whether the account is on. Only an admin may.
+   * Changes a person: their name, password, the email they sign in with
+   * Google by, whether they are an admin, and whether the account is on.
+   * Only an admin may.
    */
   changePerson(id: string, request: ChangePersonRequest): Promise<Person> {
     return this.json("POST", `/v1/people/${encodeURIComponent(id)}`, { json: request });
