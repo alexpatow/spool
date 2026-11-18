@@ -57,8 +57,8 @@ pub(crate) fn create_scope(
         "CREATE OR REPLACE TEMP TABLE {SCOPE} AS
          SELECT record_id FROM (
            SELECT record_id FROM spool.record
-           WHERE entity_type = '{entity_type}' AND ingest_run < {run}
-             AND (ingest_run > {after_run} OR record_id IN ({restored}))
+           WHERE entity_type = '{entity_type}' AND load_run < {run}
+             AND (load_run > {after_run} OR record_id IN ({restored}))
            {under_review}
          ) WHERE {NOT_DISMISSED} AND {NOT_RETRACTED}",
         restored = retract::restored_between(after_run, run),

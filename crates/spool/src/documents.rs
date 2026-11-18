@@ -163,9 +163,6 @@ pub struct ExtractReport {
     pub superseded: u64,
     /// The load run the records were stored under. There is none
     /// when nothing was found.
-    // A store keeps the report of a run, and one written before the field
-    // had this name has it as `ingest_run`.
-    #[serde(alias = "ingest_run")]
     pub load_run: Option<RunId>,
 }
 
@@ -264,7 +261,7 @@ pub(crate) fn insert(
 
 const DOCUMENT: &str = "
     SELECT d.document_id::VARCHAR, d.source_id, d.source_key, d.uri, length(d.text),
-           epoch_us(d.ingested_at), d.ingest_run, d.supersedes::VARCHAR,
+           epoch_us(d.loaded_at), d.load_run, d.supersedes::VARCHAR,
            later.document_id::VARCHAR
     FROM spool.document d
     LEFT JOIN spool.document later ON later.supersedes = d.document_id";
@@ -549,15 +546,6 @@ fn canonical(attributes: Option<&str>) -> Result<String, String> {
 mod tests {
     use super::*;
     use crate::project::Runtime;
-
-    #[test]
-    fn a_report_kept_under_the_older_name_of_the_load_run_is_read() {
-        let kept = r#"{"run":2,"documents":1,"mentions":3,"inserted":3,"duplicates":0,"superseded":0,"ingest_run":3}"#;
-        let report: ExtractReport = serde_json::from_str(kept).unwrap();
-        assert_eq!(report.load_run, Some(RunId(3)));
-        let written = serde_json::to_string(&report).unwrap();
-        assert!(written.ends_with(r#""load_run":3}"#), "{written}");
-    }
 
     fn extractor() -> Extractor {
         Extractor {

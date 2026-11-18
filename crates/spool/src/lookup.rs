@@ -348,7 +348,7 @@ fn json(text: String) -> Result<serde_json::Value> {
 
 const RECORD: &str = "
     SELECT o.record_id::VARCHAR, o.entity_type, o.source_id, o.source_key,
-           o.payload::VARCHAR, o.evidence::VARCHAR, epoch_us(o.ingested_at), o.ingest_run,
+           o.payload::VARCHAR, o.evidence::VARCHAR, epoch_us(o.loaded_at), o.load_run,
            m.identity_id::VARCHAR, o.supersedes::VARCHAR, later.record_id::VARCHAR,
            named.label, taken.retract_run
     FROM spool.record o
@@ -430,7 +430,7 @@ const RECORD_ORDER: &str = "o.source_id, o.source_key IS NULL, \
                    THEN json_extract_string(o.evidence, '$.key') END, o.source_key, ''), \
      coalesce(CASE WHEN json_extract_string(o.evidence, '$.document') IS NOT NULL \
                    THEN TRY_CAST(json_extract_string(o.evidence, '$.start') AS BIGINT) END, 0), \
-     coalesce(o.source_key, ''), o.entity_type, o.ingest_run, o.record_id";
+     coalesce(o.source_key, ''), o.entity_type, o.load_run, o.record_id";
 
 pub(crate) fn records(conn: &Connection, filter: &RecordFilter) -> Result<Vec<RecordEntry>> {
     // A page continues from where a record stands, so the record has to be
@@ -512,7 +512,7 @@ pub(crate) fn members(
         "{RECORD}
          WHERE m.identity_id = $1::UUID
          ORDER BY list_contains({}, o.record_id) DESC,
-                  o.ingested_at, o.ingest_run, o.record_id
+                  o.loaded_at, o.load_run, o.record_id
          LIMIT $2",
         uuid_list(first)
     ))?;
@@ -595,7 +595,7 @@ fn labels(conn: &Connection, ids: &[IdentityId]) -> Result<BTreeMap<IdentityId, 
            SELECT m.identity_id, named.label,
                   row_number() OVER (
                     PARTITION BY m.identity_id
-                    ORDER BY o.ingested_at, o.ingest_run, o.record_id) AS nth
+                    ORDER BY o.loaded_at, o.load_run, o.record_id) AS nth
            FROM spool.membership m
            JOIN spool.record o ON o.record_id = m.record_id
            LEFT JOIN spool.record_label named ON named.record_id = o.record_id
@@ -849,7 +849,7 @@ pub(crate) fn info(conn: &Connection, manifest: Option<&Manifest>) -> Result<Sto
     let mut statement = conn.prepare(
         "SELECT o.entity_type, o.source_id, count(*),
                 count(*) FILTER (WHERE m.record_id IS NULL AND taken.record_id IS NULL),
-                epoch_us(max(o.ingested_at)), count(taken.record_id)
+                epoch_us(max(o.loaded_at)), count(taken.record_id)
          FROM spool.record o
          LEFT JOIN spool.membership m ON m.record_id = o.record_id AND m.to_seq IS NULL
          LEFT JOIN spool.retraction taken

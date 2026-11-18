@@ -148,7 +148,7 @@ pub(crate) fn drop_table(conn: &Connection, entity_type: &EntityType) -> Result<
 pub(crate) fn of_run(entity_type: &EntityType, load_run: RunId) -> String {
     format!(
         "entity_type = '{entity_type}'
-         AND (ingest_run = {load_run} OR record_id IN ({}))",
+         AND (load_run = {load_run} OR record_id IN ({}))",
         retract::restored_in(load_run)
     )
 }

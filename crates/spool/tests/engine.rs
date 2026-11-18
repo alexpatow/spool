@@ -124,10 +124,7 @@ fn evidence_is_stored_beside_the_payload_and_needs_a_key() {
     );
     assert_eq!(count(&engine, "SELECT count(*) FROM spool.record"), 0);
     assert_eq!(
-        select(
-            &engine,
-            "SELECT status FROM spool.run WHERE kind = 'ingest'"
-        ),
+        select(&engine, "SELECT status FROM spool.run WHERE kind = 'load'"),
         [[Some("failed".to_owned())]]
     );
 
@@ -487,11 +484,7 @@ fn an_external_strategy_fills_a_run_and_nothing_changes_until_commit() {
             "SELECT r.kind, r.status, r.strategy FROM spool.run r ORDER BY r.run_id"
         ),
         [
-            [
-                Some("ingest".to_owned()),
-                Some("succeeded".to_owned()),
-                None
-            ],
+            [Some("load".to_owned()), Some("succeeded".to_owned()), None],
             [
                 Some("match".to_owned()),
                 Some("succeeded".to_owned()),

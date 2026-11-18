@@ -37,15 +37,6 @@ impl RunKind {
             RunKind::Retract => "retract",
         }
     }
-
-    /// The kind as the store holds it. A load is `ingest` there: the store
-    /// had the word before the API changed it, and its format is as it was.
-    pub(crate) const fn stored(self) -> &'static str {
-        match self {
-            RunKind::Load => "ingest",
-            other => other.as_str(),
-        }
-    }
 }
 
 /// How far a run has got.
@@ -174,7 +165,7 @@ fn entry(row: &duckdb::Row<'_>) -> Result<RunEntry> {
         message: format!("its recorded {what} cannot be read"),
     };
     let kind = match row.get::<_, String>(1)?.as_str() {
-        "ingest" => RunKind::Load,
+        "load" => RunKind::Load,
         "extract" => RunKind::Extract,
         "match" => RunKind::Match,
         "reconcile" => RunKind::Reconcile,
@@ -264,7 +255,7 @@ pub(crate) fn list(conn: &Connection, filter: &RunFilter) -> Result<Vec<RunEntry
          LIMIT $4"
     ))?;
     let mut rows = statement.query(params![
-        filter.kind.map(RunKind::stored),
+        filter.kind.map(RunKind::as_str),
         filter.status.map(RunStatus::as_str),
         filter.entity_type.as_ref().map(EntityType::as_str),
         filter.limit.min(i64::MAX as u64) as i64,

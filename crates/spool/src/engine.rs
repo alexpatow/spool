@@ -34,7 +34,7 @@ use crate::retract::{self, RetractReport};
 use crate::review::{self, ReviewCase, ReviewEntry, ReviewFilter};
 use crate::rows::Rows;
 use crate::rules;
-use crate::runs::{self, RunEntry, RunFilter, RunKind, RunStatus};
+use crate::runs::{self, RunEntry, RunFilter, RunStatus};
 use crate::schema;
 use crate::store::{self, DuckStore};
 use crate::usercode::{self, Task, TaskInfo, UserCode};
@@ -1424,7 +1424,7 @@ impl Inner {
             .clone();
 
         let run = self.start_run(
-            RunKind::Load.stored(),
+            "load",
             None,
             &json!({ "source": source.name, "entity_type": name }),
         )?;
@@ -1480,7 +1480,7 @@ impl Inner {
             }
             let superseded: i64 = tx.query_row(
                 "SELECT count(*) FROM spool.record
-                 WHERE ingest_run = ? AND supersedes IS NOT NULL",
+                 WHERE load_run = ? AND supersedes IS NOT NULL",
                 [run.0 as i64],
                 |row| row.get(0),
             )?;
@@ -1918,7 +1918,7 @@ impl Inner {
             let reexamined = inner.count(&format!(
                 "SELECT count(*) FROM {} s
                  JOIN spool.record o ON o.record_id = s.record_id
-                 WHERE o.ingest_run <= {after_run}
+                 WHERE o.load_run <= {after_run}
                    AND s.record_id NOT IN ({restored})",
                 rules::SCOPE,
                 after_run = config.after_run,
@@ -2410,7 +2410,7 @@ impl Inner {
         let loaded = self.count(&format!(
             "SELECT count(*) FROM spool.record
              WHERE entity_type = '{entity_type}'
-               AND (ingest_run > {after_run} OR (
+               AND (load_run > {after_run} OR (
                  record_id IN (
                    SELECT record_id FROM spool.retraction WHERE restored_run > {after_run})
                  AND record_id NOT IN (

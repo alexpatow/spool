@@ -148,7 +148,7 @@ pub fn records(engine: &Engine, source: &str, key: &str) -> Vec<RecordId> {
         engine,
         &format!(
             "SELECT record_id::VARCHAR FROM spool.record
-             WHERE source_id = '{source}' AND source_key = '{key}' ORDER BY ingest_run"
+             WHERE source_id = '{source}' AND source_key = '{key}' ORDER BY load_run"
         ),
     )
     .into_iter()

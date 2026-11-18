@@ -19,7 +19,7 @@ use crate::error::{Error, Result};
 use crate::features;
 use crate::load::{self, LoadReport};
 use crate::project::{Declaration, Extractor};
-use crate::runs::{RunKind, RunStatus};
+use crate::runs::RunStatus;
 use crate::store::parse;
 use crate::usercode::{self, ExtractType, Task, UserCode};
 
@@ -150,7 +150,7 @@ impl Inner {
         let staged = documents::stage(source, documents)?;
         let received = documents.len() as u64;
         let run = self.start_run(
-            RunKind::Load.stored(),
+            "load",
             None,
             &json!({ "source": source, "documents": received }),
         )?;
@@ -163,7 +163,7 @@ impl Inner {
             };
             let superseded: i64 = tx.query_row(
                 "SELECT count(*) FROM spool.document
-                 WHERE ingest_run = ? AND supersedes IS NOT NULL",
+                 WHERE load_run = ? AND supersedes IS NOT NULL",
                 [run.0 as i64],
                 |row| row.get(0),
             )?;
@@ -221,13 +221,13 @@ impl Inner {
         conn.execute_batch(&format!(
             "CREATE OR REPLACE TEMP TABLE {TASK} AS
              SELECT d.document_id,
-                    row_number() OVER (ORDER BY d.ingest_run, d.source_id, d.source_key) AS ord
+                    row_number() OVER (ORDER BY d.load_run, d.source_id, d.source_key) AS ord
              FROM spool.document d
              WHERE NOT EXISTS (
                  SELECT 1 FROM spool.document later WHERE later.supersedes = d.document_id)
                {of_source}
                {unread}
-             ORDER BY d.ingest_run, d.source_id, d.source_key
+             ORDER BY d.load_run, d.source_id, d.source_key
              {limit}"
         ))?;
         let chosen: i64 = conn.query_row(&format!("SELECT count(*) FROM {TASK}"), [], |row| {
@@ -322,7 +322,7 @@ impl Inner {
         let load_run = match staged.is_empty() {
             true => None,
             false => Some(self.start_run(
-                RunKind::Load.stored(),
+                "load",
                 None,
                 &json!({ "extract_run": run, "extractor": reference }),
             )?),
@@ -372,7 +372,7 @@ impl Inner {
             let superseded: i64 = match load_run {
                 Some(load_run) => tx.query_row(
                     "SELECT count(*) FROM spool.record
-                     WHERE ingest_run = ? AND supersedes IS NOT NULL",
+                     WHERE load_run = ? AND supersedes IS NOT NULL",
                     [load_run.0 as i64],
                     |row| row.get(0),
                 )?,
