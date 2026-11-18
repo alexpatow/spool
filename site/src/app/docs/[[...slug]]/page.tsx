@@ -9,6 +9,8 @@ import { TableOfContents } from "@/components/table-of-contents";
 import * as Typography from "@/components/ui/typography";
 import { markdownPath } from "@/lib/markdown";
 import { type NavPage, neighbours } from "@/lib/nav";
+import { docsCardPath, sharing } from "@/lib/sharing";
+import { site } from "@/lib/site";
 import { source } from "@/lib/source";
 import { layout, breakpoints } from "@/styles/layout.stylex";
 import { media } from "@/styles/shelf/conditions.stylex";
@@ -59,11 +61,21 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   const page = source.getPage(slug);
   if (!page) notFound();
+  const description = page.data.description ?? "";
+  const shared = sharing({
+    title: `${page.data.title} | ${site.name}`,
+    description,
+    path: page.url,
+    image: docsCardPath(page.url),
+    imageAlt: `${page.data.title}: ${description}`,
+    type: "article",
+  });
   return {
+    ...shared,
     title: page.data.title,
-    description: page.data.description,
+    description,
     alternates: {
-      canonical: page.url,
+      ...shared.alternates,
       // An agent that fetched the HTML finds the Markdown here.
       types: { "text/markdown": markdownPath(page.url) },
     },
