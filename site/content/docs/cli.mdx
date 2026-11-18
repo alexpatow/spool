@@ -56,7 +56,8 @@ created   companies
   samples/crm-1.csv                  six rows to load first
   samples/crm-2.csv                  three more for later
   samples/notes-1.txt                a call note that names three companies
-  .gitignore                         keeps the server's data, .spool/, out of Git
+  .gitignore                         keeps the server's data, .spool/, and .env out of Git
+  .env.example                       the form of .env, where your code's secrets go
 
   cd companies
   spool dev                          runs the server on this machine
@@ -74,9 +75,24 @@ spool init ../my-data
 ```
 
 ```text title="Output"
+created   ../my-data
+
+  sources/          a YAML file for each source of rows or documents
+  entities/         a folder for each entity type, with its features and its rules
+  transforms/       SQL functions that features are made with
+  extractors/       Python or TypeScript files that find records in text
+  .gitignore        keeps the server's data, .spool/, and .env out of Git
+  .env.example      the form of .env, where your code's secrets go
+
+  cd ../my-data
+  spool dev         runs the server, and applies each file as you save it
+
+The project is empty. Declare a source under sources/ and an entity type
+under entities/, then load your rows with `spool load`. To see a project that
+works first, with sample rows: spool init companies --example companies
 ```
 
-In a folder that holds files already:
+In a folder that holds files already, it names a few of them, says that `spool init <name>` makes a new folder, and writes nothing. In a project, it says so:
 
 {/* sample: fails */}
 
@@ -85,6 +101,7 @@ spool init
 ```
 
 ```text title="Output"
+spool: this folder is a project already: it has an entities/ folder
 ```
 
 The project's `.env` sets environment variables for its extractors and strategies, such as the key of a hosted model. Spool reads it each time it starts one, and hands the code what it sets. A variable that is set already where Spool runs keeps its value, and Spool never prints a value. A line is `NAME=value`, which may start with `export ` and may put the value in quotes. Lines that start with `#` are comments.
@@ -166,7 +183,7 @@ spool dev ../other
 ```text title="Output"
 project   ../other
 store     ../other/.spool/dev.duckdb
-applied   d7d4b712d86302152897a67a5924cd1c2e26594e049685c2f007177e20633946 (declared company)
+applied   5ae1625b488b3935122d8dd627fe575b388a5aa360378fa4407aad08baaed1e2 (rules only)
 accounts  ../other/.spool/dev.auth.sqlite
 spool: cannot listen on 127.0.0.1:7765: something else is listening there, perhaps a `spool dev` on another project.
 Give this one another port by adding `--listen 127.0.0.1:7766` to the command, and point the commands that call it there with SPOOL_URL=http://127.0.0.1:7766.
