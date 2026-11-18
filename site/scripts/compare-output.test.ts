@@ -104,3 +104,15 @@ test("an update keeps the ID the pages already show", () => {
 test("tidy drops trailing spaces and trailing empty lines", () => {
   expect(tidy("a  \n\nb\n\n\n")).toEqual(["a", "", "b"]);
 });
+
+describe("the number of a process", () => {
+  test("is compared by its shape", () => {
+    const page = ["the store is open in another process (PID 3635), most likely a `spool dev`"];
+    const run = ["the store is open in another process (PID 91), most likely a `spool dev`"];
+    expect(sameOutput(page, run, noIds())).toBe(true);
+  });
+
+  test("leaves other numbers to be compared as they are", () => {
+    expect(sameOutput(["run 4: 1 key named"], ["run 5: 1 key named"], noIds())).toBe(false);
+  });
+});

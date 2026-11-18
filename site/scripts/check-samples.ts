@@ -3,47 +3,73 @@
  *
  *   bun run check:samples                 check every page
  *   bun run check:samples --update        rewrite the output blocks from what was printed
+ *   bun run check:samples --release       also fail when a page uses something that is not built
  *   bun run check:samples --spool <path>  the binary to run (default: ../target/release/spool,
  *                                         or SPOOL_BIN)
  *   bun run check:samples --port <n>      the port `spool dev` listens on, when 7765 is taken
- *   bun run check:samples --keep          leave the session's directory behind, to look at
+ *   bun run check:samples --page <name>   only the pages whose path has <name> in it
+ *   bun run check:samples --trace         say which block is being run
+ *   bun run check:samples --keep          leave the last session's directory behind, to look at
  *   bun run check:samples --stop-at <page>:<line>
  *                                         stop before the block that opens on that line, which
  *                                         with --keep leaves the project as a reader has it there
  *
- * The pages are read in sidebar order and run as one session in one empty
- * directory, as a reader who follows them would. In a page:
+ * The pages are read in sidebar order. A page that starts a session is run in
+ * an empty directory, as a reader who lands on it would run it. In a page:
  *
- *   ```yaml title="sources/crm.yaml"      a file: written, relative to the directory the
+ *   ```csv title="rows.csv"               a file: written, relative to the directory the
  *                                         session is in
- *   ```sh                                 commands: run, and must succeed
- *   ```text title="Output"                what the commands before it printed: compared
+ *   ```sh                                 commands: run, and must succeed. A variable one
+ *                                         block sets is there in the blocks after it
+ *   ```text title="Output"                what the block before it printed: compared
+ *   ```json title="MCP tool call"         a tool's name and arguments: sent to the server's
+ *                                         /mcp, and must succeed. `$NAME` stands for a
+ *                                         variable an `sh` block set
  *
  * An MDX comment on the line before a block, written `sample: <what>` between
- * the comment marks, changes what is done with it:
+ * the comment marks, changes what is done with it. Several are divided by `;`.
  *
+ *   sample: new session                   start from an empty directory, with no server
+ *                                         running and no IDs remembered
  *   sample: skip <why>                    not run or written, and the reason is reported
  *   sample: background                    started and left running (`spool dev`); its output
  *                                         block is compared with what it printed first
+ *   sample: stop servers                  what `background` started is stopped first
  *   sample: existing                      a file a command made: compared, not written
+ *   sample: without record column         on an output block: the page shows a listing of
+ *                                         records without its first column, of record IDs
+ *   sample: fails                         the commands are to end with an error, which the
+ *                                         output block shows
+ *   sample: after                         run when the session ends, not here: another way
+ *                                         to do the step before it, which a reader does once
+ *   sample: not built <name>              uses something `not-built.ts` lists under that
+ *                                         name. It is run; if it fails it is reported as not
+ *                                         built yet, and its output block is not compared
  *
- * In commands, `<identity of crm:c-1>` stands for the identity of that record
- * and `<open draft>` for the one draft that is open. Both are minted, so they
- * differ on every machine. The page tells the reader to look them up; this
- * script does the same.
+ * What is not built yet is reported in one list, apart from mismatches, and
+ * does not fail the check unless `--release` is given. `not-built/shim.ts`
+ * stands in for the commands on that list, so the pages that use them are
+ * still run and compared.
  *
  * Output is compared line by line. Times are compared by shape. IDs and
- * hashes must agree with themselves, within a block and from page to page:
+ * hashes must agree with themselves, within a block and through a session:
  * where the pages show one ID twice, the run must print one ID twice, and
  * where they show two, it must print two. A line that is only `...` stands
  * for any lines. `compare-output.ts` does the comparing.
  */
 import { type Subprocess, spawn, spawnSync } from "bun";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync,
+} from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { asShown, noIds, sameOutput, tidy } from "./compare-output";
+import { type Ids, asShown, noIds, sameOutput, tidy } from "./compare-output";
+import { notBuilt } from "./not-built";
+import { shownIds } from "./shown-ids";
+import {
+  type Block, blocksOf, directivesOf, shellVariables, withoutRecordColumn,
+} from "./sample-blocks";
 
 const DEFAULT_PORT = 7765;
 const siteDir = resolve(import.meta.dir, "..");
@@ -61,18 +87,7 @@ const spoolBin = resolve(
   option("--spool") ?? process.env["SPOOL_BIN"] ?? join(siteDir, "../target/release/spool"),
 );
 
-interface Block {
-  lang: string;
-  title?: string;
-  directive?: string;
-  body: string;
-  /** Lines of the page the body spans, for `--update`: [first, last) */
-  start: number;
-  end: number;
-  line: number;
-}
-
-/** The pages with their blocks, in the order `meta.json` gives them. */
+/** The pages, in the order `meta.json` gives them. */
 function pagesInOrder(dir: string = docsDir): string[] {
   const meta = JSON.parse(readFileSync(join(dir, "meta.json"), "utf8")) as { pages: string[] };
   return meta.pages.flatMap((entry) => {
@@ -82,46 +97,25 @@ function pagesInOrder(dir: string = docsDir): string[] {
   });
 }
 
-function blocksOf(lines: string[]): Block[] {
-  const blocks: Block[] = [];
-  for (let index = 0; index < lines.length; index++) {
-    const open = /^```(\w+)(.*)$/.exec(lines[index] ?? "");
-    if (!open) continue;
-    const start = index + 1;
-    let end = start;
-    while (end < lines.length && !/^```\s*$/.test(lines[end] ?? "")) end++;
-
-    let above = index - 1;
-    while (above >= 0 && (lines[above] ?? "").trim() === "") above--;
-    const directive = /^\{\/\*\s*sample:\s*(.*?)\s*\*\/\}$/.exec(lines[above] ?? "")?.[1];
-    const title = /title="([^"]*)"/.exec(open[2] ?? "")?.[1];
-
-    blocks.push({
-      lang: open[1] ?? "",
-      body: lines.slice(start, end).join("\n"),
-      start,
-      end,
-      line: index + 1,
-      ...(title !== undefined && { title }),
-      ...(directive !== undefined && { directive }),
-    });
-    index = end;
-  }
-  return blocks;
-}
-
 const failures: string[] = [];
 const skipped: string[] = [];
+/** Where each thing that is not built yet is used, and where a mark is no longer needed. */
+const notYet = new Map<string, string[]>();
+const builtNow = new Map<string, string[]>();
 let ran = 0;
 let compared = 0;
 let written = 0;
+let sessions = 0;
 
 function fail(where: string, message: string) {
   failures.push(`${where}\n${message.replace(/^/gm, "    ")}`);
 }
 
-// What the pages show for each ID and hash, and what this run printed for it.
-const ids = noIds();
+function note(list: Map<string, string[]>, name: string, where: string) {
+  const places = list.get(name) ?? [];
+  if (!places.includes(where)) places.push(where);
+  list.set(name, places);
+}
 
 async function freePort(port: number): Promise<boolean> {
   return new Promise((done) => {
@@ -129,6 +123,17 @@ async function freePort(port: number): Promise<boolean> {
     server.once("error", () => done(false));
     server.listen(port, "127.0.0.1", () => server.close(() => done(true)));
   });
+}
+
+interface Session {
+  work: string;
+  cwd: string;
+  ids: Ids;
+  /** Shell variables that blocks have set, as `sh` prints them. */
+  variables: Map<string, string>;
+  background: { process: Subprocess; log: () => string }[];
+  /** Blocks marked `after`. */
+  later: (() => Promise<void>)[];
 }
 
 async function main() {
@@ -146,26 +151,75 @@ async function main() {
     );
     process.exit(2);
   }
-  const address = (text: string) => text.replaceAll(`127.0.0.1:${DEFAULT_PORT}`, `127.0.0.1:${port}`);
+  // The pages use 7765 for `spool dev` and 7766 for a second server.
+  const address = (text: string) =>
+    text
+      .replaceAll(`127.0.0.1:${DEFAULT_PORT}`, `127.0.0.1:${port}`)
+      .replaceAll(`127.0.0.1:${DEFAULT_PORT + 1}`, `127.0.0.1:${port + 1}`);
   const unaddress = (text: string) =>
-    text.replaceAll(`127.0.0.1:${port}`, `127.0.0.1:${DEFAULT_PORT}`);
+    text
+      .replaceAll(`127.0.0.1:${port + 1}`, `127.0.0.1:${DEFAULT_PORT + 1}`)
+      .replaceAll(`127.0.0.1:${port}`, `127.0.0.1:${DEFAULT_PORT}`);
 
-  const work = mkdtempSync(join(tmpdir(), "spool-samples-"));
+  // The stand-in for commands that are not built goes first on the search path.
+  const tools = mkdtempSync(join(tmpdir(), "spool-samples-tools-"));
+  const standIn = join(tools, "spool");
+  const standInLog = join(tools, "not-built.log");
+  writeFileSync(
+    standIn,
+    `#!/bin/sh\nexec "${process.execPath}" "${join(siteDir, "scripts/not-built/shim.ts")}" "$@"\n`,
+  );
+  chmodSync(standIn, 0o755);
+  writeFileSync(standInLog, "");
+  const stoodIn = () => readFileSync(standInLog, "utf8").split("\n").filter(Boolean);
+
   const env = {
     ...process.env,
-    PATH: `${dirname(spoolBin)}:${process.env["PATH"] ?? ""}`,
+    PATH: `${tools}:${dirname(spoolBin)}:${process.env["PATH"] ?? ""}`,
+    SPOOL_REAL: spoolBin,
+    SPOOL_NOT_BUILT_LOG: standInLog,
     SPOOL_URL: `http://127.0.0.1:${port}`,
     // What a reader's terminal has not got.
     SPOOL_TOKEN: "",
     SPOOL_STORE: "",
   };
-  let cwd = work;
-  const background: { process: Subprocess; log: () => string }[] = [];
-  const devLog = () => background.map((entry) => entry.log()).join("");
+  const ownVariables = new Set(
+    shellVariables(spawnSync(["sh", "-c", "set"], { env }).stdout.toString()).keys(),
+  );
+
+  const startSession = (): Session => {
+    sessions++;
+    const work = mkdtempSync(join(tmpdir(), "spool-samples-"));
+    return { work, cwd: work, ids: noIds(), variables: new Map(), background: [], later: [] };
+  };
+  const stopServers = async (session: Session) => {
+    // A server that is asked to stop waits for its open connections, and this
+    // process may still hold one, so it is not waited for long.
+    for (const entry of session.background) entry.process.kill();
+    await Promise.all(
+      session.background.map(async (entry) => {
+        const gone = await Promise.race([entry.process.exited.then(() => true), Bun.sleep(2000).then(() => false)]);
+        if (!gone) {
+          entry.process.kill("SIGKILL");
+          await entry.process.exited;
+        }
+      }),
+    );
+    session.background = [];
+  };
+  const endSession = async (session: Session, keep: boolean) => {
+    for (const block of session.later) await block();
+    await stopServers(session);
+    if (keep) console.log(`kept ${session.work}`);
+    else rmSync(session.work, { recursive: true, force: true });
+  };
+
+  let session = startSession();
+  const devLog = () => session.background.map((entry) => entry.log()).join("");
 
   /** Waits for `spool dev` to say what it made of a saved file. */
   async function settle(before: number) {
-    if (background.length === 0) return;
+    if (session.background.length === 0) return;
     const deadline = Date.now() + 5000;
     while (Date.now() < deadline) {
       if (devLog().length > before) {
@@ -176,74 +230,153 @@ async function main() {
     }
   }
 
-  function identityOf(record: string, where: string): string {
-    const result = spawnSync([spoolBin, "show", "records", record, "--json"], { cwd, env });
-    try {
-      const answer = JSON.parse(result.stdout.toString()) as { record: { identity: string | null } };
-      if (answer.record.identity) return answer.record.identity;
-    } catch {
-      // Reported below.
+  /** Runs commands as one script, and keeps the directory and the variables it ends with. */
+  function runScript(script: string) {
+    const before = stoodIn().length;
+    const set = [...session.variables].map(([name, value]) => `${name}=${value}`).join("\n");
+    // From a file: a shell that is given its commands as an argument lists them
+    // among its variables, where their lines would be taken for variables.
+    const file = join(tools, "block.sh");
+    writeFileSync(file, `${set}\n${script}\nprintf '\\n__CWD__%s\\n__SET__\\n' "$PWD"\nset\n`);
+    const result = spawnSync(["sh", "-e", file], { cwd: session.cwd, env });
+    const [stdout = "", rest] = result.stdout.toString().split("\n__CWD__");
+    const [next, set2 = ""] = rest?.split("\n__SET__\n") ?? [];
+    const ok = result.exitCode === 0 && next !== undefined;
+    if (ok) {
+      session.cwd = next;
+      for (const [name, value] of shellVariables(set2)) {
+        if (!ownVariables.has(name)) session.variables.set(name, value);
+      }
     }
-    fail(where, `no identity found for \`${record}\`: ${result.stderr.toString().trim()}`);
-    return "00000000-0000-0000-0000-000000000000";
+    return {
+      ok,
+      exitCode: result.exitCode,
+      stdout,
+      stderr: result.stderr.toString(),
+      stoodIn: stoodIn().slice(before),
+    };
   }
 
-  function recordOf(record: string, where: string): string {
-    const result = spawnSync([spoolBin, "show", "records", record, "--json"], { cwd, env });
+  /** Calls a tool of the server's MCP endpoint. */
+  async function callTool(body: string): Promise<{ ok: boolean; text: string }> {
+    let call: { name?: unknown; arguments?: unknown };
     try {
-      return (JSON.parse(result.stdout.toString()) as { record: { id: string } }).record.id;
-    } catch {
-      fail(where, `no record found for \`${record}\`: ${result.stderr.toString().trim()}`);
-      return "unknown";
+      const filled = body.replace(/\$([A-Z][A-Z0-9_]*)/g, (whole, name) => {
+        const value = session.variables.get(String(name));
+        return value === undefined ? whole : value.replace(/^'(.*)'$/, "$1");
+      });
+      call = JSON.parse(filled) as typeof call;
+    } catch (error) {
+      return { ok: false, text: `the block is not JSON: ${String(error)}` };
+    }
+    if (typeof call.name !== "string") return { ok: false, text: "the block names no tool" };
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          connection: "close",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: call.name, arguments: call.arguments ?? {} },
+        }),
+      });
+      const answer = (await response.json()) as {
+        error?: { message?: string };
+        result?: { isError?: boolean; content?: { text?: string }[] };
+      };
+      if (answer.error) return { ok: false, text: answer.error.message ?? "the call failed" };
+      const text = (answer.result?.content ?? []).map((part) => part.text ?? "").join("\n");
+      return { ok: answer.result?.isError !== true, text };
+    } catch (error) {
+      return { ok: false, text: `no answer from /mcp: ${String(error)}` };
     }
   }
 
-  function openDraft(where: string): string {
-    const result = spawnSync([spoolBin, "show", "drafts", "--status", "open", "--json"], { cwd, env });
-    let ids: string[] = [];
+  /** With --update: gives the identities of the sample companies the IDs the pages show for them. */
+  async function nameIdentities() {
+    if (!update || session.background.length === 0) return;
     try {
-      const answer = JSON.parse(result.stdout.toString()) as { drafts: { id: string }[] };
-      ids = answer.drafts.map((draft) => draft.id);
+      const answer = (await (await fetch(`http://127.0.0.1:${port}/v1/records?limit=1000`, { headers: { connection: "close" } })).json()) as {
+        records?: { source: string; key: string; identity: string | null }[];
+      };
+      for (const record of answer.records ?? []) {
+        const shown = shownIds[`${record.source}:${record.key}`];
+        if (!shown || !record.identity) continue;
+        if (session.ids.shown.has(shown) || session.ids.printed.has(record.identity)) continue;
+        session.ids.shown.set(shown, record.identity);
+        session.ids.printed.set(record.identity, shown);
+      }
     } catch {
-      // Reported below.
+      // No server answers: the IDs are shown as printed.
     }
-    if (ids.length !== 1) fail(where, `expected one open draft, found ${ids.length}`);
-    return ids[0] ?? "00000000-0000-0000-0000-000000000000";
   }
 
+  let kept = false;
   try {
     const stopAt = option("--stop-at");
     let stopped = false;
+    const only = option("--page");
     for (const file of pagesInOrder()) {
       if (stopped) break;
       const name = file.slice(docsDir.length + 1);
+      if (only !== undefined && !name.includes(only)) continue;
       const lines = readFileSync(file, "utf8").split("\n");
       const blocks = blocksOf(lines);
       const edits: { block: Block; text: string }[] = [];
-      let last: { output: string; background: boolean } | undefined;
+      /** What the block before printed, or the name of what it needs that is not built. */
+      let last: { output: string; background: boolean } | { missing: string } | undefined;
 
       for (const block of blocks) {
         const where = `${name}:${block.line}`;
-        const directive = block.directive ?? "";
+        const directives = directivesOf(block);
+        if (flag("--trace")) console.error(`${where}  ${block.lang} ${block.title ?? ""} ${block.directive ?? ""}`);
         if (where === stopAt) {
           stopped = true;
           break;
         }
 
-        if (directive.startsWith("skip")) {
-          skipped.push(`${where}  ${directive.replace(/^skip:?\s*/, "") || "no reason given"}`);
+        if (directives.has("new session")) {
+          await endSession(session, false);
+          session = startSession();
+          last = undefined;
+        }
+        if (directives.has("stop servers")) await stopServers(session);
+
+        const skip = directives.get("skip");
+        if (skip !== undefined) {
+          skipped.push(`${where}  ${skip || "no reason given"}`);
           last = undefined;
           continue;
         }
 
+        const missing = directives.get("not built");
+        if (missing !== undefined && !notBuilt[missing]) {
+          fail(where, `\`not built ${missing}\` names nothing in scripts/not-built.ts`);
+        }
+        if (missing !== undefined && notBuilt[missing]?.run === false) {
+          note(notYet, missing, where);
+          last = { missing };
+          continue;
+        }
+
         if (block.lang === "sh") {
-          let script = address(block.body)
-            .replace(/<identity of ([^>\s]+)>/g, (_match, record) => identityOf(String(record), where))
-            .replace(/<record of ([^>\s]+)>/g, (_match, record) => recordOf(String(record), where))
-            .replace(/<open draft>/g, () => openDraft(where));
-          if (directive === "background") {
-            if (port !== DEFAULT_PORT) script += ` --listen 127.0.0.1:${port}`;
-            const child = spawn(["sh", "-c", `exec ${script} 2>&1`], { cwd, env, stdout: "pipe" });
+          const script = address(block.body);
+          if (directives.has("background")) {
+            const listens = script.includes("--listen");
+            const command = listens || port === DEFAULT_PORT ? script : `${script} --listen 127.0.0.1:${port}`;
+            const set = [...session.variables].map(([key, value]) => `${key}=${value}`).join("\n");
+            // Without the stand-in, which would run the server as a child of its
+            // own that stopping it here would leave behind.
+            const child = spawn(["sh", "-c", `${set}\nexec ${command} 2>&1`], {
+              cwd: session.cwd,
+              env: { ...env, PATH: `${dirname(spoolBin)}:${process.env["PATH"] ?? ""}` },
+              stdout: "pipe",
+            });
             let log = "";
             void (async () => {
               const decoder = new TextDecoder();
@@ -254,7 +387,7 @@ async function main() {
                 log += decoder.decode(value, { stream: true });
               }
             })();
-            background.push({ process: child, log: () => log });
+            session.background.push({ process: child, log: () => log });
             const deadline = Date.now() + 20000;
             while (!log.includes("listening on") && Date.now() < deadline) {
               if (child.exitCode !== null) break;
@@ -267,39 +400,76 @@ async function main() {
             continue;
           }
 
-          const status = devLog().trimEnd().split("\n").pop() ?? "";
-          if (status.includes("still running the last version")) {
-            fail(where, `the project did not compile before this command:\n${devLog().slice(-600)}`);
-          }
-          const result = spawnSync(
-            ["sh", "-e", "-c", `${script}\nprintf '\\n__CWD__%s' "$PWD"`],
-            { cwd, env },
-          );
-          const [stdout = "", next] = result.stdout.toString().split("\n__CWD__");
-          const stderr = result.stderr.toString();
-          ran++;
-          if (result.exitCode !== 0 || next === undefined) {
-            fail(where, `exit ${result.exitCode}\n${block.body}\n${stdout}${stderr}`);
+          const run = () => {
+            const status = devLog().trimEnd().split("\n").pop() ?? "";
+            if (status.includes("still running the last version") && !directives.has("fails")) {
+              fail(where, `the project did not compile before this command:\n${devLog().slice(-600)}`);
+            }
+            const result = runScript(script);
+            ran++;
+            for (const stood of result.stoodIn) note(notYet, stood, where);
+            const answer = result.stdout + result.stderr;
+            const worked = result.ok && !answer.trimStart().startsWith('{"error"');
+            if (missing !== undefined) {
+              note(worked ? builtNow : notYet, missing, where);
+              return worked ? { output: unaddress(answer), background: false } : { missing };
+            }
+            if (directives.has("fails")) {
+              if (result.exitCode === 0) fail(where, `was to fail, and did not:\n${block.body}\n${answer}`);
+            } else if (!result.ok) {
+              fail(where, `exit ${result.exitCode}\n${block.body}\n${answer}`);
+            }
+            return { output: unaddress(answer), background: false };
+          };
+          if (directives.has("after")) {
+            session.later.push(async () => void run());
+            last = undefined;
           } else {
-            cwd = next;
+            last = run();
           }
-          last = { output: unaddress(stdout + stderr), background: false };
+          continue;
+        }
+
+        if (block.lang === "json" && block.title === "MCP tool call") {
+          const run = async () => {
+            const result = await callTool(block.body);
+            ran++;
+            if (missing !== undefined) {
+              note(result.ok ? builtNow : notYet, missing, where);
+              return result.ok ? { output: result.text, background: false } : { missing };
+            }
+            if (!result.ok) fail(where, `the tool call failed:\n${block.body}\n${result.text}`);
+            return { output: result.text, background: false };
+          };
+          if (directives.has("after")) {
+            session.later.push(async () => void (await run()));
+            last = undefined;
+          } else {
+            last = await run();
+          }
           continue;
         }
 
         if (block.lang === "text" && block.title === "Output") {
           if (!last) {
-            fail(where, "an output block with no command before it");
+            fail(where, "an output block with nothing run before it");
             continue;
           }
-          const actual = tidy(last.output);
+          if ("missing" in last) {
+            note(notYet, last.missing, where);
+            last = undefined;
+            continue;
+          }
+          await nameIdentities();
+          const printed = tidy(last.output);
+          const actual = directives.has("without record column") ? withoutRecordColumn(printed) : printed;
           const expected = tidy(block.body);
           compared++;
           if (update) {
-            if (expected.length === 0 || !sameOutput(expected, actual, ids, last.background)) {
-              edits.push({ block, text: actual.map((line) => asShown(line, ids)).join("\n") });
+            if (expected.length === 0 || !sameOutput(expected, actual, session.ids, last.background)) {
+              edits.push({ block, text: actual.map((line) => asShown(line, session.ids)).join("\n") });
             }
-          } else if (!sameOutput(expected, actual, ids, last.background)) {
+          } else if (!sameOutput(expected, actual, session.ids, last.background)) {
             fail(where, `the page shows:\n${expected.join("\n")}\n\nand this was printed:\n${actual.join("\n")}`);
           }
           last = undefined;
@@ -307,8 +477,8 @@ async function main() {
         }
 
         if (block.title && block.title !== "Output") {
-          const target = join(cwd, block.title);
-          if (directive === "existing") {
+          const target = join(session.cwd, block.title);
+          if (directives.has("existing")) {
             const found = existsSync(target) ? readFileSync(target, "utf8") : undefined;
             compared++;
             if (found === undefined) {
@@ -337,19 +507,40 @@ async function main() {
       }
     }
   } finally {
-    for (const entry of background) entry.process.kill();
-    await Promise.all(background.map((entry) => entry.process.exited));
-    if (flag("--keep")) console.log(`kept ${work}`);
-    else rmSync(work, { recursive: true, force: true });
+    kept = flag("--keep");
+    await endSession(session, kept);
+    rmSync(tools, { recursive: true, force: true });
   }
 
   console.log(
-    `${ran} command blocks run, ${written} files written, ${compared} outputs and files compared, ${skipped.length} blocks skipped`,
+    `${ran} blocks run in ${sessions} sessions, ${written} files written, ${compared} outputs and files compared, ${skipped.length} blocks skipped`,
   );
   for (const entry of skipped) console.log(`  skipped ${entry}`);
+
+  const list = (title: string, entries: Map<string, string[]>) => {
+    if (entries.size === 0) return;
+    const uses = [...entries.values()].reduce((sum, places) => sum + places.length, 0);
+    console.log(`\n${title}: ${entries.size} thing${entries.size === 1 ? "" : "s"}, used in ${uses} blocks\n`);
+    for (const name of Object.keys(notBuilt)) {
+      const places = entries.get(name);
+      if (!places) continue;
+      console.log(`  ${name}: ${notBuilt[name]?.what ?? ""}`);
+      for (const place of places) console.log(`      ${place}`);
+    }
+    for (const [name, places] of entries) {
+      if (!notBuilt[name]) console.log(`  ${name}: not in scripts/not-built.ts\n      ${places.join("\n      ")}`);
+    }
+  };
+  list("Not built yet", notYet);
+  list("Built now, so the `not built` mark on these blocks can go", builtNow);
+
   if (failures.length > 0) {
     console.error(`\n${failures.length} failed:\n`);
     for (const failure of failures) console.error(`${failure}\n`);
+    process.exit(1);
+  }
+  if (flag("--release") && notYet.size > 0) {
+    console.error("\n--release: the pages use what is not built yet.");
     process.exit(1);
   }
 }

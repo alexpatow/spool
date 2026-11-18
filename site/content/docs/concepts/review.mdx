@@ -1,21 +1,77 @@
 ---
 title: Review
-description: What a run will not decide is kept as a review item for a person or an agent, and a run can leave its whole changeset as a draft to approve.
+description: What a match will not decide is kept as a review item for a person or an agent, and a match can leave its whole changeset as a draft to approve.
 ---
 
-A run decides the cases its rules settle and leaves the rest. What it leaves is recorded, so the question outlives the run and someone can answer it later. There are two things to review: **review items**, which are records a run would not place, and **drafts**, which are changesets a run was told not to commit.
+A match decides the cases its rules settle and leaves the rest. What it leaves is recorded, so the question outlives the run and someone can answer it later. There are two things to review: **review items**, which are questions about records, and **drafts**, which are changesets a run was told not to commit.
 
-This page shows a review item being raised, decided and dismissed, and a draft being approved. Review is where [matching](/docs/concepts/matching) hands over to people: the changes a reviewer makes are the changesets described in [Identities](/docs/concepts/identities).
+This page raises one review item of each kind, answers each, and approves a draft.
 
-The examples continue the project from [Identities](/docs/concepts/identities), with `spool dev` running.
+## Before you start
+
+The examples use the sample project with both of its files of rows loaded and matched, which is where [Getting started](/docs/getting-started) ends. If you have that project and its server is running, use it. If not, this makes it:
+
+{/* sample: new session */}
+
+```sh
+spool init companies
+cd companies
+```
+
+{/* sample: background */}
+
+```sh
+spool dev
+```
+
+Leave that running. In a second terminal, in the `companies` directory:
+
+```sh
+spool load samples/crm-1.csv
+spool match
+spool load samples/crm-2.csv
+spool match
+```
+
+## The three kinds of item
+
+| Kind | The question | Raised when |
+| --- | --- | --- |
+| `possible_merge` | Which identity does this record belong to? | A new record matches members of two or more identities. |
+| `conflict` | Does this record belong here or not? | A new record matches one member of an identity and a no_match rule holds against another. |
+| `possible_split` | Are these records still one thing? | A row is taken back, and nothing is left that joins the identity's other records. |
+
+A record in an open `possible_merge` or `conflict` has no identity. An identity in an open `possible_split` stays as it is. Nothing is merged or split without someone deciding.
 
 ## A record that fits two identities
 
-Load a row that has the name of one company and the website of another, and run:
+The sample has a Halden Group in GB and one in the US, kept apart by the country rule. Load a Halden Group with no country:
+
+```csv title="halden.csv"
+id,name
+c-13,Halden Group
+```
 
 ```sh
-curl -s -X POST http://127.0.0.1:7765/v1/ingest -H 'content-type: application/json' -d '{"source": "crm", "entity_type": "company", "rows": [{"id": "c-10", "name": "Acorn Tools", "website": "http://acornhardware.example/shop", "country": "GB"}]}'
-curl -s -X POST http://127.0.0.1:7765/v1/runs -H 'content-type: application/json' -d '{"entity_type": "company"}'
+spool load halden.csv --source crm
+spool match
+```
+
+```text title="Output"
+source  crm
+type    company
+read    1 row from halden.csv
+loaded  1 new, 0 already held, 0 new versions
+next    `spool match` places them in identities
+run         8
+type        company
+examined    1 record
+candidates  2 pairs
+judgements  2 match, 0 no_match
+placed      0 records, 0 identities created
+left out    1 record in 1 review item
+
+review: 1 record matched 2 identities, which may be one
 ```
 
 ```sh
@@ -23,12 +79,13 @@ spool show review
 ```
 
 ```text title="Output"
-item  kind            status  type     holds     matched       raised by
-1     possible_merge  open    company  1 record  3 identities  run 20
+item  kind            status  type     raised by  about
+1     possible_merge  open    company  run 9      1 record without an identity, which matched 2 identities
 ```
 
 ```sh
-spool show review 1
+ITEM=$(spool show review --status open | awk 'NR==2 {print $1}')
+spool show review $ITEM
 ```
 
 ```text title="Output"
@@ -36,63 +93,67 @@ review item  1
 kind         possible_merge
 status       open
 type         company
-raised by    reconcile run 20
+raised by    reconcile run 9
 
-record                                source and key
-4a14a801-4891-2ec5-6511-a2fd929db844  crm:c-10
+record                                source and key  now
+621ab95e-5f9e-6b91-e660-455831fe854a  crm:c-13        waits for an identity
 
 identities they matched
-  01a1ef24-76bc-73d9-9c8c-469e735d8cdd
-  01a1ef2b-e1a7-773e-94e4-8ecd3f127e17
-  01a1ef2b-e1a7-773e-94e4-8ecf45f9bd51
+  01a1ef8e-5a8d-76d4-acb6-2bb65a02262a
+  01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae
 ```
 
-The record matched Acorn Tools and ACORN TOOLS LIMITED by name and Acorn Hardware by domain. Joining any of them would be a guess, and joining all would merge identities, which a run never does. So the record has no identity, and a `possible_merge` item says why.
+The record matched both Halden Groups by name, and with no country the rule that keeps them apart had nothing to compare. Joining either would be a guess, and joining both would merge two identities, which a match never does. So the record has no identity, and a `possible_merge` item says why.
 
-The studio, the server's browser interface at [http://127.0.0.1:7765/](http://127.0.0.1:7765/), shows the same item on its Review screen. The record is in the first column and each identity it matched has a column of its own, with the values they share and the rule that matched them:
+The studio, at [http://127.0.0.1:7765/](http://127.0.0.1:7765/), shows the same item on its Review screen, with the record beside each identity it matched and a button to assign it to each:
 
-![The studio's Review screen with item 1: the record crm:c-10 beside the three identities it matched, Acorn Tools, ACORN TOOLS LIMITED and Acorn Hardware, and a button to assign it to each](/images/studio-review-item.png)
-
-The other kind of item is a `conflict`: the record matches an identity and a no-match rule holds between it and a member of that identity. The evidence contradicts itself.
+![The studio's Review screen with one open item: the record crm:c-13, Halden Group, beside the two identities it matched, each with a button to assign the record to it](/images/studio-review-item.png)
 
 ## Decide it
 
-A reviewer who knows that `c-10` is Acorn Hardware places it there with a changeset of one `assign`:
+A reviewer who knows that `c-13` is the British company places it there with a changeset of one `assign`:
 
 ```sh
-curl -s -X POST http://127.0.0.1:7765/v1/changesets -H 'content-type: application/json' -d '{"reason": "the shop belongs to Acorn Hardware", "ops": [{"op": "assign", "record": "4a14a801-4891-2ec5-6511-a2fd929db844", "to": "<identity of crm:c-6>"}]}'
+RECORD=$(spool show records crm:c-13 | awk '/^record/ {print $2}')
+HALDEN=$(spool show records crm:c-5 | awk '/^identity/ {print $2}')
+curl -s -X POST http://127.0.0.1:7765/v1/changesets -d '{"reason": "its invoices go to Leeds", "ops": [{"op": "assign", "record": "'$RECORD'", "from": null, "to": "'$HALDEN'"}]}'
 ```
 
-Replace `<identity of crm:c-6>` with the ID `spool show records crm:c-6` prints as `identity`. The record is `crm:c-10`, named by its ID, which `spool show review 1` printed.
+```text title="Output"
+{"seq":3,"changeset":"01a1efa6-bc56-7738-bc00-72ea8b2d7741","content_hash":"7140b079c5bdf48f0270b175dbef85d2fb8edc6d40d3483f05d6b504a5e89aa0"}
+```
 
 ```sh
 spool show review
 ```
 
 ```text title="Output"
-item  kind            status    type     holds     matched       raised by
-1     possible_merge  resolved  company  1 record  3 identities  run 20
+item  kind            status    type     raised by  about
+1     possible_merge  resolved  company  run 9      1 record without an identity, which matched 2 identities
 ```
 
-The item closed by itself. An item is open while any of its records has no identity, and any changeset that places the last one resolves it.
+The item closed by itself. A `possible_merge` or a `conflict` is open while any of its records has no identity, and any changeset that places the last one resolves it.
 
 An item closes in one of three ways:
 
-- **Resolved.** A changeset gave its records an identity. A reviewer may have written it, or a later run.
-- **Superseded.** A later run looked at the records again and raised an item that differs.
-- **Dismissed.** A reviewer closed it without placing the records.
+- **Resolved.** A changeset answered it. A reviewer may have written it, or a later match.
+- **Superseded.** A later run looked again and raised an item that differs, or found that the question no longer stands.
+- **Dismissed.** A reviewer closed it and left things as they are.
 
-Open items are looked at again by every later run of their entity type. If the reviewer had merged the identities, or fixed a rule so that the record matched only one of them, the next run would have placed the record and resolved the item.
+Open items are looked at again by every later match of their entity type. If the reviewer had fixed a rule so that the record matched only one identity, the next match would have placed the record and resolved the item.
 
-In the studio the same decision is the button `Assign to Acorn Hardware` on the item.
+## A conflict
 
-## Dismiss one
+The British Halden Group now has a record with no country. Load a Halden Group in France:
 
-Some records should stay out. Load a registry row for a US company with the name of a British one:
+```csv title="halden-fr.csv"
+id,name,country
+c-14,Halden Group,FR
+```
 
 ```sh
-curl -s -X POST http://127.0.0.1:7765/v1/ingest -H 'content-type: application/json' -d '{"source": "registry", "entity_type": "company", "rows": [{"number": "X003", "legal_name": "Larkfield Logistics", "country": "US"}]}'
-curl -s -X POST http://127.0.0.1:7765/v1/runs -H 'content-type: application/json' -d '{"entity_type": "company"}'
+spool load halden-fr.csv --source crm
+spool match
 ```
 
 ```sh
@@ -100,53 +161,198 @@ spool show review --status open
 ```
 
 ```text title="Output"
-item  kind      status  type     holds     matched     raised by
-2     conflict  open    company  1 record  1 identity  run 23
+item  kind      status  type     raised by  about
+2     conflict  open    company  run 12     1 record without an identity, which matched 1 identity
 ```
 
-This is a `conflict`, and `spool explain` shows where it comes from:
+`spool explain` shows where it comes from:
 
 ```sh
-spool explain registry:X003 crm:c-3
+spool explain crm:c-14 crm:c-13
 ```
 
 ```text title="Output"
-`crm:c-3` belongs to identity 01a1ef24-76bc-73d9-9c8c-469f8e792cfb. `registry:X003` has no identity.
-Run 22 (strategy `rules`) judged them `no_match` (no_match rule `different_country` held).
-`crm:c-3` was placed at log position 3 by `engine` (reconcile run 10, "reconcile new records").
-Review item 2 (`conflict`) is open and names `registry:X003`: the evidence about it contradicts itself, which is left to a reviewer.
-By the rules as they are now, block rule `same_name` makes them a candidate pair and no_match rule `different_country` holds, so they would be judged `no_match`.
+`crm:c-14` has no identity. `crm:c-13` belongs to identity 01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae.
+Run 11 (strategy `rules`) judged them `match` (match rule `similar_name` held).
+`crm:c-13` was placed at log position 3 by `user:01a1efa6-ba4b-74e1-84f7-b2643cc97a7f` ("its invoices go to Leeds").
+Review item 2 (`conflict`) is open and names `crm:c-14`: the evidence about it contradicts itself, which is left to a reviewer.
+By the rules as they are now, block rule `name_prefix` makes them a candidate pair and match rule `similar_name` holds, so they would be judged `match`.
 
-left   c4ec1a11-9238-127c-4de7-aeb1cebb2439  crm:c-3        identity 01a1ef24-76bc-73d9-9c8c-469f8e792cfb
-right  dca899da-46ff-a1fa-2a52-756bcfae80e9  registry:X003  no identity
+left   4adcad34-e94d-d0d7-bd50-5ed0599dab66  crm:c-14  no identity
+right  621ab95e-5f9e-6b91-e660-455831fe854a  crm:c-13  identity 01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae
 
 features
-            left                 right
-  country   GB                   US
-  domain    larkfield.example    -
-  name      Larkfield Logistics  Larkfield Logistics
-  name_key  larkfield logistics  larkfield logistics
+            left          right
+  country   FR            -
+  name      Halden Group  Halden Group
+  name_key  halden group  halden group
 
 rules as they are now
-  block     same_domain        cannot be decided: a feature it reads is null
-  block     same_name          holds
-  no_match  different_country  holds
-  match     same_domain        cannot be decided: a feature it reads is null
-  match     same_name          holds
+  block     name_prefix        holds
+  no_match  different_country  cannot be decided: a feature it reads is null
+  match     similar_name       holds
 
 runs that compared them
-  run 22  rules  succeeded  block: same_name  no_match
+  run 11  rules  succeeded  block: name_prefix  match
+
+review items that name them
+  item 1 (possible_merge, resolved)
+  item 2 (conflict, open)
+```
+
+```sh
+spool explain crm:c-14 crm:c-5
+```
+
+```text title="Output"
+`crm:c-5` belongs to identity 01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae. `crm:c-14` has no identity.
+Run 11 (strategy `rules`) judged them `no_match` (no_match rule `different_country` held).
+`crm:c-5` was placed at log position 1 by `engine` (reconcile run 3, "reconcile new records").
+Review item 2 (`conflict`) is open and names `crm:c-14`: the evidence about it contradicts itself, which is left to a reviewer.
+By the rules as they are now, block rule `name_prefix` makes them a candidate pair and no_match rule `different_country` holds, so they would be judged `no_match`.
+
+left   38f040c9-82b9-2f94-813b-697309e52dab  crm:c-5   identity 01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae
+right  4adcad34-e94d-d0d7-bd50-5ed0599dab66  crm:c-14  no identity
+
+features
+            left          right
+  country   GB            FR
+  name      Halden Group  Halden Group
+  name_key  halden group  halden group
+
+rules as they are now
+  block     name_prefix        holds
+  no_match  different_country  holds
+  match     similar_name       holds
+
+runs that compared them
+  run 11  rules  succeeded  block: name_prefix  no_match
 
 review items that name them
   item 2 (conflict, open)
 ```
 
-`crm:c-3` names the latest version of that row, which is in GB, so the no-match rule holds. The identity also holds the first version of `crm:c-3`, loaded before the source had a country. That version matches `registry:X003` by name, and no rule speaks against it. One member says yes and another says no, so the run left it.
+One member of the identity says yes and another says no, so the match left it. This is what a record with a missing value costs: it matches what a complete record would not. An earlier version of a row that was later corrected does the same, because earlier versions stay members.
 
-This is the cost of keeping earlier versions that [Records and sources](/docs/concepts/records-and-sources#a-changed-row-is-a-new-version) mentioned. A reviewer who decides the US company is not one to track dismisses the item:
+A reviewer who decides that the French company is not one to track dismisses the item:
 
 ```sh
-curl -s -X POST http://127.0.0.1:7765/v1/review/2/dismiss -H 'content-type: application/json' -d '{"reason": "a US company we do not track"}'
+ITEM=$(spool show review --status open | awk 'NR==2 {print $1}')
+curl -s -X POST http://127.0.0.1:7765/v1/review/$ITEM/dismiss -d '{"reason": "a French company we do not track"}'
+```
+
+```text title="Output"
+{"id":2,"run":12,"entity_type":"company","kind":"conflict","records":["4adcad34-e94d-d0d7-bd50-5ed0599dab66"],"identities":["01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae"],"groups":[],"status":"dismissed","resolved_seq":null,"superseded_by":null,"dismissed":{"by":"user:01a1efa6-ba4b-74e1-84f7-b2643cc97a7f","at":"2026-11-18T17:14:04.598877Z","reason":"a French company we do not track"}}
+```
+
+The record stays without an identity, and later matches stop asking about it. A changeset can still place it.
+
+## A possible split
+
+Records can be in one identity only because a third record joined them. Load a name that is close to "Acorn Tools Ltd" and not close enough to "Acorn Tools":
+
+```csv title="acorn.csv"
+id,name,country
+c-15,Acorn Tools Limited,GB
+```
+
+```sh
+spool load acorn.csv --source crm
+spool match
+```
+
+```sh
+spool explain crm:c-15 crm:c-1
+```
+
+```text title="Output"
+`crm:c-15` and `crm:c-1` belong to the same identity, 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada.
+Run 14 (strategy `rules`) made them a candidate pair (block rule `name_prefix`) and gave no judgement.
+Nothing links the two directly. They are joined through 1 other member: `crm:c-15` → 31075f20-6900-838b-f5af-f8c6576744a4 (`match` in run 14) → `crm:c-1` (`match` in run 2).
+`crm:c-15` was placed at log position 4 by `engine` (reconcile run 15, "reconcile new records").
+`crm:c-1` was placed at log position 1 by `engine` (reconcile run 3, "reconcile new records").
+By the rules as they are now, block rule `name_prefix` makes them a candidate pair and no `no_match` or `match` rule holds, so they would get no judgement.
+
+left   8342b5e7-9fe2-8b68-d800-f7478cab83e5  crm:c-15  identity 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+right  ab8e9d59-0aaa-96b9-ddb7-db0bff7a9356  crm:c-1   identity 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+
+features
+            left                 right
+  country   GB                   GB
+  name      Acorn Tools Limited  Acorn Tools
+  name_key  acorn tools limited  acorn tools
+
+rules as they are now
+  block     name_prefix        holds
+  no_match  different_country  does not hold
+  match     similar_name       does not hold
+
+runs that compared them
+  run 14  rules  succeeded  block: name_prefix  no judgement
+
+what joins them
+  8342b5e7-9fe2-8b68-d800-f7478cab83e5 and 31075f20-6900-838b-f5af-f8c6576744a4: match in run 14
+  31075f20-6900-838b-f5af-f8c6576744a4 and ab8e9d59-0aaa-96b9-ddb7-db0bff7a9356: match in run 2
+```
+
+It joined Acorn Tools through `crm:c-3`, Acorn Tools Ltd. Now the CRM deletes `c-3`, and the row is taken back:
+
+```sh
+spool retract --source crm --type company c-3 --reason "deleted in the CRM"
+```
+
+```text title="Output"
+run 16: 1 key named, 1 record taken back
+1 record left an identity, by the changeset at log position 5
+1 identity was left for review: what held its records together went through a record that was taken back. See `spool show review --status open`.
+```
+
+```sh
+ITEM=$(spool show review --status open | awk 'NR==2 {print $1}')
+spool show review $ITEM
+```
+
+```text title="Output"
+review item  3
+kind         possible_split
+status       open
+type         company
+raised by    run 16
+identity     01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+
+Are these records still one thing?
+They share an identity, and a record that held them together was taken back by its source.
+Each group below still holds together. Nothing the store knows joins one group to another:
+no match found by a run, no `must_link`, and no decision by a reviewer or an agent.
+
+group 1
+  34c3d52d-e53b-1559-7404-1892fb1fd4e3  crm:c-9  still in the identity
+  a780fcfe-cb2f-21dd-25ea-11db898fd6a2  crm:c-2  still in the identity
+  ab8e9d59-0aaa-96b9-ddb7-db0bff7a9356  crm:c-1  still in the identity
+
+group 2
+  8342b5e7-9fe2-8b68-d800-f7478cab83e5  crm:c-15  still in the identity
+
+taken back by their source, and no longer in the identity
+  31075f20-6900-838b-f5af-f8c6576744a4  crm:c-3  in run 16
+
+what answers it
+  they are different things  split the identity: POST /v1/identities/01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada/split with the records of a group
+  they are one thing         say so with a `must_link` between a record of each group: POST /v1/changesets
+  leave it as it is          dismiss the item: POST /v1/review/3/dismiss
+The review screen of the studio does each of these.
+```
+
+The identity is as it was, with `crm:c-15` still in it. Nothing is split automatically: most identities that lose such a record are still one thing, and the item asks. The output lists the three answers. A reviewer who knows that Acorn Tools Limited is Acorn Tools says so with a `must_link`, which joins the groups whatever the rules say:
+
+```sh
+A=$(spool show records crm:c-1 | awk '/^record/ {print $2}')
+B=$(spool show records crm:c-15 | awk '/^record/ {print $2}')
+curl -s -X POST http://127.0.0.1:7765/v1/changesets -d '{"reason": "Acorn Tools Limited is Acorn Tools", "ops": [{"op": "constrain", "kind": "must_link", "a": "'$A'", "b": "'$B'"}]}'
+```
+
+```text title="Output"
+{"seq":6,"changeset":"01a1efa6-bf2c-7217-8a79-04156fcb171d","content_hash":"172d0850e8019236df5ba6d69400b732715ab3fa770cf699c7bef8d5de74295e"}
 ```
 
 ```sh
@@ -154,53 +360,51 @@ spool show review
 ```
 
 ```text title="Output"
-item  kind            status     type     holds     matched       raised by
-1     possible_merge  resolved   company  1 record  3 identities  run 20
-2     conflict        dismissed  company  1 record  1 identity    run 23
+item  kind            status     type     raised by  about
+1     possible_merge  resolved   company  run 9      1 record without an identity, which matched 2 identities
+2     conflict        dismissed  company  run 12     1 record without an identity, which matched 1 identity
+3     possible_split  resolved   company  run 16     4 records of one identity in 2 groups that nothing holds together
 ```
-
-The record stays without an identity, and later runs stop asking about it. A changeset can still place it.
 
 ## Drafts
 
-A run commits its changeset by default. With `"commit": false` it stores the changeset as a **draft** and changes nothing. That is how a new rule, or an agent, is tried against shared identities without touching them.
+A match commits its changeset by default. Started with `"commit": false`, it stores the changeset as a **draft** and changes nothing. That is how a new rule, or an agent, is tried against shared identities without touching them. `spool match` has no option for it, so this match is started over HTTP:
 
-```sh
-curl -s -X POST http://127.0.0.1:7765/v1/ingest -H 'content-type: application/json' -d '{"source": "crm", "entity_type": "company", "rows": [{"id": "c-11", "name": "Larkfield logistics", "country": "GB"}]}'
-curl -s -X POST http://127.0.0.1:7765/v1/runs -H 'content-type: application/json' -d '{"entity_type": "company", "commit": false}'
+```csv title="larkfield.csv"
+id,name,country
+c-16,Larkfield logistics,GB
 ```
 
 ```sh
-spool show drafts
+spool load larkfield.csv --source crm
+curl -s -X POST http://127.0.0.1:7765/v1/runs -d '{"entity_type": "company", "commit": false}'
+```
+
+```sh
+DRAFT=$(spool show drafts --status open | awk 'NR==2 {print $1}')
+spool show drafts $DRAFT
 ```
 
 ```text title="Output"
-draft                                 type     status  operations  from
-01a1ef2a-9241-7524-a930-442bf7570fb8  company  open    1           match run 25
-```
-
-Replace `<open draft>` below with the ID in the first column:
-
-```sh
-spool show drafts <open draft>
-```
-
-```text title="Output"
-draft            01a1ef2a-9241-7524-a930-442bf7570fb8
+draft            01a1efa6-bfaa-72b1-8a23-d5f70bf9107d
 type             company
 status           open
-from             match run 25, reconcile run 26
-written against  log position 9
+from             match run 18, reconcile run 19
+written against  log position 6
 would place      1 record, 0 identities created
 
 operations
-  place record f4a847bf-05df-c7c8-8b65-4fb382930a50 in 01a1ef24-76bc-73d9-9c8c-469f8e792cfb
+  place record 5af84b72-c049-e1cc-0b28-2db7c0c0ef7d in 01a1ef8e-5a8d-76d4-acb6-2bb802d5ca25
 ```
 
-The draft is stored on the server, so whoever approves it need not be whoever started the run:
+The draft is stored on the server, so whoever approves it need not be whoever started the match:
 
 ```sh
-curl -s -X POST http://127.0.0.1:7765/v1/drafts/<open draft>/approve
+curl -s -X POST http://127.0.0.1:7765/v1/drafts/$DRAFT/approve
+```
+
+```text title="Output"
+{"seq":7,"changeset":"01a1efa6-bfaa-72b1-8a23-d5f70bf9107d","content_hash":"5e74fc145c44cd680847ba61e658b904edc27e41d3b1a7f5248df080dfb44b43"}
 ```
 
 ```sh
@@ -209,19 +413,26 @@ spool show drafts
 
 ```text title="Output"
 draft                                 type     status     operations  from
-01a1ef2a-9241-7524-a930-442bf7570fb8  company  committed  1           match run 25
+01a1efa6-bfaa-72b1-8a23-d5f70bf9107d  company  committed  1           match run 18
 ```
 
 Approving checks the draft like any changeset, against the identities as they are then. If they changed in a way that breaks it, the answer names the operations that no longer hold and the draft stays open. A draft can also be rejected, with `POST /v1/drafts/<draft>/reject`.
 
-An entity type has at most one open draft. A later run of the type replaces it. The records of a draft that is rejected, replaced or never decided are examined again by the next run, so nothing is stranded.
+An entity type has at most one open draft. A later match of the type replaces it. The records of a draft that is rejected, replaced or never decided are examined again by the next match, so nothing is stranded.
 
 ## Who reviews
 
-A reviewer is anyone the server knows: a person signed in to the studio, or a program with a token. Each change is recorded under its author. An assistant that speaks the Model Context Protocol can be pointed at the server's `/mcp` address, where it has tools to read review items and explain pairs, and to commit a changeset, split an identity, undo a change and dismiss an item. Every tool that writes requires a reason.
+A reviewer is anyone the server knows: a person signed in to the studio, or a program with a token. Each change is recorded under its author.
 
-## Not yet
+An agent connects at `/mcp`. For Claude Code against `spool dev`: `claude mcp add --transport http spool http://127.0.0.1:7765/mcp`. It has tools to list review items, read what is needed to decide one, explain a pair, commit a changeset, split an identity, undo a change and dismiss an item. Every tool that writes requires a reason. [MCP](/docs/mcp) lists them.
+
+## How many to expect
+
+It depends on the rules. In the repository's benchmark on 5,000,000 voter records from five sources, the rules left 13,755 records for review. In its benchmark of data that changes, taking back 50,000 of 600,000 rows raised 70 `possible_split` items.
+
+## What review does not have
 
 - Nothing notifies anyone that an item is waiting. Someone has to look.
 - Items are not assigned to people, and there is no queue or priority beyond the list.
 - The command line shows review items and drafts and cannot decide them.
+- An agent cannot approve or reject a draft. There is no MCP tool for it.

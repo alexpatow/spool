@@ -5,9 +5,16 @@
     "index",
     "getting-started",
     "limits",
+    "compared",
     "---Concepts---",
     "...concepts",
+    "---Use---",
+    "using-the-ids",
+    "mcp",
+    "deploying",
     "---Reference---",
+    "cli",
+    "api",
     "project-structure"
   ]
 }

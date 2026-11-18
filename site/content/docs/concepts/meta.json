@@ -2,6 +2,7 @@
   "title": "Concepts",
   "pages": [
     "records-and-sources",
+    "extraction",
     "entity-types-and-features",
     "matching",
     "identities",

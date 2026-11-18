@@ -1,0 +1,342 @@
+---
+title: Extraction
+description: Records out of text. A document is stored, an extractor finds where it names a thing, and each place becomes a record. With a pattern, and with your own code in Python or TypeScript.
+---
+
+Rows are one way records get into Spool. The other is text.
+
+- A **document** is a text, stored as it arrived: a call note, an article, an email.
+- An **extractor** reads documents and reports each place where one names a thing of an entity type. A place is a **mention**: the document, where it starts and ends, and the attributes the extractor read off it, such as a name.
+- Each mention becomes a **record**. From there it is matched, placed in an identity, explained and corrected like a record that came from a row.
+
+There are three kinds of extractor. A pattern is a regular expression in a YAML file, which Spool runs itself. A Python file and a TypeScript file are your own code, which the server runs as a child process. Nothing comes with a language model: an extractor that asks one is your code, with your key.
+
+## Before you start
+
+The examples use the sample project with its first file of rows loaded and matched:
+
+{/* sample: new session */}
+
+```sh
+spool init companies
+cd companies
+```
+
+{/* sample: background */}
+
+```sh
+spool dev
+```
+
+Leave that running. In a second terminal, in the `companies` directory:
+
+```sh
+spool load samples/crm-1.csv
+spool match
+```
+
+## What the project needs
+
+A source for the documents. Its columns are the attributes an extractor may give a mention:
+
+{/* sample: existing */}
+
+```yaml title="sources/notes.yaml"
+# Call notes. The columns are what a record found in a note may say: the
+# attributes an extractor gives it.
+columns: [name]
+```
+
+A mapping from those attributes to the entity type's features, beside the mapping of the rows:
+
+{/* sample: existing */}
+
+```yaml title="entities/company/entity.yaml"
+# `features` is what records are compared by, and `label` is the feature a
+# record is called by. `mapping` says, for each source, which column each
+# feature comes from, and the transform it goes through if it needs one.
+label: name
+features: [name, name_key, country]
+
+mapping:
+  crm:
+    name: name
+    name_key: { from: name, transform: name_key }
+    country: country
+  notes:
+    name: name
+    name_key: { from: name, transform: name_key }
+```
+
+A note says nothing about a country, so a record from one has none. The rule that keeps different countries apart does not hold against it.
+
+And an extractor, under `extractors/`. `spool init` writes all three.
+
+## A pattern
+
+{/* sample: existing */}
+
+```yaml title="extractors/companies.yaml"
+entity_type: company
+attribute: name
+pattern: '(?:[A-Z][A-Za-z]+ )+(?:Ltd|Inc|LLC|GmbH|plc)\b'
+```
+
+Every match of `pattern` in a document is a mention of `entity_type`, and the text it matched is the mention's `attribute`. A named group, such as `(?P<country>[A-Z]{2})`, is an attribute of that name. The syntax is that of Rust's `regex` crate, which has no look-around and runs in time linear in the text.
+
+{/* sample: existing */}
+
+```text title="samples/notes-1.txt"
+Call with Dana Reyes on 12 November. She has moved to Acorn Tools Ltd and runs
+purchasing there. They now ship through Larkfield Logistics Ltd, and she asked
+whether we work with Brightwater Foods Ltd, their new supplier.
+```
+
+`spool extract` stores a file as a document and runs the extractor over the documents it has not read:
+
+```sh
+spool extract samples/notes-1.txt
+```
+
+```text title="Output"
+source     notes
+read       1 document from samples/notes-1.txt
+loaded     1 new, 0 already held, 0 new versions
+extractor  companies
+found      3 records in 1 document: 3 new, 0 already held
+
+  company  Acorn Tools Ltd          notes-1.txt[54-69]
+  company  Larkfield Logistics Ltd  notes-1.txt[119-142]
+  company  Brightwater Foods Ltd    notes-1.txt[179-200]
+
+next       `spool match` places them in identities
+```
+
+The document's key is its file's name. A file of the same name with other text is the next version of the document, and the same text again adds nothing.
+
+```sh
+spool match
+```
+
+```sh
+spool show records --source notes
+```
+
+{/* sample: without record column */}
+
+```text title="Output"
+source and key              name                     identity
+notes:notes-1.txt[54-69]    Acorn Tools Ltd          01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+notes:notes-1.txt[119-142]  Larkfield Logistics Ltd  01a1ef8e-5a8d-76d4-acb6-2bb802d5ca25
+notes:notes-1.txt[179-200]  Brightwater Foods Ltd    01a1efb7-4ddf-7234-a3b0-aca5b7e2274b
+```
+
+Two of the three joined identities the CRM rows had made, and Brightwater Foods is new.
+
+## What a record from text keeps
+
+```sh
+MENTION=$(spool show records --source notes | awk 'NR==2 {print $1}')
+spool show records $MENTION
+```
+
+```text title="Output"
+record    00308454-974b-52ac-112f-80f483e081fd
+type      company
+source    notes
+key       fb9a1372-e552-f564-d2b5-c2a510bd408a#company:54-69
+ingested  2026-11-18T17:32:09Z by run 6
+identity  01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+
+payload
+  name  Acorn Tools Ltd
+
+evidence
+  document   fb9a1372-e552-f564-d2b5-c2a510bd408a
+  end        69
+  extractor  companies
+  key        notes-1.txt
+  start      54
+  text       Acorn Tools Ltd
+  version    f1e0ac57efcfebc529f7742e04465e37be7208fa1ef2cbefc2a799cc482e11f6
+
+in document notes:notes-1.txt, characters 54 to 69
+  Call with Dana Reyes on 12 November. She has moved to [Acorn Tools Ltd] and runs purchasing there. They now ship through Larkfield Logistics Ltd, and s…
+```
+
+The evidence names the document, the characters, the extractor and the version of the extractor, which is a hash of its file. The last lines show the place in the text. The studio's Documents screen shows the whole document with every mention marked.
+
+```sh
+spool show documents
+```
+
+```text title="Output"
+document                              source and key     characters  read by
+fb9a1372-e552-f564-d2b5-c2a510bd408a  notes:notes-1.txt  222         companies in run 5 (3 mentions)
+```
+
+## Your own code, in Python
+
+A pattern finds only what is written the way it expects. This note has no legal forms, and the pattern finds nothing in it:
+
+```text title="notes-2.txt"
+Dana called again. Acorn Tools are moving their account to Kestrel Analytics
+next quarter, and Larkfield will keep the deliveries.
+```
+
+What reads it is an extractor that asks something better than a pattern, usually a language model. This file has the shape of one. `ask` stands where the model's answer goes: here it gives two names from a fixed list, so that the example runs with no key.
+
+```py title="extractors/names.py"
+"""Finds the companies a note names, by asking for them and locating each answer in the text."""
+
+from spool import extractor
+
+KNOWN = ["Acorn Tools", "Kestrel Analytics"]
+
+
+def ask(text):
+    """The names in `text`. A real extractor sends the text to a model here."""
+    return [name for name in KNOWN if name in text]
+
+
+@extractor
+def find(document):
+    for quote in ask(document.text):
+        for start, end in document.find(quote):
+            yield document.mention("company", start, end, name=quote)
+```
+
+- `@extractor` marks the function the server calls, once for each document.
+- `document.text` is the text, and `document.key` its key.
+- `document.find(quote)` gives each place the quote is in the text. Ask a model for quotes and not for positions: models count characters badly.
+- `document.mention(entity_type, start, end, **attributes)` is one mention. An attribute the source does not list is refused.
+
+The server runs a `.py` file with [uv](https://docs.astral.sh/uv/), which has to be installed where the server runs. The project now has two extractors, so the command says which:
+
+```sh
+spool extract notes-2.txt --extractor names
+```
+
+```text title="Output"
+source     notes
+read       1 document from notes-2.txt
+loaded     1 new, 0 already held, 0 new versions
+extractor  names
+found      3 records in 2 documents: 3 new, 0 already held
+
+  company  Acorn Tools        notes-1.txt[54-65]
+  company  Acorn Tools        notes-2.txt[19-30]
+  company  Kestrel Analytics  notes-2.txt[59-76]
+
+next       `spool match` places them in identities
+```
+
+It read both notes, because an extractor reads every document it has not read. In the first note it found "Acorn Tools" inside "Acorn Tools Ltd", which the pattern had found too. Those are two records for nearly the same place, from two extractors, and a match puts both in Acorn's identity:
+
+```sh
+spool match
+```
+
+```sh
+spool show records --source notes
+```
+
+{/* sample: without record column */}
+
+```text title="Output"
+source and key              name                     identity
+notes:notes-1.txt[54-65]    Acorn Tools              01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+notes:notes-1.txt[54-69]    Acorn Tools Ltd          01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+notes:notes-1.txt[119-142]  Larkfield Logistics Ltd  01a1ef8e-5a8d-76d4-acb6-2bb802d5ca25
+notes:notes-1.txt[179-200]  Brightwater Foods Ltd    01a1efb7-4ddf-7234-a3b0-aca5b7e2274b
+notes:notes-2.txt[19-30]    Acorn Tools              01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+notes:notes-2.txt[59-76]    Kestrel Analytics        01a1efb7-518d-7142-b42e-33792093d01b
+```
+
+Kestrel Analytics is new. "Larkfield" alone was not in the list, and a model might or might not have given it.
+
+### With a model
+
+Replace the body of `ask` with a call to a model's API and return the names it gives. The repository has a whole one, [`llm.py`](https://github.com/alexpatow/spool/blob/main/benchmarks/extraction/company-news/extractors/llm.py), which uses only Python's standard library, speaks the chat-completions API, and reads its key and model from the environment. It tells the model what each entity type is from a file of the project, `entities/<type>/extract.md`:
+
+```md title="entities/company/extract.md"
+A company is a business the text names: a legal entity such as a corporation,
+a limited company or a partnership.
+
+Quote the name exactly as the text writes it, with its legal form if the text
+gives one. A product, a person, a place or a public body is not a company.
+
+Attributes:
+
+- `name`: the name as quoted.
+```
+
+An extractor that takes `(documents, task)` in place of `(document)` gets every document at once and reads those instructions with `task.instructions("company")`.
+
+No test in the repository runs `llm.py` against a real model, because a test that needs a key and answers differently each time is not a test. An extractor that calls a model costs what the model costs, for every document, and the server stops one that runs longer than `--task-timeout`, which is 600 seconds unless set.
+
+## In TypeScript
+
+The same extractor as a `.ts` file, which the server runs with [Bun](https://bun.sh):
+
+```ts title="extractors/names_ts.ts"
+import { extractor } from "spool-strategy";
+
+const KNOWN = ["Acorn Tools", "Kestrel Analytics"];
+
+await extractor(async (task) => {
+  const documents = await task.documents();
+  return documents.flatMap((document) =>
+    KNOWN.flatMap((name) =>
+      document.find(name).map(([start, end]) => document.mention("company", start, end, { name })),
+    ),
+  );
+});
+```
+
+`spool dev` picks up a new extractor file as it is saved, and `spool info` lists what the project has:
+
+```sh
+spool info
+```
+
+```text title="Output"
+project   .
+manifest  8b3d95a97f62c6b8b905e7c2d42e2522bfc0d563e286f8a49be548fde2d190e5
+
+entity type `company`
+  features  record_id UUID, name VARCHAR, name_key VARCHAR, country VARCHAR
+  label     name
+  sources   crm, notes
+  block     name_prefix
+  no_match  different_country
+  match     similar_name
+  extract   extract.md says what an extractor looks for
+
+extractor `companies` (pattern, extractors/companies.yaml)
+extractor `names` (python, extractors/names.py)
+extractor `names_ts` (typescript, extractors/names_ts.ts)
+```
+
+## Over HTTP and MCP
+
+| | Store a document | Run an extractor |
+| --- | --- | --- |
+| Command | `spool extract <file>` does both | `spool extract` with no file |
+| HTTP | `POST /v1/documents` | `POST /v1/extractions` |
+| MCP | `load_documents` | `run_extraction` |
+
+[Getting started](/docs/getting-started#extract-records-from-text) has a call of each. `POST /v1/extractions` takes `extractor`, `source` to keep to the documents of one source, `again` to read every document again, and `limit`.
+
+## How good is it
+
+An extractor is scored apart from matching. `spool bench` runs a scenario with labelled mentions and reports what the extractor found, missed and made up. The repository's [`benchmarks/extraction/company-news`](https://github.com/alexpatow/spool/tree/main/benchmarks/extraction/company-news) has ten news items, a rule-based extractor in both languages, and its scores.
+
+## What extraction does not do
+
+- **Documents are text.** Spool does not read PDF or HTML. Turn them into text first.
+- **A pattern finds what a regular expression finds.** "Acorn Tools" without "Ltd" is missed, and "The Falcon Ltd edition" is taken for a company.
+- **No model is included.** An extractor that asks one is a Python or TypeScript file, and needs `uv` or `bun` where the server runs.
+- **A mention is a place.** Two mentions of one company in one document are two records, in one identity.
+- **A changed extractor does not read again by itself.** `--again` has it read every document again.
+- **A document is one request.** A file larger than the API's limit of 256 MiB cannot be stored.

@@ -14,6 +14,8 @@ export const noIds = (): Ids => ({ shown: new Map(), printed: new Map() });
 
 const ID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\b[0-9a-f]{64}\b/g;
 const TIME = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g;
+/** The number of a process, which differs on every run. */
+const PID = /\bPID \d+/g;
 
 export function tidy(text: string): string[] {
   const lines = text.split("\n").map((line) => line.trimEnd());
@@ -37,7 +39,7 @@ function forget(added: string[], ids: Ids) {
  * nothing when the lines differ or one ID would stand for two.
  */
 function pair(expected: string, actual: string, ids: Ids): string[] | undefined {
-  const shape = (line: string) => line.replace(TIME, "<time>").replace(ID, "<id>");
+  const shape = (line: string) => line.replace(TIME, "<time>").replace(ID, "<id>").replace(PID, "PID <n>");
   if (shape(expected) !== shape(actual)) return undefined;
   const want = expected.match(ID) ?? [];
   const got = actual.match(ID) ?? [];
