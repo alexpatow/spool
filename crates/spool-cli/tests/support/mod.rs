@@ -298,11 +298,17 @@ impl Server {
             .unwrap_or_else(|| panic!("the server never complained `{what}`; it said {seen:?}"))
     }
 
-    /// Stops the server the way a container runtime does and waits for it.
-    pub fn stop(mut self) {
+    /// Tells the server to stop the way a container runtime does, and does
+    /// not wait for it.
+    pub fn ask_to_stop(&self) {
         let _ = Command::new("kill")
             .args(["-TERM", &self.child.id().to_string()])
             .status();
+    }
+
+    /// Stops the server the way a container runtime does and waits for it.
+    pub fn stop(mut self) {
+        self.ask_to_stop();
         let status = self.child.wait().unwrap();
         assert!(status.success(), "the server stopped with {status}");
     }
@@ -310,9 +316,7 @@ impl Server {
     /// Stops the server as `stop` does, and returns the lines it printed
     /// that nothing has read yet.
     pub fn stopped(mut self) -> Vec<String> {
-        let _ = Command::new("kill")
-            .args(["-TERM", &self.child.id().to_string()])
-            .status();
+        self.ask_to_stop();
         let status = self.child.wait().unwrap();
         assert!(status.success(), "the server stopped with {status}");
         // The stream ends with the process, and the lines end with it.

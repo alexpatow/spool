@@ -73,6 +73,17 @@ Strategies and extractors that are `.py` files run with `uv`, and `.ts` files
 with `bun`. SPOOL_UV and SPOOL_BUN name the commands if they are not on the
 search path. The server runs such a file only while it is the one the
 manifest was compiled from.
+
+The server stops on Ctrl-C or SIGTERM, and prints `stopping`. It takes no new
+request. Whoever waits on a run with `wait_ms` is answered at once, with the
+run as far as it has got. Other requests are answered if that takes no more
+than 5 seconds; one that a client has not sent in full by then gets no
+answer. A client that was refused while still sending has 1 second more to
+read why. So the server is done with its clients within 6 seconds.
+
+It then finishes the runs the engine was given, however long they take, and
+prints `stopped`. A run is not cut off half way. If the process is killed
+first, the run is recorded as failed when the store is next opened.
 ";
 
 pub const DEV_USAGE: &str = "\
@@ -107,6 +118,8 @@ Options:
 Strategies and extractors that are `.py` files run with `uv`, and `.ts` files
 with `bun`. SPOOL_UV and SPOOL_BUN name the commands if they are not on the
 search path.
+
+Ctrl-C stops it, the way `spool serve --help` says a server stops.
 ";
 
 /// Prints a line, and carries on if nobody is reading: a server must not
@@ -469,6 +482,9 @@ fn run(
             .await
             .map_err(|error| failed(format!("the server stopped: {error}")))
     })?;
+    // This ends the connections that were not done in time, and waits for
+    // the work the engine was given: a run is not cut off half way.
+    drop(runtime);
     say!("stopped");
     Ok(())
 }
@@ -494,4 +510,5 @@ async fn shutdown() {
         () = interrupt => {}
         () = terminate => {}
     }
+    say!("stopping");
 }
