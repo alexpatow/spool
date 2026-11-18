@@ -161,9 +161,7 @@ jobs:
       # far from the cause. This says how near that is.
       - name: Disk left
         if: always()
-        run: |
-          df -h /
-          nproc
+        run: df -h /
 
   msrv:
     name: Build with the oldest supported Rust
