@@ -1,10 +1,10 @@
-//! People: the first account, signing in, who may manage accounts, and who a
-//! change is recorded under.
+//! People and tokens: the first account, signing in, who may manage accounts
+//! and tokens, and who a change is recorded under.
 
 mod support;
 
 use serde_json::{Value, json};
-use support::{Response, Server, path, write_things};
+use support::{Response, Server, path, run, succeed, text, write_things};
 
 const PASSWORD: &str = "a long enough one";
 
@@ -261,8 +261,7 @@ fn a_write_from_another_site_is_refused() {
 fn nobody_signs_in_to_a_development_server() {
     let dir = tempfile::tempdir().unwrap();
     write_things(dir.path());
-    let server =
-        Server::start_with(&["dev", path(dir.path()), "--listen", "127.0.0.1:0"], None).unwrap();
+    let server = Server::start_with(&["dev", path(dir.path()), "--listen", "127.0.0.1:0"]).unwrap();
     let state = browse(&server, "GET", "/auth/session", "").send().ok();
     assert_eq!(state["person"]["username"], "dev");
     assert_eq!(state["setup"], false);
@@ -288,17 +287,14 @@ fn a_store_that_was_developed_on_still_gets_its_first_account() {
     let project = dir.path().join("project");
     write_things(&project);
     let store = dir.path().join("store.duckdb");
-    let developed = Server::start_with(
-        &[
-            "dev",
-            path(&project),
-            "--store",
-            path(&store),
-            "--listen",
-            "127.0.0.1:0",
-        ],
-        None,
-    )
+    let developed = Server::start_with(&[
+        "dev",
+        path(&project),
+        "--store",
+        path(&store),
+        "--listen",
+        "127.0.0.1:0",
+    ])
     .unwrap();
     let state = browse(&developed, "GET", "/auth/session", "").send().ok();
     let dev = state["person"]["id"].as_str().unwrap().to_owned();
@@ -395,4 +391,216 @@ fn a_body_too_large_to_be_about_an_account_is_not_read() {
     }
     // The code was not used up.
     set_up(&server, &code);
+}
+
+/// A request that presents `token` and nothing else.
+fn present<'a>(server: &'a Server, method: &str, path: &str, token: &str) -> support::Request<'a> {
+    server
+        .request(method, path)
+        .header("Authorization", &format!("Bearer {token}"))
+}
+
+/// Commits a changeset that creates one identity as whoever presents
+/// `token`, and returns who the log says made it.
+fn author(server: &Server, token: &str) -> String {
+    let minted = present(server, "POST", "/v1/ids", token)
+        .json(&json!({ "identities": 1 }))
+        .send()
+        .ok();
+    let create = json!({ "ops": [
+        { "op": "create_identity", "identity": minted["identities"][0], "entity_type": "thing" }
+    ] });
+    let committed = present(server, "POST", "/v1/changesets", token)
+        .json(&create)
+        .send()
+        .ok();
+    let log = server.read("/v1/changesets");
+    let entry = log["changesets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["seq"] == committed["seq"])
+        .unwrap();
+    entry["changeset"]["actor"].as_str().unwrap().to_owned()
+}
+
+fn token_names(list: &Value) -> Vec<&str> {
+    list["tokens"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|token| token["name"].as_str().unwrap())
+        .collect()
+}
+
+#[test]
+fn an_admin_makes_tokens_and_each_writes_under_its_own_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let (server, code) = served(dir.path());
+    let (ada, id) = set_up(&server, &code);
+    let bob = json!({ "username": "bob", "name": "Bob", "password": "another long one" });
+    post(&server, "/v1/people", &ada, bob).ok();
+    let sign_in = json!({ "username": "bob", "password": "another long one" });
+    let bob = cookie(&post(&server, "/auth/sign-in", "", sign_in));
+
+    let added = post(&server, "/v1/tokens", &ada, json!({ "name": "Ingest" })).ok();
+    let secret = added["secret"].as_str().unwrap().to_owned();
+    assert!(secret.starts_with("spool_"), "{secret}");
+    assert_eq!(added["token"]["name"], "ingest");
+    assert_eq!(added["token"]["created_by"], id.as_str());
+    assert_eq!(added["token"]["last_used_at"], Value::Null);
+    let token_id = added["token"]["id"].as_str().unwrap();
+
+    // A name is one token's, and is what the log will say.
+    post(&server, "/v1/tokens", &ada, json!({ "name": "ingest" })).error(409, "conflict");
+    for name in ["", "two words", "agent:ingest"] {
+        post(&server, "/v1/tokens", &ada, json!({ "name": name })).error(400, "invalid");
+    }
+
+    // What it changes is recorded under its name.
+    let wrote = author(&server, &secret);
+    assert_eq!(wrote, "agent:ingest");
+
+    // The list says it was used, and never what the token is. The token the
+    // tests call with was made on this machine, by nobody.
+    let listed = browse(&server, "GET", "/v1/tokens", &ada).send();
+    assert!(!text(&listed.body).contains(&secret));
+    let listed = listed.ok();
+    assert_eq!(token_names(&listed), ["api", "ingest"]);
+    assert_eq!(listed["tokens"][0]["created_by"], Value::Null);
+    assert!(listed["tokens"][1]["last_used_at"].is_string(), "{listed}");
+
+    // Only an admin sees or manages tokens: not someone else who is signed
+    // in, not a token, and not a stranger.
+    let revoke = format!("/v1/tokens/{token_id}/revoke");
+    let another = json!({ "name": "another" });
+    browse(&server, "GET", "/v1/tokens", &bob)
+        .send()
+        .error(403, "forbidden");
+    post(&server, "/v1/tokens", &bob, another.clone()).error(403, "forbidden");
+    post(&server, &revoke, &bob, json!({})).error(403, "forbidden");
+    present(&server, "GET", "/v1/tokens", &secret)
+        .send()
+        .error(403, "forbidden");
+    present(&server, "POST", "/v1/tokens", &secret)
+        .json(&another)
+        .send()
+        .error(403, "forbidden");
+    present(&server, "POST", &revoke, &secret)
+        .send()
+        .error(403, "forbidden");
+    browse(&server, "GET", "/v1/tokens", "")
+        .send()
+        .error(401, "unauthorized");
+    post(&server, "/v1/tokens", "", another).error(401, "unauthorized");
+
+    // A revoked token is refused from then on, and the others are not.
+    let revoked = post(&server, &revoke, &ada, json!({})).ok();
+    assert_eq!(revoked["name"], "ingest");
+    present(&server, "GET", "/v1/info", &secret)
+        .send()
+        .error(401, "unauthorized");
+    server.read("/v1/info");
+    post(&server, &revoke, &ada, json!({})).error(404, "not_found");
+    let listed = browse(&server, "GET", "/v1/tokens", &ada).send().ok();
+    assert_eq!(token_names(&listed), ["api"]);
+}
+
+#[test]
+fn tokens_are_made_and_revoked_on_the_servers_machine_while_it_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let (server, _) = served(dir.path());
+    let store = dir.path().join("store.duckdb");
+    let store = path(&store);
+
+    // The token is all that is printed where a script reads it.
+    let added = run(&["token", "add", "ci", "--store", store]);
+    assert!(added.status.success(), "{}", text(&added.stderr));
+    let printed = text(&added.stdout);
+    let secret = printed.trim_end();
+    assert!(
+        secret.starts_with("spool_") && printed == format!("{secret}\n") && !secret.contains(' '),
+        "{printed}"
+    );
+    assert!(text(&added.stderr).contains("agent:ci"));
+    let wrote = author(&server, secret);
+    assert_eq!(wrote, "agent:ci");
+
+    let listed = succeed(&["token", "list", "--store", store]);
+    let lines: Vec<&str> = listed.lines().collect();
+    assert_eq!(lines.len(), 3, "{listed}");
+    assert!(lines[0].starts_with("token"), "{listed}");
+    assert!(
+        lines[1].starts_with("api ") && lines[2].starts_with("ci "),
+        "{listed}"
+    );
+    assert!(!listed.contains(secret));
+    let listed: Value =
+        serde_json::from_str(&succeed(&["token", "list", "--json", "--store", store])).unwrap();
+    assert_eq!(token_names(&listed), ["api", "ci"]);
+
+    // The store can be named in the environment, as it is in a container.
+    let named = support::spool()
+        .args(["token", "add", "ci"])
+        .env("SPOOL_STORE", store)
+        .output()
+        .unwrap();
+    assert_eq!(named.status.code(), Some(1));
+    assert!(
+        text(&named.stderr).contains("`ci` already"),
+        "{}",
+        text(&named.stderr)
+    );
+    assert_eq!(text(&named.stdout), "");
+
+    let revoked = succeed(&["token", "revoke", "ci", "--store", store]);
+    assert!(revoked.contains("revoked `ci`"), "{revoked}");
+    present(&server, "GET", "/v1/info", secret)
+        .send()
+        .error(401, "unauthorized");
+    let again = run(&["token", "revoke", "ci", "--store", store]);
+    assert_eq!(again.status.code(), Some(1));
+    assert!(text(&again.stderr).contains("no such token"));
+
+    // A token beside a store that is not there would open nothing.
+    let nowhere = dir.path().join("typo.duckdb");
+    let missing = run(&["token", "add", "ci", "--store", path(&nowhere)]);
+    assert_eq!(missing.status.code(), Some(1));
+    assert!(text(&missing.stderr).contains("there is no store at"));
+    assert!(!dir.path().join("typo.auth.sqlite").exists());
+
+    for (arguments, complaint) in [
+        (&["token"][..], "say what to do"),
+        (&["token", "add"], "needs the token's name"),
+        (&["token", "frob", "ci"], "not `frob`"),
+        (&["token", "list", "ci"], "unexpected argument `ci`"),
+        (&["token", "add", "ci"], "SPOOL_STORE"),
+    ] {
+        let refused = run(arguments);
+        assert_eq!(refused.status.code(), Some(2), "{arguments:?}");
+        assert!(
+            text(&refused.stderr).contains(complaint),
+            "{arguments:?}: {}",
+            text(&refused.stderr)
+        );
+    }
+}
+
+#[test]
+fn a_development_server_asks_for_no_token_and_takes_no_made_up_one() {
+    let dir = tempfile::tempdir().unwrap();
+    write_things(dir.path());
+    let server = Server::start_with(&["dev", path(dir.path()), "--listen", "127.0.0.1:0"]).unwrap();
+    server.read("/v1/info");
+    // What a caller presents is checked, here as anywhere.
+    for made_up in ["dev", "spool_dev", "anything"] {
+        present(&server, "GET", "/v1/info", made_up)
+            .send()
+            .error(401, "unauthorized");
+    }
+    // `dev` is an admin, and a token it makes writes under its own name.
+    let added = server.call("/v1/tokens", json!({ "name": "review-bot" }));
+    let secret = added["secret"].as_str().unwrap();
+    let wrote = author(&server, secret);
+    assert_eq!(wrote, "agent:review-bot");
 }

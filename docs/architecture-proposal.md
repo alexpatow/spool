@@ -533,7 +533,7 @@ Why one server, and not an engine in each caller:
 - **A DuckDB file has one owner.** While the engine has the file open, no other process can open it, even read-only (tested). One server that owns the file fits that.
 - **One writer has nothing to synchronise.** Sync transport, conflict policy, and two copies each creating an identity for the same new entity all disappear.
 
-Every path of the API is under `/v1` and needs a caller the server knows: a person who signed in, or the bearer token. The Access part below describes both. `GET /healthz` needs neither, and nor do the files of the studio, which the Inspection part describes. Small values are JSON. `spool schema` prints one JSON Schema for all of them, a copy is committed at `schema/spool-api.v1.schema.json`, and a test fails when the two differ.
+Every path of the API is under `/v1` and needs a caller the server knows: a person who signed in, or an agent that presents a token. The Access part below describes both. `GET /healthz` needs neither, and nor do the files of the studio, which the Inspection part describes. Small values are JSON. `spool schema` prints one JSON Schema for all of them, a copy is committed at `schema/spool-api.v1.schema.json`, and a test fails when the two differ.
 
 | Call | What it does | Response |
 | --- | --- | --- |
@@ -592,7 +592,7 @@ The answer is data, with a `summary` that says the same in sentences. The engine
 
 The explanation is about what was recorded. It does not run a strategy again, so for user code it reports the verdict, score and detail the strategy stored and cannot say what the strategy would judge now.
 
-`spool show` and `spool explain` are the same API from a terminal. They are a client: they take `--url` and `--token`, by default those of `spool dev`, and never open a store, so they work against a development server and a deployed one alike. `show` lists runs, identities, records, documents, review items, drafts and the log, and shows one of each: an identity with its members, the constraints on them and its history; a record with its payload, its evidence and, for a mention, the text around it in its document; a draft with the operations it would commit. `--json` prints what the server answered. The commands speak HTTP with `ureq`, a crate the build of the DuckDB library already used, so the lock file gained no package.
+`spool show` and `spool explain` are the same API from a terminal. They are a client: they take `--url` and `--token`, by default the address of `spool dev`, which asks for no token, and never open a store, so they work against a development server and a deployed one alike. `show` lists runs, identities, records, documents, review items, drafts and the log, and shows one of each: an identity with its members, the constraints on them and its history; a record with its payload, its evidence and, for a mention, the text around it in its document; a draft with the operations it would commit. `--json` prints what the server answered. The commands speak HTTP with `ureq`, a crate the build of the DuckDB library already used, so the lock file gained no package.
 
 The studio is the same API in a browser. The server answers `GET /` and the path of each screen with a page, and the page reads through `/v1` with the TypeScript client, like any other caller. It has a screen for each thing `show` shows and one for `explain`: an overview of the store, runs, identities, records, documents with each mention marked in the text, review items, drafts and the log. A value that names something else is a link to it, and two records ticked in any list lead to their explanation.
 
@@ -629,9 +629,9 @@ A caller of `/v1` is a person or an agent, and the server says which made a chan
 - **A person signs in with a username and a password** and gets a session: a cookie the page cannot read (`HttpOnly`, `SameSite=Lax`, and `Secure` unless the server listens on loopback or was started with `--plain-http`) that ends twelve hours after signing in. Sessions are rows of the same file, under the hash of their ID, so they outlast a restart and a copy of the file signs nobody in. A session is good while the account is on and its password is the one the session began with, so a sign-in that was under way when the password was replaced starts nothing. Ten wrong passwords for a username within fifteen minutes refuse further tries for it, and the server checks four passwords at once: a sign-in beyond that is turned away, as `too_many_attempts`, so that nobody who reaches the server can have it hash as many passwords as they send. The paths that sign people in read a body of at most 64 KiB, since anyone can send one.
 - **The first account is made with a link the server prints.** A server that starts with no admin who can sign in prints `/setup#<code>`. Whoever opens it makes the first account, an admin, and the code then stops working. No credential is put in the environment.
 - **An admin adds everyone else**, and can change a name, set a new password, make an admin and turn an account off. Nobody signs themselves up. An account is turned off, not deleted, so the log keeps a name for its ID, and one admin who can sign in always remains. Turning an account off, or changing its password, ends its sessions. A person changes their own password with the current one.
-- **An agent sends a bearer token**, `SPOOL_TOKEN`, which a server may be started without. It reads and writes as `agent:api` and cannot manage people. Tokens that are named, made and revoked in the studio are to replace it.
+- **An agent presents a token**, as `Authorization: Bearer <token>`. A token has a name, and what it changes is recorded under it, as `agent:<name>`, so each agent or pipeline is its own author in the log. An admin makes and revokes tokens on the studio's Tokens page or through `/v1/tokens`, and `spool token add`, `list` and `revoke` do the same on the server's machine, where they open the accounts file and not the store, so they work while the server runs. A token is 32 random bytes after `spool_`. It is shown once, when it is made: the file keeps its SHA-256, by which it is looked up, and when it was last used, to the minute. A revoked token is deleted, and its name is free for another. A token reads and writes as a person does, and manages neither people nor tokens. No token is put in the environment: the server reads none from it.
 - **A write must come from the server's own pages.** A browser can send the session cookie with a request that another site's page makes. A write whose `Sec-Fetch-Site` is not `same-origin`, or, from a browser that sends none, whose `Origin` is not the host it was sent to, is refused as `forbidden`. A caller that is not a browser sends neither header and is let through.
-- **`spool dev` has no sign-in.** Whoever opens it is the account `dev`, an admin with no password, so it listens on a loopback address only and refuses any other. Nobody signs in as it, so a store that was developed on and is then served still prints the link, and `dev` does not count as the admin who must remain. What `dev` changed keeps its name in the log.
+- **`spool dev` has no sign-in.** Whoever opens it is the account `dev`, an admin with no password, so it listens on a loopback address only and refuses any other. A caller that is not a browser presents nothing and is `dev` too; one that presents a token must present a real one, and writes under its name. Nobody signs in as it, so a store that was developed on and is then served still prints the link, and `dev` does not count as the admin who must remain. What `dev` changed keeps its name in the log.
 - **Passwords are for getting started.** A deployment that people depend on should sign them in through an identity provider, so that leaving the organisation ends their access and a second factor is the provider's to require. Sign-in with Google is planned as the first, with a person still added by an admin beforehand.
 
 The paths that make a caller one are outside `/v1`: `GET /auth/session` says who is signed in and whether the server still waits for its first account, and `POST /auth/sign-in`, `/auth/sign-out`, `/auth/setup` and `/auth/password` do what they are called. The parts are `password-auth` for Argon2, `tower-sessions` for sessions and `rusqlite` for the file.
@@ -643,7 +643,7 @@ Two packaging facts to plan around:
 
 Tradeoff: a server has to be run, backed up and secured, where a library needed none of that. Every call crosses the network, which is small next to matching work and costly for per-record lookups, so lookups need batch forms. The library remains for Rust callers and for tests.
 
-**Decide now:** the engine as a library with the server as a wrapper, JSON and Arrow as the only two wire forms, the run ID as the task handle, one tenant and one writer, no native bindings. **Defer:** authentication beyond a bearer token, streaming a run's progress, a queue so that a call never waits for the writer before it has a run ID, a Python client, a statically linked DuckDB, a published base image, Windows on ARM.
+**Decide now:** the engine as a library with the server as a wrapper, JSON and Arrow as the only two wire forms, the run ID as the task handle, one tenant and one writer, no native bindings. **Defer:** tokens that only read or that expire, streaming a run's progress, a queue so that a call never waits for the writer before it has a run ID, a Python client, a statically linked DuckDB, a published base image, Windows on ARM.
 
 ## 6. Python and TypeScript user code without embedded runtimes
 
@@ -768,7 +768,7 @@ Reconciliation policy is configuration in the first versions. Someone who needs 
 Consequences to accept:
 
 - An image with user code carries `uv` or `bun` and the code's dependencies. A project of data files stays one binary.
-- User code is the operator's own code. It runs with the service's permissions, and Spool does not sandbox it. The one thing withheld is the API's bearer token, which is taken out of the process's environment.
+- User code is the operator's own code. It runs with the service's permissions, and Spool does not sandbox it. The one thing withheld is a token of the API that the process was started with: `SPOOL_TOKEN`, which the commands that call a server read, is taken out of the environment.
 - Files cost a write and a read per task. That suits batches and is wrong for per-record calls, which stay with SQL rules.
 - Every task gets both the candidate pairs and the feature rows, though most strategies read one of them. Writing only what a strategy asks for needs the strategy to say so before it runs, and is deferred.
 - A Python file named after a library it imports would be found in place of the library, because Python looks first in the directory of the file it runs. The engine turns that off (`PYTHONSAFEPATH`), which needs Python 3.11 or later, so `splink.py` can `import splink`.
@@ -965,7 +965,7 @@ Milestone 4 adds user code: `crates/spool/src/usercode.rs`, which runs a project
 - A strategy that fails, writes nothing, or does not finish in time fails its run, changes nothing, and leaves its task directory to be looked at. The next run examines the same records.
 - Judgements from user code are checked as a caller's are: an unknown record, or a pair of records that both have an identity, is refused.
 - Only the file the manifest was compiled from runs. A file that changed is refused until the project is built again, and a name the project does not have runs nothing.
-- A strategy is started without the server's token, and with paths that do not depend on where the engine was started.
+- A strategy is started without a token of the server, and with paths that do not depend on where the engine was started.
 - The engine answers reads and commits writes while a strategy runs.
 - A strategy that finds its own pairs is given every record with its identity.
 - A rematch moves no record that has an identity, and lists the merges and splits the strategy would make.
@@ -1016,16 +1016,18 @@ Milestone 6 continues with the studio: `packages/studio`, `crates/spool-cli/src/
 - A change is recorded under whoever is signed in.
 - `bun run demo` fills only the server it started, and stops when another server already listens at its address.
 
-Accounts are `crates/spool-cli/src/accounts.rs` and the `/auth` and `/v1/people` paths of the server. Their exit criteria, each a test in `crates/spool-cli/tests/accounts.rs`:
+Accounts and tokens are `crates/spool-cli/src/accounts.rs`, the `/auth`, `/v1/people` and `/v1/tokens` paths of the server, and `spool token` (`crates/spool-cli/src/commands/token.rs`). Their exit criteria, each a test in `crates/spool-cli/tests/accounts.rs`:
 
 - The first account is made with the code of the link the server printed, and only once. A store that `spool dev` ran on still gets one.
-- A change is recorded under the person whose session sent it, and under `agent:api` when the token did. A request that names its author is refused.
-- An admin adds people and changes them, and nobody else does: not another person, and not the token.
+- A change is recorded under the person whose session sent it, and under the name of the token that did. A request that names its author is refused.
+- An admin adds people and changes them, and nobody else does: not another person, and not a token.
+- An admin makes a token, which is shown once and writes under its own name, and revokes it, after which it is refused. Nobody else sees or manages tokens: not another person, not a token, and not a stranger.
+- `spool token add` prints a token that works at once on a running server, `spool token revoke` ends it, and neither makes an accounts file beside a store that is not there.
 - Signing out, a new password and an account turned off each end sessions, and the last admin stays one.
 - A sign-in beyond the passwords the server checks at once is turned away, and signing in works again afterwards.
 - A body too large to be about an account is refused unread.
 - A write that says it comes from another site is refused.
-- Nobody signs in to a development server, and its changes are the `dev` account's. It does not start on an address others reach (`crates/spool-cli/tests/cli.rs`).
+- Nobody signs in to a development server, and its changes are the `dev` account's. It asks for no token, refuses one that is made up, and takes one that was made. It does not start on an address others reach (`crates/spool-cli/tests/cli.rs`).
 
 Beside the milestones, `packages/stress` puts a real server under load and abuse. Each part is a command for a run of any size, and runs in a small form with the tests (`crates/spool-cli/tests/stress.rs`, with `--include-ignored`). Every part ends with the server stopped and the store checked by `Engine::verify`, through the `verify` example of the `spool` crate:
 

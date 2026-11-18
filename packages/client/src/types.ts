@@ -20,6 +20,29 @@ export interface AddPersonRequest {
 }
 
 /**
+ * `POST /v1/tokens`: make a token. Only an admin may.
+ */
+export interface AddTokenRequest {
+  /**
+   * What its changes are recorded under, as `agent:<name>`: 1 to 64
+   * letters, digits, `.`, `_` or `-`. No other token has it.
+   */
+  name: string;
+}
+
+/**
+ * A token that was just made. This is the only time the server says what
+ * the token is: it keeps a hash of it.
+ */
+export interface AddedToken {
+  /**
+   * What the caller presents.
+   */
+  secret: string;
+  token: Token;
+}
+
+/**
  * A changeset the engine wrote for a caller, and its receipt.
  */
 export interface Authored {
@@ -1614,6 +1637,34 @@ export interface Suggestions {
    * by ID.
    */
   splits: SuggestedSplit[];
+}
+
+/**
+ * A token: what a caller that is not a person presents, as
+ * `Authorization: Bearer <token>`. The log names what it changed by the
+ * token's name, as `agent:<name>`.
+ */
+export interface Token {
+  created_at: string;
+  /**
+   * The ID of the person who made it. `null` when it was made on the
+   * server's machine with `spool token add`.
+   */
+  created_by?: string | null;
+  id: string;
+  /**
+   * When it was last presented, to the minute. `null` if it never was.
+   */
+  last_used_at?: string | null;
+  name: string;
+}
+
+/**
+ * `GET /v1/tokens`: every token, in the order they were made. Only an
+ * admin may read it.
+ */
+export interface TokenList {
+  tokens: Token[];
 }
 
 export interface TypeInfo {

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use spool::{ApplyReport, Engine, Manifest, Options};
-use spool_cli::accounts::{self, Accounts};
+use spool_cli::accounts;
 use spool_cli::server::{self, ServerOptions};
 
 use super::manifest_path;
@@ -31,8 +31,9 @@ store, named after it: `spool.auth.sqlite` for `spool.duckdb`. While no admin
 can sign in, the server prints a link when it starts; whoever opens it makes
 the first account and is the admin, who adds everyone else.
 
-A caller that is not a person sends the bearer token in SPOOL_TOKEN, if one
-is set. What it changes is recorded under `agent:api`.
+A caller that is not a person presents a token, which an admin makes on the
+studio's Tokens page and `spool token add` makes on this machine. What it
+changes is recorded under the token's name, as `agent:<name>`.
 
 Options:
   --manifest <path>   the manifest to run on (default: .spool/manifest.json)
@@ -65,17 +66,17 @@ saved; a change that does not compile is reported and the last version that
 did keeps running.
 
 Open the address it listens on in a browser for the studio, which shows what
-the store holds and takes changes. Nobody signs in: every change is recorded
-under an account called `dev`, an admin. So it listens on this machine only;
-`spool serve` runs a server that others reach.
+the store holds and takes changes. Nobody signs in, and a caller needs no
+token: every change is recorded under an account called `dev`, an admin. So
+it listens on this machine only; `spool serve` runs a server that others
+reach. A caller that does present a token writes as that token, as it would
+there.
 
   <dir>               the project directory (default: the current directory)
 
 Options:
   --listen <addr>     the loopback address to listen on (default: 127.0.0.1:7765)
   --store <path>      the store's database file (default: <dir>/.spool/dev.duckdb)
-  --token <token>     the bearer token of callers that are not a browser, which
-                      write as `agent:api` (default: $SPOOL_TOKEN, or `dev`)
   --task-timeout <s>  how long a user-code strategy or an extractor may run,
                       in seconds (default: 600)
   --tasks <dir>       where the task directories of user code are made
@@ -139,12 +140,6 @@ pub fn serve(arguments: &[String]) -> Result<(), Failure> {
     )?;
     let listen = listen_address(&arguments, &format!("0.0.0.0:{DEFAULT_PORT}"))?;
     let store = super::store_path(&arguments)?;
-    // Trimmed, as the token a caller presents is: a secret read from a file
-    // often ends with a newline.
-    let token = std::env::var("SPOOL_TOKEN")
-        .ok()
-        .map(|token| token.trim().to_owned())
-        .filter(|token| !token.is_empty());
     let manifest_file = arguments
         .path("--manifest")
         .unwrap_or_else(|| manifest_path(Path::new(".")));
@@ -174,12 +169,12 @@ pub fn serve(arguments: &[String]) -> Result<(), Failure> {
         }
     }
     say!("manifest  {}", manifest.hash);
-    let accounts = open_accounts(&store)?;
+    let accounts = super::open_accounts(&store)?;
+    say!("accounts  {}", super::accounts_path(&store).display());
     let empty = accounts
         .needs_setup()
         .map_err(|refused| failed(refused.to_string()))?;
     let mut options = ServerOptions::new(accounts);
-    options.token = token;
     options.setup = empty.then(accounts::code);
     options.https = !(arguments.flag("--plain-http") || listen.ip().is_loopback());
     options.studio = !arguments.flag("--no-studio");
@@ -190,14 +185,7 @@ pub fn dev(arguments: &[String]) -> Result<(), Failure> {
     let arguments = super::arguments(
         arguments,
         &Spec {
-            values: &[
-                "--listen",
-                "--store",
-                "--token",
-                "--seed",
-                "--task-timeout",
-                "--tasks",
-            ],
+            values: &["--listen", "--store", "--seed", "--task-timeout", "--tasks"],
             flags: &[],
             positional: 1,
         },
@@ -215,14 +203,6 @@ pub fn dev(arguments: &[String]) -> Result<(), Failure> {
     let store = arguments
         .path("--store")
         .unwrap_or_else(|| dir.join(".spool").join("dev.duckdb"));
-    let token = arguments
-        .value("--token")
-        .map(str::to_owned)
-        .or_else(|| std::env::var("SPOOL_TOKEN").ok())
-        .map(|token| token.trim().to_owned())
-        .filter(|token| !token.is_empty())
-        .unwrap_or_else(|| "dev".to_owned());
-
     let seen = fingerprint(&dir);
     let manifest = Manifest::load(&dir)?;
     if let Some(parent) = store
@@ -238,26 +218,16 @@ pub fn dev(arguments: &[String]) -> Result<(), Failure> {
     let report = engine.apply(&manifest)?;
     say!("project   {}", dir.display());
     say!("store     {}", store.display());
-    say!("token     {token}");
     print_applied(&manifest, &report);
 
-    let mut options = ServerOptions::new(open_accounts(&store)?);
-    options.token = Some(token);
+    let mut options = ServerOptions::new(super::open_accounts(&store)?);
+    say!("accounts  {}", super::accounts_path(&store).display());
     options.dev = true;
     options.https = false;
 
     let watched = Arc::clone(&engine);
     std::thread::spawn(move || watch(&dir, &watched, seen));
     run(engine, listen, options)
-}
-
-/// The accounts of the server over `store`: a file beside it, named after it.
-fn open_accounts(store: &Path) -> Result<Accounts, Failure> {
-    let path = store.with_extension("auth.sqlite");
-    let accounts = Accounts::open(&path)
-        .map_err(|refused| failed(format!("{}: {refused}", path.display())))?;
-    say!("accounts  {}", path.display());
-    Ok(accounts)
 }
 
 fn print_applied(manifest: &Manifest, report: &ApplyReport) {

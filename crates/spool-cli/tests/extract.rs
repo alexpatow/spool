@@ -360,19 +360,16 @@ fn the_server_runs_the_projects_extractors_and_resolves_what_they_find() {
 fn dev_runs_an_extractor_as_it_was_last_saved() {
     let dir = tempfile::tempdir().unwrap();
     write_things(dir.path());
-    let server = Server::start_with(
-        &[
-            "dev",
-            path(dir.path()),
-            "--listen",
-            "127.0.0.1:0",
-            "--seed",
-            "1",
-            "--tasks",
-            path(&dir.path().join("tasks")),
-        ],
-        None,
-    )
+    let server = Server::start_with(&[
+        "dev",
+        path(dir.path()),
+        "--listen",
+        "127.0.0.1:0",
+        "--seed",
+        "1",
+        "--tasks",
+        path(&dir.path().join("tasks")),
+    ])
     .unwrap();
     assert_eq!(server.read("/v1/info")["store"]["extractors"], json!([]));
     add(

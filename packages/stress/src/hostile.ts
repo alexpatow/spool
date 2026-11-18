@@ -10,7 +10,7 @@
 import { appendFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { scratch, serve, TOKEN, verify } from "./server.ts";
+import { scratch, serve, verify } from "./server.ts";
 import { copyCompanies } from "./write.ts";
 
 interface Case {
@@ -39,7 +39,7 @@ export interface HostileResult {
   faults: string[];
 }
 
-function all(): Case[] {
+function all(token: string): Case[] {
   const cases: Case[] = [];
   const ingest = (name: string, status: number, body: unknown) =>
     cases.push({ name: `ingest: ${name}`, status, method: "POST", path: "/v1/ingest", body });
@@ -295,8 +295,12 @@ function all(): Case[] {
   for (const [status, paths] of reads) for (const path of paths) cases.push({ name: `GET ${path}`, status, path });
   cases.push({ name: "no token", status: 401, path: "/v1/info", token: null });
   cases.push({ name: "wrong token", status: 401, path: "/v1/info", token: "nope" });
-  cases.push({ name: "token prefix", status: 401, path: "/v1/info", token: TOKEN.slice(0, -1) });
-  cases.push({ name: "token longer", status: 401, path: "/v1/info", token: TOKEN + "x" });
+  cases.push({ name: "token prefix", status: 401, path: "/v1/info", token: token.slice(0, -1) });
+  cases.push({ name: "token longer", status: 401, path: "/v1/info", token: token + "x" });
+  cases.push({ name: "token in another case", status: 401, path: "/v1/info", token: token.toUpperCase() });
+  cases.push({ name: "the token's name", status: 401, path: "/v1/info", token: "stress" });
+  cases.push({ name: "the token the server once had", status: 401, path: "/v1/info", token: "dev" });
+  cases.push({ name: "a token of 32k", status: 401, path: "/v1/info", token: "spool_" + "0".repeat(32_000) });
   // People. Nobody has an account here, and the token is not a person.
   const person = { username: "eve", name: "Eve", password: "a long enough one" };
   const asNobody = (name: string, status: number, path: string, body?: unknown, headers?: Record<string, string>) =>
@@ -327,6 +331,24 @@ function all(): Case[] {
     path: "/v1/people/00000000-0000-7000-8000-000000000000",
     body: { admin: true },
   });
+  // Tokens. A token is not an admin: it makes none, and takes none away.
+  asNobody("tokens: nobody lists them", 401, "/v1/tokens");
+  asNobody("tokens: nobody makes one", 401, "/v1/tokens", { name: "mine" });
+  cases.push({ name: "tokens: the token lists them", status: 403, path: "/v1/tokens" });
+  cases.push({
+    name: "tokens: the token makes one",
+    status: 403,
+    method: "POST",
+    path: "/v1/tokens",
+    body: { name: "mine" },
+  });
+  cases.push({
+    name: "tokens: the token revokes one",
+    status: 403,
+    method: "POST",
+    path: "/v1/tokens/00000000-0000-7000-8000-000000000000/revoke",
+    body: {},
+  });
   const elsewhere: Array<Record<string, string>> = [
     { origin: "https://elsewhere.example" },
     { "sec-fetch-site": "cross-site" },
@@ -346,14 +368,14 @@ function all(): Case[] {
     status: 401,
     path: "/v1/info",
     token: null,
-    headers: { authorization: `Basic ${btoa("a:" + TOKEN)}` },
+    headers: { authorization: `Basic ${btoa("a:" + token)}` },
   });
   cases.push({
     name: "lowercase bearer",
     status: 200,
     path: "/v1/info",
     token: null,
-    headers: { authorization: `bearer ${TOKEN}` },
+    headers: { authorization: `bearer ${token}` },
   });
   cases.push({ name: "64k header", status: 200, path: "/v1/info", headers: { "x-long": "h".repeat(64_000) } });
   for (const method of ["PUT", "DELETE", "PATCH", "OPTIONS"])
@@ -502,13 +524,13 @@ export async function hostile(log: (line: string) => void = () => {}): Promise<H
   writeFileSync(join(dir, "sources/scans.yaml"), "key: id\nevidence: ev\ncolumns: [id, name, ev]\n");
   appendFileSync(join(dir, "entities/company/entity.yaml"), "  scans:\n    name: name\n");
   const server = await serve({ project: dir, store: join(dir, "store.duckdb"), seed: 3 });
-  const cases = all();
+  const cases = all(server.token);
   const faults: string[] = [];
   try {
     for (const item of cases) {
       const headers: Record<string, string> = { ...(item.headers ?? {}) };
       if (item.token !== null && headers.authorization === undefined) {
-        headers.authorization = `Bearer ${item.token ?? TOKEN}`;
+        headers.authorization = `Bearer ${item.token ?? server.token}`;
       }
       let body: BodyInit | undefined;
       if (item.raw !== undefined) body = item.raw;

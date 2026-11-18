@@ -23,9 +23,6 @@ const port = option("--port", "7765");
 const signIn = args.includes("--sign-in");
 const scenario = args.includes("news") ? "news" : "companies";
 
-// What fills a server where people sign in: it is not a person.
-const TOKEN = "demo";
-
 const project = copyProject(scenario === "news" ? news : companies);
 const listen = ["--listen", `127.0.0.1:${port}`, "--store", join(project, "dev.duckdb")];
 if (signIn) spool("build", project);
@@ -43,7 +40,7 @@ const child = Bun.spawn(
         ...listen,
       ]
     : [binary(), "dev", project, ...listen],
-  { env: { ...process.env, SPOOL_TOKEN: signIn ? TOKEN : undefined }, stdout: "pipe", stderr: "inherit" },
+  { stdout: "pipe", stderr: "inherit" },
 );
 
 const stop = async (code = 0) => {
@@ -83,7 +80,10 @@ void (async () => {
 })();
 
 // On a development server the corrections are those of its `dev` account.
-const client = new SpoolClient({ url: url!, token: signIn ? TOKEN : undefined });
+// Where people sign in, what fills the server is not a person: it has a
+// token, made on the server's machine.
+const token = signIn ? spool("token", "add", "demo", "--store", join(project, "dev.duckdb")).trim() : undefined;
+const client = new SpoolClient({ url: url!, token });
 await (scenario === "news" ? seedNews(client) : seedCompanies(client));
 console.log(`\nthe ${scenario} scenario is at ${url}`);
 await child.exited;

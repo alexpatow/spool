@@ -54,7 +54,8 @@ Options:
                      position
   --limit <n>        list at most this many
   --url <url>        the server (default: $SPOOL_URL, or http://127.0.0.1:7765)
-  --token <token>    its bearer token (default: $SPOOL_TOKEN, or `dev`)
+  --token <token>    a token of that server (default: $SPOOL_TOKEN); `spool dev`
+                     asks for none
   --json             print what the server answered, as JSON
 ";
 
@@ -71,7 +72,8 @@ latest version of that row.
 
 Options:
   --url <url>        the server (default: $SPOOL_URL, or http://127.0.0.1:7765)
-  --token <token>    its bearer token (default: $SPOOL_TOKEN, or `dev`)
+  --token <token>    a token of that server (default: $SPOOL_TOKEN); `spool dev`
+                     asks for none
   --json             print what the server answered, as JSON
 ";
 
@@ -1397,7 +1399,7 @@ fn object(value: &Value) {
 }
 
 /// A list under its column names, or a line that says there is nothing.
-fn table(what: &str, headers: &[&str], rows: Vec<Vec<String>>) {
+pub(super) fn table(what: &str, headers: &[&str], rows: Vec<Vec<String>>) {
     if rows.is_empty() {
         println!("no {what}");
         return;

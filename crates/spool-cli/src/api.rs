@@ -471,6 +471,46 @@ pub struct PersonList {
     pub people: Vec<Person>,
 }
 
+/// A token: what a caller that is not a person presents, as
+/// `Authorization: Bearer <token>`. The log names what it changed by the
+/// token's name, as `agent:<name>`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Token {
+    pub id: String,
+    pub name: String,
+    pub created_at: String,
+    /// The ID of the person who made it. `null` when it was made on the
+    /// server's machine with `spool token add`.
+    pub created_by: Option<String>,
+    /// When it was last presented, to the minute. `null` if it never was.
+    pub last_used_at: Option<String>,
+}
+
+/// `POST /v1/tokens`: make a token. Only an admin may.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AddTokenRequest {
+    /// What its changes are recorded under, as `agent:<name>`: 1 to 64
+    /// letters, digits, `.`, `_` or `-`. No other token has it.
+    pub name: String,
+}
+
+/// A token that was just made. This is the only time the server says what
+/// the token is: it keeps a hash of it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AddedToken {
+    pub token: Token,
+    /// What the caller presents.
+    pub secret: String,
+}
+
+/// `GET /v1/tokens`: every token, in the order they were made. Only an
+/// admin may read it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TokenList {
+    pub tokens: Vec<Token>,
+}
+
 /// Every type that crosses the API, so that one schema describes them all.
 #[derive(JsonSchema)]
 #[allow(dead_code)]
@@ -524,6 +564,9 @@ struct Wire {
     add_person_request: AddPersonRequest,
     change_person_request: ChangePersonRequest,
     person_list: PersonList,
+    add_token_request: AddTokenRequest,
+    added_token: AddedToken,
+    token_list: TokenList,
 }
 
 /// The JSON Schema of the API: one definition per type, under `$defs`.

@@ -3,11 +3,13 @@ pub mod project;
 mod remote;
 pub mod serve;
 pub mod show;
+pub mod token;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use spool::UserCode;
+use spool_cli::accounts::Accounts;
 
 use crate::Failure;
 use crate::args::{self, Arguments, Spec};
@@ -34,6 +36,18 @@ fn store_path(arguments: &Arguments) -> Result<PathBuf, Failure> {
         .ok_or_else(|| {
             Failure::Usage("say where the store is with `--store` or `SPOOL_STORE`".to_owned())
         })
+}
+
+/// Where the accounts of the server over `store` are: a file beside it,
+/// named after it.
+fn accounts_path(store: &Path) -> PathBuf {
+    store.with_extension("auth.sqlite")
+}
+
+fn open_accounts(store: &Path) -> Result<Accounts, Failure> {
+    let path = accounts_path(store);
+    Accounts::open(&path)
+        .map_err(|refused| Failure::Failed(format!("{}: {refused}", path.display())))
 }
 
 /// How user code of the project at `project` is run: `--task-timeout` and

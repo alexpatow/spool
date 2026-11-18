@@ -291,15 +291,14 @@ fn the_server_runs_the_projects_strategies_and_no_other_code() {
     assert!(changed.contains("has changed since"), "{changed}");
     assert_eq!(thing(&server)["unassigned"], 1);
 
-    // The server's token is not something a strategy can read: no task was
-    // given it.
+    // A token of the server is not something a strategy can read: no task
+    // was given it.
+    let token = server.token().as_bytes();
     for entry in walk(&tasks) {
         if entry.is_file() {
             let contents = std::fs::read(&entry).unwrap();
             assert!(
-                !contents
-                    .windows(TOKEN.len())
-                    .any(|window| window == TOKEN.as_bytes()),
+                !contents.windows(token.len()).any(|window| window == token),
                 "{}",
                 entry.display()
             );
@@ -329,19 +328,16 @@ fn dev_runs_a_strategy_as_it_was_last_saved() {
     let dir = tempfile::tempdir().unwrap();
     write_things(dir.path());
     write_strategy(dir.path(), "by_code.py", BY_CODE);
-    let server = Server::start_with(
-        &[
-            "dev",
-            path(dir.path()),
-            "--listen",
-            "127.0.0.1:0",
-            "--seed",
-            "1",
-            "--tasks",
-            path(&dir.path().join("tasks")),
-        ],
-        None,
-    )
+    let server = Server::start_with(&[
+        "dev",
+        path(dir.path()),
+        "--listen",
+        "127.0.0.1:0",
+        "--seed",
+        "1",
+        "--tasks",
+        path(&dir.path().join("tasks")),
+    ])
     .unwrap();
     let first = thing(&server)["strategies"][0]["hash"].clone();
 

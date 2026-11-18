@@ -231,14 +231,8 @@ fn serve_sets_up_an_empty_store_and_refuses_one_applied_with_another_manifest() 
     let manifest = build(&project);
     let store = dir.path().join("store.duckdb");
 
-    // An empty store is set up from the manifest. A token read from a file
-    // often ends with a newline, which is not part of it.
-    let mut server = Server::start_with(
-        &serve_arguments(&manifest, &store, "1"),
-        Some("test-token\n"),
-    )
-    .unwrap();
-    server.token = TOKEN.to_owned();
+    // An empty store is set up from the manifest.
+    let server = Server::start(&serve_arguments(&manifest, &store, "1"));
     let hash = server.read("/v1/info")["store"]["manifest_hash"].clone();
     ingest(
         &server,
@@ -261,8 +255,7 @@ fn serve_sets_up_an_empty_store_and_refuses_one_applied_with_another_manifest() 
     // A changed project is refused until it is applied.
     std::fs::remove_file(project.join("entities/thing/rules/no_match/other_colour.sql")).unwrap();
     build(&project);
-    let stopped =
-        Server::start_with(&serve_arguments(&manifest, &store, "3"), Some(TOKEN)).unwrap_err();
+    let stopped = Server::start_with(&serve_arguments(&manifest, &store, "3")).unwrap_err();
     assert_eq!(stopped.code, Some(1));
     assert!(
         stopped.output.contains(hash.as_str().unwrap()),
@@ -280,8 +273,7 @@ fn serve_sets_up_an_empty_store_and_refuses_one_applied_with_another_manifest() 
 
     // No manifest, no server.
     std::fs::remove_file(&manifest).unwrap();
-    let stopped =
-        Server::start_with(&serve_arguments(&manifest, &store, "4"), Some(TOKEN)).unwrap_err();
+    let stopped = Server::start_with(&serve_arguments(&manifest, &store, "4")).unwrap_err();
     assert_eq!(stopped.code, Some(1));
     assert!(
         stopped.output.contains("manifest.json"),
@@ -345,19 +337,15 @@ fn dev_serves_a_project_directory_and_applies_changes_as_they_are_saved() {
     .unwrap();
     let folded = thing_entity("{ from: code, transform: lower }");
 
-    let server = Server::start_with(
-        &[
-            "dev",
-            path(dir.path()),
-            "--listen",
-            "127.0.0.1:0",
-            "--seed",
-            "1",
-        ],
-        None,
-    )
+    let server = Server::start_with(&[
+        "dev",
+        path(dir.path()),
+        "--listen",
+        "127.0.0.1:0",
+        "--seed",
+        "1",
+    ])
     .unwrap();
-    assert_eq!(server.token, "dev");
     assert!(dir.path().join(".spool/dev.duckdb").is_file());
     let first = server.read("/v1/info")["store"]["manifest_hash"].clone();
 

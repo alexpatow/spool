@@ -33,6 +33,37 @@
       ],
       "type": "object"
     },
+    "AddTokenRequest": {
+      "additionalProperties": false,
+      "description": "`POST /v1/tokens`: make a token. Only an admin may.",
+      "properties": {
+        "name": {
+          "description": "What its changes are recorded under, as `agent:<name>`: 1 to 64\nletters, digits, `.`, `_` or `-`. No other token has it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "AddedToken": {
+      "description": "A token that was just made. This is the only time the server says what\nthe token is: it keeps a hash of it.",
+      "properties": {
+        "secret": {
+          "description": "What the caller presents.",
+          "type": "string"
+        },
+        "token": {
+          "$ref": "#/$defs/Token"
+        }
+      },
+      "required": [
+        "token",
+        "secret"
+      ],
+      "type": "object"
+    },
     "Authored": {
       "description": "A changeset the engine wrote for a caller, and its receipt.",
       "properties": {
@@ -3652,6 +3683,55 @@
       "required": [
         "merges",
         "splits"
+      ],
+      "type": "object"
+    },
+    "Token": {
+      "description": "A token: what a caller that is not a person presents, as\n`Authorization: Bearer <token>`. The log names what it changed by the\ntoken's name, as `agent:<name>`.",
+      "properties": {
+        "created_at": {
+          "type": "string"
+        },
+        "created_by": {
+          "description": "The ID of the person who made it. `null` when it was made on the\nserver's machine with `spool token add`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "last_used_at": {
+          "description": "When it was last presented, to the minute. `null` if it never was.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "created_at"
+      ],
+      "type": "object"
+    },
+    "TokenList": {
+      "description": "`GET /v1/tokens`: every token, in the order they were made. Only an\nadmin may read it.",
+      "properties": {
+        "tokens": {
+          "items": {
+            "$ref": "#/$defs/Token"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "tokens"
       ],
       "type": "object"
     },

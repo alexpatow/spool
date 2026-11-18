@@ -6,6 +6,7 @@
 
 import type {
   AddPersonRequest,
+  AddedToken,
   Authored,
   ChangePersonRequest,
   ChangesetId,
@@ -52,6 +53,8 @@ import type {
   SplitReport,
   SplitRequest,
   StartRunRequest,
+  Token,
+  TokenList,
   TypeResolution,
   UndoRequest,
 } from "./types.ts";
@@ -68,9 +71,10 @@ export interface SpoolClientOptions {
   /** Where the server is, for example `http://localhost:7765`. */
   url: string;
   /**
-   * The server's bearer token, for a caller that is not a person. Left out,
-   * the client is a page of the server's own, and the browser sends the
-   * session cookie of whoever is signed in.
+   * One of the server's tokens, for a caller that is not a person. What it
+   * changes is recorded under the token's name. Left out, the client is a
+   * page of the server's own, and the browser sends the session cookie of
+   * whoever is signed in; a development server asks for neither.
    */
   token?: string;
   /** The `fetch` to call with. Defaults to the runtime's. */
@@ -600,6 +604,26 @@ export class SpoolClient {
    */
   changePerson(id: string, request: ChangePersonRequest): Promise<Person> {
     return this.json("POST", `/v1/people/${encodeURIComponent(id)}`, { json: request });
+  }
+
+  /** Every token, in the order they were made. Only an admin may read them. */
+  async tokens(): Promise<Token[]> {
+    const { tokens } = await this.json<TokenList>("GET", "/v1/tokens");
+    return tokens;
+  }
+
+  /**
+   * Makes a token for a caller that is not a person, which writes as
+   * `agent:<name>`. Only an admin may. `secret` is what the caller presents,
+   * and this is the only time the server says what it is.
+   */
+  addToken(name: string): Promise<AddedToken> {
+    return this.json("POST", "/v1/tokens", { json: { name } });
+  }
+
+  /** Takes a token away, so that the server no longer accepts it. Only an admin may. */
+  revokeToken(id: string): Promise<Token> {
+    return this.json("POST", `/v1/tokens/${encodeURIComponent(id)}/revoke`, { json: {} });
   }
 
   // The wire
