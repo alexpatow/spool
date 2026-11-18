@@ -84,7 +84,7 @@ export interface AppProps {
 type Connection =
   | { status: "checking" }
   | { status: "ready"; me: Person; dev: boolean; info: Info; people: Person[] }
-  /** Nobody is signed in. With `setup`, nobody has an account yet either. */
+  /** Nobody is signed in. With `setup`, no admin can sign in yet either. */
   | { status: "out"; setup: boolean }
   | { status: "failed"; error: unknown };
 
@@ -172,7 +172,7 @@ export function App({ url = window.location.origin, fetch, storage = window.loca
         {parseAddress(here()).path[0] === "setup" ? (
           <SetupForm client={client} open={connection.setup} entered={entered} />
         ) : connection.setup ? (
-          <Notice>No accounts yet. Open the setup link the server printed when it started.</Notice>
+          <Notice>No admin can sign in yet. Open the setup link the server printed when it started.</Notice>
         ) : (
           <SignInForm client={client} entered={entered} />
         )}
@@ -311,7 +311,7 @@ function SetupForm({
   entered,
 }: {
   client: SpoolClient;
-  /** Whether the server still has no accounts. */
+  /** Whether the server still waits for its first account. */
   open: boolean;
   entered: (state: SessionState) => void;
 }) {

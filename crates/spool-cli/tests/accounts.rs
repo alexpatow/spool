@@ -281,3 +281,54 @@ fn nobody_signs_in_to_a_development_server() {
         format!("user:{dev}").as_str()
     );
 }
+
+#[test]
+fn a_store_that_was_developed_on_still_gets_its_first_account() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("project");
+    write_things(&project);
+    let store = dir.path().join("store.duckdb");
+    let developed = Server::start_with(
+        &[
+            "dev",
+            path(&project),
+            "--store",
+            path(&store),
+            "--listen",
+            "127.0.0.1:0",
+        ],
+        None,
+    )
+    .unwrap();
+    let state = browse(&developed, "GET", "/auth/session", "").send().ok();
+    let dev = state["person"]["id"].as_str().unwrap().to_owned();
+    developed.stop();
+
+    // `dev` has no password, so nobody could sign in: the link is printed.
+    let (server, code) = served(dir.path());
+    let state = browse(&server, "GET", "/auth/session", "").send().ok();
+    assert_eq!(
+        state,
+        json!({ "person": null, "setup": true, "dev": false })
+    );
+    let (ada, id) = set_up(&server, &code);
+
+    // What `dev` changed keeps its name.
+    let people = browse(&server, "GET", "/v1/people", &ada).send().ok();
+    let ids: Vec<&str> = people["people"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|person| person["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, [dev.as_str(), id.as_str()]);
+
+    // An admin nobody can sign in as is not one who is left to manage people.
+    post(
+        &server,
+        &format!("/v1/people/{id}"),
+        &ada,
+        json!({ "admin": false }),
+    )
+    .error(409, "conflict");
+}

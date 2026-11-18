@@ -555,7 +555,7 @@ export class SpoolClient {
 
   // People
 
-  /** Who the browser is signed in as, and whether anyone has an account yet. */
+  /** Who the browser is signed in as, and whether the first account is still to be made. */
   session(): Promise<SessionState> {
     return this.json("GET", "/auth/session");
   }
@@ -571,7 +571,8 @@ export class SpoolClient {
 
   /**
    * Makes the first account, an admin, and signs in as it. The code is the
-   * one in the link the server printed when it started with no accounts.
+   * one in the link the server printed when it started with no admin who
+   * could sign in.
    */
   setUp(request: SetupRequest): Promise<SessionState> {
     return this.json("POST", "/auth/setup", { json: request });

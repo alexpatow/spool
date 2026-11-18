@@ -1382,8 +1382,8 @@ export interface SessionState {
   dev: boolean;
   person?: Person | null;
   /**
-   * Nobody has an account yet. The server printed a link when it started
-   * that makes the first one.
+   * No admin can sign in yet. The server printed a link when it started
+   * that makes the first account.
    */
   setup: boolean;
 }

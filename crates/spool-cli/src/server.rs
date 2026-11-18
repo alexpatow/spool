@@ -112,7 +112,7 @@ pub struct ServerOptions {
     /// A caller that presents nothing is the `dev` account. For `spool dev`,
     /// which listens on this machine only.
     pub dev: bool,
-    /// The code that makes the first account, while nobody has one.
+    /// The code that makes the first account, while no admin can sign in.
     pub setup: Option<String>,
     /// Whether browsers reach the server over HTTPS, and so whether the
     /// session cookie is sent only over HTTPS.
@@ -453,7 +453,7 @@ impl From<Refused> for ApiError {
         match refused {
             Refused::Invalid(_) | Refused::WrongPassword => Self::invalid(message),
             Refused::Unknown => Self::not_found(message),
-            Refused::Taken(_) | Refused::LastAdmin | Refused::NotEmpty => {
+            Refused::Taken(_) | Refused::LastAdmin | Refused::SetUp => {
                 Self::new(StatusCode::CONFLICT, ErrorCode::Conflict, message)
             }
             Refused::Failed(_) => Self::internal(message),
@@ -592,7 +592,7 @@ async fn session_state(State(app): State<App>, session: Session) -> ApiResult {
     if person.is_none() && app.dev {
         person = Some(people(&app, Accounts::dev).await?);
     }
-    let setup = person.is_none() && people(&app, Accounts::is_empty).await?;
+    let setup = person.is_none() && people(&app, Accounts::needs_setup).await?;
     ok(SessionState {
         person,
         setup,
@@ -643,7 +643,7 @@ async fn sign_out(State(app): State<App>, session: Session) -> ApiResult {
 }
 
 /// Makes the first account. The code is the one the server printed when it
-/// started with no accounts, and it works once.
+/// started with no admin who could sign in, and it works once.
 async fn set_up(State(app): State<App>, session: Session, body: Bytes) -> ApiResult {
     let request: SetupRequest = json_body(&body)?;
     let right = {

@@ -402,8 +402,8 @@ pub struct Person {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionState {
     pub person: Option<Person>,
-    /// Nobody has an account yet. The server printed a link when it started
-    /// that makes the first one.
+    /// No admin can sign in yet. The server printed a link when it started
+    /// that makes the first account.
     pub setup: bool,
     /// A development server: nobody signs in, and whoever opens it is the
     /// `dev` account.

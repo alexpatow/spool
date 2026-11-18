@@ -3251,7 +3251,7 @@
           ]
         },
         "setup": {
-          "description": "Nobody has an account yet. The server printed a link when it started\nthat makes the first one.",
+          "description": "No admin can sign in yet. The server printed a link when it started\nthat makes the first account.",
           "type": "boolean"
         }
       },

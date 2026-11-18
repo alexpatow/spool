@@ -55,8 +55,8 @@ pub enum Refused {
     Unknown,
     /// The change would leave nobody able to manage people.
     LastAdmin,
-    /// The first account has already been made.
-    NotEmpty,
+    /// An admin can already sign in: the first account has been made.
+    SetUp,
     /// The password given as the current one is not.
     WrongPassword,
     Failed(String),
@@ -71,7 +71,7 @@ impl std::fmt::Display for Refused {
             Refused::LastAdmin => {
                 f.write_str("this is the only admin who can sign in; make another one first")
             }
-            Refused::NotEmpty => f.write_str("this server already has its first account"),
+            Refused::SetUp => f.write_str("this server already has an admin who can sign in"),
             Refused::WrongPassword => f.write_str("the current password is not that"),
         }
     }
@@ -136,24 +136,21 @@ impl Accounts {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Whether nobody has an account yet.
-    pub fn is_empty(&self) -> Result<bool, Refused> {
-        let people: i64 =
-            self.connection()
-                .query_row("SELECT count(*) FROM person", [], |row| row.get(0))?;
-        Ok(people == 0)
+    /// Whether no admin can sign in yet, so that nobody could add anyone.
+    /// The account `spool dev` works as has no password and is not one who
+    /// can: a store that was developed on still gets its first account.
+    pub fn needs_setup(&self) -> Result<bool, Refused> {
+        Ok(admins(&self.connection(), true)? == 0)
     }
 
-    /// Makes the first account, an admin. Refused once anyone has one.
+    /// Makes the first account, an admin. Refused once an admin can sign in.
     pub fn first(&self, username: &str, name: &str, password: &str) -> Result<Person, Refused> {
         let person = drafted(username, name, true)?;
         let hash = hashed(password)?;
         let mut connection = self.connection();
         let transaction = connection.transaction()?;
-        let people: i64 =
-            transaction.query_row("SELECT count(*) FROM person", [], |row| row.get(0))?;
-        if people != 0 {
-            return Err(Refused::NotEmpty);
+        if admins(&transaction, true)? != 0 {
+            return Err(Refused::SetUp);
         }
         insert(&transaction, &person, Some(&hash))?;
         transaction.commit()?;
@@ -235,6 +232,9 @@ impl Accounts {
         let mut connection = self.connection();
         let transaction = connection.transaction()?;
         let before = find(&transaction, "id", id)?.ok_or(Refused::Unknown)?;
+        // Once an admin can sign in, one always can. Until then `dev` is the
+        // admin, and stays one.
+        let signs_in = admins(&transaction, true)? != 0;
         let after = Person {
             name: name.unwrap_or(before.name.clone()),
             admin: change.admin.unwrap_or(before.admin),
@@ -245,12 +245,7 @@ impl Accounts {
             "UPDATE person SET name = ?, admin = ?, active = ?, password = coalesce(?, password) WHERE id = ?",
             params![after.name, after.admin, after.active, hash, id],
         )?;
-        let admins: i64 = transaction.query_row(
-            "SELECT count(*) FROM person WHERE admin AND active",
-            [],
-            |row| row.get(0),
-        )?;
-        if admins == 0 {
+        if admins(&transaction, signs_in)? == 0 {
             return Err(Refused::LastAdmin);
         }
         if hash.is_some() || !after.active {
@@ -302,6 +297,15 @@ fn find(connection: &Connection, column: &str, value: &str) -> Result<Option<Per
             person,
         )
         .optional()?)
+}
+
+/// How many admins are on: with `signs_in`, only those who have a password.
+fn admins(connection: &Connection, signs_in: bool) -> Result<i64, Refused> {
+    Ok(connection.query_row(
+        "SELECT count(*) FROM person WHERE admin AND active AND (password IS NOT NULL OR NOT ?)",
+        [signs_in],
+        |row| row.get(0),
+    )?)
 }
 
 fn insert(connection: &Connection, person: &Person, hash: Option<&str>) -> Result<(), Refused> {
@@ -471,17 +475,14 @@ mod tests {
     #[test]
     fn the_first_account_is_an_admin_and_there_is_only_one_first() {
         let accounts = Accounts::in_memory();
-        assert!(accounts.is_empty().unwrap());
+        assert!(accounts.needs_setup().unwrap());
         let ada = accounts.first("Ada", " Ada Lovelace ", PASSWORD).unwrap();
         assert!(ada.admin && ada.active);
         assert_eq!(
             (ada.username.as_str(), ada.name.as_str()),
             ("ada", "Ada Lovelace")
         );
-        assert_eq!(
-            accounts.first("eve", "Eve", PASSWORD),
-            Err(Refused::NotEmpty)
-        );
+        assert_eq!(accounts.first("eve", "Eve", PASSWORD), Err(Refused::SetUp));
         assert_eq!(accounts.list().unwrap(), [ada]);
     }
 
@@ -535,6 +536,39 @@ mod tests {
         assert_eq!(accounts.dev().unwrap(), dev);
         assert!(dev.admin);
         assert_eq!(accounts.verify("dev", "").unwrap(), None);
+    }
+
+    #[test]
+    fn the_dev_account_does_not_stand_in_for_the_first_one() {
+        let accounts = Accounts::in_memory();
+        let dev = accounts.dev().unwrap();
+        // Someone `spool dev` added signs in, and manages nobody.
+        accounts.add("bob", "Bob", PASSWORD, false).unwrap();
+        assert!(accounts.needs_setup().unwrap());
+        let off = Change {
+            active: Some(false),
+            ..Change::default()
+        };
+        // Until someone signs in to manage people, `dev` is who does.
+        assert_eq!(
+            accounts.change(&dev.id, off.clone()),
+            Err(Refused::LastAdmin)
+        );
+
+        let ada = accounts.first("ada", "Ada", PASSWORD).unwrap();
+        assert!(!accounts.needs_setup().unwrap());
+        assert_eq!(accounts.get(&dev.id).unwrap(), Some(dev.clone()));
+        // `dev` is an admin nobody signs in as: it cannot be the one left.
+        let plain = Change {
+            admin: Some(false),
+            ..Change::default()
+        };
+        assert_eq!(accounts.change(&ada.id, plain), Err(Refused::LastAdmin));
+        assert_eq!(
+            accounts.change(&ada.id, off.clone()),
+            Err(Refused::LastAdmin)
+        );
+        assert!(!accounts.change(&dev.id, off).unwrap().active);
     }
 
     #[test]

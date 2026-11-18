@@ -627,11 +627,11 @@ A caller of `/v1` is a person or an agent, and the server says which made a chan
 
 - **People have accounts, kept by the server** in a SQLite file beside the store and named after it: `spool.duckdb` has `spool.auth.sqlite`. An account is a username, a name, a password hashed with Argon2, whether it is an admin, and whether it is on. The log names a person as `user:<id>`, the ID of the account, which stays when the name changes.
 - **A person signs in with a username and a password** and gets a session: a cookie the page cannot read (`HttpOnly`, `SameSite=Lax`, and `Secure` unless the server listens on loopback or was started with `--plain-http`) that ends twelve hours after signing in. Sessions are rows of the same file, under the hash of their ID, so they outlast a restart and a copy of the file signs nobody in. Ten wrong passwords for a username within fifteen minutes refuse further tries for it.
-- **The first account is made with a link the server prints.** A server that starts with no accounts prints `/setup#<code>`. Whoever opens it makes the first account, an admin, and the code then stops working. No credential is put in the environment.
-- **An admin adds everyone else**, and can change a name, set a new password, make an admin and turn an account off. Nobody signs themselves up. An account is turned off, not deleted, so the log keeps a name for its ID, and one admin that is on always remains. Turning an account off, or changing its password, ends its sessions. A person changes their own password with the current one.
+- **The first account is made with a link the server prints.** A server that starts with no admin who can sign in prints `/setup#<code>`. Whoever opens it makes the first account, an admin, and the code then stops working. No credential is put in the environment.
+- **An admin adds everyone else**, and can change a name, set a new password, make an admin and turn an account off. Nobody signs themselves up. An account is turned off, not deleted, so the log keeps a name for its ID, and one admin who can sign in always remains. Turning an account off, or changing its password, ends its sessions. A person changes their own password with the current one.
 - **An agent sends a bearer token**, `SPOOL_TOKEN`, which a server may be started without. It reads and writes as `agent:api` and cannot manage people. Tokens that are named, made and revoked in the studio are to replace it.
 - **A write must come from the server's own pages.** A browser can send the session cookie with a request that another site's page makes. A write whose `Sec-Fetch-Site` is not `same-origin`, or, from a browser that sends none, whose `Origin` is not the host it was sent to, is refused as `forbidden`. A caller that is not a browser sends neither header and is let through.
-- **`spool dev` has no sign-in.** Whoever opens it is the account `dev`, an admin with no password.
+- **`spool dev` has no sign-in.** Whoever opens it is the account `dev`, an admin with no password. Nobody signs in as it, so a store that was developed on and is then served still prints the link, and `dev` does not count as the admin who must remain. What `dev` changed keeps its name in the log.
 - **Passwords are for getting started.** A deployment that people depend on should sign them in through an identity provider, so that leaving the organisation ends their access and a second factor is the provider's to require. Sign-in with Google is planned as the first, with a person still added by an admin beforehand.
 
 The paths that make a caller one are outside `/v1`: `GET /auth/session` says who is signed in and whether the server still waits for its first account, and `POST /auth/sign-in`, `/auth/sign-out`, `/auth/setup` and `/auth/password` do what they are called. The parts are `password-auth` for Argon2, `tower-sessions` for sessions and `rusqlite` for the file.
@@ -1018,7 +1018,7 @@ Milestone 6 continues with the studio: `packages/studio`, `crates/spool-cli/src/
 
 Accounts are `crates/spool-cli/src/accounts.rs` and the `/auth` and `/v1/people` paths of the server. Their exit criteria, each a test in `crates/spool-cli/tests/accounts.rs`:
 
-- The first account is made with the code of the link the server printed, and only once.
+- The first account is made with the code of the link the server printed, and only once. A store that `spool dev` ran on still gets one.
 - A change is recorded under the person whose session sent it, and under `agent:api` when the token did. A request that names its author is refused.
 - An admin adds people and changes them, and nobody else does: not another person, and not the token.
 - Signing out, a new password and an account turned off each end sessions, and the last admin stays one.

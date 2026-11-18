@@ -27,9 +27,9 @@ another manifest is refused: run `spool apply` on it first.
 The server answers a browser at its address with the studio, which shows what
 the store holds and takes the changes of whoever is signed in. People sign in
 with a username and a password. Their accounts are kept in a file beside the
-store, named after it: `spool.auth.sqlite` for `spool.duckdb`. While nobody
-has an account, the server prints a link when it starts; whoever opens it
-makes the first account and is the admin, who adds everyone else.
+store, named after it: `spool.auth.sqlite` for `spool.duckdb`. While no admin
+can sign in, the server prints a link when it starts; whoever opens it makes
+the first account and is the admin, who adds everyone else.
 
 A caller that is not a person sends the bearer token in SPOOL_TOKEN, if one
 is set. What it changes is recorded under `agent:api`.
@@ -174,7 +174,7 @@ pub fn serve(arguments: &[String]) -> Result<(), Failure> {
     say!("manifest  {}", manifest.hash);
     let accounts = open_accounts(&store)?;
     let empty = accounts
-        .is_empty()
+        .needs_setup()
         .map_err(|refused| failed(refused.to_string()))?;
     let mut options = ServerOptions::new(accounts);
     options.token = token;
@@ -353,16 +353,16 @@ fn run(engine: Arc<Engine>, listen: SocketAddr, options: ServerOptions) -> Resul
             Some(code) if options.studio => {
                 say!("setup     http://{address}/setup#{code}");
                 say!(
-                    "nobody has an account yet: open that link, at the address people reach \
-                     this server by, to make the first one"
+                    "no admin can sign in yet: open that link, at the address people reach \
+                     this server by, to make the first account"
                 );
             }
             // No page asks for it: the code is sent to the API.
             Some(code) => {
                 say!("setup     {code}");
                 say!(
-                    "nobody has an account yet: `POST /auth/setup` with that code makes the \
-                     first one"
+                    "no admin can sign in yet: `POST /auth/setup` with that code makes the \
+                     first account"
                 );
             }
             None => {}
