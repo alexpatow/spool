@@ -1,0 +1,46 @@
+# North Carolina voters, five sources of about 100,000 people each: the tenth
+# of the register whose number ends in 0, which is the same people in every
+# source. 500,323 records of 350,022 people. See ../../datasets.toml.
+
+project = "."
+
+[truth]
+column = "recid"
+
+[[step]]
+name = "five sources"
+
+[[step.ingest]]
+dataset = "ncvoters_5"
+member = "5Party-ocp20/ncvr_numrec_1000000_modrec_2_ocp_20_myp_0_nump_5.csv"
+source = "party_0"
+entity_type = "person"
+where = "recid::BIGINT % 10 = 0"
+
+[[step.ingest]]
+dataset = "ncvoters_5"
+member = "5Party-ocp20/ncvr_numrec_1000000_modrec_2_ocp_20_myp_1_nump_5.csv"
+source = "party_1"
+entity_type = "person"
+where = "recid::BIGINT % 10 = 0"
+
+[[step.ingest]]
+dataset = "ncvoters_5"
+member = "5Party-ocp20/ncvr_numrec_1000000_modrec_2_ocp_20_myp_2_nump_5.csv"
+source = "party_2"
+entity_type = "person"
+where = "recid::BIGINT % 10 = 0"
+
+[[step.ingest]]
+dataset = "ncvoters_5"
+member = "5Party-ocp20/ncvr_numrec_1000000_modrec_2_ocp_20_myp_3_nump_5.csv"
+source = "party_3"
+entity_type = "person"
+where = "recid::BIGINT % 10 = 0"
+
+[[step.ingest]]
+dataset = "ncvoters_5"
+member = "5Party-ocp20/ncvr_numrec_1000000_modrec_2_ocp_20_myp_4_nump_5.csv"
+source = "party_4"
+entity_type = "person"
+where = "recid::BIGINT % 10 = 0"

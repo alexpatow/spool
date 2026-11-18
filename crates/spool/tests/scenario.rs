@@ -256,6 +256,189 @@ fn a_dataset_is_downloaded_once_and_checked_against_its_checksum() {
     assert!(message.contains("no dataset named `posters`"), "{message}");
 }
 
+#[test]
+fn an_ingest_can_take_only_the_rows_a_condition_holds_for() {
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path());
+    write(dir.path(), "bench/papers.csv", PAPERS);
+    // Every column is text, so a number is cast. A comment in the condition
+    // does not reach past it.
+    write(
+        dir.path(),
+        "bench/scenario.toml",
+        &scenario("file = \"papers.csv\"\nwhere = \"id::BIGINT % 2 = 0 -- even\""),
+    );
+    let report = run(dir.path()).unwrap();
+    let ingest = &report.steps[0].ingest[0];
+    assert_eq!((ingest.received, ingest.inserted), (2, 2));
+    // Truth is read from the rows that were taken, and from no others.
+    assert_eq!(report.steps[0].metrics.records, 2);
+    assert_eq!(report.steps[0].metrics.true_entities, 2);
+
+    let rows = Rows::from_csv_where(dir.path().join("bench/papers.csv"), "title ILIKE '%spools'")
+        .unwrap();
+    let batches: Vec<_> = rows.map(Result::unwrap).collect();
+    let ids: Vec<_> = batches
+        .iter()
+        .flat_map(|batch| (0..batch.num_rows()).map(|row| cell(batch, 0, row)))
+        .collect();
+    assert_eq!(ids, [Some("1".to_owned()), Some("2".to_owned())]);
+
+    // A condition that is not SQL over the file's columns names the source
+    // and the condition.
+    write(
+        dir.path(),
+        "bench/scenario.toml",
+        &scenario("file = \"papers.csv\"\nwhere = \"shelf = 3\""),
+    );
+    let message = scenario_error(run(dir.path()));
+    assert!(
+        message.contains("the rows of `library` where `shelf = 3`"),
+        "{message}"
+    );
+    assert!(message.contains("shelf"), "{message}");
+}
+
+#[test]
+fn the_truth_column_may_be_the_key_of_the_source() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    project(root);
+    // Two shelves list the same works under the works' own numbers.
+    for shelf in ["north", "south"] {
+        write(
+            root,
+            &format!("bench/sources/{shelf}.yaml"),
+            "key: work\ncolumns: [work, title]\n",
+        );
+        write(
+            root,
+            &format!("bench/{shelf}.csv"),
+            "work,title\nw1,On Spools\nw2,Threads\n",
+        );
+    }
+    write(
+        root,
+        "bench/entities/paper/entity.yaml",
+        "label: title\nfeatures: [title]\nmapping:\n  north:\n    title: title\n  south:\n    title: title\n",
+    );
+    write(
+        root,
+        "bench/scenario.toml",
+        "[truth]\ncolumn = \"work\"\n\n[[step]]\nname = \"all\"\n\n\
+         [[step.ingest]]\nfile = \"north.csv\"\nsource = \"north\"\nentity_type = \"paper\"\n\n\
+         [[step.ingest]]\nfile = \"south.csv\"\nsource = \"south\"\nentity_type = \"paper\"\n",
+    );
+    let report = run(root).unwrap();
+    let step = &report.steps[0];
+    // The key stays in the rows: each record has it, and is scored by it.
+    assert_eq!(step.ingest[0].inserted, 2);
+    assert_eq!(step.metrics.records, 4);
+    assert_eq!(step.metrics.true_entities, 2);
+    assert_eq!(step.metrics.pairs.precision, Some(1.0));
+    assert_eq!(step.metrics.pairs.recall, Some(1.0));
+}
+
+#[test]
+fn a_dataset_that_is_an_archive_is_unpacked_once_and_an_ingest_names_a_file_in_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    project(root);
+    write(root, "upstream/shelves/papers.csv", PAPERS);
+    write(root, "upstream/shelves/more.csv", MORE);
+    let archive = root.join("upstream/shelves.tar.gz");
+    let packed = std::process::Command::new("tar")
+        .arg("-czf")
+        .arg(&archive)
+        .arg("-C")
+        .arg(root.join("upstream"))
+        .arg("shelves")
+        .status()
+        .unwrap();
+    assert!(packed.success());
+    let checksum: String = Sha256::digest(fs::read(&archive).unwrap())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let datasets = |archive_line: &str| {
+        format!(
+            "[[dataset]]\nname = \"shelves\"\nurl = \"file://{}\"\nsha256 = \"{checksum}\"\n\
+             licence = \"invented for this test\"\n{archive_line}",
+            archive.display()
+        )
+    };
+    let ingest = |member: &str| scenario(&format!("dataset = \"shelves\"\n{member}"));
+
+    write(root, "datasets.toml", &datasets("archive = \"tar\"\n"));
+    write(
+        root,
+        "bench/scenario.toml",
+        &ingest("member = \"shelves/papers.csv\""),
+    );
+    assert_eq!(run(root).unwrap().steps[0].ingest[0].inserted, 4);
+    assert!(root.join(".cache/shelves/shelves/more.csv").is_file());
+    // What is kept is the unpacked copy, not the archive beside it.
+    assert!(!root.join(".cache/shelves.tar").exists());
+
+    // The unpacked copy is used from then on, and another file of it is
+    // there without a second download.
+    fs::remove_file(&archive).unwrap();
+    write(
+        root,
+        "bench/scenario.toml",
+        &ingest("member = \"shelves/more.csv\""),
+    );
+    assert_eq!(run(root).unwrap().steps[0].ingest[0].inserted, 3);
+
+    let cases = [
+        (
+            ingest("member = \"shelves/posters.csv\""),
+            "the archive has no file `shelves/posters.csv`",
+        ),
+        (
+            ingest("member = \"../papers.csv\""),
+            "`../papers.csv` does not name a file within the archive",
+        ),
+        (
+            ingest(""),
+            "dataset `shelves` is an archive: the ingest names the file to read with `member`",
+        ),
+    ];
+    for (scenario, expected) in cases {
+        write(root, "bench/scenario.toml", &scenario);
+        let message = scenario_error(run(root));
+        assert!(
+            message.contains(expected),
+            "expected `{expected}` in: {message}"
+        );
+    }
+
+    // A dataset that is one file has no members, and only `tar` is an archive.
+    write(root, "datasets.toml", &datasets(""));
+    write(
+        root,
+        "bench/scenario.toml",
+        &ingest("member = \"shelves/papers.csv\""),
+    );
+    let message = scenario_error(run(root));
+    assert!(message.contains("is one file"), "{message}");
+    write(root, "datasets.toml", &datasets("archive = \"zip\"\n"));
+    let message = scenario_error(run(root));
+    assert!(message.contains("unknown variant `zip`"), "{message}");
+
+    // `member` belongs to a dataset.
+    write(
+        root,
+        "bench/scenario.toml",
+        &scenario("file = \"papers.csv\"\nmember = \"shelves/papers.csv\""),
+    );
+    let message = scenario_error(Scenario::load(root.join("bench")));
+    assert!(
+        message.contains("`member` names a file within a `dataset`"),
+        "{message}"
+    );
+}
+
 /// Papers in two batches, with a reviewer between them.
 const REVIEWED: &str = r#"
 [truth]

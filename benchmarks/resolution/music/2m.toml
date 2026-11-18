@@ -1,0 +1,40 @@
+# MusicBrainz songs, five sources of about 390,000 songs each: 1,937,500
+# records of 1,000,000 songs. See ../../datasets.toml.
+
+project = "."
+
+[truth]
+column = "CID"
+
+[[step]]
+name = "five sources"
+
+[[step.ingest]]
+dataset = "musicbrainz_2m"
+source = "source_1"
+entity_type = "song"
+where = "SourceID = '1'"
+
+[[step.ingest]]
+dataset = "musicbrainz_2m"
+source = "source_2"
+entity_type = "song"
+where = "SourceID = '2'"
+
+[[step.ingest]]
+dataset = "musicbrainz_2m"
+source = "source_3"
+entity_type = "song"
+where = "SourceID = '3'"
+
+[[step.ingest]]
+dataset = "musicbrainz_2m"
+source = "source_4"
+entity_type = "song"
+where = "SourceID = '4'"
+
+[[step.ingest]]
+dataset = "musicbrainz_2m"
+source = "source_5"
+entity_type = "song"
+where = "SourceID = '5'"

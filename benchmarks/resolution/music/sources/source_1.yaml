@@ -1,0 +1,4 @@
+# Writes a title as "Title (Album)", a length as "03:39", a track number
+# with leading zeros and a year in four digits, and has no language.
+key: TID
+columns: [TID, CTID, SourceID, id, number, title, length, artist, album, year, language]
