@@ -1841,6 +1841,77 @@ fn rows_are_taken_as_csv_and_as_tab_separated_text() {
 }
 
 #[test]
+fn a_name_that_two_records_have_is_refused_with_their_ids() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("project");
+    write_two_of_each(&project);
+    let server = Server::serve(&project, dir.path(), 1);
+    let load = |entity_type: &str, rows: Value| {
+        let body = json!({ "source": "crm", "entity_type": entity_type, "rows": rows });
+        server.call("/v1/load", body);
+    };
+    // The source sends rows of two types, and has a company and a person
+    // under the key 1. Each is the row of its type that nothing replaced.
+    load(
+        "company",
+        json!([{ "id": "1", "name": "Dana" }, { "id": "2", "name": "Dana" }]),
+    );
+    load("person", json!([{ "id": "1", "name": "Dana Reyes" }]));
+    let held = |key: &str, entity_type: &str| -> String {
+        let records = server.read(&format!(
+            "/v1/records?source=crm&key={key}&entity_type={entity_type}"
+        ));
+        let current = records["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|record| record["superseded_by"].is_null())
+            .unwrap();
+        current["id"].as_str().unwrap().to_owned()
+    };
+    let (company, person) = (held("1", "company"), held("1", "person"));
+
+    // The name does not say which, so neither is taken for it.
+    let message = server
+        .get("/v1/explain?a=crm:1&b=crm:2")
+        .error(400, "invalid");
+    assert!(
+        message.starts_with("2 records are named `crm:1`: name one by its ID, of "),
+        "{message}"
+    );
+    assert!(
+        message.contains(&format!("{company} (a `company`)")),
+        "{message}"
+    );
+    assert!(
+        message.contains(&format!("{person} (a `person`)")),
+        "{message}"
+    );
+    // Whichever side it is on.
+    server
+        .get("/v1/explain?a=crm:2&b=crm:1")
+        .error(400, "invalid");
+    // By its ID the company is explained, and a name one record has still
+    // names it.
+    let by_id = server.read(&format!("/v1/explain?a={company}&b=crm:2"));
+    let ids = [
+        &by_id["left"]["record"]["id"],
+        &by_id["right"]["record"]["id"],
+    ];
+    assert!(ids.contains(&&json!(company)), "{by_id}");
+
+    // A new version of the company's row leaves two that nothing replaced,
+    // the new one and the person.
+    load("company", json!([{ "id": "1", "name": "Dana Ltd" }]));
+    let message = server
+        .get("/v1/explain?a=crm:1&b=crm:2")
+        .error(400, "invalid");
+    assert!(message.starts_with("2 records are named"), "{message}");
+    assert!(!message.contains(&company), "{message}");
+    assert!(message.contains(&held("1", "company")), "{message}");
+}
+
+#[test]
 fn a_load_and_a_match_are_called_by_the_words_the_commands_have() {
     let dir = tempfile::tempdir().unwrap();
     let server = things_server(dir.path());

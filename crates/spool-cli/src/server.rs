@@ -2130,7 +2130,8 @@ async fn explain(
 /// The record a caller names: by its ID, or as `<source>:<key>`, which
 /// names the version of the row that nothing has replaced, or a mention as
 /// the lists name it, `<source>:<document>[<start>-<end>]`. A source's name
-/// has no colon in it, so the first one ends it, and a key may have any.
+/// has no colon in it, so the first one ends it, and a key may have any. A
+/// name more than one record has is refused, with their IDs.
 async fn named_record(app: &App, name: &str) -> ApiResult<RecordId> {
     if let Ok(record) = name.parse() {
         return Ok(record);
@@ -2143,14 +2144,17 @@ async fn named_record(app: &App, name: &str) -> ApiResult<RecordId> {
     let (source, key) = (source.to_owned(), key.to_owned());
     let found = engine(app, {
         let (name, source, key) = (name.to_owned(), source.clone(), key.clone());
-        move |engine| match latest_version(engine, &source, &key)? {
-            Some(record) => Ok(vec![record]),
-            None => mentions(engine, &name, &source, &key),
+        move |engine| {
+            let rows = current_versions(engine, &source, &key)?;
+            match rows.is_empty() {
+                true => mentions(engine, &name, &source, &key),
+                false => Ok(rows),
+            }
         }
     })
     .await?;
     match found.as_slice() {
-        [record] => Ok(*record),
+        [record] => Ok(record.id),
         [] => {
             // The first part is often not a source at all, such as the
             // name of the entity type. The sources there are say what to
@@ -2172,7 +2176,10 @@ async fn named_record(app: &App, name: &str) -> ApiResult<RecordId> {
             )))
         }
         several => {
-            let ids: Vec<String> = several.iter().map(RecordId::to_string).collect();
+            let ids: Vec<String> = several
+                .iter()
+                .map(|record| format!("{} (a `{}`)", record.id, record.entity_type))
+                .collect();
             Err(ApiError::invalid(format!(
                 "{} records are named `{name}`: name one by its ID, of {}",
                 several.len(),
@@ -2182,28 +2189,31 @@ async fn named_record(app: &App, name: &str) -> ApiResult<RecordId> {
     }
 }
 
-/// The version of a source's row that nothing has replaced, or the last
-/// one listed if every version was.
-fn latest_version(engine: &Engine, source: &str, key: &str) -> spool::Result<Option<RecordId>> {
+/// The versions of a source's row that nothing has replaced. A source that
+/// sends rows of more than one entity type may hold a row of each under
+/// one key, so there can be more than one.
+fn current_versions(
+    engine: &Engine,
+    source: &str,
+    key: &str,
+) -> spool::Result<Vec<spool::RecordEntry>> {
     let mut filter = RecordFilter {
         source: Some(source.to_owned()),
         key: Some(key.to_owned()),
         limit: MAX_PAGE,
         ..RecordFilter::default()
     };
-    let mut last = None;
+    let mut current = Vec::new();
     loop {
         let page = engine.records(&filter)?;
         let full = page.len() as u64 == filter.limit;
-        for version in page {
-            if version.superseded_by.is_none() {
-                return Ok(Some(version.id));
-            }
-            last = Some(version.id);
-        }
-        match last {
-            Some(after) if full => filter.after = Some(after),
-            _ => return Ok(last),
+        filter.after = page.last().map(|version| version.id);
+        current.extend(
+            page.into_iter()
+                .filter(|version| version.superseded_by.is_none()),
+        );
+        if !full {
+            return Ok(current);
         }
     }
 }
@@ -2218,7 +2228,7 @@ fn mentions(
     name: &str,
     source: &str,
     place: &str,
-) -> spool::Result<Vec<RecordId>> {
+) -> spool::Result<Vec<spool::RecordEntry>> {
     let Some((document, span)) = place
         .strip_suffix(']')
         .and_then(|place| place.rsplit_once('['))
@@ -2271,17 +2281,13 @@ fn mentions(
             }
         }
         let ids: Vec<RecordId> = found.iter().map(|record| record.id).collect();
-        let named: Vec<RecordId> = found
-            .iter()
-            .filter(|record| {
-                record
-                    .superseded_by
-                    .is_none_or(|later| !ids.contains(&later))
-            })
-            .map(|record| record.id)
-            .collect();
-        if !named.is_empty() {
-            return Ok(named);
+        found.retain(|record| {
+            record
+                .superseded_by
+                .is_none_or(|later| !ids.contains(&later))
+        });
+        if !found.is_empty() {
+            return Ok(found);
         }
     }
     Ok(Vec::new())
