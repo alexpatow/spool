@@ -20,7 +20,7 @@ use std::process::Command;
 
 use common::*;
 use spool::core::{IdentityStore, MemoryState, ReviewItem, Seq, Snapshot};
-use spool::{BenchReport, Engine, Manifest, Options, ResolveOptions, Rows, Scenario};
+use spool::{BenchReport, Engine, Manifest, Options, RecordFilter, ResolveOptions, Rows, Scenario};
 
 fn companies() -> PathBuf {
     benchmarks().join("identity/companies-small")
@@ -149,11 +149,12 @@ fn resent_rows_create_no_records_and_no_operations() {
     );
     assert_eq!(resolved.records_assigned, 12);
 
-    // Sending every file again changes nothing at all.
+    // Sending again what the sources hold now changes nothing at all. That
+    // is every file but the first of the CRM, which has a row as it was
+    // before batch two changed it.
     let records = count(&engine, "SELECT count(*) FROM spool.record");
     let head = engine.head().unwrap();
     for (file, source) in [
-        ("batch-1-crm.csv", "crm"),
         ("batch-1-registry.csv", "registry"),
         ("batch-2-crm.csv", "crm"),
         ("batch-2-registry.csv", "registry"),
@@ -177,6 +178,30 @@ fn resent_rows_create_no_records_and_no_operations() {
     assert_eq!(engine.head().unwrap(), head);
     assert_eq!(engine.log().unwrap().len(), 2);
     assert_eq!(head, Seq(2));
+
+    // The first file of the CRM says that one row is again what it was: a
+    // source that sends a row as it was before is taken at its word. The
+    // row has a version more, in the identity it was in, and the other rows
+    // of the file are known.
+    let kestrel = engine
+        .records(&RecordFilter::keyed("crm", "c-104"))
+        .unwrap();
+    let rows = Rows::from_csv(companies().join("batch-1-crm.csv")).unwrap();
+    let back = engine.load("crm", "company", rows).unwrap();
+    assert_eq!((back.inserted, back.superseded), (1, 1));
+    assert_eq!(back.duplicates, back.received - 1);
+    let report = engine.resolve(&ResolveOptions::default()).unwrap();
+    assert_eq!(report.resolved[0].identities_created, 0);
+    let versions = engine
+        .records(&RecordFilter::keyed("crm", "c-104"))
+        .unwrap();
+    assert_eq!(versions.len(), kestrel.len() + 1);
+    assert!(
+        versions
+            .iter()
+            .all(|version| version.identity == kestrel[0].identity)
+    );
+    engine.verify().unwrap();
 }
 
 // Every identity ID from batch one still exists after batch two, with the

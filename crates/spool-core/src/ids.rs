@@ -10,6 +10,10 @@ use uuid::Uuid;
 /// Identifies a record. Derived from the record's source, its key
 /// within that source and its content, so loading the same thing twice
 /// yields the same ID.
+///
+/// One case takes more: a row that holds again what it held before, with
+/// something else in between. That version is a record of its own, and its
+/// ID is derived from the content's and from the version it follows.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(from = "Uuid", into = "Uuid")]
 pub struct RecordId(u128);
@@ -34,6 +38,18 @@ impl RecordId {
         Self(u128::from_be_bytes(first))
     }
 
+    /// The ID of a version that holds the content this ID was derived
+    /// from, when a version with that content exists already: the first
+    /// 128 bits of a SHA-256 over this ID and the ID of the version it
+    /// follows. The input begins with eight bytes that no other ID's does.
+    pub fn held_again(self, follows: Self) -> Self {
+        Self(u128::from_be_bytes(again(
+            [0xfe; 8],
+            self.0.to_be_bytes(),
+            follows.0.to_be_bytes(),
+        )))
+    }
+
     pub const fn from_u128(value: u128) -> Self {
         Self(value)
     }
@@ -41,6 +57,17 @@ impl RecordId {
     pub const fn as_u128(self) -> u128 {
         self.0
     }
+}
+
+fn again(marker: [u8; 8], content: [u8; 16], follows: [u8; 16]) -> [u8; 16] {
+    let mut hasher = Sha256::new();
+    hasher.update(marker);
+    hasher.update(content);
+    hasher.update(follows);
+    let digest = hasher.finalize();
+    let mut first = [0u8; 16];
+    first.copy_from_slice(&digest[..16]);
+    first
 }
 
 fn put_str(hasher: &mut Sha256, value: &str) {
@@ -133,7 +160,9 @@ uuid_id!(
 uuid_id!(
     /// Identifies one version of a document. Derived from the document's
     /// source, its key within that source and its text, so storing the same
-    /// text twice yields the same ID, and a changed text yields another.
+    /// text twice yields the same ID, and a changed text yields another. A
+    /// version that holds a text again, with another in between, has an ID
+    /// derived from the text's and from the version it follows.
     DocumentId
 );
 
@@ -151,6 +180,17 @@ impl DocumentId {
         let mut first = [0u8; 16];
         first.copy_from_slice(&digest[..16]);
         Self(Uuid::from_bytes(first))
+    }
+
+    /// The ID of a version that holds the text this ID was derived from,
+    /// when a version with that text exists already. As
+    /// [`RecordId::held_again`], with eight bytes of its own in front.
+    pub fn held_again(self, follows: Self) -> Self {
+        Self(Uuid::from_bytes(again(
+            [0xfd; 8],
+            self.0.into_bytes(),
+            follows.0.into_bytes(),
+        )))
     }
 }
 
@@ -318,7 +358,7 @@ mod schema {
     }
 
     text_schema!(RecordId, "RecordId", {
-        "description": "Identifies a record. Derived by the engine from the record's source, key and content.",
+        "description": "Identifies a record. Derived by the engine from the record's source, key and content, and for a version that holds what its row held before, from the version it follows as well.",
         "type": "string",
         "format": "uuid"
     });
@@ -333,7 +373,7 @@ mod schema {
         "format": "uuid"
     });
     text_schema!(DocumentId, "DocumentId", {
-        "description": "Identifies one version of a document. Derived by the engine from the document's source, key and text.",
+        "description": "Identifies one version of a document. Derived by the engine from the document's source, key and text, and for a version that holds a text the document held before, from the version it follows as well.",
         "type": "string",
         "format": "uuid"
     });
@@ -397,6 +437,30 @@ mod tests {
             base,
             RecordId::derive("crm", Some("1"), r#"{"name":"Acme Ltd"}"#)
         );
+    }
+
+    #[test]
+    fn a_version_held_again_has_an_id_of_its_own() {
+        let first = RecordId::derive("crm", Some("1"), r#"{"name":"Acme"}"#);
+        let second = RecordId::derive("crm", Some("1"), r#"{"name":"Acme Ltd"}"#);
+        let third = first.held_again(second);
+        assert_eq!(third, first.held_again(second));
+        assert_ne!(third, first);
+        assert_ne!(third, second);
+        // What it follows is part of it, and so is which of the two it holds.
+        let fourth = second.held_again(third);
+        assert_ne!(first.held_again(fourth), third);
+        assert_ne!(second.held_again(first), third);
+
+        let text = DocumentId::derive("news", "a", "Acme opened an office.");
+        let other = DocumentId::derive("news", "a", "Acme closed an office.");
+        let again = text.held_again(other);
+        assert_eq!(again, text.held_again(other));
+        assert_ne!(again, text);
+        assert_ne!(again, other.held_again(text));
+        // A document's is not a record's, from the same two IDs.
+        let as_records = RecordId::from(text.as_uuid()).held_again(RecordId::from(other.as_uuid()));
+        assert_ne!(again.to_string(), as_records.to_string());
     }
 
     #[test]

@@ -697,6 +697,160 @@ fn versions_sent_in_one_call_follow_each_other_in_row_order() {
     engine.verify().unwrap();
 }
 
+/// The names of a row's versions, from the one nothing replaced back to
+/// the first.
+fn history(engine: &Engine, source: &str, key: &str) -> Vec<String> {
+    let versions = engine.records(&RecordFilter::keyed(source, key)).unwrap();
+    let mut at = versions
+        .iter()
+        .find(|version| version.superseded_by.is_none());
+    let mut names = Vec::new();
+    while let Some(version) = at {
+        names.push(version.payload["name"].as_str().unwrap().to_owned());
+        at = versions
+            .iter()
+            .find(|earlier| Some(earlier.id) == version.supersedes);
+    }
+    assert_eq!(names.len(), versions.len(), "the versions are one chain");
+    names
+}
+
+#[test]
+fn a_row_that_changes_back_is_what_it_was_again_and_keeps_its_identity() {
+    let engine = engine();
+    let anvil = [("1", Some("anvil"), Some("K1"))];
+    let hammer = [("1", Some("hammer"), Some("K2"))];
+    load(&engine, "shop", &anvil);
+    resolve(&engine);
+    let identity = identity(&engine, "shop", "1").unwrap();
+    let first = record_id(&engine, "shop", "1");
+    load(&engine, "shop", &hammer);
+    resolve(&engine);
+    let second = engine
+        .record(first)
+        .unwrap()
+        .unwrap()
+        .superseded_by
+        .unwrap();
+
+    // The shop has the row as it was at first. Its content is that of a
+    // record the store holds, and the row is that record's no longer: the
+    // row has a third version, which says what the first said.
+    let report = load(&engine, "shop", &anvil);
+    assert_eq!(
+        (report.inserted, report.duplicates, report.superseded),
+        (1, 0, 1)
+    );
+    assert_eq!(history(&engine, "shop", "1"), ["anvil", "hammer", "anvil"]);
+    let third = engine
+        .record(second)
+        .unwrap()
+        .unwrap()
+        .superseded_by
+        .unwrap();
+    let entry = engine.record(third).unwrap().unwrap();
+    assert_eq!(
+        entry.payload,
+        engine.record(first).unwrap().unwrap().payload
+    );
+    assert_eq!(
+        (entry.supersedes, entry.superseded_by),
+        (Some(second), None)
+    );
+    // Its ID is the content's and the ID of what it follows, so it is the
+    // same in any store with this history.
+    assert_eq!(third, first.held_again(second));
+    // The first version is as it was: one version replaced it.
+    let entry = engine.record(first).unwrap().unwrap();
+    assert_eq!(
+        (entry.supersedes, entry.superseded_by),
+        (None, Some(second))
+    );
+
+    // Like any version, it joins the identity of the one before it.
+    let report = resolve(&engine);
+    assert_eq!(report.resolved[0].new_records, 1);
+    assert_eq!(report.resolved[0].identities_created, 0);
+    assert_eq!(
+        engine.identities_of(&[first, second, third]).unwrap(),
+        [Some(identity); 3]
+    );
+    assert_eq!(engine.identity(identity).unwrap().members.len(), 3);
+
+    // What the row holds now, sent again, is nothing new.
+    let report = load(&engine, "shop", &anvil);
+    assert_eq!((report.inserted, report.duplicates), (0, 1));
+    // And the row can change the same way again.
+    let report = load(&engine, "shop", &hammer);
+    assert_eq!((report.inserted, report.superseded), (1, 1));
+    assert_eq!(
+        history(&engine, "shop", "1"),
+        ["hammer", "anvil", "hammer", "anvil"]
+    );
+    let report = load(&engine, "shop", &hammer);
+    assert_eq!((report.inserted, report.duplicates), (0, 1));
+    resolve(&engine);
+    assert_eq!(engine.identity(identity).unwrap().members.len(), 4);
+    engine.verify().unwrap();
+}
+
+#[test]
+fn a_row_that_changes_back_within_one_call_ends_as_the_last_row_says() {
+    let engine = engine();
+    // Two rows in a row that say the same are one version.
+    let report = load(
+        &engine,
+        "shop",
+        &[
+            ("1", Some("anvil"), None),
+            ("1", Some("hammer"), None),
+            ("1", Some("hammer"), None),
+            ("1", Some("anvil"), None),
+            ("2", Some("tongs"), None),
+        ],
+    );
+    assert_eq!(
+        (report.received, report.inserted, report.duplicates),
+        (5, 4, 1)
+    );
+    assert_eq!(report.superseded, 2);
+    assert_eq!(history(&engine, "shop", "1"), ["anvil", "hammer", "anvil"]);
+
+    // The store holds the hammer as a version, and the call begins with it:
+    // that is a change, and the anvil after it is what the row holds.
+    let report = load(
+        &engine,
+        "shop",
+        &[("1", Some("hammer"), None), ("1", Some("anvil"), None)],
+    );
+    assert_eq!((report.inserted, report.superseded), (2, 2));
+    assert_eq!(
+        history(&engine, "shop", "1"),
+        ["anvil", "hammer", "anvil", "hammer", "anvil"]
+    );
+
+    resolve(&engine);
+    let versions = records(&engine, "shop", "1");
+    let identities = engine.identities_of(&versions).unwrap();
+    assert!(identities[0].is_some());
+    assert!(identities.iter().all(|found| *found == identities[0]));
+    engine.verify().unwrap();
+}
+
+#[test]
+fn a_row_without_a_key_has_no_versions_and_is_stored_once() {
+    let engine = engine();
+    let keyless = |name: &'static str| -> spool::Rows {
+        spool::Rows::from_text(&["name"], &[vec![Some(name)]]).unwrap()
+    };
+    for (name, inserted) in [("anvil", 1), ("hammer", 1), ("anvil", 0)] {
+        let report = engine.load("shop", "thing", keyless(name)).unwrap();
+        assert_eq!(report.inserted, inserted, "{name}");
+        assert_eq!(report.superseded, 0);
+    }
+    assert_eq!(count(&engine, "SELECT count(*) FROM spool.record"), 2);
+}
+
 #[test]
 fn a_new_version_that_matches_another_identity_is_left_for_review() {
     let engine = engine();

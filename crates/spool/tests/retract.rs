@@ -312,6 +312,43 @@ fn a_row_that_comes_back_changed_brings_its_earlier_versions_with_it() {
 }
 
 #[test]
+fn a_row_that_comes_back_as_it_was_before_it_changed_is_that_again() {
+    let engine = engine();
+    let anvil = three_anvils(&engine);
+    let first = record_id(&engine, "shop", "1");
+    load(&engine, "shop", &[("1", Some("anvil mk2"), None)]);
+    resolve(&engine);
+    retract(&engine, "shop", &["1"]);
+
+    // The shop holds the row again, and it says what its first version
+    // said. Both versions come back, and the row has a third, which is
+    // what the shop holds now.
+    let report = load(&engine, "shop", &[("1", Some("anvil"), None)]);
+    assert_eq!(
+        (report.inserted, report.superseded, report.restored),
+        (1, 1, 2)
+    );
+    assert_eq!(report.returned, 2);
+    let versions = engine.records(&RecordFilter::keyed("shop", "1")).unwrap();
+    let [latest] = &versions
+        .iter()
+        .filter(|version| version.superseded_by.is_none())
+        .collect::<Vec<_>>()[..]
+    else {
+        panic!("one version is the latest: {versions:?}");
+    };
+    assert_eq!(latest.payload["name"], "anvil");
+    assert_ne!(latest.id, first);
+    assert_eq!(latest.identity, None);
+
+    resolve(&engine);
+    let versions = records(&engine, "shop", "1");
+    assert_eq!(versions.len(), 3);
+    assert_eq!(engine.identities_of(&versions).unwrap(), [Some(anvil); 3]);
+    engine.verify().unwrap();
+}
+
+#[test]
 fn a_record_that_was_taken_back_cannot_be_given_an_identity() {
     let engine = engine();
     let anvil = three_anvils(&engine);

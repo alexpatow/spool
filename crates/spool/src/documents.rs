@@ -16,6 +16,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use duckdb::arrow::record_batch::RecordBatch;
+use duckdb::vtab::arrow::ArrowBatchRegistration;
 use duckdb::{Connection, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -26,6 +27,7 @@ use crate::error::{Error, Result};
 use crate::project::Extractor;
 use crate::store::parse;
 use crate::time::rfc3339;
+use crate::versions;
 
 /// A document as a source hands it over.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -180,13 +182,13 @@ impl ExtractReport {
     }
 }
 
-/// The documents of one call that are not repeated within it, as a batch of
-/// `ord`, `document_id`, `source_key`, `uri` and `text`.
+/// The documents of one call, as a batch of `ord`, `document_id`,
+/// `source_key`, `uri` and `text`. `document_id` is the ID derived from the
+/// text.
 pub(crate) fn stage(source: &str, documents: &[NewDocument]) -> Result<Option<RecordBatch>> {
     if source.is_empty() {
         return Err(Error::Documents("the source needs a name".to_owned()));
     }
-    let mut seen = HashSet::new();
     let (mut ords, mut ids, mut keys, mut uris, mut texts) =
         (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
     for (index, document) in documents.iter().enumerate() {
@@ -198,13 +200,11 @@ pub(crate) fn stage(source: &str, documents: &[NewDocument]) -> Result<Option<Re
             return Err(fail("it has no text"));
         }
         let id = DocumentId::derive(source, &document.key, &document.text);
-        if seen.insert(id) {
-            ords.push(index as i64);
-            ids.push(Some(id.to_string()));
-            keys.push(Some(document.key.clone()));
-            uris.push(document.uri.clone().filter(|uri| !uri.is_empty()));
-            texts.push(Some(document.text.clone()));
-        }
+        ords.push(index as i64);
+        ids.push(Some(id.to_string()));
+        keys.push(Some(document.key.clone()));
+        uris.push(document.uri.clone().filter(|uri| !uri.is_empty()));
+        texts.push(Some(document.text.clone()));
     }
     if ids.is_empty() {
         return Ok(None);
@@ -218,10 +218,11 @@ pub(crate) fn stage(source: &str, documents: &[NewDocument]) -> Result<Option<Re
     ])?))
 }
 
-/// Stores staged documents and returns how many were new. A text that is
-/// new under a key the source has used before is the next version of that
-/// document, and supersedes the latest version the store holds, or the one
-/// before it in this call.
+/// Stores staged documents and returns how many were new. A text under a
+/// key the source has used before, other than the one the key holds now, is
+/// the next version of that document, and supersedes the latest version the
+/// store holds, or the one before it in this call. That is so for a text
+/// the key held earlier too. See [`versions`](crate::versions).
 pub(crate) fn insert(
     conn: &Connection,
     source: &str,
@@ -229,31 +230,44 @@ pub(crate) fn insert(
     run: RunId,
     staged: RecordBatch,
 ) -> Result<u64> {
-    let inserted = conn.execute(
-        "INSERT INTO spool.document
-         SELECT n.document_id, $1, n.source_key,
-                coalesce(
-                  lag(n.document_id) OVER (PARTITION BY n.source_key ORDER BY n.ord),
-                  latest.document_id),
-                n.uri, n.text, make_timestamptz($2), $3
-         FROM (
-           SELECT s.document_id::UUID AS document_id, s.source_key, s.uri, s.text, s.ord
-           FROM arrow($4) s
-           WHERE NOT EXISTS (
-             SELECT 1 FROM spool.document d WHERE d.document_id = s.document_id::UUID)
-         ) n
+    let mut statement = conn.prepare(
+        "SELECT s.ord, known.document_id IS NOT NULL,
+                latest.document_id::VARCHAR, latest.supersedes::VARCHAR
+         FROM arrow($2) s
+         LEFT JOIN spool.document known ON known.document_id = s.document_id::UUID
          LEFT JOIN (
-           SELECT d.source_key, d.document_id
+           SELECT d.source_key, d.document_id, d.supersedes
            FROM spool.document d
            WHERE d.source_id = $1
              AND NOT EXISTS (
                SELECT 1 FROM spool.document later WHERE later.supersedes = d.document_id)
-         ) latest ON latest.source_key = n.source_key",
+         ) latest ON latest.source_key = s.source_key
+         WHERE known.document_id IS NOT NULL OR latest.document_id IS NOT NULL",
+    )?;
+    let held = statement.query(params![
+        source,
+        &ArrowBatchRegistration::new(staged.clone())
+    ])?;
+    let versions = versions::of_staged(&staged, "document_id", held, DocumentId::held_again)?;
+    if versions.is_empty() {
+        return Ok(0);
+    }
+    let stored = versions::to_store(
+        &staged,
+        "document_id",
+        &versions,
+        &["source_key", "uri", "text"],
+    )?;
+    let inserted = conn.execute(
+        "INSERT INTO spool.document
+         SELECT n.document_id::UUID, $1, n.source_key, n.supersedes::UUID,
+                n.uri, n.text, make_timestamptz($2), $3
+         FROM arrow($4) n",
         params![
             source,
             now,
             run.0 as i64,
-            &duckdb::vtab::arrow::ArrowBatchRegistration::new(staged)
+            &ArrowBatchRegistration::new(stored)
         ],
     )?;
     Ok(inserted as u64)
@@ -722,7 +736,7 @@ mod tests {
     }
 
     #[test]
-    fn a_repeated_document_is_staged_once_and_an_empty_one_is_refused() {
+    fn every_document_of_a_call_is_staged_and_an_empty_one_is_refused() {
         let document = |key: &str, text: &str| NewDocument {
             key: key.to_owned(),
             uri: None,
@@ -738,7 +752,9 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        assert_eq!(staged.num_rows(), 2);
+        // Which of them is a version of its key is decided when they are
+        // stored, against what the store holds.
+        assert_eq!(staged.num_rows(), 3);
         assert!(stage("news", &[]).unwrap().is_none());
 
         for (source, documents, expected) in [
