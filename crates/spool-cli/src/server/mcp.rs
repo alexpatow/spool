@@ -96,12 +96,11 @@ Loading and matching: `load_rows` stores rows from one source as records, \
 and `run_match` then places the records no run has examined: each joins the \
 identity it matches or gets a new one, and identities that exist keep their \
 IDs. `describe_store` names each source the project declares in `sources`, \
-with its columns and the entity types it sends rows of. A row that was \
-loaded stays in the store: nothing deletes it, and `retract_rows` takes it \
-out of its identity and keeps it. So load what you were asked to load and \
-nothing else. `load_rows` refuses a row whose key the store holds with \
-other values, because it would replace that row: set `replace` only when \
-you were asked to change it.
+with its columns and the entity types it sends rows of. Load what you were \
+asked to load and nothing else; `retract_rows` takes a row back out of its \
+identity and keeps it, marked as retracted. `load_rows` refuses a row whose \
+key the store holds with other values, because it would replace that row: \
+set `replace` only when you were asked to change it.
 
 Text is the other way in: `load_documents` stores documents, and \
 `run_extraction` has one of the project's extractors, which \
@@ -952,10 +951,10 @@ static TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
              true; otherwise the rows are not the file's, so read the file again. Values \
              the row held before count as other values: loading them changes the row \
              back, so an older file loaded after a newer one is refused the same way. \
-             Loading does not match: follow it with `run_match`. A loaded row is kept \
-             for good and nothing deletes \
-             it, so load only what the person asked for; `retract_rows` takes a row back, \
-             which removes it from its identity and keeps it as evidence. This is for a \
+             Loading does not match: follow it with `run_match`. Load every row you were \
+             asked to load, and no row you were not. A row loaded by mistake, or that the \
+             person wants out later, is taken back with `retract_rows`, which removes it \
+             from its identity and keeps it, marked as retracted. This is for a \
              few thousand rows at most: a call is 4 MiB at most, and a pipeline loads \
              more with `POST /v1/load`. Returns the run that stored the rows, whose \
              `load` counts them.",

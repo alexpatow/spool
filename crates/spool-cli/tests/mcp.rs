@@ -215,6 +215,20 @@ fn a_client_connects_and_is_told_the_tools() {
     assert_eq!(search["properties"]["q"]["type"], "string");
     assert_eq!(search["properties"]["after"]["$ref"], "#/$defs/IdentityId");
     assert!(search.get("required").is_none(), "{search}");
+    // A row loaded by mistake can be taken back, so the description of a
+    // load does not warn an assistant off a row it was asked to load.
+    let load = &tools[13];
+    assert_eq!(load["name"], "load_rows");
+    let said = text(&load["description"]);
+    assert!(
+        said.contains("Load every row you were asked to load"),
+        "{said}"
+    );
+    assert!(said.contains("`retract_rows`"), "{said}");
+    for scare in ["for good", "nothing deletes"] {
+        assert!(!said.contains(scare), "{said}");
+        assert!(!text(&hello["instructions"]).contains(scare), "{hello}");
+    }
 
     // The revision that has no handshake: each request says what it speaks.
     let meta = json!({
