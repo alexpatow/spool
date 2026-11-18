@@ -98,7 +98,9 @@
 //! still hold. A step with `rebuild = true` also runs the steps so far in a
 //! store of its own, without the rows that are taken back as things stand
 //! and without the corrections, and reports how its identities differ from
-//! those of the store that held the rows and lost them.
+//! those of the store that held the rows and lost them. A mention that is
+//! taken back is extracted there too, since it is in a document, and is
+//! taken back before anything is matched with it.
 //!
 //! The store is verified after every step, and the scenario fails at the
 //! first step that leaves it inconsistent.
@@ -1156,6 +1158,10 @@ impl Scenario {
     /// and without corrections: each batch with the strategy it was written
     /// with, and no rematch. The scenario's own engine says how user code
     /// is run.
+    ///
+    /// The mentions in `without` are extracted here as they were there, and
+    /// are taken back before the step is resolved, so they are records of
+    /// this store that no run examines.
     fn replay<'a>(
         &self,
         engine: &Engine,
@@ -1169,8 +1175,29 @@ impl Scenario {
             replayed.set_user_code(user_code.as_ref().clone());
         }
         let mut truth = self.truth()?;
+        // In an order that does not change from one run to the next.
+        let mut gone: Vec<_> = without.iter().collect();
+        gone.sort_by_key(|(named, _)| *named);
         for step in steps {
             self.feed(&replayed, step, &mut truth, without)?;
+            // A row of a file is left out before it is ingested. A mention
+            // is what an extractor finds in a document, and cannot be left
+            // out, so it is taken back before anything is matched with it:
+            // it gets no identity, and counts for nothing, as a row that
+            // was never sent.
+            if !step.extract.is_empty() {
+                for ((entity_type, source), keys) in &gone {
+                    let mut keys: Vec<String> = keys.iter().cloned().collect();
+                    keys.sort();
+                    replayed.retract(
+                        source,
+                        entity_type,
+                        &keys,
+                        Actor::Agent("benchmark".to_owned()),
+                        None,
+                    )?;
+                }
+            }
             replayed.resolve(&ResolveOptions::with_strategy(self.strategy(step)))?;
         }
         Ok((replayed, truth))
