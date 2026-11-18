@@ -24,7 +24,7 @@ name = "ncvoters_5"
 url = "https://dbs.uni-leipzig.de/files/datasets/saeedi/5Party-ocp20.tar.gz"
 sha256 = "4cecc0ddba08793befbc448696268bcf8a26e22e7fd7ff20a3cba327d9e1fd6c"
 archive = "tar"
-licence = "The page says the datasets are made available under the Creative Commons licence, and names no variant. The files are downloaded and never committed."
+licence = "CC BY 4.0: the page says the datasets are made available under the Creative Commons licence, and links those words to version 4.0 of the Attribution licence. The files are downloaded and never committed."
 
 # Songs of the MusicBrainz database in five sources, each with its own way
 # of writing a title, a length and a year. Half of the songs are in two to
@@ -33,16 +33,16 @@ licence = "The page says the datasets are made available under the Creative Comm
 name = "musicbrainz_20k"
 url = "https://dbs.uni-leipzig.de/files/datasets/saeedi/musicbrainz-20-A01.csv.dapo"
 sha256 = "527a94f24f7e813a9bc3fef35a635f13e195516966b308140a0dd2926afbb97d"
-licence = "As for ncvoters_5: Creative Commons, variant not named. Downloaded and never committed."
+licence = "CC BY 4.0, as for ncvoters_5. Downloaded and never committed, but for the 26 records of resolution/music/sample.csv."
 
 [[dataset]]
 name = "musicbrainz_200k"
 url = "https://dbs.uni-leipzig.de/files/datasets/saeedi/musicbrainz-200-A01.csv.dapo"
 sha256 = "5b6811e75530438e511e4b6f64213e6f99987551d3f32d4ce9f1333d7ebf76e2"
-licence = "As for ncvoters_5: Creative Commons, variant not named. Downloaded and never committed."
+licence = "CC BY 4.0, as for ncvoters_5. Downloaded and never committed, but for the 26 records of resolution/music/sample.csv."
 
 [[dataset]]
 name = "musicbrainz_2m"
 url = "https://dbs.uni-leipzig.de/files/datasets/saeedi/musicbrainz-2000-A01.csv.dapo"
 sha256 = "32efc65542530549ee16596838634ac4ce07bb613733c64d26f683b6516076ed"
-licence = "As for ncvoters_5: Creative Commons, variant not named. Downloaded and never committed."
+licence = "CC BY 4.0, as for ncvoters_5. Downloaded and never committed, but for the 26 records of resolution/music/sample.csv."
