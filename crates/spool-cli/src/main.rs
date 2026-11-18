@@ -16,6 +16,7 @@ Commands:
   serve    run the server from a manifest and a store
   dev      run the server on localhost and apply file changes as they are saved
   load     send the rows of a file to a running server
+  extract  find records in documents with one of the project's extractors
   match    match the new records on a running server and place them in identities
   show     show what a running server holds
   explain  say why two records share an identity, or why they do not
@@ -68,6 +69,7 @@ fn main() -> ExitCode {
         "serve" => (commands::serve::SERVE_USAGE, commands::serve::serve),
         "dev" => (commands::serve::DEV_USAGE, commands::serve::dev),
         "load" => (commands::load::USAGE, commands::load::load),
+        "extract" => (commands::extract::USAGE, commands::extract::extract),
         "match" => (commands::matching::USAGE, commands::matching::run),
         "show" => (commands::show::SHOW_USAGE, commands::show::show),
         "retract" => (commands::retract::USAGE, commands::retract::retract),

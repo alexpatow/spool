@@ -83,8 +83,9 @@ pub use metrics::{
     PairMetrics, Rebuild, SplitRecovery, UpgradeStability,
 };
 pub use project::{
-    Declaration, EntityTypeManifest, EntityTypeSource, Extractor, FeatureColumn, Manifest, Project,
-    Rule, RuleSet, Runtime, Source, SqlFile, Strategy, StrategySource, Transform, YamlFile,
+    Declaration, EntityTypeManifest, EntityTypeSource, Extractor, FeatureColumn, Manifest, Pattern,
+    Project, Rule, RuleSet, Runtime, Source, SqlFile, Strategy, StrategySource, Transform,
+    YamlFile,
 };
 pub use retract::RetractReport;
 pub use review::{

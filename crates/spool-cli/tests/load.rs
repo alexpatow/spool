@@ -434,7 +434,7 @@ fn load_says_what_is_wrong_with_the_file() {
     );
     write(
         &project.join("mine.csv"),
-        "ID,name,email\nc-1,Acorn Tools,hello@acorn.example\n",
+        "ID,name,country,email\nc-1,Acorn Tools,GB,hello@acorn.example\n",
     );
     assert_eq!(
         refused(&["mine.csv"]),
@@ -715,31 +715,10 @@ next    `spool match --type company` places it in an identity
     );
 }
 
-/// A new project with a second source, of what is found in documents, and a
-/// document: a project whose rows and whose text are both records.
-fn companies_with_notes(dir: &Path) -> std::path::PathBuf {
-    let project = init_companies(dir);
-    write(
-        &project.join("sources/notes.yaml"),
-        "# What a record found in a note may say.\ncolumns: [name]\n",
-    );
-    let entity = project.join("entities/company/entity.yaml");
-    let mut yaml = std::fs::read_to_string(&entity).unwrap();
-    yaml += "  notes:\n    name: name\n    name_key: { from: name, transform: name_key }\n";
-    write(&entity, &yaml);
-    write(
-        &project.join("samples/notes-1.txt"),
-        "Call with Dana Reyes on 12 November. She has moved to Acorn Tools Ltd and runs\n\
-         purchasing there. They now ship through Larkfield Logistics Ltd, and she asked\n\
-         whether we work with Brightwater Foods Ltd, their new supplier.\n",
-    );
-    project
-}
-
 #[test]
 fn a_project_with_a_source_of_documents_loads_its_rows_by_the_name_of_the_file() {
     let dir = tempfile::tempdir().unwrap();
-    let project = companies_with_notes(dir.path());
+    let project = init_companies(dir.path());
     let server = Server::dev(&project);
     let refused = |arguments: &[&str]| refused(&server, &project, arguments);
 
@@ -818,17 +797,24 @@ next    `spool match` places them in identities
         "{printed}"
     );
 
-    // A file named after neither source needs to be told.
+    // A file named after neither source is the one's that lists more of its
+    // columns, and has to be told when both list as many.
     write(
         &project.join("more.csv"),
         "id,name,country\nc-31,Yarrow Mills,GB\n",
     );
+    let (printed, _) = load(&server, &project, &["more.csv"]);
+    assert!(
+        printed.starts_with("loaded  1 row into source `crm`, type `company`: 1 new\n"),
+        "{printed}"
+    );
+    write(&project.join("names.csv"), "name\nXanthe Dairy\n");
     assert_eq!(
-        refused(&["more.csv"]),
-        "the project has the sources `crm` and `notes`, and more.csv is named after neither: \
+        refused(&["names.csv"]),
+        "the project has the sources `crm` and `notes`, and names.csv is named after neither: \
          say which its rows come from with `--source`"
     );
-    let (printed, _) = load(&server, &project, &["more.csv", "--source", "crm"]);
+    let (printed, _) = load(&server, &project, &["names.csv", "--source", "crm"]);
     assert!(
         printed.starts_with("loaded  1 row into source `crm`, type `company`: 1 new\n"),
         "{printed}"

@@ -18,7 +18,7 @@ use crate::documents::{
 use crate::error::{Error, Result};
 use crate::features;
 use crate::ingest::{self, IngestReport};
-use crate::project::{Declaration, Extractor};
+use crate::project::{Declaration, Extractor, Pattern};
 use crate::runs::RunStatus;
 use crate::store::parse;
 use crate::usercode::{self, ExtractType, Task, UserCode};
@@ -73,10 +73,10 @@ impl Engine {
     /// records are new to the next [`resolve`](Self::resolve) like
     /// rows that were ingested.
     ///
-    /// The extractor is user code and runs as a process of its own. While
-    /// it runs the engine is free. An extractor that fails, does not finish
-    /// in time, or writes a mention the engine refuses fails its run, and
-    /// nothing it found is stored.
+    /// An extractor that is user code runs as a process of its own, and one
+    /// that is a pattern runs here. While either reads, the engine is free.
+    /// An extractor that fails, does not finish in time, or finds a mention
+    /// the engine refuses fails its run, and nothing it found is stored.
     pub fn extract(&self, options: &ExtractOptions) -> Result<ExtractReport> {
         let _turn = lock(&self.resolving);
         let mut inner = self.lock();
@@ -92,14 +92,23 @@ impl Engine {
                     .map(|extractor| extractor.name.clone())
                     .collect(),
             })?;
-        let user_code = self.user_code().ok_or_else(|| Error::Extractor {
-            extractor: extractor.name.clone(),
-            message: "it is user code, and this engine was not told where the project directory is"
-                .to_owned(),
-        })?;
-        // A file that is not the one the manifest was compiled from is
-        // never run.
-        user_code.check(&(&extractor).into())?;
+        // A pattern is in the manifest, and the engine runs it. Anything else
+        // is a file of the project's.
+        let user_code = match &extractor.pattern {
+            Some(_) => None,
+            None => {
+                let user_code = self.user_code().ok_or_else(|| Error::Extractor {
+                    extractor: extractor.name.clone(),
+                    message:
+                        "it is user code, and this engine was not told where the project directory is"
+                            .to_owned(),
+                })?;
+                // A file that is not the one the manifest was compiled from
+                // is never run, and neither is one that nothing here can run.
+                user_code.check(&(&extractor).into())?;
+                Some(user_code)
+            }
+        };
 
         let run = inner.start_run(
             "extract",
@@ -111,16 +120,44 @@ impl Engine {
                 "limit": options.limit,
             }),
         )?;
-        let task = inner.in_run(run, |inner| {
-            inner.write_extract_task(run, &extractor, &user_code, options)
-        })?;
-        let Some(mut task) = task else {
+        let chosen = inner.in_run(run, |inner| inner.choose_documents(&extractor, options))?;
+        if chosen == 0 {
             // There is nothing to read, so nothing is started.
             let report = ExtractReport::empty(run);
             inner.finish_run(run, RunStatus::Succeeded, Some(&json!(report)))?;
             return Ok(report);
+        }
+
+        let Some(user_code) = user_code else {
+            let pattern = extractor
+                .pattern
+                .as_ref()
+                .expect("an extractor that is not user code is a pattern");
+            let given = inner.in_run(run, |inner| inner.task_documents())?;
+            // The pattern reads with the writer let go, as user code does.
+            drop(inner);
+            let found = find(pattern, &given);
+            let mut inner = self.lock();
+            return inner.in_run(run, |inner| {
+                let found = found.map_err(|message| Error::Extractor {
+                    extractor: extractor.name.clone(),
+                    message,
+                })?;
+                inner
+                    .store_mentions(run, &found, &extractor)
+                    .map_err(|error| match error {
+                        Error::Mentions(message) => Error::Extractor {
+                            extractor: extractor.name.clone(),
+                            message: format!("what it found was refused: {message}"),
+                        },
+                        other => other,
+                    })
+            });
         };
 
+        let mut task = inner.in_run(run, |inner| {
+            inner.write_extract_task(run, &extractor, &user_code)
+        })?;
         // The extractor runs with the writer let go. The run stays
         // `running`, and it reads the documents as they were written.
         drop(inner);
@@ -138,6 +175,59 @@ impl Engine {
         task.remove();
         Ok(report)
     }
+}
+
+/// Every place the pattern matches in the documents, as the mentions an
+/// extractor writes. The documents are read in the order of their sources
+/// and keys, and each from its start, so the same documents give the same
+/// mentions in the same order.
+fn find(
+    pattern: &Pattern,
+    documents: &HashMap<DocumentId, TaskDocument>,
+) -> std::result::Result<Vec<RawMention>, String> {
+    // The manifest was compiled from an expression that was tried, so this
+    // fails only for a manifest that was written by something else.
+    let regex = pattern
+        .regex()
+        .map_err(|error| format!("its pattern is not a regular expression: {error}"))?;
+    let groups: Vec<&str> = regex.capture_names().flatten().collect();
+    let mut ordered: Vec<(&DocumentId, &TaskDocument)> = documents.iter().collect();
+    ordered.sort_by(|(_, a), (_, b)| (&a.source, &a.key).cmp(&(&b.source, &b.key)));
+
+    let mut found = Vec::new();
+    for (id, document) in ordered {
+        // A match is at bytes of the text, and a mention at code points.
+        // Matches come in order, so the text is counted through once.
+        let (mut bytes, mut points) = (0, 0);
+        let mut point = |at: usize| {
+            points += document.text[bytes..at].chars().count();
+            bytes = at;
+            points as i64
+        };
+        for captures in regex.captures_iter(&document.text) {
+            let whole = captures.get(0).expect("a match has a whole");
+            if whole.is_empty() {
+                continue;
+            }
+            let mut attributes = serde_json::Map::new();
+            if let Some(attribute) = &pattern.attribute {
+                attributes.insert(attribute.clone(), whole.as_str().into());
+            }
+            for group in &groups {
+                if let Some(part) = captures.name(group) {
+                    attributes.insert((*group).to_owned(), part.as_str().into());
+                }
+            }
+            found.push(RawMention {
+                document: Some(id.to_string()),
+                entity_type: Some(pattern.entity_type.clone()),
+                start: Some(point(whole.start())),
+                end: Some(point(whole.end())),
+                attributes: Some(serde_json::Value::Object(attributes).to_string()),
+            });
+        }
+    }
+    Ok(found)
 }
 
 /// A SQL string literal.
@@ -190,16 +280,9 @@ impl Inner {
         })
     }
 
-    /// Chooses the documents an extraction reads and writes them where the
-    /// extractor finds them. `None` when there is nothing to read.
-    fn write_extract_task(
-        &mut self,
-        run: RunId,
-        extractor: &Extractor,
-        user_code: &UserCode,
-        options: &ExtractOptions,
-    ) -> Result<Option<Task>> {
-        let manifest = self.manifest.clone().ok_or(Error::NoManifest)?;
+    /// Chooses the documents an extraction reads, and returns how many
+    /// there are.
+    fn choose_documents(&mut self, extractor: &Extractor, options: &ExtractOptions) -> Result<u64> {
         let conn = &self.store.conn;
         let of_source = match &options.source {
             Some(source) => format!("AND d.source_id = {}", sql_text(source)),
@@ -233,10 +316,18 @@ impl Inner {
         let chosen: i64 = conn.query_row(&format!("SELECT count(*) FROM {TASK}"), [], |row| {
             row.get(0)
         })?;
-        if chosen == 0 {
-            return Ok(None);
-        }
+        Ok(chosen as u64)
+    }
 
+    /// Writes the chosen documents where the extractor's process finds them.
+    fn write_extract_task(
+        &mut self,
+        run: RunId,
+        extractor: &Extractor,
+        user_code: &UserCode,
+    ) -> Result<Task> {
+        let manifest = self.manifest.clone().ok_or(Error::NoManifest)?;
+        let conn = &self.store.conn;
         let entity_types: Vec<ExtractType> = manifest
             .entity_types
             .iter()
@@ -256,22 +347,32 @@ impl Inner {
              ) TO {} (FORMAT parquet)",
             usercode::sql_path(&task.path(usercode::DOCUMENTS))
         ))?;
-        Ok(Some(task))
+        Ok(task)
     }
 
-    /// Reads the mentions an extractor wrote, checks them against the
-    /// documents it was given, and stores them as records.
+    /// Reads the mentions an extractor wrote and stores them as records.
     fn take_mentions(
         &mut self,
         run: RunId,
         mentions: &Path,
         extractor: &Extractor,
     ) -> Result<ExtractReport> {
+        let raw = self.read_mentions(mentions)?;
+        self.store_mentions(run, &raw, extractor)
+    }
+
+    /// Checks the mentions an extractor found against the documents it was
+    /// given, and stores them as records.
+    fn store_mentions(
+        &mut self,
+        run: RunId,
+        raw: &[RawMention],
+        extractor: &Extractor,
+    ) -> Result<ExtractReport> {
         let manifest = self.manifest.clone().ok_or(Error::NoManifest)?;
         let given = self.task_documents()?;
-        let raw = self.read_mentions(mentions)?;
         let staged = documents::stage_mentions(
-            &raw,
+            raw,
             &given,
             &|name| manifest.entity_type(name).is_some(),
             extractor,

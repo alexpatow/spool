@@ -109,17 +109,21 @@ fn init_says_what_it_wrote_and_what_to_run_next() {
         "\
 created   companies
 
-  sources/crm.yaml                  the columns of a CRM export
-  entities/company/entity.yaml      what companies are compared by
-  entities/company/rules/           three rules, one line of SQL each
-  transforms/name_key.sql           the lower-case name the rules compare
-  samples/crm-1.csv                 six rows to load first
-  samples/crm-2.csv                 three more for later
-  .gitignore                        keeps the server's data, .spool/, out of Git
+  sources/crm.yaml                   the columns of a CRM export
+  sources/notes.yaml                 what a record found in a note may say
+  entities/company/entity.yaml       what companies are compared by
+  entities/company/rules/            three rules, one line of SQL each
+  transforms/name_key.sql            the lower-case name the rules compare
+  extractors/companies.yaml          a pattern that finds company names in text
+  samples/crm-1.csv                  six rows to load first
+  samples/crm-2.csv                  three more for later
+  samples/notes-1.txt                a call note that names three companies
+  .gitignore                         keeps the server's data, .spool/, out of Git
 
   cd companies
-  spool dev                         runs the server on this machine
-  spool load samples/crm-1.csv      loads the first rows, from a second terminal
+  spool dev                          runs the server on this machine
+  spool load samples/crm-1.csv       loads the first rows, from a second terminal
+  spool extract samples/notes-1.txt  finds the companies in the note
 "
     );
     let project = dir.path().join("companies");
@@ -131,9 +135,12 @@ created   companies
             "entities/company/rules/block/name_prefix.sql",
             "entities/company/rules/match/similar_name.sql",
             "entities/company/rules/no_match/different_country.sql",
+            "extractors/companies.yaml",
             "samples/crm-1.csv",
             "samples/crm-2.csv",
+            "samples/notes-1.txt",
             "sources/crm.yaml",
+            "sources/notes.yaml",
             "transforms/name_key.sql",
         ]
     );
@@ -193,15 +200,19 @@ c-9,Acorn Tool,GB
         "\
 created   .
 
-  sources/ledger.yaml              the columns of a row from `ledger`
-  entities/person/entity.yaml      what records of type `person` are compared by
-  entities/person/rules/           three rules, one line of SQL each
-  transforms/name_key.sql          the lower-case name the rules compare
-  samples/ledger-1.csv             six rows to load first
-  samples/ledger-2.csv             three more for later
+  sources/ledger.yaml                the columns of a row from `ledger`
+  sources/notes.yaml                 what a record found in a note may say
+  entities/person/entity.yaml        what records of type `person` are compared by
+  entities/person/rules/             three rules, one line of SQL each
+  transforms/name_key.sql            the lower-case name the rules compare
+  extractors/person.yaml             a pattern that finds records of type `person` in text
+  samples/ledger-1.csv               six rows to load first
+  samples/ledger-2.csv               three more for later
+  samples/notes-1.txt                a call note that names three of them
 
-  spool dev                        runs the server on this machine
-  spool load samples/ledger-1.csv  loads the first rows, from a second terminal
+  spool dev                          runs the server on this machine
+  spool load samples/ledger-1.csv    loads the first rows, from a second terminal
+  spool extract samples/notes-1.txt  finds the records in the note
 "
     );
     assert_eq!(read(&here.join(".gitignore")), "target/\n");

@@ -85,6 +85,10 @@ pub struct IngestParams {
 
 /// `POST /v1/documents`: store documents from one source, to be read by an
 /// extractor. The response is the ingest run that stored them.
+///
+/// One document can also be sent as it is: a body of UTF-8 text, such as
+/// `text/plain`, with `source`, `key` and optionally `uri` and `wait_ms` in
+/// the query string.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DocumentsRequest {
@@ -107,12 +111,17 @@ pub struct DocumentList {
 /// `POST /v1/extractions`: run one of the project's extractors over the
 /// documents it has not read. The response is the extract run. What it
 /// found is records, which `POST /v1/runs` then matches.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+///
+/// The body may be left out: the project's only extractor then reads
+/// every document it has not read.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ExtractRequest {
     /// The name of one of the project's extractors; `GET /v1/info` lists
-    /// them. The server runs no code it was not built with.
-    pub extractor: String,
+    /// them. The server runs no code it was not built with. It may be left
+    /// out when the project has exactly one.
+    #[serde(default)]
+    pub extractor: Option<String>,
     /// Read only the documents of this source.
     #[serde(default)]
     pub source: Option<String>,

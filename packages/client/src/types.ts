@@ -343,6 +343,10 @@ export interface DocumentList {
 /**
  * `POST /v1/documents`: store documents from one source, to be read by an
  * extractor. The response is the ingest run that stored them.
+ *
+ * One document can also be sent as it is: a body of UTF-8 text, such as
+ * `text/plain`, with `source`, `key` and optionally `uri` and `wait_ms` in
+ * the query string.
  */
 export interface DocumentsRequest {
   documents: NewDocument[];
@@ -533,6 +537,9 @@ export interface ExtractReport {
  * `POST /v1/extractions`: run one of the project's extractors over the
  * documents it has not read. The response is the extract run. What it
  * found is records, which `POST /v1/runs` then matches.
+ *
+ * The body may be left out: the project's only extractor then reads
+ * every document it has not read.
  */
 export interface ExtractRequest {
   /**
@@ -541,9 +548,10 @@ export interface ExtractRequest {
   again?: boolean | null;
   /**
    * The name of one of the project's extractors; `GET /v1/info` lists
-   * them. The server runs no code it was not built with.
+   * them. The server runs no code it was not built with. It may be left
+   * out when the project has exactly one.
    */
-  extractor: string;
+  extractor?: string | null;
   /**
    * Read at most this many documents, oldest first.
    */
@@ -561,9 +569,10 @@ export interface ExtractRequest {
 }
 
 /**
- * An extractor: a file the engine runs as a child process, which reads
- * documents and says where they mention entities. The engine runs the file
- * only while it still has this hash.
+ * An extractor: what reads documents and says where they mention entities.
+ * One that is user code is a file the engine runs as a child process, only
+ * while the file still has this hash. One that is a pattern is run by the
+ * engine itself, from what the manifest holds.
  */
 export interface Extractor {
   /**
@@ -577,6 +586,10 @@ export interface Extractor {
    */
   hash: string;
   name: string;
+  /**
+   * What a pattern extractor looks for. User code has none.
+   */
+  pattern?: Pattern | null;
   runtime: Runtime;
 }
 
@@ -966,6 +979,28 @@ export interface PairJudgement {
 export interface PasswordRequest {
   current: string;
   new: string;
+}
+
+/**
+ * What a pattern extractor looks for: every place in a document that the
+ * regular expression matches is a mention of the entity type.
+ */
+export interface Pattern {
+  /**
+   * The attribute that holds the whole of the matched text, if it is
+   * kept.
+   */
+  attribute?: string | null;
+  /**
+   * The entity type of what it finds.
+   */
+  entity_type: string;
+  /**
+   * The regular expression, in the syntax of Rust's `regex` crate. Each
+   * of its named groups that took part in a match is an attribute of the
+   * mention, under the group's name.
+   */
+  pattern: string;
 }
 
 /**
@@ -1558,9 +1593,10 @@ export interface RunResponse {
 export type RunStatus = "running" | "open" | "drafted" | "succeeded" | "failed";
 
 /**
- * What runs a strategy file. The file's extension decides.
+ * What runs a strategy's or an extractor's file. The file's extension
+ * decides.
  */
-export type Runtime = "python" | "typescript";
+export type Runtime = "python" | "typescript" | "pattern";
 
 /**
  * A position in the changeset log. The first committed changeset is 1, and 0

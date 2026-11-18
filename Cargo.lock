@@ -2874,6 +2874,7 @@ dependencies = [
  "duckdb",
  "libc",
  "proptest",
+ "regex",
  "schemars 1.2.3",
  "serde",
  "serde-saphyr",

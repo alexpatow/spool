@@ -31,6 +31,9 @@
 //! fails leaves its directory behind to be looked at; one that succeeds is
 //! removed.
 //!
+//! An extractor that is a pattern is not user code, and nothing here runs
+//! it: the engine reads the documents itself.
+//!
 //! A `.py` file runs with `uv run` and a `.ts` file with `bun run`. Each
 //! finds a module that hides the files from the code's author: `spool` in
 //! Python and `spool-strategy` in TypeScript. This crate carries both and
@@ -182,10 +185,21 @@ impl UserCode {
         let file = absolute(&self.file(&code))?;
         let mut command = match code.runtime {
             Runtime::Python => {
-                let mut command = Command::new(&self.uv);
+                let mut command = Command::new(self.program(code.runtime));
                 // The helper reads and writes Parquet with pyarrow, so it is
                 // the launcher that asks for it, not every file of user code.
-                command.args(["run", "--quiet", "--with", "pyarrow", "--script"]);
+                // `--isolated` keeps the packages of the system's Python out:
+                // without it `uv` runs a file that names no dependencies in
+                // that Python as it is, and pyarrow fails beside a NumPy
+                // older than it was built for.
+                command.args([
+                    "run",
+                    "--quiet",
+                    "--isolated",
+                    "--with",
+                    "pyarrow",
+                    "--script",
+                ]);
                 command.arg(&file);
                 command.env(
                     "PYTHONPATH",
@@ -202,11 +216,16 @@ impl UserCode {
                 command
             }
             Runtime::Typescript => {
-                let mut command = Command::new(&self.bun);
+                let mut command = Command::new(self.program(code.runtime));
                 command.arg("run");
                 command.arg(&file);
                 command.env("NODE_PATH", search_path(&helpers.join("node"), "NODE_PATH"));
                 command
+            }
+            Runtime::Pattern => {
+                return Err(code.fail(
+                    "it is a pattern, which the engine runs itself: no command runs it".to_owned(),
+                ));
             }
         };
         command.current_dir(&self.project_dir);
@@ -255,9 +274,71 @@ impl UserCode {
         path
     }
 
-    /// Checks that the file is the one the manifest was compiled from. Only
-    /// code that was built into the manifest runs: a file that changed since
-    /// is refused until the project is built again.
+    /// The command that runs files of a runtime: the one this was given if
+    /// the search path has it, and otherwise where its installer puts it.
+    /// Someone who installs `uv` because a run said so has a server whose
+    /// search path is as it was, and the next run finds it all the same.
+    fn program(&self, runtime: Runtime) -> OsString {
+        let (named, installed): (&OsString, &[&str]) = match runtime {
+            Runtime::Python => (&self.uv, &[".local/bin", ".cargo/bin"]),
+            Runtime::Typescript => (&self.bun, &[".bun/bin"]),
+            Runtime::Pattern => return OsString::new(),
+        };
+        if found(named) {
+            return named.clone();
+        }
+        let home = std::env::var_os("HOME").filter(|home| !home.is_empty());
+        // Only the command's own name is looked for elsewhere: a path that
+        // was given names one file.
+        let plain = Path::new(named).components().count() == 1;
+        home.filter(|_| plain)
+            .and_then(|home| {
+                installed
+                    .iter()
+                    .map(|dir| Path::new(&home).join(dir).join(named))
+                    .find(|path| executable(path))
+            })
+            .map_or_else(|| named.clone(), PathBuf::into_os_string)
+    }
+
+    /// Why nothing here can run the code, if nothing can: what runs its
+    /// language is not installed. `None` for code that can be started.
+    fn cannot_run(&self, code: &Code) -> Option<String> {
+        let (language, program, install, variable) = match code.runtime {
+            Runtime::Python => (
+                "Python",
+                "uv",
+                "https://docs.astral.sh/uv/getting-started/installation/",
+                "SPOOL_UV",
+            ),
+            Runtime::Typescript => (
+                "TypeScript",
+                "bun",
+                "https://bun.sh/docs/installation",
+                "SPOOL_BUN",
+            ),
+            Runtime::Pattern => return None,
+        };
+        let named = self.program(code.runtime);
+        if found(&named) {
+            return None;
+        }
+        let looked = match named == *program {
+            true => String::new(),
+            false => format!(" It was looked for as `{}`.", named.to_string_lossy()),
+        };
+        Some(format!(
+            "it is a {language} file, and Spool runs those with `{program}`, which is not \
+             installed where Spool runs.{looked} Install {program} there ({install}) and try \
+             again. If it is installed where the search path does not reach, set {variable} to \
+             it where Spool is started"
+        ))
+    }
+
+    /// Checks that the file is the one the manifest was compiled from, and
+    /// that what runs it is installed. Only code that was built into the
+    /// manifest runs: a file that changed since is refused until the
+    /// project is built again.
     pub(crate) fn check(&self, code: &Code) -> Result<()> {
         let file = self.file(code);
         if !file.is_file() {
@@ -274,7 +355,10 @@ impl UserCode {
                 code.file
             )));
         }
-        Ok(())
+        match self.cannot_run(code) {
+            Some(why) => Err(code.fail(why)),
+            None => Ok(()),
+        }
     }
 
     /// Writes the helper modules beside the tasks, once per version of them,
@@ -318,6 +402,29 @@ impl UserCode {
         }
         Ok(dir)
     }
+}
+
+/// Whether a file is there and may be executed.
+fn executable(path: &Path) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    #[cfg(unix)]
+    let may = std::os::unix::fs::PermissionsExt::mode(&metadata.permissions()) & 0o111 != 0;
+    #[cfg(not(unix))]
+    let may = true;
+    metadata.is_file() && may
+}
+
+/// Whether a command can be started: a path names an executable file, and a
+/// plain name is one that a directory of the search path has.
+fn found(program: &OsString) -> bool {
+    let path = Path::new(program);
+    if path.components().count() != 1 {
+        return executable(path);
+    }
+    std::env::var_os("PATH")
+        .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| executable(&dir.join(path))))
 }
 
 /// `dir`, followed by what the variable already holds.
@@ -676,7 +783,8 @@ mod tests {
 
         let python = strategy(Runtime::Python, "entities/thing/strategies/model.py");
         let command = user_code.command(&python, Some(&task)).unwrap();
-        assert_eq!(command.get_program(), "uv");
+        // `uv` as the search path has it, or as its installer left it.
+        assert_eq!(Path::new(command.get_program()).file_name().unwrap(), "uv");
         let file = dir
             .path()
             .join("project/entities/thing/strategies/model.py");
@@ -685,6 +793,7 @@ mod tests {
             [
                 "run",
                 "--quiet",
+                "--isolated",
                 "--with",
                 "pyarrow",
                 "--script",
@@ -747,7 +856,7 @@ mod tests {
 
         let typescript = strategy(Runtime::Typescript, "entities/thing/strategies/model.ts");
         let command = user_code.command(&typescript, None).unwrap();
-        assert_eq!(command.get_program(), "bun");
+        assert_eq!(Path::new(command.get_program()).file_name().unwrap(), "bun");
         assert_eq!(arguments(&command)[0], "run");
         let set = environment(&command);
         // With nothing to do, it is told of no task.
@@ -764,6 +873,71 @@ mod tests {
             .unwrap();
         assert!(first.join("spool-strategy/index.js").is_file());
         assert!(first.join("spool-strategy/package.json").is_file());
+    }
+
+    #[test]
+    fn code_whose_language_nothing_here_runs_says_what_to_install() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("project");
+        std::fs::create_dir_all(project.join("extractors")).unwrap();
+        let code = |runtime, file: &str| {
+            std::fs::write(project.join(file), "").unwrap();
+            Code::from(&Extractor {
+                name: "names".to_owned(),
+                runtime,
+                file: file.to_owned(),
+                hash: strategy_hash(&project.join(file)).unwrap(),
+                pattern: None,
+            })
+        };
+        let python = code(Runtime::Python, "extractors/names.py");
+        let typescript = code(Runtime::Typescript, "extractors/names.ts");
+        // Neither command is anywhere: a path names one file, and is looked
+        // for nowhere else.
+        let nowhere = UserCode {
+            work_dir: dir.path().join("work"),
+            uv: dir.path().join("bin/uv").into(),
+            bun: dir.path().join("bin/bun").into(),
+            ..UserCode::new(&project)
+        };
+        let message = nowhere.check(&python).unwrap_err().to_string();
+        for part in [
+            "extractor `names`: it is a Python file, and Spool runs those with `uv`, which is \
+             not installed where Spool runs.",
+            "Install uv there (https://docs.astral.sh/uv/getting-started/installation/) and try \
+             again.",
+            "set SPOOL_UV to it where Spool is started",
+        ] {
+            assert!(message.contains(part), "no `{part}` in: {message}");
+        }
+        let message = nowhere.check(&typescript).unwrap_err().to_string();
+        for part in [
+            "it is a TypeScript file, and Spool runs those with `bun`, which is not installed \
+             where Spool runs.",
+            "Install bun there (https://bun.sh/docs/installation) and try again.",
+            "SPOOL_BUN",
+        ] {
+            assert!(message.contains(part), "no `{part}` in: {message}");
+        }
+        // The same when it is asked to fetch what the code depends on.
+        let message = nowhere.install(python.clone()).unwrap_err().to_string();
+        assert!(message.contains("Install uv"), "{message}");
+
+        // A file that is there and cannot be executed is not the command.
+        std::fs::create_dir_all(dir.path().join("bin")).unwrap();
+        std::fs::write(dir.path().join("bin/uv"), "#!/bin/sh\n").unwrap();
+        assert!(nowhere.check(&python).is_err());
+        let mut permissions = std::fs::metadata(dir.path().join("bin/uv"))
+            .unwrap()
+            .permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+        std::fs::set_permissions(dir.path().join("bin/uv"), permissions).unwrap();
+        nowhere.check(&python).unwrap();
+
+        // A pattern is run by the engine, and needs neither.
+        let pattern = code(Runtime::Pattern, "extractors/codes.yaml");
+        nowhere.check(&pattern).unwrap();
+        assert!(nowhere.command(pattern, None).is_err());
     }
 
     #[test]

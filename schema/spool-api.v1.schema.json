@@ -694,7 +694,7 @@
     },
     "DocumentsRequest": {
       "additionalProperties": false,
-      "description": "`POST /v1/documents`: store documents from one source, to be read by an\nextractor. The response is the ingest run that stored them.",
+      "description": "`POST /v1/documents`: store documents from one source, to be read by an\nextractor. The response is the ingest run that stored them.\n\nOne document can also be sent as it is: a body of UTF-8 text, such as\n`text/plain`, with `source`, `key` and optionally `uri` and `wait_ms` in\nthe query string.",
       "properties": {
         "documents": {
           "items": {
@@ -1115,7 +1115,7 @@
     },
     "ExtractRequest": {
       "additionalProperties": false,
-      "description": "`POST /v1/extractions`: run one of the project's extractors over the\ndocuments it has not read. The response is the extract run. What it\nfound is records, which `POST /v1/runs` then matches.",
+      "description": "`POST /v1/extractions`: run one of the project's extractors over the\ndocuments it has not read. The response is the extract run. What it\nfound is records, which `POST /v1/runs` then matches.\n\nThe body may be left out: the project's only extractor then reads\nevery document it has not read.",
       "properties": {
         "again": {
           "default": null,
@@ -1126,8 +1126,12 @@
           ]
         },
         "extractor": {
-          "description": "The name of one of the project's extractors; `GET /v1/info` lists\nthem. The server runs no code it was not built with.",
-          "type": "string"
+          "default": null,
+          "description": "The name of one of the project's extractors; `GET /v1/info` lists\nthem. The server runs no code it was not built with. It may be left\nout when the project has exactly one.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "limit": {
           "default": null,
@@ -1158,13 +1162,10 @@
           ]
         }
       },
-      "required": [
-        "extractor"
-      ],
       "type": "object"
     },
     "Extractor": {
-      "description": "An extractor: a file the engine runs as a child process, which reads\ndocuments and says where they mention entities. The engine runs the file\nonly while it still has this hash.",
+      "description": "An extractor: what reads documents and says where they mention entities.\nOne that is user code is a file the engine runs as a child process, only\nwhile the file still has this hash. One that is a pattern is run by the\nengine itself, from what the manifest holds.",
       "properties": {
         "file": {
           "description": "The file, as a path from the project directory with `/` between its\nparts.",
@@ -1176,6 +1177,17 @@
         },
         "name": {
           "type": "string"
+        },
+        "pattern": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Pattern"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What a pattern extractor looks for. User code has none."
         },
         "runtime": {
           "$ref": "#/$defs/Runtime"
@@ -2048,6 +2060,31 @@
       "required": [
         "current",
         "new"
+      ],
+      "type": "object"
+    },
+    "Pattern": {
+      "description": "What a pattern extractor looks for: every place in a document that the\nregular expression matches is a mention of the entity type.",
+      "properties": {
+        "attribute": {
+          "description": "The attribute that holds the whole of the matched text, if it is\nkept.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "entity_type": {
+          "description": "The entity type of what it finds.",
+          "type": "string"
+        },
+        "pattern": {
+          "description": "The regular expression, in the syntax of Rust's `regex` crate. Each\nof its named groups that took part in a match is an attribute of the\nmention, under the group's name.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "entity_type",
+        "pattern"
       ],
       "type": "object"
     },
@@ -3493,7 +3530,7 @@
       ]
     },
     "Runtime": {
-      "description": "What runs a strategy file. The file's extension decides.",
+      "description": "What runs a strategy's or an extractor's file. The file's extension\ndecides.",
       "oneOf": [
         {
           "const": "python",
@@ -3503,6 +3540,11 @@
         {
           "const": "typescript",
           "description": "A `.ts` file, run with `bun run`.",
+          "type": "string"
+        },
+        {
+          "const": "pattern",
+          "description": "A `.yaml` file under `extractors/`: a pattern, which the engine runs\nitself. No strategy is one.",
           "type": "string"
         }
       ]
