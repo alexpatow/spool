@@ -28,20 +28,32 @@
 //!
 //! A call that finds the writer busy has no run to report until its own work
 //! starts, so it can wait longer than `wait_ms` for that.
+//!
+//! # Bodies the server does not read
+//!
+//! A request is refused as soon as it can be: one without a caller before
+//! its body is read, and one over the size limit when the limit is passed.
+//! What is left of the body is then in the way of the next request. Up to
+//! 64 KB of it is read and dropped. When more is left, the connection is
+//! closed after the answer, and the answer says so with `Connection: close`.
 
 use std::collections::HashMap;
 use std::future::Future;
 use std::io::Cursor;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 use arrow::ipc::reader::StreamReader;
 use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatchReader;
-use axum::body::Bytes;
+use axum::body::{Body, Bytes};
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{DefaultBodyLimit, Extension, Path, Query, Request, State};
-use axum::http::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HOST, ORIGIN, WWW_AUTHENTICATE};
+use axum::http::header::{
+    ACCEPT, AUTHORIZATION, CONNECTION, CONTENT_TYPE, HOST, ORIGIN, WWW_AUTHENTICATE,
+};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -112,6 +124,12 @@ const MAX_ATTEMPTED: usize = 10_000;
 /// The largest body the paths that sign people in read. Anyone can send one,
 /// and what they are about is a few names and a password.
 const MAX_AUTH_BODY_BYTES: usize = 64 * 1024;
+
+/// The most of a body that is read only to be dropped, when the request was
+/// answered without it, and how long the server waits for it to arrive. The
+/// connection is closed after an answer that leaves more behind.
+const MAX_LEFTOVER_BYTES: usize = 64 * 1024;
+const LEFTOVER_WAIT: Duration = Duration::from_secs(2);
 
 /// The most passwords hashed at once. A hash is made to cost time and memory,
 /// and a sign-in costs one whether or not the account exists, so anyone who
@@ -315,10 +333,11 @@ pub fn router(engine: Arc<Engine>, options: &ServerOptions) -> Router {
         .layer(DefaultBodyLimit::max(options.max_body_bytes))
         .layer(middleware::map_response(describe_failure))
         .with_state(app);
-    match options.dev {
+    let router = match options.dev {
         true => router.layer(middleware::from_fn(local::this_machine_only)),
         false => router,
-    }
+    };
+    router.layer(middleware::from_fn(finish_the_body))
 }
 
 /// Serves the API on `listener` until `shutdown` completes. Requests in
@@ -471,6 +490,91 @@ async fn describe_failure(response: Response) -> Response {
 
 async fn not_found() -> ApiError {
     ApiError::not_found("there is nothing at this path")
+}
+
+/// A request's body that whoever answers the request reads through, so that
+/// what they left of it can be read afterwards.
+struct Shared(Arc<Mutex<Body>>);
+
+impl http_body::Body for Shared {
+    type Data = Bytes;
+    type Error = axum::Error;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+    ) -> Poll<Option<Result<http_body::Frame<Bytes>, axum::Error>>> {
+        Pin::new(&mut *lock(&self.0)).poll_frame(context)
+    }
+
+    fn is_end_stream(&self) -> bool {
+        lock(&self.0).is_end_stream()
+    }
+
+    fn size_hint(&self) -> http_body::SizeHint {
+        lock(&self.0).size_hint()
+    }
+}
+
+fn lock(body: &Mutex<Body>) -> std::sync::MutexGuard<'_, Body> {
+    body.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Reads what is left of a body and drops it. False if more is left than
+/// [`MAX_LEFTOVER_BYTES`], or it does not arrive within [`LEFTOVER_WAIT`].
+async fn read_out(body: &Mutex<Body>) -> bool {
+    use http_body::Body as _;
+
+    let rest = async {
+        let mut read = 0;
+        loop {
+            {
+                let body = lock(body);
+                if body.is_end_stream() {
+                    return true;
+                }
+                if body.size_hint().lower() > (MAX_LEFTOVER_BYTES - read) as u64 {
+                    return false;
+                }
+            }
+            let frame =
+                std::future::poll_fn(|context| Pin::new(&mut *lock(body)).poll_frame(context));
+            match frame.await {
+                None => return true,
+                Some(Err(_)) => return false,
+                Some(Ok(frame)) => {
+                    read += frame.data_ref().map_or(0, Bytes::len);
+                    if read > MAX_LEFTOVER_BYTES {
+                        return false;
+                    }
+                }
+            }
+        }
+    };
+    tokio::time::timeout(LEFTOVER_WAIT, rest)
+        .await
+        .unwrap_or(false)
+}
+
+/// Leaves the connection fit for the next request, or says that it is not.
+///
+/// A request can be answered before its body was read to the end: nobody
+/// was signed in, or the body passed the size limit. What is left of the body
+/// is where the next request would start. A little is read and dropped. More
+/// than that is not worth reading, the connection closes after the answer,
+/// and the answer says so with `Connection: close`. A client that is not told
+/// sends its next request into a connection that is gone.
+async fn finish_the_body(request: Request, next: Next) -> Response {
+    let (parts, body) = request.into_parts();
+    let body = Arc::new(Mutex::new(body));
+    let request = Request::from_parts(parts, Body::new(Shared(body.clone())));
+    let mut response = next.run(request).await;
+    if !read_out(&body).await {
+        response
+            .headers_mut()
+            .insert(CONNECTION, HeaderValue::from_static("close"));
+    }
+    response
 }
 
 impl From<Refused> for ApiError {

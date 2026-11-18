@@ -299,8 +299,9 @@ fn failures_are_described_the_same_way_whatever_went_wrong() {
     assert_eq!(server.read("/v1/changesets")["head"], 0);
 }
 
-#[test]
-fn a_body_over_the_limit_is_refused() {
+/// A server in this process that reads bodies of up to 1,000 bytes, its
+/// address, and a token it takes. It stops when the runtime is dropped.
+fn small_bodied_server() -> (tokio::runtime::Runtime, String, String) {
     use spool_cli::server::{ServerOptions, serve};
 
     let engine = Engine::open_in_memory(Options::seeded(1)).unwrap();
@@ -324,7 +325,12 @@ fn a_body_over_the_limit_is_refused() {
         )
         .await
     });
+    (runtime, address, token)
+}
 
+#[test]
+fn a_body_over_the_limit_is_refused() {
+    let (_runtime, address, token) = small_bodied_server();
     let send = |body: &Value| {
         Request::to(&address, "POST", "/v1/ids")
             .header("Authorization", &format!("Bearer {token}"))
@@ -340,6 +346,103 @@ fn a_body_over_the_limit_is_refused() {
     );
     let padded = json!({ "identities": 1, "padding": "x".repeat(2_000) });
     send(&padded).error(413, "too_large");
+}
+
+/// Reads one response from a connection that stays open: its head, then the
+/// body its `Content-Length` counts.
+fn read_response(stream: &mut std::net::TcpStream) -> String {
+    use std::io::Read;
+
+    let mut raw = Vec::new();
+    loop {
+        let text = String::from_utf8_lossy(&raw).to_ascii_lowercase();
+        if let Some(head) = text.find("\r\n\r\n") {
+            let length: usize = text[..head]
+                .lines()
+                .find_map(|line| line.strip_prefix("content-length:"))
+                .expect("the response says how long it is")
+                .trim()
+                .parse()
+                .unwrap();
+            if raw.len() >= head + 4 + length {
+                return text;
+            }
+        }
+        let mut some = [0; 4096];
+        let read = stream.read(&mut some).unwrap();
+        assert!(read > 0, "the server closed the connection: {text}");
+        raw.extend_from_slice(&some[..read]);
+    }
+}
+
+#[test]
+fn a_client_is_told_when_its_connection_will_not_take_another_request() {
+    use std::io::Write;
+
+    let (_runtime, address, token) = small_bodied_server();
+    let bearer = format!("Bearer {token}");
+    // The server answers these without reading the megabyte to its end, and
+    // what is left of it is in the way of the next request. A client that is
+    // not told sends its next request into a connection that is gone.
+    let long = "x".repeat(1_000_000);
+    for (path, authorization, body, status, code) in [
+        (
+            "/auth/sign-in",
+            None,
+            json!({ "username": "ada", "password": long }),
+            413,
+            "too_large",
+        ),
+        (
+            "/v1/ids",
+            Some(&bearer),
+            json!({ "identities": 1, "padding": long }),
+            413,
+            "too_large",
+        ),
+        (
+            "/v1/ids",
+            None,
+            json!({ "identities": 1, "padding": long }),
+            401,
+            "unauthorized",
+        ),
+    ] {
+        let mut request = Request::to(&address, "POST", path).json(&body).kept();
+        if let Some(authorization) = authorization {
+            request = request.header("Authorization", authorization);
+        }
+        let response = request.send();
+        response.error(status, code);
+        assert_eq!(
+            response.header("connection"),
+            Some("close"),
+            "{path} answered {status}"
+        );
+    }
+
+    // A small request leaves the connection open, whether it is answered or
+    // refused before its body is read.
+    let mut stream = std::net::TcpStream::connect(&address).unwrap();
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(30)))
+        .unwrap();
+    for (authorization, status) in [(bearer.as_str(), "200"), ("Bearer made-up", "401")] {
+        for _ in 0..2 {
+            let body = r#"{"identities":1}"#;
+            let request = format!(
+                "POST /v1/ids HTTP/1.1\r\nHost: {address}\r\nAuthorization: {authorization}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(request.as_bytes()).unwrap();
+            let response = read_response(&mut stream);
+            assert!(
+                response.starts_with(&format!("http/1.1 {status}")),
+                "{response}"
+            );
+            assert!(!response.contains("connection: close"), "{response}");
+        }
+    }
 }
 
 /// Many rows of the `thing` type, each with a code of its own.
