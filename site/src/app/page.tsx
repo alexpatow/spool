@@ -85,7 +85,7 @@ export default function Home() {
           <Typography.P style={styles.lead}>{site.problem}</Typography.P>
           <CodeBlock>{start}</CodeBlock>
           <Typography.Muted>
-            Needs Rust 1.89 or later. Version {site.version}, with no release yet, so the first
+            Needs Rust 1.89 or later and a C compiler. Version {site.version}, with no release yet, so the first
             step is a build from source. {site.licence} licence.
           </Typography.Muted>
           <div {...stylex.props(styles.actions)}>

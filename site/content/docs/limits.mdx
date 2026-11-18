@@ -36,8 +36,8 @@ Splink also fits beside Spool: a strategy can run it to judge pairs, and Spool k
 
 ### Getting it
 
-- No release, no package and no container image is published. You build from source with Rust 1.89 or later, as [Getting started](/docs/getting-started) shows.
-- The built binary depends on files inside the checkout it was built in, so it cannot be copied to another machine.
+- No release, no package and no container image is published. You build from source with Rust 1.89 or later and a C compiler, as [Getting started](/docs/getting-started) shows.
+- The binary alone cannot be copied to another machine. It needs the DuckDB library, which it looks for beside itself, then in `../lib`, then in the checkout it was built in. The build leaves that library under `target/duckdb-download`.
 - It is tested on Linux on x86-64, and these pages were run on macOS on Apple silicon. Windows is untried.
 
 ### Loading and matching

@@ -9,7 +9,8 @@ Nothing is published yet: there is no release, package or container image. So th
 
 ## What you need
 
-- Rust 1.89 or later, with `cargo`. [rustup](https://rustup.rs) installs both.
+- Rust 1.89 or later, with `cargo`. [rustup](https://rustup.rs) installs both. A Rust older than 1.85 stops with ``feature `edition2024` is required`` and does not say which version it wants.
+- A C compiler, such as the one in Xcode's command line tools or `gcc`. The build compiles SQLite and a cryptography library with it.
 - `git` and `curl`.
 - macOS or Linux. Windows has not been tried.
 
@@ -23,7 +24,7 @@ cd spool
 cargo build --release --locked -p spool-cli
 ```
 
-The build downloads the DuckDB library it links against, so it needs the network. It took one minute on an Apple silicon laptop. The result is one binary, `target/release/spool`. Put it on your search path for this terminal:
+The build downloads the DuckDB library it links against, so it needs the network. It took one minute on an Apple silicon laptop and about two and a half minutes on four x86-64 cores under Linux, and it leaves 1.2 GB in `target`. The result is one binary, `target/release/spool`. Put it on your search path for this terminal:
 
 {/* sample: skip the check puts its own binary on the search path */}
 
@@ -31,7 +32,7 @@ The build downloads the DuckDB library it links against, so it needs the network
 export PATH="$PWD/target/release:$PATH"
 ```
 
-You will open a second terminal later. Run the same line there, from the `spool` directory. Leave the checkout where it is: the binary loads the DuckDB library from the checkout's `target` directory.
+You will open a second terminal later. Run the same line there, from the `spool` directory. Leave the checkout where it is: the binary finds the DuckDB library in the checkout's `target` directory.
 
 ```sh
 spool --version
