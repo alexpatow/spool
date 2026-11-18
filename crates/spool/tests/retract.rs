@@ -32,9 +32,9 @@ fn set(members: &[&str]) -> std::collections::BTreeSet<String> {
 
 /// The anvil as the shop, the depot and the kiosk know it: one identity.
 fn three_anvils(engine: &Engine) -> spool::core::IdentityId {
-    ingest(engine, "shop", &[("1", Some("anvil"), None)]);
-    ingest(engine, "depot", &[("1", Some("anvil"), None)]);
-    ingest(engine, "kiosk", &[("1", Some("anvil"), None)]);
+    load(engine, "shop", &[("1", Some("anvil"), None)]);
+    load(engine, "depot", &[("1", Some("anvil"), None)]);
+    load(engine, "kiosk", &[("1", Some("anvil"), None)]);
     resolve(engine);
     identity(engine, "shop", "1").unwrap()
 }
@@ -100,15 +100,15 @@ fn a_row_its_source_took_back_leaves_its_identity_and_stays_as_evidence() {
 #[test]
 fn a_row_that_was_taken_back_is_matched_with_nothing() {
     let engine = engine();
-    ingest(&engine, "shop", &[("1", Some("anvil"), Some("K1"))]);
-    ingest(&engine, "depot", &[("1", Some("mallet"), Some("K1"))]);
+    load(&engine, "shop", &[("1", Some("anvil"), Some("K1"))]);
+    load(&engine, "depot", &[("1", Some("mallet"), Some("K1"))]);
     resolve(&engine);
     let shop = record_id(&engine, "shop", "1");
     retract(&engine, "shop", &["1"]);
 
     // Only the shop's row said that K1 is an anvil. An anvil that arrives
     // now is a thing of its own.
-    ingest(&engine, "kiosk", &[("1", Some("anvil"), None)]);
+    load(&engine, "kiosk", &[("1", Some("anvil"), None)]);
     let report = resolve(&engine);
     assert_eq!(report.resolved[0].new_records, 1);
     assert_eq!(report.resolved[0].candidates, 0);
@@ -145,7 +145,7 @@ fn a_row_that_was_taken_back_is_matched_with_nothing() {
 #[test]
 fn a_row_taken_back_before_it_had_an_identity_is_never_given_one() {
     let engine = engine();
-    ingest(
+    load(
         &engine,
         "shop",
         &[("1", Some("anvil"), None), ("2", Some("anvil"), None)],
@@ -168,9 +168,9 @@ fn a_row_taken_back_before_it_had_an_identity_is_never_given_one() {
 #[test]
 fn every_version_of_a_row_is_taken_back() {
     let engine = engine();
-    ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
-    ingest(&engine, "shop", &[("1", Some("anvil mk2"), None)]);
-    ingest(&engine, "depot", &[("1", Some("anvil"), None)]);
+    load(&engine, "shop", &[("1", Some("anvil"), None)]);
+    load(&engine, "shop", &[("1", Some("anvil mk2"), None)]);
+    load(&engine, "depot", &[("1", Some("anvil"), None)]);
     resolve(&engine);
     let anvil = identity(&engine, "depot", "1").unwrap();
     assert_eq!(engine.identity(anvil).unwrap().members.len(), 3);
@@ -236,7 +236,7 @@ fn a_row_the_source_sends_again_comes_back() {
     // taken back, and it is in the identity it left: what put it there
     // still holds.
     let head = engine.head().unwrap();
-    let report = ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
+    let report = load(&engine, "shop", &[("1", Some("anvil"), None)]);
     assert_eq!(
         (report.inserted, report.duplicates, report.restored),
         (0, 1, 1)
@@ -267,7 +267,7 @@ fn a_row_the_source_sends_again_comes_back() {
         }]
     );
     // The run reads back with what it did.
-    assert_eq!(engine.run(report.run).unwrap().ingest, Some(report));
+    assert_eq!(engine.run(report.run).unwrap().load, Some(report));
 
     // It has an identity, so it is nothing for a run to look at.
     assert_eq!(resolve(&engine).resolved, []);
@@ -290,7 +290,7 @@ fn a_row_that_comes_back_changed_brings_its_earlier_versions_with_it() {
     let first = record_id(&engine, "shop", "1");
     retract(&engine, "shop", &["1"]);
 
-    let report = ingest(&engine, "shop", &[("1", Some("anvil mk2"), None)]);
+    let report = load(&engine, "shop", &[("1", Some("anvil mk2"), None)]);
     assert_eq!(
         (report.inserted, report.superseded, report.restored),
         (1, 1, 1)
@@ -351,7 +351,7 @@ fn a_record_that_was_taken_back_cannot_be_given_an_identity() {
 #[test]
 fn a_draft_that_places_a_record_is_closed_when_the_record_is_taken_back() {
     let engine = engine();
-    ingest(
+    load(
         &engine,
         "shop",
         &[("1", Some("anvil"), None), ("2", Some("anvil"), None)],
@@ -384,7 +384,7 @@ fn a_draft_that_places_a_record_is_closed_when_the_record_is_taken_back() {
 /// An anvil without a code and a hammer with the code K2, each an identity
 /// of its own.
 fn an_anvil_and_a_hammer(engine: &Engine) {
-    ingest(
+    load(
         engine,
         "shop",
         &[
@@ -400,7 +400,7 @@ fn a_review_item_is_closed_when_the_record_it_asks_about_is_taken_back() {
     let engine = engine();
     an_anvil_and_a_hammer(&engine);
     // An anvil with the hammer's code: the rules cannot say which it is.
-    ingest(&engine, "depot", &[("9", Some("anvil"), Some("K2"))]);
+    load(&engine, "depot", &[("9", Some("anvil"), Some("K2"))]);
     resolve(&engine);
     let [item] = &engine.review_items(&ReviewFilter::open()).unwrap()[..] else {
         panic!("one open review item");
@@ -429,7 +429,7 @@ fn a_review_item_is_closed_when_the_record_it_asks_about_is_taken_back() {
     engine.verify().unwrap();
 
     // The row comes back, and the question with it.
-    ingest(&engine, "depot", &[("9", Some("anvil"), Some("K2"))]);
+    load(&engine, "depot", &[("9", Some("anvil"), Some("K2"))]);
     let report = resolve(&engine);
     assert_eq!(
         (
@@ -449,8 +449,8 @@ fn a_review_item_stays_open_for_the_records_that_were_not_taken_back() {
     let engine = engine();
     an_anvil_and_a_hammer(&engine);
     // Two rows the rules cannot place, held back together.
-    ingest(&engine, "depot", &[("9", Some("anvil"), Some("K2"))]);
-    ingest(&engine, "kiosk", &[("9", Some("anvil"), Some("K2"))]);
+    load(&engine, "depot", &[("9", Some("anvil"), Some("K2"))]);
+    load(&engine, "kiosk", &[("9", Some("anvil"), Some("K2"))]);
     resolve(&engine);
     let [item] = &engine.review_items(&ReviewFilter::open()).unwrap()[..] else {
         panic!("one open review item");
@@ -505,7 +505,7 @@ fn a_review_item_stays_open_for_the_records_that_were_not_taken_back() {
 fn what_a_store_holds_says_how_much_was_taken_back() {
     let engine = engine();
     three_anvils(&engine);
-    ingest(&engine, "shop", &[("2", Some("hammer"), None)]);
+    load(&engine, "shop", &[("2", Some("hammer"), None)]);
     retract(&engine, "shop", &["1"]);
 
     let info = engine.info().unwrap();
@@ -602,14 +602,14 @@ fn a_record_that_was_taken_back_is_still_explained() {
 #[test]
 fn a_row_that_was_alone_comes_back_to_the_identity_it_had() {
     let engine = engine();
-    ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
+    load(&engine, "shop", &[("1", Some("anvil"), None)]);
     resolve(&engine);
     let anvil = identity(&engine, "shop", "1").unwrap();
     retract(&engine, "shop", &["1"]);
     assert_eq!(members(&engine, anvil), set(&[]));
 
     // Nothing is left to match it with, and it is the same thing it was.
-    let report = ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
+    let report = load(&engine, "shop", &[("1", Some("anvil"), None)]);
     assert_eq!((report.restored, report.returned), (1, 1));
     assert_eq!(identity(&engine, "shop", "1"), Some(anvil));
     assert_eq!(resolve(&engine).resolved, []);
@@ -624,7 +624,7 @@ fn a_row_that_was_alone_comes_back_to_the_identity_it_had() {
 fn a_row_comes_back_to_the_identity_that_stands_for_the_one_it_left() {
     let engine = engine();
     let anvil = three_anvils(&engine);
-    ingest(&engine, "shop", &[("2", Some("hammer"), None)]);
+    load(&engine, "shop", &[("2", Some("hammer"), None)]);
     resolve(&engine);
     let hammer = identity(&engine, "shop", "2").unwrap();
     retract(&engine, "shop", &["1"]);
@@ -642,7 +642,7 @@ fn a_row_comes_back_to_the_identity_that_stands_for_the_one_it_left() {
         )
         .unwrap();
 
-    let report = ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
+    let report = load(&engine, "shop", &[("1", Some("anvil"), None)]);
     assert_eq!(report.returned, 1);
     assert_eq!(identity(&engine, "shop", "1"), Some(hammer));
     assert_eq!(
@@ -655,8 +655,8 @@ fn a_row_comes_back_to_the_identity_that_stands_for_the_one_it_left() {
 #[test]
 fn a_row_a_reviewer_placed_comes_back_to_where_the_reviewer_put_it() {
     let engine = engine();
-    ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
-    ingest(&engine, "depot", &[("1", Some("mallet"), None)]);
+    load(&engine, "shop", &[("1", Some("anvil"), None)]);
+    load(&engine, "depot", &[("1", Some("mallet"), None)]);
     resolve(&engine);
     let anvil = identity(&engine, "shop", "1").unwrap();
     let mallet = record_id(&engine, "depot", "1");
@@ -676,7 +676,7 @@ fn a_row_a_reviewer_placed_comes_back_to_where_the_reviewer_put_it() {
     // No rule would put the two together. The reviewer did, and that
     // holds when the row has been away.
     retract(&engine, "depot", &["1"]);
-    let report = ingest(&engine, "depot", &[("1", Some("mallet"), None)]);
+    let report = load(&engine, "depot", &[("1", Some("mallet"), None)]);
     assert_eq!(report.returned, 1);
     assert_eq!(identity(&engine, "depot", "1"), Some(anvil));
     assert_eq!(resolve(&engine).resolved, []);
@@ -689,7 +689,7 @@ fn a_row_that_cannot_go_back_where_it_was_is_new_to_the_next_run() {
     let anvil = three_anvils(&engine);
     let shop = record_id(&engine, "shop", "1");
     let depot = record_id(&engine, "depot", "1");
-    ingest(&engine, "shop", &[("2", Some("hammer"), None)]);
+    load(&engine, "shop", &[("2", Some("hammer"), None)]);
     resolve(&engine);
     let hammer = identity(&engine, "shop", "2").unwrap();
     retract(&engine, "shop", &["1", "2"]);
@@ -710,7 +710,7 @@ fn a_row_that_cannot_go_back_where_it_was_is_new_to_the_next_run() {
 
     // The hammer goes back, and the anvil does not: it waits for a run,
     // which leaves it apart from the others.
-    let report = ingest(
+    let report = load(
         &engine,
         "shop",
         &[("1", Some("anvil"), None), ("2", Some("hammer"), None)],
@@ -744,7 +744,7 @@ fn a_row_that_had_no_identity_when_it_was_taken_back_is_given_none_when_it_comes
     let taken = retract(&engine, "shop", &["1"]);
     assert_eq!((taken.retracted, taken.detached), (1, 0));
 
-    let report = ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
+    let report = load(&engine, "shop", &[("1", Some("anvil"), None)]);
     assert_eq!((report.restored, report.returned), (1, 0));
     assert_eq!(report.committed, None);
     assert_eq!(identity(&engine, "shop", "1"), None);
@@ -754,22 +754,22 @@ fn a_row_that_had_no_identity_when_it_was_taken_back_is_given_none_when_it_comes
 #[test]
 fn a_row_that_arrived_while_another_was_away_meets_it_in_a_rematch() {
     let engine = engine();
-    ingest(&engine, "shop", &[("1", Some("anvil"), Some("K1"))]);
-    ingest(&engine, "depot", &[("1", Some("anvil"), None)]);
+    load(&engine, "shop", &[("1", Some("anvil"), Some("K1"))]);
+    load(&engine, "depot", &[("1", Some("anvil"), None)]);
     resolve(&engine);
     let anvil = identity(&engine, "shop", "1").unwrap();
     retract(&engine, "shop", &["1"]);
 
     // Only the shop's row says that the kiosk's sledge is the anvil, and
     // the shop's row is away when the sledge arrives.
-    ingest(&engine, "kiosk", &[("9", Some("sledge"), Some("K1"))]);
+    load(&engine, "kiosk", &[("9", Some("sledge"), Some("K1"))]);
     resolve(&engine);
     let sledge = identity(&engine, "kiosk", "9").unwrap();
     assert_ne!(sledge, anvil);
 
     // The shop's row goes back where it was. Both have an identity now,
     // so no run places either again, and both stay as they are.
-    let report = ingest(&engine, "shop", &[("1", Some("anvil"), Some("K1"))]);
+    let report = load(&engine, "shop", &[("1", Some("anvil"), Some("K1"))]);
     assert_eq!(report.returned, 1);
     assert_eq!(resolve(&engine).resolved, []);
     assert_eq!(identity(&engine, "kiosk", "9"), Some(sledge));

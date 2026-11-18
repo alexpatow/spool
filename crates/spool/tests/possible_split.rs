@@ -103,9 +103,9 @@ struct Held {
 }
 
 fn held_by_one(engine: &Engine) -> Held {
-    ingest(engine, "shop", &[("1", Some("anvil"), None)]);
-    ingest(engine, "depot", &[("1", Some("mallet"), Some("K2"))]);
-    ingest(engine, "kiosk", &[("1", Some("anvil"), Some("K2"))]);
+    load(engine, "shop", &[("1", Some("anvil"), None)]);
+    load(engine, "depot", &[("1", Some("mallet"), Some("K2"))]);
+    load(engine, "kiosk", &[("1", Some("anvil"), Some("K2"))]);
     resolve(engine);
     let identity = identity(engine, "shop", "1").unwrap();
     assert_eq!(
@@ -168,9 +168,9 @@ fn what_only_a_row_that_was_taken_back_held_together_is_put_to_a_reviewer() {
 fn nothing_is_asked_while_what_is_left_holds_together() {
     // Three anvils match each other, so any two of them still do.
     let engine = engine();
-    ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
-    ingest(&engine, "depot", &[("1", Some("anvil"), None)]);
-    ingest(&engine, "kiosk", &[("1", Some("anvil"), None)]);
+    load(&engine, "shop", &[("1", Some("anvil"), None)]);
+    load(&engine, "depot", &[("1", Some("anvil"), None)]);
+    load(&engine, "kiosk", &[("1", Some("anvil"), None)]);
     resolve(&engine);
     assert_eq!(retract(&engine, "kiosk", &["1"]).possible_splits, 0);
     assert_eq!(open(&engine), []);
@@ -201,12 +201,12 @@ fn a_constraint_and_a_version_of_the_same_row_hold_records_together() {
     // version matches nothing, and is with the old one because it is the
     // same row.
     let engine = self::engine();
-    ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
-    ingest(&engine, "depot", &[("1", Some("anvil"), None)]);
+    load(&engine, "shop", &[("1", Some("anvil"), None)]);
+    load(&engine, "depot", &[("1", Some("anvil"), None)]);
     resolve(&engine);
-    ingest(&engine, "depot", &[("1", Some("mallet"), None)]);
+    load(&engine, "depot", &[("1", Some("mallet"), None)]);
     resolve(&engine);
-    ingest(&engine, "kiosk", &[("1", Some("anvil"), None)]);
+    load(&engine, "kiosk", &[("1", Some("anvil"), None)]);
     resolve(&engine);
     let anvils = identity(&engine, "shop", "1").unwrap();
     assert_eq!(members(&engine, anvils).len(), 3);
@@ -224,9 +224,9 @@ fn a_constraint_and_a_version_of_the_same_row_hold_records_together() {
 #[test]
 fn a_record_a_reviewer_placed_stays_with_the_members_that_were_there() {
     let engine = engine();
-    ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
-    ingest(&engine, "kiosk", &[("1", Some("anvil"), None)]);
-    ingest(&engine, "depot", &[("1", Some("mallet"), None)]);
+    load(&engine, "shop", &[("1", Some("anvil"), None)]);
+    load(&engine, "kiosk", &[("1", Some("anvil"), None)]);
+    load(&engine, "depot", &[("1", Some("mallet"), None)]);
     resolve(&engine);
     let anvils = identity(&engine, "shop", "1").unwrap();
     let mallets = identity(&engine, "depot", "1").unwrap();
@@ -253,10 +253,10 @@ fn a_record_a_reviewer_placed_stays_with_the_members_that_were_there() {
 
     // That holds when the mallet itself goes and comes back: the engine
     // puts it back, and what put it there first still counts.
-    ingest(&engine, "yard", &[("1", Some("anvil"), None)]);
+    load(&engine, "yard", &[("1", Some("anvil"), None)]);
     resolve(&engine);
     retract(&engine, "depot", &["1"]);
-    let back = ingest(&engine, "depot", &[("1", Some("mallet"), None)]);
+    let back = load(&engine, "depot", &[("1", Some("mallet"), None)]);
     assert_eq!(back.returned, 1);
     assert_eq!(retract(&engine, "yard", &["1"]).possible_splits, 0);
     assert_eq!(open(&engine), []);
@@ -267,7 +267,7 @@ fn a_record_a_reviewer_placed_stays_with_the_members_that_were_there() {
 fn identities_a_reviewer_merged_stay_together_and_a_side_that_came_apart_is_asked_about() {
     let engine = engine();
     let held = held_by_one(&engine);
-    ingest(
+    load(
         &engine,
         "yard",
         &[("1", Some("wrench"), None), ("2", Some("wrench"), None)],
@@ -305,7 +305,7 @@ fn identities_a_reviewer_merged_stay_together_and_a_side_that_came_apart_is_aske
 fn undoing_a_merge_says_nothing_about_the_records_it_puts_back() {
     let engine = engine();
     let held = held_by_one(&engine);
-    ingest(&engine, "yard", &[("1", Some("wrench"), None)]);
+    load(&engine, "yard", &[("1", Some("wrench"), None)]);
     resolve(&engine);
     let wrenches = identity(&engine, "yard", "1").unwrap();
     let merged = decide(
@@ -346,7 +346,7 @@ fn the_item_makes_no_work_for_a_match_run() {
     );
 
     // A run that has work does not examine them on the item's account.
-    ingest(&engine, "yard", &[("7", Some("wrench"), None)]);
+    load(&engine, "yard", &[("7", Some("wrench"), None)]);
     let report = resolve(&engine);
     assert_eq!(
         (
@@ -366,7 +366,7 @@ fn a_changeset_that_does_not_answer_the_item_leaves_it_open() {
     let (held, item) = asked(&engine);
 
     // A run that places an unrelated record.
-    ingest(&engine, "yard", &[("7", Some("wrench"), None)]);
+    load(&engine, "yard", &[("7", Some("wrench"), None)]);
     resolve(&engine);
     assert_eq!(open(&engine), std::slice::from_ref(&item));
 
@@ -436,7 +436,7 @@ fn saying_the_groups_are_one_thing_resolves_the_item() {
 
     // The decision is evidence from then on: the question is not raised
     // again when another record comes and goes.
-    ingest(&engine, "yard", &[("1", Some("anvil"), None)]);
+    load(&engine, "yard", &[("1", Some("anvil"), None)]);
     resolve(&engine);
     assert_eq!(members(&engine, held.identity).len(), 3);
     assert_eq!(retract(&engine, "yard", &["1"]).possible_splits, 0);
@@ -449,7 +449,7 @@ fn the_row_coming_back_resolves_the_item() {
     let engine = engine();
     let (held, item) = asked(&engine);
 
-    let back = ingest(&engine, "kiosk", &[("1", Some("anvil"), Some("K2"))]);
+    let back = load(&engine, "kiosk", &[("1", Some("anvil"), Some("K2"))]);
     assert_eq!(back.returned, 1);
     assert_eq!(
         engine.identity_of(held.bridge).unwrap(),
@@ -468,7 +468,7 @@ fn a_new_record_that_matches_both_groups_resolves_the_item() {
     let (held, item) = asked(&engine);
 
     // The yard has an anvil with the code K2 as well.
-    ingest(&engine, "yard", &[("1", Some("anvil"), Some("K2"))]);
+    load(&engine, "yard", &[("1", Some("anvil"), Some("K2"))]);
     let report = resolve(&engine);
     assert_eq!(
         identity(&engine, "yard", "1"),
@@ -516,7 +516,7 @@ fn another_retraction_keeps_the_item_with_the_groups_that_are_left() {
     let engine = engine();
     let held = held_by_one(&engine);
     // A second anvil, which matches the first.
-    ingest(&engine, "yard", &[("1", Some("anvil"), None)]);
+    load(&engine, "yard", &[("1", Some("anvil"), None)]);
     resolve(&engine);
     assert_eq!(identity(&engine, "yard", "1"), Some(held.identity));
 
@@ -564,7 +564,7 @@ fn a_record_that_joins_the_identity_is_in_the_group_it_matches() {
     let (held, item) = asked(&engine);
 
     // The yard has a mallet too. It matches the depot's, and joins it.
-    ingest(&engine, "yard", &[("1", Some("mallet"), None)]);
+    load(&engine, "yard", &[("1", Some("mallet"), None)]);
     resolve(&engine);
     assert_eq!(identity(&engine, "yard", "1"), Some(held.identity));
 
@@ -586,7 +586,7 @@ fn a_record_that_joins_the_identity_is_in_the_group_it_matches() {
 fn the_item_goes_with_its_records_into_a_merge_and_back() {
     let engine = engine();
     let (held, item) = asked(&engine);
-    ingest(&engine, "yard", &[("1", Some("wrench"), None)]);
+    load(&engine, "yard", &[("1", Some("wrench"), None)]);
     resolve(&engine);
     let wrenches = identity(&engine, "yard", "1").unwrap();
 
@@ -659,9 +659,9 @@ fn identities_that_are_merged_have_one_item_between_them() {
     let engine = engine();
     let held = held_by_one(&engine);
     // A second identity that one row holds together.
-    ingest(&engine, "shop", &[("5", Some("pliers"), None)]);
-    ingest(&engine, "depot", &[("5", Some("tongs"), Some("K5"))]);
-    ingest(&engine, "kiosk", &[("5", Some("pliers"), Some("K5"))]);
+    load(&engine, "shop", &[("5", Some("pliers"), None)]);
+    load(&engine, "depot", &[("5", Some("tongs"), Some("K5"))]);
+    load(&engine, "kiosk", &[("5", Some("pliers"), Some("K5"))]);
     resolve(&engine);
     let pliers = identity(&engine, "shop", "5").unwrap();
     let taken = retract(&engine, "kiosk", &["1", "5"]);
@@ -822,10 +822,10 @@ fn a_record_that_comes_back_where_what_held_it_is_still_gone_is_asked_about() {
     // Two anvils, the kiosk's anvil with the code K2, and the yard's
     // mallet with the same code: only the kiosk's row says the mallet
     // belongs with the anvils.
-    ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
-    ingest(&engine, "depot", &[("1", Some("anvil"), None)]);
-    ingest(&engine, "kiosk", &[("1", Some("anvil"), Some("K2"))]);
-    ingest(&engine, "yard", &[("1", Some("mallet"), Some("K2"))]);
+    load(&engine, "shop", &[("1", Some("anvil"), None)]);
+    load(&engine, "depot", &[("1", Some("anvil"), None)]);
+    load(&engine, "kiosk", &[("1", Some("anvil"), Some("K2"))]);
+    load(&engine, "yard", &[("1", Some("mallet"), Some("K2"))]);
     resolve(&engine);
     let identity = identity(&engine, "shop", "1").unwrap();
     assert_eq!(members(&engine, identity).len(), 4);
@@ -837,7 +837,7 @@ fn a_record_that_comes_back_where_what_held_it_is_still_gone_is_asked_about() {
 
     // The mallet comes back to the identity it left. Nothing that is there
     // now says it belongs.
-    let back = ingest(&engine, "yard", &[("1", Some("mallet"), Some("K2"))]);
+    let back = load(&engine, "yard", &[("1", Some("mallet"), Some("K2"))]);
     assert_eq!((back.returned, back.possible_splits), (1, 1));
     assert_eq!(self::identity(&engine, "yard", "1"), Some(identity));
     let [item] = &open(&engine)[..] else {
@@ -850,7 +850,7 @@ fn a_record_that_comes_back_where_what_held_it_is_still_gone_is_asked_about() {
         groups(&engine, item),
         names(&[&["depot:1", "shop:1"], &["yard:1"]])
     );
-    assert_eq!(engine.run(back.run).unwrap().ingest, Some(back));
+    assert_eq!(engine.run(back.run).unwrap().load, Some(back));
     // The record that held it is still what the case shows as taken back.
     let case = engine.review_case(item.id).unwrap();
     let taken: Vec<RecordId> = case.taken_back.iter().map(|record| record.id).collect();
@@ -858,7 +858,7 @@ fn a_record_that_comes_back_where_what_held_it_is_still_gone_is_asked_about() {
     engine.verify().unwrap();
 
     // When the kiosk's row is back as well, nothing is left to ask.
-    ingest(&engine, "kiosk", &[("1", Some("anvil"), Some("K2"))]);
+    load(&engine, "kiosk", &[("1", Some("anvil"), Some("K2"))]);
     assert_eq!(open(&engine), []);
     assert_eq!(self::item(&engine, item.id).status, ReviewStatus::Resolved);
     engine.verify().unwrap();
@@ -944,13 +944,13 @@ fn the_case_shows_the_groups_and_what_held_them_together() {
 
     // A case of another kind has neither.
     let engine = self::engine();
-    ingest(
+    load(
         &engine,
         "shop",
         &[("1", Some("anvil"), None), ("2", None, Some("K7"))],
     );
     resolve(&engine);
-    ingest(&engine, "depot", &[("9", Some("anvil"), Some("K7"))]);
+    load(&engine, "depot", &[("9", Some("anvil"), Some("K7"))]);
     resolve(&engine);
     let other = engine.review_case(open(&engine)[0].id).unwrap();
     assert_eq!(other.item.groups, Vec::<Vec<RecordId>>::new());
@@ -1008,9 +1008,9 @@ fn a_store_that_keeps_an_item_open_with_nothing_to_ask_does_not_verify() {
             }],
         );
         // A second identity with the same question, which is dismissed.
-        ingest(&engine, "shop", &[("5", Some("pliers"), None)]);
-        ingest(&engine, "depot", &[("5", Some("tongs"), Some("K5"))]);
-        ingest(&engine, "kiosk", &[("5", Some("pliers"), Some("K5"))]);
+        load(&engine, "shop", &[("5", Some("pliers"), None)]);
+        load(&engine, "depot", &[("5", Some("tongs"), Some("K5"))]);
+        load(&engine, "kiosk", &[("5", Some("pliers"), Some("K5"))]);
         resolve(&engine);
         assert_eq!(retract(&engine, "kiosk", &["5"]).possible_splits, 1);
         let other = open(&engine).remove(0);

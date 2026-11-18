@@ -335,6 +335,13 @@ pub fn dev(arguments: &[String]) -> Result<(), Failure> {
             path.display(),
             holder.map_or_else(String::new, |pid| format!(" (PID {pid})")),
         )),
+        // A store that another version of `spool` made.
+        spool::Error::FormatVersion { found, expected } => failed(format!(
+            "the store {} has format version {found}, and this `spool` reads only version \
+             {expected}: it does not convert a store.\n\
+             Move the file away or name another with `--store`, then load the rows again.",
+            store.display(),
+        )),
         other => other.into(),
     })?;
     let engine = Arc::new(engine);

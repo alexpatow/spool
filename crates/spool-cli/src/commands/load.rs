@@ -2,7 +2,7 @@
 //!
 //! The file is read here and sent as Arrow, a part at a time, so a file of
 //! any size goes in requests the server takes. What the server does with a
-//! part is what it does with any ingest.
+//! part is what it does with any load.
 
 use std::io::Read;
 use std::path::Path;
@@ -10,7 +10,7 @@ use std::path::Path;
 use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatch;
 use serde_json::{Value, json};
-use spool::{DeclaredSource, IngestReport, RunStatus};
+use spool::{DeclaredSource, LoadReport, RunStatus};
 use spool_cli::api::{ARROW_STREAM, Info};
 use spool_cli::delimited::{EMPTY, Reader};
 
@@ -47,7 +47,7 @@ Options:
   --url <url>        the server (default: $SPOOL_URL, or http://127.0.0.1:7765)
   --token <token>    a token of that server (default: $SPOOL_TOKEN); `spool dev`
                      asks for none
-  --json             print the ingest runs the server answered with, as JSON
+  --json             print the load runs the server answered with, as JSON
 ";
 
 /// About how much one request holds. A server reads 256 MiB unless it was
@@ -222,13 +222,13 @@ struct Total {
     held: u64,
     restored: u64,
     returned: u64,
-    /// How many ingest runs there were, with the first and the last, for a
+    /// How many load runs there were, with the first and the last, for a
     /// failure that comes after some succeeded.
     runs: Option<(u64, u64, u64)>,
 }
 
 impl Total {
-    fn add(&mut self, rows: u64, report: &IngestReport) {
+    fn add(&mut self, rows: u64, report: &LoadReport) {
         self.rows += rows;
         self.new += report.inserted.saturating_sub(report.superseded);
         self.versions += report.superseded;
@@ -288,13 +288,13 @@ impl Total {
     }
 }
 
-/// Sends one part and waits for its ingest run.
+/// Sends one part and waits for its load run.
 fn send(
     remote: &Remote,
     source: &str,
     entity_type: &str,
     batch: &RecordBatch,
-) -> Result<(Value, IngestReport), Failure> {
+) -> Result<(Value, LoadReport), Failure> {
     let cannot_write = |error: arrow::error::ArrowError| {
         Failure::Failed(format!("the rows cannot be sent: {error}"))
     };
@@ -305,7 +305,7 @@ fn send(
     drop(writer);
 
     let answer = remote.send(
-        "/ingest",
+        "/load",
         &[
             ("source", source.to_owned()),
             ("entity_type", entity_type.to_owned()),
@@ -316,15 +316,14 @@ fn send(
     )?;
     let unexpected = || {
         Failure::Failed(
-            "the server took the rows and reported no ingest run; is it of this version?"
-                .to_owned(),
+            "the server took the rows and reported no load run; is it of this version?".to_owned(),
         )
     };
     let (answer, run) = remote.ended(answer)?.ok_or_else(unexpected)?;
     if run.status != RunStatus::Succeeded {
         return Err(unsuccessful(&run));
     }
-    let report = run.ingest.ok_or_else(unexpected)?;
+    let report = run.load.ok_or_else(unexpected)?;
     Ok((answer["run"].clone(), report))
 }
 

@@ -7,7 +7,7 @@ use crate::error::{Error, Result};
 
 /// Written to `spool.meta` when a store is created and checked when one is
 /// opened.
-pub(crate) const FORMAT_VERSION: &str = "9";
+pub(crate) const FORMAT_VERSION: &str = "10";
 
 const TABLES: &str = "
 CREATE SCHEMA spool;
@@ -25,14 +25,14 @@ CREATE TABLE spool.record (
   payload        JSON        NOT NULL, -- attributes exactly as received
   evidence       JSON,                 -- where in the source the record was found
   observed_at    TIMESTAMPTZ,          -- when the source says it held, if known
-  ingested_at    TIMESTAMPTZ NOT NULL,
-  ingest_run     BIGINT      NOT NULL
+  loaded_at      TIMESTAMPTZ NOT NULL,
+  load_run       BIGINT      NOT NULL
 );
 
 CREATE TABLE spool.retraction (        -- rows a source took back; kept. One is in force while restored_run IS NULL
   record_id    UUID   NOT NULL,        -- a record the source no longer holds: it stays as evidence and has no identity
   retract_run  BIGINT NOT NULL,        -- the retract run that took it back
-  restored_run BIGINT,                 -- the ingest run in which the source sent the row again
+  restored_run BIGINT,                 -- the load run in which the source sent the row again
   detached_seq BIGINT                  -- the log position of the changeset that took it out of its identity, if it had one
 );
 
@@ -43,8 +43,8 @@ CREATE TABLE spool.document (          -- text a source holds, kept so that what
   supersedes  UUID,                    -- previous version of the same (source_id, source_key)
   uri         VARCHAR,                 -- where the source keeps it, if it said
   text        VARCHAR     NOT NULL,
-  ingested_at TIMESTAMPTZ NOT NULL,
-  ingest_run  BIGINT      NOT NULL
+  loaded_at   TIMESTAMPTZ NOT NULL,
+  load_run    BIGINT      NOT NULL
 );
 
 CREATE TABLE spool.extraction (        -- one row each time an extractor read a document
@@ -65,7 +65,7 @@ CREATE TABLE spool.entity_type (       -- declared by the project; the engine sh
 
 CREATE TABLE spool.run (               -- also the task record a client reads
   run_id           BIGINT      NOT NULL,
-  kind             VARCHAR     NOT NULL, -- 'ingest' | 'extract' | 'match' | 'reconcile' | 'retract'
+  kind             VARCHAR     NOT NULL, -- 'load' | 'extract' | 'match' | 'reconcile' | 'retract'
   status           VARCHAR     NOT NULL, -- 'running' | 'open' | 'drafted' | 'succeeded' | 'failed'
   strategy         VARCHAR,
   strategy_version VARCHAR,
@@ -75,7 +75,7 @@ CREATE TABLE spool.run (               -- also the task record a client reads
   started_at       TIMESTAMPTZ NOT NULL,
   finished_at      TIMESTAMPTZ,
   error            VARCHAR,              -- failed: why
-  result           JSON                  -- what the run reported: an ingest's, an extraction's or a retraction's counts, a match run's resolution
+  result           JSON                  -- what the run reported: a load's, an extraction's or a retraction's counts, a match run's resolution
 );
 
 CREATE TABLE spool.candidate (         -- per run, disposable
@@ -218,25 +218,10 @@ CREATE VIEW spool.draft_open AS
   WHERE status = 'open';
 ";
 
-/// What format 8 added to format 7: the retractions. Nothing that was there
-/// changed, so a store of format 7 is brought up to date when it is opened.
-const FROM_7: &str = "
-CREATE TABLE spool.retraction (
-  record_id    UUID   NOT NULL,
-  retract_run  BIGINT NOT NULL,
-  restored_run BIGINT,
-  detached_seq BIGINT
-);
-";
-
-/// What format 9 added to format 8: the groups of a `possible_split` review
-/// item.
-const FROM_8: &str = "
-ALTER TABLE spool.review_item ADD COLUMN groups UUID[][];
-";
-
 /// Creates the schema in an empty database, or checks the format version of
-/// an existing one.
+/// an existing one. A store of another format is refused and left as it is:
+/// format 10 renamed columns that were there, so nothing earlier is brought
+/// up to date.
 pub(crate) fn ensure(conn: &mut Connection) -> Result<()> {
     let exists: bool = conn.query_row(
         "SELECT count(*) > 0 FROM information_schema.schemata WHERE schema_name = 'spool'",
@@ -253,18 +238,7 @@ pub(crate) fn ensure(conn: &mut Connection) -> Result<()> {
         tx.commit()?;
         return Ok(());
     }
-    let mut found = meta(conn, "format_version")?.unwrap_or_else(|| "none".to_owned());
-    // A store of an earlier format that only lacks what came later is
-    // brought up to date, one format at a time.
-    for (from, added, to) in [("7", FROM_7, "8"), ("8", FROM_8, "9")] {
-        if found == from {
-            let tx = conn.transaction()?;
-            tx.execute_batch(added)?;
-            set_meta(&tx, "format_version", to)?;
-            tx.commit()?;
-            found = to.to_owned();
-        }
-    }
+    let found = meta(conn, "format_version")?.unwrap_or_else(|| "none".to_owned());
     if found != FORMAT_VERSION {
         return Err(Error::FormatVersion {
             found,

@@ -28,8 +28,8 @@ function record(fields: Partial<RecordEntry>): RecordEntry {
     source: "crm",
     key: "c-1",
     payload: {},
-    ingested_at: "2026-11-17T11:53:18Z",
-    ingest_run: 1,
+    loaded_at: "2026-11-17T11:53:18Z",
+    load_run: 1,
     ...fields,
   } as RecordEntry;
 }

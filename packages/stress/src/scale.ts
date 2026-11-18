@@ -1,5 +1,5 @@
 // How a server does as the store grows: generated company records are
-// ingested and matched over HTTP, in batches, and each step is timed.
+// loaded and matched over HTTP, in batches, and each step is timed.
 //
 //   bun src/scale.ts 10000 100000        the numbers of true companies to try
 //   bun src/scale.ts --out results.json 50000
@@ -19,7 +19,7 @@ import type { Row } from "./generate.ts";
 import { scratch, serve, storeSize, timed, verify } from "./server.ts";
 import { writeProject } from "./write.ts";
 
-/** The most rows one call of `POST /v1/ingest` carries. */
+/** The most rows one call of `POST /v1/load` carries. */
 const CHUNK = 100_000;
 
 export interface Step {
@@ -61,7 +61,7 @@ export async function finished(client: SpoolClient, run: RunEntry | null): Promi
  * and nothing waits for review.
  */
 export async function match(client: SpoolClient, rematch = false): Promise<RunEntry | null> {
-  const run = await finished(client, await client.startRun({ entity_type: "company", rematch }));
+  const run = await finished(client, await client.match({ entity_type: "company", rematch }));
   if (run !== null && run.status !== "succeeded") throw new Error(`the match run ${run.status}: ${run.error ?? ""}`);
   return run;
 }
@@ -72,19 +72,19 @@ export function filled(row: Row): Row {
 }
 
 /** Sends rows in calls of at most `CHUNK`, waits for each, and says what became of them. */
-export async function ingest(client: SpoolClient, source: string, rows: Row[]): Promise<string> {
+export async function load(client: SpoolClient, source: string, rows: Row[]): Promise<string> {
   let inserted = 0;
   let duplicates = 0;
   let superseded = 0;
   for (let from = 0; from < rows.length; from += CHUNK) {
     const run = await finished(
       client,
-      await client.ingest({ source, entity_type: "company", rows: rows.slice(from, from + CHUNK).map(filled) }),
+      await client.load({ source, entity_type: "company", rows: rows.slice(from, from + CHUNK).map(filled) }),
     );
-    if (run?.status !== "succeeded") throw new Error(`ingest ${run?.status}: ${run?.error ?? ""}`);
-    inserted += run.ingest?.inserted ?? 0;
-    duplicates += run.ingest?.duplicates ?? 0;
-    superseded += run.ingest?.superseded ?? 0;
+    if (run?.status !== "succeeded") throw new Error(`load ${run?.status}: ${run?.error ?? ""}`);
+    inserted += run.load?.inserted ?? 0;
+    duplicates += run.load?.duplicates ?? 0;
+    superseded += run.load?.superseded ?? 0;
   }
   return `${inserted} new, ${duplicates} known, ${superseded} superseded`;
 }
@@ -139,10 +139,10 @@ export async function scale(
     log(`${companies} companies, ${total} records, in ${dir}`);
     for (const [index, batch] of generated.batches.entries()) {
       const name = `batch ${index + 1}`;
-      const [crm, crmSeconds] = await timed(() => ingest(client, "crm", batch.crm));
-      await record(`${name}: ingest crm`, crmSeconds, `${batch.crm.length} rows: ${crm}`);
-      const [registry, registrySeconds] = await timed(() => ingest(client, "registry", batch.registry));
-      await record(`${name}: ingest registry`, registrySeconds, `${batch.registry.length} rows: ${registry}`);
+      const [crm, crmSeconds] = await timed(() => load(client, "crm", batch.crm));
+      await record(`${name}: load crm`, crmSeconds, `${batch.crm.length} rows: ${crm}`);
+      const [registry, registrySeconds] = await timed(() => load(client, "registry", batch.registry));
+      await record(`${name}: load registry`, registrySeconds, `${batch.registry.length} rows: ${registry}`);
       const [run, seconds] = await timed(() => match(client));
       const resolution = run?.resolution;
       await record(

@@ -8,7 +8,7 @@
 //! that by itself: no rule says they differ, so a rematch is silent.
 //!
 //! A retraction therefore looks at each identity it took a record out of,
-//! and sorts the members that are left into groups. An ingest does the same
+//! and sorts the members that are left into groups. A load does the same
 //! for each identity it gave a record back to: the record is where it was,
 //! and what held it there may still be gone. Two members are in one
 //! group when a chain of these leads from one to the other, through members

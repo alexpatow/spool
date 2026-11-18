@@ -149,10 +149,10 @@ function DocumentScreen({ document, found, cut, at }: Loaded & { at: number | nu
           ["URI", document.uri],
           ["Characters", document.length],
           [
-            "Ingested",
+            "Loaded",
             <>
-              <When at={document.ingested_at} /> by{" "}
-              <Ref kind="run" id={document.ingest_run} label={`run ${document.ingest_run}`} />
+              <When at={document.loaded_at} /> by{" "}
+              <Ref kind="run" id={document.load_run} label={`run ${document.load_run}`} />
             </>,
           ],
           ["Supersedes", document.supersedes ? <Ref kind="document" id={document.supersedes} /> : null],

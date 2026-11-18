@@ -66,9 +66,9 @@ fn has(printed: &str, line: &str) {
     );
 }
 
-fn ingest(server: &Server, source: &str, entity_type: &str, rows: Rows) {
+fn load(server: &Server, source: &str, entity_type: &str, rows: Rows) {
     let response = server.post(
-        "/v1/ingest",
+        "/v1/load",
         json!({
             "source": source,
             "entity_type": entity_type,
@@ -79,7 +79,7 @@ fn ingest(server: &Server, source: &str, entity_type: &str, rows: Rows) {
 }
 
 fn resolve(server: &Server, entity_type: &str) -> Value {
-    server.call("/v1/runs", json!({ "entity_type": entity_type }))["run"].clone()
+    server.call("/v1/match", json!({ "entity_type": entity_type }))["run"].clone()
 }
 
 fn id_of(server: &Server, source: &str, key: &str) -> String {
@@ -95,7 +95,7 @@ fn workshop(dir: &Path) -> Server {
     let project = dir.join("project");
     write_things(&project);
     let server = Server::serve(&project, dir, 1);
-    ingest(
+    load(
         &server,
         "shop",
         "thing",
@@ -135,7 +135,7 @@ fn show_lists_what_a_server_holds() {
         "{runs}"
     );
     assert!(
-        runs.contains("\n1    ingest     succeeded  thing         "),
+        runs.contains("\n1    load       succeeded  thing         "),
         "{runs}"
     );
     let matches = shown(&server, &["show", "runs", "--kind", "match"]);
@@ -163,9 +163,9 @@ fn show_lists_what_a_server_holds() {
         run.contains("\ncommitted      log position 1, changeset "),
         "{run}"
     );
-    let ingested = shown(&server, &["show", "runs", "1"]);
+    let loaded = shown(&server, &["show", "runs", "1"]);
     has(
-        &ingested,
+        &loaded,
         "rows      4 received: 4 new, 0 known, 0 new versions of a known row",
     );
 
@@ -427,12 +427,12 @@ fn drafts_and_review_items_are_shown_with_what_they_hold() {
         ("batch-1-registry.csv", "registry"),
     ] {
         let rows = Rows::from_csv(companies.join(file)).unwrap();
-        ingest(&server, source, "company", rows);
+        load(&server, source, "company", rows);
     }
 
     // The first run's draft is left for a reviewer.
     let run = server.call(
-        "/v1/runs",
+        "/v1/match",
         json!({ "entity_type": "company", "commit": false }),
     )["run"]
         .clone();
@@ -478,7 +478,7 @@ fn drafts_and_review_items_are_shown_with_what_they_hold() {
         ("batch-2-registry.csv", "registry"),
     ] {
         let rows = Rows::from_csv(companies.join(file)).unwrap();
-        ingest(&server, source, "company", rows);
+        load(&server, source, "company", rows);
     }
     resolve(&server, "company");
     let stuck = id_of(&server, "crm", "c-117");
@@ -550,7 +550,7 @@ and `spool show review` lists the ones a match left out.
     let mut again = server.read(&format!("/v1/records/{stuck}"))["payload"].clone();
     again["id"] = json!("c-217");
     let response = server.post(
-        "/v1/ingest",
+        "/v1/load",
         json!({ "source": "crm", "entity_type": "company", "rows": [again] }),
     );
     assert_eq!(response.ok()["run"]["status"], "succeeded");
@@ -608,7 +608,7 @@ fn a_mention_is_shown_in_its_document() {
     // writes. A caller that finds mentions itself can write the same.
     let evidence = json!({ "document": document, "key": "a.txt", "start": 105, "end": 110 });
     let response = server.post(
-        "/v1/ingest",
+        "/v1/load",
         json!({
             "source": "notes",
             "entity_type": "thing",
@@ -670,7 +670,7 @@ fn a_mention_is_shown_in_its_document() {
     // Evidence that points outside the document is shown as it is.
     let evidence = json!({ "document": document, "start": 5, "end": 5000 });
     server.call(
-        "/v1/ingest",
+        "/v1/load",
         json!({
             "source": "notes",
             "entity_type": "thing",
@@ -686,7 +686,7 @@ fn a_mention_is_shown_in_its_document() {
     // keys `[105-110]` would come before `[12-17]`.
     let evidence = json!({ "document": document, "key": "a.txt", "start": 12, "end": 17 });
     server.call(
-        "/v1/ingest",
+        "/v1/load",
         json!({
             "source": "notes",
             "entity_type": "thing",
@@ -727,7 +727,7 @@ fn a_mention_named_by_its_place_is_the_latest_there_is() {
     let mention = |row: &str, code: &str, document: &str| {
         let evidence = json!({ "document": document, "key": "a.txt", "start": 4, "end": 9 });
         let response = server.post(
-            "/v1/ingest",
+            "/v1/load",
             json!({
                 "source": "notes",
                 "entity_type": "thing",
@@ -809,14 +809,14 @@ fn a_source_and_key_name_the_latest_version_however_many_there_were() {
     let versions = 250;
     for version in 1..=versions {
         let code = format!("anvil-{version}");
-        ingest(
+        load(
             &server,
             "shop",
             "thing",
             rows(&[&["id", "code"], &["1", &code]]),
         );
     }
-    ingest(
+    load(
         &server,
         "shop",
         "thing",
@@ -901,7 +901,7 @@ fn a_type_with_no_rules_is_explained() {
     write_things(&project);
     std::fs::remove_dir_all(project.join("entities/thing/rules")).unwrap();
     let server = Server::serve(&project, dir.path(), 1);
-    ingest(
+    load(
         &server,
         "shop",
         "thing",
@@ -936,7 +936,7 @@ fn a_rule_that_sql_refuses_on_a_pair_is_shown_as_one_that_cannot_be_applied() {
         std::fs::write(project.join("entities/thing").join(file), sql).unwrap();
     }
     let server = Server::serve(&project, dir.path(), 1);
-    ingest(
+    load(
         &server,
         "shop",
         "thing",

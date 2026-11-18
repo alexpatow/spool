@@ -91,11 +91,11 @@ export async function reviewer({
   let client: SpoolClient = server.client;
 
   const send = async (source: string, rows: Row[]) => {
-    const run = await client.ingest({ source, entity_type: "company", rows: rows.map(filled) });
-    if (run.status !== "succeeded") throw new Error(`the ingest ${run.status}: ${run.error ?? ""}`);
+    const run = await client.load({ source, entity_type: "company", rows: rows.map(filled) });
+    if (run.status !== "succeeded") throw new Error(`the load ${run.status}: ${run.error ?? ""}`);
   };
   const match = async (request: { rematch?: boolean; commit?: boolean }) => {
-    const run = await client.startRun({ entity_type: "company", ...request });
+    const run = await client.match({ entity_type: "company", ...request });
     const done = run?.status === "running" ? await client.waitForRun(run.run) : run;
     if (done !== null && done.status !== "succeeded" && done.status !== "drafted") {
       throw new Error(`the run ${done.status}: ${done.error ?? ""}`);
@@ -129,7 +129,7 @@ export async function reviewer({
   // has nothing to work on does something smaller instead of nothing.
   const menu: Array<[name: string, weight: number, act: (state: State) => Promise<void>]> = [
     [
-      "ingest",
+      "load",
       10,
       async () => {
         const rows = waiting.splice(0, 1 + below(40));

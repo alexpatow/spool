@@ -18,7 +18,7 @@ use crate::schema;
 use crate::store::{OpRow, op_from_row, parse};
 use crate::time::rfc3339;
 
-/// A record as it was ingested, and the identity it belongs to now.
+/// A record as it was loaded, and the identity it belongs to now.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct RecordEntry {
@@ -36,8 +36,8 @@ pub struct RecordEntry {
     pub label: Option<String>,
     /// Where in the source the record was found, if the source said.
     pub evidence: Option<serde_json::Value>,
-    pub ingested_at: String,
-    pub ingest_run: RunId,
+    pub loaded_at: String,
+    pub load_run: RunId,
     /// `None` while no changeset has placed it.
     pub identity: Option<IdentityId>,
     /// The version of the row this one replaced: what the source held under
@@ -147,7 +147,7 @@ impl Default for RecordFilter {
 
 impl RecordFilter {
     /// The records a source holds under one key. There is more than one
-    /// when the row changed between ingests.
+    /// when the row changed between loads.
     pub fn keyed(source: impl Into<String>, key: impl Into<String>) -> Self {
         Self {
             source: Some(source.into()),
@@ -194,9 +194,9 @@ pub struct IdentitySummary {
     pub id: IdentityId,
     pub entity_type: EntityType,
     /// What a person would call it: the label most of its members have. Of
-    /// labels that as many have, the one that was ingested first. `None`
+    /// labels that as many have, the one that was loaded first. `None`
     /// when no member's payload names it. An identity with very many
-    /// members is judged by the hundred that were ingested first.
+    /// members is judged by the hundred that were loaded first.
     #[serde(default)]
     pub label: Option<String>,
     pub created: Seq,
@@ -334,8 +334,8 @@ pub struct SourceInfo {
     /// Those of them the source took back.
     #[serde(default)]
     pub retracted: u64,
-    /// When the latest of them was ingested.
-    pub last_ingested_at: String,
+    /// When the latest of them was loaded.
+    pub last_loaded_at: String,
 }
 
 fn entity_type(name: String) -> Result<EntityType> {
@@ -348,7 +348,7 @@ fn json(text: String) -> Result<serde_json::Value> {
 
 const RECORD: &str = "
     SELECT o.record_id::VARCHAR, o.entity_type, o.source_id, o.source_key,
-           o.payload::VARCHAR, o.evidence::VARCHAR, epoch_us(o.ingested_at), o.ingest_run,
+           o.payload::VARCHAR, o.evidence::VARCHAR, epoch_us(o.loaded_at), o.load_run,
            m.identity_id::VARCHAR, o.supersedes::VARCHAR, later.record_id::VARCHAR,
            named.label, taken.retract_run
     FROM spool.record o
@@ -377,8 +377,8 @@ fn record_from_row(row: &duckdb::Row<'_>) -> Result<RecordEntry> {
         label: row.get(11)?,
         payload: json(row.get(4)?)?,
         evidence: row.get::<_, Option<String>>(5)?.map(json).transpose()?,
-        ingested_at: rfc3339(row.get(6)?),
-        ingest_run: RunId(row.get::<_, i64>(7)? as u64),
+        loaded_at: rfc3339(row.get(6)?),
+        load_run: RunId(row.get::<_, i64>(7)? as u64),
         identity: id(row, 8)?,
         supersedes: id(row, 9)?,
         superseded_by: id(row, 10)?,
@@ -430,7 +430,7 @@ const RECORD_ORDER: &str = "o.source_id, o.source_key IS NULL, \
                    THEN json_extract_string(o.evidence, '$.key') END, o.source_key, ''), \
      coalesce(CASE WHEN json_extract_string(o.evidence, '$.document') IS NOT NULL \
                    THEN TRY_CAST(json_extract_string(o.evidence, '$.start') AS BIGINT) END, 0), \
-     coalesce(o.source_key, ''), o.entity_type, o.ingest_run, o.record_id";
+     coalesce(o.source_key, ''), o.entity_type, o.load_run, o.record_id";
 
 pub(crate) fn records(conn: &Connection, filter: &RecordFilter) -> Result<Vec<RecordEntry>> {
     // A page continues from where a record stands, so the record has to be
@@ -501,7 +501,7 @@ pub(crate) fn records_by_id(conn: &Connection, ids: &[RecordId]) -> Result<Vec<R
 }
 
 /// At most `most` of the members an identity has now: those among `first`
-/// before the others, and of the others the ones ingested first.
+/// before the others, and of the others the ones loaded first.
 pub(crate) fn members(
     conn: &Connection,
     identity: IdentityId,
@@ -512,7 +512,7 @@ pub(crate) fn members(
         "{RECORD}
          WHERE m.identity_id = $1::UUID
          ORDER BY list_contains({}, o.record_id) DESC,
-                  o.ingested_at, o.ingest_run, o.record_id
+                  o.loaded_at, o.load_run, o.record_id
          LIMIT $2",
         uuid_list(first)
     ))?;
@@ -583,7 +583,7 @@ pub(crate) fn uuid_list<T: std::fmt::Display>(ids: &[T]) -> String {
 }
 
 /// What to call each of the identities: the label most of its members
-/// have, judged from the members that were ingested first. An identity
+/// have, judged from the members that were loaded first. An identity
 /// whose members name nothing is left out.
 fn labels(conn: &Connection, ids: &[IdentityId]) -> Result<BTreeMap<IdentityId, String>> {
     let mut labels: BTreeMap<IdentityId, Vec<String>> = BTreeMap::new();
@@ -595,7 +595,7 @@ fn labels(conn: &Connection, ids: &[IdentityId]) -> Result<BTreeMap<IdentityId, 
            SELECT m.identity_id, named.label,
                   row_number() OVER (
                     PARTITION BY m.identity_id
-                    ORDER BY o.ingested_at, o.ingest_run, o.record_id) AS nth
+                    ORDER BY o.loaded_at, o.load_run, o.record_id) AS nth
            FROM spool.membership m
            JOIN spool.record o ON o.record_id = m.record_id
            LEFT JOIN spool.record_label named ON named.record_id = o.record_id
@@ -849,7 +849,7 @@ pub(crate) fn info(conn: &Connection, manifest: Option<&Manifest>) -> Result<Sto
     let mut statement = conn.prepare(
         "SELECT o.entity_type, o.source_id, count(*),
                 count(*) FILTER (WHERE m.record_id IS NULL AND taken.record_id IS NULL),
-                epoch_us(max(o.ingested_at)), count(taken.record_id)
+                epoch_us(max(o.loaded_at)), count(taken.record_id)
          FROM spool.record o
          LEFT JOIN spool.membership m ON m.record_id = o.record_id AND m.to_seq IS NULL
          LEFT JOIN spool.retraction taken
@@ -869,7 +869,7 @@ pub(crate) fn info(conn: &Connection, manifest: Option<&Manifest>) -> Result<Sto
                 records: row.get::<_, i64>(2)? as u64,
                 unassigned: row.get::<_, i64>(3)? as u64,
                 retracted: row.get::<_, i64>(5)? as u64,
-                last_ingested_at: rfc3339(row.get(4)?),
+                last_loaded_at: rfc3339(row.get(4)?),
             });
         }
     }

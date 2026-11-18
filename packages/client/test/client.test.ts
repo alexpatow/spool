@@ -40,8 +40,8 @@ async function thingsServer(seed: number, environment: Record<string, string> = 
   return server;
 }
 
-async function ingestThings(client: SpoolClient, rows: Array<Record<string, string>>): Promise<RunEntry> {
-  const run = await client.ingest({ source: "shop", entity_type: "thing", rows });
+async function loadThings(client: SpoolClient, rows: Array<Record<string, string>>): Promise<RunEntry> {
+  const run = await client.load({ source: "shop", entity_type: "thing", rows });
   expect(run.status).toBe("succeeded");
   return run;
 }
@@ -63,7 +63,7 @@ async function failureOf(call: Promise<unknown>): Promise<SpoolError> {
 }
 
 describe("the company scenario", () => {
-  // The files of the scenario, in the order it ingests them, in two steps.
+  // The files of the scenario, in the order it loads them, in two steps.
   const steps = [
     [
       { file: "batch-1-crm.csv", source: "crm" },
@@ -85,11 +85,11 @@ describe("the company scenario", () => {
     for (const step of steps) {
       for (const { file, source } of step) {
         const rows = readCsv(join(companies, file));
-        const run = await server.client.ingest({ source, entity_type: "company", rows });
+        const run = await server.client.load({ source, entity_type: "company", rows });
         expect(run.status).toBe("succeeded");
-        expect(run.ingest?.received).toBe(rows.length);
+        expect(run.load?.received).toBe(rows.length);
       }
-      const run = await server.client.startRun({ entity_type: "company" });
+      const run = await server.client.match({ entity_type: "company" });
       expect(run?.status).toBe("succeeded");
     }
   });
@@ -170,9 +170,9 @@ describe("the company scenario", () => {
 describe("drafts", () => {
   test("a draft left for review is listed, read and approved", async () => {
     const { client } = await thingsServer(1);
-    await ingestThings(client, twoAnvilsAndAHammer);
+    await loadThings(client, twoAnvilsAndAHammer);
 
-    const run = await client.startRun({ entity_type: "thing", commit: false });
+    const run = await client.match({ entity_type: "thing", commit: false });
     expect(run?.status).toBe("drafted");
     const id = run!.resolution!.draft!;
     expect((await client.changesets()).head).toBe(0);
@@ -192,24 +192,24 @@ describe("drafts", () => {
 
   test("a rejected draft does not strand its records", async () => {
     const { client } = await thingsServer(2);
-    await ingestThings(client, twoAnvilsAndAHammer);
+    await loadThings(client, twoAnvilsAndAHammer);
 
-    const first = await client.startRun({ entity_type: "thing", commit: false });
+    const first = await client.match({ entity_type: "thing", commit: false });
     const rejected = await client.rejectDraft(first!.resolution!.draft!, "not yet");
     expect(rejected).toMatchObject({ status: "rejected", rejected_reason: "not yet" });
     expect((await client.records({ unassigned: true })).records).toHaveLength(3);
 
-    const second = await client.startRun({ entity_type: "thing" });
+    const second = await client.match({ entity_type: "thing" });
     expect(second?.status).toBe("succeeded");
     expect(second?.resolution?.records_assigned).toBe(3);
     expect((await client.records({ unassigned: true })).records).toEqual([]);
-    expect(await client.startRun({ entity_type: "thing" })).toBeNull();
+    expect(await client.match({ entity_type: "thing" })).toBeNull();
   });
 
   test("approving a draft that went stale names the operations at fault", async () => {
     const { client } = await thingsServer(3);
-    await ingestThings(client, twoAnvilsAndAHammer);
-    const run = await client.startRun({ entity_type: "thing", commit: false });
+    await loadThings(client, twoAnvilsAndAHammer);
+    const run = await client.match({ entity_type: "thing", commit: false });
     const { changeset } = await client.draft(run!.resolution!.draft!);
 
     // Someone commits the same assignments first, in a changeset of their own.
@@ -251,11 +251,11 @@ describe("a reviewer", () => {
 
   test("merges two identities and takes the merge back", async () => {
     const { client } = await thingsServer(9);
-    await ingestThings(client, [
+    await loadThings(client, [
       { id: "1", code: "anvil" },
       { id: "2", code: "hammer" },
     ]);
-    await client.startRun({ entity_type: "thing" });
+    await client.match({ entity_type: "thing" });
     const anvil = (await thing(client, "1")).identity!;
     const hammer = (await thing(client, "2")).identity!;
 
@@ -291,13 +291,13 @@ describe("a reviewer", () => {
 
   test("refuses a split that is based on a log position the identity changed after", async () => {
     const { client } = await thingsServer(22);
-    await ingestThings(client, [
+    await loadThings(client, [
       { id: "1", code: "anvil" },
       { id: "2", code: "anvil" },
       { id: "3", code: "anvil" },
       { id: "4", code: "hammer" },
     ]);
-    await client.startRun({ entity_type: "thing" });
+    await client.match({ entity_type: "thing" });
     const [first, second, hammer] = [await thing(client, "1"), await thing(client, "2"), await thing(client, "4")];
     const anvils = first.identity!;
     // Read now, the two named are the larger side and would keep the ID.
@@ -319,12 +319,12 @@ describe("a reviewer", () => {
 
   test("splits an identity, and the constraint keeps the sides apart", async () => {
     const { client } = await thingsServer(10);
-    await ingestThings(client, [
+    await loadThings(client, [
       { id: "1", code: "anvil" },
       { id: "2", code: "anvil" },
       { id: "3", code: "anvil" },
     ]);
-    await client.startRun({ entity_type: "thing" });
+    await client.match({ entity_type: "thing" });
     const third = await thing(client, "3");
     const anvils = third.identity!;
 
@@ -348,8 +348,8 @@ describe("a reviewer", () => {
 
     // A fourth anvil matches both sides, and is left for the reviewer, who
     // closes the item without placing it.
-    await ingestThings(client, [{ id: "4", code: "anvil" }]);
-    await client.startRun({ entity_type: "thing" });
+    await loadThings(client, [{ id: "4", code: "anvil" }]);
+    await client.match({ entity_type: "thing" });
     const [item] = await client.reviewItems({ status: "open" });
     expect(item!.kind).toBe("possible_merge");
     expect(await client.reviewItem(item!.id)).toEqual(item!);
@@ -435,7 +435,7 @@ describe("a reviewer", () => {
     const dismissed = await client.dismissReview(item!.id, { reason: "not ours" });
     expect(dismissed).toMatchObject({ status: "dismissed", dismissed: { by: actor, reason: "not ours" } });
     expect(await client.reviewItems({ status: "open" })).toEqual([]);
-    expect(await client.startRun({ entity_type: "thing" })).toBeNull();
+    expect(await client.match({ entity_type: "thing" })).toBeNull();
     expect((await thing(client, "4")).identity ?? null).toBeNull();
     expect((await failureOf(client.dismissReview(item!.id, {}))).code).toBe("conflict");
     expect((await failureOf(client.reviewItem(999))).code).toBe("not_found");
@@ -449,13 +449,13 @@ describe("a reviewer", () => {
 
   test("a row that changed supersedes the one before", async () => {
     const { client } = await thingsServer(11);
-    await ingestThings(client, [{ id: "1", code: "anvil" }]);
-    await client.startRun({ entity_type: "thing" });
+    await loadThings(client, [{ id: "1", code: "anvil" }]);
+    await client.match({ entity_type: "thing" });
     const first = await thing(client, "1");
 
-    const run = await ingestThings(client, [{ id: "1", code: "anvil", weight: "50kg" }]);
-    expect(run.ingest?.superseded).toBe(1);
-    await client.startRun({ entity_type: "thing" });
+    const run = await loadThings(client, [{ id: "1", code: "anvil", weight: "50kg" }]);
+    expect(run.load?.superseded).toBe(1);
+    await client.match({ entity_type: "thing" });
 
     const { records } = await client.records({ source: "shop", key: "1" });
     expect(records).toHaveLength(2);
@@ -467,8 +467,8 @@ describe("a reviewer", () => {
 
   test("a row its source took back leaves its identity until it is sent again", async () => {
     const { client } = await thingsServer(12);
-    await ingestThings(client, twoAnvilsAndAHammer);
-    await client.startRun({ entity_type: "thing" });
+    await loadThings(client, twoAnvilsAndAHammer);
+    await client.match({ entity_type: "thing" });
     const kept = await thing(client, "1");
     const taken = await thing(client, "2");
     expect(taken.identity).toBe(kept.identity!);
@@ -496,19 +496,19 @@ describe("a reviewer", () => {
     expect(gone.payload).toEqual(taken.payload);
     expect((await client.records({ unassigned: true })).records).toEqual([]);
     expect((await client.info()).store.entity_types[0]).toMatchObject({ records: 3, unassigned: 0, retracted: 1 });
-    expect(await client.startRun({ entity_type: "thing" })).toBeNull();
+    expect(await client.match({ entity_type: "thing" })).toBeNull();
     const placing = client.commit({ ops: [{ op: "assign", record: taken.id, from: null, to: kept.identity! }] });
     expect(await failureOf(placing)).toMatchObject({ status: 409, code: "conflict" });
 
     expect((await failureOf(client.retract({ source: "shop", entity_type: "thing", keys: [] }))).code).toBe("invalid");
     expect((await client.runs({ kind: "retract" })).map((entry) => entry.run)).toEqual([run.run]);
 
-    const again = await ingestThings(client, [{ id: "2", code: "anvil" }]);
-    expect(again.ingest).toMatchObject({ inserted: 0, duplicates: 1, restored: 1, returned: 1 });
+    const again = await loadThings(client, [{ id: "2", code: "anvil" }]);
+    expect(again.load).toMatchObject({ inserted: 0, duplicates: 1, restored: 1, returned: 1 });
     const put = (await client.changesets()).changesets.at(-1)!;
-    expect(put.seq).toBe(again.ingest!.committed!.seq);
+    expect(put.seq).toBe(again.load!.committed!.seq);
     expect(put.changeset.ops).toEqual([{ op: "assign", record: taken.id, from: null, to: kept.identity! }]);
-    expect(await client.startRun({ entity_type: "thing" })).toBeNull();
+    expect(await client.match({ entity_type: "thing" })).toBeNull();
     const back = await client.record(taken.id);
     expect(back.identity).toBe(kept.identity!);
     expect(back.retracted ?? null).toBeNull();
@@ -518,9 +518,9 @@ describe("a reviewer", () => {
 describe("a run judged by the caller", () => {
   test("candidates are read, judged and reconciled", async () => {
     const { client } = await thingsServer(4);
-    await ingestThings(client, [...twoAnvilsAndAHammer, { id: "4", code: "hammer" }]);
+    await loadThings(client, [...twoAnvilsAndAHammer, { id: "4", code: "hammer" }]);
 
-    const run = await client.startRun({ entity_type: "thing", strategy: { name: "by-hand", version: "1" } });
+    const run = await client.match({ entity_type: "thing", strategy: { name: "by-hand", version: "1" } });
     expect(run?.status).toBe("open");
     const id = run!.run;
 
@@ -557,8 +557,8 @@ describe("a run judged by the caller", () => {
 
   test("an open run can be cancelled", async () => {
     const { client } = await thingsServer(5);
-    await ingestThings(client, twoAnvilsAndAHammer);
-    const run = await client.startRun({ entity_type: "thing", strategy: { name: "by-hand" } });
+    await loadThings(client, twoAnvilsAndAHammer);
+    const run = await client.match({ entity_type: "thing", strategy: { name: "by-hand" } });
     const cancelled = await client.cancelRun(run!.run);
     expect(cancelled).toMatchObject({ status: "failed", error: "cancelled" });
     expect((await client.runs({ kind: "match" })).map((record) => record.status)).toEqual(["failed"]);
@@ -615,8 +615,8 @@ def judge(candidates):
     ]);
     const allOne = thing!.strategies![0]!;
 
-    await ingestThings(client, twoAnvilsAndAHammer);
-    const rules = await client.startRun({ entity_type: "thing" });
+    await loadThings(client, twoAnvilsAndAHammer);
+    const rules = await client.match({ entity_type: "thing" });
     expect(rules?.status).toBe("succeeded");
     expect(rules?.resolution?.suggestions ?? null).toBeNull();
     const before = await client.identities({ entity_type: "thing" });
@@ -625,7 +625,7 @@ def judge(candidates):
     // The strategy would make one thing of everything. A rematch says so
     // and leaves the two identities as they are.
     const head = (await client.info()).store.head;
-    const rematch = await client.startRun({ entity_type: "thing", strategy: { name: "all_one" }, rematch: true });
+    const rematch = await client.match({ entity_type: "thing", strategy: { name: "all_one" }, rematch: true });
     expect(rematch?.status).toBe("succeeded");
     expect(rematch?.strategy).toEqual({ name: "all_one", version: allOne.hash });
     const suggestions = rematch?.resolution?.suggestions;
@@ -637,16 +637,16 @@ def judge(candidates):
     expect((await client.info()).store.head).toBe(head);
 
     // Without `rematch` it places what is new.
-    await ingestThings(client, [{ id: "4", code: "saw" }]);
-    const run = await client.startRun({ entity_type: "thing", strategy: { name: "all_one" } });
+    await loadThings(client, [{ id: "4", code: "saw" }]);
+    const run = await client.match({ entity_type: "thing", strategy: { name: "all_one" } });
     expect(run?.status).toBe("succeeded");
     expect(run?.resolution?.identities_created).toBe(0);
   });
 
   test("that fails is a failed run with what it said", async () => {
     const { client } = server;
-    await ingestThings(client, [{ id: "5", code: "file" }]);
-    const failure = await failureOf(client.startRun({ entity_type: "thing", strategy: { name: "failing" } }));
+    await loadThings(client, [{ id: "5", code: "file" }]);
+    const failure = await failureOf(client.match({ entity_type: "thing", strategy: { name: "failing" } }));
     expect(failure.status).toBe(500);
     expect(failure.code).toBe("strategy_failed");
     expect(failure.message).toContain("no model");
@@ -664,9 +664,9 @@ describe("documents", () => {
       { key: "b", text: "Hammer again." },
       { key: "a", text: "🔨 Anvil and Hammer.", uri: "https://notes.test/a" },
     ]);
-    expect(run.kind).toBe("ingest");
+    expect(run.kind).toBe("load");
     expect(run.status).toBe("succeeded");
-    expect(run.ingest).toMatchObject({ received: 3, inserted: 2, duplicates: 1 });
+    expect(run.load).toMatchObject({ received: 3, inserted: 2, duplicates: 1 });
     expect((await client.info()).store.documents).toBe(2);
 
     const { documents, next } = await client.documents({ source: "notes" });
@@ -681,7 +681,7 @@ describe("documents", () => {
 
     // A changed text is the next version of the document.
     const changed = await client.addDocuments("notes", [{ key: "a", text: "Only an Anvil." }]);
-    expect(changed.ingest?.superseded).toBe(1);
+    expect(changed.load?.superseded).toBe(1);
     const [latest] = (await client.documents({ key: "a", latest: true })).documents;
     expect(latest?.supersedes).toBe(a.id);
     expect((await client.document(a.id)).superseded_by).toBe(latest!.id);
@@ -761,7 +761,7 @@ def find(document):
     expect(anvil.evidence).toMatchObject({ document: a.id, key: "a", start: 2, end: 7, text: "Anvil" });
 
     // Matching treats mentions as it treats rows: the two hammers are one thing.
-    const resolved = await client.startRun({ entity_type: "thing" });
+    const resolved = await client.match({ entity_type: "thing" });
     expect(resolved?.resolution?.identities_created).toBe(2);
     const hammers = (await client.records({ entity_type: "thing" })).records.filter(
       (record) => code(record) === "hammer",
@@ -793,13 +793,13 @@ describe("calls that take a while", () => {
     const { client } = await thingsServer(6);
     const rows = Array.from({ length: 30_000 }, (_, index) => ({ id: String(index), code: String(index) }));
 
-    const started = await client.ingest({ source: "bulk", entity_type: "thing", rows, wait_ms: 0 });
+    const started = await client.load({ source: "bulk", entity_type: "thing", rows, wait_ms: 0 });
     expect(started.status).toBe("running");
     const finished = await client.waitForRun(started.run);
     expect(finished.status).toBe("succeeded");
-    expect(finished.ingest?.inserted).toBe(30_000);
+    expect(finished.load?.inserted).toBe(30_000);
 
-    const resolving = await client.startRun({ entity_type: "thing", wait_ms: 0 });
+    const resolving = await client.match({ entity_type: "thing", wait_ms: 0 });
     expect(resolving?.status).toBe("running");
     // A wait that is too short hands back the run as it is.
     expect((await client.waitForRun(resolving!.run, { timeoutMs: 0 })).status).toBe("running");
@@ -871,15 +871,15 @@ describe("people and tokens", () => {
   test("an admin makes a token, which writes under its own name until it is revoked", async () => {
     const server = await thingsServer(22);
     const ada = await firstPerson(server);
-    const { token, secret } = await ada.client.addToken("ingest");
-    expect(token).toMatchObject({ name: "ingest", created_by: ada.person.id, last_used_at: null });
-    expect((await failureOf(ada.client.addToken("ingest"))).code).toBe("conflict");
+    const { token, secret } = await ada.client.addToken("load");
+    expect(token).toMatchObject({ name: "load", created_by: ada.person.id, last_used_at: null });
+    expect((await failureOf(ada.client.addToken("load"))).code).toBe("conflict");
 
     const agent = new SpoolClient({ url: server.url, token: secret });
     const [identity] = (await agent.mintIds({ identities: 1 })).identities;
     const made = await agent.commit({ ops: [{ op: "create_identity", identity: identity!, entity_type: "thing" }] });
     const { changesets } = await agent.changesets({ after: made.seq - 1 });
-    expect(changesets[0]!.changeset.actor).toBe("agent:ingest");
+    expect(changesets[0]!.changeset.actor).toBe("agent:load");
 
     // A token manages neither tokens nor people.
     expect((await failureOf(agent.tokens())).code).toBe("forbidden");
@@ -889,11 +889,11 @@ describe("people and tokens", () => {
     const listed = await ada.client.tokens();
     expect(listed.map((each) => [each.name, each.created_by])).toEqual([
       ["api", null],
-      ["ingest", ada.person.id],
+      ["load", ada.person.id],
     ]);
     expect(listed[1]!.last_used_at).not.toBeNull();
 
-    expect((await ada.client.revokeToken(token.id)).name).toBe("ingest");
+    expect((await ada.client.revokeToken(token.id)).name).toBe("load");
     expect((await failureOf(agent.info())).code).toBe("unauthorized");
     expect((await failureOf(ada.client.revokeToken(token.id))).code).toBe("not_found");
     expect((await server.client.info()).api).toBe("v1");
@@ -915,7 +915,7 @@ describe("failures", () => {
 
   test("what the server will not take is described", async () => {
     const { client } = await thingsServer(8);
-    const undeclared = await failureOf(client.startRun({ entity_type: "gadget" }));
+    const undeclared = await failureOf(client.match({ entity_type: "gadget" }));
     expect(undeclared).toMatchObject({ status: 400, code: "invalid" });
     expect(undeclared.message).toContain("`gadget` is not declared");
     expect((await failureOf(client.run(999))).code).toBe("not_found");

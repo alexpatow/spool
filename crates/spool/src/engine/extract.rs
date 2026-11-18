@@ -17,7 +17,7 @@ use crate::documents::{
 };
 use crate::error::{Error, Result};
 use crate::features;
-use crate::ingest::{self, IngestReport};
+use crate::load::{self, LoadReport};
 use crate::project::{Declaration, Extractor};
 use crate::runs::RunStatus;
 use crate::store::parse;
@@ -46,7 +46,7 @@ impl Engine {
     /// the source has used before is the next version of that document.
     ///
     /// Nothing is extracted yet: [`extract`](Self::extract) does that.
-    pub fn add_documents(&self, source: &str, documents: &[NewDocument]) -> Result<IngestReport> {
+    pub fn add_documents(&self, source: &str, documents: &[NewDocument]) -> Result<LoadReport> {
         self.lock().add_documents(source, documents)
     }
 
@@ -71,7 +71,7 @@ impl Engine {
     /// extractor gave, and its evidence says where in which document it
     /// was found and quotes the text there. Nothing is matched: the
     /// records are new to the next [`resolve`](Self::resolve) like
-    /// rows that were ingested.
+    /// rows that were loaded.
     ///
     /// The extractor is user code and runs as a process of its own. While
     /// it runs the engine is free. An extractor that fails, does not finish
@@ -146,11 +146,11 @@ fn sql_text(text: &str) -> String {
 }
 
 impl Inner {
-    fn add_documents(&mut self, source: &str, documents: &[NewDocument]) -> Result<IngestReport> {
+    fn add_documents(&mut self, source: &str, documents: &[NewDocument]) -> Result<LoadReport> {
         let staged = documents::stage(source, documents)?;
         let received = documents.len() as u64;
         let run = self.start_run(
-            "ingest",
+            "load",
             None,
             &json!({ "source": source, "documents": received }),
         )?;
@@ -163,11 +163,11 @@ impl Inner {
             };
             let superseded: i64 = tx.query_row(
                 "SELECT count(*) FROM spool.document
-                 WHERE ingest_run = ? AND supersedes IS NOT NULL",
+                 WHERE load_run = ? AND supersedes IS NOT NULL",
                 [run.0 as i64],
                 |row| row.get(0),
             )?;
-            let report = IngestReport {
+            let report = LoadReport {
                 run,
                 received,
                 inserted,
@@ -221,13 +221,13 @@ impl Inner {
         conn.execute_batch(&format!(
             "CREATE OR REPLACE TEMP TABLE {TASK} AS
              SELECT d.document_id,
-                    row_number() OVER (ORDER BY d.ingest_run, d.source_id, d.source_key) AS ord
+                    row_number() OVER (ORDER BY d.load_run, d.source_id, d.source_key) AS ord
              FROM spool.document d
              WHERE NOT EXISTS (
                  SELECT 1 FROM spool.document later WHERE later.supersedes = d.document_id)
                {of_source}
                {unread}
-             ORDER BY d.ingest_run, d.source_id, d.source_key
+             ORDER BY d.load_run, d.source_id, d.source_key
              {limit}"
         ))?;
         let chosen: i64 = conn.query_row(&format!("SELECT count(*) FROM {TASK}"), [], |row| {
@@ -316,24 +316,24 @@ impl Inner {
         // The records are stored under a run of their own, which
         // begins now. A match run that began while the extractor worked
         // has a later ID than the extract run, and takes as new only what
-        // was ingested before it: under the extract run's ID these
+        // was loaded before it: under the extract run's ID these
         // records would be new to no run at all.
         let reference = ExtractorRef::from(extractor);
-        let ingest_run = match staged.is_empty() {
+        let load_run = match staged.is_empty() {
             true => None,
             false => Some(self.start_run(
-                "ingest",
+                "load",
                 None,
                 &json!({ "extract_run": run, "extractor": reference }),
             )?),
         };
-        let store = |inner: &mut Self| -> Result<(ExtractReport, Option<IngestReport>)> {
+        let store = |inner: &mut Self| -> Result<(ExtractReport, Option<LoadReport>)> {
             let now = inner.store.clock.now_micros();
             let tx = inner.store.conn.transaction()?;
             let (mut inserted, mut restored) = (0, 0);
-            if let Some(ingest_run) = ingest_run {
+            if let Some(load_run) = load_run {
                 for ((entity_type, source), staged) in grouped(&staged)? {
-                    let stored = ingest::insert(&tx, entity_type, source, now, ingest_run, staged)?;
+                    let stored = load::insert(&tx, entity_type, source, now, load_run, staged)?;
                     inserted += stored.inserted;
                     restored += stored.restored;
                 }
@@ -343,7 +343,7 @@ impl Inner {
                         name,
                         declaration,
                         *version,
-                        &features::of_run(name, ingest_run),
+                        &features::of_run(name, load_run),
                     )?;
                     if let Some(problem) = problem {
                         return Err(Error::Mentions(problem));
@@ -369,11 +369,11 @@ impl Inner {
                 ],
             )?;
 
-            let superseded: i64 = match ingest_run {
-                Some(ingest_run) => tx.query_row(
+            let superseded: i64 = match load_run {
+                Some(load_run) => tx.query_row(
                     "SELECT count(*) FROM spool.record
-                     WHERE ingest_run = ? AND supersedes IS NOT NULL",
-                    [ingest_run.0 as i64],
+                     WHERE load_run = ? AND supersedes IS NOT NULL",
+                    [load_run.0 as i64],
                     |row| row.get(0),
                 )?,
                 None => 0,
@@ -386,14 +386,14 @@ impl Inner {
                 inserted,
                 duplicates: mentions - inserted,
                 superseded: superseded as u64,
-                ingest_run,
+                load_run,
             };
             let finished = inner.store.clock.now_micros();
             let finish = "UPDATE spool.run
                  SET status = 'succeeded', finished_at = make_timestamptz(?), result = ?::JSON
                  WHERE run_id = ?";
-            let stored = ingest_run.map(|ingest_run| IngestReport {
-                run: ingest_run,
+            let stored = load_run.map(|load_run| LoadReport {
+                run: load_run,
                 received: mentions,
                 inserted,
                 duplicates: mentions - inserted,
@@ -416,8 +416,8 @@ impl Inner {
             tx.commit()?;
             Ok((report, stored))
         };
-        let (report, stored) = match ingest_run {
-            Some(ingest_run) => self.in_run(ingest_run, store),
+        let (report, stored) = match load_run {
+            Some(load_run) => self.in_run(load_run, store),
             None => store(self),
         }?;
         if let Some(stored) = stored {
@@ -512,7 +512,7 @@ impl Inner {
     }
 }
 
-/// The mentions of each entity type and source, as the batch an ingest
+/// The mentions of each entity type and source, as the batch a load
 /// stores. `ord` is the mention's position in what the extractor wrote.
 #[allow(clippy::type_complexity)]
 fn grouped(
