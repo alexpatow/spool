@@ -799,6 +799,72 @@ fn a_change_whose_answer_is_too_large_is_still_answered_as_made() {
 }
 
 #[test]
+fn a_refusal_too_large_for_a_model_gives_the_first_of_its_reasons() {
+    let dir = tempfile::tempdir().unwrap();
+    let (server, _) = thing_server(dir.path());
+    let ops: Vec<Value> = (0..5000)
+        .map(|op| {
+            let identity = format!("01a1ee5d-3154-710c-8a15-{op:012x}");
+            json!({ "op": "merge", "from": identity, "into": identity })
+        })
+        .collect();
+
+    // The API answers with every operation that broke a rule, which is more
+    // than a tool returns.
+    let whole = server
+        .request("POST", "/v1/changesets")
+        .json(&json!({ "ops": ops, "reason": "each into itself" }))
+        .send();
+    assert_eq!(whole.status, 409);
+    assert!(whole.body.len() > 256 * 1024, "{}", whole.body.len());
+
+    let error = refused(
+        &server,
+        "commit_changeset",
+        json!({ "ops": ops, "reason": "each into itself" }),
+        "rejected",
+    );
+    // With what the error is wrapped in, it is no more than a tool returns.
+    let size = json!({ "error": error }).to_string().len();
+    assert!(size <= 256 * 1024, "{size}");
+    let given = error["rejections"].as_array().unwrap();
+    assert!(!given.is_empty() && given.len() < 5000, "{}", given.len());
+    for (index, rejection) in given.iter().enumerate() {
+        assert_eq!(rejection["op_index"], index, "{rejection}");
+    }
+    let said = text(&error["message"]);
+    let count = format!("the first {}", given.len());
+    assert!(said.contains(&count), "{said}");
+    assert!(said.contains("Nothing was changed"), "{said}");
+    assert_eq!(head(&server), 0);
+
+    // An error that repeats what the caller sent repeats the beginning of
+    // it: an argument the tool does not take, and a tool there is not.
+    let long = "x".repeat(300 * 1024);
+    let mut named = json!({ "ops": [], "reason": "nothing" });
+    named[&long] = json!(true);
+    let error = refused(&server, "commit_changeset", named, "invalid");
+    let said = text(&error["message"]);
+    assert!(said.contains("`commit_changeset`"), "{said}");
+    assert!(said.len() <= 4 * 1024, "{}", said.len());
+    let unknown = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": { "name": long, "arguments": {} },
+    });
+    let answer = message(&server, &unknown).send().json();
+    assert_eq!(
+        answer["error"]["code"], -32602,
+        "{}",
+        answer["error"]["code"]
+    );
+    let said = text(&answer["error"]["message"]);
+    assert!(said.starts_with("there is no tool called `xxx"), "{said}");
+    assert!(said.len() <= 5 * 1024, "{}", said.len());
+}
+
+#[test]
 fn a_development_server_answers_the_endpoint_only_by_this_machines_names() {
     let dir = tempfile::tempdir().unwrap();
     write_things(dir.path());
