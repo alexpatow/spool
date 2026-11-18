@@ -928,6 +928,78 @@ fn rows_are_loaded_matched_and_taken_back_through_tools() {
     assert_eq!(by_key["records"].as_array().unwrap().len(), 2, "{by_key}");
 }
 
+#[test]
+fn an_empty_value_is_one_the_row_does_not_have() {
+    let dir = tempfile::tempdir().unwrap();
+    let (server, _) = thing_server(dir.path());
+    let load = |rows: Value| {
+        let rows = json!({ "source": "shop", "entity_type": "thing", "rows": rows });
+        tool(&server, "load_rows", rows)
+    };
+    // Two anvils of different colours are two things.
+    load(json!([
+        { "id": "1", "code": "anvil", "colour": "black" },
+        { "id": "2", "code": "anvil", "colour": "red" },
+    ]));
+    let placed = tool(&server, "run_match", json!({ "entity_type": "thing" }));
+    assert_eq!(placed["run"]["resolution"]["identities_created"], 2);
+
+    // An empty field of a file comes as empty text. The row is stored
+    // without the column, as the same line of CSV is.
+    let loaded = load(json!([{ "id": "3", "code": "anvil", "colour": "", "name": "" }]));
+    assert_eq!(loaded["run"]["load"]["inserted"], 1, "{loaded}");
+    let found = tool(
+        &server,
+        "search_records",
+        json!({ "source": "shop", "key": "3" }),
+    );
+    let record = &found["records"][0];
+    assert_eq!(record["payload"], json!({ "id": "3", "code": "anvil" }));
+    let csv = server
+        .request("POST", "/v1/load?source=shop&entity_type=thing")
+        .header("Content-Type", "text/csv")
+        .body(b"id,code,colour,name\n3,anvil,,\n".as_slice())
+        .send()
+        .ok();
+    assert_eq!(csv["run"]["load"]["duplicates"], 1, "{csv}");
+    assert_eq!(csv["run"]["load"]["inserted"], 0, "{csv}");
+
+    // So no rule reads a colour it does not have. As empty text it would
+    // differ from black and from red, and the anvil would be a third thing
+    // without a word. With no colour it matches both, which someone has to
+    // decide.
+    let matched = tool(&server, "run_match", json!({ "entity_type": "thing" }));
+    let resolution = &matched["run"]["resolution"];
+    assert_eq!(resolution["identities_created"], 0, "{matched}");
+    assert_eq!(resolution["records_unassigned"], 1, "{matched}");
+    let items = tool(&server, "list_review_items", json!({}));
+    let items = items["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "{items:?}");
+    assert!(
+        items[0].to_string().contains(text(&record["id"])),
+        "{items:?}"
+    );
+
+    // The column is still one the row has, so one the source does not list
+    // is refused as before, and the row is not stored.
+    let unlisted = json!({ "source": "shop", "entity_type": "thing",
+        "rows": [{ "id": "4", "code": "saw", "shape": "" }] });
+    let error = refused(&server, "load_rows", unlisted, "invalid");
+    assert!(
+        text(&error["message"]).contains("a column `shape`"),
+        "{error}"
+    );
+    // A value that is only spaces is a value.
+    let spaces = load(json!([{ "id": "4", "code": "saw", "colour": " " }]));
+    assert_eq!(spaces["run"]["load"]["inserted"], 1, "{spaces}");
+    let found = tool(
+        &server,
+        "search_records",
+        json!({ "source": "shop", "key": "4" }),
+    );
+    assert_eq!(found["records"][0]["payload"]["colour"], " ", "{found}");
+}
+
 /// Takes a capitalised word to be a thing, with the word in lower case as
 /// its code.
 const WORDS: &str = r#"

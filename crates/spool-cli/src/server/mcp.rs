@@ -519,8 +519,10 @@ struct LoadRows {
     /// One object for each row, such as
     /// `{"id": "c-1", "name": "Acorn Tools", "country": "GB"}`. Its fields
     /// are columns the source declares, and a column it does not declare
-    /// is refused. A value is text, a number or a boolean. The source's
-    /// `key` column tells one row from another: give it in every row.
+    /// is refused. A value is text, a number or a boolean. An empty field
+    /// of a file has no value: leave the column out of that row, or send
+    /// `""` or `null`, which are read the same. The source's `key` column
+    /// tells one row from another: give it in every row.
     rows: Vec<JsonObject>,
     /// Whether these rows may replace rows the store holds. Left out or
     /// `false`, a row whose key the store holds with other values is
@@ -1225,12 +1227,24 @@ impl Tools {
                     replace: None,
                     wait_ms: None,
                 };
+                // An empty field of a file reaches a tool as `""`. It is a
+                // value the row does not have, as it is when the file is
+                // sent as CSV. Kept as text it would be a value like any
+                // other, and a rule that compares it would hold or fail
+                // where it should say nothing. The column stays in the
+                // row, so one the source does not list is still refused.
+                let mut rows = asked.rows;
+                for value in rows.iter_mut().flat_map(JsonObject::values_mut) {
+                    if value.as_str() == Some("") {
+                        *value = Value::Null;
+                    }
+                }
                 // The API replaces a row unless it is told not to. An
                 // assistant is to add rows unless it is told to change one.
                 let request = LoadRequest {
                     source: asked.source,
                     entity_type: asked.entity_type,
-                    rows: asked.rows,
+                    rows,
                     replace: Some(asked.replace.unwrap_or(false)),
                     wait_ms: None,
                 };
