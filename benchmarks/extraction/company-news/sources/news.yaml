@@ -1,0 +1,3 @@
+# News articles. The columns are the attributes an extractor may give a
+# mention it finds in one.
+columns: [name]

@@ -39,7 +39,7 @@ async function thingsServer(seed: number): Promise<Server> {
 }
 
 async function ingestThings(client: SpoolClient, rows: Array<Record<string, string>>): Promise<RunEntry> {
-  const run = await client.ingest({ source: "shop", entity_type: "thing", key: "id", rows });
+  const run = await client.ingest({ source: "shop", entity_type: "thing", rows });
   expect(run.status).toBe("succeeded");
   return run;
 }
@@ -64,12 +64,12 @@ describe("the company scenario", () => {
   // The files of the scenario, in the order it ingests them, in two steps.
   const steps = [
     [
-      { file: "batch-1-crm.csv", source: "crm", key: "id" },
-      { file: "batch-1-registry.csv", source: "registry", key: "number" },
+      { file: "batch-1-crm.csv", source: "crm" },
+      { file: "batch-1-registry.csv", source: "registry" },
     ],
     [
-      { file: "batch-2-crm.csv", source: "crm", key: "id" },
-      { file: "batch-2-registry.csv", source: "registry", key: "number" },
+      { file: "batch-2-crm.csv", source: "crm" },
+      { file: "batch-2-registry.csv", source: "registry" },
     ],
   ];
   const seed = 21;
@@ -81,9 +81,9 @@ describe("the company scenario", () => {
     server = await serve(project, seed);
     servers.push(server);
     for (const step of steps) {
-      for (const { file, source, key } of step) {
+      for (const { file, source } of step) {
         const rows = readCsv(join(companies, file));
-        const run = await server.client.ingest({ source, entity_type: "company", key, rows });
+        const run = await server.client.ingest({ source, entity_type: "company", rows });
         expect(run.status).toBe("succeeded");
         expect(run.ingest?.received).toBe(rows.length);
       }
@@ -740,7 +740,7 @@ describe("calls that take a while", () => {
     const { client } = await thingsServer(6);
     const rows = Array.from({ length: 30_000 }, (_, index) => ({ id: String(index), code: String(index) }));
 
-    const started = await client.ingest({ source: "bulk", entity_type: "thing", key: "id", rows, wait_ms: 0 });
+    const started = await client.ingest({ source: "bulk", entity_type: "thing", rows, wait_ms: 0 });
     expect(started.status).toBe("running");
     const finished = await client.waitForRun(started.run);
     expect(finished.status).toBe("succeeded");

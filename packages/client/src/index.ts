@@ -90,10 +90,6 @@ export type ArrowBody = Uint8Array | ArrayBuffer | Blob;
 export interface IngestArrowOptions {
   source: string;
   entity_type: string;
-  /** The column that holds each row's key within the source. */
-  key?: string;
-  /** A column of JSON text that says where each row was found. */
-  evidence?: string;
   wait_ms?: number;
 }
 

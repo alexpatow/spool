@@ -14,7 +14,6 @@ name = "all records, with the rules"
 dataset = "fake_1000"
 source = "fake_1000"
 entity_type = "person"
-key = "unique_id"
 
 [[step]]
 name = "splink judges everything again"

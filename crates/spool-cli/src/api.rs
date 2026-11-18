@@ -28,16 +28,12 @@ pub const ARROW_STREAM: &str = "application/vnd.apache.arrow.stream";
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IngestRequest {
-    /// The name of the source the rows come from.
+    /// The name of the source the rows come from, which the project
+    /// declares in `sources/<name>.yaml`.
     pub source: String,
     pub entity_type: String,
-    /// The column that holds each row's key within the source.
-    #[serde(default)]
-    pub key: Option<String>,
-    /// A column of JSON text that says where each row was found.
-    #[serde(default)]
-    pub evidence: Option<String>,
-    /// One object per row. A column holds text, booleans or numbers.
+    /// One object per row, with the columns the source declares. A column
+    /// holds text, booleans or numbers.
     pub rows: Vec<serde_json::Map<String, serde_json::Value>>,
     #[serde(default)]
     pub wait_ms: Option<u64>,
@@ -49,10 +45,6 @@ pub struct IngestRequest {
 pub struct IngestParams {
     pub source: String,
     pub entity_type: String,
-    #[serde(default)]
-    pub key: Option<String>,
-    #[serde(default)]
-    pub evidence: Option<String>,
     #[serde(default)]
     pub wait_ms: Option<u64>,
 }

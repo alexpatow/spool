@@ -49,11 +49,11 @@ export interface Step {
 
 /** The work of loading a generated set, one step at a time. */
 export function steps(generated: Generated): Step[] {
-  const load = (name: string, source: string, key: string, rows: Row[]): Step => ({
+  const load = (name: string, source: string, rows: Row[]): Step => ({
     name,
     start: (client) =>
-      void client.ingest({ source, entity_type: "company", key, rows: rows.map(filled), wait_ms: 0 }).catch(() => {}),
-    finish: async (client) => void (await ingest(client, source, key, rows)),
+      void client.ingest({ source, entity_type: "company", rows: rows.map(filled), wait_ms: 0 }).catch(() => {}),
+    finish: async (client) => void (await ingest(client, source, rows)),
   });
   const run = (name: string, rematch: boolean): Step => ({
     name,
@@ -64,8 +64,8 @@ export function steps(generated: Generated): Step[] {
   });
   const all: Step[] = [];
   for (const [index, batch] of generated.batches.entries()) {
-    all.push(load(`batch ${index + 1}: ingest crm`, "crm", "id", batch.crm));
-    all.push(load(`batch ${index + 1}: ingest registry`, "registry", "number", batch.registry));
+    all.push(load(`batch ${index + 1}: ingest crm`, "crm", batch.crm));
+    all.push(load(`batch ${index + 1}: ingest registry`, "registry", batch.registry));
     all.push(run(`batch ${index + 1}: match`, false));
   }
   all.push(run("rematch", true));

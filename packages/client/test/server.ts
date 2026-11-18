@@ -34,17 +34,25 @@ export function temporaryDirectory(): string {
   return mkdtempSync(join(tmpdir(), "spool-client-"));
 }
 
-/** A project with one entity type, `thing`: things with the same code match. */
+/**
+ * A project with one entity type, `thing`: things with the same code match.
+ * Rows come from `shop` and `bulk`, and `notes` is a source of documents.
+ */
 export function writeThings(dir: string): void {
-  const entity = join(dir, "entities/thing");
+  const rows = "key: id\ncolumns: [id, code, weight]\n";
   const files: Record<string, string> = {
-    "features.sql": "SELECT record_id, payload->>'code' AS code\nFROM record\n",
-    "rules/block/same_code.sql": "l.code = r.code\n",
-    "rules/match/same_code.sql": "l.code = r.code\n",
+    "sources/shop.yaml": rows,
+    "sources/bulk.yaml": rows,
+    "sources/notes.yaml": "columns: [code]\n",
+    "entities/thing/entity.yaml":
+      "label: code\nfeatures: [code]\nmapping:\n" +
+      ["shop", "bulk", "notes"].map((source) => `  ${source}:\n    code: code\n`).join(""),
+    "entities/thing/rules/block/same_code.sql": "l.code = r.code\n",
+    "entities/thing/rules/match/same_code.sql": "l.code = r.code\n",
   };
-  for (const [file, sql] of Object.entries(files)) {
-    mkdirSync(dirname(join(entity, file)), { recursive: true });
-    writeFileSync(join(entity, file), sql);
+  for (const [file, contents] of Object.entries(files)) {
+    mkdirSync(dirname(join(dir, file)), { recursive: true });
+    writeFileSync(join(dir, file), contents);
   }
 }
 
@@ -122,10 +130,12 @@ export async function serve(project: string, seed: number): Promise<Server> {
   };
 }
 
-/** Copies a project's `entities` directory, so that building it leaves the original alone. */
+/** Copies a project's files, so that building it leaves the original alone. */
 export function copyProject(from: string): string {
   const to = temporaryDirectory();
-  cpSync(join(from, "entities"), join(to, "entities"), { recursive: true });
+  for (const part of ["sources", "transforms", "entities", "extractors"]) {
+    if (existsSync(join(from, part))) cpSync(join(from, part), join(to, part), { recursive: true });
+  }
   return to;
 }
 

@@ -6,9 +6,26 @@ use common::*;
 use serde_json::json;
 use spool::core::{Actor, EntityType, IdGenerator, Op, SeededIds, Seq};
 use spool::{
-    Engine, Error, IdentityFilter, IngestOptions, Manifest, RecordFilter, ResolveOptions,
-    ReviewFilter, ReviewKind, ReviewStatus, Rows,
+    Engine, Error, IdentityFilter, Manifest, Options, RecordFilter, ResolveOptions, ReviewFilter,
+    ReviewKind, ReviewStatus, Rows, YamlFile,
 };
+
+/// The tests' things, and two sources more whose rows hold numbers.
+fn engine() -> Engine {
+    let mut thing = thing();
+    thing.entity.yaml += "  till:\n    name: name\n    code: code\n  scale: {}\n";
+    let mut project = project_of(vec![thing]);
+    project.sources.extend([
+        YamlFile::new(
+            "till",
+            "key: id\ncolumns: [id, name, price, stocked, code]\n",
+        ),
+        YamlFile::new("scale", "key: id\ncolumns: [id, weight]\n"),
+    ]);
+    let engine = Engine::open_in_memory(Options::seeded(1)).unwrap();
+    engine.apply(&project.compile().unwrap()).unwrap();
+    engine
+}
 
 fn thing_type() -> EntityType {
     EntityType::new("thing").unwrap()
@@ -216,7 +233,10 @@ fn review_items_are_read_as_typed_records() {
         panic!("one entity type");
     };
     assert_eq!(info.head, committed.seq);
-    assert_eq!(info.manifest_hash, Some(things().hash));
+    assert_eq!(
+        info.manifest_hash,
+        engine.manifest().map(|manifest| manifest.hash.clone())
+    );
     assert_eq!(
         (thing.records, thing.unassigned, thing.identities),
         (4, 0, 2)
@@ -297,7 +317,6 @@ fn rows_given_as_json_keep_their_types() {
                 { "id": 2, "name": "hammer", "price": 7.5, "stocked": false, "code": null },
                 { "id": 3 },
             ])),
-            &IngestOptions::keyed_by("id"),
         )
         .unwrap();
 
@@ -325,19 +344,13 @@ fn rows_given_as_json_keep_their_types() {
             "till",
             "thing",
             json_rows(json!([{ "id": 1, "name": "anvil", "price": 12, "stocked": true }])),
-            &IngestOptions::keyed_by("id"),
         )
         .unwrap();
     assert_eq!((report.inserted, report.duplicates), (0, 1));
 
     // No rows at all is not an error.
     let report = engine
-        .ingest(
-            "till",
-            "thing",
-            json_rows(json!([])),
-            &IngestOptions::default(),
-        )
+        .ingest("till", "thing", json_rows(json!([])))
         .unwrap();
     assert_eq!(report.received, 0);
 }
@@ -406,12 +419,7 @@ fn a_snapshot_read_while_changesets_commit_is_of_one_log_position() {
 fn json_rows_without_a_value_are_rows_all_the_same() {
     let engine = engine();
     let report = engine
-        .ingest(
-            "till",
-            "thing",
-            json_rows(json!([{}, { "name": null }])),
-            &IngestOptions::default(),
-        )
+        .ingest("till", "thing", json_rows(json!([{}, { "name": null }])))
         .unwrap();
     assert_eq!(
         (report.received, report.inserted, report.duplicates),
@@ -425,24 +433,9 @@ fn json_rows_without_a_value_are_rows_all_the_same() {
             "till",
             "thing",
             json_rows(json!([{ "id": null, "name": null }])),
-            &IngestOptions::keyed_by("id"),
         )
         .unwrap();
     assert_eq!((report.received, report.duplicates), (1, 1));
-
-    // As with any rows, the key column has to be one of the columns.
-    let error = engine
-        .ingest(
-            "till",
-            "thing",
-            json_rows(json!([{}])),
-            &IngestOptions::keyed_by("id"),
-        )
-        .unwrap_err();
-    assert!(
-        matches!(&error, Error::Ingest(message) if message.contains("no column `id`")),
-        "{error}"
-    );
 }
 
 #[test]
@@ -476,16 +469,8 @@ fn json_integers_are_kept_exactly_or_refused() {
 
     // Below that, an integer beside a fraction is the integer it was.
     let engine = engine();
-    let ingest = |rows: serde_json::Value| {
-        engine
-            .ingest(
-                "scale",
-                "thing",
-                json_rows(rows),
-                &IngestOptions::keyed_by("id"),
-            )
-            .unwrap()
-    };
+    let ingest =
+        |rows: serde_json::Value| engine.ingest("scale", "thing", json_rows(rows)).unwrap();
     ingest(json!([
         { "id": "1", "weight": 0.5 },
         { "id": "2", "weight": 9007199254740991u64 },

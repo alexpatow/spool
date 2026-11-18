@@ -22,7 +22,7 @@ use crate::drafts::{self, DraftEntry, DraftFilter, DraftStatus, DraftSummary};
 use crate::error::{Error, Result};
 use crate::explain::{self, Explanation};
 use crate::features;
-use crate::ingest::{self, IngestOptions, IngestReport};
+use crate::ingest::{self, IngestReport};
 use crate::lookup::{
     self, HistoryEntry, IdentityFilter, IdentitySummary, IdentityView, RecordEntry, RecordFilter,
     StoreInfo,
@@ -571,9 +571,8 @@ impl Engine {
         source: &str,
         entity_type: &str,
         rows: impl RecordBatchReader,
-        options: &IngestOptions,
     ) -> Result<IngestReport> {
-        self.lock().ingest(source, entity_type, rows, options)
+        self.lock().ingest(source, entity_type, rows)
     }
 
     /// Starts a match run and generates its candidate pairs with the
@@ -1268,6 +1267,13 @@ impl Inner {
             )?;
             report.rebuilt.push(name.clone());
         }
+        features::label_view(
+            &tx,
+            manifest
+                .entity_types
+                .iter()
+                .map(|entity_type| (&entity_type.name, &entity_type.declaration)),
+        )?;
         schema::set_meta(&tx, "manifest_hash", &manifest.hash)?;
         tx.commit()?;
         self.manifest = Some(Arc::new(manifest.clone()));
@@ -1379,19 +1385,22 @@ impl Inner {
         source: &str,
         entity_type: &str,
         rows: impl RecordBatchReader,
-        options: &IngestOptions,
     ) -> Result<IngestReport> {
         if source.is_empty() {
             return Err(Error::Ingest("the source needs a name".to_owned()));
         }
-        let (_, entry, version) = self.declared(entity_type)?;
+        let (manifest, entry, version) = self.declared(entity_type)?;
         let name = entry.name.clone();
         let declaration = entry.declaration.clone();
+        let source = &manifest
+            .source_of(source, entry)
+            .map_err(Error::Ingest)?
+            .clone();
 
         let run = self.start_run(
             "ingest",
             None,
-            &json!({ "source": source, "entity_type": name }),
+            &json!({ "source": source.name, "entity_type": name }),
         )?;
         self.in_run(run, |inner| {
             let now = inner.store.clock.now_micros();
@@ -1401,7 +1410,7 @@ impl Inner {
 
             for incoming in rows {
                 let incoming = incoming?;
-                let staged = ingest::stage(source, &incoming, options, &mut seen, received as usize)?;
+                let staged = ingest::stage(source, &incoming, &mut seen, received as usize)?;
                 received += incoming.num_rows() as u64;
                 let Some(staged) = staged else { continue };
 
@@ -1428,7 +1437,8 @@ impl Inner {
                     )));
                 }
 
-                inserted += ingest::insert(&tx, name.as_str(), source, now, run, staged)?;
+                inserted +=
+                    ingest::insert(&tx, name.as_str(), &source.name, now, run, staged)?;
             }
 
             let problem = features::fill(

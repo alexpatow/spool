@@ -7,11 +7,11 @@
 // 500 or above), every refusal has to be the documented error body, and
 // afterwards the server still has to work and its store has to verify.
 
-import { cpSync, rmSync } from "node:fs";
+import { appendFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { scratch, serve, TOKEN, verify } from "./server.ts";
-import { companiesProject } from "./write.ts";
+import { copyCompanies } from "./write.ts";
 
 interface Case {
   name: string;
@@ -43,7 +43,7 @@ function all(): Case[] {
   const cases: Case[] = [];
   const ingest = (name: string, status: number, body: unknown) =>
     cases.push({ name: `ingest: ${name}`, status, method: "POST", path: "/v1/ingest", body });
-  const ok = { source: "crm", entity_type: "company", key: "id" };
+  const ok = { source: "crm", entity_type: "company" };
   const sql = `x'; DROP TABLE spool.record; --`;
   const long = "a".repeat(1_000_000);
 
@@ -55,7 +55,7 @@ function all(): Case[] {
   ingest("array value", 400, { ...ok, rows: [{ id: "3", name: ["a", "b"] }] });
   ingest("null value", 200, { ...ok, rows: [{ id: "4", name: null }] });
   ingest("number and bool values", 200, { ...ok, rows: [{ id: "5", name: 12, country: true, city: 1.5e300 }] });
-  ingest("key missing in a row", 400, { ...ok, rows: [{ name: "No Key" }] });
+  ingest("key missing in a row", 200, { ...ok, rows: [{ name: "No Key" }] });
   ingest("key null", 200, { ...ok, rows: [{ id: null, name: "Null Key" }] });
   ingest("key empty", 200, { ...ok, rows: [{ id: "", name: "Empty Key" }] });
   ingest("key number", 200, { ...ok, rows: [{ id: 7, name: "Number Key" }] });
@@ -82,27 +82,20 @@ function all(): Case[] {
       { id: "e", name: "Dup Two" },
     ],
   });
-  ingest("no key column named", 200, { source: "crm", entity_type: "company", rows: [{ id: "k1", name: "Keyless" }] });
-  ingest("no key column, same row twice", 200, {
-    source: "crm",
-    entity_type: "company",
-    rows: [
-      { id: "k1", name: "Keyless" },
-      { id: "k1", name: "Keyless" },
-    ],
-  });
-  ingest("key column not in rows", 400, { source: "crm", entity_type: "company", key: "nope", rows: [{ id: "k2" }] });
+  ingest("key column named in the call", 400, { ...ok, key: "id", rows: [{ id: "k2" }] });
   ingest("key 1MB", 200, { ...ok, rows: [{ id: long, name: "Long Key" }] });
   ingest("value 1MB", 200, { ...ok, rows: [{ id: "long", name: long }] });
   ingest("key with NUL", 200, { ...ok, rows: [{ id: "a\u0000b", name: "Nul Key" }] });
   ingest("value with NUL", 200, { ...ok, rows: [{ id: "nul", name: "Nul\u0000Value" }] });
   ingest("key sql", 200, { ...ok, rows: [{ id: sql, name: sql }] });
   ingest("key unicode", 200, { ...ok, rows: [{ id: "ключ-🚀-鍵", name: "Société 🚀 GmbH" }] });
-  ingest("column name empty", 200, { ...ok, rows: [{ id: "c1", "": "x" }] });
-  ingest("column name sql", 200, { ...ok, rows: [{ id: "c2", [sql]: "x" }] });
-  ingest("column name with quote and dot", 200, { ...ok, rows: [{ id: "c3", 'a"b.c$[0]': "x" }] });
-  ingest("column name NUL", 200, { ...ok, rows: [{ id: "c4", "a\u0000b": "x" }] });
-  ingest("2000 columns", 200, {
+  // A column the source's file does not list is refused, whatever its name.
+  ingest("column not declared", 400, { ...ok, rows: [{ id: "c0", colour: "x" }] });
+  ingest("column name empty", 400, { ...ok, rows: [{ id: "c1", "": "x" }] });
+  ingest("column name sql", 400, { ...ok, rows: [{ id: "c2", [sql]: "x" }] });
+  ingest("column name with quote and dot", 400, { ...ok, rows: [{ id: "c3", 'a"b.c$[0]': "x" }] });
+  ingest("column name NUL", 400, { ...ok, rows: [{ id: "c4", "a\u0000b": "x" }] });
+  ingest("2000 columns", 400, {
     ...ok,
     rows: [Object.fromEntries([["id", "wide"], ...Array.from({ length: 2000 }, (_, i) => [`col${i}`, "v"])])],
   });
@@ -119,19 +112,24 @@ function all(): Case[] {
     ],
   });
   ingest("source empty", 400, { ...ok, source: "", rows: [{ id: "s1" }] });
-  ingest("source sql", 200, { ...ok, source: sql, rows: [{ id: "s2", name: "Sql Source" }] });
-  ingest("source with colon", 200, { ...ok, source: "a:b", rows: [{ id: "s3:x", name: "Colon" }] });
-  ingest("source 100k long", 200, { ...ok, source: "s".repeat(100_000), rows: [{ id: "s4" }] });
-  ingest("source NUL", 200, { ...ok, source: "a\u0000b", rows: [{ id: "s5" }] });
+  // A source the project does not declare is refused, whatever its name.
+  ingest("source not declared", 400, { ...ok, source: "erp", rows: [{ id: "s0", name: "Erp" }] });
+  ingest("source sql", 400, { ...ok, source: sql, rows: [{ id: "s2", name: "Sql Source" }] });
+  ingest("source with colon", 400, { ...ok, source: "a:b", rows: [{ id: "s3:x", name: "Colon" }] });
+  ingest("source with a path", 400, { ...ok, source: "../crm", rows: [{ id: "s3" }] });
+  ingest("source 100k long", 400, { ...ok, source: "s".repeat(100_000), rows: [{ id: "s4" }] });
+  ingest("source NUL", 400, { ...ok, source: "a\u0000b", rows: [{ id: "s5" }] });
   ingest("source number", 400, { ...ok, source: 5, rows: [{ id: "s6" }] });
   ingest("entity type unknown", 400, { ...ok, entity_type: "person", rows: [{ id: "u1" }] });
   ingest("entity type sql", 400, { ...ok, entity_type: sql, rows: [{ id: "u2" }] });
   ingest("entity type upper", 400, { ...ok, entity_type: "Company", rows: [{ id: "u3" }] });
   ingest("unknown field", 400, { ...ok, rows: [{ id: "f1" }], extra: 1 });
-  ingest("evidence not json", 400, { ...ok, evidence: "ev", rows: [{ id: "ev1", ev: "not json" }] });
-  ingest("evidence json", 200, { ...ok, evidence: "ev", rows: [{ id: "ev2", ev: '{"page": 3}' }] });
-  ingest("evidence column missing", 400, { ...ok, evidence: "nope", rows: [{ id: "ev3" }] });
-  ingest("evidence is key", 400, { ...ok, evidence: "id", rows: [{ id: "ev4" }] });
+  // `scans` is a source whose file names `ev` as its evidence column.
+  const scans = { source: "scans", entity_type: "company" };
+  ingest("evidence not json", 400, { ...scans, rows: [{ id: "ev1", ev: "not json" }] });
+  ingest("evidence json", 200, { ...scans, rows: [{ id: "ev2", ev: '{"page": 3}' }] });
+  ingest("evidence without a key", 400, { ...scans, rows: [{ ev: '{"page": 3}' }] });
+  ingest("evidence column named in the call", 400, { ...ok, evidence: "ev", rows: [{ id: "ev3" }] });
   ingest("wait_ms negative", 400, { ...ok, wait_ms: -1, rows: [{ id: "w1" }] });
   ingest("wait_ms huge", 400, { ...ok, wait_ms: 1e30, rows: [{ id: "w2" }] });
   ingest("wait_ms u64 max", 400, { ...ok, wait_ms: 18446744073709551615, rows: [{ id: "w3" }] });
@@ -172,7 +170,7 @@ function all(): Case[] {
     status: 400,
     method: "POST",
     path: "/v1/ingest",
-    raw: '{"source":"crm","entity_type":"company","key":"id","rows":[{"id":"\\ud800"}]}',
+    raw: '{"source":"crm","entity_type":"company","rows":[{"id":"\\ud800"}]}',
     headers: { "content-type": "application/json" },
   });
   cases.push({
@@ -180,11 +178,7 @@ function all(): Case[] {
     status: 400,
     method: "POST",
     path: "/v1/ingest",
-    raw:
-      '{"source":"crm","entity_type":"company","key":"id","rows":[{"id":' +
-      "[".repeat(100_000) +
-      "]".repeat(100_000) +
-      "}]}",
+    raw: '{"source":"crm","entity_type":"company","rows":[{"id":' + "[".repeat(100_000) + "]".repeat(100_000) + "}]}",
     headers: { "content-type": "application/json" },
   });
   cases.push({
@@ -192,7 +186,7 @@ function all(): Case[] {
     status: 200,
     method: "POST",
     path: "/v1/ingest",
-    raw: '{"source":"crm","entity_type":"company","key":"id","rows":[{"id":"dk","name":"A","name":"B"}]}',
+    raw: '{"source":"crm","entity_type":"company","rows":[{"id":"dk","name":"A","name":"B"}]}',
     headers: { "content-type": "application/json" },
   });
   cases.push({
@@ -200,14 +194,14 @@ function all(): Case[] {
     status: 200,
     method: "POST",
     path: "/v1/ingest",
-    raw: '{"source":"crm","entity_type":"company","key":"id","rows":[{"id":"big","n":123456789012345678901234567890123456789012345678901234567890}]}',
+    raw: '{"source":"crm","entity_type":"company","rows":[{"id":"big","name":123456789012345678901234567890123456789012345678901234567890}]}',
     headers: { "content-type": "application/json" },
   });
   cases.push({
     name: "ingest: arrow garbage",
     status: 400,
     method: "POST",
-    path: "/v1/ingest?source=crm&entity_type=company&key=id",
+    path: "/v1/ingest?source=crm&entity_type=company",
     raw: "not arrow",
     headers: { "content-type": "application/vnd.apache.arrow.stream" },
   });
@@ -215,7 +209,7 @@ function all(): Case[] {
     name: "ingest: arrow empty",
     status: 400,
     method: "POST",
-    path: "/v1/ingest?source=crm&entity_type=company&key=id",
+    path: "/v1/ingest?source=crm&entity_type=company",
     raw: "",
     headers: { "content-type": "application/vnd.apache.arrow.stream" },
   });
@@ -492,7 +486,9 @@ function all(): Case[] {
 
 export async function hostile(log: (line: string) => void = () => {}): Promise<HostileResult> {
   const dir = scratch("hostile");
-  cpSync(join(companiesProject, "entities"), join(dir, "entities"), { recursive: true });
+  copyCompanies(dir);
+  writeFileSync(join(dir, "sources/scans.yaml"), "key: id\nevidence: ev\ncolumns: [id, name, ev]\n");
+  appendFileSync(join(dir, "entities/company/entity.yaml"), "  scans:\n    name: name\n");
   const server = await serve({ project: dir, store: join(dir, "store.duckdb"), seed: 3 });
   const cases = all();
   const faults: string[] = [];

@@ -64,27 +64,55 @@ pub fn path(path: &Path) -> &str {
     path.to_str().unwrap()
 }
 
+/// The sources of the `thing` project. Each gives rows with the columns
+/// `id`, `code`, `colour`, `name` and `weight`, keyed by `id`; `notes` also
+/// says where each row was found, in `where`.
+pub const THING_SOURCES: [&str; 13] = [
+    "shop", "notes", "s", "bulk", "more", "source-0", "source-1", "source-2", "source-3",
+    "source-4", "source-5", "source-6", "source-7",
+];
+
+/// The `entity.yaml` of a `thing`, with `code` mapped as given.
+pub fn thing_entity(code: &str) -> String {
+    let mut yaml = "label: code\nfeatures: [code, colour]\nmapping:\n".to_owned();
+    for source in THING_SOURCES {
+        yaml += &format!("  {source}:\n    code: {code}\n    colour: colour\n");
+    }
+    yaml
+}
+
 /// Writes a project with one entity type, `thing`: two things are the same
 /// if their `code` is the same, unless their `colour` differs.
 pub fn write_things(dir: &Path) {
-    let entity = dir.join("entities/thing");
+    let write = |file: &str, contents: &str| {
+        let file = dir.join(file);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, contents).unwrap();
+    };
+    for source in THING_SOURCES {
+        let evidence = if source == "notes" {
+            "evidence: where\n"
+        } else {
+            ""
+        };
+        let last = if source == "notes" { ", where" } else { "" };
+        write(
+            &format!("sources/{source}.yaml"),
+            &format!("key: id\n{evidence}columns: [id, code, colour, name, weight{last}]\n"),
+        );
+    }
+    write("entities/thing/entity.yaml", &thing_entity("code"));
     for (file, sql) in [
-        (
-            "features.sql",
-            "SELECT record_id, payload->>'code' AS code, payload->>'colour' AS colour\nFROM record\n",
-        ),
         ("rules/block/same_code.sql", "l.code = r.code\n"),
         ("rules/match/same_code.sql", "l.code = r.code\n"),
         ("rules/no_match/other_colour.sql", "l.colour <> r.colour\n"),
     ] {
-        let file = entity.join(file);
-        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-        std::fs::write(file, sql).unwrap();
+        write(&format!("entities/thing/{file}"), sql);
     }
 }
 
-/// Copies a project's `entities` directory, so that building it leaves the
-/// original as it was.
+/// Copies a project's files, so that building it leaves the original as it
+/// was.
 pub fn copy_project(from: &Path, to: &Path) {
     fn copy(from: &Path, to: &Path) {
         std::fs::create_dir_all(to).unwrap();
@@ -98,7 +126,11 @@ pub fn copy_project(from: &Path, to: &Path) {
             }
         }
     }
-    copy(&from.join("entities"), &to.join("entities"));
+    for part in ["sources", "transforms", "entities"] {
+        if from.join(part).is_dir() {
+            copy(&from.join(part), &to.join(part));
+        }
+    }
 }
 
 /// Builds the project in `dir` and returns the path of its manifest.

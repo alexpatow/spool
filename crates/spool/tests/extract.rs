@@ -80,9 +80,14 @@ impl News {
             engine: Arc::new(Engine::open_in_memory(Options::seeded(1)).unwrap()),
             dir,
         };
+        for source in ["news", "wire"] {
+            news.write(&format!("sources/{source}.yaml"), "columns: [name, form]\n");
+        }
         news.write(
-            "entities/company/features.sql",
-            "SELECT record_id, lower(payload->>'name') AS name FROM record",
+            "entities/company/entity.yaml",
+            "features: [name]\nmapping:\n  \
+             news:\n    name: { from: name, transform: lower }\n  \
+             wire:\n    name: { from: name, transform: lower }\n",
         );
         news.write(
             "entities/company/rules/block/same_name.sql",

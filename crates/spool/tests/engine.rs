@@ -9,8 +9,7 @@ use spool::core::{
     Actor, Changeset, EntityType, IdGenerator, Op, Policy, Reason, ReviewItem, SeededIds, Seq,
 };
 use spool::{
-    Engine, EntityTypeSource, Error, IngestOptions, Options, ResolveOptions, Rows, Scope, SqlFile,
-    StrategyRef,
+    Engine, EntityTypeSource, Error, Options, ResolveOptions, Rows, Scope, StrategyRef, YamlFile,
 };
 
 fn resolve(engine: &Engine) -> spool::ResolveReport {
@@ -68,16 +67,10 @@ fn ingest_stores_each_row_once() {
 #[test]
 fn an_record_id_ignores_column_order_and_empty_columns() {
     let engine = engine();
-    ingest(&engine, "shop", &[("1", Some("anvil"), Some("A"))]);
+    ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
 
-    let reordered = Rows::from_text(
-        &["code", "colour", "name", "id"],
-        &[vec![Some("A"), None, Some("anvil"), Some("1")]],
-    )
-    .unwrap();
-    let report = engine
-        .ingest("shop", "thing", reordered, &IngestOptions::keyed_by("id"))
-        .unwrap();
+    let reordered = Rows::from_text(&["name", "id"], &[vec![Some("anvil"), Some("1")]]).unwrap();
+    let report = engine.ingest("shop", "thing", reordered).unwrap();
     assert_eq!((report.inserted, report.duplicates), (0, 1));
 }
 
@@ -97,25 +90,25 @@ fn a_changed_row_or_another_source_is_another_record() {
 #[test]
 fn ingest_needs_an_applied_manifest_and_a_declared_type() {
     let bare = Engine::open_in_memory(Options::seeded(1)).unwrap();
-    let error = bare
-        .ingest("shop", "thing", rows(&[]), &IngestOptions::default())
-        .unwrap_err();
+    let error = bare.ingest("shop", "thing", rows(&[])).unwrap_err();
     assert!(matches!(error, Error::NoManifest), "{error}");
 
     let engine = engine();
-    let error = engine
-        .ingest("shop", "gadget", rows(&[]), &IngestOptions::default())
-        .unwrap_err();
+    let error = engine.ingest("shop", "gadget", rows(&[])).unwrap_err();
     assert!(matches!(error, Error::UndeclaredType(name) if name == "gadget"));
 }
 
 #[test]
 fn evidence_is_stored_beside_the_payload_and_needs_a_key() {
-    let engine = engine();
-    let options = IngestOptions {
-        key_column: Some("locator".to_owned()),
-        evidence_column: Some("evidence".to_owned()),
-    };
+    let mut thing = thing();
+    thing.entity.yaml += "  report:\n    name: name\n";
+    let mut project = project_of(vec![thing]);
+    project.sources.push(YamlFile::new(
+        "report",
+        "key: locator\nevidence: evidence\ncolumns: [locator, name, evidence]\n",
+    ));
+    let engine = Engine::open_in_memory(Options::seeded(1)).unwrap();
+    engine.apply(&project.compile().unwrap()).unwrap();
     let mentions = |locator: Option<&'static str>| {
         Rows::from_text(
             &["locator", "name", "evidence"],
@@ -125,7 +118,7 @@ fn evidence_is_stored_beside_the_payload_and_needs_a_key() {
     };
 
     let error = engine
-        .ingest("report.pdf", "thing", mentions(None), &options)
+        .ingest("report", "thing", mentions(None))
         .unwrap_err();
     assert!(
         matches!(&error, Error::Ingest(message) if message.contains("evidence")),
@@ -141,12 +134,7 @@ fn evidence_is_stored_beside_the_payload_and_needs_a_key() {
     );
 
     engine
-        .ingest(
-            "report.pdf",
-            "thing",
-            mentions(Some("p3:120-125")),
-            &options,
-        )
+        .ingest("report", "thing", mentions(Some("p3:120-125")))
         .unwrap();
     assert_eq!(
         select(
@@ -162,7 +150,7 @@ fn evidence_is_stored_beside_the_payload_and_needs_a_key() {
 
     // The same words at another place in the document are another record.
     let report = engine
-        .ingest("report.pdf", "thing", mentions(Some("p9:14-19")), &options)
+        .ingest("report", "thing", mentions(Some("p9:14-19")))
         .unwrap();
     assert_eq!(report.inserted, 1);
 }
@@ -178,51 +166,11 @@ fn a_known_row_cannot_arrive_as_another_entity_type() {
     ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
 
     let error = engine
-        .ingest(
-            "shop",
-            "widget",
-            rows(&[("1", Some("anvil"), None)]),
-            &IngestOptions::keyed_by("id"),
-        )
+        .ingest("shop", "widget", rows(&[("1", Some("anvil"), None)]))
         .unwrap_err();
     assert!(
         matches!(&error, Error::Ingest(message) if message.contains("`thing`")),
         "{error}"
-    );
-}
-
-#[test]
-fn a_features_query_that_repeats_an_record_fails_the_ingest() {
-    let engine = Engine::open_in_memory(Options::seeded(1)).unwrap();
-    let doubled = EntityTypeSource {
-        features: SqlFile::new(
-            "features",
-            "SELECT record_id, 1 AS n FROM record
-             UNION ALL SELECT record_id, 2 FROM record",
-        ),
-        block: Vec::new(),
-        no_match: Vec::new(),
-        match_: Vec::new(),
-        ..thing()
-    };
-    engine.apply(&manifest_of(vec![doubled])).unwrap();
-
-    let error = engine
-        .ingest(
-            "shop",
-            "thing",
-            rows(&[("1", Some("anvil"), None)]),
-            &IngestOptions::keyed_by("id"),
-        )
-        .unwrap_err();
-    assert!(
-        matches!(&error, Error::Ingest(message) if message.contains("one row per record")),
-        "{error}"
-    );
-    assert_eq!(count(&engine, "SELECT count(*) FROM spool.record"), 0);
-    assert_eq!(
-        count(&engine, "SELECT count(*) FROM spool.features_thing"),
-        0
     );
 }
 
@@ -437,12 +385,7 @@ fn entity_types_are_resolved_apart() {
     engine.apply(&manifest_of(vec![thing(), widget])).unwrap();
     ingest(&engine, "shop", &[("1", Some("anvil"), None)]);
     engine
-        .ingest(
-            "shop",
-            "widget",
-            rows(&[("2", Some("anvil"), None)]),
-            &IngestOptions::keyed_by("id"),
-        )
+        .ingest("shop", "widget", rows(&[("2", Some("anvil"), None)]))
         .unwrap();
 
     let only_widgets = ResolveOptions {
@@ -874,10 +817,13 @@ fn state_survives_reopening_and_a_changed_declaration() {
     ));
 
     let changed = EntityTypeSource {
-        features: SqlFile::new(
-            "features",
-            "SELECT record_id, upper(payload->>'name') AS name, payload->>'code' AS code
-             FROM record",
+        entity: entity(
+            Some("name"),
+            &[
+                ("name", "{ from: name, transform: upper }"),
+                ("code", "code"),
+            ],
+            &SOURCES,
         ),
         ..thing()
     };

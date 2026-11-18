@@ -7,9 +7,13 @@
 //!
 //! ```text
 //! my-project/
+//! ├── sources/
+//! │   └── crm.yaml                what comes in from the source `crm`: its key and columns
+//! ├── transforms/
+//! │   └── name_key.sql            a function of the values it is given from one record
 //! ├── entities/
 //! │   └── company/
-//! │       ├── features.sql        one query; its columns are the feature table
+//! │       ├── entity.yaml         the type's features, and how each source's columns become them
 //! │       ├── extract.md          what an extractor is told about the type
 //! │       ├── rules/
 //! │       │   ├── block/*.sql     predicates over rows `l` and `r` that generate candidate pairs
@@ -24,7 +28,7 @@
 //!     └── names/                  files that belong to `names`
 //! ```
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -35,21 +39,25 @@ use crate::error::{Error, Result};
 use crate::features;
 use crate::store::DuckStore;
 
-/// A project as read from disk, before any SQL has been checked.
+/// A project as read from disk, before any file has been checked.
 #[derive(Clone, Debug, Default)]
 pub struct Project {
+    /// The files under `sources/`, one per source.
+    pub sources: Vec<YamlFile>,
+    /// The files under `transforms/`, one per transform.
+    pub transforms: Vec<SqlFile>,
     pub entity_types: Vec<EntityTypeSource>,
     /// The files under `extractors/`.
     pub extractors: Vec<StrategySource>,
-    /// Files under `entities/` and `extractors/` that this version does not
-    /// use.
+    /// Files of the project's directories that this version does not use.
     pub ignored: Vec<PathBuf>,
 }
 
 #[derive(Clone, Debug)]
 pub struct EntityTypeSource {
     pub name: String,
-    pub features: SqlFile,
+    /// The type's `entity.yaml`.
+    pub entity: YamlFile,
     pub block: Vec<SqlFile>,
     pub no_match: Vec<SqlFile>,
     pub match_: Vec<SqlFile>,
@@ -90,10 +98,33 @@ impl SqlFile {
     }
 }
 
-/// What the engine runs on: every entity type with its checked features query
-/// and rules. The hash covers all of it and is recorded with each match run.
+/// A YAML file. The name is the file's name without `.yaml`.
+#[derive(Clone, Debug)]
+pub struct YamlFile {
+    pub name: String,
+    pub path: PathBuf,
+    pub yaml: String,
+}
+
+impl YamlFile {
+    pub fn new(name: impl Into<String>, yaml: impl Into<String>) -> Self {
+        let name = name.into();
+        Self {
+            path: PathBuf::from(format!("{name}.yaml")),
+            name,
+            yaml: yaml.into(),
+        }
+    }
+}
+
+/// What the engine runs on: every source with what it sends, and every
+/// entity type with its checked features and rules. The hash covers all of
+/// it and is recorded with each match run.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Manifest {
+    /// What each source sends.
+    #[serde(default)]
+    pub sources: Vec<Source>,
     pub entity_types: Vec<EntityTypeManifest>,
     /// User-code extractors. Left out of the JSON when there are none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -108,6 +139,10 @@ pub struct EntityTypeManifest {
     /// Covers the declaration and not the rules: rules can change between
     /// runs, a declaration cannot change under existing feature rows.
     pub declaration_hash: String,
+    /// The sources whose columns the type's mapping reads. Rows of any
+    /// other source are not records of this type.
+    #[serde(default)]
+    pub sources: Vec<String>,
     pub rules: RuleSet,
     /// User-code strategies. Left out of the JSON when there are none, so a
     /// project of SQL files has the manifest hash it always had.
@@ -192,11 +227,41 @@ impl EntityTypeManifest {
     }
 }
 
-/// The features query and the columns DuckDB infers from it.
+/// What one source sends: the columns a row of it may have. A mention an
+/// extractor finds in one of the source's documents may have those
+/// attributes.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Source {
+    pub name: String,
+    /// The column that holds each row's key within the source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    /// A column of JSON text that says where each row was found. It is
+    /// stored as the record's evidence and is not part of its payload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<String>,
+    pub columns: Vec<String>,
+}
+
+/// An entity type's features: the query compiled from its `entity.yaml`,
+/// the columns DuckDB infers from it, and the transforms the query calls.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Declaration {
     pub features: String,
     pub columns: Vec<FeatureColumn>,
+    /// The feature that names a record to a person, if the type says one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub transforms: Vec<Transform>,
+}
+
+/// A transform: an expression over the values it is given from one record.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Transform {
+    pub name: String,
+    pub parameters: Vec<String>,
+    pub body: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -248,7 +313,12 @@ impl Manifest {
                 )));
             }
         }
-        if manifest_hash(&manifest.entity_types, &manifest.extractors) != manifest.hash {
+        if manifest_hash(
+            &manifest.sources,
+            &manifest.entity_types,
+            &manifest.extractors,
+        ) != manifest.hash
+        {
             return Err(invalid(
                 "the manifest does not have the hash recorded in it; build it again".to_owned(),
             ));
@@ -273,6 +343,29 @@ impl Manifest {
             .find(|entity_type| entity_type.name.as_str() == name)
     }
 
+    pub fn source(&self, name: &str) -> Option<&Source> {
+        self.sources.iter().find(|source| source.name == name)
+    }
+
+    /// The source `name` as one whose rows or mentions become records of
+    /// `entity_type`, or why they cannot.
+    pub(crate) fn source_of(
+        &self,
+        name: &str,
+        entity_type: &EntityTypeManifest,
+    ) -> Result<&Source, String> {
+        let source = self.source(name).ok_or_else(|| {
+            format!("source `{name}` is not declared: the project has no sources/{name}.yaml")
+        })?;
+        if !entity_type.sources.iter().any(|mapped| mapped == name) {
+            return Err(format!(
+                "the mapping of `{}` has nothing for source `{name}`: add it to entities/{}/entity.yaml",
+                entity_type.name, entity_type.name
+            ));
+        }
+        Ok(source)
+    }
+
     pub fn extractor(&self, name: &str) -> Option<&Extractor> {
         self.extractors
             .iter()
@@ -280,19 +373,19 @@ impl Manifest {
     }
 }
 
-/// The hash of a manifest's content. A project without extractors has the
-/// hash it had before there were any.
-fn manifest_hash(entity_types: &[EntityTypeManifest], extractors: &[Extractor]) -> String {
-    if extractors.is_empty() {
-        hash_json(&entity_types)
-    } else {
-        hash_json(&(entity_types, extractors))
-    }
+/// The hash of a manifest's content.
+fn manifest_hash(
+    sources: &[Source],
+    entity_types: &[EntityTypeManifest],
+    extractors: &[Extractor],
+) -> String {
+    hash_json(&(sources, entity_types, extractors))
 }
 
 impl Project {
-    /// Discovers the entity types under `dir/entities`. Nothing is validated
-    /// beyond names; [`compile`](Self::compile) checks the SQL.
+    /// Discovers the sources, transforms and entity types under `dir`.
+    /// Nothing is validated beyond names; [`compile`](Self::compile) checks
+    /// the files.
     pub fn read(dir: impl AsRef<Path>) -> Result<Self> {
         let root = dir.as_ref();
         let entities = root.join("entities");
@@ -305,6 +398,26 @@ impl Project {
             });
         }
         let mut project = Project::default();
+        let sources = root.join("sources");
+        if sources.is_dir() {
+            for file in list(&sources)? {
+                if file.is_file() && file.extension().is_some_and(|ext| ext == "yaml") {
+                    project.sources.push(read_yaml(&file)?);
+                } else {
+                    project.ignored.push(file);
+                }
+            }
+        }
+        let transforms = root.join("transforms");
+        if transforms.is_dir() {
+            for file in list(&transforms)? {
+                if file.is_file() && file.extension().is_some_and(|ext| ext == "sql") {
+                    project.transforms.push(read_sql(&file)?);
+                } else {
+                    project.ignored.push(file);
+                }
+            }
+        }
         for entry in list(&entities)? {
             if !entry.is_dir() {
                 project.ignored.push(entry);
@@ -315,16 +428,16 @@ impl Project {
                 file: entry.clone(),
                 message: error.to_string(),
             })?;
-            let features_path = entry.join("features.sql");
-            if !features_path.is_file() {
+            let entity_path = entry.join("entity.yaml");
+            if !entity_path.is_file() {
                 return Err(Error::Project {
-                    file: features_path,
-                    message: format!("entity type `{name}` needs a features.sql"),
+                    file: entity_path,
+                    message: format!("entity type `{name}` needs an entity.yaml"),
                 });
             }
             let mut source = EntityTypeSource {
                 name,
-                features: read_sql(&features_path)?,
+                entity: read_yaml(&entity_path)?,
                 block: Vec::new(),
                 no_match: Vec::new(),
                 match_: Vec::new(),
@@ -333,7 +446,7 @@ impl Project {
             };
             for child in list(&entry)? {
                 match file_name(&child).as_str() {
-                    "features.sql" => {}
+                    "entity.yaml" => {}
                     "extract.md" if child.is_file() => {
                         source.extract =
                             Some(std::fs::read_to_string(&child).map_err(Error::io(&child))?);
@@ -375,40 +488,68 @@ impl Project {
         Ok(project)
     }
 
-    /// Checks every SQL file by preparing it against DuckDB and returns the
-    /// manifest. A mistake in a file fails here, not during a run.
+    /// Checks every file, the SQL by preparing it against DuckDB, and
+    /// returns the manifest. A mistake in a file fails here, not during a
+    /// run.
     pub fn compile(&self) -> Result<Manifest> {
         // A scratch database with the engine's schema to prepare against.
         let scratch = DuckStore::open(None, Box::new(StepClock::new(0, 0)))?;
+        let in_path = |path: &Path| {
+            let path = path.to_owned();
+            move |message: String| Error::Project {
+                file: path.clone(),
+                message,
+            }
+        };
+
+        let mut sources: Vec<Source> = Vec::new();
+        for file in &self.sources {
+            let invalid = in_path(&file.path);
+            if sources.iter().any(|other| other.name == file.name) {
+                return Err(invalid(format!("source `{}` is declared twice", file.name)));
+            }
+            sources.push(source_of(file).map_err(invalid)?);
+        }
+        sources.sort_by(|a, b| a.name.cmp(&b.name));
+
+        let mut transforms: BTreeMap<String, Transform> = BTreeMap::new();
+        for file in &self.transforms {
+            let invalid = in_path(&file.path);
+            if transforms.contains_key(&file.name) {
+                return Err(invalid(format!(
+                    "transform `{}` is defined twice",
+                    file.name
+                )));
+            }
+            let transform = transform_of(file).map_err(&invalid)?;
+            features::check_transform(&scratch.conn, &transform)
+                .map_err(|error| invalid(error.to_string()))?;
+            transforms.insert(file.name.clone(), transform);
+        }
+
         let mut names = BTreeSet::new();
         let mut entity_types = Vec::new();
 
         for source in &self.entity_types {
-            let in_file = |file: &SqlFile| {
-                let path = file.path.clone();
-                move |message: String| Error::Project {
-                    file: path,
-                    message,
-                }
-            };
+            let in_file = |file: &SqlFile| in_path(&file.path);
+            let in_entity = in_path(&source.entity.path);
             let name = EntityType::new(source.name.clone())
-                .map_err(|error| in_file(&source.features)(error.to_string()))?;
+                .map_err(|error| in_entity(error.to_string()))?;
             if !names.insert(name.clone()) {
-                return Err(in_file(&source.features)(format!(
-                    "entity type `{name}` is declared twice"
-                )));
+                return Err(in_entity(format!("entity type `{name}` is declared twice")));
             }
 
-            let query = strip(&source.features.sql);
-            let columns = features::describe(&scratch.conn, &query)
-                .map_err(|error| in_file(&source.features)(error.to_string()))?;
-            features::check_columns(&columns).map_err(in_file(&source.features))?;
+            let entity = entity_of(&source.entity, &sources, &transforms).map_err(&in_entity)?;
+            let columns = features::describe(&scratch.conn, &entity.transforms, &entity.query)
+                .map_err(|error| in_entity(error.to_string()))?;
             let declaration = Declaration {
-                features: query,
+                features: entity.query,
                 columns,
+                label: entity.label,
+                transforms: entity.transforms,
             };
             features::create_table(&scratch.conn, &name, &declaration, 1)
-                .map_err(|error| in_file(&source.features)(error.to_string()))?;
+                .map_err(|error| in_entity(error.to_string()))?;
 
             let table = features::table(&name);
             let compile_rules = |files: &[SqlFile]| -> Result<Vec<Rule>> {
@@ -490,6 +631,7 @@ impl Project {
                 declaration_hash: hash_json(&declaration),
                 name,
                 declaration,
+                sources: entity.sources,
                 rules,
                 strategies,
                 extract: source
@@ -530,11 +672,385 @@ impl Project {
 
         entity_types.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(Manifest {
-            hash: manifest_hash(&entity_types, &extractors),
+            hash: manifest_hash(&sources, &entity_types, &extractors),
+            sources,
             entity_types,
             extractors,
         })
     }
+}
+
+/// A source's file, as written.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SourceYaml {
+    #[serde(default)]
+    key: Option<String>,
+    #[serde(default)]
+    evidence: Option<String>,
+    columns: Vec<String>,
+}
+
+/// An entity type's file, as written.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EntityYaml {
+    #[serde(default)]
+    label: Option<String>,
+    features: Vec<String>,
+    /// Source, then feature, then where the feature comes from.
+    mapping: BTreeMap<String, BTreeMap<String, MappedYaml>>,
+}
+
+/// Where a feature comes from in one source: a column as it is, or columns
+/// given to a transform.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum MappedYaml {
+    Column(String),
+    Transformed(TransformedYaml),
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TransformedYaml {
+    from: FromYaml,
+    #[serde(default)]
+    transform: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum FromYaml {
+    One(String),
+    Many(Vec<String>),
+}
+
+/// What an `entity.yaml` compiles to.
+struct Entity {
+    query: String,
+    label: Option<String>,
+    /// The transforms the query calls, in name order.
+    transforms: Vec<Transform>,
+    /// The sources the mapping reads, in name order.
+    sources: Vec<String>,
+}
+
+/// A name that can stand in SQL without quotes: lowercase letters, digits
+/// and `_`, not starting with a digit.
+fn identifier(name: &str) -> bool {
+    name.chars()
+        .next()
+        .is_some_and(|first| first.is_ascii_lowercase() || first == '_')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
+
+fn source_of(file: &YamlFile) -> Result<Source, String> {
+    if !valid_name(&file.name) {
+        return Err(
+            "a source's file name may contain only letters, digits, `_` and `-`".to_owned(),
+        );
+    }
+    let written: SourceYaml =
+        serde_saphyr::from_str(&file.yaml).map_err(|error| error.to_string())?;
+    if written.columns.is_empty() {
+        return Err("a source lists the columns its rows may have".to_owned());
+    }
+    let mut seen = BTreeSet::new();
+    for column in &written.columns {
+        if column.is_empty() || column.contains(['"', '\\']) {
+            return Err(format!(
+                "column `{column}`: a column needs a name without `\"` or `\\`"
+            ));
+        }
+        if !seen.insert(column.as_str()) {
+            return Err(format!("column `{column}` is listed twice"));
+        }
+    }
+    for (what, column) in [("key", &written.key), ("evidence", &written.evidence)] {
+        if let Some(column) = column
+            && !seen.contains(column.as_str())
+        {
+            return Err(format!(
+                "the {what} is `{column}`, which is not one of the columns"
+            ));
+        }
+    }
+    if written.key.is_some() && written.key == written.evidence {
+        return Err("the key and the evidence are the same column".to_owned());
+    }
+    Ok(Source {
+        name: file.name.clone(),
+        key: written.key,
+        evidence: written.evidence,
+        columns: written.columns,
+    })
+}
+
+/// A transform's file: `lambda` and the names of its arguments, a colon, and
+/// an expression over them, as DuckDB writes a lambda.
+fn transform_of(file: &SqlFile) -> Result<Transform, String> {
+    const FORM: &str = "a transform is `lambda`, the names of its arguments, `:` and an expression, as in `lambda name: lower(trim(name))`";
+    if !identifier(&file.name) {
+        return Err(
+            "a transform's file name may contain only lowercase letters, digits and `_`".to_owned(),
+        );
+    }
+    let text = after_comments(&file.sql);
+    let rest = text
+        .strip_prefix("lambda")
+        .filter(|rest| rest.starts_with(char::is_whitespace))
+        .ok_or(FORM)?;
+    let (header, body) = rest.split_once(':').ok_or(FORM)?;
+    let mut parameters: Vec<String> = Vec::new();
+    for parameter in header.split(',').map(str::trim) {
+        if !identifier(parameter) {
+            return Err(format!(
+                "`{parameter}` cannot name an argument: use lowercase letters, digits and `_`"
+            ));
+        }
+        if parameters.iter().any(|other| other == parameter) {
+            return Err(format!("the argument `{parameter}` is named twice"));
+        }
+        parameters.push(parameter.to_owned());
+    }
+    let body = strip(body);
+    if body.is_empty() {
+        return Err(FORM.to_owned());
+    }
+    if words(&body).any(|word| word.eq_ignore_ascii_case("select")) {
+        return Err(
+            "a transform works on the values it is given from one record, and cannot `select` from anything"
+                .to_owned(),
+        );
+    }
+    Ok(Transform {
+        name: file.name.clone(),
+        parameters,
+        body,
+    })
+}
+
+/// SQL text from its first character that is not whitespace or a comment.
+fn after_comments(sql: &str) -> &str {
+    let mut text = sql.trim_start();
+    loop {
+        if let Some(rest) = text.strip_prefix("--") {
+            text = rest.split_once('\n').map_or("", |(_, rest)| rest);
+        } else if let Some(rest) = text.strip_prefix("/*") {
+            text = rest.split_once("*/").map_or("", |(_, rest)| rest);
+        } else {
+            return text;
+        }
+        text = text.trim_start();
+    }
+}
+
+/// The words of SQL text that are not inside a string, a quoted name or a
+/// comment.
+fn words(sql: &str) -> impl Iterator<Item = &str> {
+    // Every byte of a character outside ASCII counts as part of a word, so
+    // the scan only ever stops between characters.
+    let in_word = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_' || !byte.is_ascii();
+    let bytes = sql.as_bytes();
+    let mut at = 0;
+    std::iter::from_fn(move || {
+        while at < bytes.len() {
+            let byte = bytes[at];
+            let rest = &bytes[at..];
+            if byte == b'\'' || byte == b'"' {
+                at = past(bytes, at + 1, &[byte]);
+            } else if rest.starts_with(b"--") {
+                at = past(bytes, at, b"\n");
+            } else if rest.starts_with(b"/*") {
+                at = past(bytes, at + 2, b"*/");
+            } else if let Some(quote) = dollar_quote(rest) {
+                at = past(bytes, at + quote.len(), quote);
+            } else if in_word(byte) && !byte.is_ascii_digit() {
+                let start = at;
+                while at < bytes.len() && in_word(bytes[at]) {
+                    at += 1;
+                }
+                return Some(&sql[start..at]);
+            } else {
+                at += 1;
+            }
+        }
+        None
+    })
+}
+
+/// Where the first `needle` at or after `from` ends, or the end of the text.
+fn past(bytes: &[u8], from: usize, needle: &[u8]) -> usize {
+    bytes
+        .get(from..)
+        .and_then(|rest| {
+            rest.windows(needle.len())
+                .position(|window| window == needle)
+        })
+        .map_or(bytes.len(), |found| from + found + needle.len())
+}
+
+/// The `$$` or `$tag$` that opens a dollar-quoted string, if the text begins
+/// with one.
+fn dollar_quote(text: &[u8]) -> Option<&[u8]> {
+    let tag = text.strip_prefix(b"$")?;
+    let length = tag
+        .iter()
+        .take_while(|byte| byte.is_ascii_alphanumeric() || **byte == b'_' || !byte.is_ascii())
+        .count();
+    let closed = tag.get(length) == Some(&b'$');
+    let numbered = tag.first().is_some_and(u8::is_ascii_digit);
+    (closed && !numbered).then(|| &text[..length + 2])
+}
+
+/// Checks an `entity.yaml` against the sources and transforms it names, and
+/// writes the query that computes its features: one row per record, each
+/// feature from the columns its source's mapping says.
+fn entity_of(
+    file: &YamlFile,
+    sources: &[Source],
+    transforms: &BTreeMap<String, Transform>,
+) -> Result<Entity, String> {
+    let written: EntityYaml =
+        serde_saphyr::from_str(&file.yaml).map_err(|error| error.to_string())?;
+
+    if written.features.is_empty() {
+        return Err("an entity type lists its features".to_owned());
+    }
+    let mut features = BTreeSet::new();
+    for feature in &written.features {
+        if !identifier(feature) {
+            return Err(format!(
+                "`{feature}` cannot name a feature: use lowercase letters, digits and `_`"
+            ));
+        }
+        if ["record_id", "declaration_version", "identity_id", "is_new"].contains(&feature.as_str())
+        {
+            return Err(format!(
+                "`{feature}` is a column the engine adds; give the feature another name"
+            ));
+        }
+        if !features.insert(feature.as_str()) {
+            return Err(format!("feature `{feature}` is listed twice"));
+        }
+    }
+    if let Some(label) = &written.label
+        && !features.contains(label.as_str())
+    {
+        return Err(format!(
+            "the label is `{label}`, which is not one of the features"
+        ));
+    }
+    if written.mapping.is_empty() {
+        return Err("the mapping names no source, so nothing can become a record".to_owned());
+    }
+
+    // Feature, then the expression each source computes it with.
+    let mut expressions: BTreeMap<&str, Vec<(&str, String)>> = BTreeMap::new();
+    let mut used: BTreeMap<&str, &Transform> = BTreeMap::new();
+    for (source_name, mapped) in &written.mapping {
+        let source = sources
+            .iter()
+            .find(|source| &source.name == source_name)
+            .ok_or_else(|| {
+                format!("the mapping reads source `{source_name}`, and there is no sources/{source_name}.yaml")
+            })?;
+        for (feature, mapped) in mapped {
+            let at = format!("mapping of `{feature}` from `{source_name}`");
+            if !features.contains(feature.as_str()) {
+                return Err(format!("{at}: `{feature}` is not one of the features"));
+            }
+            let (from, transform) = match mapped {
+                MappedYaml::Column(column) => (vec![column.as_str()], None),
+                MappedYaml::Transformed(mapped) => (
+                    match &mapped.from {
+                        FromYaml::One(column) => vec![column.as_str()],
+                        FromYaml::Many(columns) => columns.iter().map(String::as_str).collect(),
+                    },
+                    mapped.transform.as_deref(),
+                ),
+            };
+            let mut arguments = Vec::new();
+            for column in &from {
+                if !source.columns.iter().any(|known| known == column) {
+                    return Err(format!(
+                        "{at}: `{column}` is not a column of sources/{source_name}.yaml"
+                    ));
+                }
+                // The column's value as text, whatever JSON type it has.
+                arguments.push(format!(
+                    "json_extract_string(payload, '$.\"{}\"')",
+                    column.replace('\'', "''")
+                ));
+            }
+            let expression = match transform {
+                None => match &arguments[..] {
+                    [one] => one.clone(),
+                    _ => {
+                        return Err(format!(
+                            "{at}: {} columns need a transform to become one feature",
+                            arguments.len()
+                        ));
+                    }
+                },
+                Some(name) => {
+                    let function = match transforms.get(name) {
+                        Some(transform) => {
+                            if transform.parameters.len() != arguments.len() {
+                                return Err(format!(
+                                    "{at}: transform `{name}` takes {} ({}), and is given {}",
+                                    transform.parameters.len(),
+                                    transform.parameters.join(", "),
+                                    arguments.len()
+                                ));
+                            }
+                            used.insert(name, transform);
+                            features::transform_function(name)
+                        }
+                        // A function DuckDB has, such as `upper`.
+                        None if identifier(name) => name.to_owned(),
+                        None => {
+                            return Err(format!(
+                                "{at}: `{name}` is not a file in transforms/ and cannot name a function"
+                            ));
+                        }
+                    };
+                    format!("{function}({})", arguments.join(", "))
+                }
+            };
+            expressions
+                .entry(feature.as_str())
+                .or_default()
+                .push((source_name.as_str(), expression));
+        }
+    }
+
+    let mut columns = Vec::new();
+    for feature in &written.features {
+        let Some(by_source) = expressions.get(feature.as_str()) else {
+            return Err(format!("feature `{feature}` is not mapped from any source"));
+        };
+        let cases: Vec<String> = by_source
+            .iter()
+            .map(|(source, expression)| {
+                format!("WHEN '{}' THEN {expression}", source.replace('\'', "''"))
+            })
+            .collect();
+        columns.push(format!(
+            "  CASE source_id\n    {}\n  END AS {feature}",
+            cases.join("\n    ")
+        ));
+    }
+
+    Ok(Entity {
+        query: format!("SELECT\n  record_id,\n{}\nFROM record", columns.join(",\n")),
+        label: written.label,
+        transforms: used.into_values().cloned().collect(),
+        sources: written.mapping.into_keys().collect(),
+    })
 }
 
 /// The user-code files of a directory: every `.py` and `.ts` file, each
@@ -658,6 +1174,17 @@ pub(crate) fn hash_json(value: &impl Serialize) -> String {
 /// files usually do.
 fn strip(sql: &str) -> String {
     sql.trim().trim_end_matches(';').trim_end().to_owned()
+}
+
+fn read_yaml(path: &Path) -> Result<YamlFile> {
+    Ok(YamlFile {
+        name: path
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        path: path.to_owned(),
+        yaml: std::fs::read_to_string(path).map_err(Error::io(path))?,
+    })
 }
 
 fn read_sql(path: &Path) -> Result<SqlFile> {

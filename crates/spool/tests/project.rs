@@ -8,7 +8,18 @@ use std::path::Path;
 use common::benchmarks;
 use spool::{Error, Manifest, Project};
 
-const FEATURES: &str = "SELECT record_id, lower(payload->>'title') AS title FROM record;\n";
+const SOURCE: &str = "key: id\ncolumns: [id, title]\n";
+const ENTITY: &str = "\
+features: [title]
+mapping:
+  journal:
+    title: { from: title, transform: folded }
+";
+
+/// An `entity.yaml` of one feature, `title`, mapped from the journal as given.
+fn mapped(how: &str) -> String {
+    format!("features: [title]\nmapping:\n  journal:\n    title: {how}\n")
+}
 
 fn write(root: &Path, file: &str, contents: &str) {
     let path = root.join(file);
@@ -20,7 +31,9 @@ fn write(root: &Path, file: &str, contents: &str) {
 fn papers() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
-    write(root, "entities/paper/features.sql", FEATURES);
+    write(root, "sources/journal.yaml", SOURCE);
+    write(root, "transforms/folded.sql", "lambda text: lower(text)\n");
+    write(root, "entities/paper/entity.yaml", ENTITY);
     write(
         root,
         "entities/paper/rules/block/same_title.sql",
@@ -139,11 +152,7 @@ fn the_manifest_hash_covers_rules_and_the_declaration_hash_does_not() {
         before.entity_types[0].declaration_hash
     );
 
-    write(
-        dir.path(),
-        "entities/paper/features.sql",
-        "SELECT record_id, payload->>'title' AS title FROM record",
-    );
+    write(dir.path(), "entities/paper/entity.yaml", &mapped("title"));
     let with_features = Manifest::load(dir.path()).unwrap();
     assert_ne!(
         with_features.entity_types[0].declaration_hash,
@@ -158,74 +167,131 @@ fn a_mistake_fails_the_build_and_names_the_file() {
     assert_eq!(file, "entities");
     assert!(message.contains("`entities` directory"), "{message}");
 
-    let cases: [(&str, &str, &str); 12] = [
+    let entity = "entities/paper/entity.yaml";
+    let cases: [(&str, String, &str); 22] = [
+        // A source.
         (
-            "entities/paper/features.sql",
-            "SELECT record_id, true AS is_new FROM record",
-            "entities/paper/features.sql",
+            "sources/journal.yaml",
+            "key: id\n".into(),
+            "sources/journal.yaml",
         ),
         (
-            "entities/paper/features.sql",
-            "SELECT record_id, record_id AS identity_id FROM record",
-            "entities/paper/features.sql",
+            "sources/journal.yaml",
+            "key: doi\ncolumns: [id, title]\n".into(),
+            "sources/journal.yaml",
         ),
         (
-            "entities/paper/strategies/rules.py",
-            "",
-            "entities/paper/strategies/rules.py",
+            "sources/journal.yaml",
+            "key: id\ncolumns: [id, title, id]\n".into(),
+            "sources/journal.yaml",
         ),
         (
-            "entities/paper/strategies/it's.ts",
-            "",
-            "entities/paper/strategies/it's.ts",
+            "sources/journal.yaml",
+            "key: id\nfields: [id, title]\n".into(),
+            "sources/journal.yaml",
+        ),
+        ("sources/it's.yaml", SOURCE.into(), "sources/it's.yaml"),
+        // A transform.
+        (
+            "transforms/folded.sql",
+            "lower(text)".into(),
+            "transforms/folded.sql",
         ),
         (
-            "entities/Paper-2/features.sql",
-            FEATURES,
+            "transforms/folded.sql",
+            "lambda text: lowr(text)".into(),
+            "transforms/folded.sql",
+        ),
+        (
+            "transforms/folded.sql",
+            "lambda text: (SELECT max(source_key) FROM spool.record)".into(),
+            "transforms/folded.sql",
+        ),
+        // An entity type.
+        (
+            entity,
+            "features: [is_new]\nmapping:\n  journal:\n    is_new: title\n".into(),
+            entity,
+        ),
+        (
+            entity,
+            "features: [title, title]\nmapping:\n  journal:\n    title: title\n".into(),
+            entity,
+        ),
+        (entity, format!("label: name\n{}", mapped("title")), entity),
+        (entity, mapped("heading"), entity),
+        (
+            entity,
+            mapped("{ from: [id, title], transform: folded }"),
+            entity,
+        ),
+        (entity, mapped("{ from: [id, title] }"), entity),
+        (
+            entity,
+            "features: [title, year]\nmapping:\n  journal:\n    title: title\n".into(),
+            entity,
+        ),
+        (
+            entity,
+            "features: [title]\nmapping:\n  preprints:\n    title: title\n".into(),
+            entity,
+        ),
+        (
+            "entities/Paper-2/entity.yaml",
+            ENTITY.into(),
             "entities/Paper-2",
         ),
         (
             "entities/book/rules/match/any.sql",
-            "true",
-            "entities/book/features.sql",
+            "true".into(),
+            "entities/book/entity.yaml",
         ),
+        // A strategy and a rule.
         (
-            "entities/paper/features.sql",
-            "SELECT payload->>'title' AS title FROM record",
-            "entities/paper/features.sql",
-        ),
-        (
-            "entities/paper/features.sql",
-            "SELECT record_id::VARCHAR AS record_id FROM record",
-            "entities/paper/features.sql",
-        ),
-        (
-            "entities/paper/features.sql",
-            "SELECT record_id, 1 AS declaration_version FROM record",
-            "entities/paper/features.sql",
+            "entities/paper/strategies/rules.py",
+            String::new(),
+            "entities/paper/strategies/rules.py",
         ),
         (
             "entities/paper/rules/match/typo.sql",
-            "l.titel = r.title",
+            "l.titel = r.title".into(),
             "entities/paper/rules/match/typo.sql",
         ),
         (
             "entities/paper/rules/block/two.sql",
-            "l.title = r.title; DROP TABLE spool.record",
+            "l.title = r.title; DROP TABLE spool.record".into(),
             "entities/paper/rules/block/two.sql",
         ),
         (
             "entities/paper/rules/no_match/empty.sql",
-            "  \n",
+            "  \n".into(),
             "entities/paper/rules/no_match/empty.sql",
         ),
     ];
     for (path, contents, expected_file) in cases {
         let dir = papers();
-        write(dir.path(), path, contents);
+        write(dir.path(), path, &contents);
         let (file, message) = project_error(dir.path());
-        assert_eq!(file, expected_file, "{path}: {message}");
+        assert_eq!(file, expected_file, "{path}: {contents}: {message}");
         assert!(!message.is_empty());
+    }
+}
+
+#[test]
+fn a_transform_may_hold_any_text_in_its_strings() {
+    for body in [
+        "replace(lower(text), $$é$$, 'e')",
+        "replace(text, 'é — select', $word$ select ü $word$)",
+        "replace(text, 'ü', 'u') -- ö\n",
+        "text /* ø */ || \"text\"",
+    ] {
+        let dir = papers();
+        write(
+            dir.path(),
+            "transforms/folded.sql",
+            &format!("lambda text: {body}"),
+        );
+        Manifest::load(dir.path()).unwrap_or_else(|error| panic!("{body}: {error}"));
     }
 }
 
@@ -364,7 +430,7 @@ fn an_extractor_belongs_to_the_project_and_instructions_to_a_type() {
     let plain = Manifest::load(root).unwrap();
     // A project without extractors has the manifest it always had.
     let text = serde_json::to_string(&plain).unwrap();
-    assert!(!text.contains("extract"), "{text}");
+    assert!(!text.contains("extractors"), "{text}");
 
     write(root, "extractors/citations.py", "# citations\n");
     write(root, "extractors/citations/prompt.md", "Find the papers.\n");

@@ -63,16 +63,20 @@ Spool's central invariant, that extensions may propose identity changes but only
 A Spool project is a directory in a git repository. It defines the entity types, how they are matched, and how the server is built. The conventions follow eve, a framework in which an agent is a directory of files ([agent files](https://eve.dev/docs/reference/agent-files), [deployment](https://eve.dev/docs/guides/deployment)):
 
 - **The path is the name.** `entities/company/` declares the entity type `company`, and `rules/match/same_domain.sql` is the rule `same_domain`. Nothing is registered by hand.
-- **Data files first.** SQL for features and rules, TOML for settings, Markdown for instructions. Code is used only where data cannot say it.
+- **Data files first.** YAML for sources and entity types, SQL for transforms and rules, TOML for settings, Markdown for instructions. Code is used only where data cannot say it.
 - **A file replaces the default at the same path.** A project without `policy.toml` gets the default reconciliation policy.
 - **A build step compiles the directory into one artefact**, and a command lists what was discovered.
 
 ```text
 my-project/
 ├── spool.toml                    # optional project settings
+├── sources/
+│   └── crm.yaml                  # the file name is the source; the columns its rows may have (section 1)
+├── transforms/
+│   └── company_name_key.sql      # the file name is the transform; one expression over its arguments (section 1)
 ├── entities/
 │   └── company/                  # the directory name is the entity type
-│       ├── features.sql          # one query; its columns are the feature table (section 1)
+│       ├── entity.yaml           # its features, and how each source's columns become them (section 1)
 │       ├── rules/
 │       │   ├── block/*.sql       # candidate rules, one predicate per file (section 8)
 │       │   ├── match/*.sql
@@ -94,8 +98,8 @@ A project with no `entities/company/` has no company type. A project that resolv
 | --- | --- |
 | `spool init` | Scaffolds the directory. |
 | `spool dev` | Runs the server on localhost against a development database under `.spool/`, and applies file changes as they are saved. |
-| `spool info` | Lists the discovered entity types, rules, strategies and extractors, with diagnostics. |
-| `spool build` | Validates the project and compiles it into a manifest. Every SQL file is prepared against DuckDB, so a mistake fails the build, not a run. Writes a `Dockerfile` if the project has none. With `--install` it also starts each user-code strategy and extractor once with nothing to do, which fetches what it depends on. |
+| `spool info` | Lists the discovered sources, entity types, rules, strategies and extractors, with diagnostics. |
+| `spool build` | Validates the project and compiles it into a manifest. Every YAML file is checked against the files it names and every SQL file is prepared against DuckDB, so a mistake fails the build, not a run. Writes a `Dockerfile` if the project has none. With `--install` it also starts each user-code strategy and extractor once with nothing to do, which fetches what it depends on. |
 | `spool apply` | Applies a manifest to a store: declares entity types and rebuilds the feature tables whose declaration changed. |
 | `spool serve` | Runs the server from a manifest and a store location. An empty store is set up from the manifest. |
 | `spool show` | Shows what a running server holds: runs, identities, records, documents, review items, drafts and the log (section 5). |
@@ -142,7 +146,7 @@ CREATE TABLE spool.record (
 CREATE TABLE spool.entity_type (          -- declared by the project; the engine ships none
   entity_type      VARCHAR     NOT NULL,  -- any name: 'company', 'person', 'product', ...
   version          INTEGER     NOT NULL,  -- increases when the declaration changes
-  declaration      JSON        NOT NULL,  -- the features query and the columns inferred from it
+  declaration      JSON        NOT NULL,  -- the features, the label, and the query and transforms compiled from entity.yaml
   declaration_hash VARCHAR     NOT NULL,
   declared_at      TIMESTAMPTZ NOT NULL
 );
@@ -209,20 +213,51 @@ CREATE TABLE spool.draft (                -- a changeset a reconcile run drafted
 -- spool.draft_op holds a draft's operations in the shape of spool.changeset_op below.
 ```
 
-`spool.features_company` above is not part of Spool. It is what the engine generates from this file, which is one project's idea of a company:
+`spool.features_company` above is not part of Spool. It is what the engine generates from three kinds of file, which are one project's idea of a company. Each knows nothing of the others but the last, which is where they meet.
 
-```sql
--- entities/company/features.sql
-SELECT
-  record_id,
-  lower(trim(payload->>'name')) AS name_norm,
-  lower(payload->>'domain')     AS domain,
-  upper(payload->>'country')    AS country,
-  payload->>'registry_id'       AS registry_id
-FROM record
+What comes in. One file per source, named for it. It lists the columns a row may have, and names the one that is the row's key and, if rows say where they were found, the one that holds that evidence:
+
+```yaml
+# sources/crm.yaml
+key: id
+columns: [id, name, website, country, city, registry_number]
 ```
 
-`record` in this file is the engine's view of the type's records. The query must return `record_id` and at most one row per record, and the engine checks both. DuckDB infers the column names and types from the query, so the file is the whole declaration (tested). Another project's `company` can have different columns.
+A transform. One file per transform, named for it: `lambda`, the names of its arguments, and a DuckDB expression over them. It works on the values it is given from one record, and cannot `select` from anything:
+
+```sql
+-- transforms/registry_id.sql
+lambda country, number: upper(country) || '-' || number
+```
+
+What a company is compared by, and how each source's columns become that:
+
+```yaml
+# entities/company/entity.yaml
+label: name
+features: [name, name_key, trading_key, domain, country, registry_id]
+
+mapping:
+  crm:
+    name: name
+    name_key: { from: name, transform: company_name_key }
+    domain: { from: website, transform: domain_of }
+    country: { from: country, transform: upper }
+    registry_id: { from: [country, registry_number], transform: registry_id }
+  registry:
+    name: legal_name
+    name_key: { from: legal_name, transform: company_name_key }
+    trading_key: { from: trading_name, transform: company_name_key }
+    country: { from: country, transform: upper }
+    registry_id: { from: [country, number], transform: registry_id }
+```
+
+- **`features`** are the columns of the feature table, which is what rules and strategies read. **`label`** is the feature a record is called by.
+- **`mapping`** has a block per source. A feature is a column as it is, or columns given to a transform. A transform with no file is the DuckDB function of that name, such as `upper`. A feature a source does not map is empty for that source's records, and every feature is mapped by at least one source.
+- **A column's value reaches a transform as text**, whatever JSON type it arrived with. A transform that returns another type, such as `try_cast(text AS DATE)`, gives the feature that type.
+- **What is not declared is refused.** `spool build` fails on a mapping that names a source without a file, a column its source does not list, or a transform given the wrong number of columns. Ingest refuses rows from a source without a file, rows from a source the type's mapping has no block for, and rows with a column the source's file does not list. A column the rows lack is empty.
+
+The engine compiles the mapping into one query over `record`, its view of the type's records, with one row per record. The query, the transforms it calls and the columns DuckDB infers for it are the type's declaration (tested). Another project's `company` can have different features.
 
 Identity state:
 
@@ -293,7 +328,7 @@ Design points:
 - **The locator names a version of the document, not its key.** A document is text under a source and a key, and its ID is derived from all three, so a changed text is another document that names the one it supersedes. Had the locator named the key, a mention at characters 10 to 20 of the new text would supersede whatever was at 10 to 20 of the old one, and a run treats a version and the one before it as a match (below). With the document's ID in it, a locator never spans two versions. What follows is a limit: the mentions found in an earlier version stay as records, and members of their identities, after the document has changed.
 - **Documents are text.** Turning a PDF or a web page into text is the caller's work, and a place in a document is a place in that text. Pages and bounding boxes are not recorded.
 - **Feature tables are generated from a declaration, never hand-written.** A declaration is one SQL query over the type's records. The engine creates `spool.features_<entity_type>` from its result and fills it with one `INSERT ... SELECT` per ingest. No engine code names a feature column, and `ingest` rejects a type that has not been declared.
-- **Changing a declaration changes no identity.** Applying a changed query for an existing type increases its version and rebuilds the feature table from the stored payloads. Identity state refers to records and to the type's name, never to feature columns, so every identity ID stays in place. A match run records the declaration version it read, so its judgements stay traceable.
+- **Changing a declaration changes no identity.** Applying a changed `entity.yaml`, or a changed transform it uses, for an existing type increases its version and rebuilds the feature table from the stored payloads. Identity state refers to records and to the type's name, never to feature columns, so every identity ID stays in place. A match run records the declaration version it read, so its judgements stay traceable.
 - **Typed columns, not one generic table.** A single features table holding JSON for every type would need no generation. It would also move normalisation into every matching query and give up the typed columns that blocking joins and similarity functions work on.
 - **Operations are rows, not a JSON blob.** A first load is one changeset with as many `assign` rows as records, applied with `INSERT ... SELECT`. When measured, a one-million-operation changeset wrote its log rows and its projection rows in one transaction in 0.4 s.
 - **Membership keeps intervals.** "What was this identity at log position N" is a filter, and undoing a merge can read which records it moved.
@@ -503,7 +538,7 @@ Every path of the API is under `/v1` and needs the bearer token. `GET /healthz` 
 | Call | What it does | Response |
 | --- | --- | --- |
 | `GET /v1/info` | What the store holds: the manifest hash, the head of the log, and counts per entity type and per source of each | JSON |
-| `POST /v1/ingest` | Adds rows as records. The body is JSON with the rows as objects, or an Arrow stream with the other fields in the query string | The ingest run |
+| `POST /v1/ingest` | Adds rows as records of one entity type, from a source the project declares. The source's file says which column is the key. The body is JSON with the rows as objects, or an Arrow stream with the other fields in the query string | The ingest run |
 | `POST /v1/documents` | Stores documents of one source as text, for an extractor to read. A changed text under a key is the document's next version | The ingest run |
 | `GET /v1/documents`, `GET /v1/documents/{id}` | Lists documents in pages, without their text; reads one version with its text and each time an extractor read it | JSON |
 | `POST /v1/extractions` | Runs one of the project's extractors, which `GET /v1/info` lists, over the latest version of each document it has not read, or with `again` over those it has. What it finds is stored as records | The extract run |
@@ -540,7 +575,7 @@ Every path of the API is under `/v1` and needs the bearer token. `GET /healthz` 
 
 A person reads names, and the store holds IDs. Three things the API answers with are there for whoever reads it, and none of them is stored:
 
-- **A label.** A record's label is what a person would call it: the first of `name`, `legal_name`, `title`, `label`, `display_name` and `full_name` in its payload that holds text, or failing those the first field, in alphabetical order, whose name ends in `name`. An identity's label is the one most of its members have, and of those as common, the one that was ingested first. It is judged from the hundred members ingested first, so that a very large identity costs no more to list. The label is a guess from the payload: a project cannot yet say which field names its records.
+- **A label.** A record's label is what a person would call it: its value of the feature its type's `entity.yaml` names as `label`. A type that names none has no labels. An identity's label is the one most of its members have, and of those as common, the one that was ingested first. It is judged from the hundred members ingested first, so that a very large identity costs no more to list.
 - **A search.** `q` on `GET /v1/records` and `GET /v1/identities` finds the records that hold every word of it, in a value of the payload, in the source's name or in the key, whatever the case or the accents. For identities, one member has to hold all the words. It is a scan of the records by DuckDB, with no index to keep: on a store of 1.1 million records and 530,000 identities it answers in 0.07 to 0.3 seconds, the more words the longer. It finds what was typed, not what was meant: nothing ranks the answers, and a misspelt word finds nothing.
 - **A case.** `GET /v1/review/{id}/case` is a review item with what a reviewer decides it from: its records in full, the identities they matched as they are now, each with its label, its sources and up to 25 of its members, those that were judged first, what the latest run made of each pair of one of its records with another or with any member of those identities, and the constraints in force that bear on the decision: those that name one of its records, and those between members of two of the identities, each with the identities its two records belong to now. A judgement names the identity its other record belongs to, because the case holds only some of an identity's members and the judgements are against all of them. A `cannot_link` between two of the identities says a reviewer already decided they are not one, and the engine refuses a changeset that would merge them.
 
@@ -694,7 +729,7 @@ await extractor(async (task) =>
 );
 ```
 
-A mention is a place in a document, an entity type and attributes. The engine makes each one a record of that type: its source is the document's, its key is the locator of section 1, its payload is the attributes, and its evidence is the document's ID, key and URI, the place, the text there, and the extractor with its version. From there it is a record like any other. The type's `features.sql` reads its payload, and the next match run places it.
+A mention is a place in a document, an entity type and attributes. The engine makes each one a record of that type: its source is the document's, its key is the locator of section 1, its payload is the attributes, and its evidence is the document's ID, key and URI, the place, the text there, and the extractor with its version. From there it is a record like any other. The document's source has a file like any source, whose columns are the attributes a mention may have, and the type's mapping has a block for it. A mention with another attribute, or from a source the type does not map, is refused with the rest of what the extractor found. The next match run places it.
 
 - **Places count Unicode code points.** That is what Python's string indices are. JavaScript's count UTF-16 units, so the TypeScript helper's `document.mention` converts, and the same mention written in either language is the same record, with the same ID. `document.find(quote)` gives the places of a quote, for an extractor that is told what a document mentions and not where.
 - **The engine cuts the quoted text itself**, from the document and the place. An extractor cannot attribute to a document words that are not in it.
@@ -992,7 +1027,7 @@ Milestones 2 and 3 do not depend on each other. Sandbox synchronisation, initial
 | Evidence versus identity-state split; `spool-core` without DuckDB or Arrow | A Postgres store; any abstraction over evidence storage |
 | One server that owns the store; thin clients; one tenant, one writer; no native bindings | Richer authentication; a Python client; a published base image |
 | A project directory with path-derived names, compiled to a manifest; state outside the image | Mountable packages of entity types; `review.md` |
-| Entity types declared by the project; feature tables generated from a query; rules as files; no built-in types | Feature columns from user code; client types generated from a manifest |
+| Entity types declared by the project; sources declared with their columns; feature tables generated from a mapping of source columns through SQL transforms; rules as files; no built-in types | Transforms in Python or TypeScript; a row that feeds more than one entity type; relationships between entities; client types generated from a manifest |
 | User code as child processes over Parquet files; evidence only; workers inside the service; only files the manifest was compiled from run | More than one user-code process at a time; separate worker containers; a streaming protocol; per-task resource limits |
 | Extractors as project-level user code; documents as text; a mention keyed by its document version, entity type and code-point span; mentions stored under their own ingest run; reading again only when asked | An extractor built into the engine; documents that are not text; retiring the mentions of a superseded document; extraction in batches |
 | Judgements and draft changesets in place of proposals | Entity-centric judgements; calibrated probabilities |

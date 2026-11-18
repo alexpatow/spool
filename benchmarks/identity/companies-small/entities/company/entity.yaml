@@ -1,0 +1,17 @@
+# What a company is compared by, and how each source's columns become that.
+label: name
+features: [name, name_key, trading_key, domain, country, registry_id]
+
+mapping:
+  crm:
+    name: name
+    name_key: { from: name, transform: company_name_key }
+    domain: { from: website, transform: domain_of }
+    country: { from: country, transform: upper }
+    registry_id: { from: [country, registry_number], transform: registry_id }
+  registry:
+    name: legal_name
+    name_key: { from: legal_name, transform: company_name_key }
+    trading_key: { from: trading_name, transform: company_name_key }
+    country: { from: country, transform: upper }
+    registry_id: { from: [country, number], transform: registry_id }

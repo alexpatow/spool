@@ -16,6 +16,7 @@ duckdb.workspace = true
 schemars = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
+serde-saphyr.workspace = true
 sha2.workspace = true
 spool-core.workspace = true
 thiserror.workspace = true

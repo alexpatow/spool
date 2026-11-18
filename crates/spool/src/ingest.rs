@@ -17,27 +17,7 @@ use spool_core::{RecordId, RunId};
 
 use crate::batch::{Column, batch};
 use crate::error::{Error, Result};
-
-/// Which columns of the incoming rows are not plain attributes.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct IngestOptions {
-    /// The column holding each row's key within the source: a row key, or
-    /// the locator of an extracted mention. It stays part of the payload.
-    pub key_column: Option<String>,
-    /// A column of JSON text saying where in the source each record was
-    /// found. It is stored as `evidence` and is not part of the payload. A
-    /// row that has evidence must also have a key.
-    pub evidence_column: Option<String>,
-}
-
-impl IngestOptions {
-    pub fn keyed_by(column: impl Into<String>) -> Self {
-        Self {
-            key_column: Some(column.into()),
-            evidence_column: None,
-        }
-    }
-}
+use crate::project::Source;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -58,26 +38,30 @@ pub struct IngestReport {
 /// The rows of one incoming batch that were not seen earlier in this call,
 /// as a batch of `ord`, `record_id`, `source_key`, `payload` and
 /// `evidence`. `ord` is the row's position in the call.
+///
+/// The rows may have only the columns the source lists. The source's key
+/// column stays part of the payload; its evidence column does not.
 pub(crate) fn stage(
-    source: &str,
+    source: &Source,
     incoming: &RecordBatch,
-    options: &IngestOptions,
     seen: &mut HashSet<RecordId>,
     first_row: usize,
 ) -> Result<Option<RecordBatch>> {
     let schema = incoming.schema();
-    let position = |column: &Option<String>| -> Result<Option<usize>> {
-        column
-            .as_deref()
-            .map(|name| {
-                schema
-                    .index_of(name)
-                    .map_err(|_| Error::Ingest(format!("the rows have no column `{name}`")))
-            })
-            .transpose()
-    };
-    let key_at = position(&options.key_column)?;
-    let evidence_at = position(&options.evidence_column)?;
+    for field in schema.fields() {
+        if !source.columns.iter().any(|column| column == field.name()) {
+            return Err(Error::Ingest(format!(
+                "the rows have a column `{}`, which sources/{}.yaml does not list",
+                field.name(),
+                source.name
+            )));
+        }
+    }
+    // A column the rows do not have is empty in each of them.
+    let position =
+        |column: &Option<String>| -> Option<usize> { schema.index_of(column.as_deref()?).ok() };
+    let key_at = position(&source.key);
+    let evidence_at = position(&source.evidence);
 
     let mut readers = Vec::with_capacity(incoming.num_columns());
     for (index, field) in schema.fields().iter().enumerate() {
@@ -137,7 +121,7 @@ pub(crate) fn stage(
         // A map ordered by key, serialised without whitespace, is the canonical form.
         let payload = serde_json::to_string(&payload)
             .map_err(|error| fail(format!("the payload cannot be encoded: {error}")))?;
-        let id = RecordId::derive(source, key.as_deref(), &payload);
+        let id = RecordId::derive(&source.name, key.as_deref(), &payload);
         if seen.insert(id) {
             ords.push(row_number as i64);
             ids.push(Some(id.to_string()));

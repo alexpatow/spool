@@ -1,0 +1,7 @@
+label: name
+features: [name, name_key]
+
+mapping:
+  news:
+    name: name
+    name_key: { from: name, transform: company_name_key }

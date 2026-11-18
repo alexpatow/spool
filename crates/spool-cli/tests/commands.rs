@@ -34,7 +34,6 @@ fn ingest(server: &Server, table: &[&[&str]]) {
         json!({
             "source": "shop",
             "entity_type": "thing",
-            "key": "id",
             "rows": json_rows(rows(table)),
         }),
     );
@@ -61,7 +60,7 @@ fn the_binary_starts_with_no_library_path_set() {
         );
     }
     // `init` opened DuckDB to check what it wrote.
-    assert!(dir.path().join("entities/record/features.sql").is_file());
+    assert!(dir.path().join("entities/record/entity.yaml").is_file());
 }
 
 #[test]
@@ -72,7 +71,9 @@ fn init_scaffolds_a_project_that_info_lists_and_build_compiles() {
     let created = succeed(&["init", path(&project), "--entity", "customer"]);
     assert!(created.contains("entity type `customer`"), "{created}");
     for file in [
-        "entities/customer/features.sql",
+        "sources/example.yaml",
+        "transforms/name_key.sql",
+        "entities/customer/entity.yaml",
         "entities/customer/rules/block/same_name.sql",
         "entities/customer/rules/match/same_name.sql",
     ] {
@@ -196,8 +197,8 @@ fn apply_declares_types_and_rebuilds_the_features_of_a_changed_declaration() {
     server.stop();
 
     std::fs::write(
-        project.join("entities/thing/features.sql"),
-        "SELECT record_id, lower(payload->>'code') AS code, payload->>'colour' AS colour\nFROM record\n",
+        project.join("entities/thing/entity.yaml"),
+        thing_entity("{ from: code, transform: lower }"),
     )
     .unwrap();
     build(&project);
@@ -314,7 +315,7 @@ fn a_run_cut_short_by_a_killed_server_is_recorded_as_failed() {
         .map(|id| vec![Some(id.as_str()), Some(id.as_str())])
         .collect();
     let response = server.post_arrow(
-        "/v1/ingest?source=bulk&entity_type=thing&key=id&wait_ms=0",
+        "/v1/ingest?source=bulk&entity_type=thing&wait_ms=0",
         Rows::from_text(&["id", "code"], &bulk).unwrap(),
     );
     let accepted = response.expect(202);
@@ -343,8 +344,15 @@ fn a_run_cut_short_by_a_killed_server_is_recorded_as_failed() {
 fn dev_serves_a_project_directory_and_applies_changes_as_they_are_saved() {
     let dir = tempfile::tempdir().unwrap();
     write_things(dir.path());
-    let features = dir.path().join("entities/thing/features.sql");
-    let original = read(&features);
+    let entity = dir.path().join("entities/thing/entity.yaml");
+    // A transform that cannot work on a code that is a word. Nothing uses it yet.
+    std::fs::create_dir_all(dir.path().join("transforms")).unwrap();
+    std::fs::write(
+        dir.path().join("transforms/number.sql"),
+        "lambda code: code::INTEGER\n",
+    )
+    .unwrap();
+    let folded = thing_entity("{ from: code, transform: lower }");
 
     let server = Server::start_with(
         &[
@@ -369,11 +377,7 @@ fn dev_serves_a_project_directory_and_applies_changes_as_they_are_saved() {
     );
 
     // A saved change to the declaration is applied without a restart.
-    std::fs::write(
-        &features,
-        original.replace("payload->>'code'", "lower(payload->>'code')"),
-    )
-    .unwrap();
+    std::fs::write(&entity, &folded).unwrap();
     let applied = server.printed("applied");
     assert!(applied.contains("rebuilt thing"), "{applied}");
     let second = server.read("/v1/info")["store"]["manifest_hash"].clone();
@@ -386,19 +390,15 @@ fn dev_serves_a_project_directory_and_applies_changes_as_they_are_saved() {
 
     // A change that does not compile is reported, and the server carries on
     // with what it had.
-    std::fs::write(&features, "SELEC nothing\n").unwrap();
-    let complaint = server.complained("features.sql");
+    std::fs::write(&entity, "features: [code\n").unwrap();
+    let complaint = server.complained("entity.yaml");
     assert!(complaint.starts_with("spool: "), "{complaint}");
     server.complained("still running the last version that compiled");
     assert_eq!(server.read("/v1/info")["store"]["manifest_hash"], second);
 
     // So is a change that compiles and that the stored records do not
-    // fit: here, two feature rows for each record.
-    std::fs::write(
-        &features,
-        "SELECT record_id, payload->>'code' AS code, payload->>'colour' AS colour\nFROM record, range(2)\n",
-    )
-    .unwrap();
+    // fit: here, a code that has to be a number.
+    std::fs::write(&entity, thing_entity("{ from: code, transform: number }")).unwrap();
     server.complained("still running the last version that compiled");
     assert_eq!(server.read("/v1/info")["store"]["manifest_hash"], second);
     ingest(&server, &[&["id", "code"], &["3", "Anvil"]]);
@@ -407,11 +407,7 @@ fn dev_serves_a_project_directory_and_applies_changes_as_they_are_saved() {
     assert_eq!(resolution["identities_created"], 0, "{resolution}");
 
     // A rule is only a rule: adding one rebuilds nothing.
-    std::fs::write(
-        &features,
-        original.replace("payload->>'code'", "lower(payload->>'code')"),
-    )
-    .unwrap();
+    std::fs::write(&entity, &folded).unwrap();
     std::fs::write(
         dir.path().join("entities/thing/rules/match/never.sql"),
         "false\n",
