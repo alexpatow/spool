@@ -28,6 +28,15 @@ pub enum Error {
     #[error("the store has format version {found}, and this engine reads version {expected}")]
     FormatVersion { found: String, expected: String },
 
+    /// Another process has the store's file open. `holder` is that
+    /// process's ID, where the system tells.
+    #[error(
+        "the store at {} is open in another process{}. One process opens a store at a time: stop that one first.",
+        path.display(),
+        match holder { Some(pid) => format!(" (PID {pid})"), None => String::new() }
+    )]
+    StoreInUse { path: PathBuf, holder: Option<u32> },
+
     #[error(transparent)]
     InvalidEntityType(#[from] spool_core::InvalidEntityType),
 

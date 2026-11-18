@@ -325,7 +325,19 @@ pub fn dev(arguments: &[String]) -> Result<(), Failure> {
             .map_err(|error| failed(format!("{}: {error}", parent.display())))?;
     }
     let user_code = super::user_code(&arguments, &dir)?;
-    let engine = Arc::new(Engine::open(&store, options(&arguments)?)?);
+    let engine = Engine::open(&store, options(&arguments)?).map_err(|error| match error {
+        // The usual cause by far, and what to do about it.
+        spool::Error::StoreInUse { path, holder } => failed(format!(
+            "the store {} is open in another process{}, most likely a `spool dev` that is \
+             already running on this project.\n\
+             One server runs on a store at a time. Use the one that is running, or stop it \
+             with Ctrl-C and start this one again.",
+            path.display(),
+            holder.map_or_else(String::new, |pid| format!(" (PID {pid})")),
+        )),
+        other => other.into(),
+    })?;
+    let engine = Arc::new(engine);
     engine.set_user_code(user_code);
     let report = engine.apply(&manifest)?;
     say!("project   {}", dir.display());
@@ -437,7 +449,7 @@ fn run(
     runtime.block_on(async {
         let listener = tokio::net::TcpListener::bind(listen)
             .await
-            .map_err(|error| failed(format!("cannot listen on {listen}: {error}")))?;
+            .map_err(|error| failed(cannot_listen(listen, &error, options.dev)))?;
         let address = listener
             .local_addr()
             .map_err(|error| failed(error.to_string()))?;
@@ -487,6 +499,32 @@ fn run(
     drop(runtime);
     say!("stopped");
     Ok(())
+}
+
+/// Why the server could not listen on `listen`. A port that is taken is
+/// said in words, with another port to try: the next one up.
+fn cannot_listen(listen: SocketAddr, error: &std::io::Error, dev: bool) -> String {
+    if error.kind() != std::io::ErrorKind::AddrInUse {
+        return format!("cannot listen on {listen}: {error}");
+    }
+    let mut other = listen;
+    other.set_port(match listen.port() {
+        u16::MAX => u16::MAX - 1,
+        port => port + 1,
+    });
+    if dev {
+        format!(
+            "cannot listen on {listen}: something else is listening there, perhaps a \
+             `spool dev` on another project.\n\
+             Give this one another port by adding `--listen {other}` to the command, and \
+             point the commands that call it there with SPOOL_URL=http://{other}."
+        )
+    } else {
+        format!(
+            "cannot listen on {listen}: something else is listening there.\n\
+             Give this server another port by adding `--listen {other}` to the command."
+        )
+    }
 }
 
 /// Completes when the process is asked to stop: Ctrl-C, or SIGTERM from

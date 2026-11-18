@@ -62,6 +62,10 @@ fn usage_is_printed_on_request_and_on_a_mistake() {
         (&["bench", "a", "--seed"], "`--seed` needs a value"),
         (&["bench", "a", "--seed", "lucky"], "needs a whole number"),
         (&["init", "a", "--entity", "Not A Name"], "Not A Name"),
+        (
+            &["init", "a", "--source", "Not A Name"],
+            "invalid source name \"Not A Name\"",
+        ),
         (&["info", "a", "b"], "unexpected argument `b`"),
         (&["apply", "a"], "`--store` or `SPOOL_STORE`"),
         (&["serve", "extra"], "unexpected argument `extra`"),

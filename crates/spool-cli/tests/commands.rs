@@ -60,7 +60,178 @@ fn the_binary_starts_with_no_library_path_set() {
         );
     }
     // `init` opened DuckDB to check what it wrote.
-    assert!(dir.path().join("entities/record/entity.yaml").is_file());
+    assert!(dir.path().join("entities/company/entity.yaml").is_file());
+}
+
+/// Every file under `dir`, as paths below it with `/` between their parts.
+fn files_of(dir: &Path) -> Vec<String> {
+    fn visit(root: &Path, dir: &Path, found: &mut Vec<String>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let entry = entry.unwrap().path();
+            if entry.is_dir() {
+                visit(root, &entry, found);
+            } else {
+                let below: Vec<_> = entry
+                    .strip_prefix(root)
+                    .unwrap()
+                    .iter()
+                    .map(|part| part.to_string_lossy())
+                    .collect();
+                found.push(below.join("/"));
+            }
+        }
+    }
+    let mut found = Vec::new();
+    visit(dir, dir, &mut found);
+    found.sort();
+    found
+}
+
+/// `spool init <arguments>`, run in `dir`.
+fn init_in(dir: &Path, arguments: &[&str]) -> std::process::Output {
+    spool()
+        .current_dir(dir)
+        .arg("init")
+        .args(arguments)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn init_says_what_it_wrote_and_what_to_run_next() {
+    let dir = tempfile::tempdir().unwrap();
+
+    // The first thing a reader sees of a project, every line of it.
+    let created = init_in(dir.path(), &["companies"]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    assert_eq!(
+        text(&created.stdout),
+        "\
+created   companies
+
+  sources/crm.yaml                  the columns of a CRM export
+  entities/company/entity.yaml      what companies are compared by
+  entities/company/rules/           three rules, one line of SQL each
+  transforms/name_key.sql           the lower-case name the rules compare
+  samples/crm-1.csv                 six rows to load first
+  samples/crm-2.csv                 three more for later
+  .gitignore                        keeps the server's data, .spool/, out of Git
+
+  cd companies
+  spool dev                         runs the server on this machine
+"
+    );
+    let project = dir.path().join("companies");
+    assert_eq!(
+        files_of(&project),
+        [
+            ".gitignore",
+            "entities/company/entity.yaml",
+            "entities/company/rules/block/name_prefix.sql",
+            "entities/company/rules/match/similar_name.sql",
+            "entities/company/rules/no_match/different_country.sql",
+            "samples/crm-1.csv",
+            "samples/crm-2.csv",
+            "sources/crm.yaml",
+            "transforms/name_key.sql",
+        ]
+    );
+    assert_eq!(read(&project.join(".gitignore")), ".spool/\n");
+    assert_eq!(
+        read(&project.join("samples/crm-1.csv")),
+        "\
+id,name,country
+c-1,Acorn Tools,GB
+c-2,ACORN TOOLS,GB
+c-3,Acorn Tools Ltd,GB
+c-4,Larkfield Logistics,GB
+c-5,Halden Group,GB
+c-6,Halden Group,US
+"
+    );
+    assert_eq!(
+        read(&project.join("samples/crm-2.csv")),
+        "\
+id,name,country
+c-7,Larkfeild Logistics,GB
+c-8,Kestrel Analytics,US
+c-9,Acorn Tool,GB
+"
+    );
+    // Each rule is one line of SQL under a comment that says what it is.
+    for (rule, sql) in [
+        (
+            "block/name_prefix.sql",
+            "left(l.name_key, 4) = left(r.name_key, 4)",
+        ),
+        (
+            "match/similar_name.sql",
+            "jaro_winkler_similarity(l.name_key, r.name_key) >= 0.92",
+        ),
+        ("no_match/different_country.sql", "l.country <> r.country"),
+    ] {
+        let rule = read(&project.join("entities/company/rules").join(rule));
+        let lines: Vec<&str> = rule
+            .lines()
+            .filter(|line| !line.starts_with("--"))
+            .collect();
+        assert_eq!(lines, [sql], "{rule}");
+    }
+
+    // In the directory the reader is in, with names of their own and a
+    // `.gitignore` that was there: there is nowhere to change to, the file
+    // is left as it was, and nothing calls a `ledger` a CRM or a `person`
+    // a company.
+    let here = dir.path().join("here");
+    std::fs::create_dir(&here).unwrap();
+    std::fs::write(here.join(".gitignore"), "target/\n").unwrap();
+    let created = init_in(&here, &["--entity", "person", "--source", "ledger"]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    assert_eq!(
+        text(&created.stdout),
+        "\
+created   .
+
+  sources/ledger.yaml              the columns of a row from `ledger`
+  entities/person/entity.yaml      what records of type `person` are compared by
+  entities/person/rules/           three rules, one line of SQL each
+  transforms/name_key.sql          the lower-case name the rules compare
+  samples/ledger-1.csv             six rows to load first
+  samples/ledger-2.csv             three more for later
+
+  spool dev                        runs the server on this machine
+"
+    );
+    assert_eq!(read(&here.join(".gitignore")), "target/\n");
+    assert_eq!(
+        read(&here.join("samples/ledger-1.csv")),
+        read(&project.join("samples/crm-1.csv"))
+    );
+
+    // A directory that is not a plain word is quoted for the shell.
+    let created = init_in(dir.path(), &["it's here"]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    let created = text(&created.stdout);
+    assert!(created.contains("\n  cd 'it'\\''s here'\n"), "{created}");
+
+    // Nothing is written over, and then nothing is written at all.
+    let taken = dir.path().join("taken");
+    std::fs::create_dir_all(taken.join("samples")).unwrap();
+    std::fs::write(taken.join("samples/crm-2.csv"), "mine\n").unwrap();
+    let refused = init_in(dir.path(), &["taken"]);
+    assert_eq!(refused.status.code(), Some(1));
+    let complaint = text(&refused.stderr);
+    assert!(
+        complaint.contains("samples/crm-2.csv already exists"),
+        "{complaint}"
+    );
+    assert_eq!(files_of(&taken), ["samples/crm-2.csv"]);
+    assert_eq!(read(&taken.join("samples/crm-2.csv")), "mine\n");
+
+    // Neither is a source whose name is no file name.
+    let refused = init_in(dir.path(), &["odd", "--source", "a/b"]);
+    assert_eq!(refused.status.code(), Some(2));
+    assert!(!dir.path().join("odd").exists());
 }
 
 #[test]
@@ -69,13 +240,19 @@ fn init_scaffolds_a_project_that_info_lists_and_build_compiles() {
     let project = dir.path().join("crm");
 
     let created = succeed(&["init", path(&project), "--entity", "customer"]);
-    assert!(created.contains("entity type `customer`"), "{created}");
+    assert!(
+        created.starts_with(&format!("created   {}\n", project.display())),
+        "{created}"
+    );
     for file in [
-        "sources/example.yaml",
+        "sources/crm.yaml",
         "transforms/name_key.sql",
         "entities/customer/entity.yaml",
-        "entities/customer/rules/block/same_name.sql",
-        "entities/customer/rules/match/same_name.sql",
+        "entities/customer/rules/block/name_prefix.sql",
+        "entities/customer/rules/match/similar_name.sql",
+        "entities/customer/rules/no_match/different_country.sql",
+        "samples/crm-1.csv",
+        "samples/crm-2.csv",
     ] {
         assert!(project.join(file).is_file(), "{file}");
     }
@@ -89,18 +266,28 @@ fn init_scaffolds_a_project_that_info_lists_and_build_compiles() {
     let listing = succeed(&["info", path(&project)]);
     assert!(listing.contains("entity type `customer`"), "{listing}");
     assert!(
-        listing.contains("features  record_id UUID, name VARCHAR"),
+        listing
+            .contains("features  record_id UUID, name VARCHAR, name_key VARCHAR, country VARCHAR"),
         "{listing}"
     );
-    assert!(listing.contains("block     same_name"), "{listing}");
-    assert!(listing.contains("no_match  (none)"), "{listing}");
+    assert!(listing.contains("block     name_prefix"), "{listing}");
+    assert!(listing.contains("no_match  different_country"), "{listing}");
+    assert!(listing.contains("match     similar_name"), "{listing}");
+    // The sample rows are the reader's to load, and no part of the project.
+    assert!(!listing.contains("samples"), "{listing}");
+    assert!(!listing.contains("not used"), "{listing}");
     let listing: Value =
         serde_json::from_str(&succeed(&["info", path(&project), "--json"])).unwrap();
     assert_eq!(listing["entity_types"][0]["name"], "customer");
     assert_eq!(
         listing["entity_types"][0]["rules"],
-        json!({ "block": ["same_name"], "no_match": [], "match": ["same_name"] })
+        json!({
+            "block": ["name_prefix"],
+            "no_match": ["different_country"],
+            "match": ["similar_name"],
+        })
     );
+    assert_eq!(listing["ignored"], json!([]));
     assert_eq!(listing["warnings"], json!([]));
 
     let built = succeed(&["build", path(&project)]);
@@ -398,4 +585,283 @@ fn dev_serves_a_project_directory_and_applies_changes_as_they_are_saved() {
     assert_ne!(third, second);
 
     server.stop();
+}
+
+/// The rows of a sample file, as the objects `POST /v1/ingest` takes: the
+/// first line is the column names, and no value has a comma in it.
+fn sample_rows(file: &Path) -> Vec<Value> {
+    let contents = read(file);
+    let mut lines = contents.lines();
+    let columns: Vec<&str> = lines.next().unwrap().split(',').collect();
+    lines
+        .map(|line| {
+            let values: Vec<&str> = line.split(',').collect();
+            assert_eq!(values.len(), columns.len(), "{line}");
+            Value::Object(
+                columns
+                    .iter()
+                    .zip(values)
+                    .map(|(column, value)| ((*column).to_owned(), value.into()))
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+/// Loads a sample file of a new project into its server, and returns what
+/// the ingest did.
+fn load_sample(server: &Server, file: &Path) -> Value {
+    let loaded = server.call(
+        "/v1/ingest",
+        json!({ "source": "crm", "entity_type": "company", "rows": sample_rows(file) }),
+    );
+    assert_eq!(loaded["run"]["status"], "succeeded", "{loaded}");
+    loaded["run"]["ingest"].clone()
+}
+
+/// Matches the companies that were loaded, and returns what the run did.
+fn match_companies(server: &Server) -> Value {
+    let matched = server.call("/v1/runs", json!({ "entity_type": "company" }));
+    assert_eq!(matched["run"]["status"], "succeeded", "{matched}");
+    matched["run"]["resolution"].clone()
+}
+
+/// The records of the source `crm`, by key: each one's record ID, the name
+/// it is called by, and its identity.
+fn companies(server: &Server) -> std::collections::BTreeMap<String, (String, String, String)> {
+    let text = |value: &Value| value.as_str().unwrap().to_owned();
+    server.read("/v1/records?source=crm")["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|record| {
+            (
+                text(&record["key"]),
+                (
+                    text(&record["id"]),
+                    text(&record["label"]),
+                    text(&record["identity"]),
+                ),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn the_sample_rows_of_a_new_project_match_and_keep_their_identities() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("companies");
+    succeed(&["init", path(&project)]);
+    let server = Server::start(&[
+        "dev",
+        path(&project),
+        "--listen",
+        "127.0.0.1:0",
+        "--seed",
+        "1",
+    ]);
+    let explain = |a: &str, b: &str| {
+        let url = format!("http://{}", server.address);
+        succeed(&["explain", a, b, "--url", &url])
+    };
+
+    // The first file: six rows, and four companies.
+    let first = project.join("samples/crm-1.csv");
+    let loaded = load_sample(&server, &first);
+    assert_eq!(loaded["received"], 6, "{loaded}");
+    assert_eq!(loaded["inserted"], 6, "{loaded}");
+    let matched = match_companies(&server);
+    assert_eq!(matched["new_records"], 6, "{matched}");
+    assert_eq!(matched["candidates"], 4, "{matched}");
+    assert_eq!(
+        matched["judgements"],
+        json!({ "match": 3, "no_match": 1, "unsure": 0 })
+    );
+    assert_eq!(matched["records_assigned"], 6, "{matched}");
+    assert_eq!(matched["identities_created"], 4, "{matched}");
+    assert_eq!(matched["review"], json!([]));
+
+    let before = companies(&server);
+    let identity = |key: &str| before[key].2.as_str();
+    let names: Vec<(&str, &str)> = before
+        .iter()
+        .map(|(key, (_, name, _))| (key.as_str(), name.as_str()))
+        .collect();
+    assert_eq!(
+        names,
+        [
+            ("c-1", "Acorn Tools"),
+            ("c-2", "ACORN TOOLS"),
+            ("c-3", "Acorn Tools Ltd"),
+            ("c-4", "Larkfield Logistics"),
+            ("c-5", "Halden Group"),
+            ("c-6", "Halden Group"),
+        ]
+    );
+    // Three spellings of Acorn Tools are one company. The two Halden Groups
+    // are in different countries, and are two.
+    assert_eq!(identity("c-2"), identity("c-1"));
+    assert_eq!(identity("c-3"), identity("c-1"));
+    let apart = ["c-1", "c-4", "c-5", "c-6"].map(identity);
+    for (index, one) in apart.iter().enumerate() {
+        assert!(!apart[index + 1..].contains(one), "{apart:?}");
+    }
+    // Each for the reason its rule gives.
+    let why = explain("crm:c-1", "crm:c-3");
+    assert!(
+        why.contains(
+            "Run 2 (strategy `rules`) judged them `match` (match rule `similar_name` held)."
+        ),
+        "{why}"
+    );
+    let why = explain("crm:c-5", "crm:c-6");
+    assert!(
+        why.contains(
+            "Run 2 (strategy `rules`) judged them `no_match` (no_match rule `different_country` held)."
+        ),
+        "{why}"
+    );
+
+    // Loading the file again adds nothing.
+    let again = load_sample(&server, &first);
+    assert_eq!(again["inserted"], 0, "{again}");
+    assert_eq!(again["duplicates"], 6, "{again}");
+
+    // The second file: two misspellings join the companies they are, which
+    // keep their IDs, and one company is new.
+    let loaded = load_sample(&server, &project.join("samples/crm-2.csv"));
+    assert_eq!(loaded["inserted"], 3, "{loaded}");
+    let matched = match_companies(&server);
+    assert_eq!(matched["new_records"], 3, "{matched}");
+    assert_eq!(matched["candidates"], 4, "{matched}");
+    assert_eq!(
+        matched["judgements"],
+        json!({ "match": 4, "no_match": 0, "unsure": 0 })
+    );
+    assert_eq!(matched["records_assigned"], 3, "{matched}");
+    assert_eq!(matched["identities_created"], 1, "{matched}");
+    assert_eq!(matched["review"], json!([]));
+
+    let after = companies(&server);
+    for (key, record) in &before {
+        assert_eq!(&after[key], record, "{key} is as it was");
+    }
+    let (_, name, joined) = &after["c-7"];
+    assert_eq!(name, "Larkfeild Logistics");
+    assert_eq!(joined, identity("c-4"));
+    let (_, name, joined) = &after["c-9"];
+    assert_eq!(name, "Acorn Tool");
+    assert_eq!(joined, identity("c-1"));
+    let (_, name, new) = &after["c-8"];
+    assert_eq!(name, "Kestrel Analytics");
+    assert!(
+        before.values().all(|(_, _, identity)| identity != new),
+        "{after:?}"
+    );
+    let info = server.read("/v1/info");
+    assert_eq!(info["store"]["entity_types"][0]["records"], 9, "{info}");
+    assert_eq!(info["store"]["entity_types"][0]["identities"], 5, "{info}");
+
+    // A record's ID is made from its source, its key and what the row
+    // holds, so these are the ones every reader gets, and a page that shows
+    // the sample prints them. If a sample row changes, so does that page.
+    let ids: Vec<(&str, &str)> = after
+        .iter()
+        .map(|(key, (id, _, _))| (key.as_str(), id.as_str()))
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            ("c-1", "ab8e9d59-0aaa-96b9-ddb7-db0bff7a9356"),
+            ("c-2", "a780fcfe-cb2f-21dd-25ea-11db898fd6a2"),
+            ("c-3", "31075f20-6900-838b-f5af-f8c6576744a4"),
+            ("c-4", "4b1bc703-9041-0989-d0eb-4df5e9eae0f2"),
+            ("c-5", "38f040c9-82b9-2f94-813b-697309e52dab"),
+            ("c-6", "34a5d12a-11a0-e461-c6e4-0576f546d165"),
+            ("c-7", "bdbab4b2-e260-2b34-b08f-3fae6a2018a9"),
+            ("c-8", "7da2b0d2-3601-e533-efa5-e1068cce5344"),
+            ("c-9", "34c3d52d-e53b-1559-7404-1892fb1fd4e3"),
+        ]
+    );
+
+    server.stop();
+}
+
+#[test]
+fn a_second_server_on_a_store_or_a_port_says_what_is_wrong() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("companies");
+    succeed(&["init", path(&project)]);
+    let store = project.join(".spool/dev.duckdb");
+    let dev = |project: &Path, listen: &str| {
+        Server::start_with(&["dev", path(project), "--listen", listen])
+    };
+    let running = dev(&project, "127.0.0.1:0").unwrap();
+
+    // The same project again. DuckDB refuses the second process the store,
+    // in words about a lock and a page of its own documentation.
+    let stopped = dev(&project, "127.0.0.1:0").unwrap_err();
+    assert_eq!(stopped.code, Some(1));
+    let said = stopped.output;
+    assert!(
+        said.starts_with(&format!(
+            "spool: the store {} is open in another process",
+            store.display()
+        )),
+        "{said}"
+    );
+    assert!(
+        said.contains("most likely a `spool dev` that is already running on this project"),
+        "{said}"
+    );
+    assert!(said.contains("stop it with Ctrl-C"), "{said}");
+    for raw in ["IO Error", "lock", "duckdb.org"] {
+        assert!(!said.contains(raw), "{said}");
+    }
+
+    // Any other command that opens the store is told the same thing.
+    build(&project);
+    let applied = run(&["apply", path(&project), "--store", path(&store)]);
+    assert_eq!(applied.status.code(), Some(1));
+    let said = text(&applied.stderr);
+    assert!(
+        said.starts_with(&format!(
+            "spool: the store at {} is open in another process",
+            store.display()
+        )),
+        "{said}"
+    );
+    assert!(said.contains("stop that one first"), "{said}");
+    assert!(!said.contains("duckdb.org"), "{said}");
+
+    // Another project on the port the first one has.
+    let other = dir.path().join("other");
+    succeed(&["init", path(&other)]);
+    let stopped = dev(&other, &running.address).unwrap_err();
+    assert_eq!(stopped.code, Some(1));
+    let said = stopped.output;
+    let (host, port) = running.address.rsplit_once(':').unwrap();
+    let next = match port.parse::<u16>().unwrap() {
+        u16::MAX => u16::MAX - 1,
+        port => port + 1,
+    };
+    let next = format!("{host}:{next}");
+    assert!(
+        said.contains(&format!(
+            "spool: cannot listen on {}: something else is listening there",
+            running.address
+        )),
+        "{said}"
+    );
+    assert!(said.contains(&format!("`--listen {next}`")), "{said}");
+    assert!(said.contains(&format!("SPOOL_URL=http://{next}")), "{said}");
+    assert!(!said.contains("os error"), "{said}");
+
+    // The first server is as it was, and the second project starts on a
+    // port of its own.
+    assert_eq!(running.read("/v1/info")["store"]["head"], 0);
+    let second = dev(&other, "127.0.0.1:0").unwrap();
+    assert_eq!(second.read("/v1/info")["store"]["head"], 0);
+    second.stop();
+    running.stop();
 }
