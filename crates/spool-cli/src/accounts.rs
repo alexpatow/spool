@@ -308,17 +308,19 @@ impl Accounts {
             .ok_or(Refused::WrongPassword)?;
         password_auth::verify_password(current, &stored).map_err(|_| Refused::WrongPassword)?;
         let hash = hashed(new)?;
-        let connection = self.connection();
+        let mut connection = self.connection();
+        let transaction = connection.transaction()?;
         // Only over the password that was checked: one an admin set in the
         // meantime stays.
-        let changed = connection.execute(
+        let changed = transaction.execute(
             "UPDATE person SET password = ? WHERE id = ? AND password = ?",
             params![hash, id, stored],
         )?;
         if changed == 0 {
             return Err(Refused::WrongPassword);
         }
-        end_sessions(&connection, id)?;
+        end_sessions(&transaction, id)?;
+        transaction.commit()?;
         Ok(mark(&hash))
     }
 }

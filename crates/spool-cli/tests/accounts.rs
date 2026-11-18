@@ -368,3 +368,31 @@ fn only_so_many_passwords_are_checked_at_once() {
     let sign_in = json!({ "username": "ada", "password": PASSWORD });
     post(&server, "/auth/sign-in", "", sign_in).ok();
 }
+
+#[test]
+fn a_body_too_large_to_be_about_an_account_is_not_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let (server, code) = served(dir.path());
+    // Over what is read by the few bytes around it, so that the server has
+    // taken all of it in by the time it answers.
+    let long = "x".repeat(64 * 1024);
+    // Before anyone has an account, and so from anyone at all.
+    for (path, body) in [
+        (
+            "/auth/sign-in",
+            json!({ "username": "ada", "password": long }),
+        ),
+        (
+            "/auth/setup",
+            json!({ "code": code, "username": "ada", "name": "Ada", "password": long }),
+        ),
+        (
+            "/auth/password",
+            json!({ "current": long, "new": PASSWORD }),
+        ),
+    ] {
+        post(&server, path, "", body).error(413, "too_large");
+    }
+    // The code was not used up.
+    set_up(&server, &code);
+}

@@ -304,8 +304,10 @@ function all(): Case[] {
   asNobody("session: nobody", 200, "/auth/session");
   asNobody("session: a cookie that was made up", 401, "/v1/info", undefined, { cookie: "spool_session=AAAA" });
   asNobody("sign in: no account", 401, "/auth/sign-in", { username: "root", password: "x" });
-  asNobody("sign in: a username of 100k", 401, "/auth/sign-in", { username: "a".repeat(100_000), password: "x" });
-  asNobody("sign in: a password of 1M", 401, "/auth/sign-in", { username: "root", password: "x".repeat(1_000_000) });
+  asNobody("sign in: a username of 10k", 401, "/auth/sign-in", { username: "a".repeat(10_000), password: "x" });
+  asNobody("sign in: a password of 10k", 401, "/auth/sign-in", { username: "root", password: "x".repeat(10_000) });
+  asNobody("sign in: a password of 1M", 413, "/auth/sign-in", { username: "root", password: "x".repeat(1_000_000) });
+  asNobody("setup: a password of 1M", 413, "/auth/setup", { code: "", ...person, password: "x".repeat(1_000_000) });
   asNobody("sign in: nothing", 400, "/auth/sign-in", {});
   for (let tried = 0; tried <= 10; tried++) {
     asNobody(`sign in: guess ${tried + 1}`, tried < 10 ? 401 : 429, "/auth/sign-in", {

@@ -99,6 +99,10 @@ const ATTEMPT_WINDOW: Duration = Duration::from_secs(15 * 60);
 /// try a username, so what is kept of the tries has to have an end.
 const MAX_ATTEMPTED: usize = 10_000;
 
+/// The largest body the paths that sign people in read. Anyone can send one,
+/// and what they are about is a few names and a password.
+const MAX_AUTH_BODY_BYTES: usize = 64 * 1024;
+
 /// The most passwords hashed at once. A hash is made to cost time and memory,
 /// and a sign-in costs one whether or not the account exists, so anyone who
 /// reaches the server could otherwise have it make as many as they sent.
@@ -249,7 +253,10 @@ pub fn router(engine: Arc<Engine>, options: &ServerOptions) -> Router {
         .route("/sign-out", post(sign_out))
         .route("/setup", post(set_up))
         .route("/password", post(change_password))
-        .fallback(not_found);
+        .fallback(not_found)
+        .layer(DefaultBodyLimit::max(
+            options.max_body_bytes.min(MAX_AUTH_BODY_BYTES),
+        ));
     let v1 = Router::new()
         .route("/info", get(info))
         .route("/ingest", post(ingest))
