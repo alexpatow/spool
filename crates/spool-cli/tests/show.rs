@@ -651,8 +651,20 @@ fn a_mention_is_shown_in_its_document() {
     assert_eq!(bundle["mention"]["text"], "Anvil");
     assert_eq!(bundle["mention"]["document"], document);
     assert_eq!(bundle["mention"]["cut_before"], true);
+    // The list names a mention by its document and its place there, as
+    // an explanation does, and the name finds the record.
     let found = shown(&server, &["show", "records", "--document", document]);
-    has(&found, "notes:m1  anvil  -");
+    has(&found, "notes:a.txt[105-110]  anvil  -");
+    assert_eq!(
+        shown(&server, &["show", "record", "notes:a.txt[105-110]"]),
+        record
+    );
+    let (code, complaint) = refused(&server, &["show", "record", "notes:a.txt[1-2]"]);
+    assert_eq!(code, Some(1));
+    assert_eq!(
+        complaint,
+        "spool: there is no record with key `a.txt[1-2]` from source `notes`\n"
+    );
 
     // Evidence that points outside the document is shown as it is.
     let evidence = json!({ "document": document, "start": 5, "end": 5000 });
@@ -667,6 +679,31 @@ fn a_mention_is_shown_in_its_document() {
     let record = shown(&server, &["show", "record", "notes:m2"]);
     has(&record, "  end       5000");
     assert!(!record.contains("in document"), "{record}");
+
+    // A document's mentions are listed in the order of its text. The key an
+    // extractor gives one begins with the ID of the document, and by those
+    // keys `[105-110]` would come before `[12-17]`.
+    let evidence = json!({ "document": document, "key": "a.txt", "start": 12, "end": 17 });
+    server.call(
+        "/v1/ingest",
+        json!({
+            "source": "notes",
+            "entity_type": "thing",
+            "rows": [{ "id": "a-first", "code": "xs", "where": evidence.to_string() }],
+        }),
+    );
+    let listed = shown(&server, &["show", "records", "--source", "notes"]);
+    let names: Vec<&str> = listed
+        .lines()
+        .skip(1)
+        .take(3)
+        .map(|line| line.split_whitespace().next().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        ["notes:a.txt[12-17]", "notes:a.txt[105-110]", "notes:m2"],
+        "{listed}"
+    );
 
     // A mention is named by its document and its place in it, when its
     // evidence says both.

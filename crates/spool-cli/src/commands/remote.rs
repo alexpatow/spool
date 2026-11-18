@@ -27,6 +27,37 @@ pub const WAIT_MS: u64 = 30_000;
 /// The options every command that calls a server takes.
 pub const VALUES: [&str; 2] = ["--url", "--token"];
 
+/// The source a file is named after, of the `sources` a project declares:
+/// the one its name begins with, up to the dot or to a character that is
+/// neither a letter nor a digit. `crm.csv`, `crm-1.csv` and `crm_2024.csv`
+/// are named after `crm`, and `crmx.csv` is not. Of two such sources it is
+/// the longer name: `crm-eu-1.csv` is named after `crm-eu`.
+///
+/// A command that takes a file takes its source from this when the project
+/// has several, so that the files of a new project need no `--source`.
+pub fn named_after<'a>(file: &str, sources: &[&'a str]) -> Option<&'a str> {
+    let stem = std::path::Path::new(file).file_stem()?.to_str()?;
+    sources
+        .iter()
+        .filter(|source| {
+            stem.strip_prefix(**source).is_some_and(|rest| {
+                !source.is_empty() && !rest.chars().next().is_some_and(char::is_alphanumeric)
+            })
+        })
+        .max_by_key(|source| source.len())
+        .copied()
+}
+
+/// Names in a sentence: `a`, `a` and `b`, or `a`, `b` and `c`.
+pub fn listed(names: &[&str]) -> String {
+    let quoted: Vec<String> = names.iter().map(|name| format!("`{name}`")).collect();
+    match quoted.as_slice() {
+        [] => String::new(),
+        [only] => only.clone(),
+        [first @ .., last] => format!("{} and {last}", first.join(", ")),
+    }
+}
+
 pub struct Remote {
     agent: ureq::Agent,
     pub url: String,
@@ -243,4 +274,44 @@ pub fn print_json(value: &Value) {
         "{}",
         serde_json::to_string_pretty(value).expect("JSON that was read can be written")
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_file_is_named_after_the_source_its_name_begins_with() {
+        let sources = ["crm", "crm-eu", "notes"];
+        for (file, source) in [
+            ("crm.csv", Some("crm")),
+            ("crm-1.csv", Some("crm")),
+            ("samples/crm_2024.tsv", Some("crm")),
+            ("crm.2024.csv", Some("crm")),
+            ("crm", Some("crm")),
+            ("samples/notes-1.txt", Some("notes")),
+            // The longer name of two that fit.
+            ("crm-eu-1.csv", Some("crm-eu")),
+            ("crm-europe.csv", Some("crm")),
+            // A name that goes on in letters or digits is another name.
+            ("crms.csv", None),
+            ("crm2.csv", None),
+            ("CRM-1.csv", None),
+            ("old-crm.csv", None),
+            // The directory a file is in says nothing.
+            ("crm/rows.csv", None),
+            ("-", None),
+            ("", None),
+        ] {
+            assert_eq!(named_after(file, &sources), source, "{file}");
+        }
+        assert_eq!(named_after("crm.csv", &[]), None);
+    }
+
+    #[test]
+    fn names_are_listed_as_a_sentence_lists_them() {
+        assert_eq!(listed(&["crm"]), "`crm`");
+        assert_eq!(listed(&["crm", "notes"]), "`crm` and `notes`");
+        assert_eq!(listed(&["a", "b", "c"]), "`a`, `b` and `c`");
+    }
 }

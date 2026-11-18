@@ -103,8 +103,9 @@ const LABEL_MEMBERS: u64 = 100;
 
 /// Which records to list. Results are ordered by source and key, as text:
 /// the rows of one source are together, and the versions of one row follow
-/// each other, the oldest first. Records without a key come last in their
-/// source.
+/// each other, the oldest first. The mentions of a document are together
+/// too, in the order they stand in its text. Records without a key come
+/// last in their source.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RecordFilter {
     pub entity_type: Option<EntityType>,
@@ -419,8 +420,17 @@ fn holds_words(words: &str) -> String {
 /// Where the record `o` stands in a list of records, as SQL: a row of
 /// values none of which is null, so that two of them compare the way the
 /// list is ordered.
-const RECORD_ORDER: &str = "o.source_id, o.source_key IS NULL, coalesce(o.source_key, ''), \
-     o.entity_type, o.ingest_run, o.record_id";
+///
+/// A mention stands where [`RecordEntry::name`] puts it, under the key of
+/// its document and then at its place there. Its own key begins with the
+/// ID of the document and ends with the span as text, which would put the
+/// documents in no order a reader knows and `[119-142]` before `[54-69]`.
+const RECORD_ORDER: &str = "o.source_id, o.source_key IS NULL, \
+     coalesce(CASE WHEN json_extract_string(o.evidence, '$.document') IS NOT NULL \
+                   THEN json_extract_string(o.evidence, '$.key') END, o.source_key, ''), \
+     coalesce(CASE WHEN json_extract_string(o.evidence, '$.document') IS NOT NULL \
+                   THEN TRY_CAST(json_extract_string(o.evidence, '$.start') AS BIGINT) END, 0), \
+     coalesce(o.source_key, ''), o.entity_type, o.ingest_run, o.record_id";
 
 pub(crate) fn records(conn: &Connection, filter: &RecordFilter) -> Result<Vec<RecordEntry>> {
     // A page continues from where a record stands, so the record has to be

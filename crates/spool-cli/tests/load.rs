@@ -562,8 +562,8 @@ fn load_asks_which_source_and_type_when_the_project_has_several() {
 
     assert_eq!(
         refused(&["rows.csv"]),
-        "say which source the rows come from with `--source`: the project has `crm`, \
-         `registry`, `spare`"
+        "the project has the sources `crm`, `registry` and `spare`, and rows.csv is named after \
+         none of them: say which its rows come from with `--source`"
     );
     assert_eq!(
         refused(&["rows.csv", "--source", "crm"]),
@@ -572,7 +572,27 @@ fn load_asks_which_source_and_type_when_the_project_has_several() {
     );
     assert_eq!(
         refused(&["rows.csv", "--type", "company"]),
-        "say which source the rows come from with `--source`: `company` reads `crm`, `registry`"
+        "`company` reads the sources `crm` and `registry`, and rows.csv is named after neither: \
+         say which its rows come from with `--source`"
+    );
+    // Standard input has no name to go by.
+    let mut child = server
+        .spool_in(&project, &["load", "-", "--type", "company"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"id,name\n1,Ada\n")
+        .unwrap();
+    assert_eq!(
+        failure(&child.wait_with_output().unwrap(), &["-"]),
+        "`company` reads the sources `crm` and `registry`: say which the rows come from with \
+         `--source`"
     );
 
     // Names the project does not have, and a pair that does not go together.
@@ -620,6 +640,38 @@ loaded  1 row into source `registry`, type `company`: 1 new
 next    `spool match --type company` places it in an identity
 "
     );
+    // A file named after a source holds that source's rows: the name up to
+    // the first character that is no letter or digit, wherever the file is.
+    write(
+        &project.join("exports/registry-2024.csv"),
+        "id,name\n7,Lin\n",
+    );
+    let (printed, _) = load(&server, &project, &["exports/registry-2024.csv"]);
+    assert!(
+        printed.starts_with("loaded  1 row into source `registry`, type `company`: 1 new\n"),
+        "{printed}"
+    );
+    // The name says the source and nothing of the type, and a name that
+    // only begins like a source's is not after it.
+    write(&project.join("crm.csv"), "id,name\n8,Kay\n");
+    assert_eq!(
+        refused(&["crm.csv"]),
+        "say which entity type the rows are records of with `--type`: source `crm` is read by \
+         `company`, `person`"
+    );
+    write(&project.join("crms.csv"), "id,name\n8,Kay\n");
+    assert_eq!(
+        refused(&["crms.csv", "--type", "company"]),
+        "`company` reads the sources `crm` and `registry`, and crms.csv is named after neither: \
+         say which its rows come from with `--source`"
+    );
+    // What is asked for is what is done, whatever the file is called.
+    let (printed, _) = load(&server, &project, &["crm.csv", "--source", "registry"]);
+    assert!(
+        printed.starts_with("loaded  1 row into source `registry`, type `company`: 1 new\n"),
+        "{printed}"
+    );
+
     write(&project.join("more.csv"), "id,name\n2,Grace\n");
     let (printed, _) = load(
         &server,
@@ -637,5 +689,125 @@ next    `spool match --type company` places it in an identity
         refused(&["rows.csv", "--source", "crm", "--type", "company"]),
         "ingest rejected: a row with the same source, key and content is already stored as \
          entity type `person`"
+    );
+}
+
+/// A new project with a second source, of what is found in documents, and a
+/// document: a project whose rows and whose text are both records.
+fn companies_with_notes(dir: &Path) -> std::path::PathBuf {
+    let project = init_companies(dir);
+    write(
+        &project.join("sources/notes.yaml"),
+        "# What a record found in a note may say.\ncolumns: [name]\n",
+    );
+    let entity = project.join("entities/company/entity.yaml");
+    let mut yaml = std::fs::read_to_string(&entity).unwrap();
+    yaml += "  notes:\n    name: name\n    name_key: { from: name, transform: name_key }\n";
+    write(&entity, &yaml);
+    write(
+        &project.join("samples/notes-1.txt"),
+        "Call with Dana Reyes on 12 November. She has moved to Acorn Tools Ltd and runs\n\
+         purchasing there. They now ship through Larkfield Logistics Ltd, and she asked\n\
+         whether we work with Brightwater Foods Ltd, their new supplier.\n",
+    );
+    project
+}
+
+#[test]
+fn a_project_with_a_source_of_documents_loads_its_rows_by_the_name_of_the_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = companies_with_notes(dir.path());
+    let server = Server::dev(&project);
+    let refused = |arguments: &[&str]| refused(&server, &project, arguments);
+
+    // The sample rows need no `--source`: the files are named after theirs.
+    for (file, rows) in [("samples/crm-1.csv", 6), ("samples/crm-2.csv", 3)] {
+        let (printed, _) = load(&server, &project, &[file]);
+        assert_eq!(
+            printed,
+            format!(
+                "\
+loaded  {rows} rows into source `crm`, type `company`: {rows} new
+next    `spool match` places them in identities
+"
+            )
+        );
+    }
+    assert_eq!(records(&server, "crm").len(), 9);
+    assert_eq!(records(&server, "notes"), Vec::new());
+
+    // A document is not rows, and another command reads it.
+    assert_eq!(
+        refused(&["samples/notes-1.txt"]),
+        "samples/notes-1.txt does not look like rows: its first line names no column that a \
+         source of the project lists. `spool load` reads CSV, with the names of the columns on \
+         its first line.\n\
+         If it is a document, `spool extract samples/notes-1.txt` reads it: an extractor finds \
+         the records in its text."
+    );
+    write(
+        &project.join("call.md"),
+        "# A call\n\nWith Acorn Tools Ltd.\n",
+    );
+    assert!(
+        refused(&["call.md"]).ends_with("\nIf it is a document, `spool extract call.md` reads it: an extractor finds the records in its text."),
+    );
+    // A first line that cannot name columns is said as it is of any file,
+    // with where a document goes.
+    write(&project.join("letter.txt"), "Dear Dana,\n\nThank you.\n");
+    assert_eq!(
+        refused(&["letter.txt"]),
+        "letter.txt cannot be read as CSV: line 1: column 2 has no name. The first line has to \
+         name the columns\n\
+         If it is a document, `spool extract letter.txt` reads it: an extractor finds the \
+         records in its text."
+    );
+    // Nothing is said of documents where they are not the question: a file
+    // with nothing in it, a file of rows, and one said to hold rows.
+    write(&project.join("empty.txt"), "");
+    assert_eq!(
+        refused(&["empty.txt"]),
+        "empty.txt cannot be read as CSV: it is empty: the first line has to name the columns"
+    );
+    assert_eq!(
+        refused(&["samples/notes-1.txt", "--delimiter", ","]),
+        "samples/notes-1.txt has a column `Call with Dana Reyes on 12 November. She has moved \
+         to Acorn Tools Ltd and runs`, which sources/notes.yaml does not list. It lists `name`. \
+         Add the column to that file to keep it, or leave it out of the rows."
+    );
+    assert_eq!(ingest_runs(&server).len(), 2);
+
+    // Rows can be kept in a text file, and rows of the other source are
+    // loaded as any are.
+    write(
+        &project.join("crm-export.txt"),
+        "id,name\nc-30,Zennor Glass\n",
+    );
+    let (printed, _) = load(&server, &project, &["crm-export.txt"]);
+    assert!(
+        printed.starts_with("loaded  1 row into source `crm`, type `company`: 1 new\n"),
+        "{printed}"
+    );
+    write(&project.join("notes.csv"), "name\nAcorn Tools Ltd\n");
+    let (printed, _) = load(&server, &project, &["notes.csv"]);
+    assert!(
+        printed.starts_with("loaded  1 row into source `notes`, type `company`: 1 new\n"),
+        "{printed}"
+    );
+
+    // A file named after neither source needs to be told.
+    write(
+        &project.join("more.csv"),
+        "id,name,country\nc-31,Yarrow Mills,GB\n",
+    );
+    assert_eq!(
+        refused(&["more.csv"]),
+        "the project has the sources `crm` and `notes`, and more.csv is named after neither: \
+         say which its rows come from with `--source`"
+    );
+    let (printed, _) = load(&server, &project, &["more.csv", "--source", "crm"]);
+    assert!(
+        printed.starts_with("loaded  1 row into source `crm`, type `company`: 1 new\n"),
+        "{printed}"
     );
 }

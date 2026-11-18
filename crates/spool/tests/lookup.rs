@@ -13,9 +13,14 @@ use spool::{
 /// The tests' things, and two sources more whose rows hold numbers.
 fn engine() -> Engine {
     let mut thing = thing();
-    thing.entity.yaml += "  till:\n    name: name\n    code: code\n  scale: {}\n";
+    thing.entity.yaml +=
+        "  till:\n    name: name\n    code: code\n  scale: {}\n  notes:\n    name: name\n";
     let mut project = project_of(vec![thing]);
     project.sources.extend([
+        YamlFile::new(
+            "notes",
+            "key: id\nevidence: where\ncolumns: [id, name, where]\n",
+        ),
         YamlFile::new(
             "till",
             "key: id\ncolumns: [id, name, price, stocked, code]\n",
@@ -212,6 +217,71 @@ fn records_are_listed_by_source_and_key() {
         matches!(refused, Error::UnknownRecord(id) if id == unknown),
         "{refused}"
     );
+}
+
+#[test]
+fn mentions_are_listed_by_their_document_and_their_place_in_it() {
+    let engine = engine();
+    // What an extractor writes: a key that begins with the ID of the
+    // document, and evidence that says where in it the record was found.
+    let (first, second) = (
+        "11111111-1111-7111-8111-111111111111",
+        "99999999-9999-7999-8999-999999999999",
+    );
+    let mention = |document: &str, key: &str, start: u64, end: u64| {
+        json!({
+            "id": format!("{document}#thing:{start}-{end}"),
+            "name": format!("at {start}"),
+            "where": json!({ "document": document, "key": key, "start": start, "end": end })
+                .to_string(),
+        })
+    };
+    engine
+        .ingest(
+            "notes",
+            "thing",
+            json_rows(json!([
+                mention(first, "b.txt", 105, 110),
+                mention(first, "b.txt", 12, 20),
+                mention(second, "a.txt", 7, 9),
+                { "id": "k", "name": "a row" },
+                { "id": "z", "name": "a row of a page", "where": json!({ "page": 4 }).to_string() },
+            ])),
+        )
+        .unwrap();
+
+    // The documents are in the order of their keys, which is what a reader
+    // knows them by, and a document's mentions in the order of the text:
+    // by their keys, `[105-110]` would come before `[12-20]`.
+    let all = engine.records(&RecordFilter::default()).unwrap();
+    let names: Vec<String> = all.iter().map(|record| record.name()).collect();
+    assert_eq!(
+        names,
+        [
+            "notes:a.txt[7-9]",
+            "notes:b.txt[12-20]",
+            "notes:b.txt[105-110]",
+            "notes:k",
+            "notes:z",
+        ]
+    );
+    for limit in 1..=all.len() as u64 {
+        let mut walked = Vec::new();
+        let mut after = None;
+        loop {
+            let page = engine
+                .records(&RecordFilter {
+                    limit,
+                    after,
+                    ..RecordFilter::default()
+                })
+                .unwrap();
+            let Some(last) = page.last() else { break };
+            after = Some(last.id);
+            walked.extend(page);
+        }
+        assert_eq!(walked, all, "in pages of {limit}");
+    }
 }
 
 #[test]

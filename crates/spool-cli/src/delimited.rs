@@ -15,6 +15,9 @@ use arrow::array::{ArrayRef, StringBuilder};
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use arrow::record_batch::RecordBatch;
 
+/// What is wrong with text that has nothing in it.
+pub const EMPTY: &str = "it is empty: the first line has to name the columns";
+
 /// Why the text could not be read as rows, in words for the person who
 /// sent it.
 #[derive(Debug, PartialEq, Eq)]
@@ -44,9 +47,7 @@ impl<R: Read> Reader<R> {
             .from_reader(input);
         let header = records.byte_headers().map_err(|error| describe(&error))?;
         if header.is_empty() {
-            return Err(Malformed(
-                "it is empty: the first line has to name the columns".to_owned(),
-            ));
+            return Err(Malformed(EMPTY.to_owned()));
         }
         let mut names: Vec<&str> = Vec::with_capacity(header.len());
         for (index, name) in header.iter().enumerate() {

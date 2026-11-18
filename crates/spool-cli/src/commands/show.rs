@@ -14,7 +14,7 @@ use spool::{
     DocumentEntry, DraftEntry, DraftSummary, Explanation, HistoryEntry, IdentitySummary,
     IdentityView, RecordEntry, ReviewEntry, RuleResult, RunEntry,
 };
-use spool_cli::api::{Info, RecordList};
+use spool_cli::api::{DocumentList, Info, RecordList};
 
 use super::remote::{self, Remote, print_json, typed};
 use crate::Failure;
@@ -38,7 +38,8 @@ much there is of each.
   log                            the changeset log
 
 A record is named by its ID or as <source>:<key>, which names the
-latest version of that row.
+latest version of that row. A record found in a document is named as the
+lists name it, <source>:<document>[<start>-<end>].
 
 Options:
   --type <name>      only this entity type (runs, identities, records,
@@ -71,7 +72,8 @@ constraints and review items that name them, and what the project's rules
 say about the pair as it is now.
 
 A record is named by its ID or as <source>:<key>, which names the
-latest version of that row.
+latest version of that row. A record found in a document is named as the
+lists name it, <source>:<document>[<start>-<end>].
 
 Options:
   --url <url>        the server (default: $SPOOL_URL, or http://127.0.0.1:7765)
@@ -182,7 +184,8 @@ pub fn explain(arguments: &[String]) -> Result<(), Failure> {
 }
 
 /// The record a reference names: an ID, or `<source>:<key>`, which
-/// names the version of the row that nothing has replaced.
+/// names the version of the row that nothing has replaced, or a mention as
+/// the lists name it, `<source>:<document>[<start>-<end>]`.
 fn find_record(remote: &Remote, reference: &str) -> Result<RecordEntry, Failure> {
     if reference.parse::<RecordId>().is_ok() {
         let found = remote.get(&format!("/records/{reference}"), &[], || {
@@ -216,11 +219,76 @@ fn find_record(remote: &Remote, reference: &str) -> Result<RecordEntry, Failure>
             None => break,
         }
     }
-    last.ok_or_else(|| {
-        Failure::Failed(format!(
-            "there is no record with key `{key}` from source `{source}`"
-        ))
-    })
+    if let Some(last) = last {
+        return Ok(last);
+    }
+    if let Some(mention) = find_mention(remote, reference, source, key)? {
+        return Ok(mention);
+    }
+    Err(Failure::Failed(format!(
+        "there is no record with key `{key}` from source `{source}`"
+    )))
+}
+
+/// The record found at a place in a document, named as
+/// [`RecordEntry::name`] names it. Of the versions of the document, it is
+/// the one in the latest that has such a record.
+fn find_mention(
+    remote: &Remote,
+    reference: &str,
+    source: &str,
+    place: &str,
+) -> Result<Option<RecordEntry>, Failure> {
+    let Some((document, span)) = place
+        .strip_suffix(']')
+        .and_then(|place| place.rsplit_once('['))
+    else {
+        return Ok(None);
+    };
+    let is_span = span
+        .split_once('-')
+        .is_some_and(|(start, end)| start.parse::<u64>().is_ok() && end.parse::<u64>().is_ok());
+    if !is_span {
+        return Ok(None);
+    }
+    let mut versions: Vec<DocumentEntry> = Vec::new();
+    let mut query = vec![("source", source.to_owned()), ("key", document.to_owned())];
+    loop {
+        let page: DocumentList = typed(&remote.list("/documents", &query)?)?;
+        versions.extend(page.documents);
+        let Some(next) = page.next else { break };
+        query.truncate(2);
+        query.push(("after", next.to_string()));
+    }
+    // The version nothing replaced first.
+    versions.sort_by_key(|version| version.superseded_by.is_some());
+    for version in versions {
+        let mut found = Vec::new();
+        let mut query = vec![("document", version.id.to_string())];
+        loop {
+            let page: RecordList = typed(&remote.list("/records", &query)?)?;
+            found.extend(
+                page.records
+                    .into_iter()
+                    .filter(|record| record.name() == reference),
+            );
+            let Some(next) = page.next else { break };
+            query.truncate(1);
+            query.push(("after", next.to_string()));
+        }
+        match found.len() {
+            0 => {}
+            1 => return Ok(found.pop()),
+            several => {
+                let ids: Vec<String> = found.iter().map(|record| record.id.to_string()).collect();
+                return Err(Failure::Failed(format!(
+                    "{several} records are named `{reference}`: name one by its ID, of {}",
+                    ids.join(", ")
+                )));
+            }
+        }
+    }
+    Ok(None)
 }
 
 struct View<'a> {
@@ -735,7 +803,7 @@ impl View<'_> {
                         row.push(record.entity_type.to_string());
                     }
                     row.extend([
-                        named(&record.source, record.key.as_deref()),
+                        record_name(record),
                         label(record.label.as_deref()),
                         record
                             .identity
@@ -1056,7 +1124,7 @@ impl View<'_> {
                 .map(|record| {
                     vec![
                         record.id.to_string(),
-                        named(&record.source, record.key.as_deref()),
+                        record_name(record),
                         match (record.identity, record.retracted) {
                             (Some(identity), _) => format!("in identity {identity}"),
                             (None, Some(run)) => {
@@ -1480,6 +1548,16 @@ fn named(source: &str, key: Option<&str>) -> String {
     match key {
         Some(key) => format!("{source}:{key}"),
         None => format!("{source} (no key)"),
+    }
+}
+
+/// What a list calls a record: its source and key, and a mention its
+/// document and its place there, as an explanation does. The key of a
+/// mention is the ID of its document and more, which nobody reads.
+fn record_name(record: &RecordEntry) -> String {
+    match &record.key {
+        Some(_) => record.name(),
+        None => named(&record.source, None),
     }
 }
 

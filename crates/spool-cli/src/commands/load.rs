@@ -12,7 +12,7 @@ use arrow::record_batch::RecordBatch;
 use serde_json::{Value, json};
 use spool::{DeclaredSource, IngestReport, RunStatus};
 use spool_cli::api::{ARROW_STREAM, Info};
-use spool_cli::delimited::Reader;
+use spool_cli::delimited::{EMPTY, Reader};
 
 use super::remote::{self, Remote, WAIT_MS, print_json, unsuccessful};
 use super::show::{count, fields};
@@ -36,7 +36,8 @@ same key with other content is a new version of that row.
 
 Options:
   --source <name>    the source the rows come from (default: the only source
-                     the project declares)
+                     the project declares, or the one the file is named
+                     after: crm-1.csv holds rows of `crm`)
   --type <name>      the entity type they are records of (default: the only
                      type whose mapping reads the source)
   --delimiter <c>    the character between the fields, or `tab` (default: a
@@ -52,6 +53,10 @@ Options:
 /// About how much one request holds. A server reads 256 MiB unless it was
 /// told otherwise, and this is well inside that.
 const PART_BYTES: usize = 32 * 1024 * 1024;
+
+/// The characters a file may have between its fields when it is not the
+/// one it was read with.
+const OTHER_DELIMITERS: [char; 4] = [';', '\t', '|', ','];
 
 pub fn load(arguments: &[String]) -> Result<(), Failure> {
     let arguments = super::arguments(
@@ -87,7 +92,15 @@ pub fn load(arguments: &[String]) -> Result<(), Failure> {
             format(delimiter)
         ))
     };
-    let mut reader = Reader::new(input, delimiter).map_err(|why| unreadable(&why))?;
+    // A text file that was not said to hold rows may be a document.
+    let may_be_text = arguments.value("--delimiter").is_none() && named_as_text(file);
+    let mut reader = Reader::new(input, delimiter).map_err(|why| {
+        let (Failure::Failed(said) | Failure::Usage(said)) = unreadable(&why);
+        Failure::Failed(match may_be_text && why.0 != EMPTY {
+            true => format!("{said}\n{}", extract_reads(&name)),
+            false => said,
+        })
+    })?;
     let columns: Vec<String> = reader
         .schema()
         .fields()
@@ -97,8 +110,30 @@ pub fn load(arguments: &[String]) -> Result<(), Failure> {
 
     let remote = Remote::new(&arguments);
     let info = remote.info()?;
+    // A first line that names no column of any source is prose, unless
+    // it is the columns with another character between them.
+    let listed = |column: &str| {
+        let lists = |source: &DeclaredSource| source.columns.iter().any(|known| known == column);
+        info.store.sources.iter().any(lists)
+    };
+    if may_be_text
+        && !columns.iter().any(|column| {
+            listed(column)
+                || column
+                    .split(OTHER_DELIMITERS)
+                    .any(|part| listed(part.trim()))
+        })
+    {
+        return Err(Failure::Failed(format!(
+            "{name} does not look like rows: its first line names no column that a source of \
+             the project lists. `spool load` reads CSV, with the names of the columns on its \
+             first line.\n{}",
+            extract_reads(&name)
+        )));
+    }
     let (source, entity_type) = target(
         &info,
+        (file != "-").then_some(file.as_str()),
         arguments.value("--source"),
         arguments.value("--type"),
     )?;
@@ -330,6 +365,27 @@ fn delimiter(asked: Option<&str>, file: &str) -> Result<u8, Failure> {
     }
 }
 
+/// Whether a file's name says it is text for a person to read, which
+/// `spool extract` stores as a document.
+fn named_as_text(file: &str) -> bool {
+    Path::new(file)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            ["txt", "text", "md", "markdown"]
+                .iter()
+                .any(|text| extension.eq_ignore_ascii_case(text))
+        })
+}
+
+/// Where a document goes: said of a file that is no rows.
+fn extract_reads(name: &str) -> String {
+    format!(
+        "If it is a document, `spool extract {name}` reads it: an extractor finds the records \
+         in its text."
+    )
+}
+
 /// What a file with this character between its fields is called.
 fn format(delimiter: u8) -> String {
     match delimiter {
@@ -340,9 +396,11 @@ fn format(delimiter: u8) -> String {
 }
 
 /// The source the rows come from and the entity type they are records of:
-/// what was asked for, or the only choice the project leaves.
+/// what was asked for, or the only choice the project leaves. Of several
+/// sources, it is the one `file` is named after.
 fn target<'a>(
     info: &'a Info,
+    file: Option<&str>,
     source: Option<&str>,
     entity_type: Option<&'a str>,
 ) -> Result<(&'a DeclaredSource, &'a str), Failure> {
@@ -414,17 +472,34 @@ fn target<'a>(
                     )));
                 }
                 (several, _) => {
-                    let names = quoted(several.iter().map(|source| source.name.as_str()).collect());
-                    return Err(Failure::Failed(match entity_type {
-                        Some(entity_type) => format!(
-                            "say which source the rows come from with `--source`: \
-                             `{entity_type}` reads {names}"
-                        ),
-                        None => format!(
-                            "say which source the rows come from with `--source`: the project \
-                             has {names}"
-                        ),
-                    }));
+                    let names: Vec<&str> =
+                        several.iter().map(|source| source.name.as_str()).collect();
+                    let after = file.and_then(|file| remote::named_after(file, &names));
+                    if let Some(after) = after
+                        && let Some(named) = several.iter().find(|source| source.name == after)
+                    {
+                        *named
+                    } else {
+                        let has = match entity_type {
+                            Some(entity_type) => format!("`{entity_type}` reads"),
+                            None => "the project has".to_owned(),
+                        };
+                        let listed = remote::listed(&names);
+                        return Err(Failure::Failed(match file {
+                            Some(file) => format!(
+                                "{has} the sources {listed}, and {file} is named after {}: say \
+                                 which its rows come from with `--source`",
+                                match names.len() {
+                                    2 => "neither",
+                                    _ => "none of them",
+                                }
+                            ),
+                            None => format!(
+                                "{has} the sources {listed}: say which the rows come from with \
+                                 `--source`"
+                            ),
+                        }));
+                    }
                 }
             }
         }
@@ -499,7 +574,7 @@ fn check_columns(
     // A first line that was not split is one column with the other
     // character in it.
     if let [only] = columns
-        && let Some(other) = [';', '\t', '|', ',']
+        && let Some(other) = OTHER_DELIMITERS
             .into_iter()
             .find(|other| *other as u32 != u32::from(delimiter) && only.contains(*other))
     {
