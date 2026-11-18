@@ -590,7 +590,7 @@ Every path of the API is under `/v1` and needs a caller the server knows: a pers
 | `GET /v1/records`, `GET /v1/records/{id}` | Finds records by source and key, those found in one document, the members of one identity, those that wait for an identity (they have none, and their source has not taken them back), or with `q` those that hold every word; reads one. The list is ordered by source and key | JSON |
 | `POST /v1/records/identities` | The identities of many records in one call | JSON |
 | `GET /v1/review`, `GET /v1/review/{id}`, `.../case` | Review items, typed, by status, entity type or a record they name; one of them; one with what a reviewer decides it from | JSON |
-| `GET /v1/explain?a=&b=` | Why two records share an identity, or why they do not | JSON |
+| `GET /v1/explain?a=&b=` | Why two records share an identity, or why they do not. Each record is named by its ID or as `<source>:<key>`, which names the latest version of that row. A mention is also named by its place in its document, `<source>:<document key>[<start>-<end>]`, as `spool show records` lists it | JSON |
 | `POST /v1/review/{id}/dismiss` | Closes a review item without placing its records | The item |
 | `GET /v1/people`, `POST /v1/people`, `POST /v1/people/{id}` | Lists everyone with an account; as an admin, adds a person or changes one | JSON |
 
@@ -676,7 +676,7 @@ The paths that make a caller one are outside `/v1`: `GET /auth/session` says who
 
 ### Assistants
 
-The server answers the Model Context Protocol at `/mcp`, so that an assistant such as Claude or ChatGPT can be pointed at it. A tool there is a call of the API: it runs the handler the path under `/v1` runs, as the caller the request came from, so it is held to the same rules and what it changes is recorded under the same name. There are tools to find identities and records, to explain a pair, to read review items, constraints and the log, and to commit a changeset, split an identity, undo a change and dismiss a review item. The tools that write require a reason. Loading, match runs, drafts and people are not offered.
+The server answers the Model Context Protocol at `/mcp`, so that an assistant such as Claude or ChatGPT can be pointed at it. A tool there is a call of the API: it runs the handler the path under `/v1` runs, as the caller the request came from, so it is held to the same rules and what it changes is recorded under the same name. There are tools to load rows and documents, to run an extractor, to start a match run and read a run, to take rows back, to find identities and records, to explain a pair, to read review items, constraints and the log, and to commit a changeset, split an identity, undo a change and dismiss a review item. The tools that write under the caller's name require a reason. Reading documents, drafts, user-code judgements and people are not offered.
 
 The transport is Streamable HTTP with no sessions, and the protocol is the `rmcp` crate's, compiled into the binary. `/mcp` takes the callers `/v1` takes. An assistant that can send a header presents a token of its own and is that agent in the log. Claude and ChatGPT on the web add a server through OAuth instead, and Spool is not an OAuth authorization server. `docs/mcp.md` lists the tools, says how to add the server to each client, and says what was tried.
 

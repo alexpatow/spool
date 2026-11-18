@@ -44,10 +44,10 @@ studio's Tokens page and `spool token add` makes on this machine. What it
 changes is recorded under the token's name, as `agent:<name>`.
 
 An assistant that speaks the Model Context Protocol, such as Claude or
-ChatGPT, is pointed at `/mcp`, where the server offers it tools to look things
-up and to change identities. It presents a token as any other caller does,
-and what it changes is recorded under that token's name. docs/mcp.md says how
-to add the server to each.
+ChatGPT, is pointed at `/mcp`, where the server offers it tools to load rows
+and documents, to match them, to look things up and to change identities. It
+presents a token as any other caller does, and what it changes is recorded
+under that token's name. docs/mcp.md says how to add the server to each.
 
 Options:
   --manifest <path>   the manifest to run on (default: .spool/manifest.json)
@@ -102,8 +102,9 @@ or to a loopback address; `spool serve` runs a server that others reach. A
 caller that does present a token writes as that token, as it would there.
 
 An assistant on this machine that speaks the Model Context Protocol, such as
-Claude Code, is pointed at `/mcp`, where the server offers it tools to look
-things up and to change identities. docs/mcp.md says how.
+Claude Code, is pointed at `/mcp`, where the server offers it tools to load
+rows and documents, to match them, to look things up and to change
+identities. docs/mcp.md says how.
 
   <dir>               the project directory (default: the current directory)
 

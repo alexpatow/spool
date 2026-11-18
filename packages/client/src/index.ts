@@ -543,6 +543,9 @@ export class SpoolClient {
    * is and what placed it there, what each run that compared them concluded,
    * the constraints and review items that name them, and what the project's
    * rules say about the pair as it is now. `summary` says it in sentences.
+   * Each record is named by its ID or as `<source>:<key>`, which names the
+   * latest version of that row. A mention is also named by its place in its
+   * document, as `<source>:<document key>[<start>-<end>]`.
    */
   explain(a: RecordId, b: RecordId): Promise<Explanation> {
     return this.json("GET", "/v1/explain", { query: { a, b } });

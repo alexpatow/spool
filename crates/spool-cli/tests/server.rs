@@ -1562,9 +1562,65 @@ fn a_pair_of_records_is_explained() {
     server
         .get(&format!("/v1/explain?a={first}"))
         .error(400, "invalid");
-    server
+    let message = server
         .get(&format!("/v1/explain?a={first}&b=nothing"))
         .error(400, "invalid");
+    assert!(message.contains("<source>:<key>"), "{message}");
+
+    // A record is named by its source and key as well. That is the row the
+    // source holds under the key now, whatever it held before.
+    assert_eq!(server.read("/v1/explain?a=shop:1&b=shop:2"), explanation);
+    assert_eq!(
+        server.read(&format!("/v1/explain?a=shop:3&b={first}")),
+        server.read(&format!("/v1/explain?a={red}&b={first}"))
+    );
+    let message = server
+        .get("/v1/explain?a=shop:1&b=shop:9")
+        .error(404, "not_found");
+    assert_eq!(
+        message,
+        "there is no record with key `9` from source `shop`"
+    );
+    let unknown = server
+        .get("/v1/explain?a=shop:1&b=shed:2")
+        .error(404, "not_found");
+    assert!(
+        unknown.starts_with(
+            "there is no record with key `2` from source `shed`: the project's sources are `"
+        ),
+        "{unknown}"
+    );
+    assert!(unknown.contains("`shop`"), "{unknown}");
+    load_things(
+        &server,
+        "shop",
+        &[
+            &["id", "code", "colour"],
+            &["2", "anvil", "blue"],
+            &["a:b", "anvil", "black"],
+        ],
+    );
+    let versions = server.read("/v1/records?source=shop&key=2");
+    let versions = versions["records"].as_array().unwrap();
+    assert_eq!(versions.len(), 2);
+    let latest = versions
+        .iter()
+        .find(|version| version["superseded_by"].is_null())
+        .unwrap();
+    assert_eq!(latest["payload"]["colour"], "blue");
+    let by_key = server.read("/v1/explain?a=shop:1&b=shop:2");
+    let (left, right) = (&by_key["left"]["record"], &by_key["right"]["record"]);
+    assert!(
+        left["id"] == latest["id"] || right["id"] == latest["id"],
+        "{by_key}"
+    );
+    // A key may have a colon in it: the first one ends the source's name.
+    let colon = server.read("/v1/explain?a=shop:1&b=shop:a:b");
+    let keys = [
+        &colon["left"]["record"]["key"],
+        &colon["right"]["record"]["key"],
+    ];
+    assert!(keys.contains(&&json!("a:b")), "{colon}");
 
     // Review items are listed by a record they name.
     assert_eq!(
@@ -1782,6 +1838,77 @@ fn rows_are_taken_as_csv_and_as_tab_separated_text() {
     // The first line alone is no rows, which is not a mistake.
     let none = csv(shop, "text/csv", "id,code\n").ok();
     assert_eq!(none["run"]["load"]["received"], 0, "{none}");
+}
+
+#[test]
+fn a_name_that_two_records_have_is_refused_with_their_ids() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("project");
+    write_two_of_each(&project);
+    let server = Server::serve(&project, dir.path(), 1);
+    let load = |entity_type: &str, rows: Value| {
+        let body = json!({ "source": "crm", "entity_type": entity_type, "rows": rows });
+        server.call("/v1/load", body);
+    };
+    // The source sends rows of two types, and has a company and a person
+    // under the key 1. Each is the row of its type that nothing replaced.
+    load(
+        "company",
+        json!([{ "id": "1", "name": "Dana" }, { "id": "2", "name": "Dana" }]),
+    );
+    load("person", json!([{ "id": "1", "name": "Dana Reyes" }]));
+    let held = |key: &str, entity_type: &str| -> String {
+        let records = server.read(&format!(
+            "/v1/records?source=crm&key={key}&entity_type={entity_type}"
+        ));
+        let current = records["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|record| record["superseded_by"].is_null())
+            .unwrap();
+        current["id"].as_str().unwrap().to_owned()
+    };
+    let (company, person) = (held("1", "company"), held("1", "person"));
+
+    // The name does not say which, so neither is taken for it.
+    let message = server
+        .get("/v1/explain?a=crm:1&b=crm:2")
+        .error(400, "invalid");
+    assert!(
+        message.starts_with("2 records are named `crm:1`: name one by its ID, of "),
+        "{message}"
+    );
+    assert!(
+        message.contains(&format!("{company} (a `company`)")),
+        "{message}"
+    );
+    assert!(
+        message.contains(&format!("{person} (a `person`)")),
+        "{message}"
+    );
+    // Whichever side it is on.
+    server
+        .get("/v1/explain?a=crm:2&b=crm:1")
+        .error(400, "invalid");
+    // By its ID the company is explained, and a name one record has still
+    // names it.
+    let by_id = server.read(&format!("/v1/explain?a={company}&b=crm:2"));
+    let ids = [
+        &by_id["left"]["record"]["id"],
+        &by_id["right"]["record"]["id"],
+    ];
+    assert!(ids.contains(&&json!(company)), "{by_id}");
+
+    // A new version of the company's row leaves two that nothing replaced,
+    // the new one and the person.
+    load("company", json!([{ "id": "1", "name": "Dana Ltd" }]));
+    let message = server
+        .get("/v1/explain?a=crm:1&b=crm:2")
+        .error(400, "invalid");
+    assert!(message.starts_with("2 records are named"), "{message}");
+    assert!(!message.contains(&company), "{message}");
+    assert!(message.contains(&held("1", "company")), "{message}");
 }
 
 #[test]

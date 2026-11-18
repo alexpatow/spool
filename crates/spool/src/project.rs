@@ -373,7 +373,22 @@ impl Manifest {
         entity_type: &EntityTypeManifest,
     ) -> Result<&Source, String> {
         let source = self.source(name).ok_or_else(|| {
-            format!("source `{name}` is not declared: the project has no sources/{name}.yaml")
+            let taken: Vec<String> = entity_type
+                .sources
+                .iter()
+                .map(|source| format!("`{source}`"))
+                .collect();
+            let taken = match taken.is_empty() {
+                true => String::new(),
+                false => format!(
+                    ". `{}` takes rows from {}",
+                    entity_type.name,
+                    taken.join(", ")
+                ),
+            };
+            format!(
+                "source `{name}` is not declared: the project has no sources/{name}.yaml{taken}"
+            )
         })?;
         if !entity_type.sources.iter().any(|mapped| mapped == name) {
             return Err(format!(
