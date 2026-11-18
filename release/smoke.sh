@@ -6,9 +6,10 @@
 #
 #   release/smoke.sh
 #
-# The extractor `spool init` writes runs a small model, which a first run
-# fetches. A release is not tested with it: by-legal-form.py takes its place,
-# and finds the same three companies in the note.
+# The extractor `spool init --example companies` writes runs a small model,
+# which a first run fetches. A release is not tested with it:
+# by-legal-form.py takes its place, and finds the same three companies in
+# the note.
 #
 # An extractor is a Python file, which the server runs with `uv`. Where `uv`
 # is not on the search path and SPOOL_UV names none, as in the image, only
@@ -53,9 +54,9 @@ unset SPOOL_TOKEN
 
 cd "$work"
 spool --version
-spool init companies > /dev/null
+spool init companies --example companies > /dev/null
 cd companies
-[ -f extractors/companies.py ] || fail "\`spool init\` wrote no extractors/companies.py for the stand-in to replace"
+[ -f extractors/companies.py ] || fail "\`spool init --example companies\` wrote no extractors/companies.py for the stand-in to replace"
 cp "$here/by-legal-form.py" extractors/companies.py
 spool dev --listen "127.0.0.1:$port" > "$work/server.log" 2>&1 &
 server=$!

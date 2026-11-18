@@ -9,7 +9,7 @@ const USAGE: &str = "\
 Usage: spool <command> [options]
 
 Commands:
-  init     scaffold a project directory
+  init     make a project, empty or from an example
   info     list what a project directory declares
   build    check a project and compile it into a manifest
   apply    apply a manifest to a store
@@ -62,7 +62,7 @@ fn main() -> ExitCode {
             println!("spool {}", env!("CARGO_PKG_VERSION"));
             return ExitCode::SUCCESS;
         }
-        "init" => (commands::project::INIT_USAGE, commands::project::init),
+        "init" => (commands::init::USAGE, commands::init::init),
         "info" => (commands::project::INFO_USAGE, commands::project::info),
         "build" => (commands::project::BUILD_USAGE, commands::project::build),
         "apply" => (commands::project::APPLY_USAGE, commands::project::apply),

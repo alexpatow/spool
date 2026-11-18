@@ -206,7 +206,8 @@ main() {
             echo
             ;;
     esac
-    echo "Next: spool init companies"
+    echo "Next, a project to try it on: spool init companies --example companies"
+    echo "Or an empty one for your own data: spool init <name>"
 }
 
 # Nothing runs until the whole script has arrived.

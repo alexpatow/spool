@@ -289,31 +289,6 @@ fn the_extractor_of_a_new_project_names_what_it_needs_and_what_it_finds() {
         "{listing}"
     );
     assert!(listing.contains("sources   crm, notes"), "{listing}");
-
-    // A project of another entity type looks for companies all the same,
-    // since that is what the sample note names, and makes them records of
-    // its type.
-    let people = dir.path().join("people");
-    succeed(&["init", path(&people), "--entity", "person"]);
-    let extractor = std::fs::read_to_string(people.join("extractors/person.py")).unwrap();
-    assert!(
-        extractor.contains("\nLOOK_FOR = {\"company\": \"person\"}\n"),
-        "{extractor}"
-    );
-
-    // The source of the sample note has its name, so the rows' source
-    // takes another.
-    let refused = run(&["init", path(&dir.path().join("other")), "--source", "notes"]);
-    assert_eq!(refused.status.code(), Some(2));
-    assert!(
-        text(&refused.stderr).starts_with(
-            "spool: `notes` is the source of the sample document: give the source of rows \
-             another name\n"
-        ),
-        "{}",
-        text(&refused.stderr)
-    );
-    assert!(!dir.path().join("other").exists());
 }
 
 /// The steps a reader takes after `spool init`, with what each prints: the
@@ -324,6 +299,67 @@ fn the_extractor_of_a_new_project_names_what_it_needs_and_what_it_finds() {
 fn the_note_of_a_new_project_is_read_and_what_it_names_joins_the_rows() {
     let dir = tempfile::tempdir().unwrap();
     the_steps_after_init(&init_with_stand_in(dir.path()));
+}
+
+/// The project's `.env` reaches the extractor, under what the server was
+/// started with, and no value of it is printed.
+#[test]
+#[ignore = "runs uv"]
+fn an_extractor_is_given_what_the_projects_env_file_sets() {
+    const BY_FORM_FROM_ENV: &str = r#"import os
+import re
+
+from spool import extractor
+
+if os.environ.get("SPOOL_TEST_SECRET") != "not-for-the-log":
+    raise SystemExit("SPOOL_TEST_SECRET is not set")
+NAME = re.compile(r"(?:[A-Z][A-Za-z]+ )+" + re.escape(os.environ["LEGAL_FORM"]) + r"\b")
+
+
+@extractor
+def find(document):
+    for found in NAME.finditer(document.text):
+        yield document.mention("company", found.start(), found.end(), name=found.group())
+"#;
+    const ENV: &str =
+        "# The form that names end in.\nLEGAL_FORM=Ltd\nSPOOL_TEST_SECRET='not-for-the-log'\n";
+    let dir = tempfile::tempdir().unwrap();
+
+    let project = init_companies(&dir.path().join("first"));
+    write(&project.join("extractors/companies.py"), BY_FORM_FROM_ENV);
+    write(&project.join(".env"), ENV);
+    let server = Server::dev(&project);
+    let output = extracted(&server, &project, &["samples/notes-1.txt"]);
+    assert!(
+        output.contains("\nfound      3 records in 1 document"),
+        "{output}"
+    );
+    for line in server.stopped() {
+        assert!(!line.contains("not-for-the-log"), "{line}");
+    }
+
+    // A variable the server was started with keeps its value.
+    let project = init_companies(&dir.path().join("second"));
+    write(&project.join("extractors/companies.py"), BY_FORM_FROM_ENV);
+    write(&project.join(".env"), ENV);
+    let server = Server::start_in(
+        &[
+            "dev",
+            path(&project),
+            "--listen",
+            "127.0.0.1:0",
+            "--seed",
+            "1",
+        ],
+        &[("LEGAL_FORM", "GmbH")],
+    )
+    .unwrap_or_else(|stopped| panic!("the server did not start:\n{}", stopped.output));
+    let output = extracted(&server, &project, &["samples/notes-1.txt"]);
+    assert!(
+        output.contains("\nfound      0 records in 1 document"),
+        "{output}"
+    );
+    server.stop();
 }
 
 /// The same steps with the extractor `spool init` wrote, whose model reads
@@ -930,8 +966,8 @@ fn the_same_step_over_http_sends_the_file_as_it_is() {
             .request("POST", "/v1/extractions")
             .send()
             .error(400, "invalid"),
-        "the project has no extractors: one is a file under extractors/, and `spool init` \
-         writes a sample"
+        "the project has no extractors: one is a file under extractors/, and \
+         `spool init <dir> --example companies` makes a project with a sample"
     );
 }
 

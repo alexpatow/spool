@@ -241,8 +241,8 @@ fn extractor<'a>(known: &'a [Extractor], named: Option<&str>) -> Result<&'a Extr
         .collect();
     match (named, known) {
         (_, []) => Err(Failure::Failed(
-            "the project has no extractors: one is a file under extractors/, and `spool init` \
-             writes a sample"
+            "the project has no extractors: one is a file under extractors/, and \
+             `spool init <dir> --example companies` makes a project with a sample"
                 .to_owned(),
         )),
         (Some(named), _) => known

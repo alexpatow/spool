@@ -169,11 +169,12 @@ pub fn copy_project(from: &Path, to: &Path) {
     }
 }
 
-/// A project as `spool init` leaves it, in `dir/companies`: the source
-/// `crm`, the entity type `company`, and two files of sample rows.
+/// A project as `spool init --example companies` leaves it, in
+/// `dir/companies`: the source `crm`, the entity type `company`, and two
+/// files of sample rows.
 pub fn init_companies(dir: &Path) -> PathBuf {
     let project = dir.join("companies");
-    succeed(&["init", path(&project)]);
+    succeed(&["init", path(&project), "--example", "companies"]);
     project
 }
 

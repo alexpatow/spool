@@ -1,0 +1,15 @@
+# `features` is what records are compared by, and `label` is the feature a
+# record is called by. `mapping` says, for each source, which column each
+# feature comes from, and the transform it goes through if it needs one. A
+# record found in a note has no country.
+label: name
+features: [name, name_key, country]
+
+mapping:
+  crm:
+    name: name
+    name_key: { from: name, transform: name_key }
+    country: country
+  notes:
+    name: name
+    name_key: { from: name, transform: name_key }

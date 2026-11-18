@@ -268,6 +268,18 @@ impl UserCode {
                 command
             }
         };
+        // What the project's `.env` sets, under what this process was
+        // started with and what is set above for the code.
+        let set: Vec<OsString> = command
+            .get_envs()
+            .map(|(name, _)| name.to_owned())
+            .collect();
+        for (name, value) in self.project_variables()? {
+            let named = |set: &OsString| set.as_os_str() == std::ffi::OsStr::new(&name);
+            if std::env::var_os(&name).is_none() && !set.iter().any(named) {
+                command.env(name, value);
+            }
+        }
         command.current_dir(&self.project_dir);
         // User code runs with the service's permissions, and that is no
         // reason to hand it a token this process was started with, or what
@@ -306,6 +318,25 @@ impl UserCode {
             )));
         }
         Ok(())
+    }
+
+    /// The variables the project's `.env` sets, in its order: none if it
+    /// has no `.env`. It is read each time code is started, so a change to
+    /// it needs no restart. A line that is wrong is named by its number
+    /// alone, since what it holds may be a secret.
+    pub fn project_variables(&self) -> Result<Vec<(String, String)>> {
+        let path = self.project_dir.join(ENV_FILE);
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(Error::io(&path)(error)),
+        };
+        parse_env(&text).map_err(|line| Error::Project {
+            file: path,
+            message: format!(
+                "line {line} is not `NAME=value`, a comment that starts with `#`, or blank"
+            ),
+        })
     }
 
     fn file(&self, code: &Code) -> PathBuf {
@@ -461,6 +492,51 @@ fn found(program: &OsString) -> bool {
     }
     std::env::var_os("PATH")
         .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| executable(&dir.join(path))))
+}
+
+/// The file of a project that sets variables for its code.
+const ENV_FILE: &str = ".env";
+
+/// The variables a `.env` sets, or the number of its first line that is
+/// wrong. A line is `NAME=value`, which may start with `export `; blank lines
+/// and lines that start with `#` are passed over. A value between quotes,
+/// double or single, is what is between them as it stands. One without is
+/// trimmed and ends before ` #`, where a comment begins.
+fn parse_env(text: &str) -> std::result::Result<Vec<(String, String)>, usize> {
+    let mut variables = Vec::new();
+    for (number, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let line = line.strip_prefix("export ").unwrap_or(line);
+        let wrong = number + 1;
+        let (name, value) = line.split_once('=').ok_or(wrong)?;
+        let name = name.trim();
+        let plain = name
+            .chars()
+            .next()
+            .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if !plain {
+            return Err(wrong);
+        }
+        let value = value.trim();
+        let value = match value.chars().next() {
+            Some(quote @ ('"' | '\'')) => {
+                let inside = &value[1..];
+                let end = inside.find(quote).ok_or(wrong)?;
+                let after = inside[end + 1..].trim_start();
+                if !(after.is_empty() || after.starts_with('#')) {
+                    return Err(wrong);
+                }
+                &inside[..end]
+            }
+            _ => value.split(" #").next().unwrap_or_default().trim_end(),
+        };
+        variables.push((name.to_owned(), value.to_owned()));
+    }
+    Ok(variables)
 }
 
 /// `dir`, followed by what the variable already holds.
@@ -954,6 +1030,104 @@ mod tests {
             .unwrap();
         assert!(first.join("spool-strategy/index.js").is_file());
         assert!(first.join("spool-strategy/package.json").is_file());
+    }
+
+    #[test]
+    fn an_env_file_is_read_as_dotenv_files_are_written() {
+        assert_eq!(parse_env(""), Ok(Vec::new()));
+        let text = "\
+# a comment
+
+PLAIN=one two
+export EXPORTED=2
+SPACED = three   # said of it
+DOUBLE=\"four # five\"
+SINGLE='$six'  # quoted
+EMPTY=
+WITH_EQUALS=a=b
+";
+        let pairs = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
+            pairs
+                .iter()
+                .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+                .collect()
+        };
+        assert_eq!(
+            parse_env(text),
+            Ok(pairs(&[
+                ("PLAIN", "one two"),
+                ("EXPORTED", "2"),
+                ("SPACED", "three"),
+                ("DOUBLE", "four # five"),
+                ("SINGLE", "$six"),
+                ("EMPTY", ""),
+                ("WITH_EQUALS", "a=b"),
+            ]))
+        );
+        // A wrong line is named by its number.
+        for (text, line) in [
+            ("A=1\nno equals sign\n", 2),
+            ("1ST=1\n", 1),
+            ("A B=1\n", 1),
+            ("\n\nOPEN=\"no end\n", 3),
+            ("AFTER='quoted' more\n", 1),
+        ] {
+            assert_eq!(parse_env(text), Err(line), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn code_is_given_what_the_projects_env_file_sets_under_what_is_set_already() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        let user_code = UserCode {
+            work_dir: dir.path().join("work"),
+            ..UserCode::new(&project)
+        };
+        let strategy = Strategy {
+            name: "model".to_owned(),
+            runtime: Runtime::Python,
+            file: "entities/thing/strategies/model.py".to_owned(),
+            hash: String::new(),
+        };
+        let given = |name: &str| -> Option<Option<String>> {
+            let command = user_code.command(&strategy, None).unwrap();
+            command
+                .get_envs()
+                .find(|(set, _)| set.to_str() == Some(name))
+                .map(|(_, value)| value.map(|value| value.to_string_lossy().into_owned()))
+        };
+        // With no `.env`, nothing is added.
+        assert_eq!(given("SPOOL_TEST_FROM_DOT_ENV"), None);
+
+        assert!(std::env::var_os("PATH").is_some());
+        std::fs::write(
+            project.join(".env"),
+            "SPOOL_TEST_FROM_DOT_ENV=secret\nPATH=/nowhere\nPYTHONPATH=/nowhere\n\
+             SPOOL_TOKEN=withheld\n",
+        )
+        .unwrap();
+        assert_eq!(
+            given("SPOOL_TEST_FROM_DOT_ENV"),
+            Some(Some("secret".to_owned()))
+        );
+        // What this process was started with wins, and so does what Spool
+        // sets for the code, and what is withheld from it stays withheld.
+        assert_eq!(given("PATH"), None);
+        let python_path = given("PYTHONPATH").unwrap().unwrap();
+        assert!(!python_path.starts_with("/nowhere"), "{python_path}");
+        assert_eq!(given("SPOOL_TOKEN"), Some(None));
+
+        // A wrong line is reported by its number, and not with what it holds.
+        std::fs::write(project.join(".env"), "TOKEN=fine\nsecret-value\n").unwrap();
+        let refused = user_code.command(&strategy, None).unwrap_err().to_string();
+        assert!(
+            refused.contains(".env: line 2 is not `NAME=value`"),
+            "{refused}"
+        );
+        assert!(!refused.contains("secret-value"), "{refused}");
+        assert!(!refused.contains("fine"), "{refused}");
     }
 
     #[test]
