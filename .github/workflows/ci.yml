@@ -140,11 +140,15 @@ jobs:
           version: "0.13.8"
 
       # Public datasets are downloaded on first use and checked against the
-      # checksums in datasets.toml.
-      - uses: actions/cache@v6
+      # checksums in datasets.toml. Each job keeps the ones its own tests
+      # read: the newest copy it saved is the one restored.
+      - name: Restore datasets
+        id: datasets
+        uses: actions/cache/restore@v6
         with:
           path: benchmarks/.cache
-          key: datasets-${{ hashFiles('benchmarks/datasets.toml') }}
+          key: datasets-${{ matrix.name }}-${{ hashFiles('benchmarks/datasets.toml') }}-
+          restore-keys: datasets-${{ matrix.name }}-${{ hashFiles('benchmarks/datasets.toml') }}-
 
       - name: Build
         run: cargo nextest run --locked --no-run ${{ matrix.packages }}
@@ -156,6 +160,15 @@ jobs:
       - name: Test the documentation
         if: matrix.documentation
         run: cargo test --doc --locked ${{ matrix.packages }}
+
+      # Saved again when a test fetched a dataset the job did not have, which
+      # happens when a test is added or moves from one job to another.
+      - name: Save datasets
+        if: hashFiles('benchmarks/.cache/**') != '' && !endsWith(steps.datasets.outputs.cache-matched-key, hashFiles('benchmarks/.cache/**'))
+        uses: actions/cache/save@v6
+        with:
+          path: benchmarks/.cache
+          key: datasets-${{ matrix.name }}-${{ hashFiles('benchmarks/datasets.toml') }}-${{ hashFiles('benchmarks/.cache/**') }}
 
       # A build that outgrows the disk fails in whichever test writes next,
       # far from the cause. This says how near that is.
