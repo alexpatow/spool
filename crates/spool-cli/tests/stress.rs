@@ -30,6 +30,7 @@ fn a_server_stands_up_to_scale_crashes_a_random_reviewer_and_hostile_requests() 
     bun(&["run", "typecheck"]);
     // Small runs: a store that grows in batches, a server killed in the
     // middle of its work, reviewers who do anything in any order, and
-    // requests nobody should send. Each ends with the store verified.
-    bun(&["test"]);
+    // requests nobody should send. Each ends with the store verified. The
+    // test files run side by side, each with servers of its own.
+    bun(&["test", "--parallel"]);
 }

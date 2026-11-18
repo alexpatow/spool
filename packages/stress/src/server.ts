@@ -164,15 +164,15 @@ export async function serve({ project, store, seed, args = [], build = true }: S
 
 /**
  * Checks a store no server has open, with the `verify` example of the
- * `spool` crate. Resolves to what it printed, and throws if the store does
- * not verify.
+ * `spool-cli` crate. Resolves to what it printed, and throws if the store
+ * does not verify.
  */
 export function verify(store: string): string {
-  // Built like the binary under test, so that nothing is compiled a second
-  // way only for this.
+  // Built like the binary under test and from the same package, so that
+  // nothing is compiled a second way only for this.
   const profile = binary().includes("/release/") ? ["--release"] : [];
   const result = Bun.spawnSync(
-    ["cargo", "run", ...profile, "--quiet", "--locked", "-p", "spool", "--example", "verify", "--", store],
+    ["cargo", "run", ...profile, "--quiet", "--locked", "-p", "spool-cli", "--example", "verify", "--", store],
     { cwd: repository, stdout: "pipe", stderr: "pipe" },
   );
   const printed = `${result.stdout}${result.stderr}`.trim();
