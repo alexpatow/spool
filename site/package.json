@@ -9,6 +9,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
+    "test": "bun test scripts",
     "check:site": "bun scripts/check-site.ts",
     "check:samples": "bun scripts/check-samples.ts"
   },

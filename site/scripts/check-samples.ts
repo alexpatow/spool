@@ -33,14 +33,17 @@
  * script does the same.
  *
  * Output is compared line by line. Times are compared by shape. IDs and
- * hashes must agree with themselves: where the page shows one ID twice, the
- * run must print one ID twice. A line that is only `...` stands for any lines.
+ * hashes must agree with themselves, within a block and from page to page:
+ * where the pages show one ID twice, the run must print one ID twice, and
+ * where they show two, it must print two. A line that is only `...` stands
+ * for any lines. `compare-output.ts` does the comparing.
  */
 import { type Subprocess, spawn, spawnSync } from "bun";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { asShown, noIds, sameOutput, tidy } from "./compare-output";
 
 const DEFAULT_PORT = 7765;
 const siteDir = resolve(import.meta.dir, "..");
@@ -117,71 +120,8 @@ function fail(where: string, message: string) {
   failures.push(`${where}\n${message.replace(/^/gm, "    ")}`);
 }
 
-// IDs and hashes: what the page shows, and what this run printed for it.
-const shown = new Map<string, string>();
-const printed = new Map<string, string>();
-const ID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\b[0-9a-f]{64}\b/g;
-const TIME = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g;
-
-function tidy(text: string): string[] {
-  const lines = text.split("\n").map((line) => line.trimEnd());
-  while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
-  return lines;
-}
-
-/** Whether a printed line is the line the page shows. Records which ID stands for which. */
-function sameLine(expected: string, actual: string, record: boolean): boolean {
-  const shape = (line: string) => line.replace(TIME, "<time>").replace(ID, "<id>");
-  if (shape(expected) !== shape(actual)) return false;
-  const want = expected.match(ID) ?? [];
-  const got = actual.match(ID) ?? [];
-  for (let index = 0; index < want.length; index++) {
-    const a = want[index] ?? "";
-    const b = got[index] ?? "";
-    if ((shown.get(a) ?? b) !== b || (printed.get(b) ?? a) !== a) return false;
-  }
-  if (record) {
-    want.forEach((a, index) => {
-      shown.set(a, got[index] ?? "");
-      printed.set(got[index] ?? "", a);
-    });
-  }
-  return true;
-}
-
-/**
- * A printed line as the pages should show it: an ID the pages already show under
- * another value keeps that value, so that `--update` leaves one ID for one thing
- * across every page.
- */
-function asShown(line: string): string {
-  return line.replace(ID, (id) => {
-    const known = printed.get(id);
-    if (known !== undefined) return known;
-    shown.set(id, id);
-    printed.set(id, id);
-    return id;
-  });
-}
-
-/** Compares what was printed with what the page shows. `...` on a line of its own matches any lines. */
-function sameOutput(expected: string[], actual: string[], prefix = false): boolean {
-  const match = (e: number, a: number): boolean => {
-    if (e === expected.length) return prefix || a === actual.length;
-    if (expected[e] === "...") {
-      for (let skip = a; skip <= actual.length; skip++) if (match(e + 1, skip)) return true;
-      return false;
-    }
-    if (a === actual.length) return false;
-    return sameLine(expected[e] ?? "", actual[a] ?? "", false) && match(e + 1, a + 1);
-  };
-  if (!match(0, 0)) return false;
-  // Matched: go again without `...` freedom to record the IDs of lines that pair up one to one.
-  if (!expected.includes("...")) {
-    expected.forEach((line, index) => sameLine(line, actual[index] ?? "", true));
-  }
-  return true;
-}
+// What the pages show for each ID and hash, and what this run printed for it.
+const ids = noIds();
 
 async function freePort(port: number): Promise<boolean> {
   return new Promise((done) => {
@@ -356,10 +296,10 @@ async function main() {
           const expected = tidy(block.body);
           compared++;
           if (update) {
-            if (expected.length === 0 || !sameOutput(expected, actual, last.background)) {
-              edits.push({ block, text: actual.map(asShown).join("\n") });
+            if (expected.length === 0 || !sameOutput(expected, actual, ids, last.background)) {
+              edits.push({ block, text: actual.map((line) => asShown(line, ids)).join("\n") });
             }
-          } else if (!sameOutput(expected, actual, last.background)) {
+          } else if (!sameOutput(expected, actual, ids, last.background)) {
             fail(where, `the page shows:\n${expected.join("\n")}\n\nand this was printed:\n${actual.join("\n")}`);
           }
           last = undefined;
