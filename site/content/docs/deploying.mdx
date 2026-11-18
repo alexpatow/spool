@@ -1,0 +1,175 @@
+---
+title: Deploying
+description: Run Spool for other people with spool build, spool apply and spool serve, sign them in, give programs tokens, and back up the store.
+---
+
+`spool dev` is for one person on one machine. `spool serve` is the server other people and programs reach. It is the same binary and the same store format. What changes is that every caller is known, and that the server reads a compiled manifest in place of the project's files.
+
+This page says how Spool is meant to be run, and each command on it was run as shown.
+
+## What a deployment is
+
+- **One process** on one machine. There is no cluster mode, no replica and no failover.
+- **One store file**, a DuckDB database, which that process alone opens.
+- **One accounts file** beside it, named after it: `spool.auth.sqlite` for `spool.duckdb`. It holds people and tokens.
+- **The project**, at the version you built: the manifest, plus any strategy and extractor files.
+
+## Build
+
+{/* sample: new session */}
+
+```sh
+spool init companies
+cd companies
+```
+
+```sh
+spool build
+```
+
+```text title="Output"
+manifest  ./.spool/manifest.json
+hash      afe4902cdc6e283cd2293de37cce8e95c4d7afc3782464325b2127319ce92290
+types     company
+wrote     ./Dockerfile
+wrote     ./.dockerignore
+```
+
+`spool build` checks the project and writes `.spool/manifest.json`, which holds every rule and declaration with a hash of the whole. It also writes a `Dockerfile` and a `.dockerignore` if the project has none.
+
+## Apply
+
+```sh
+spool apply --store spool.duckdb
+```
+
+```text title="Output"
+store     spool.duckdb
+manifest  afe4902cdc6e283cd2293de37cce8e95c4d7afc3782464325b2127319ce92290
+declared  company
+```
+
+`spool apply` creates the store if there is none, declares new entity types, and computes the features again for each type whose declaration changed. Identities are not touched. It runs while the server is stopped, so a change of rules is: build, stop the server, apply, start the server.
+
+## Serve
+
+{/* sample: background */}
+
+```sh
+spool serve --store spool.duckdb --listen 127.0.0.1:7765
+```
+
+```text title="Output"
+manifest  afe4902cdc6e283cd2293de37cce8e95c4d7afc3782464325b2127319ce92290
+accounts  spool.auth.sqlite
+listening on http://127.0.0.1:7765
+studio    http://127.0.0.1:7765/
+mcp       http://127.0.0.1:7765/mcp
+setup     http://127.0.0.1:7765/setup#5270eb9fbf1cb73f38aa70cab58f5d848c08c33990a3f4bb4d9337abf154dec7
+no admin can sign in yet: open that link, at the address people reach this server by, to make the first account
+```
+
+Left out, `--listen` is `0.0.0.0:7765`. Put a reverse proxy with TLS in front, and give the server the address people reach it by with `--public-url https://spool.example.com`. Spool does not terminate TLS.
+
+A server refuses to start on a store that was applied with another manifest, and says to run `spool apply` first.
+
+## The first account
+
+While no admin can sign in, the server prints a link when it starts. Whoever opens it makes the first account, with a username and a password, and is the admin who adds everyone else on the studio's People page.
+
+Passwords are for getting started. They have no second factor and no reset by email. A server that people rely on should sign them in with Google: set `SPOOL_GOOGLE_CLIENT_ID` and `SPOOL_GOOGLE_CLIENT_SECRET` to an OAuth client of the type "Web application", whose redirect URI is the public URL followed by `/auth/google/callback`. The server prints the exact value on the line that begins with `google`. An admin then adds each person by the email of their Google account. Google is the only identity provider there is. There is no SAML and no generic OIDC.
+
+## Tokens for programs
+
+A pipeline or an agent presents a token. Make one on the server's machine, or on the studio's Tokens page:
+
+```sh
+TOKEN=$(spool token add pipeline --store spool.duckdb)
+```
+
+```text title="Output"
+That is the token `pipeline`, kept in spool.auth.sqlite. It is shown this once.
+A caller sends it as `Authorization: Bearer <token>`, and what it changes is recorded under `agent:pipeline`.
+```
+
+The token itself is the only thing on standard output, which is why it can be caught in a variable. It is shown this once. The server keeps a hash of it.
+
+```sh
+spool token list --store spool.duckdb
+```
+
+```text title="Output"
+token     made at                   made by          last used
+pipeline  2026-11-18T17:22:33.382Z  spool token add  never
+```
+
+A caller sends it as a bearer token, and what it changes is recorded as `agent:pipeline`:
+
+```sh
+curl -s -X POST http://127.0.0.1:7765/v1/ingest -H "Authorization: Bearer $TOKEN" -d '{"source": "crm", "entity_type": "company", "wait_ms": 5000, "rows": [{"id": "c-1", "name": "Acorn Tools", "country": "GB"}]}'
+```
+
+Without one, the server says so:
+
+```sh
+curl -s http://127.0.0.1:7765/v1/info
+```
+
+```text title="Output"
+{"error":{"code":"unauthorized","message":"sign in, or send a token: `Authorization: Bearer <token>`"}}
+```
+
+The command line takes the token from `SPOOL_TOKEN` and the address from `SPOOL_URL`:
+
+```sh
+SPOOL_TOKEN=$TOKEN spool show
+```
+
+```text title="Output"
+server     http://127.0.0.1:7765
+api        v1, engine 0.1.0, store format 9
+manifest   afe4902cdc6e283cd2293de37cce8e95c4d7afc3782464325b2127319ce92290
+head       log position 0
+documents  0
+
+entity type `company`
+  records     1, 1 without an identity
+  identities  0
+  review      0 items open
+
+extractor `companies` (typescript, extractors/companies.ts)
+```
+
+There are two kinds of caller. An admin adds people and makes tokens. Everyone else, and every token, can read everything and change identities. There are no finer permissions, and nothing limits a caller to one entity type or one source.
+
+## A container
+
+{/* sample: not built image */}
+
+```sh
+docker build -t companies .
+docker run -p 7765:7765 -v spool-data:/data companies
+```
+
+The Dockerfile that `spool build` writes starts from the image `ghcr.io/alexpatow/spool:0.1.0`, builds the manifest in it, and runs `spool serve` with the store at `/data/spool.duckdb`, on a volume. A changed project is applied with the server stopped: `docker run --rm -v spool-data:/data companies apply --manifest /spool/manifest.json`.
+
+## Backing up
+
+The store is one file and the accounts are another. Stop the server, copy both, start it. There is no online backup and no export.
+
+Everything that decides an identity is in the store: the records, every judgement, and the whole log. Nothing is derived from the project at read time, so a copy of the store is a copy of the identities.
+
+## Upgrading
+
+Until 1.0, nothing is promised about a store written by one version opening in the next. Where a release can upgrade a store, it does so when the store is opened, and the release notes say which formats it reads. Copy the store before starting a new version on it.
+
+## Stopping
+
+The server stops on Ctrl-C or SIGTERM and prints `stopping`. It takes no new request, answers the ones it has within six seconds, finishes the runs it was given, however long they take, and prints `stopped`. If the process is killed first, the run is recorded as failed when the store is next opened.
+
+## What to watch
+
+- **Memory.** A match holds its candidate pairs in memory. Five million records with 76 million candidate pairs peaked at 13.4 GB in the repository's benchmark.
+- **One writer.** Calls that change the store run one after another. A long match holds up an ingest that arrives during it.
+- **`GET /v1/healthz`** answers `{"status":"ok"}` with no sign-in. There are no metrics and no tracing.
+- **User code.** Strategies and extractors that are `.py` files run with `uv`, and `.ts` files with `bun`. Both must be on the server's machine, and each run is limited by `--task-timeout`, 600 seconds unless set.

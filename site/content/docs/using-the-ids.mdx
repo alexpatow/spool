@@ -1,0 +1,166 @@
+---
+title: Using the IDs
+description: How another system looks up the identity of a row, keeps a copy that follows merges and splits, and what to store.
+---
+
+Spool's output is an ID for each real-world thing. This page is for the system that uses those IDs: a warehouse table, a CRM sync, a search index. It covers looking up one row, looking up many, keeping a copy that follows the log, and what an ID promises.
+
+## Before you start
+
+The examples use the sample project with both of its files of rows loaded and matched, which is where [Getting started](/docs/getting-started) ends. If you have that project and its server is running, use it. If not, this makes it:
+
+{/* sample: new session */}
+
+```sh
+spool init companies
+cd companies
+```
+
+{/* sample: background */}
+
+```sh
+spool dev
+```
+
+Leave that running. In a second terminal, in the `companies` directory:
+
+```sh
+spool load samples/crm-1.csv
+spool match
+spool load samples/crm-2.csv
+spool match
+```
+
+## What to store
+
+Store the identity ID beside your own row, and keep the row's source and key. The identity ID is the join key across systems. The source and key are how you ask again.
+
+- An identity ID is a UUID that is minted once, when the identity is created. It does not depend on which records the identity holds, and it does not change when records join or leave.
+- A record's ID is derived from its source, its key and its content, so the same row has the same record ID in every store. A changed row is a new record with a new ID under the same key.
+
+## The identity of one row
+
+```sh
+curl -s 'http://127.0.0.1:7765/v1/records?source=crm&key=c-7'
+```
+
+```text title="Output"
+{"records":[{"id":"bdbab4b2-e260-2b34-b08f-3fae6a2018a9","entity_type":"company","source":"crm","key":"c-7","payload":{"country":"GB","id":"c-7","name":"Larkfeild Logistics"},"label":"Larkfeild Logistics","evidence":null,"ingested_at":"2026-11-18T17:18:25.790965Z","ingest_run":4,"identity":"01a1ef8e-5a8d-76d4-acb6-2bb802d5ca25","supersedes":null,"superseded_by":null,"retracted":null}],"next":null}
+```
+
+`identity` is the answer. It is `null` for a record that no match has placed yet, or that waits in a review item. A key whose row changed has one record for each version, and each has an identity.
+
+From the command line:
+
+```sh
+spool show records crm:c-7
+```
+
+```text title="Output"
+record    bdbab4b2-e260-2b34-b08f-3fae6a2018a9
+type      company
+source    crm
+key       c-7
+ingested  2026-11-18T17:18:25Z by run 4
+identity  01a1ef8e-5a8d-76d4-acb6-2bb802d5ca25
+
+payload
+  country  GB
+  id       c-7
+  name     Larkfeild Logistics
+```
+
+## Many rows in one call
+
+`POST /v1/records/identities` takes record IDs and answers where each is now:
+
+```sh
+A=$(spool show records crm:c-1 | awk '/^record/ {print $2}')
+B=$(spool show records crm:c-8 | awk '/^record/ {print $2}')
+curl -s -X POST http://127.0.0.1:7765/v1/records/identities -d '{"records": ["'$A'", "'$B'"]}'
+```
+
+```text title="Output"
+{"identities":["01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada","01a1ef8e-5f06-7397-9a0c-445aaacfd3fe"]}
+```
+
+It takes record IDs and not `source:key`, so a caller that holds only keys lists the records of a source first: `GET /v1/records?source=crm&limit=1000`, then `after=<next>` for the following page.
+
+## An ID that was merged away
+
+When two identities are merged, one ID survives and the other stops being current. It is never deleted or given to something else. Merge Kestrel Analytics into Larkfield Logistics, wrongly, to see it:
+
+```sh
+KESTREL=$(spool show records crm:c-8 | awk '/^identity/ {print $2}')
+LARKFIELD=$(spool show records crm:c-4 | awk '/^identity/ {print $2}')
+curl -s -X POST http://127.0.0.1:7765/v1/changesets -d '{"reason": "an example of a merge", "ops": [{"op": "merge", "from": "'$KESTREL'", "into": "'$LARKFIELD'"}]}'
+```
+
+```sh
+curl -s http://127.0.0.1:7765/v1/identities/$KESTREL
+```
+
+```text title="Output"
+{"id":"01a1ef8e-5f06-7397-9a0c-445aaacfd3fe","current":"01a1ef8e-5a8d-76d4-acb6-2bb802d5ca25","entity_type":"company","label":"Larkfield Logistics","created":2,"members":[{"record":"4b1bc703-9041-0989-d0eb-4df5e9eae0f2","source":"crm","key":"c-4","since":1},{"record":"7da2b0d2-3601-e533-efa5-e1068cce5344","source":"crm","key":"c-8","since":3},{"record":"bdbab4b2-e260-2b34-b08f-3fae6a2018a9","source":"crm","key":"c-7","since":2}]}
+```
+
+The old ID still answers. `id` is the ID that was asked for, `current` is the identity that took its place, and the records are that identity's. A system that stored the old ID stores `current` in its place. Until it does, lookups by the old ID keep working.
+
+## Follow the log
+
+Every change to an identity is a changeset in an append-only log, and each has a position. A system that keeps its own copy reads the log from the position it last saw:
+
+```sh
+curl -s 'http://127.0.0.1:7765/v1/changesets?after=2'
+```
+
+```text title="Output"
+{"changesets":[{"seq":3,"changeset":{"id":"01a1efaa-bb04-772b-9298-199688250576","base":2,"actor":"user:01a1efaa-b967-7385-876b-97d8dd4710fa","reason":"an example of a merge","run":null,"ops":[{"op":"merge","from":"01a1ef8e-5f06-7397-9a0c-445aaacfd3fe","into":"01a1ef8e-5a8d-76d4-acb6-2bb802d5ca25"}]},"content_hash":"2ddecf637e7d0b43faf1a7a0be11e5849a8227fb2bb354e554d6c8bffec02cf7"}],"head":3}
+```
+
+`head` is the last position there is. Each operation says what changed:
+
+| Operation | What a copy does |
+| --- | --- |
+| `create_identity` | Nothing until a record is placed in it |
+| `assign` | Set the identity of `record` to `to`. `to` is `null` when the record leaves without joining another |
+| `merge` | Rewrite every row that has `from` to `into` |
+| `reinstate` | An undo of a merge. The `assign` operations beside it say which records go back |
+| `constrain`, `unconstrain` | Nothing. These bind later changes, not the current state |
+
+The loop is: remember a position, ask for `after=<position>`, apply the operations in order, remember the last `seq` you applied, and ask again while it is below `head`. A page holds 100 changesets unless `limit` says otherwise, up to 1,000.
+
+The undo of the merge above arrives the same way, as one more changeset:
+
+```sh
+curl -s -X POST http://127.0.0.1:7765/v1/changesets/3/undo -d '{"reason": "that was only an example"}'
+```
+
+```sh
+curl -s 'http://127.0.0.1:7765/v1/changesets?after=3'
+```
+
+```text title="Output"
+{"changesets":[{"seq":4,"changeset":{"id":"01a1efaa-bb33-7581-a896-6c12d4427836","base":3,"actor":"user:01a1efaa-b967-7385-876b-97d8dd4710fa","reason":"that was only an example","run":null,"ops":[{"op":"reinstate","identity":"01a1ef8e-5f06-7397-9a0c-445aaacfd3fe"},{"op":"assign","record":"7da2b0d2-3601-e533-efa5-e1068cce5344","from":"01a1ef8e-5a8d-76d4-acb6-2bb802d5ca25","to":"01a1ef8e-5f06-7397-9a0c-445aaacfd3fe"}]},"content_hash":"d5498ae193b83d74bc8983d4e674865c903a44d16c7e3195640550079c0f3c54"}],"head":4}
+```
+
+## What changes an ID, and what does not
+
+| Event | What happens to IDs |
+| --- | --- |
+| More rows arrive and match | Existing identities keep their IDs. New things get new IDs |
+| A row changes | The new version joins or does not, by the rules. The identity keeps its ID |
+| A rule changes | Nothing moves. A rematch suggests merges and does not make them |
+| A merge | The `into` ID survives. The `from` ID answers with the other as `current` |
+| A split | The identity that is split keeps its ID. The records that leave get a new one |
+| An undo | A new changeset puts things back, with the IDs they had |
+| A row is taken back | The record leaves its identity. The identity keeps its ID, even with no records left |
+
+What this costs: IDs depend on the order records arrived in and on what the rules were at the time, so two stores loaded in different orders can disagree about which records share an identity. [Matching](/docs/concepts/matching#the-cost-of-ids-that-stay) has the detail.
+
+## What is not there
+
+- No webhook and no stream. A consumer polls `GET /v1/changesets`.
+- No export of all identities as a file. A copy is built by listing records and then following the log.
+- No lookup of many rows by `source:key` in one call.
+- No client library. The calls above are the interface. `spool schema` prints the JSON Schema of the API's answers.

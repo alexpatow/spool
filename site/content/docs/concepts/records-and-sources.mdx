@@ -1,0 +1,237 @@
+---
+title: Records and sources
+description: A record is a row as a source sent it, or a mention an extractor found in a text. It is never changed, a changed row becomes a new version, and a row its source no longer holds can be taken back.
+---
+
+A **record** is one thing a source said, kept as it arrived. Records come in two ways:
+
+- **From rows.** A **source** is a place rows come from: a CRM export, a company registry, a table in your warehouse. Each row becomes a record.
+- **From text.** A document is stored as it is, and an **extractor** finds the places where it names a thing. Each place becomes a record. An extractor is a pattern that Spool runs itself, or code of yours in Python or TypeScript that the server runs as a child process.
+
+Either way the record is then matched by the same rules. This page says what Spool keeps of a row, what happens when a row is loaded twice, changes, is taken back or is refused, and how a record comes out of a text.
+
+## Before you start
+
+The examples use the sample project with both of its files of rows loaded and matched, which is where [Getting started](/docs/getting-started) ends. If you have that project and its server is running, use it. If not, this makes it:
+
+{/* sample: new session */}
+
+```sh
+spool init companies
+cd companies
+```
+
+{/* sample: background */}
+
+```sh
+spool dev
+```
+
+Leave that running. In a second terminal, in the `companies` directory:
+
+```sh
+spool load samples/crm-1.csv
+spool match
+spool load samples/crm-2.csv
+spool match
+```
+
+## A source is a file
+
+Each source is a YAML file under `sources/`, and the file's name is the source's name. It lists the columns a row may have and names the one that is the row's key. This is the one `spool init` wrote:
+
+{/* sample: existing */}
+
+```yaml title="sources/crm.yaml"
+# A source of rows. `key` is the column that tells one row from another, and
+# `columns` is every column a row may have.
+key: id
+columns: [id, name, country]
+```
+
+Add a column to it:
+
+```yaml title="sources/crm.yaml"
+key: id
+columns: [id, name, country, website]
+```
+
+`spool dev` applies the change when the file is saved. Rows that were loaded before stay as they are, with no value for the new column.
+
+A source says nothing about what its rows mean. Which entity type they describe, and how they are compared, is in the entity type's [mapping](/docs/concepts/entity-types-and-features).
+
+## What a record holds
+
+```sh
+spool show records crm:c-1
+```
+
+```text title="Output"
+record    ab8e9d59-0aaa-96b9-ddb7-db0bff7a9356
+type      company
+source    crm
+key       c-1
+ingested  2026-11-18T17:06:13Z by run 1
+identity  01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+
+payload
+  country  GB
+  id       c-1
+  name     Acorn Tools
+```
+
+- **`record`** is the record's ID. It is derived from the source, the key and the row's content, so the same row gets the same ID on any machine.
+- **`payload`** is the row as it was sent. Spool never rewrites it. What rules compare is computed from it, and can be computed again when you change how.
+- **`identity`** is the identity the record belongs to, once a match has placed it.
+
+A record is named by its ID, or as `source:key`, which names the latest version of that row.
+
+## Loading the same row twice does nothing
+
+A pipeline can send everything it has every time. Rows the server already holds are counted and ignored:
+
+```sh
+spool load samples/crm-1.csv
+```
+
+```text title="Output"
+source  crm
+type    company
+read    6 rows from samples/crm-1.csv
+loaded  0 new, 6 already held, 0 new versions
+```
+
+## A changed row is a new version
+
+When a row arrives with a key the server has seen and content it has not, it becomes a new record that replaces the earlier one. Save a file that has `c-4` again, now with a website:
+
+```csv title="changed.csv"
+id,name,country,website
+c-4,Larkfield Logistics,GB,https://www.larkfield.example
+```
+
+```sh
+spool load changed.csv --source crm
+```
+
+```text title="Output"
+source  crm
+type    company
+read    1 row from changed.csv
+loaded  0 new, 0 already held, 1 new version
+next    `spool match` places them in identities
+```
+
+```sh
+spool show records --source crm --key c-4
+```
+
+```text title="Output"
+record                                source and key  name                 identity
+4b1bc703-9041-0989-d0eb-4df5e9eae0f2  crm:c-4         Larkfield Logistics  01a1ef8e-5a8d-76d4-acb6-2bb802d5ca25
+69c75f0d-bc65-b5f2-39aa-5c6d017a1531  crm:c-4         Larkfield Logistics  -
+```
+
+Both versions are kept. The new one has no identity yet. The next match gives it the identity of the version it replaces, whatever the rules say about the pair:
+
+```sh
+spool match
+```
+
+```sh
+spool show records --source crm --key c-4
+```
+
+```text title="Output"
+record                                source and key  name                 identity
+4b1bc703-9041-0989-d0eb-4df5e9eae0f2  crm:c-4         Larkfield Logistics  01a1ef8e-5a8d-76d4-acb6-2bb802d5ca25
+69c75f0d-bc65-b5f2-39aa-5c6d017a1531  crm:c-4         Larkfield Logistics  01a1ef8e-5a8d-76d4-acb6-2bb802d5ca25
+```
+
+The earlier version stays a member of the identity and can still be matched by later records. That keeps history intact, and it has a cost: an old version that lacks a value can match something the new version would not. [Review](/docs/concepts/review#a-conflict) shows what a missing value does.
+
+A row that changes from A to B and back to A ends at B. The second A is content the server has seen under that key, so it is counted as already held and ignored. This is a known fault, and it is listed on [Limits](/docs/limits).
+
+## A row the source no longer holds
+
+`spool retract` takes a row back. Name the source, the entity type and the row's key:
+
+```sh
+spool retract --source crm --type company c-9 --reason "deleted in the CRM"
+```
+
+```text title="Output"
+run 11: 1 key named, 1 record taken back
+1 record left an identity, by the changeset at log position 4
+```
+
+```sh
+spool show records crm:c-9
+```
+
+```text title="Output"
+record    34c3d52d-e53b-1559-7404-1892fb1fd4e3
+type      company
+source    crm
+key       c-9
+ingested  2026-11-18T17:06:13Z by run 4
+identity  none: its source took it back in run 11
+
+payload
+  country  GB
+  id       c-9
+  name     Acorn Tool
+```
+
+The record left its identity and no later match looks at it. The identity keeps its ID and its other records. The row itself stays in the store: taking back is not erasing. Loading a row under the same key again, changed or not, brings every version of it back.
+
+The same over HTTP is `POST /v1/retract` with `{"source": "crm", "entity_type": "company", "keys": ["c-9"]}`.
+
+When the row that is taken back was what joined two other records of its identity, the identity is not split. A review item asks whether it still is one thing. [Review](/docs/concepts/review#a-possible-split) has an example.
+
+## What is refused
+
+A row with a column its source does not list is refused, and so is the whole load. Here the rows are sent over HTTP as JSON, which is the other form `POST /v1/ingest` takes:
+
+```sh
+curl -s -X POST http://127.0.0.1:7765/v1/ingest -d '{"source": "crm", "entity_type": "company", "rows": [{"id": "c-10", "name": "Acorn Hardware", "city": "Leeds"}]}'
+```
+
+```text title="Output"
+{"error":{"code":"invalid","message":"ingest rejected: the rows have a column `city`, which sources/crm.yaml does not list"}}
+```
+
+Rows are also refused when their source has no file, or when the entity type's mapping has no block for that source. A column that a row leaves out is fine: it is empty for that record.
+
+## Records from text
+
+A document is stored as it arrived, as a row is. An extractor reads it and reports each place where it names a thing, and each place becomes a record of the document's source, with the document and the characters it spans as its evidence. From there it is a record like any other: it is never changed, a match places it, and it can be explained.
+
+```sh
+spool extract samples/notes-1.txt
+```
+
+```text title="Output"
+source     notes
+read       1 document from samples/notes-1.txt
+loaded     1 new, 0 already held, 0 new versions
+extractor  companies
+found      3 records in 1 document: 3 new, 0 already held
+
+  company  Acorn Tools Ltd          notes-1.txt[54-69]
+  company  Larkfield Logistics Ltd  notes-1.txt[119-142]
+  company  Brightwater Foods Ltd    notes-1.txt[179-200]
+
+next       `spool match` places them in identities
+```
+
+[Extraction](/docs/concepts/extraction) goes through it, with an extractor of each kind.
+
+## Where records come from
+
+- `spool load` reads CSV files. [The command line](/docs/cli#spool-load) has its options.
+- `POST /v1/ingest` takes CSV, JSON or an Apache Arrow stream. [The HTTP API](/docs/api#load-rows) has an example.
+- An agent loads rows with the MCP tool `load_rows`. [MCP](/docs/mcp)
+- `spool extract` stores a text file as a document and runs an extractor over it. `POST /v1/documents` and `POST /v1/extractions` are the same over HTTP, and `load_documents` and `run_extraction` over MCP.
+
+Nothing reads a database, a warehouse or a file store. [Limits](/docs/limits) has the rest of what loading does not do.

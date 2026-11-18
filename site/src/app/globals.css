@@ -1,0 +1,25 @@
+@import "../styles/shelf/fonts.css";
+
+@stylex;
+
+/*
+ * Code is highlighted when the site is built, and each token carries a light
+ * and a dark colour. The theme on <html> says which one shows.
+ */
+.shiki span {
+  color: var(--shiki-light);
+}
+
+html[data-theme="dark"] .shiki span {
+  color: var(--shiki-dark);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
