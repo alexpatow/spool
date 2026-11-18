@@ -16,7 +16,8 @@
 # that a second run replaces it, that an archive which is not the one
 # SHA256SUMS lists is refused and leaves nothing, that a file in the place of
 # the link is left alone, and then runs release/smoke.sh with what it
-# installed.
+# installed. SPOOL_SMOKE_NOTE and SPOOL_UV reach that script as they are
+# here: see its first lines.
 
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
@@ -90,7 +91,7 @@ if [ -n "${SPOOL_TEST_URL:-}" ]; then
     [ "$(cat occupied/.local/bin/spool)" = "someone's own" ] || fail "a file at ~/.local/bin/spool was changed"
     holds "$homes/occupied/.local" bin
 
-    echo "== the start of Getting started, with what was installed"
+    echo "== the start of the README, with what was installed"
     PATH=$homes/first/.local/bin:$PATH HOME=$homes/first sh "$here/smoke.sh"
     echo "release/test-install.sh: passed"
     exit 0
@@ -134,12 +135,15 @@ url=http://127.0.0.1:$port
 
 if [ -z "$image" ]; then
     echo "== installing from $dir on this machine"
-    env -i PATH="$PATH" SPOOL_TEST_URL="$url" sh "$here/test-install.sh"
+    env -i PATH="$PATH" SPOOL_TEST_URL="$url" \
+        SPOOL_SMOKE_NOTE="${SPOOL_SMOKE_NOTE:-}" SPOOL_UV="${SPOOL_UV:-}" \
+        sh "$here/test-install.sh"
 else
     echo "== installing from $dir in a container of $image${platform:+, $platform}"
     # The container shares this machine's network, to reach the file server.
     # shellcheck disable=SC2086
     docker run --rm --network host ${platform:+--platform $platform} \
-        --env SPOOL_TEST_URL="$url" --volume "$here:/release:ro" \
+        --env SPOOL_TEST_URL="$url" --env SPOOL_SMOKE_NOTE="${SPOOL_SMOKE_NOTE:-}" \
+        --volume "$here:/release:ro" \
         "$image" sh /release/test-install.sh
 fi

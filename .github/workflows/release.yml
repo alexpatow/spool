@@ -70,15 +70,29 @@ jobs:
       - name: Lint the scripts
         run: shellcheck install.sh release/*.sh
 
+      # What reads the sample note in the tests below. It is the version
+      # CI tests with and the Dockerfile of `spool build` installs. Nothing
+      # of a run is kept for the next.
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: "0.13.8"
+          enable-cache: false
+
       - name: Emulate arm64
         run: docker run --privileged --rm tonistiigi/binfmt --install arm64
 
       - name: Build the archives and the image
         run: release/linux.sh dist
 
+      # The whole start of the README, with a stand-in for the sample
+      # extractor: see release/smoke.sh.
       - name: Install from the archive for x86-64
+        env:
+          SPOOL_SMOKE_NOTE: required
         run: release/test-install.sh dist
 
+      # The container has no `uv`, so here the rows are loaded and matched
+      # and the note is not read.
       - name: Install from the archive for arm64
         run: release/test-install.sh dist buildpack-deps:bookworm-curl linux/arm64
 
@@ -122,6 +136,11 @@ jobs:
           rustup toolchain install "$version" --profile minimal
           rustup default "$version"
 
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: "0.13.8"
+          enable-cache: false
+
       - name: Build
         env:
           SPOOL_RELEASE_BUILD: "1"
@@ -133,6 +152,8 @@ jobs:
           release/archive.sh aarch64-apple-darwin target/release/spool "$library" dist
 
       - name: Install from the archive
+        env:
+          SPOOL_SMOKE_NOTE: required
         run: release/test-install.sh dist
 
       - uses: actions/upload-artifact@v7

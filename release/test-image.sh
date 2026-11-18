@@ -8,8 +8,13 @@
 # and for arm64 it checks that the image pulled is for that architecture,
 # that `spool --version` names this version, and runs release/smoke.sh in a
 # container of it. Then it builds a new project's image from the Dockerfile
-# `spool build` writes, which starts from this one, and loads and matches
-# rows on the server that image runs.
+# `spool build` writes, which starts from this one and adds `uv`, and on the
+# server that image runs, with no network, it loads and matches rows and
+# reads the sample note.
+#
+# The project's extractor is by-legal-form.py and not the one `spool init`
+# writes, whose model the image would fetch as it is built. What the build
+# fetches is `uv`, a Python and `pyarrow`.
 #
 # The registry is a container that listens on port 5005 of this machine, or
 # on SPOOL_TEST_REGISTRY_PORT. It and the rest are removed afterwards.
@@ -67,10 +72,17 @@ done
 
 # What the image is for: the Dockerfile `spool build` writes starts from it.
 echo "== a project's image, from the Dockerfile \`spool build\` writes"
-docker run --rm --user "$(id -u):$(id -g)" --volume "$project:/project" --workdir /project --entrypoint sh "$image" \
-    -c "spool init companies > /dev/null && spool build companies --base-image $image"
+docker run --rm --user "$(id -u):$(id -g)" --volume "$project:/project" --volume "$here:/release:ro" \
+    --workdir /project --entrypoint sh "$image" -c "
+        set -e
+        spool init companies > /dev/null
+        cp /release/by-legal-form.py companies/extractors/companies.py
+        spool build companies --base-image $image"
+grep -q '^RUN spool build --install$' "$project/companies/Dockerfile" \
+    || fail "the project's Dockerfile does not start its extractor as the image is built"
 docker build --quiet --tag spool-test-project "$project/companies" > /dev/null
-server=$(docker run --detach spool-test-project)
+# Everything the extractor needs is in the image by now.
+server=$(docker run --detach --network none spool-test-project)
 token=$(docker exec "$server" spool token add test 2> /dev/null)
 spool() {
     docker exec --interactive --env SPOOL_TOKEN="$token" "$server" spool "$@"
@@ -84,6 +96,19 @@ done
 [ "$(docker exec "$server" id -un)" = spool ] || fail "the project's server does not run as the user \`spool\`"
 spool load - --source crm < "$project/companies/samples/crm-1.csv"
 spool match
-count=$(spool show records | grep -c '^crm:' || true)
+# The note is the copy in the image: a command starts in the project directory.
+spool extract samples/notes-1.txt
+spool match
+records=$(spool show records)
+echo "$records"
+identity() {
+    echo "$records" | awk -v key="$1" '$1 == key { print $NF }'
+}
+count=$(echo "$records" | grep -c '^crm:' || true)
 [ "$count" -eq 6 ] || fail "the project's server holds $count records of \`crm\`, and the file held 6"
+count=$(echo "$records" | grep -c '^notes:' || true)
+[ "$count" -eq 3 ] || fail "the project's server holds $count records of \`notes\`, and the note names 3 companies"
+[ -n "$(identity crm:c-1)" ] || fail "crm:c-1 has no identity"
+[ "$(identity 'notes:notes-1.txt[54-69]')" = "$(identity crm:c-1)" ] \
+    || fail "the note's Acorn Tools Ltd is not in the identity of crm:c-1"
 echo "release/test-image.sh: passed"
