@@ -1302,7 +1302,9 @@ export interface ReviewCase {
   judgements: PairJudgement[];
   /**
    * The records the item names, as they are now, in the item's
-   * order.
+   * order. One with `retracted` set was taken back by its source: it
+   * does not wait for a decision, and a changeset that gives it an
+   * identity is refused. The decision is about the others.
    */
   records: RecordEntry[];
 }

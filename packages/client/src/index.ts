@@ -561,7 +561,9 @@ export class SpoolClient {
   /**
    * A review item with what a reviewer reads to decide it: the records
    * it holds back, the identities they matched with their members, and what
-   * was judged between them.
+   * was judged between them. A record whose `retracted` is set was taken back
+   * by its source: it does not wait for a decision, and a changeset that
+   * gives it an identity is refused.
    */
   reviewCase(item: number): Promise<ReviewCase> {
     return this.json("GET", `/v1/review/${item}/case`);

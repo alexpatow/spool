@@ -2954,7 +2954,7 @@
           "type": "array"
         },
         "records": {
-          "description": "The records the item names, as they are now, in the item's\norder.",
+          "description": "The records the item names, as they are now, in the item's\norder. One with `retracted` set was taken back by its source: it\ndoes not wait for a decision, and a changeset that gives it an\nidentity is refused. The decision is about the others.",
           "items": {
             "$ref": "#/$defs/RecordEntry"
           },

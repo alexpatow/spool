@@ -113,7 +113,9 @@ pub struct Dismissal {
 pub struct ReviewCase {
     pub item: ReviewEntry,
     /// The records the item names, as they are now, in the item's
-    /// order.
+    /// order. One with `retracted` set was taken back by its source: it
+    /// does not wait for a decision, and a changeset that gives it an
+    /// identity is refused. The decision is about the others.
     pub records: Vec<RecordEntry>,
     /// The identities the item names, as they stand now, ordered by ID. One
     /// that was merged away since is shown as the identity that stands for

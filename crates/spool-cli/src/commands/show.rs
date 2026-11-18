@@ -996,13 +996,22 @@ impl View<'_> {
         println!();
         table(
             "records left without an identity",
-            &["record", "source and key"],
+            &["record", "source and key", "now"],
             records
                 .iter()
                 .map(|record| {
                     vec![
                         record.id.to_string(),
                         named(&record.source, record.key.as_deref()),
+                        match (record.identity, record.retracted) {
+                            (Some(identity), _) => format!("in identity {identity}"),
+                            (None, Some(run)) => {
+                                format!(
+                                    "taken back by its source in run {run}, so it does not wait"
+                                )
+                            }
+                            (None, None) => "waits for an identity".to_owned(),
+                        },
                     ]
                 })
                 .collect(),
