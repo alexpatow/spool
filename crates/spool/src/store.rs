@@ -19,6 +19,7 @@ use spool_core::{
 use crate::batch::{Column, batch, id_list};
 use crate::drafts;
 use crate::error::{Error, Result};
+use crate::possible_split;
 use crate::review;
 use crate::schema;
 
@@ -353,6 +354,7 @@ impl DuckStore {
         // Not identity state, but it has to agree with membership at every
         // log position, so it is updated in the same transaction.
         review::resolve_assigned(&tx, Seq(seq as u64))?;
+        possible_split::resolve_answered(&tx, Seq(seq as u64))?;
         // Nor is a draft, and committing one is what ends its match run.
         drafts::committed(&tx, changeset.id, Seq(seq as u64), committed_at)?;
         tx.commit()?;
@@ -1152,10 +1154,17 @@ mod tests {
             let store =
                 DuckStore::open(Some(&path), Box::new(StepClock::new(0, 1_000_000))).unwrap();
             // What a store of format 7 looked like: everything but the
-            // retractions.
+            // retractions and the groups of a review item.
             store
                 .conn
-                .execute_batch("DROP TABLE spool.retraction")
+                .execute_batch(
+                    "DROP TABLE spool.retraction;
+                     DROP VIEW spool.review_open;
+                     ALTER TABLE spool.review_item DROP COLUMN groups;
+                     CREATE VIEW spool.review_open AS
+                       SELECT review_id, run_id, entity_type, kind, record_ids, identity_ids
+                       FROM spool.review_item WHERE status = 'open';",
+                )
                 .unwrap();
             schema::set_meta(&store.conn, "format_version", "7").unwrap();
         }
@@ -1171,6 +1180,62 @@ mod tests {
             })
             .unwrap();
         assert_eq!(retractions, 0);
+    }
+
+    #[test]
+    fn a_store_of_the_format_before_possible_splits_is_brought_up_to_date() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("store.duckdb");
+        let item = "INSERT INTO spool.review_item VALUES (
+                      1, 1, 'thing', 'conflict', []::UUID[], []::UUID[], 'open',
+                      NULL, NULL, NULL, NULL, NULL";
+        {
+            let store =
+                DuckStore::open(Some(&path), Box::new(StepClock::new(0, 1_000_000))).unwrap();
+            // What a store of format 8 looked like: a review item had no
+            // groups.
+            store
+                .conn
+                .execute_batch(&format!(
+                    "DROP VIEW spool.review_open;
+                     ALTER TABLE spool.review_item DROP COLUMN groups;
+                     CREATE VIEW spool.review_open AS
+                       SELECT review_id, run_id, entity_type, kind, record_ids, identity_ids
+                       FROM spool.review_item WHERE status = 'open';
+                     {item})"
+                ))
+                .unwrap();
+            schema::set_meta(&store.conn, "format_version", "8").unwrap();
+        }
+        let store = DuckStore::open(Some(&path), Box::new(StepClock::new(0, 1))).unwrap();
+        assert_eq!(
+            schema::meta(&store.conn, "format_version").unwrap(),
+            Some(schema::FORMAT_VERSION.to_owned())
+        );
+        // The item that was there has none, and a new one can have them.
+        let items = review::list(&store.conn, &review::ReviewFilter::default()).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].groups, Vec::<Vec<RecordId>>::new());
+        store
+            .conn
+            .execute_batch(&format!(
+                "{}, [[uuid()], [uuid()]])",
+                item.replace(
+                    "1, 1, 'thing', 'conflict'",
+                    "2, 1, 'thing', 'possible_split'"
+                )
+            ))
+            .unwrap();
+        let items = review::list(&store.conn, &review::ReviewFilter::default()).unwrap();
+        assert_eq!(items[1].groups.len(), 2);
+        // The view that was there still reads the table.
+        let open: i64 = store
+            .conn
+            .query_row("SELECT count(*) FROM spool.review_open", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(open, 2);
     }
 
     #[test]

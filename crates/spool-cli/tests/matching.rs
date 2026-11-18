@@ -261,7 +261,7 @@ left out    1 record in 1 review item: `spool show review` says why
     );
     let review = shown(&["show", "review"]);
     assert!(
-        review.contains("\n1     possible_merge  open    company  1 record  2 identities  run "),
+        review.contains("\n1     possible_merge  open    company  run 6      1 record without an identity, which matched 2 identities\n"),
         "{review}"
     );
     let records = shown(&["show", "records"]);

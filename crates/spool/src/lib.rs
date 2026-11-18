@@ -36,6 +36,7 @@ mod features;
 mod ingest;
 mod lookup;
 mod metrics;
+mod possible_split;
 mod project;
 mod retract;
 mod review;
@@ -55,7 +56,7 @@ pub use spool_core as core;
 
 pub use bench::{
     BenchReport, CorrectionSummary, DocumentsSummary, ExtractSummary, IngestSummary,
-    RetractSummary, Scenario, StepReport,
+    PossibleSplits, RetractSummary, Scenario, StepReport,
 };
 pub use documents::{
     DocumentEntry, DocumentExtraction, DocumentFilter, ExtractOptions, ExtractReport, ExtractorRef,

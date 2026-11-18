@@ -132,9 +132,10 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use duckdb::arrow::array::{Array, AsArray};
+use duckdb::arrow::datatypes::Int64Type;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use spool_core::{Actor, Changeset, Constraint, ConstraintKind, IdentityId, Op, Seq};
+use spool_core::{Actor, Changeset, Constraint, ConstraintKind, IdentityId, Op, RecordId, Seq};
 
 use spool_core::DocumentId;
 
@@ -150,6 +151,7 @@ use crate::metrics::{
 };
 use crate::project::Manifest;
 use crate::retract::NOT_RETRACTED;
+use crate::review::{ReviewFilter, ReviewKind};
 use crate::rows::Rows;
 use crate::usercode::UserCode;
 
@@ -456,6 +458,10 @@ pub struct StepReport {
     /// in a store of their own. Only a step with `rebuild = true` has it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rebuild: Option<Rebuild>,
+    /// The open `possible_split` review items against the truth. Only a
+    /// store in which a retraction has raised one has it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub possible_splits: Option<PossibleSplits>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -474,6 +480,11 @@ pub struct IngestSummary {
     /// Those of them that went back to the identity they left.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub returned: u64,
+    /// Identities they went back to where nothing holds them with the
+    /// records that are there, each put to a reviewer as a `possible_split`
+    /// item.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub possible_splits: u64,
 }
 
 fn is_zero(count: &u64) -> bool {
@@ -493,6 +504,27 @@ pub struct RetractSummary {
     pub retracted: u64,
     /// Those that had an identity, and left it.
     pub detached: u64,
+    /// Identities they left whose remaining records nothing holds together
+    /// any more, each put to a reviewer as a `possible_split` item.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub possible_splits: u64,
+}
+
+/// The `possible_split` review items that are open after a step, against
+/// the truth. An item asks about a pair of records when they are in
+/// different groups of it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PossibleSplits {
+    pub open: u64,
+    /// The records the open items name.
+    pub records: u64,
+    /// The pairs they ask about.
+    pub pairs: u64,
+    /// Of those pairs, the ones the truth says are two things.
+    pub wrong_pairs: u64,
+    /// Items that ask about at least one such pair: their identity holds
+    /// more than one thing.
+    pub wrong: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1015,6 +1047,7 @@ impl Scenario {
                     true => Some(self.rebuild(engine, &manifest, &self.spec.steps[..=at])?),
                     false => None,
                 },
+                possible_splits: possible_splits(engine, &truth.entities)?,
             };
             engine.verify().map_err(|error| {
                 Error::Scenario(format!(
@@ -1111,6 +1144,7 @@ impl Scenario {
             superseded: report.superseded,
             restored: report.restored,
             returned: report.returned,
+            possible_splits: report.possible_splits,
         })
     }
 
@@ -1151,6 +1185,7 @@ impl Scenario {
             unknown: report.unknown,
             retracted: report.retracted,
             detached: report.detached,
+            possible_splits: report.possible_splits,
         })
     }
 
@@ -1226,7 +1261,27 @@ impl Scenario {
             )));
         }
         let metrics = rebuilt.score(truth_relation(&rebuilt, &truth.entities)?)?;
-        Ok(Rebuild::between(&kept, &afresh, metrics))
+        let mut rebuild = Rebuild::between(&kept, &afresh, metrics);
+        // Of the pairs only the store has together, those a reviewer is
+        // asked about.
+        let group = |grouping: &'_ [(String, String)]| -> HashMap<String, String> {
+            grouping.iter().cloned().collect()
+        };
+        let (here, there) = (group(&kept), group(&afresh));
+        let mut asked_about = HashSet::new();
+        for (_, one, other) in asked(engine)? {
+            let (one, other) = (one.to_string(), other.to_string());
+            let together =
+                |groups: &HashMap<String, String>| match (groups.get(&one), groups.get(&other)) {
+                    (Some(a), Some(b)) => Some(a == b),
+                    _ => None,
+                };
+            if together(&here) == Some(true) && together(&there) == Some(false) {
+                asked_about.insert((one, other));
+            }
+        }
+        rebuild.pairs_only_kept_asked = asked_about.len() as u64;
+        Ok(rebuild)
     }
 
     /// Runs the steps that ingest anything in reverse, without corrections
@@ -1284,6 +1339,86 @@ fn gone(engine: &Engine) -> Result<Gone> {
         }
     }
     Ok(gone)
+}
+
+/// The pairs of records the open `possible_split` review items ask about,
+/// each with its item: two records in different groups of one item, the
+/// smaller ID first.
+fn asked(engine: &Engine) -> Result<Vec<(u64, RecordId, RecordId)>> {
+    let mut pairs = Vec::new();
+    for item in engine.review_items(&ReviewFilter::open())? {
+        if item.kind != ReviewKind::PossibleSplit {
+            continue;
+        }
+        for (index, group) in item.groups.iter().enumerate() {
+            for other in item.groups[index + 1..].iter().flatten() {
+                for record in group {
+                    pairs.push((item.id, *record.min(other), *record.max(other)));
+                }
+            }
+        }
+    }
+    Ok(pairs)
+}
+
+/// The open `possible_split` review items against the truth, or `None` in
+/// a store where no retraction has raised one.
+fn possible_splits(
+    engine: &Engine,
+    truth: &HashMap<(String, String), String>,
+) -> Result<Option<PossibleSplits>> {
+    let count = |sql: &str| -> Result<u64> {
+        let batches = engine.query(sql)?;
+        Ok(batches.first().map_or(0, |batch| {
+            batch.column(0).as_primitive::<Int64Type>().value(0)
+        }) as u64)
+    };
+    let about = "FROM spool.review_item WHERE kind = 'possible_split'";
+    if count(&format!("SELECT count(*) {about}"))? == 0 {
+        return Ok(None);
+    }
+    let open = format!("{about} AND status = 'open'");
+    // What each record the open items name truly is, where the truth says.
+    let batches = engine.query(&format!(
+        "SELECT record_id::VARCHAR, source_id, source_key FROM spool.record
+         WHERE source_key IS NOT NULL
+           AND record_id IN (SELECT unnest(record_ids) {open})"
+    ))?;
+    let mut entity_of: HashMap<String, &str> = HashMap::new();
+    for batch in &batches {
+        let column = |index: usize| batch.column(index).as_string::<i32>();
+        let (ids, sources, keys) = (column(0), column(1), column(2));
+        for row in 0..batch.num_rows() {
+            let key = (sources.value(row).to_owned(), keys.value(row).to_owned());
+            if let Some(entity) = truth.get(&key) {
+                entity_of.insert(ids.value(row).to_owned(), entity);
+            }
+        }
+    }
+    let pairs = asked(engine)?;
+    let mut wrong = BTreeSet::new();
+    let mut wrong_pairs = 0;
+    for (item, one, other) in &pairs {
+        let entities = (
+            entity_of.get(&one.to_string()),
+            entity_of.get(&other.to_string()),
+        );
+        if let (Some(one), Some(other)) = entities
+            && one != other
+        {
+            wrong_pairs += 1;
+            wrong.insert(*item);
+        }
+    }
+    Ok(Some(PossibleSplits {
+        open: count(&format!("SELECT count(*) {open}"))?,
+        records: count(&format!(
+            "SELECT count(DISTINCT record_id) FROM (SELECT unnest(record_ids) AS record_id {open})"
+        ))?,
+        pairs: pairs.len() as u64,
+        wrong_pairs,
+        wrong: wrong.len() as u64,
+    }))
 }
 
 /// Every record its source has not taken back, with the group it is in:

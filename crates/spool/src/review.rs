@@ -1,9 +1,10 @@
-//! Review items: what a reconcile run would not decide, kept in the store.
+//! Review items: what the engine would not decide, kept in the store.
 //!
-//! A review item names records that were left without an identity and
-//! says why. It is evidence, like a judgement: it changes no identity, and
-//! nothing is committed on its account. It is open while any of its
-//! records waits for an identity, and it closes in one of three ways:
+//! Most review items come from a reconcile run. Such an item names records
+//! that were left without an identity and says why. It is evidence, like a
+//! judgement: it changes no identity, and nothing is committed on its
+//! account. It is open while any of its records waits for an identity, and
+//! it closes in one of three ways:
 //!
 //! - `resolved`: a changeset gave every record an identity. Any
 //!   changeset does this, whether a reviewer wrote it or a later run did.
@@ -22,6 +23,13 @@
 //! A record its source took back does not wait for an identity. An item
 //! that names one stays open for the sake of its other records, and
 //! is resolved when those have an identity.
+//!
+//! A `possible_split` is the other way round: its records have an identity,
+//! and the question is whether they should share it. A retraction raises
+//! one, and so does a record that comes back. The `possible_split` module
+//! says when, and how it closes. None
+//! of the above applies to it: its records wait for nothing, so no match
+//! run examines them on its account.
 
 use std::collections::BTreeSet;
 
@@ -34,6 +42,7 @@ use spool_core::{
 
 use crate::error::{Error, Result};
 use crate::lookup::{self, IdentitySummary, RecordEntry};
+use crate::possible_split;
 use crate::retract;
 use crate::store::{self, parse};
 use crate::time::rfc3339;
@@ -47,7 +56,25 @@ pub enum ReviewKind {
     PossibleMerge,
     /// The evidence about the records contradicts itself.
     Conflict,
+    /// The records share an identity, and nothing the store knows holds
+    /// them together any more: what did was a record its source took back.
+    /// They may be more than one thing.
+    PossibleSplit,
 }
+
+impl ReviewKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            ReviewKind::PossibleMerge => "possible_merge",
+            ReviewKind::Conflict => "conflict",
+            ReviewKind::PossibleSplit => "possible_split",
+        }
+    }
+}
+
+/// A condition on a row of `spool.review_item` that holds for the kinds that
+/// are about records without an identity.
+pub(crate) const ABOUT_WAITING: &str = "kind <> 'possible_split'";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -75,20 +102,41 @@ impl ReviewStatus {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ReviewEntry {
     pub id: u64,
-    /// The reconcile run that raised it.
+    /// The run that raised it: a reconcile run. For a `possible_split`, the
+    /// retract run that took back what held the records together, or the
+    /// ingest run that brought a record back to where what held it is
+    /// still gone.
     pub run: RunId,
     pub entity_type: EntityType,
     pub kind: ReviewKind,
-    /// The records left without an identity.
+    /// The records left without an identity. For a `possible_split`, the
+    /// members of the identity that nothing holds together: every record
+    /// in `groups`.
     pub records: Vec<RecordId>,
     /// The identities they matched. Empty when the conflict is among the
-    /// records themselves.
+    /// records themselves. For a `possible_split`, the one identity the
+    /// records are in. While the item is open that is the identity as it is
+    /// now: when the identity is merged into another, the item names the
+    /// one that stands for both.
     pub identities: Vec<IdentityId>,
+    /// Only a `possible_split` has these: the records of its identity as
+    /// the groups that are each still held together. Nothing the store
+    /// knows says that two of the groups are one thing. While the item is
+    /// open they are the identity's records as they are now; once it is
+    /// closed, as they were last. The largest group is first.
+    #[serde(default)]
+    pub groups: Vec<Vec<RecordId>>,
     pub status: ReviewStatus,
     /// Resolved: the changeset after which every record had an identity.
+    /// For a `possible_split`, the changeset after which nothing was left
+    /// to ask: it took the groups apart, or it added what holds them
+    /// together, or it merged the identity with one whose item asks for
+    /// both.
     pub resolved_seq: Option<Seq>,
     /// Superseded: the reconcile run that raised it again in another form,
-    /// or the retract run that took back the records it asked about.
+    /// or the retract run that took back the records it asked about. For a
+    /// `possible_split`, the reconcile run whose judgements hold the
+    /// groups together.
     pub superseded_by: Option<RunId>,
     /// Dismissed: who closed it, when and why.
     #[serde(default)]
@@ -122,9 +170,17 @@ pub struct ReviewCase {
     /// it, so there may be fewer than the item names.
     pub candidates: Vec<Candidate>,
     /// What the latest run to judge each pair made of it, for every pair of
-    /// one of the item's records with another of them or with a member
-    /// of a candidate. Only runs that were reconciled count.
+    /// one of the item's records with another of them, with a member
+    /// of a candidate, or with a record in `taken_back`. Only runs that
+    /// were reconciled count.
     pub judgements: Vec<PairJudgement>,
+    /// Only a `possible_split` has these: the records that were taken out
+    /// of the identity when their source took them back, and have not come
+    /// back. What held the groups together went through them, and
+    /// `judgements` has what was judged between them and the item's
+    /// records.
+    #[serde(default)]
+    pub taken_back: Vec<RecordEntry>,
     /// The constraints in force that bear on the decision, oldest first:
     /// those that name one of the item's records, and those between
     /// members of two of the candidates. A changeset that would break one
@@ -171,7 +227,8 @@ pub struct PairJudgement {
     /// What it was compared with.
     pub other: RecordId,
     /// The identity `other` belongs to now: one of the candidates, unless
-    /// `other` is another of the item's records. A candidate's members
+    /// `other` is another of the item's records, or a record that was
+    /// taken back, which has none. A candidate's members
     /// are not all in the case, so this, not the members, says which
     /// candidate a judgement is about.
     pub identity: Option<IdentityId>,
@@ -212,7 +269,8 @@ pub(crate) fn list(conn: &Connection, filter: &ReviewFilter) -> Result<Vec<Revie
         "SELECT review_id, run_id, entity_type, kind,
                 array_to_string(record_ids::VARCHAR[], ','),
                 array_to_string(identity_ids::VARCHAR[], ','),
-                status, closed_seq, closed_run, closed_by, epoch_us(closed_at), closed_reason
+                status, closed_seq, closed_run, closed_by, epoch_us(closed_at), closed_reason,
+                to_json(groups)::VARCHAR
          FROM spool.review_item
          WHERE ($1::VARCHAR IS NULL OR status = $1::VARCHAR)
            AND ($2::VARCHAR IS NULL OR entity_type = $2::VARCHAR)
@@ -239,6 +297,7 @@ pub(crate) fn list(conn: &Connection, filter: &ReviewFilter) -> Result<Vec<Revie
             kind: match kind.as_str() {
                 "possible_merge" => ReviewKind::PossibleMerge,
                 "conflict" => ReviewKind::Conflict,
+                "possible_split" => ReviewKind::PossibleSplit,
                 other => return Err(unknown("kind", other).into()),
             },
             records: split(row.get(4)?)
@@ -249,6 +308,10 @@ pub(crate) fn list(conn: &Connection, filter: &ReviewFilter) -> Result<Vec<Revie
                 .iter()
                 .map(|id| parse(id))
                 .collect::<Result<_>>()?,
+            groups: match row.get::<_, Option<String>>(12)? {
+                Some(groups) => serde_json::from_str(&groups).map_err(StateError::new)?,
+                None => Vec::new(),
+            },
             status: match status.as_str() {
                 "open" => ReviewStatus::Open,
                 "resolved" => ReviewStatus::Resolved,
@@ -353,6 +416,11 @@ pub(crate) fn case(conn: &Connection, id: u64) -> Result<ReviewCase> {
     let current: Vec<IdentityId> = current.into_iter().collect();
     let identities = lookup::identities_by_id(conn, &current)?;
 
+    let taken_back = match item.kind {
+        ReviewKind::PossibleSplit => possible_split::taken_back(conn, &current)?,
+        ReviewKind::PossibleMerge | ReviewKind::Conflict => Vec::new(),
+    };
+
     let mut judgements = Vec::new();
     {
         // A pair is stored with the smaller ID on the left, so one of the
@@ -361,6 +429,8 @@ pub(crate) fn case(conn: &Connection, id: u64) -> Result<ReviewCase> {
             "WITH held AS (SELECT unnest({held}) AS record_id),
                   near AS (
                     SELECT record_id FROM held
+                    UNION
+                    SELECT unnest({taken_back})
                     UNION
                     SELECT record_id FROM spool.membership
                     WHERE to_seq IS NULL AND list_contains({candidates}, identity_id)),
@@ -382,6 +452,7 @@ pub(crate) fn case(conn: &Connection, id: u64) -> Result<ReviewCase> {
               AND m.to_seq IS NULL
              ORDER BY 1, 2, verdict, score",
             held = lookup::uuid_list(&item.records),
+            taken_back = lookup::uuid_list(&taken_back),
             candidates = lookup::uuid_list(&current),
         ))?;
         let mut rows = statement.query([])?;
@@ -467,16 +538,20 @@ pub(crate) fn case(conn: &Connection, id: u64) -> Result<ReviewCase> {
         records,
         candidates,
         judgements,
+        taken_back: lookup::records_by_id(conn, &taken_back)?,
         constraints,
     })
 }
 
-/// The open review items of an entity type, oldest first.
+/// The open review items of an entity type that have records waiting for
+/// an identity, oldest first. A match run examines those records again. A
+/// `possible_split` is not among them: its records have an identity.
 pub(crate) fn open_ids(conn: &Connection, entity_type: &EntityType) -> Result<Vec<u64>> {
-    let mut statement = conn.prepare(
+    let mut statement = conn.prepare(&format!(
         "SELECT review_id FROM spool.review_item
-         WHERE status = 'open' AND entity_type = ? ORDER BY review_id",
-    )?;
+         WHERE status = 'open' AND entity_type = ? AND {ABOUT_WAITING}
+         ORDER BY review_id"
+    ))?;
     let mut rows = statement.query([entity_type.as_str()])?;
     let mut ids = Vec::new();
     while let Some(row) = rows.next()? {
@@ -518,13 +593,14 @@ pub(crate) fn record(
 
     let mut open: Vec<(i64, Shape)> = Vec::new();
     {
-        let mut statement = conn.prepare(
+        let mut statement = conn.prepare(&format!(
             "SELECT review_id, kind,
                     array_to_string(record_ids::VARCHAR[], ','),
                     array_to_string(identity_ids::VARCHAR[], ',')
              FROM spool.review_item
-             WHERE status = 'open' AND entity_type = ? ORDER BY review_id",
-        )?;
+             WHERE status = 'open' AND entity_type = ? AND {ABOUT_WAITING}
+             ORDER BY review_id"
+        ))?;
         let mut rows = statement.query([entity_type.as_str()])?;
         while let Some(row) = rows.next()? {
             let kind = match row.get::<_, String>(1)?.as_str() {
@@ -565,7 +641,7 @@ pub(crate) fn record(
         conn.execute(
             &format!(
                 "INSERT INTO spool.review_item
-                 VALUES (?, ?, ?, ?, {}, {}, 'open', NULL, NULL, NULL, NULL, NULL)",
+                 VALUES (?, ?, ?, ?, {}, {}, 'open', NULL, NULL, NULL, NULL, NULL, NULL)",
                 uuid_list(&shape.records),
                 uuid_list(&shape.identities)
             ),
@@ -590,12 +666,13 @@ pub(crate) fn record(
 
 /// Closes the open items none of whose records waits for an identity
 /// any longer, as resolved by the changeset at `seq`. Runs inside the
-/// transaction that commits that changeset.
+/// transaction that commits that changeset. A `possible_split` is not
+/// about records that wait, and closes by its own rule.
 pub(crate) fn resolve_assigned(conn: &Connection, seq: Seq) -> Result<()> {
     conn.execute(
         &format!(
             "UPDATE spool.review_item SET status = 'resolved', closed_seq = ?
-             WHERE status = 'open' AND review_id NOT IN ({})",
+             WHERE status = 'open' AND {ABOUT_WAITING} AND review_id NOT IN ({})",
             retract::WAITING
         ),
         [seq.0 as i64],

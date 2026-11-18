@@ -7,7 +7,7 @@ use crate::error::{Error, Result};
 
 /// Written to `spool.meta` when a store is created and checked when one is
 /// opened.
-pub(crate) const FORMAT_VERSION: &str = "8";
+pub(crate) const FORMAT_VERSION: &str = "9";
 
 const TABLES: &str = "
 CREATE SCHEMA spool;
@@ -94,19 +94,20 @@ CREATE TABLE spool.judgement (         -- kept
   detail   JSON
 );
 
-CREATE TABLE spool.review_item (       -- what a reconcile run would not decide; kept
+CREATE TABLE spool.review_item (       -- what the engine would not decide; kept
   review_id       BIGINT  NOT NULL,    -- dense, assigned by the engine
-  run_id          BIGINT  NOT NULL,    -- reconcile run that raised it
+  run_id          BIGINT  NOT NULL,    -- the run that raised it: a reconcile run, or for a possible_split a retract run
   entity_type     VARCHAR NOT NULL,
-  kind            VARCHAR NOT NULL,    -- 'possible_merge' | 'conflict'
-  record_ids UUID[]  NOT NULL,    -- the records left without an identity
-  identity_ids    UUID[]  NOT NULL,    -- the identities they matched; empty when the conflict is among the records
+  kind            VARCHAR NOT NULL,    -- 'possible_merge' | 'conflict' | 'possible_split'
+  record_ids UUID[]  NOT NULL,    -- the records left without an identity; possible_split: the members nothing holds together
+  identity_ids    UUID[]  NOT NULL,    -- the identities they matched; empty when the conflict is among the records; possible_split: the identity they are in
   status          VARCHAR NOT NULL,    -- 'open' | 'resolved' | 'superseded' | 'dismissed'
-  closed_seq      BIGINT,              -- resolved: the changeset after which every record had an identity
-  closed_run      BIGINT,              -- superseded: the reconcile run that raised it again in another form, or the retract run that took back what it asked about
+  closed_seq      BIGINT,              -- resolved: the changeset after which every record had an identity; possible_split: after which nothing was left to ask
+  closed_run      BIGINT,              -- superseded: the run that raised it again in another form, the retract run that took back what it asked about, or the reconcile run whose judgements answered it
   closed_by       VARCHAR,             -- dismissed: who decided, as an actor
   closed_at       TIMESTAMPTZ,         -- dismissed: when
-  closed_reason   VARCHAR              -- dismissed: why, if the reviewer said
+  closed_reason   VARCHAR,             -- dismissed: why, if the reviewer said
+  groups          UUID[][]             -- possible_split: record_ids as the groups that are each still held together; NULL otherwise
 );
 
 CREATE TABLE spool.draft (             -- a changeset a reconcile run drafted and left for review; kept
@@ -228,6 +229,12 @@ CREATE TABLE spool.retraction (
 );
 ";
 
+/// What format 9 added to format 8: the groups of a `possible_split` review
+/// item.
+const FROM_8: &str = "
+ALTER TABLE spool.review_item ADD COLUMN groups UUID[][];
+";
+
 /// Creates the schema in an empty database, or checks the format version of
 /// an existing one.
 pub(crate) fn ensure(conn: &mut Connection) -> Result<()> {
@@ -247,12 +254,16 @@ pub(crate) fn ensure(conn: &mut Connection) -> Result<()> {
         return Ok(());
     }
     let mut found = meta(conn, "format_version")?.unwrap_or_else(|| "none".to_owned());
-    if found == "7" {
-        let tx = conn.transaction()?;
-        tx.execute_batch(FROM_7)?;
-        set_meta(&tx, "format_version", FORMAT_VERSION)?;
-        tx.commit()?;
-        found = FORMAT_VERSION.to_owned();
+    // A store of an earlier format that only lacks what came later is
+    // brought up to date, one format at a time.
+    for (from, added, to) in [("7", FROM_7, "8"), ("8", FROM_8, "9")] {
+        if found == from {
+            let tx = conn.transaction()?;
+            tx.execute_batch(added)?;
+            set_meta(&tx, "format_version", to)?;
+            tx.commit()?;
+            found = to.to_owned();
+        }
     }
     if found != FORMAT_VERSION {
         return Err(Error::FormatVersion {
