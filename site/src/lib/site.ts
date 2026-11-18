@@ -14,6 +14,8 @@ export const site = {
   version: "0.1.0",
   licence: "MIT",
   repository: "https://github.com/alexpatow/spool",
+  /** The X account a shared page names as its site and its author. Spool has none of its own. */
+  x: "@alexpatow",
   /** Where the site is published. `SITE_URL`, when it is set, takes its place. */
   url: "https://spool.alexpatow.com",
 } as const;

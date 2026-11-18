@@ -47,6 +47,8 @@ export function sharing({ title, description, path, image, imageAlt, type }: Sha
     },
     twitter: {
       card: "summary_large_image",
+      site: site.x,
+      creator: site.x,
       title,
       description,
       images,

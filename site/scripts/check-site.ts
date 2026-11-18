@@ -320,6 +320,9 @@ async function checkBuilt(pages: Page[]) {
         if (!meta.get(key)) fail(from, `no ${key}`);
       }
       if (meta.get("twitter:card") !== "summary_large_image") fail(from, "twitter:card is not summary_large_image");
+      for (const key of ["twitter:site", "twitter:creator"]) {
+        if (!/^@\w+$/.test(meta.get(key) ?? "")) fail(from, `${key} is not an X handle: ${meta.get(key) ?? "missing"}`);
+      }
       const image = meta.get("og:image") ?? "";
       if (!/^https?:\/\//.test(image)) fail(from, `og:image is not an absolute address: ${image || "missing"}`);
       if (meta.get("twitter:image") !== image) fail(from, "twitter:image is not its og:image");
