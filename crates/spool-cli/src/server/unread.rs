@@ -20,7 +20,7 @@
 use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::task::{Context, Poll};
 use std::time::Duration;
@@ -36,7 +36,7 @@ use axum::serve::{IncomingStream, Listener};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::runtime::Handle;
-use tokio::sync::mpsc;
+use tokio::sync::Notify;
 use tokio::time::Instant;
 
 /// The most of a body that is read and dropped for the connection to go on,
@@ -72,26 +72,61 @@ impl Connected<IncomingStream<'_, Connections>> for Unread {
 /// close.
 pub(super) struct Connections {
     listener: TcpListener,
-    closing: mpsc::Sender<()>,
+    open: Arc<Open>,
 }
 
 impl Connections {
-    /// The connections of `listener`, and what waits for the last of them.
+    /// The connections of `listener`, and what waits for them to close.
     pub(super) fn of(listener: TcpListener) -> (Self, ReadOut) {
-        let (closing, closed) = mpsc::channel(1);
-        (Self { listener, closing }, ReadOut(closed))
+        let open = Arc::new(Open::default());
+        let connections = Self {
+            listener,
+            open: open.clone(),
+        };
+        (connections, ReadOut(open))
     }
 }
 
-/// Ends when the listener is gone and no connection is being read out.
-pub(super) struct ReadOut(mpsc::Receiver<()>);
+/// The connections that have not closed: how many there are, how many of
+/// them are being read out, and word of each change.
+#[derive(Default)]
+struct Open {
+    connections: AtomicUsize,
+    read_out: AtomicUsize,
+    changed: Notify,
+}
+
+/// Waits for connections to close when the server stops.
+pub(super) struct ReadOut(Arc<Open>);
 
 impl ReadOut {
-    /// Waits for the connections that are still being read out, for at most
-    /// [`STOPPING_WAIT`].
-    pub(super) async fn wait(mut self) {
-        // Nothing is ever sent: this ends when the last sender is dropped.
-        let _ = tokio::time::timeout(STOPPING_WAIT, self.0.recv()).await;
+    /// Waits for every connection to close, for at most [`STOPPING_WAIT`].
+    /// This is for a server whose requests are all answered: what is open
+    /// is being read out, or is about to be.
+    pub(super) async fn wait(self) {
+        self.until_none(|open| &open.connections).await;
+    }
+
+    /// Waits for the connections that are being read out, for at most
+    /// [`STOPPING_WAIT`]. This is for a server that has given up on the
+    /// requests it has left, whose connections stay open.
+    pub(super) async fn wait_for_the_answered(self) {
+        self.until_none(|open| &open.read_out).await;
+    }
+
+    async fn until_none(&self, count: impl Fn(&Open) -> &AtomicUsize) {
+        let none = async {
+            loop {
+                // Asked for before the count is read, so that a change in
+                // between is not missed.
+                let changed = self.0.changed.notified();
+                if count(&self.0).load(Ordering::Acquire) == 0 {
+                    return;
+                }
+                changed.await;
+            }
+        };
+        let _ = tokio::time::timeout(STOPPING_WAIT, none).await;
     }
 }
 
@@ -101,10 +136,11 @@ impl Listener for Connections {
 
     async fn accept(&mut self) -> (Connection, SocketAddr) {
         let (stream, address) = Listener::accept(&mut self.listener).await;
+        self.open.connections.fetch_add(1, Ordering::AcqRel);
         let connection = Connection {
             stream: Some(stream),
             unread: Unread::default(),
-            closing: self.closing.clone(),
+            open: self.open.clone(),
         };
         (connection, address)
     }
@@ -118,7 +154,7 @@ pub(super) struct Connection {
     /// There until the connection is dropped.
     stream: Option<TcpStream>,
     unread: Unread,
-    closing: mpsc::Sender<()>,
+    open: Arc<Open>,
 }
 
 impl Connection {
@@ -171,16 +207,23 @@ impl AsyncWrite for Connection {
 
 impl Drop for Connection {
     fn drop(&mut self) {
+        let open = self.open.clone();
+        let closed = move || {
+            open.connections.fetch_sub(1, Ordering::AcqRel);
+            open.changed.notify_waiters();
+        };
         if !self.unread.0.load(Ordering::Relaxed) {
-            return;
+            return closed();
         }
         let (Some(stream), Ok(runtime)) = (self.stream.take(), Handle::try_current()) else {
-            return;
+            return closed();
         };
-        let closing = self.closing.clone();
+        let open = self.open.clone();
+        open.read_out.fetch_add(1, Ordering::AcqRel);
         runtime.spawn(async move {
             drop_the_rest(stream).await;
-            drop(closing);
+            open.read_out.fetch_sub(1, Ordering::AcqRel);
+            closed();
         });
     }
 }

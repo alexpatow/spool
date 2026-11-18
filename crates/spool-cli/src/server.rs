@@ -40,9 +40,28 @@
 //! the connection and drops what the client is still sending, within bounds,
 //! so that the client finishes writing and reads the answer
 //! (`server/unread.rs`).
+//!
+//! # Stopping
+//!
+//! A server that is told to stop takes no new connection and closes those
+//! with no request on them. It then stops within a fixed time, whatever its
+//! clients do:
+//!
+//! - A request that waits on a run is answered at once, with the run as far
+//!   as it has got. `wait_ms` has no upper limit, so the stop cannot wait for
+//!   it; the caller reads the run from the server that starts next.
+//! - Every other request in flight is answered if that takes no more than
+//!   [`STOP_WITHIN`], 5 seconds. A request that has not arrived in full by
+//!   then, or whose answer is not ready, gets none.
+//! - A connection that is being read out after a refusal has one second
+//!   after the last request is answered or given up, so the longest a stop
+//!   takes is 6 seconds.
+//!
+//! The engine's work is not cut off. A run the engine was given goes on in a
+//! thread of its own, and `spool serve` does not exit until it has ended.
 
 use std::collections::HashMap;
-use std::future::Future;
+use std::future::{Future, IntoFuture};
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -71,7 +90,7 @@ use spool::{
     RunFilter, RunKind, RunStatus, Scope, StrategyRef, watch_runs,
 };
 use tokio::net::TcpListener;
-use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch};
 use tower_sessions::cookie::time::Duration as SessionLength;
 use tower_sessions::cookie::{Cookie, SameSite};
 use tower_sessions::{Expiry, Session, SessionManagerLayer};
@@ -98,6 +117,10 @@ mod unread;
 
 /// How long a call that starts work waits when it does not say.
 pub const DEFAULT_WAIT_MS: u64 = 30_000;
+
+/// How long a server that was told to stop goes on answering the requests
+/// it has, by default. What is unfinished after that is left unanswered.
+pub const STOP_WITHIN: Duration = Duration::from_secs(5);
 
 /// The largest request body the server reads by default.
 pub const DEFAULT_MAX_BODY_BYTES: usize = 256 * 1024 * 1024;
@@ -171,6 +194,9 @@ pub struct ServerOptions {
     pub max_body_bytes: usize,
     /// Whether the server answers a browser at `/` with the studio.
     pub studio: bool,
+    /// How long the server goes on answering the requests it has once it
+    /// is told to stop.
+    pub stop_within: Duration,
 }
 
 impl ServerOptions {
@@ -183,6 +209,7 @@ impl ServerOptions {
             google: None,
             max_body_bytes: DEFAULT_MAX_BODY_BYTES,
             studio: true,
+            stop_within: STOP_WITHIN,
         }
     }
 }
@@ -198,6 +225,28 @@ struct App {
     https: bool,
     google: Option<Arc<Provider>>,
     asking: Arc<Semaphore>,
+    stopping: Stopping,
+}
+
+/// Whether the server has been told to stop. A request that waits on a run
+/// stops waiting then, and answers with the run as far as it has got.
+#[derive(Clone)]
+struct Stopping(Arc<watch::Sender<bool>>);
+
+impl Stopping {
+    fn new() -> Self {
+        Self(Arc::new(watch::Sender::new(false)))
+    }
+
+    fn tell(&self) {
+        self.0.send_replace(true);
+    }
+
+    /// Completes once the server has been told to stop.
+    async fn told(&self) {
+        // The sender is held here, so the wait ends only with the word.
+        let _ = self.0.subscribe().wait_for(|told| *told).await;
+    }
 }
 
 /// The wrong passwords lately tried for each username, and when the first of
@@ -276,6 +325,12 @@ impl Caller {
 
 /// The API over `engine`.
 pub fn router(engine: Arc<Engine>, options: &ServerOptions) -> Router {
+    router_until(engine, options, Stopping::new())
+}
+
+/// The API over `engine`, whose requests are told through `stopping` when
+/// the server is.
+fn router_until(engine: Arc<Engine>, options: &ServerOptions, stopping: Stopping) -> Router {
     let app = App {
         engine,
         accounts: options.accounts.clone(),
@@ -286,6 +341,7 @@ pub fn router(engine: Arc<Engine>, options: &ServerOptions) -> Router {
         https: options.https,
         google: options.google.clone().map(Provider::new).map(Arc::new),
         asking: Arc::new(Semaphore::new(MAX_ASKING)),
+        stopping,
     };
     let sessions = SessionManagerLayer::new(options.accounts.clone())
         .with_name(COOKIE)
@@ -369,8 +425,14 @@ pub fn router(engine: Arc<Engine>, options: &ServerOptions) -> Router {
     router.layer(middleware::from_fn(unread::finish_the_body))
 }
 
-/// Serves the API on `listener` until `shutdown` completes. Requests in
-/// flight are answered first.
+/// Serves the API on `listener` until `shutdown` completes, and then stops
+/// as the module says under "Stopping": requests in flight have
+/// [`ServerOptions::stop_within`] to be answered, and this returns whether
+/// or not they were.
+///
+/// The connections that were given up, and the work the engine was given,
+/// outlive this. They belong to the runtime it runs on: dropping the runtime
+/// ends the connections, and waits for the work.
 pub async fn serve(
     listener: TcpListener,
     engine: Arc<Engine>,
@@ -378,14 +440,28 @@ pub async fn serve(
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> std::io::Result<()> {
     let (connections, read_out) = unread::Connections::of(listener);
-    let router = router(engine, options).into_make_service_with_connect_info::<unread::Unread>();
-    axum::serve(connections, router)
-        .with_graceful_shutdown(shutdown)
-        .await?;
-    // A connection that was answered with part of a request unread is read
-    // out before it closes, so that its client reads the answer. Those get
-    // a moment to finish.
-    read_out.wait().await;
+    let stopping = Stopping::new();
+    let router = router_until(engine, options, stopping.clone())
+        .into_make_service_with_connect_info::<unread::Unread>();
+    let told = stopping.clone();
+    let serving = axum::serve(connections, router)
+        .with_graceful_shutdown(async move {
+            shutdown.await;
+            told.tell();
+        })
+        .into_future();
+    let out_of_time = async {
+        stopping.told().await;
+        tokio::time::sleep(options.stop_within).await;
+    };
+    tokio::select! {
+        served = serving => {
+            served?;
+            read_out.wait().await;
+        }
+        // The connections that are left end with the runtime.
+        () = out_of_time => read_out.wait_for_the_answered().await,
+    }
     Ok(())
 }
 
@@ -1277,10 +1353,17 @@ async fn job(
     });
 
     let wait = Duration::from_millis(wait_ms.unwrap_or(DEFAULT_WAIT_MS));
+    let waited = async {
+        tokio::select! {
+            () = tokio::time::sleep(wait) => {}
+            () = app.stopping.told() => {}
+        }
+    };
     let finished = tokio::select! {
         finished = &mut working => finished,
-        () = tokio::time::sleep(wait) => {
-            // Not done in time. The first run the work started is the one
+        () = waited => {
+            // Not done in time, or the server is stopping and waits for
+            // nobody. The first run the work started is the one
             // that stands for it; until there is one, there is nothing to
             // hand back.
             tokio::select! {
@@ -1510,13 +1593,20 @@ async fn read_run(
     let wait = Duration::from_millis(query(params)?.wait_ms.unwrap_or(0));
     let deadline = Instant::now() + wait;
     let mut pause = Duration::from_millis(20);
+    let stopping = app.stopping.told();
+    tokio::pin!(stopping);
+    let mut told = false;
     loop {
         let record = engine(&app, move |engine| engine.run(run)).await?;
         let left = deadline.saturating_duration_since(Instant::now());
-        if record.status != RunStatus::Running || left.is_zero() {
+        // A server that is stopping waits for nobody.
+        if record.status != RunStatus::Running || left.is_zero() || told {
             return ok(RunResponse { run: Some(record) });
         }
-        tokio::time::sleep(pause.min(left)).await;
+        tokio::select! {
+            () = tokio::time::sleep(pause.min(left)) => {}
+            () = &mut stopping => told = true,
+        }
         pause = (pause * 2).min(Duration::from_millis(500));
     }
 }
