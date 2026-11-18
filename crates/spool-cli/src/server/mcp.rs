@@ -96,12 +96,11 @@ Loading and matching: `load_rows` stores rows from one source as records, \
 and `run_match` then places the records no run has examined: each joins the \
 identity it matches or gets a new one, and identities that exist keep their \
 IDs. `describe_store` names each source the project declares in `sources`, \
-with its columns and the entity types it sends rows of. A row that was \
-loaded stays in the store: nothing deletes it, and `retract_rows` takes it \
-out of its identity and keeps it. So load what you were asked to load and \
-nothing else. `load_rows` refuses a row whose key the store holds with \
-other values, because it would replace that row: set `replace` only when \
-you were asked to change it.
+with its columns and the entity types it sends rows of. Load what you were \
+asked to load and nothing else; `retract_rows` takes a row back out of its \
+identity and keeps it, marked as retracted. `load_rows` refuses a row whose \
+key the store holds with other values, because it would replace that row: \
+set `replace` only when you were asked to change it.
 
 Text is the other way in: `load_documents` stores documents, and \
 `run_extraction` has one of the project's extractors, which \
@@ -562,8 +561,10 @@ struct Document {
 #[serde(deny_unknown_fields)]
 struct RunExtraction {
     /// The name of one of the project's extractors, which `describe_store`
-    /// lists in `extractors`.
-    extractor: String,
+    /// lists in `extractors`. It may be left out when the project has only
+    /// one.
+    #[serde(default)]
+    extractor: Option<String>,
     /// Read only the documents of this source.
     #[serde(default)]
     source: Option<String>,
@@ -952,10 +953,10 @@ static TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
              true; otherwise the rows are not the file's, so read the file again. Values \
              the row held before count as other values: loading them changes the row \
              back, so an older file loaded after a newer one is refused the same way. \
-             Loading does not match: follow it with `run_match`. A loaded row is kept \
-             for good and nothing deletes \
-             it, so load only what the person asked for; `retract_rows` takes a row back, \
-             which removes it from its identity and keeps it as evidence. This is for a \
+             Loading does not match: follow it with `run_match`. Load every row you were \
+             asked to load, and no row you were not. A row loaded by mistake, or that the \
+             person wants out later, is taken back with `retract_rows`, which removes it \
+             from its identity and keeps it, marked as retracted. This is for a \
              few thousand rows at most: a call is 4 MiB at most, and a pipeline loads \
              more with `POST /v1/load`. Returns the run that stored the rows, whose \
              `load` counts them.",
@@ -980,17 +981,17 @@ static TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
             "run_extraction",
             "Run an extractor",
             Effect::Changes,
-            "Run one of the project's extractors over the documents it has not read. Each \
-             place where a document names something becomes a record of the document's \
-             source, which keeps the document and the characters it was found at as its \
-             evidence. The server runs the project's own extractor and nothing a caller \
-             sends. An extractor may ask a language model, which takes time and can cost \
-             money: `limit` says how many documents it reads at most. Extraction does not \
-             match: follow it with `run_match` for the entity type of the records. What \
-             was found is kept, as loaded rows are, and `retract_rows` takes a record \
-             back by its key. Returns the run, whose `extraction` counts the documents \
-             read and the records found. If its `status` is still `running`, read it with \
-             `get_run`.",
+            "Run one of the project's extractors over the documents it has not read. \
+             `extractor` may be left out when the project has only one. Each place where \
+             a document names something becomes a record of the document's source, which \
+             keeps the document and the characters it was found at as its evidence. The \
+             server runs the project's own extractor and nothing a caller sends. An \
+             extractor may ask a language model, which takes time and can cost money: \
+             `limit` says how many documents it reads at most. Extraction does not match: \
+             follow it with `run_match` for the entity type of the records. What was found \
+             is kept, as loaded rows are, and `retract_rows` takes a record back by its \
+             key. Returns the run, whose `extraction` counts the documents read and the \
+             records found. If its `status` is still `running`, read it with `get_run`.",
         ),
         tool::<RunMatch>(
             "run_match",
@@ -1268,7 +1269,7 @@ impl Tools {
             "run_extraction" => {
                 let asked: RunExtraction = arguments(tool, given)?;
                 let request = ExtractRequest {
-                    extractor: Some(asked.extractor),
+                    extractor: asked.extractor,
                     source: asked.source,
                     again: asked.again,
                     limit: asked.limit,

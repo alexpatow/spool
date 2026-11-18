@@ -79,8 +79,10 @@ export async function faults(client: SpoolClient, state: State, sample = 40): Pr
   if (totals.records !== state.placed.size) {
     found.push(`info counts ${totals.records} records, and ${state.placed.size} are listed`);
   }
-  if (totals.identities !== state.identities.size) {
-    found.push(`info counts ${totals.identities} identities, and ${state.identities.size} are listed`);
+  // An identity whose records all left it is still listed, and not counted.
+  const holding = [...state.identities.values()].filter((members) => members > 0).length;
+  if (totals.identities !== holding) {
+    found.push(`info counts ${totals.identities} identities, and ${holding} listed ones hold a record`);
   }
   if (totals.unassigned !== unassigned) {
     found.push(`info counts ${totals.unassigned} records without an identity, and ${unassigned} are listed`);

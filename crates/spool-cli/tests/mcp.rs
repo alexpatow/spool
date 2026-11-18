@@ -215,6 +215,27 @@ fn a_client_connects_and_is_told_the_tools() {
     assert_eq!(search["properties"]["q"]["type"], "string");
     assert_eq!(search["properties"]["after"]["$ref"], "#/$defs/IdentityId");
     assert!(search.get("required").is_none(), "{search}");
+    // The extractor may be left out, as it may be of `spool extract`.
+    let extraction = &tools[15];
+    assert_eq!(extraction["name"], "run_extraction");
+    assert!(
+        extraction["inputSchema"].get("required").is_none(),
+        "{extraction}"
+    );
+    // A row loaded by mistake can be taken back, so the description of a
+    // load does not warn an assistant off a row it was asked to load.
+    let load = &tools[13];
+    assert_eq!(load["name"], "load_rows");
+    let said = text(&load["description"]);
+    assert!(
+        said.contains("Load every row you were asked to load"),
+        "{said}"
+    );
+    assert!(said.contains("`retract_rows`"), "{said}");
+    for scare in ["for good", "nothing deletes"] {
+        assert!(!said.contains(scare), "{said}");
+        assert!(!text(&hello["instructions"]).contains(scare), "{hello}");
+    }
 
     // The revision that has no handshake: each request says what it speaks.
     let meta = json!({
@@ -1113,6 +1134,13 @@ fn documents_are_loaded_through_a_tool() {
     );
     let code = json!({ "extractor": "words", "code": "import os" });
     refused(&server, "run_extraction", code, "invalid");
+    // With none named, the project's only extractor runs, and this one has
+    // none.
+    let none = refused(&server, "run_extraction", json!({}), "invalid");
+    assert!(
+        text(&none["message"]).starts_with("the project has no extractors"),
+        "{none}"
+    );
     assert_eq!(latest().as_array().unwrap().len(), 2);
     assert_eq!(
         server.read("/v1/runs")["runs"].as_array().unwrap().len(),
@@ -1161,8 +1189,9 @@ fn an_extractor_is_run_through_a_tool_and_what_it_finds_is_matched() {
     tool(&server, "load_documents", documents);
 
     // The call is an extract run, as the API answers it, and what it found
-    // is records with no identity yet.
-    let extracted = tool(&server, "run_extraction", json!({ "extractor": "words" }));
+    // is records with no identity yet. The project's only extractor need
+    // not be named.
+    let extracted = tool(&server, "run_extraction", json!({}));
     let run = extracted["run"]["run"].as_u64().unwrap();
     assert_eq!(extracted, server.read(&format!("/v1/runs/{run}")));
     assert_eq!(tool(&server, "get_run", json!({ "run": run })), extracted);

@@ -4036,6 +4036,7 @@
           "type": "array"
         },
         "identities": {
+          "description": "Identities that hold a record. One whose records were all taken\nback is not counted: it is kept for them to come back to.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"

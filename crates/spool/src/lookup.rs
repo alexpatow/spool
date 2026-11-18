@@ -301,6 +301,8 @@ pub struct TypeInfo {
     pub retracted: u64,
     /// The sources the records came from, by name.
     pub sources: Vec<SourceInfo>,
+    /// Identities that hold a record. One whose records were all taken
+    /// back is not counted: it is kept for them to come back to.
     pub identities: u64,
     pub open_review_items: u64,
     /// The draft that waits for a decision, if there is one.
@@ -806,7 +808,10 @@ pub(crate) fn info(conn: &Connection, manifest: Option<&Manifest>) -> Result<Sto
                    AND o.record_id NOT IN (
                      SELECT record_id FROM spool.retraction WHERE restored_run IS NULL)),
                 (SELECT count(*) FROM spool.identity i
-                 WHERE i.entity_type = t.entity_type AND i.merged_into IS NULL),
+                 WHERE i.entity_type = t.entity_type AND i.merged_into IS NULL
+                   AND EXISTS (
+                     SELECT 1 FROM spool.membership m
+                     WHERE m.identity_id = i.identity_id AND m.to_seq IS NULL)),
                 (SELECT count(*) FROM spool.review_item r
                  WHERE r.entity_type = t.entity_type AND r.status = 'open'),
                 (SELECT max(d.changeset_id::VARCHAR) FROM spool.draft d

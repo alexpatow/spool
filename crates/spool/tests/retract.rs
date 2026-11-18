@@ -560,6 +560,22 @@ fn what_a_store_holds_says_how_much_was_taken_back() {
 }
 
 #[test]
+fn an_identity_whose_only_row_was_taken_back_is_not_counted() {
+    let engine = engine();
+    load(&engine, "shop", &[("1", Some("anvil"), None)]);
+    load(&engine, "shop", &[("2", Some("hammer"), None)]);
+    resolve(&engine);
+    let identities = || engine.info().unwrap().entity_types[0].identities;
+    assert_eq!(identities(), 2);
+
+    retract(&engine, "shop", &["1"]);
+    assert_eq!(identities(), 1);
+    // The row comes back to the identity it left, which counts again.
+    load(&engine, "shop", &[("1", Some("anvil"), None)]);
+    assert_eq!(identities(), 2);
+}
+
+#[test]
 fn what_was_taken_back_stays_so_through_a_rebuild_a_changed_declaration_and_a_reopen() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("store.duckdb");
