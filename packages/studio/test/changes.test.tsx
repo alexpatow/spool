@@ -524,6 +524,46 @@ describe("a review item", () => {
     expect(gone.retracted).toBeTruthy();
   });
 
+  test("that names a record its source took back merges and places only the records that still wait", async () => {
+    const first = await row(server.client, "crm", "c-117");
+    await server.client.ingest({
+      source: "crm",
+      entity_type: "company",
+      rows: [{ ...(first.payload as Record<string, string>), id: "c-217" }],
+    });
+    await server.client.startRun({ entity_type: "company" });
+    const [raised] = await server.client.reviewItems({ status: "open" });
+    const second = await row(server.client, "crm", "c-217");
+    expect([...raised!.records].sort()).toEqual([first.id, second.id].sort());
+    await server.client.retract({ source: "crm", entity_type: "company", keys: ["c-217"] });
+    // The decision that kept the two identities apart is taken back, so the merge is offered.
+    const before = await allow();
+    const found = await server.client.reviewCase(raised!.id);
+    const [into, other] = [...found.candidates]
+      .sort((a, b) => b.identity.members - a.identity.members)
+      .map((candidate) => candidate.identity);
+
+    open(server, `/review/${raised!.id}`);
+    await heading(`Review item ${raised!.id}`);
+    await idle();
+    // The dialog says what the changeset will do: one record is placed, not two.
+    await asked("Merge identities");
+    expect(screen.getByRole("dialog").textContent).toContain("and assigns crm:c-117 to it.");
+    // A changeset that also placed the record that was taken back would be refused.
+    await make("Merge identities");
+    expect(await said()).toBe(`2 identities merged and 1 record assigned at log position ${before + 1}.`);
+    await waitFor(() => expect(field("Status")).toBe("resolved"));
+
+    expect((await entry(before + 1)).changeset.ops).toEqual([
+      { op: "merge", from: other!.id, into: into!.id },
+      { op: "assign", record: first.id, from: null, to: into!.id },
+    ]);
+    expect((await server.client.record(first.id)).identity).toBe(into!.id);
+    const gone = await server.client.record(second.id);
+    expect(gone.identity ?? null).toBeNull();
+    expect(gone.retracted).toBeTruthy();
+  });
+
   test("that someone else settled first says so", async () => {
     open(server, "/review/1");
     await item();
