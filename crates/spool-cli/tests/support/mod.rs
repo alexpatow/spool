@@ -353,6 +353,7 @@ pub struct Request<'a> {
     path: String,
     headers: Vec<(String, String)>,
     body: Vec<u8>,
+    kept: bool,
 }
 
 impl<'a> Request<'a> {
@@ -363,7 +364,16 @@ impl<'a> Request<'a> {
             path: path.to_owned(),
             headers: Vec::new(),
             body: Vec::new(),
+            kept: false,
         }
+    }
+
+    /// Leaves the connection open for another request, as most clients do.
+    /// The response is read until the server closes the connection, so this
+    /// is for a request the server is expected to close it after.
+    pub fn kept(mut self) -> Self {
+        self.kept = true;
+        self
     }
 
     pub fn header(mut self, name: &str, value: &str) -> Self {
@@ -400,11 +410,14 @@ impl<'a> Request<'a> {
             .set_read_timeout(Some(Duration::from_secs(120)))
             .unwrap();
         let mut head = format!(
-            "{} {} HTTP/1.1\r\nConnection: close\r\nContent-Length: {}\r\n",
+            "{} {} HTTP/1.1\r\nContent-Length: {}\r\n",
             self.method,
             self.path,
             self.body.len()
         );
+        if !self.kept {
+            head.push_str("Connection: close\r\n");
+        }
         // The name the server is reached by, unless the request gives another.
         let named = |(name, _): &(String, String)| name.eq_ignore_ascii_case("Host");
         if !self.headers.iter().any(named) {
@@ -415,7 +428,12 @@ impl<'a> Request<'a> {
         }
         head.push_str("\r\n");
         stream.write_all(head.as_bytes()).unwrap();
-        stream.write_all(&self.body).unwrap();
+        let sent = stream.write_all(&self.body);
+        // A server that answers before the body ends may close while the
+        // rest is on its way. Its answer is still there to read.
+        if !self.kept {
+            sent.unwrap();
+        }
         let mut raw = Vec::new();
         stream.read_to_end(&mut raw).unwrap();
         Response::parse(&raw)
