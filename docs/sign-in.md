@@ -58,7 +58,7 @@ A person may have an email, a password, or both. An admin who adds an email to a
 ## What to know
 
 - **The email must be verified.** Google says whether an address belongs to the account. One that it does not vouch for is refused.
-- **An account is bound to the Google account that first signs in with its email.** Afterwards Spool knows that Google account by Google's own ID for it, not by the address. If the address is later given to someone else, they are refused. To move an account to another Google account, an admin changes its email, which also signs the account out everywhere it signed in with Google.
+- **An account is bound to the Google account that first signs in with its email.** Afterwards Spool knows that Google account by Google's own ID for it, not by the address. If the address is later given to someone else, they are refused. To move an account to another Google account, an admin changes its email, which also signs the account out everywhere it signed in with Google. Those sessions stay ended even if the same Google account signs in again under the new address.
 - **Turning an account off ends its access**, whichever way it signed in. Removing someone from the organisation in Google stops them signing in again; a session they already have lasts until it ends, at most twelve hours, or until an admin turns the account off.
 - **Passwords that exist keep working.** Google is added beside them. To rely on Google alone, add people without passwords. An existing password cannot be removed yet, only replaced.
 - **If Google cannot be reached**, the server still starts and passwords still work. Signing in with Google says so and works again when Google does.

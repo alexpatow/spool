@@ -610,9 +610,9 @@ async fn signed_in(app: &App, session: &Session) -> ApiResult<Option<Person>> {
     match kept(GOOGLE).await? {
         // A server that no longer signs people in with Google has nobody
         // signed in with it.
-        Some(subject) if app.google.is_some() => {
+        Some(bound) if app.google.is_some() => {
             people(app, move |accounts| {
-                accounts.holder_with_google(&id, &subject)
+                accounts.holder_with_google(&id, &bound)
             })
             .await
         }
@@ -662,8 +662,8 @@ async fn turn(app: &App) -> ApiResult<OwnedSemaphorePermit> {
 
 /// Starts a session for whoever entered, with an ID nobody has seen before.
 /// `with` is what they entered with, and so what the session lasts as long
-/// as: [`MARK`] and the mark of their password, or [`GOOGLE`] and their
-/// Google account.
+/// as: [`MARK`] and the mark of their password, or [`GOOGLE`] and the mark
+/// of their Google account.
 async fn begin(session: &Session, person: &str, with: (&str, &str)) -> ApiResult<()> {
     session.cycle_id().await.map_err(session_failed)?;
     for key in [MARK, GOOGLE] {
@@ -1032,15 +1032,14 @@ async fn google_callback(
             return Ok(turned_away(&app, next, why));
         }
     };
-    let subject = identity.subject.clone();
     let entered = people(&app, move |accounts| {
         accounts.enter_with_google(&identity.subject, &identity.email)
     })
     .await?;
-    let Some(person) = entered else {
+    let Some((person, bound)) = entered else {
         return Ok(turned_away(&app, next, "unknown"));
     };
-    begin(&session, &person.id, (GOOGLE, &subject)).await?;
+    begin(&session, &person.id, (GOOGLE, &bound)).await?;
     Ok(send_to(&app, next, None))
 }
 

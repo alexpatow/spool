@@ -30,8 +30,8 @@ pub const PERSON: &str = "person";
 /// is kept.
 pub const MARK: &str = "password";
 
-/// The key of a session that began with Google, under which the Google
-/// account it began with is kept.
+/// The key of a session that began with Google, under which the mark of the
+/// account being that Google account's is kept.
 pub const GOOGLE: &str = "google";
 
 /// The fewest characters a password may have.
@@ -81,6 +81,7 @@ CREATE TABLE IF NOT EXISTS session (
 const STEPS: [&str; 1] = ["
 ALTER TABLE person ADD COLUMN email TEXT;   -- who they are to Google, as an admin gave it
 ALTER TABLE person ADD COLUMN google TEXT;  -- the Google account that signed in with that email
+ALTER TABLE person ADD COLUMN bound TEXT;   -- what its sessions began with: new each time one is bound
 CREATE UNIQUE INDEX person_email ON person (email);
 CREATE UNIQUE INDEX person_google ON person (google);
 "];
@@ -327,13 +328,19 @@ impl Accounts {
     }
 
     /// The person a session that began with Google belongs to, if their
-    /// account is on and is still that Google account's.
-    pub fn holder_with_google(&self, id: &str, subject: &str) -> Result<Option<Person>, Refused> {
+    /// account is on and is still bound to a Google account as it was when
+    /// the session began: `began_with` is what [`Accounts::enter_with_google`]
+    /// answered then.
+    pub fn holder_with_google(
+        &self,
+        id: &str,
+        began_with: &str,
+    ) -> Result<Option<Person>, Refused> {
         let found = self
             .connection()
             .query_row(
-                &format!("{PEOPLE} WHERE id = ? AND google = ?"),
-                [id, subject],
+                &format!("{PEOPLE} WHERE id = ? AND bound = ?"),
+                [id, began_with],
                 person,
             )
             .optional()?;
@@ -348,32 +355,50 @@ impl Accounts {
     /// The first time, the account is the one an admin gave that email, and
     /// from then on it is that Google account's: another Google account that
     /// later has the address is not let in.
-    pub fn enter_with_google(&self, subject: &str, email: &str) -> Result<Option<Person>, Refused> {
+    ///
+    /// Returns the person and what a session of theirs begins with: the mark
+    /// of the account being that Google account's. It is made when the two
+    /// are bound, so a session from before an admin changed the email stays
+    /// ended, even when the same Google account is bound again.
+    pub fn enter_with_google(
+        &self,
+        subject: &str,
+        email: &str,
+    ) -> Result<Option<(Person, String)>, Refused> {
         let email = email.trim().to_lowercase();
         let mut connection = self.connection();
         let transaction = connection.transaction()?;
-        let known = transaction
-            .query_row(&format!("{PEOPLE} WHERE google = ?"), [subject], person)
+        // The account and the mark of its Google account, if it has one.
+        let bound = |row: &rusqlite::Row<'_>| Ok((person(row)?, row.get(BOUND)?));
+        let known: Option<(Person, Option<String>)> = transaction
+            .query_row(&format!("{PEOPLE} WHERE google = ?"), [subject], bound)
             .optional()?;
         let found = match known {
-            Some(person) => Some(person),
+            Some(known) => Some(known),
             None => transaction
                 .query_row(
                     &format!("{PEOPLE} WHERE email = ? AND google IS NULL"),
                     [&email],
-                    person,
+                    bound,
                 )
                 .optional()?,
         };
-        let Some(person) = found.filter(|person| person.active) else {
+        let Some((person, mark)) = found.filter(|(person, _)| person.active) else {
             return Ok(None);
         };
-        transaction.execute(
-            "UPDATE person SET google = ? WHERE id = ?",
-            [subject, person.id.as_str()],
-        )?;
+        let mark = match mark {
+            Some(mark) => mark,
+            None => {
+                let mark = code();
+                transaction.execute(
+                    "UPDATE person SET google = ?, bound = ? WHERE id = ?",
+                    [subject, &mark, person.id.as_str()],
+                )?;
+                mark
+            }
+        };
         transaction.commit()?;
-        Ok(Some(person))
+        Ok(Some((person, mark)))
     }
 
     /// Everyone, in the order they were added.
@@ -457,8 +482,16 @@ impl Accounts {
                 }
             }
             transaction.execute(
-                "UPDATE person SET email = ?, google = NULL WHERE id = ?",
+                "UPDATE person SET email = ?, google = NULL, bound = NULL WHERE id = ?",
                 params![after.email, id],
+            )?;
+            // Those would begin nothing again, and are not kept.
+            transaction.execute(
+                &format!(
+                    "DELETE FROM session WHERE json_extract(data, '$.{PERSON}') = ? \
+                     AND json_extract(data, '$.{GOOGLE}') IS NOT NULL"
+                ),
+                [id],
             )?;
         }
         transaction.execute(
@@ -614,11 +647,13 @@ fn sealed(token: &str) -> String {
 }
 
 /// A person, and after what a [`Person`] has, the hash of their password.
-const PEOPLE: &str =
-    "SELECT id, username, name, admin, active, email, password IS NOT NULL, password FROM person";
+const PEOPLE: &str = "SELECT id, username, name, admin, active, email, password IS NOT NULL, password, bound FROM person";
 
 /// Where the hash of the password is in a row of [`PEOPLE`].
 const PASSWORD: usize = 7;
+
+/// Where the mark of the account's Google account is.
+const BOUND: usize = 8;
 
 fn person(row: &rusqlite::Row<'_>) -> rusqlite::Result<Person> {
     Ok(Person {
@@ -888,15 +923,22 @@ mod tests {
         // Nobody has a password to try.
         assert_eq!(accounts.verify("grace", "").unwrap(), None);
 
-        let enter =
+        // Who a Google account is, and what a session of theirs begins with.
+        let begin =
             |subject: &str, email: &str| accounts.enter_with_google(subject, email).unwrap();
+        let enter = |subject: &str, email: &str| begin(subject, email).map(|(person, _)| person);
+        let holder = |began_with: &str| accounts.holder_with_google(&grace.id, began_with).unwrap();
         assert_eq!(enter("g-1", "nobody@example.com"), None);
-        assert_eq!(enter("g-1", "GRACE@example.com"), Some(grace.clone()));
-        assert_eq!(
-            accounts.holder_with_google(&grace.id, "g-1").unwrap(),
-            Some(grace.clone())
-        );
-        assert_eq!(accounts.holder_with_google(&grace.id, "g-2").unwrap(), None);
+        let (entered, first) = begin("g-1", "GRACE@example.com").unwrap();
+        assert_eq!(entered, grace);
+        assert_eq!(holder(&first), Some(grace.clone()));
+        // What Google calls the account is known to others, and begins
+        // nothing.
+        assert_eq!(holder("g-1"), None);
+        assert_eq!(holder(""), None);
+        // Each sign-in of the same Google account is a session of the same
+        // kind.
+        assert_eq!(begin("g-1", "grace@example.com").unwrap().1, first);
 
         // The account is that Google account's now: whatever its address
         // becomes, and whoever else comes to have the address.
@@ -908,17 +950,30 @@ mod tests {
             .change(&grace.id, email("hopper@example.com"))
             .unwrap();
         assert_eq!(moved.email.as_deref(), Some("hopper@example.com"));
-        assert_eq!(accounts.holder_with_google(&grace.id, "g-1").unwrap(), None);
+        assert_eq!(holder(&first), None);
         assert_eq!(enter("g-2", "grace@example.com"), None);
-        assert_eq!(enter("g-2", "hopper@example.com"), Some(moved.clone()));
+        // The Google account it was before may be the one with the new
+        // address. What it began before the change stays ended.
+        let (entered, second) = begin("g-1", "hopper@example.com").unwrap();
+        assert_eq!(entered, moved);
+        assert_ne!(second, first);
+        assert_eq!(holder(&first), None);
+        assert_eq!(holder(&second), Some(moved.clone()));
+
+        let moved = accounts
+            .change(&grace.id, email("g.hopper@example.com"))
+            .unwrap();
+        let (entered, third) = begin("g-2", "g.hopper@example.com").unwrap();
+        assert_eq!(entered, moved);
+        assert_eq!(holder(&second), None);
 
         let off = Change {
             active: Some(false),
             ..Change::default()
         };
         accounts.change(&grace.id, off).unwrap();
-        assert_eq!(enter("g-2", "hopper@example.com"), None);
-        assert_eq!(accounts.holder_with_google(&grace.id, "g-2").unwrap(), None);
+        assert_eq!(enter("g-2", "g.hopper@example.com"), None);
+        assert_eq!(holder(&third), None);
     }
 
     #[test]
@@ -1031,12 +1086,10 @@ mod tests {
         }
         let accounts = Accounts::open(&path).unwrap().with_google(true);
         let ada = accounts.change("p-1", email("ada@example.com")).unwrap();
-        assert_eq!(
-            accounts
-                .enter_with_google("g-1", "ada@example.com")
-                .unwrap(),
-            Some(ada)
-        );
+        let entered = accounts
+            .enter_with_google("g-1", "ada@example.com")
+            .unwrap();
+        assert_eq!(entered.map(|(person, _)| person), Some(ada));
     }
 
     #[test]

@@ -618,7 +618,23 @@ fn google_says_who_someone_is_and_not_whether_they_have_an_account() {
     .ok();
     assert_eq!(who(server, &session)["person"], Value::Null);
     turned_away(&GRACE, "unknown");
-    let (_, session) = sign_in(server, stand_in, &successor_of("hopper@example.com"));
+    // The Google account it was is let in again under the new address, and
+    // what it began before stays ended: a cookie from then is good for
+    // nothing, whoever has it.
+    let (_, again) = sign_in(server, stand_in, &renamed);
+    let again = again.expect("a session");
+    assert_eq!(who(server, &again)["person"]["id"], grace.as_str());
+    assert_eq!(who(server, &session)["person"], Value::Null);
+    // The next address is someone else's Google account.
+    post(
+        server,
+        &person,
+        ada,
+        json!({ "email": "g.hopper@example.com" }),
+    )
+    .ok();
+    assert_eq!(who(server, &again)["person"], Value::Null);
+    let (_, session) = sign_in(server, stand_in, &successor_of("g.hopper@example.com"));
     let session = session.expect("a session");
     assert_eq!(who(server, &session)["person"]["id"], grace.as_str());
 
@@ -628,7 +644,7 @@ fn google_says_who_someone_is_and_not_whether_they_have_an_account() {
     browse(server, "GET", "/v1/info", &session)
         .send()
         .error(401, "unauthorized");
-    turned_away(&successor_of("hopper@example.com"), "unknown");
+    turned_away(&successor_of("g.hopper@example.com"), "unknown");
 
     // Someone who says no at Google's page.
     let leaving = leave(server, stand_in, "?next=/runs");
@@ -833,6 +849,12 @@ fn a_person_has_a_way_to_sign_in() {
         json!({ "username": "bob", "password": PASSWORD }),
     );
     entered.ok();
+    // Another email ends what began with Google, and not what began with
+    // the password.
+    let with_password = format!("{SESSION}={}", cookies(&entered)[SESSION]);
+    let his = format!("/v1/people/{}", bob["id"].as_str().unwrap());
+    post(server, &his, ada, json!({ "email": "robert@example.com" })).ok();
+    assert_eq!(who(server, &with_password)["person"]["username"], "bob");
 
     // Grace has no password to try, to change, or to do without her email.
     post(
