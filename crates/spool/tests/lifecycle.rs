@@ -1044,6 +1044,44 @@ fn an_undo_leaves_an_earlier_version_where_the_changeset_found_it() {
 }
 
 #[test]
+fn a_row_placed_more_than_once_in_a_changeset_is_refused_with_nothing_moved_along() {
+    let engine = engine();
+    load(
+        &engine,
+        "shop",
+        &[("1", Some("anvil"), None), ("2", Some("hammer"), None)],
+    );
+    resolve(&engine);
+    let hammer = identity(&engine, "shop", "2").unwrap();
+    for name in ["anvil mk2", "anvil mk3", "anvil mk4"] {
+        load(&engine, "shop", &[("1", Some(name), None)]);
+        resolve(&engine);
+    }
+    let (versions, before) = placed_versions(&engine);
+    let latest = *versions.last().unwrap();
+    let place = Op::Assign {
+        record: latest,
+        from: before[3],
+        to: Some(hammer),
+    };
+
+    // The refusal is the changeset's own, and names no move of an earlier
+    // version, however often the row is named.
+    let head = engine.head().unwrap();
+    let error = engine
+        .author(reviewer(), None, vec![place; 50])
+        .unwrap_err();
+    let reasons = rejections(error);
+    assert_eq!(reasons.len(), 49);
+    assert!(reasons.iter().all(|reason| matches!(
+        reason,
+        Reason::RecordAssignedTwice { record, first_op: 0 } if *record == latest
+    )));
+    assert_eq!(engine.head().unwrap(), head);
+    assert_eq!(placed_versions(&engine).1, before);
+}
+
+#[test]
 fn a_split_moves_the_versions_it_was_given_and_no_other() {
     let engine = engine();
     load(&engine, "shop", &[("1", Some("anvil"), None)]);

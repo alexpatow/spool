@@ -25,6 +25,10 @@ use crate::store::parse;
 /// The moves that take the earlier versions of each row `ops` places to
 /// where `ops` places it, ordered by the row's operation and then by
 /// version.
+///
+/// None when `ops` moves a record more than once. Validation refuses such
+/// a changeset, and what it costs to look up stays with the records it
+/// names, however often it names them.
 pub(crate) fn following(conn: &Connection, ops: &[Op]) -> Result<Vec<Op>> {
     let mut placed = Vec::new();
     let mut moved = HashSet::new();
@@ -32,7 +36,9 @@ pub(crate) fn following(conn: &Connection, ops: &[Op]) -> Result<Vec<Op>> {
     for op in ops {
         match op {
             Op::Assign { record, to, .. } => {
-                moved.insert(*record);
+                if !moved.insert(*record) {
+                    return Ok(Vec::new());
+                }
                 if let Some(to) = to {
                     placed.push((*record, *to));
                 }

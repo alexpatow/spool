@@ -1277,11 +1277,18 @@ impl Inner {
     /// places along with them, as far as the state allows: a move it
     /// refuses, such as one a constraint forbids, is left out. Nothing when
     /// the state refuses the changeset's own operations, so that the
-    /// refusal is theirs alone.
+    /// refusal is theirs alone, or when it still refuses a move once those
+    /// it named are left out, so it is validated with the moves twice at
+    /// most.
     fn versions_along(&self, changeset: &Changeset) -> Result<Vec<Op>> {
         let own = changeset.ops.len();
         let mut along = following(&self.store.conn, &changeset.ops)?;
+        let mut rounds = 0;
         while !along.is_empty() {
+            if rounds == 2 {
+                return Ok(Vec::new());
+            }
+            rounds += 1;
             let mut whole = changeset.clone();
             whole.ops.extend(along.iter().cloned());
             let rejections = match validate(&self.store, whole) {
