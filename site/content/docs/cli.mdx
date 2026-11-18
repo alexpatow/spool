@@ -376,7 +376,7 @@ Prints the JSON Schema of every value the API takes and returns.
 
 `spool bench <scenario> [--db <path>] [--seed <n>] [--out <path>] [--list <n>] [--strategy <name>]`
 
-Runs a benchmark scenario from the repository: loads each step's files, matches, and scores the identities against the scenario's truth. The [benchmarks](https://github.com/alexpatow/spool/tree/main/benchmarks) say what each scenario measures.
+Runs a benchmark scenario from the repository: loads each step's files, matches, and scores the identities against the scenario's truth. A scenario with documents is also scored on what its extractors found, and on extraction and matching together. The [benchmarks](https://github.com/alexpatow/spool/tree/main/benchmarks) say what each scenario measures.
 
 ## Environment
 

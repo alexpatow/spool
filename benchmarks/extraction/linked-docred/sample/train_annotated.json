@@ -1,0 +1,38 @@
+[
+  {
+    "title": "Northwind Traders",
+    "sents": [
+      ["Northwind", "Traders", "Ltd", "is", "a", "kitchenware", "company", "based", "in", "Leeds", ",", "England", "."],
+      ["It", "was", "founded", "in", "1998", "by", "Dana", "Reyes", "(", "born", "1961", ")", ",", "who", "had", "left", "Halden", "Freight", "Corp", "."],
+      ["Reyes", "called", "it", "\"", "a", "mail", "-", "order", "shop", "\"", ";", "Northwind", "'s", "first", "warehouse", "opened", "in", "2001", "."]
+    ],
+    "entities": [
+      {"id": 0, "type": "ORG", "entity_linking": {"wikipedia_resource": "Northwind_Traders", "wikidata_resource": "Q900000001", "wikipedia_not_resource": null, "method": "manual", "confidence": "A"}, "mentions": [{"name": "Northwind Traders Ltd", "sent_id": 0, "pos": [0, 3]}, {"name": "Northwind", "sent_id": 2, "pos": [11, 12]}]},
+      {"id": 1, "type": "LOC", "entity_linking": {"wikipedia_resource": "Leeds", "wikidata_resource": "Q900000008", "wikipedia_not_resource": null, "method": "manual", "confidence": "A"}, "mentions": [{"name": "Leeds", "sent_id": 0, "pos": [9, 10]}]},
+      {"id": 2, "type": "LOC", "entity_linking": {"wikipedia_resource": "England", "wikidata_resource": "Q900000009", "wikipedia_not_resource": null, "method": "manual", "confidence": "A"}, "mentions": [{"name": "England", "sent_id": 0, "pos": [11, 12]}]},
+      {"id": 3, "type": "TIME", "entity_linking": {"wikipedia_resource": "#ignored#", "wikidata_resource": "#ignored#", "wikipedia_not_resource": null, "method": "num/time", "confidence": "A"}, "mentions": [{"name": "1998", "sent_id": 1, "pos": [4, 5]}]},
+      {"id": 4, "type": "PER", "entity_linking": {"wikipedia_resource": "Dana_Reyes", "wikidata_resource": "Q900000007", "wikipedia_not_resource": null, "method": "manual", "confidence": "A"}, "mentions": [{"name": "Dana Reyes", "sent_id": 1, "pos": [6, 8]}, {"name": "Reyes", "sent_id": 2, "pos": [0, 1]}]},
+      {"id": 5, "type": "TIME", "entity_linking": {"wikipedia_resource": "#ignored#", "wikidata_resource": "#ignored#", "wikipedia_not_resource": null, "method": "num/time", "confidence": "A"}, "mentions": [{"name": "1961", "sent_id": 1, "pos": [10, 11]}]},
+      {"id": 6, "type": "ORG", "entity_linking": {"wikipedia_resource": "Halden_Freight", "wikidata_resource": "Q900000002", "wikipedia_not_resource": null, "method": "manual", "confidence": "A"}, "mentions": [{"name": "Halden Freight Corp", "sent_id": 1, "pos": [16, 19]}]},
+      {"id": 7, "type": "TIME", "entity_linking": {"wikipedia_resource": "#ignored#", "wikidata_resource": "#ignored#", "wikipedia_not_resource": null, "method": "num/time", "confidence": "A"}, "mentions": [{"name": "2001", "sent_id": 2, "pos": [17, 18]}]}
+    ],
+    "relations": []
+  },
+  {
+    "title": "Brightwave",
+    "sents": [
+      ["Brightwave", "Inc.", "is", "a", "software", "company", "in", "Dunedin", "."],
+      ["The", "Dunedin", "Chamber", "of", "Commerce", "named", "Brightwave", "its", "Company", "of", "the", "Year", ",", "and", "the", "Pioneer", "Group", "invested", "8", "\u00a0", "million", "dollars", "."]
+    ],
+    "entities": [
+      {"id": 0, "type": "ORG", "entity_linking": {"wikipedia_resource": "Brightwave", "wikidata_resource": "Q900000013", "wikipedia_not_resource": null, "method": "manual", "confidence": "A"}, "mentions": [{"name": "Brightwave Inc.", "sent_id": 0, "pos": [0, 2]}, {"name": "Brightwave", "sent_id": 1, "pos": [6, 7]}]},
+      {"id": 1, "type": "LOC", "entity_linking": {"wikipedia_resource": "Dunedin", "wikidata_resource": "Q900000010", "wikipedia_not_resource": null, "method": "manual", "confidence": "A"}, "mentions": [{"name": "Dunedin", "sent_id": 0, "pos": [7, 8]}]},
+      {"id": 2, "type": "LOC", "entity_linking": {"wikipedia_resource": "#DocRED-1#", "wikidata_resource": "#DocRED-1#", "wikipedia_not_resource": null, "method": "manual", "confidence": "A"}, "mentions": [{"name": "Dunedin", "sent_id": 0, "pos": [7, 8]}]},
+      {"id": 3, "type": "ORG", "entity_linking": {"wikipedia_resource": "Dunedin_Chamber_of_Commerce", "wikidata_resource": "#DocRED-2#", "wikipedia_not_resource": null, "method": "manual", "confidence": "A"}, "mentions": [{"name": "Dunedin Chamber of Commerce", "sent_id": 1, "pos": [1, 5]}]},
+      {"id": 4, "type": "MISC", "entity_linking": {"wikipedia_resource": "Company_of_the_Year", "wikidata_resource": "Q900000014", "wikipedia_not_resource": null, "method": "manual", "confidence": "A"}, "mentions": [{"name": "Company of the Year", "sent_id": 1, "pos": [8, 12]}]},
+      {"id": 5, "type": "ORG", "entity_linking": {"wikipedia_resource": "Pioneer_Group", "wikidata_resource": "Q900000003", "wikipedia_not_resource": null, "method": "manual", "confidence": "A"}, "mentions": [{"name": "Pioneer Group", "sent_id": 1, "pos": [15, 17]}]},
+      {"id": 6, "type": "NUM", "entity_linking": {"wikipedia_resource": "#ignored#", "wikidata_resource": "#ignored#", "wikipedia_not_resource": null, "method": "num/time", "confidence": "A"}, "mentions": [{"name": "8 \u00a0 million", "sent_id": 1, "pos": [18, 21]}]}
+    ],
+    "relations": []
+  }
+]

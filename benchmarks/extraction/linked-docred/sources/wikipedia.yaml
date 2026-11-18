@@ -1,0 +1,5 @@
+# The opening paragraphs of English Wikipedia articles, as DocRED holds them.
+# The columns are the attributes an extractor may give a mention it finds in
+# one: the name as it is written, and the key of the document it is in, so
+# that a rule can ask whether two mentions are in one document.
+columns: [name, document]

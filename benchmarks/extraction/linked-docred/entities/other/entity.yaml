@@ -1,0 +1,9 @@
+# What DocRED calls `MISC`: a film, an album, a war, an award, a language, a
+# people.
+label: name
+features: [name, name_key]
+
+mapping:
+  wikipedia:
+    name: name
+    name_key: { from: name, transform: name_key }

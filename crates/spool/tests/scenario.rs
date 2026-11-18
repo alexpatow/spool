@@ -948,8 +948,15 @@ fn documents_are_stored_and_their_labelled_mentions_are_what_an_extractor_should
     assert_eq!(extraction.f1, Some(0.0));
     // And there is no record for resolution to be scored on.
     assert_eq!(step.metrics.records, 0);
+    // End to end, neither paper has a mention that was found, and the one
+    // pair of mentions of a paper is missing.
+    let whole = step.end_to_end.as_ref().unwrap();
+    assert_eq!((whole.labelled, whole.extracted), (3, 0));
+    assert_eq!((whole.true_entities, whole.entities_found), (2, 0));
+    assert_eq!((whole.pairs.actual, whole.pairs.recall), (1, Some(0.0)));
+    assert_eq!(whole.b_cubed.recall, Some(0.0));
 
-    // A scenario without labelled mentions does not report extraction.
+    // A scenario without labelled mentions reports neither.
     let rows = tempfile::tempdir().unwrap();
     project(rows.path());
     write(rows.path(), "bench/papers.csv", PAPERS);
@@ -958,7 +965,9 @@ fn documents_are_stored_and_their_labelled_mentions_are_what_an_extractor_should
         "bench/scenario.toml",
         &scenario("file = \"papers.csv\""),
     );
-    assert_eq!(run(rows.path()).unwrap().steps[0].extraction, None);
+    let step = &run(rows.path()).unwrap().steps[0];
+    assert_eq!(step.extraction, None);
+    assert_eq!(step.end_to_end, None);
 }
 
 #[test]

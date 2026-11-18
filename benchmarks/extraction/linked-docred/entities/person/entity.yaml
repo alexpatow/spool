@@ -1,0 +1,12 @@
+# A person, real or invented: `PER` in DocRED.
+#
+# A person is named in full once and by a part of the name after that, so a
+# mention is compared by its name and by the document it is in.
+label: name
+features: [name, name_key, document]
+
+mapping:
+  wikipedia:
+    name: name
+    name_key: { from: name, transform: name_key }
+    document: document

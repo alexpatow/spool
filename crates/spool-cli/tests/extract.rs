@@ -404,7 +404,7 @@ fn dev_runs_an_extractor_as_it_was_last_saved() {
 
 #[test]
 #[ignore = "runs uv"]
-fn bench_scores_extraction_apart_from_resolution() {
+fn bench_scores_extraction_apart_from_resolution_and_the_two_together() {
     let dir = tempfile::tempdir().unwrap();
     let results = dir.path().join("results.json");
     let printed = succeed(&[
@@ -424,6 +424,9 @@ fn bench_scores_extraction_apart_from_resolution() {
         "  mentions      21 extracted, 18 of them labelled",
         "  spans         precision 0.8571  recall 0.7200  (F1 0.7826)",
         "against the truth (18 records):",
+        "end to end (25 labelled mentions, 21 extracted):",
+        "  entities      10 of 10 true entities have a mention that was found",
+        "  pairs         precision 0.8333  recall 0.3571  (F1 0.5000)",
         // A mention is named by its document and its place in it.
         "news:02-brightwave-funding.txt[12-26], news:08-kestrel-bericht.txt[48-62]",
     ] {
@@ -437,4 +440,92 @@ fn bench_scores_extraction_apart_from_resolution() {
     assert_eq!(last["extraction"]["labelled"], 25);
     assert_eq!(last["extraction"]["correct"], 18);
     assert_eq!(last["metrics"]["false_merges"], 1);
+    assert_eq!(last["end_to_end"]["pairs"]["actual"], 28);
+}
+
+/// The benchmark on Linked-DocRED is run by hand: the dataset is under the
+/// GPL and none of it is here. Its script is run here on five invented
+/// documents in the dataset's format, so that the script, the project and
+/// its extractors stay in step with `spool bench`.
+#[test]
+#[ignore = "runs uv"]
+fn the_linked_docred_script_converts_and_scores_documents_in_the_datasets_format() {
+    let project = benchmarks().join("extraction/linked-docred");
+    let dir = tempfile::tempdir().unwrap();
+    let uv = std::env::var_os("SPOOL_UV").unwrap_or_else(|| "uv".into());
+    let output = std::process::Command::new(uv)
+        .args(["run", "--no-project", path(&project.join("run.py"))])
+        .args(["--data", path(&project.join("sample"))])
+        .args(["--work", path(dir.path())])
+        .args(["--spool", env!("CARGO_BIN_EXE_spool")])
+        .args(["--types", "organisation,person"])
+        // The other extractors are models, which are fetched before they run.
+        .args(["--extractors", "gold,suffix"])
+        .output()
+        .unwrap();
+    let printed = text(&output.stdout);
+    assert!(
+        output.status.success(),
+        "run.py failed:\n{printed}{}",
+        text(&output.stderr)
+    );
+    assert!(
+        printed.contains("5 documents in 3 batches, 17 labelled mentions of 9 entities"),
+        "{printed}"
+    );
+
+    // Tokens are joined the way a writer spaces them, and a mention is
+    // where its tokens went.
+    assert_eq!(
+        read(&dir.path().join("documents/train/train-0000.txt")),
+        "Northwind Traders Ltd is a kitchenware company based in Leeds, England. \
+         It was founded in 1998 by Dana Reyes (born 1961), who had left Halden Freight Corp. \
+         Reyes called it \"a mail-order shop\"; Northwind's first warehouse opened in 2001."
+    );
+    let labels = read(&dir.path().join("labels/organisation.csv"));
+    for label in [
+        "wikipedia,train-0000.txt,193,202,organisation,Q900000001,Northwind",
+        // An entity with a page and no Wikidata entry is known by the page.
+        "wikipedia,train-0001.txt,54,81,organisation,wikipedia:Dunedin_Chamber_of_Commerce,\
+         Dunedin Chamber of Commerce",
+    ] {
+        assert!(labels.contains(label), "no `{label}` in:\n{labels}");
+    }
+
+    let summary: Value =
+        serde_json::from_str(&read(&dir.path().join("results/summary.json"))).unwrap();
+    let scenario = |name: &str| {
+        summary
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|run| run["scenario"] == name)
+            .unwrap_or_else(|| panic!("no `{name}` in {summary}"))
+    };
+
+    // With the labels for an extractor, end to end is resolution. Two
+    // companies called "Pioneer Group" are one identity, and "Northwind" is
+    // not "Northwind Traders".
+    let gold = scenario("organisation-gold");
+    assert_eq!(gold["extraction"]["correct"], 13);
+    assert_eq!(gold["resolution"]["false_merges"], 1);
+    assert_eq!(gold["resolution"]["false_splits"], 1);
+    assert_eq!(gold["end_to_end"]["pairs"], gold["resolution"]["pairs"]);
+
+    // "Reyes" is "Dana Reyes" within a document, and "Dana Reyes" is one
+    // person across documents.
+    let person = scenario("person-gold");
+    assert_eq!(person["resolution"]["records"], 4);
+    assert_eq!(person["resolution"]["identities"], 1);
+
+    // The extractor that goes by endings finds 6 of the 13 mentions. It
+    // takes "Yesterday" for part of a name, and twice the full stop that
+    // ends a sentence for the one "Corp." and "Ltd." are written with.
+    let suffix = scenario("organisation-suffix");
+    assert_eq!(suffix["extraction"]["extracted"], 9);
+    assert_eq!(suffix["extraction"]["correct"], 6);
+    assert_eq!(suffix["end_to_end"]["entities_found"], 6);
+    assert_eq!(suffix["end_to_end"]["true_entities"], 8);
+    assert_eq!(suffix["end_to_end"]["pairs"]["actual"], 7);
+    assert_eq!(suffix["end_to_end"]["pairs"]["true_positives"], 0);
 }

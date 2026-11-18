@@ -1,0 +1,15 @@
+[
+  {
+    "title": "Dana Reyes",
+    "sents": [
+      ["Dana", "Reyes", "is", "a", "British", "businesswoman", "."],
+      ["Yesterday", "Northwind", "Traders", "Ltd", "said", "Reyes", "would", "retire", "."]
+    ],
+    "entities": [
+      {"id": 0, "type": "PER", "entity_linking": {"wikipedia_resource": "Dana_Reyes", "wikidata_resource": "Q900000007", "wikipedia_not_resource": null, "method": "manual", "confidence": "A"}, "mentions": [{"name": "Dana Reyes", "sent_id": 0, "pos": [0, 2]}, {"name": "Reyes", "sent_id": 1, "pos": [5, 6]}]},
+      {"id": 1, "type": "LOC", "entity_linking": {"wikipedia_resource": "United_Kingdom", "wikidata_resource": "Q900000012", "wikipedia_not_resource": null, "method": "manual", "confidence": "A"}, "mentions": [{"name": "British", "sent_id": 0, "pos": [4, 5]}]},
+      {"id": 2, "type": "ORG", "entity_linking": {"wikipedia_resource": "Northwind_Traders", "wikidata_resource": "Q900000001", "wikipedia_not_resource": null, "method": "manual", "confidence": "A"}, "mentions": [{"name": "Northwind Traders Ltd", "sent_id": 1, "pos": [1, 4]}]}
+    ],
+    "old-entities": []
+  }
+]

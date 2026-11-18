@@ -1,0 +1,8 @@
+# A country, a town, a river, a building: `LOC` in DocRED.
+label: name
+features: [name, name_key]
+
+mapping:
+  wikipedia:
+    name: name
+    name_key: { from: name, transform: name_key }

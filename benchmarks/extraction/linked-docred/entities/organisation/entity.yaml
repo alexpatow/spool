@@ -1,0 +1,8 @@
+# A company, a band, a team, a party, a school, an agency: `ORG` in DocRED.
+label: name
+features: [name, name_key]
+
+mapping:
+  wikipedia:
+    name: name
+    name_key: { from: name, transform: organisation_name_key }
