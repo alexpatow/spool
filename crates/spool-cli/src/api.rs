@@ -359,7 +359,8 @@ pub enum ErrorCode {
     /// 403: the caller is known and may not do this: only an admin manages
     /// people, and a write must come from the server's own pages.
     Forbidden,
-    /// 429: too many wrong passwords for this username. Wait and try again.
+    /// 429: too many wrong passwords for this username, or more sign-ins
+    /// at once than the server checks. Wait and try again.
     TooManyAttempts,
     /// 400: the request cannot be read, or names something that is not
     /// declared.

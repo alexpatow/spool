@@ -332,3 +332,39 @@ fn a_store_that_was_developed_on_still_gets_its_first_account() {
     )
     .error(409, "conflict");
 }
+
+#[test]
+fn only_so_many_passwords_are_checked_at_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let (server, code) = served(dir.path());
+    set_up(&server, &code);
+
+    // Nobody the server knows, all at once: each would cost it a hash.
+    let answers: Vec<Response> = std::thread::scope(|scope| {
+        let tries: Vec<_> = (0..32)
+            .map(|index| {
+                let server = &server;
+                scope.spawn(move || {
+                    let guess =
+                        json!({ "username": format!("guess-{index}"), "password": "not this one" });
+                    post(server, "/auth/sign-in", "", guess)
+                })
+            })
+            .collect();
+        tries
+            .into_iter()
+            .map(|tried| tried.join().unwrap())
+            .collect()
+    });
+    let (checked, turned_away): (Vec<Response>, Vec<Response>) =
+        answers.into_iter().partition(|answer| answer.status == 401);
+    assert!(!checked.is_empty());
+    assert!(!turned_away.is_empty());
+    for answer in turned_away {
+        answer.error(429, "too_many_attempts");
+    }
+
+    // Someone who has an account signs in once the rush is over.
+    let sign_in = json!({ "username": "ada", "password": PASSWORD });
+    post(&server, "/auth/sign-in", "", sign_in).ok();
+}

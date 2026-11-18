@@ -53,12 +53,12 @@ use spool::{
     RunFilter, RunKind, RunStatus, Scope, StrategyRef, watch_runs,
 };
 use tokio::net::TcpListener;
-use tokio::sync::mpsc;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
 use tower_sessions::cookie::SameSite;
 use tower_sessions::cookie::time::Duration as SessionLength;
 use tower_sessions::{Expiry, Session, SessionManagerLayer};
 
-use crate::accounts::{Accounts, Change, MAX_USERNAME, PERSON, Refused};
+use crate::accounts::{Accounts, Change, Entered, MARK, MAX_USERNAME, PERSON, Refused};
 use crate::api::{
     self, ARROW_STREAM, AddPersonRequest, CandidateList, ChangePersonRequest, ChangesetList,
     CommitRequest, ConstraintList, DismissRequest, DocumentList, DocumentsRequest, DraftList,
@@ -98,6 +98,11 @@ const ATTEMPT_WINDOW: Duration = Duration::from_secs(15 * 60);
 /// The most usernames whose wrong passwords are counted at once. Anyone can
 /// try a username, so what is kept of the tries has to have an end.
 const MAX_ATTEMPTED: usize = 10_000;
+
+/// The most passwords hashed at once. A hash is made to cost time and memory,
+/// and a sign-in costs one whether or not the account exists, so anyone who
+/// reaches the server could otherwise have it make as many as they sent.
+const MAX_HASHING: usize = 4;
 
 /// What the bearer token writes as.
 const TOKEN_ACTOR: &str = "api";
@@ -144,6 +149,7 @@ struct App {
     dev: bool,
     setup: Arc<Mutex<Option<String>>>,
     attempts: Attempts,
+    hashing: Arc<Semaphore>,
 }
 
 /// The wrong passwords lately tried for each username, and when the first of
@@ -229,6 +235,7 @@ pub fn router(engine: Arc<Engine>, options: &ServerOptions) -> Router {
         dev: options.dev,
         setup: Arc::new(Mutex::new(options.setup.clone())),
         attempts: Attempts::default(),
+        hashing: Arc::new(Semaphore::new(MAX_HASHING)),
     };
     let sessions = SessionManagerLayer::new(options.accounts.clone())
         .with_name(COOKIE)
@@ -548,17 +555,14 @@ async fn caller(app: &App, session: &Session, headers: &HeaderMap) -> ApiResult<
     ))
 }
 
-/// The person a session belongs to, if their account is still on.
+/// The person a session belongs to, if their account is still on and has
+/// the password the session began with.
 async fn signed_in(app: &App, session: &Session) -> ApiResult<Option<Person>> {
-    let Some(id) = session
-        .get::<String>(PERSON)
-        .await
-        .map_err(session_failed)?
-    else {
+    let kept = |key| async move { session.get::<String>(key).await.map_err(session_failed) };
+    let (Some(id), Some(mark)) = (kept(PERSON).await?, kept(MARK).await?) else {
         return Ok(None);
     };
-    let person = people(app, move |accounts| accounts.get(&id)).await?;
-    Ok(person.filter(|person| person.active))
+    people(app, move |accounts| accounts.holder(&id, &mark)).await
 }
 
 fn session_failed(error: tower_sessions::session::Error) -> ApiError {
@@ -578,13 +582,37 @@ async fn people<T: Send + 'static>(
     }
 }
 
-/// Starts a session for `person`, with an ID nobody has seen before.
-async fn begin(session: &Session, person: &Person) -> ApiResult<()> {
-    session.cycle_id().await.map_err(session_failed)?;
-    session
-        .insert(PERSON, &person.id)
+/// Runs work that hashes a password, which `permit` allows: it is held until
+/// the work is done, even if whoever asked has gone.
+async fn hashing<T: Send + 'static>(
+    app: &App,
+    permit: OwnedSemaphorePermit,
+    work: impl FnOnce(&Accounts) -> Result<T, Refused> + Send + 'static,
+) -> ApiResult<T> {
+    people(app, move |accounts| {
+        let _held = permit;
+        work(accounts)
+    })
+    .await
+}
+
+/// Leave to hash a password, for a caller the server has reason to wait
+/// for: one who is signed in, or who has the setup code.
+async fn turn(app: &App) -> ApiResult<OwnedSemaphorePermit> {
+    Arc::clone(&app.hashing)
+        .acquire_owned()
         .await
-        .map_err(session_failed)
+        .map_err(|_| ApiError::internal("the accounts stopped while working"))
+}
+
+/// Starts a session for whoever `entered`, with an ID nobody has seen
+/// before.
+async fn begin(session: &Session, person: &str, mark: &str) -> ApiResult<()> {
+    session.cycle_id().await.map_err(session_failed)?;
+    for (key, value) in [(PERSON, person), (MARK, mark)] {
+        session.insert(key, value).await.map_err(session_failed)?;
+    }
+    Ok(())
 }
 
 async fn session_state(State(app): State<App>, session: Session) -> ApiResult {
@@ -623,17 +651,26 @@ async fn sign_in(State(app): State<App>, session: Session, body: Bytes) -> ApiRe
             "too many wrong passwords for this username; wait a while and try again",
         ));
     }
+    // Anyone can ask, so nobody waits: a request beyond what is being
+    // checked is turned away, and costs nothing.
+    let Ok(permit) = Arc::clone(&app.hashing).try_acquire_owned() else {
+        return Err(ApiError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            ErrorCode::TooManyAttempts,
+            "too many people are signing in at once; try again in a moment",
+        ));
+    };
     let attempted = username.clone();
-    let person = people(&app, move |accounts| {
+    let entered = hashing(&app, permit, move |accounts| {
         accounts.verify(&attempted, &request.password)
     })
     .await?;
-    let Some(person) = person else {
+    let Some(Entered { person, mark }) = entered else {
         app.attempts.wrong(username);
         return Err(wrong());
     };
     app.attempts.forget(&username);
-    begin(&session, &person).await?;
+    begin(&session, &person.id, &mark).await?;
     now(&app, Some(person))
 }
 
@@ -656,12 +693,12 @@ async fn set_up(State(app): State<App>, session: Session, body: Bytes) -> ApiRes
             "that is not the code in the link this server printed when it started",
         ));
     }
-    let person = people(&app, move |accounts| {
+    let Entered { person, mark } = hashing(&app, turn(&app).await?, move |accounts| {
         accounts.first(&request.username, &request.name, &request.password)
     })
     .await?;
     *app.setup.lock().unwrap_or_else(|held| held.into_inner()) = None;
-    begin(&session, &person).await?;
+    begin(&session, &person.id, &mark).await?;
     now(&app, Some(person))
 }
 
@@ -671,12 +708,12 @@ async fn change_password(State(app): State<App>, session: Session, body: Bytes) 
         return Err(unauthorized("sign in first"));
     };
     let id = person.id.clone();
-    people(&app, move |accounts| {
+    let mark = hashing(&app, turn(&app).await?, move |accounts| {
         accounts.change_password(&id, &request.current, &request.new)
     })
     .await?;
     // Every session of theirs has ended. This one starts again.
-    begin(&session, &person).await?;
+    begin(&session, &person.id, &mark).await?;
     now(&app, Some(person))
 }
 
@@ -693,7 +730,7 @@ async fn add_person(
 ) -> ApiResult {
     caller.admin()?;
     let request: AddPersonRequest = json_body(&body)?;
-    ok(people(&app, move |accounts| {
+    ok(hashing(&app, turn(&app).await?, move |accounts| {
         accounts.add(
             &request.username,
             &request.name,
@@ -712,18 +749,18 @@ async fn change_person(
 ) -> ApiResult {
     caller.admin()?;
     let request: ChangePersonRequest = json_body(&body)?;
-    ok(people(&app, move |accounts| {
-        accounts.change(
-            &person,
-            Change {
-                name: request.name,
-                password: request.password,
-                admin: request.admin,
-                active: request.active,
-            },
-        )
+    let change = Change {
+        name: request.name,
+        password: request.password,
+        admin: request.admin,
+        active: request.active,
+    };
+    let sets_password = change.password.is_some();
+    let changed = move |accounts: &Accounts| accounts.change(&person, change);
+    ok(match sets_password {
+        true => hashing(&app, turn(&app).await?, changed).await?,
+        false => people(&app, changed).await?,
     })
-    .await?)
 }
 
 /// Compares without stopping at the first difference, so that the time taken

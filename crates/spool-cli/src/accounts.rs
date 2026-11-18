@@ -21,6 +21,10 @@ use crate::api::Person;
 /// The key of a session under which the person it belongs to is kept.
 pub const PERSON: &str = "person";
 
+/// The key of a session under which the mark of the password it began with
+/// is kept.
+pub const MARK: &str = "password";
+
 /// The fewest characters a password may have.
 pub const MIN_PASSWORD: usize = 12;
 
@@ -92,6 +96,16 @@ pub struct Change {
     pub active: Option<bool>,
 }
 
+/// Someone whose password was just checked or set, and the mark of it that
+/// their session keeps. A session is good while the account's password is
+/// still the one with that mark, so one that begins while the password is
+/// being replaced is of the old password, and is not good.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Entered {
+    pub person: Person,
+    pub mark: String,
+}
+
 #[derive(Clone, Debug)]
 pub struct Accounts {
     connection: Arc<Mutex<Connection>>,
@@ -144,7 +158,7 @@ impl Accounts {
     }
 
     /// Makes the first account, an admin. Refused once an admin can sign in.
-    pub fn first(&self, username: &str, name: &str, password: &str) -> Result<Person, Refused> {
+    pub fn first(&self, username: &str, name: &str, password: &str) -> Result<Entered, Refused> {
         let person = drafted(username, name, true)?;
         let hash = hashed(password)?;
         let mut connection = self.connection();
@@ -154,7 +168,10 @@ impl Accounts {
         }
         insert(&transaction, &person, Some(&hash))?;
         transaction.commit()?;
-        Ok(person)
+        Ok(Entered {
+            person,
+            mark: mark(&hash),
+        })
     }
 
     pub fn add(
@@ -186,6 +203,23 @@ impl Accounts {
         find(&self.connection(), "id", id)
     }
 
+    /// The person a session belongs to, if their account is on and their
+    /// password is still the one the session began with.
+    pub fn holder(&self, id: &str, began_with: &str) -> Result<Option<Person>, Refused> {
+        let found: Option<(Person, Option<String>)> = self
+            .connection()
+            .query_row(
+                "SELECT id, username, name, admin, active, password FROM person WHERE id = ?",
+                [id],
+                |row| Ok((person(row)?, row.get(5)?)),
+            )
+            .optional()?;
+        Ok(found.and_then(|(person, hash)| {
+            let same = hash.is_some_and(|hash| mark(&hash) == began_with);
+            (same && person.active).then_some(person)
+        }))
+    }
+
     /// Everyone, in the order they were added.
     pub fn list(&self) -> Result<Vec<Person>, Refused> {
         let connection = self.connection();
@@ -200,7 +234,7 @@ impl Accounts {
 
     /// The person with this username, if the password is theirs and their
     /// account is on. Takes as long whether or not there is such a person.
-    pub fn verify(&self, username: &str, password: &str) -> Result<Option<Person>, Refused> {
+    pub fn verify(&self, username: &str, password: &str) -> Result<Option<Entered>, Refused> {
         let username = username.trim().to_lowercase();
         let found: Option<(Person, Option<String>)> = self
             .connection()
@@ -213,7 +247,12 @@ impl Accounts {
         match found {
             Some((person, Some(hash))) => {
                 let right = password_auth::verify_password(password, &hash).is_ok();
-                Ok((right && person.active).then_some(person))
+                // The mark is of the hash that was checked, which by now
+                // may not be the account's.
+                Ok((right && person.active).then(|| Entered {
+                    person,
+                    mark: mark(&hash),
+                }))
             }
             _ => {
                 // The work a real check does, so that the time taken does
@@ -255,9 +294,9 @@ impl Accounts {
         Ok(after)
     }
 
-    /// Changes a person's own password, given the one they have. Their
-    /// other sessions end.
-    pub fn change_password(&self, id: &str, current: &str, new: &str) -> Result<(), Refused> {
+    /// Changes a person's own password, given the one they have, and
+    /// returns the mark of the new one. Their sessions end.
+    pub fn change_password(&self, id: &str, current: &str, new: &str) -> Result<String, Refused> {
         let stored: Option<Option<String>> = self
             .connection()
             .query_row("SELECT password FROM person WHERE id = ?", [id], |row| {
@@ -275,7 +314,7 @@ impl Accounts {
             params![hash, id],
         )?;
         end_sessions(&connection, id)?;
-        Ok(())
+        Ok(mark(&hash))
     }
 }
 
@@ -370,6 +409,16 @@ fn hashed(password: &str) -> Result<String, Refused> {
     Ok(password_auth::generate_hash(password))
 }
 
+/// What a session keeps of the password it began with: the SHA-256 of its
+/// stored hash, which changes whenever the password is set.
+fn mark(hash: &str) -> String {
+    hex(&Sha256::digest(hash))
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 /// A hash no password matches, to check against when there is no account.
 fn nobody() -> &'static str {
     static HASH: std::sync::LazyLock<String> =
@@ -381,14 +430,11 @@ fn nobody() -> &'static str {
 pub fn code() -> String {
     let mut bytes = [0u8; 32];
     getrandom::fill(&mut bytes).expect("the system gives random bytes");
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    hex(&bytes)
 }
 
 fn stored_id(id: &Id) -> String {
-    Sha256::digest(id.0.to_le_bytes())
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    hex(&Sha256::digest(id.0.to_le_bytes()))
 }
 
 fn backend(error: impl std::fmt::Display) -> session_store::Error {
@@ -476,7 +522,10 @@ mod tests {
     fn the_first_account_is_an_admin_and_there_is_only_one_first() {
         let accounts = Accounts::in_memory();
         assert!(accounts.needs_setup().unwrap());
-        let ada = accounts.first("Ada", " Ada Lovelace ", PASSWORD).unwrap();
+        let ada = accounts
+            .first("Ada", " Ada Lovelace ", PASSWORD)
+            .unwrap()
+            .person;
         assert!(ada.admin && ada.active);
         assert_eq!(
             (ada.username.as_str(), ada.name.as_str()),
@@ -489,14 +538,12 @@ mod tests {
     #[test]
     fn a_password_signs_in_only_its_own_active_account() {
         let accounts = Accounts::in_memory();
-        let ada = accounts.first("ada", "Ada", PASSWORD).unwrap();
+        let ada = accounts.first("ada", "Ada", PASSWORD).unwrap().person;
         let bob = accounts
             .add("bob", "Bob", "another long one", false)
             .unwrap();
-        assert_eq!(
-            accounts.verify(" ADA ", PASSWORD).unwrap(),
-            Some(ada.clone())
-        );
+        let entered = accounts.verify(" ADA ", PASSWORD).unwrap();
+        assert_eq!(entered.map(|entered| entered.person), Some(ada.clone()));
         assert_eq!(accounts.verify("ada", "another long one").unwrap(), None);
         assert_eq!(accounts.verify("nobody", PASSWORD).unwrap(), None);
 
@@ -555,7 +602,7 @@ mod tests {
             Err(Refused::LastAdmin)
         );
 
-        let ada = accounts.first("ada", "Ada", PASSWORD).unwrap();
+        let ada = accounts.first("ada", "Ada", PASSWORD).unwrap().person;
         assert!(!accounts.needs_setup().unwrap());
         assert_eq!(accounts.get(&dev.id).unwrap(), Some(dev.clone()));
         // `dev` is an admin nobody signs in as: it cannot be the one left.
@@ -572,9 +619,46 @@ mod tests {
     }
 
     #[test]
+    fn a_session_lasts_only_as_long_as_the_password_it_began_with() {
+        let accounts = Accounts::in_memory();
+        let ada = accounts.first("ada", "Ada", PASSWORD).unwrap().person;
+        // A sign-in whose password was checked just before an admin set a new one.
+        let entered = accounts.verify("ada", PASSWORD).unwrap().unwrap();
+        assert_eq!(
+            accounts.holder(&ada.id, &entered.mark).unwrap(),
+            Some(ada.clone())
+        );
+        let reset = Change {
+            password: Some("the next long one".to_owned()),
+            ..Change::default()
+        };
+        accounts.change(&ada.id, reset).unwrap();
+        // The session it would start is of the password that was replaced.
+        assert_eq!(accounts.holder(&ada.id, &entered.mark).unwrap(), None);
+
+        let entered = accounts
+            .verify("ada", "the next long one")
+            .unwrap()
+            .unwrap();
+        let mark = accounts
+            .change_password(&ada.id, "the next long one", "one more long one")
+            .unwrap();
+        assert_eq!(accounts.holder(&ada.id, &entered.mark).unwrap(), None);
+        assert_eq!(accounts.holder(&ada.id, &mark).unwrap(), Some(ada.clone()));
+
+        let off = Change {
+            active: Some(false),
+            ..Change::default()
+        };
+        accounts.add("bob", "Bob", PASSWORD, true).unwrap();
+        accounts.change(&ada.id, off).unwrap();
+        assert_eq!(accounts.holder(&ada.id, &mark).unwrap(), None);
+    }
+
+    #[test]
     fn a_new_password_needs_the_old_one() {
         let accounts = Accounts::in_memory();
-        let ada = accounts.first("ada", "Ada", PASSWORD).unwrap();
+        let ada = accounts.first("ada", "Ada", PASSWORD).unwrap().person;
         assert_eq!(
             accounts.change_password(&ada.id, "not it at all", "the next long one"),
             Err(Refused::WrongPassword)

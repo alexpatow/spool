@@ -810,7 +810,7 @@
         },
         {
           "const": "too_many_attempts",
-          "description": "429: too many wrong passwords for this username. Wait and try again.",
+          "description": "429: too many wrong passwords for this username, or more sign-ins\nat once than the server checks. Wait and try again.",
           "type": "string"
         },
         {
