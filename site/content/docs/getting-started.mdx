@@ -32,7 +32,7 @@ spool 0.1.0
 ## Create a project
 
 ```sh
-spool init companies
+spool init companies --example companies
 cd companies
 ```
 
@@ -48,7 +48,8 @@ created   companies
   samples/crm-1.csv                  six rows to load first
   samples/crm-2.csv                  three more for later
   samples/notes-1.txt                a call note that names three companies
-  .gitignore                         keeps the server's data, .spool/, out of Git
+  .gitignore                         keeps the server's data, .spool/, and .env out of Git
+  .env.example                       the form of .env, where your code's secrets go
 
   cd companies
   spool dev                          runs the server on this machine
@@ -59,7 +60,7 @@ The extractor is a Python file, which Spool runs with `uv`. Its first run fetche
 about 330 MB, most of it the model, and later runs fetch nothing.
 ```
 
-A project is a directory of files that you keep in Git. This one declares a source of rows, `crm`, a source of documents, `notes`, and one entity type, `company`. An entity type is a kind of thing you want one ID for. The sample rows:
+A project is a directory of files that you keep in Git. `spool init companies` makes the directory `companies`, and `--example companies` fills it with the sample project this page uses. Without `--example`, the project is empty: that is where your own data goes. This one declares a source of rows, `crm`, a source of documents, `notes`, and one entity type, `company`. An entity type is a kind of thing you want one ID for. The sample rows:
 
 {/* sample: existing */}
 
@@ -469,7 +470,7 @@ Ctrl-C in the first terminal stops the server. The data stays in `.spool/dev.duc
 
 ## Next
 
-- Point it at your own rows: edit the columns in `sources/crm.yaml` and the rules, then `spool load your-file.csv --source crm`. [Project structure](/docs/project-structure) lists every file.
+- Start a project for your own rows: `spool init <name>` makes an empty one, with the folders a project uses. Copy what you need from this one, then `spool load your-file.csv`. [Project structure](/docs/project-structure) lists every file.
 - Write an extractor that asks a model. [Extraction](/docs/concepts/extraction)
 - What happens when a rule gets better. [Matching](/docs/concepts/matching#rules-that-get-better)
 - Merge, split and undo. [Identities](/docs/concepts/identities)

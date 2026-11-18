@@ -1,4 +1,4 @@
-"""Stands in for the extractor `spool init` writes, where a release is tested.
+"""Stands in for the sample extractor of `spool init`, where a release is tested.
 
 The sample extractor finds names with a small model, and its first run
 fetches about 330 MB. This one finds what ends in a legal form, which in the

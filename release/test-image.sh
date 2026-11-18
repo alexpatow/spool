@@ -12,8 +12,8 @@
 # server that image runs, with no network, it loads and matches rows and
 # reads the sample note.
 #
-# The project's extractor is by-legal-form.py and not the one `spool init`
-# writes, whose model the image would fetch as it is built. What the build
+# The project's extractor is by-legal-form.py and not the one the example
+# `companies` of `spool init` writes, whose model the image would fetch as it is built. What the build
 # fetches is `uv`, a Python and `pyarrow`.
 #
 # The registry is a container that listens on port 5005 of this machine, or
@@ -75,7 +75,7 @@ echo "== a project's image, from the Dockerfile \`spool build\` writes"
 docker run --rm --user "$(id -u):$(id -g)" --volume "$project:/project" --volume "$here:/release:ro" \
     --workdir /project --entrypoint sh "$image" -c "
         set -e
-        spool init companies > /dev/null
+        spool init companies --example companies > /dev/null
         cp /release/by-legal-form.py companies/extractors/companies.py
         spool build companies --base-image $image"
 grep -q '^RUN spool build --install$' "$project/companies/Dockerfile" \

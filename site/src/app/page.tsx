@@ -14,7 +14,7 @@ import { layout, breakpoints } from "@/styles/layout.stylex";
 import { colors, linen, spacing, typography } from "@/styles/shelf/tokens.stylex";
 
 const server = `curl -fsSL ${site.repository}/releases/latest/download/install.sh | sh
-spool init companies
+spool init companies --example companies
 cd companies
 spool dev`;
 

@@ -1,5 +1,6 @@
 pub mod bench;
 pub mod extract;
+pub mod init;
 pub mod load;
 pub mod matching;
 pub mod project;

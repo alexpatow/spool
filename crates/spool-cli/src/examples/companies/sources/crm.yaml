@@ -1,0 +1,4 @@
+# A source of rows. `key` is the column that tells one row from another, and
+# `columns` is every column a row may have.
+key: id
+columns: [id, name, country]

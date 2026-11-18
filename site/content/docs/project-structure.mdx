@@ -5,12 +5,12 @@ description: Every file a Spool project can hold, with an example of each, the k
 
 A Spool project is a directory, meant to be kept in Git. It declares where records come from, what kinds of thing they describe and how those are matched. `spool dev` reads it as you save, and `spool build` compiles it into the one file a deployed server reads.
 
-This page is a reference: every file a project can hold, with an example of each and a link to the page that explains it. The examples are files `spool init` writes, and one that it does not.
+This page is a reference: every file a project can hold, with an example of each and a link to the page that explains it. The examples are files `spool init --example companies` writes, and one that it does not. Without `--example`, `spool init` writes the folders, each with an empty `.gitkeep` so that Git keeps it, `.gitignore` and `.env.example`, and nothing else.
 
 {/* sample: new session */}
 
 ```sh
-spool init companies
+spool init companies --example companies
 cd companies
 ```
 
@@ -38,7 +38,9 @@ companies/
 ├── extractors/
 │   └── companies.py                the extractor `companies`: a Python file that asks a small model
 ├── samples/                        sample rows and a sample note. Not read by the server
-├── .gitignore
+├── .gitignore                      leaves out .spool/ and .env
+├── .env.example                    the form of .env
+├── .env                            yours: secrets for the project's code. Not committed
 └── .spool/                         the development store and the compiled manifest. Not committed
 ```
 
@@ -159,7 +161,7 @@ l.country <> r.country
 
 ## Extractors
 
-`extractors/<name>.py` or `.ts`. An extractor finds records in documents. Explained in [Extraction](/docs/concepts/extraction), which shows the one `spool init` writes, `extractors/companies.py`, and writes one in each language.
+`extractors/<name>.py` or `.ts`. An extractor finds records in documents. Explained in [Extraction](/docs/concepts/extraction), which shows the one `spool init --example companies` writes, `extractors/companies.py`, and writes one in each language.
 
 A `.py` file is run with [uv](https://docs.astral.sh/uv/) and a `.ts` file with [Bun](https://bun.sh), as a child process of the server.
 
@@ -243,6 +245,16 @@ extractor `companies` (python, extractors/companies.py)
 ```
 
 The repository has a strategy that runs Splink, in [`benchmarks/resolution/people`](https://github.com/alexpatow/spool/tree/main/benchmarks/resolution/people/entities/person/strategies).
+
+## Secrets
+
+**`.env`** sets environment variables for the project's extractors and strategies, such as the key of a hosted model. It is not committed: `spool init` puts it in `.gitignore`, and `spool build` leaves it out of the image through `.dockerignore`. Copy `.env.example` to `.env` and fill it in:
+
+```text title=".env"
+OPENAI_API_KEY=sk-...
+```
+
+An extractor or a strategy runs in the project directory, with the environment Spool was started with. Spool reads `.env` each time it starts one, so a change needs no restart, and adds each variable it sets. A variable that is set already where Spool runs keeps its value, and so do the ones Spool sets for the code itself. Spool's own token and the secret of its Google client are never handed on, whatever `.env` says. No value is printed: a line that is wrong is reported by its number. A line is `NAME=value`, and may start with `export `. A value in single or double quotes is what is between them, and one without ends before ` #`. Lines that start with `#` are comments. Spool itself does not read `.env`: `SPOOL_URL`, `SPOOL_TOKEN` and the rest are set where it runs.
 
 ## What Spool writes
 

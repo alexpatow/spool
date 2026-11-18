@@ -2,12 +2,13 @@
 //
 // Copy this file into a project's extractors/ directory, as
 // extractors/model.ts. Spool runs a TypeScript extractor with bun
-// (https://bun.sh/docs/installation), in the environment of the server, so
-// that is where the model is named:
+// (https://bun.sh/docs/installation), in the environment of the server and
+// with what the project's .env sets, so that is where the model is named:
 //
-//   OPENAI_API_KEY=... SPOOL_EXTRACT_MODEL=<model> spool dev
+//   OPENAI_API_KEY=...
+//   SPOOL_EXTRACT_MODEL=<model>
 //
-// and then, in the project `spool init` writes:
+// and then, in the project `spool init --example companies` writes:
 //
 //   spool extract samples/notes-1.txt --extractor model
 //

@@ -60,7 +60,7 @@ fn the_binary_starts_with_no_library_path_set() {
         );
     }
     // `init` opened DuckDB to check what it wrote.
-    assert!(dir.path().join("entities/company/entity.yaml").is_file());
+    assert!(dir.path().join("entities/.gitkeep").is_file());
 }
 
 /// Every file under `dir`, as paths below it with `/` between their parts.
@@ -99,12 +99,167 @@ fn init_in(dir: &Path, arguments: &[&str]) -> std::process::Output {
         .unwrap()
 }
 
+/// What `spool init` writes into every project, beside what an example
+/// adds.
+const GITIGNORE: &str = ".spool/\n.env\n";
+
 #[test]
-fn init_says_what_it_wrote_and_what_to_run_next() {
+fn init_makes_an_empty_project_and_says_what_goes_where() {
     let dir = tempfile::tempdir().unwrap();
 
     // The first thing a reader sees of a project, every line of it.
-    let created = init_in(dir.path(), &["companies"]);
+    let created = init_in(dir.path(), &["my-data"]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    assert_eq!(text(&created.stderr), "");
+    assert_eq!(
+        text(&created.stdout),
+        "\
+created   my-data
+
+  sources/          a YAML file for each source of rows or documents
+  entities/         a folder for each entity type, with its features and its rules
+  transforms/       SQL functions that features are made with
+  extractors/       Python or TypeScript files that find records in text
+  .gitignore        keeps the server's data, .spool/, and .env out of Git
+  .env.example      the form of .env, where your code's secrets go
+
+  cd my-data
+  spool dev         runs the server, and applies each file as you save it
+
+The project is empty. Declare a source under sources/ and an entity type
+under entities/, then load your rows with `spool load`. To see a project that
+works first, with sample rows: spool init companies --example companies
+"
+    );
+    // The folders hold a file each, so that Git keeps them.
+    let project = dir.path().join("my-data");
+    assert_eq!(
+        files_of(&project),
+        [
+            ".env.example",
+            ".gitignore",
+            "entities/.gitkeep",
+            "extractors/.gitkeep",
+            "sources/.gitkeep",
+            "transforms/.gitkeep",
+        ]
+    );
+    assert_eq!(read(&project.join(".gitignore")), GITIGNORE);
+    // A copy of .env.example as it stands sets nothing.
+    let example = read(&project.join(".env.example"));
+    assert!(
+        example
+            .lines()
+            .all(|line| line.is_empty() || line.starts_with('#')),
+        "{example}"
+    );
+    assert!(example.contains("\n# OPENAI_API_KEY=sk-...\n"), "{example}");
+
+    // It is a project that Spool takes as it is, and says what it lacks.
+    let listing = succeed(&["info", path(&project)]);
+    assert!(
+        listing.contains("no entity types: add a directory under entities/ with an entity.yaml"),
+        "{listing}"
+    );
+    assert!(!listing.contains("not used"), "{listing}");
+    succeed(&["build", path(&project)]);
+    assert_eq!(read(&project.join(".dockerignore")), ".git\n.spool\n.env\n");
+
+    // A folder that is there and empty is taken, and so is the current
+    // folder when it is empty but for a repository and what the Finder
+    // leaves. There is nowhere to change to.
+    let here = dir.path().join("here");
+    std::fs::create_dir_all(here.join(".git")).unwrap();
+    std::fs::write(here.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+    std::fs::write(here.join(".DS_Store"), "").unwrap();
+    let created = init_in(&here, &[]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    let created = text(&created.stdout);
+    assert!(created.starts_with("created   .\n"), "{created}");
+    assert!(!created.contains("  cd "), "{created}");
+    assert!(here.join("entities/.gitkeep").is_file());
+    assert_eq!(read(&here.join(".git/HEAD")), "ref: refs/heads/main\n");
+    let empty = dir.path().join("empty");
+    std::fs::create_dir(&empty).unwrap();
+    let created = init_in(dir.path(), &["empty"]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    assert!(text(&created.stdout).contains("\n  cd empty\n"));
+
+    // A directory that is not a plain word is quoted for the shell.
+    let created = init_in(dir.path(), &["it's here"]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    let created = text(&created.stdout);
+    assert!(created.contains("\n  cd 'it'\\''s here'\n"), "{created}");
+}
+
+#[test]
+fn init_writes_nothing_into_a_folder_that_holds_files() {
+    let dir = tempfile::tempdir().unwrap();
+
+    // A home folder, where `spool init` was run without a name.
+    let home = dir.path().join("home");
+    for folder in ["Documents", "Downloads", ".config"] {
+        std::fs::create_dir_all(home.join(folder)).unwrap();
+    }
+    std::fs::write(home.join("notes.txt"), "mine\n").unwrap();
+    std::fs::write(home.join(".zshrc"), "mine\n").unwrap();
+    let before = files_of(&home);
+    let refused = init_in(&home, &[]);
+    assert_eq!(refused.status.code(), Some(1));
+    assert_eq!(text(&refused.stdout), "");
+    assert_eq!(
+        text(&refused.stderr),
+        "spool: this folder already holds files (Documents, Downloads, notes.txt and 2 more), \
+         and `spool init` makes a project only in an empty one. Nothing was written. \
+         `spool init <name>` makes the project in a new folder of that name\n"
+    );
+    assert_eq!(files_of(&home), before);
+    assert!(!home.join("entities").exists());
+
+    // A folder that is named, with one file in it.
+    let taken = dir.path().join("taken");
+    std::fs::create_dir(&taken).unwrap();
+    std::fs::write(taken.join("rows.csv"), "mine\n").unwrap();
+    let refused = init_in(dir.path(), &["taken"]);
+    assert_eq!(refused.status.code(), Some(1));
+    assert_eq!(
+        text(&refused.stderr),
+        "spool: taken already holds files (rows.csv). `spool init` makes a project only in a \
+         new or empty folder: give it another name\n"
+    );
+    assert_eq!(files_of(&taken), ["rows.csv"]);
+
+    // A project, named or not.
+    assert!(init_in(dir.path(), &["project"]).status.success());
+    let refused = init_in(dir.path(), &["project", "--example", "companies"]);
+    assert_eq!(refused.status.code(), Some(1));
+    assert_eq!(
+        text(&refused.stderr),
+        "spool: project is a project already: it has an entities/ folder\n"
+    );
+    assert!(!dir.path().join("project/samples").exists());
+    let refused = init_in(&dir.path().join("project"), &[]);
+    assert_eq!(
+        text(&refused.stderr),
+        "spool: this folder is a project already: it has an entities/ folder\n"
+    );
+
+    // A file.
+    std::fs::write(dir.path().join("a-file"), "mine\n").unwrap();
+    let refused = init_in(dir.path(), &["a-file"]);
+    assert_eq!(refused.status.code(), Some(1));
+    assert_eq!(
+        text(&refused.stderr),
+        "spool: a-file is a file, and a project is a folder\n"
+    );
+    assert_eq!(read(&dir.path().join("a-file")), "mine\n");
+}
+
+#[test]
+fn init_with_an_example_says_what_it_wrote_and_what_to_run_next() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let created = init_in(dir.path(), &["companies", "--example", "companies"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
     assert_eq!(
         text(&created.stdout),
@@ -120,7 +275,8 @@ created   companies
   samples/crm-1.csv                  six rows to load first
   samples/crm-2.csv                  three more for later
   samples/notes-1.txt                a call note that names three companies
-  .gitignore                         keeps the server's data, .spool/, out of Git
+  .gitignore                         keeps the server's data, .spool/, and .env out of Git
+  .env.example                       the form of .env, where your code's secrets go
 
   cd companies
   spool dev                          runs the server on this machine
@@ -135,6 +291,7 @@ about 330 MB, most of it the model, and later runs fetch nothing.
     assert_eq!(
         files_of(&project),
         [
+            ".env.example",
             ".gitignore",
             "entities/company/entity.yaml",
             "entities/company/rules/block/name_prefix.sql",
@@ -149,7 +306,7 @@ about 330 MB, most of it the model, and later runs fetch nothing.
             "transforms/name_key.sql",
         ]
     );
-    assert_eq!(read(&project.join(".gitignore")), ".spool/\n");
+    assert_eq!(read(&project.join(".gitignore")), GITIGNORE);
     assert_eq!(
         read(&project.join("samples/crm-1.csv")),
         "\
@@ -191,68 +348,24 @@ c-9,Acorn Tool,GB
         assert_eq!(lines, [sql], "{rule}");
     }
 
-    // In the directory the reader is in, with names of their own and a
-    // `.gitignore` that was there: there is nowhere to change to, the file
-    // is left as it was, and nothing calls a `ledger` a CRM or a `person`
-    // a company.
-    let here = dir.path().join("here");
-    std::fs::create_dir(&here).unwrap();
-    std::fs::write(here.join(".gitignore"), "target/\n").unwrap();
-    let created = init_in(&here, &["--entity", "person", "--source", "ledger"]);
-    assert!(created.status.success(), "{}", text(&created.stderr));
-    assert_eq!(
-        text(&created.stdout),
-        "\
-created   .
-
-  sources/ledger.yaml                the columns of a row from `ledger`
-  sources/notes.yaml                 what a record found in a note may say
-  entities/person/entity.yaml        what records of type `person` are compared by
-  entities/person/rules/             three rules, one line of SQL each
-  transforms/name_key.sql            the lower-case name the rules compare
-  extractors/person.py               finds records of type `person` in text, with a small model
-  samples/ledger-1.csv               six rows to load first
-  samples/ledger-2.csv               three more for later
-  samples/notes-1.txt                a call note that names three of them
-
-  spool dev                          runs the server on this machine
-  spool load samples/ledger-1.csv    loads the first rows, from a second terminal
-  spool extract samples/notes-1.txt  finds the records in the note
-
-The extractor is a Python file, which Spool runs with `uv`. Its first run fetches
-about 330 MB, most of it the model, and later runs fetch nothing.
-"
-    );
-    assert_eq!(read(&here.join(".gitignore")), "target/\n");
-    assert_eq!(
-        read(&here.join("samples/ledger-1.csv")),
-        read(&project.join("samples/crm-1.csv"))
-    );
-
-    // A directory that is not a plain word is quoted for the shell.
-    let created = init_in(dir.path(), &["it's here"]);
-    assert!(created.status.success(), "{}", text(&created.stderr));
-    let created = text(&created.stdout);
-    assert!(created.contains("\n  cd 'it'\\''s here'\n"), "{created}");
-
-    // Nothing is written over, and then nothing is written at all.
-    let taken = dir.path().join("taken");
-    std::fs::create_dir_all(taken.join("samples")).unwrap();
-    std::fs::write(taken.join("samples/crm-2.csv"), "mine\n").unwrap();
-    let refused = init_in(dir.path(), &["taken"]);
-    assert_eq!(refused.status.code(), Some(1));
+    // An example that does not exist is refused with the ones that do, and
+    // nothing is made.
+    let refused = init_in(dir.path(), &["people", "--example", "people"]);
+    assert_eq!(refused.status.code(), Some(2));
     let complaint = text(&refused.stderr);
     assert!(
-        complaint.contains("samples/crm-2.csv already exists"),
+        complaint.starts_with(
+            "spool: there is no example `people`: the examples are `companies`\n\nUsage: spool init"
+        ),
         "{complaint}"
     );
-    assert_eq!(files_of(&taken), ["samples/crm-2.csv"]);
-    assert_eq!(read(&taken.join("samples/crm-2.csv")), "mine\n");
-
-    // Neither is a source whose name is no file name.
-    let refused = init_in(dir.path(), &["odd", "--source", "a/b"]);
-    assert_eq!(refused.status.code(), Some(2));
-    assert!(!dir.path().join("odd").exists());
+    assert!(!dir.path().join("people").exists());
+    // The options that named an example's entity type and source are gone.
+    for option in ["--entity", "--source"] {
+        let refused = init_in(dir.path(), &["other", option, "person"]);
+        assert_eq!(refused.status.code(), Some(2), "{option}");
+        assert!(!dir.path().join("other").exists());
+    }
 
     // On a machine without `uv`, which the last step needs and the others
     // do not, the reader is told so now, with the line that installs it:
@@ -261,7 +374,7 @@ about 330 MB, most of it the model, and later runs fetch nothing.
     std::fs::create_dir(&empty).unwrap();
     let created = spool()
         .current_dir(dir.path())
-        .args(["init", "bare"])
+        .args(["init", "bare", "--example", "companies"])
         .env("PATH", &empty)
         .env("HOME", &empty)
         .env_remove("SPOOL_UV")
@@ -292,7 +405,7 @@ about 330 MB, most of it the model, and later runs fetch nothing.
     std::fs::copy(std::env::current_exe().unwrap(), &installed).unwrap();
     let created = spool()
         .current_dir(dir.path())
-        .args(["init", "ready"])
+        .args(["init", "ready", "--example", "companies"])
         .env("PATH", &empty)
         .env("HOME", &empty)
         .env_remove("SPOOL_UV")
@@ -304,6 +417,21 @@ about 330 MB, most of it the model, and later runs fetch nothing.
         "{}",
         text(&created.stdout)
     );
+    // An empty project has no code to run, and says nothing of `uv`.
+    let created = spool()
+        .current_dir(dir.path())
+        .args(["init", "plain"])
+        .env("PATH", &empty)
+        .env("HOME", dir.path().join("nobody"))
+        .env_remove("SPOOL_UV")
+        .output()
+        .unwrap();
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    assert!(
+        !text(&created.stdout).contains("uv"),
+        "{}",
+        text(&created.stdout)
+    );
 }
 
 #[test]
@@ -311,32 +439,14 @@ fn init_scaffolds_a_project_that_info_lists_and_build_compiles() {
     let dir = tempfile::tempdir().unwrap();
     let project = dir.path().join("crm");
 
-    let created = succeed(&["init", path(&project), "--entity", "customer"]);
+    let created = succeed(&["init", path(&project), "--example", "companies"]);
     assert!(
         created.starts_with(&format!("created   {}\n", project.display())),
         "{created}"
     );
-    for file in [
-        "sources/crm.yaml",
-        "transforms/name_key.sql",
-        "entities/customer/entity.yaml",
-        "entities/customer/rules/block/name_prefix.sql",
-        "entities/customer/rules/match/similar_name.sql",
-        "entities/customer/rules/no_match/different_country.sql",
-        "samples/crm-1.csv",
-        "samples/crm-2.csv",
-    ] {
-        assert!(project.join(file).is_file(), "{file}");
-    }
-    assert_eq!(read(&project.join(".gitignore")), ".spool/\n");
-
-    // A project is not scaffolded over another.
-    let again = run(&["init", path(&project)]);
-    assert_eq!(again.status.code(), Some(1));
-    assert!(text(&again.stderr).contains("already exists"));
 
     let listing = succeed(&["info", path(&project)]);
-    assert!(listing.contains("entity type `customer`"), "{listing}");
+    assert!(listing.contains("entity type `company`"), "{listing}");
     assert!(
         listing
             .contains("features  record_id UUID, name VARCHAR, name_key VARCHAR, country VARCHAR"),
@@ -350,7 +460,7 @@ fn init_scaffolds_a_project_that_info_lists_and_build_compiles() {
     assert!(!listing.contains("not used"), "{listing}");
     let listing: Value =
         serde_json::from_str(&succeed(&["info", path(&project), "--json"])).unwrap();
-    assert_eq!(listing["entity_types"][0]["name"], "customer");
+    assert_eq!(listing["entity_types"][0]["name"], "company");
     assert_eq!(
         listing["entity_types"][0]["rules"],
         json!({
@@ -372,6 +482,7 @@ fn init_scaffolds_a_project_that_info_lists_and_build_compiles() {
     );
 
     // The first build writes a Dockerfile, which then belongs to the project.
+    // The image is not to carry the project's secrets.
     let dockerfile = read(&project.join("Dockerfile"));
     assert!(
         dockerfile.contains(&format!(
@@ -381,7 +492,7 @@ fn init_scaffolds_a_project_that_info_lists_and_build_compiles() {
         "{dockerfile}"
     );
     assert!(dockerfile.contains("RUN spool build"), "{dockerfile}");
-    assert_eq!(read(&project.join(".dockerignore")), ".git\n.spool\n");
+    assert_eq!(read(&project.join(".dockerignore")), ".git\n.spool\n.env\n");
     std::fs::write(project.join("Dockerfile"), "FROM mine\n").unwrap();
     let rebuilt = succeed(&["build", path(&project)]);
     assert!(!rebuilt.contains("Dockerfile"), "{rebuilt}");
@@ -397,7 +508,7 @@ fn init_scaffolds_a_project_that_info_lists_and_build_compiles() {
         "--base-image",
         "registry.example/spool:1",
     ]);
-    assert!(read(&other.join("Dockerfile")).contains("FROM registry.example/spool:1 AS build"));
+    assert!(read(&other.join("Dockerfile")).contains("FROM registry.example/spool:1"));
 }
 
 #[test]
@@ -723,7 +834,7 @@ fn companies(server: &Server) -> std::collections::BTreeMap<String, (String, Str
 fn the_sample_rows_of_a_new_project_match_and_keep_their_identities() {
     let dir = tempfile::tempdir().unwrap();
     let project = dir.path().join("companies");
-    succeed(&["init", path(&project)]);
+    succeed(&["init", path(&project), "--example", "companies"]);
     let server = Server::start(&[
         "dev",
         path(&project),

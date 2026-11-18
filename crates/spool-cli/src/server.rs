@@ -1726,7 +1726,7 @@ async fn extract(
                 [] => {
                     return Err(ApiError::invalid(
                         "the project has no extractors: one is a file under extractors/, and \
-                         `spool init` writes a sample",
+                         `spool init <dir> --example companies` makes a project with a sample",
                     ));
                 }
                 _ => {

@@ -19,7 +19,7 @@ This page says how Spool is meant to be run, and each command on it was run as s
 {/* sample: new session */}
 
 ```sh
-spool init companies
+spool init companies --example companies
 cd companies
 ```
 
@@ -152,6 +152,8 @@ docker run -p 7765:7765 -v spool-data:/data companies
 ```
 
 The Dockerfile that `spool build` writes starts from the image `ghcr.io/alexpatow/spool:0.1.0`, builds the manifest in it, and runs `spool serve` with the store at `/data/spool.duckdb`, on a volume. For a project with a Python file, as the sample project has, it also copies `uv` in and runs `spool build --install`, which fetches what each strategy and extractor depends on, the sample extractor's model with it, so that the server fetches nothing as it runs. A changed project is applied with the server stopped: `docker run --rm -v spool-data:/data companies apply`.
+
+The image does not hold the project's `.env`: the `.dockerignore` that `spool build` writes leaves it out. Give the container the variables your code reads where it runs, as with `docker run --env-file .env`. On a server without Docker, set them in the environment of `spool serve`, or put a `.env` in its project directory, which `--project` names.
 
 ## Backing up
 
