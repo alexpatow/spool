@@ -16,7 +16,8 @@ Runs a benchmark scenario: ingests each step's files, stores its documents and
 runs its extractors over them, takes back the rows it says a source no longer
 holds, applies its corrections, resolves, and scores committed state against
 the scenario's truth. A scenario with labelled mentions is also scored on what
-its extractors found. The store is verified after every step.
+its extractors found, and on the two together, end to end. The store is
+verified after every step.
 
   <scenario>      a scenario.toml, or the directory that holds one
 
@@ -456,6 +457,27 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
             upgrade.suggested_merges,
             upgrade.suggested_splits,
             upgrade.applied_changes
+        );
+    }
+    if let Some(whole) = &step.end_to_end {
+        println!(
+            "\nend to end ({} labelled mentions, {} extracted):",
+            whole.labelled, whole.extracted
+        );
+        println!(
+            "  entities      {} of {} true entities have a mention that was found",
+            whole.entities_found, whole.true_entities
+        );
+        println!(
+            "  pairs         precision {}  recall {}  (F1 {})",
+            share(whole.pairs.precision),
+            share(whole.pairs.recall),
+            share(whole.pairs.f1)
+        );
+        println!(
+            "  B-cubed       precision {}  recall {}",
+            share(whole.b_cubed.precision),
+            share(whole.b_cubed.recall)
         );
     }
     if let Some(rebuild) = &step.rebuild {

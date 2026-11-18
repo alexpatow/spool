@@ -80,8 +80,8 @@ pub use lookup::{
     RecordEntry, RecordFilter, SourceCount, SourceInfo, StoreInfo, TypeInfo,
 };
 pub use metrics::{
-    BCubed, Churn, ExtractionMetrics, IdStability, Metrics, OrderSensitivity, OverridePersistence,
-    PairMetrics, Rebuild, SplitRecovery, UpgradeStability,
+    BCubed, Churn, EndToEndMetrics, ExtractionMetrics, IdStability, Metrics, OrderSensitivity,
+    OverridePersistence, PairMetrics, Rebuild, SplitRecovery, UpgradeStability,
 };
 pub use project::{
     Declaration, EntityTypeManifest, EntityTypeSource, Extractor, FeatureColumn, Manifest, Project,

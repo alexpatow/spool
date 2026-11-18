@@ -404,7 +404,7 @@ fn dev_runs_an_extractor_as_it_was_last_saved() {
 
 #[test]
 #[ignore = "runs uv"]
-fn bench_scores_extraction_apart_from_resolution() {
+fn bench_scores_extraction_apart_from_resolution_and_the_two_together() {
     let dir = tempfile::tempdir().unwrap();
     let results = dir.path().join("results.json");
     let printed = succeed(&[
@@ -424,6 +424,9 @@ fn bench_scores_extraction_apart_from_resolution() {
         "  mentions      21 extracted, 18 of them labelled",
         "  spans         precision 0.8571  recall 0.7200  (F1 0.7826)",
         "against the truth (18 records):",
+        "end to end (25 labelled mentions, 21 extracted):",
+        "  entities      10 of 10 true entities have a mention that was found",
+        "  pairs         precision 0.8333  recall 0.3571  (F1 0.5000)",
         // A mention is named by its document and its place in it.
         "news:02-brightwave-funding.txt[12-26], news:08-kestrel-bericht.txt[48-62]",
     ] {
@@ -437,4 +440,5 @@ fn bench_scores_extraction_apart_from_resolution() {
     assert_eq!(last["extraction"]["labelled"], 25);
     assert_eq!(last["extraction"]["correct"], 18);
     assert_eq!(last["metrics"]["false_merges"], 1);
+    assert_eq!(last["end_to_end"]["pairs"]["actual"], 28);
 }

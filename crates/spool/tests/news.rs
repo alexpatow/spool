@@ -158,6 +158,25 @@ fn extraction_and_resolution_are_measured_apart() {
     let order = report.order_sensitivity.as_ref().unwrap();
     assert_eq!(order.agreement, Some(1.0));
 
+    // End to end, what extraction got wrong costs. The seven mentions it
+    // missed are in no identity, so 18 of the 28 pairs of mentions of one
+    // company are missing, though every company has a mention that was
+    // found. The three it made up are each alone, so they are in no wrong
+    // pair, and count against B-cubed precision as mentions of nothing.
+    let whole = last.end_to_end.as_ref().unwrap();
+    assert_eq!((whole.labelled, whole.extracted), (25, 21));
+    assert_eq!((whole.true_entities, whole.entities_found), (10, 10));
+    assert_eq!(
+        (
+            whole.pairs.true_positives,
+            whole.pairs.predicted,
+            whole.pairs.actual
+        ),
+        (10, 12, 28)
+    );
+    assert_eq!(rounded(whole.b_cubed.precision), Some(0.7937));
+    assert_eq!(rounded(whole.b_cubed.recall), Some(0.5553));
+
     // The extractor that reads the labels: extraction is perfect by
     // construction, and what is left is what the rules do with the names.
     // A short name is now there to be missed: "Northwind" is split from
@@ -185,6 +204,10 @@ fn extraction_and_resolution_are_measured_apart() {
     );
     assert_eq!(rounded(last.metrics.pairs.precision), Some(0.9231));
     assert_eq!(rounded(last.metrics.pairs.recall), Some(0.8571));
+    // With nothing missed and nothing made up, end to end is resolution.
+    let whole = last.end_to_end.as_ref().unwrap();
+    assert_eq!(whole.pairs, last.metrics.pairs);
+    assert_eq!(whole.b_cubed, last.metrics.b_cubed);
 }
 
 #[test]
@@ -441,6 +464,11 @@ keys = ["{key}"]
         (1, 1)
     );
     assert_eq!(last.metrics.records, 24);
+    // End to end it is neither a mention that was found nor one that was
+    // missed.
+    let whole = last.end_to_end.as_ref().unwrap();
+    assert_eq!((whole.labelled, whole.extracted), (24, 24));
+    assert_eq!(whole.pairs, last.metrics.pairs);
     // The store it is set against extracts the same documents, and holds
     // the mention no more than this one does.
     let rebuild = last.rebuild.as_ref().unwrap();

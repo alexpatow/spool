@@ -72,7 +72,10 @@
 //! is for rows, over the records that have a true entity, which for an
 //! extracted mention is the label at the same place. A mention the
 //! extractor made up has no true entity and is not scored there, so the two
-//! scores do not leak into each other.
+//! scores do not leak into each other. A third score is the two together,
+//! end to end: the identities of everything the extractor found against
+//! every labelled mention, where a mention that was missed is in no
+//! identity and one that was made up is no entity.
 //!
 //! A step can take rows back, as a source does that no longer holds them:
 //!
@@ -146,8 +149,8 @@ use crate::engine::{
 use crate::error::{Error, Result};
 use crate::lookup::{RecordEntry, RecordFilter};
 use crate::metrics::{
-    Churn, ExtractionMetrics, IdStability, Metrics, OrderSensitivity, OverridePersistence, Rebuild,
-    SplitRecovery, UpgradeStability,
+    Churn, EndToEndMetrics, ExtractionMetrics, IdStability, Metrics, OrderSensitivity,
+    OverridePersistence, Rebuild, SplitRecovery, UpgradeStability,
 };
 use crate::project::Manifest;
 use crate::retract::NOT_RETRACTED;
@@ -442,6 +445,11 @@ pub struct StepReport {
     /// scenario with labelled mentions has it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extraction: Option<ExtractionMetrics>,
+    /// Extraction and resolution together: the identities of the mentions
+    /// extracted so far against every labelled mention. Only a scenario
+    /// with labelled mentions has it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_to_end: Option<EndToEndMetrics>,
     /// Of the records that had an identity before the step, how many
     /// kept it.
     pub id_stability: IdStability,
@@ -1056,6 +1064,7 @@ impl Scenario {
                 head,
                 metrics: engine.score(truth_relation(engine, &truth.entities)?)?,
                 extraction: extraction(engine, &truth)?,
+                end_to_end: end_to_end(engine, &truth)?,
                 id_stability,
                 churn,
                 split_recovery,
@@ -1677,6 +1686,68 @@ fn extraction(engine: &Engine, truth: &Truth) -> Result<Option<ExtractionMetrics
         extracted,
         correct,
     )))
+}
+
+/// The identities of the mentions extracted so far against every labelled
+/// mention of the documents stored so far. A mention its source took back
+/// is not one the store holds, and only the latest version of a mention
+/// counts.
+fn end_to_end(engine: &Engine, truth: &Truth) -> Result<Option<EndToEndMetrics>> {
+    if !truth.labelled {
+        return Ok(None);
+    }
+    let found = engine.query(&format!(
+        "SELECT o.source_id, o.source_key,
+                coalesce(m.identity_id::VARCHAR, 'unassigned:' || o.record_id::VARCHAR)
+         FROM (SELECT * FROM spool.record WHERE {NOT_RETRACTED}) o
+         LEFT JOIN spool.membership m ON m.record_id = o.record_id AND m.to_seq IS NULL
+         WHERE json_extract_string(o.evidence, '$.document') IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM spool.record later WHERE later.supersedes = o.record_id)"
+    ))?;
+    let mut mentions: Vec<((String, String), String)> = Vec::new();
+    for batch in &found {
+        let column = |index: usize| batch.column(index).as_string::<i32>();
+        let (sources, keys, groups) = (column(0), column(1), column(2));
+        for row in 0..batch.num_rows() {
+            mentions.push((
+                (sources.value(row).to_owned(), keys.value(row).to_owned()),
+                groups.value(row).to_owned(),
+            ));
+        }
+    }
+    // A labelled mention that was found and taken back is not one that was
+    // missed.
+    let taken_back = engine.query(&format!(
+        "SELECT DISTINCT source_id, source_key FROM spool.record
+         WHERE source_key IS NOT NULL AND NOT ({NOT_RETRACTED})
+           AND json_extract_string(evidence, '$.document') IS NOT NULL"
+    ))?;
+    let mut gone = HashSet::new();
+    for batch in &taken_back {
+        let column = |index: usize| batch.column(index).as_string::<i32>();
+        let (sources, keys) = (column(0), column(1));
+        for row in 0..batch.num_rows() {
+            gone.insert((sources.value(row).to_owned(), keys.value(row).to_owned()));
+        }
+    }
+    let labelled: Vec<&str> = truth
+        .gold
+        .iter()
+        .filter(|place| !gone.contains(*place))
+        .filter_map(|place| truth.entities.get(place))
+        .map(String::as_str)
+        .collect();
+    let extracted: Vec<(Option<&str>, &str)> = mentions
+        .iter()
+        .map(|(place, group)| {
+            let entity = match truth.gold.contains(place) {
+                true => truth.entities.get(place).map(String::as_str),
+                false => None,
+            };
+            (entity, group.as_str())
+        })
+        .collect();
+    Ok(Some(EndToEndMetrics::new(&labelled, &extracted)))
 }
 
 /// Every file of a directory as a document keyed by its name, in the order
