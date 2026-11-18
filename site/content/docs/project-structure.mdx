@@ -163,7 +163,7 @@ l.country <> r.country
 
 A `.py` file is run with [uv](https://docs.astral.sh/uv/) and a `.ts` file with [Bun](https://bun.sh), as a child process of the server.
 
-`entities/<type>/extract.md` is prose: what a thing of this type is and how to quote it. An extractor written in code can read it, to tell a language model what to look for. [Extraction](/docs/concepts/extraction#with-a-model) has one.
+`entities/<type>/extract.md` is prose: what a thing of this type is and how to quote it. An extractor written in code can read it, to tell a language model what to look for. [Extraction](/docs/concepts/extraction#with-a-hosted-model) has one.
 
 ## Strategies
 
@@ -247,6 +247,8 @@ The repository has a strategy that runs Splink, in [`benchmarks/resolution/peopl
 ## What Spool writes
 
 **`.spool/`** holds what is made from the project and is not committed. `spool init` puts it in `.gitignore`. `spool dev` keeps its store there, as `dev.duckdb`, with the accounts file beside it, and `spool build` writes the manifest there. [Deploying](/docs/deploying) covers `spool build` and `spool apply`.
+
+No command starts the development store over. Stop `spool dev` and delete `.spool/`: the next `spool dev` compiles the project again and starts with an empty store and no accounts. The project's own files are not in `.spool/`, and nothing else is lost.
 
 Every run records the hash of the manifest it ran with, so a judgement can be traced to the version of the project that produced it. `spool info` and `spool dev` print that hash.
 
