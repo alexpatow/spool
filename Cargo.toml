@@ -25,6 +25,9 @@ getrandom = "0.3"
 password-auth = "2"
 rusqlite = { version = "0.43", features = ["bundled"] }
 tower-sessions = { version = "0.15", default-features = false, features = ["axum-core"] }
+# Sign-in with Google: the exchange with Google and the checks of what it
+# answers. Its requests go out through ureq, so none of its HTTP clients.
+openidconnect = { version = "4.1", default-features = false }
 
 # duckdb re-exports the arrow version it was built against. Upgrade the two together.
 # spool-cli names arrow itself for the IPC and JSON forms the server speaks.

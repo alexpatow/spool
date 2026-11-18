@@ -108,9 +108,39 @@ function useTheme(kept: Kept): [Theme, () => void] {
   ];
 }
 
+/** Why Google let nobody in, as the server names it in the address it sends the browser back to. */
+const TURNED_AWAY: Record<string, string> = {
+  unknown:
+    "No account here has that Google account's email. An admin adds people, by the email they sign in to Google with.",
+  unverified: "Google has not verified that account's email address, so it cannot be used to sign in here.",
+  cancelled: "Sign-in with Google was cancelled.",
+  expired: "That sign-in took too long, or began in another browser. Start again.",
+  unreachable: "Google could not be reached. Try again in a moment.",
+  busy: "Too many people are signing in at once. Try again in a moment.",
+};
+const NOT_TAKEN =
+  "Google's answer could not be used to sign in. Try again. If it happens again, whoever runs the server can read why in its output.";
+
+/** The address without what the server added to it to say why Google let nobody in. */
+function withoutRefusal(address: string): string {
+  const [path = "", search = ""] = address.split("?", 2);
+  const query = new URLSearchParams(search);
+  query.delete("google");
+  const kept = query.toString();
+  return kept === "" ? path : `${path}?${kept}`;
+}
+
 export function App({ url = window.location.origin, fetch, storage = window.localStorage }: AppProps) {
   const [version, setVersion] = useState(0);
   const [connection, setConnection] = useState<Connection>({ status: "checking" });
+  const [google, setGoogle] = useState(false);
+  const [turnedAway] = useState(() => new URLSearchParams(window.location.search).get("google"));
+  useEffect(() => {
+    // It has been read. The address is the page's again, to keep or to pass on.
+    if (turnedAway !== null) {
+      window.history.replaceState(window.history.state, "", withoutRefusal(here()) + window.location.hash);
+    }
+  }, [turnedAway]);
   const client = useMemo(() => {
     const call: Fetch = fetch ?? ((input, init) => window.fetch(input, init));
     return new SpoolClient({
@@ -128,14 +158,18 @@ export function App({ url = window.location.origin, fetch, storage = window.loca
 
   useEffect(() => {
     let current = true;
-    const read = async (): Promise<Connection> => {
-      const { person, setup, dev } = await client.session();
-      if (!person) return { status: "out", setup };
+    const read = async (): Promise<[Connection, boolean]> => {
+      const { person, setup, dev, google } = await client.session();
+      if (!person) return [{ status: "out", setup }, google];
       const [info, people] = await Promise.all([client.info(), client.people()]);
-      return { status: "ready", me: person, dev, info, people };
+      return [{ status: "ready", me: person, dev, info, people }, google];
     };
     read().then(
-      (read) => current && setConnection(read),
+      ([read, google]) => {
+        if (!current) return;
+        setGoogle(google);
+        setConnection(read);
+      },
       (error: unknown) => {
         if (!current) return;
         // The session ended between one call and the next.
@@ -176,7 +210,7 @@ export function App({ url = window.location.origin, fetch, storage = window.loca
         ) : connection.setup ? (
           <Notice>No admin can sign in yet. Open the setup link the server printed when it started.</Notice>
         ) : (
-          <SignInForm client={client} entered={entered} />
+          <SignInForm client={client} entered={entered} google={google} turnedAway={turnedAway} />
         )}
       </Door>
     );
@@ -194,7 +228,9 @@ export function App({ url = window.location.origin, fetch, storage = window.loca
     );
   }
   return (
-    <StudioContext.Provider value={{ client, version, refresh, me: connection.me, people, info: connection.info }}>
+    <StudioContext.Provider
+      value={{ client, version, refresh, me: connection.me, people, google, info: connection.info }}
+    >
       <Shell
         url={url}
         info={connection.info}
@@ -292,14 +328,50 @@ function Username() {
   );
 }
 
-function SignInForm({ client, entered }: { client: SpoolClient; entered: (state: SessionState) => void }) {
+function SignInForm({
+  client,
+  entered,
+  google,
+  turnedAway,
+}: {
+  client: SpoolClient;
+  entered: (state: SessionState) => void;
+  /** Whether the server signs people in with Google. */
+  google: boolean;
+  /** Why Google let nobody in, if the browser has just come back from it. */
+  turnedAway: string | null;
+}) {
   return (
-    <DoorForm label="Sign in" send={(form) => client.signIn(typed(form, "username"), password(form))} entered={entered}>
-      <Username />
-      <Labelled label="Password">
-        <Input name="password" type="password" autoComplete="current-password" required />
-      </Labelled>
-    </DoorForm>
+    <>
+      {turnedAway !== null ? (
+        <Notice tone="bad" role="alert">
+          {TURNED_AWAY[turnedAway] ?? NOT_TAKEN}
+        </Notice>
+      ) : null}
+      {google ? (
+        <>
+          {/* Google sends the browser back to the page it is on. */}
+          <Button
+            variant="outline"
+            nativeButton={false}
+            render={<a href={client.googleSignIn(withoutRefusal(here()))} />}
+          >
+            Sign in with Google
+          </Button>
+          <Quiet>Or with a password:</Quiet>
+        </>
+      ) : null}
+      <DoorForm
+        label="Sign in"
+        send={(form) => client.signIn(typed(form, "username"), password(form))}
+        entered={entered}
+      >
+        <Username />
+        <Labelled label="Password">
+          <Input name="password" type="password" autoComplete="current-password" required />
+        </Labelled>
+      </DoorForm>
+    </>
   );
 }
 
@@ -532,7 +604,8 @@ function Shell({
             </div>
             {signOut ? (
               <>
-                <ChangePassword />
+                {/* Someone who signs in with Google has none to change. */}
+                {me.password ? <ChangePassword /> : null}
                 <Button variant="ghost" size="sm" onClick={signOut} style={styles.footButton}>
                   <SignOutIcon /> Sign out
                 </Button>

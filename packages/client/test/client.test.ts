@@ -31,11 +31,11 @@ afterAll(async () => {
   for (const dir of cleanup) rmSync(dir, { recursive: true, force: true });
 });
 
-async function thingsServer(seed: number): Promise<Server> {
+async function thingsServer(seed: number, environment: Record<string, string> = {}): Promise<Server> {
   const project = temporaryDirectory();
   cleanup.push(project);
   writeThings(project);
-  const server = await serve(project, seed);
+  const server = await serve(project, seed, environment);
   servers.push(server);
   return server;
 }
@@ -764,12 +764,12 @@ describe("people and tokens", () => {
   test("the first person sets the server up, adds another, and each writes under their own id", async () => {
     const server = await thingsServer(21);
     const nobody = new SpoolClient({ url: server.url, fetch: cookies() });
-    expect(await nobody.session()).toEqual({ person: null, setup: true, dev: false });
+    expect(await nobody.session()).toEqual({ person: null, setup: true, dev: false, google: false });
     expect((await failureOf(nobody.info())).code).toBe("unauthorized");
 
     const ada = await firstPerson(server);
     expect(ada.person).toMatchObject({ username: "ada", admin: true, active: true });
-    expect(await ada.client.session()).toEqual({ person: ada.person, setup: false, dev: false });
+    expect(await ada.client.session()).toEqual({ person: ada.person, setup: false, dev: false, google: false });
 
     const grace = await ada.client.addPerson({ username: "grace", name: "Grace", password: PASSWORD });
     expect(grace.admin).toBe(false);
@@ -793,6 +793,30 @@ describe("people and tokens", () => {
 
     await ada.client.signOut();
     expect((await ada.client.session()).person).toBeNull();
+  });
+
+  test("where the server signs people in with Google, a person is added by their email", async () => {
+    // Nothing answers at the issuer: the server starts without it.
+    const server = await thingsServer(23, {
+      SPOOL_GOOGLE_CLIENT_ID: "a-client",
+      SPOOL_GOOGLE_CLIENT_SECRET: "its-secret",
+      SPOOL_GOOGLE_ISSUER: "http://127.0.0.1:9",
+    });
+    const ada = await firstPerson(server);
+    expect(await ada.client.session()).toMatchObject({ google: true });
+    expect(ada.person).toMatchObject({ email: null, password: true });
+
+    const grace = await ada.client.addPerson({ username: "grace", name: "Grace", email: "Grace@Example.com" });
+    expect(grace).toMatchObject({ email: "grace@example.com", password: false });
+    expect((await failureOf(ada.client.addPerson({ username: "bob", name: "Bob" }))).code).toBe("invalid");
+    expect((await ada.client.changePerson(ada.person.id, { email: "ada@example.com" })).email).toBe("ada@example.com");
+    expect((await ada.client.changePerson(ada.person.id, { email: "" })).email).toBeNull();
+
+    // A browser opens the address, and is sent back with the reason when Google lets nobody in.
+    const address = ada.client.googleSignIn("/review?status=open");
+    expect(address).toBe(`${server.url}/auth/google?next=%2Freview%3Fstatus%3Dopen`);
+    const sent = await fetch(address, { redirect: "manual" });
+    expect([sent.status, sent.headers.get("location")]).toEqual([303, "/review?status=open&google=unreachable"]);
   });
 
   test("an admin makes a token, which writes under its own name until it is revoked", async () => {

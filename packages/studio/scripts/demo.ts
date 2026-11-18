@@ -5,6 +5,9 @@
 //   bun scripts/demo.ts news        the news items, with the mentions an extractor found
 //   bun scripts/demo.ts --port 7766
 //   bun scripts/demo.ts --sign-in   `spool serve`, where people sign in: it prints the link that makes the first account
+//   bun scripts/demo.ts --google    the same, with "Sign in with Google". With SPOOL_GOOGLE_CLIENT_ID and
+//                                   SPOOL_GOOGLE_CLIENT_SECRET set it is Google; without, a stand-in on this
+//                                   machine that asks only which email to sign in as
 //
 // The server is the one `bun run dev` passes its calls on to: it listens on
 // 127.0.0.1:7765. It also serves the studio it was built with, at that
@@ -16,11 +19,15 @@ import { join } from "node:path";
 import { binary, spool } from "../../client/test/server.ts";
 import { SpoolClient } from "../src/api.ts";
 import { companies, copyProject, news, seedCompanies, seedNews } from "../test/seed.ts";
+import { standInForGoogle } from "./google-stand-in.ts";
 
 const args = process.argv.slice(2);
 const option = (name: string, otherwise: string) => (args.includes(name) && args[args.indexOf(name) + 1]) || otherwise;
 const port = option("--port", "7765");
-const signIn = args.includes("--sign-in");
+const google = args.includes("--google");
+const signIn = google || args.includes("--sign-in");
+// A client of Google's in the environment is passed on as it is.
+const standIn = google && !process.env.SPOOL_GOOGLE_CLIENT_ID ? await standInForGoogle() : undefined;
 const scenario = args.includes("news") ? "news" : "companies";
 
 const project = copyProject(scenario === "news" ? news : companies);
@@ -40,12 +47,13 @@ const child = Bun.spawn(
         ...listen,
       ]
     : [binary(), "dev", project, ...listen],
-  { stdout: "pipe", stderr: "inherit" },
+  { stdout: "pipe", stderr: "inherit", env: { ...process.env, ...standIn?.environment } },
 );
 
 const stop = async (code = 0) => {
   child.kill("SIGTERM");
   await child.exited;
+  await standIn?.stop();
   rmSync(project, { recursive: true, force: true });
   process.exit(code);
 };
@@ -86,4 +94,10 @@ const token = signIn ? spool("token", "add", "demo", "--store", join(project, "d
 const client = new SpoolClient({ url: url!, token });
 await (scenario === "news" ? seedNews(client) : seedCompanies(client));
 console.log(`\nthe ${scenario} scenario is at ${url}`);
+if (standIn) {
+  console.log(
+    `"Sign in with Google" goes to a stand-in at ${standIn.issuer}, which asks only for an email.\n` +
+      "Make the first account with the setup link, add a person with an email on the People page, sign out, and sign in as them.",
+  );
+}
 await child.exited;

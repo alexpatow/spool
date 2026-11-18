@@ -20,6 +20,7 @@ async-trait.workspace = true
 axum.workspace = true
 getrandom.workspace = true
 libduckdb-sys.workspace = true
+openidconnect.workspace = true
 password-auth.workspace = true
 rusqlite.workspace = true
 schemars.workspace = true

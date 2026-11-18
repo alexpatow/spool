@@ -121,11 +121,15 @@ export async function firstPerson(server: Server, name = "Ada"): Promise<Browser
   return { person: person!, fetch: browser, client };
 }
 
+/** What makes a server a client of Google's. A test sets its own. */
+const GOOGLE = ["SPOOL_GOOGLE_CLIENT_ID", "SPOOL_GOOGLE_CLIENT_SECRET", "SPOOL_GOOGLE_ISSUER", "SPOOL_PUBLIC_URL"];
+
 /**
  * Builds the project in `project` and serves it on a new store, on a port
- * the server picks. `seed` makes the IDs it mints reproducible.
+ * the server picks. `seed` makes the IDs it mints reproducible, and
+ * `environment` is set for the server.
  */
-export async function serve(project: string, seed: number): Promise<Server> {
+export async function serve(project: string, seed: number, environment: Record<string, string> = {}): Promise<Server> {
   spool("build", project);
   const dir = temporaryDirectory();
   const child = Bun.spawn(
@@ -145,7 +149,14 @@ export async function serve(project: string, seed: number): Promise<Server> {
       "--seed",
       String(seed),
     ],
-    { stdout: "pipe", stderr: "inherit" },
+    {
+      stdout: "pipe",
+      stderr: "inherit",
+      env: {
+        ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !GOOGLE.includes(name))),
+        ...environment,
+      },
+    },
   );
 
   // The server prints the address it listens on, and then, as nobody has
