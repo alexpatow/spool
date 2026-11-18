@@ -1651,6 +1651,48 @@ fn held(server: &Server, source: &str) -> Vec<(Value, Value)> {
 }
 
 #[test]
+fn a_first_line_of_too_many_columns_is_refused_at_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = things_server(dir.path());
+    let csv = |body: &str| {
+        server
+            .request("POST", "/v1/ingest?source=shop&entity_type=thing")
+            .header("Content-Type", "text/csv")
+            .body(body.as_bytes())
+            .send()
+    };
+    let line = |columns: usize| -> String {
+        let names: Vec<String> = (0..columns).map(|column| format!("c{column}")).collect();
+        names.join(",")
+    };
+
+    // Half a megabyte of names and no rows: what it costs to refuse does
+    // not grow faster than the line does.
+    let began = std::time::Instant::now();
+    let message = csv(&line(80_000)).error(400, "invalid");
+    assert_eq!(
+        message,
+        "the body cannot be read as CSV: line 1 names 80000 columns, which is more than the \
+         10000 a file of rows may have"
+    );
+    // As many as there may be are looked at, and so is a name that comes
+    // twice among them.
+    let message = csv(&format!("{},c0\n", line(9_999))).error(400, "invalid");
+    assert_eq!(
+        message,
+        "the body cannot be read as CSV: line 1: two columns are named `c0`"
+    );
+    assert!(
+        began.elapsed() < std::time::Duration::from_secs(5),
+        "the first lines took {:?}",
+        began.elapsed()
+    );
+    // The server goes on reading rows.
+    let answer = csv("id,code\n1,anvil\n").ok();
+    assert_eq!(answer["run"]["ingest"]["inserted"], 1, "{answer}");
+}
+
+#[test]
 fn rows_are_taken_as_csv_and_as_tab_separated_text() {
     let dir = tempfile::tempdir().unwrap();
     let server = things_server(dir.path());

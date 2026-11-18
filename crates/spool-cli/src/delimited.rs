@@ -8,12 +8,18 @@
 //! What is wrong with a file is said with the line it is on, because the
 //! person who reads it is the one who has to open the file.
 
+use std::collections::HashSet;
 use std::io::Read;
 use std::sync::Arc;
 
 use arrow::array::{ArrayRef, StringBuilder};
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use arrow::record_batch::RecordBatch;
+
+/// The most columns the first line may name. A source lists every column
+/// its rows may have, and none lists near as many: this is what keeps a
+/// first line that anyone could send from costing more than it is worth.
+pub const MAX_COLUMNS: usize = 10_000;
 
 /// What is wrong with text that has nothing in it.
 pub const EMPTY: &str = "it is empty: the first line has to name the columns";
@@ -49,7 +55,14 @@ impl<R: Read> Reader<R> {
         if header.is_empty() {
             return Err(Malformed(EMPTY.to_owned()));
         }
+        if header.len() > MAX_COLUMNS {
+            return Err(Malformed(format!(
+                "line 1 names {} columns, which is more than the {MAX_COLUMNS} a file of rows may have",
+                header.len()
+            )));
+        }
         let mut names: Vec<&str> = Vec::with_capacity(header.len());
+        let mut seen: HashSet<&str> = HashSet::with_capacity(header.len());
         for (index, name) in header.iter().enumerate() {
             let name =
                 std::str::from_utf8(name).map_err(|_| Malformed(format!("line 1: {NOT_UTF8}")))?;
@@ -59,7 +72,7 @@ impl<R: Read> Reader<R> {
                     index + 1
                 )));
             }
-            if names.contains(&name) {
+            if !seen.insert(name) {
                 return Err(Malformed(format!("line 1: two columns are named `{name}`")));
             }
             names.push(name);
@@ -236,6 +249,38 @@ mod tests {
         let (names, rows) = read(b"id\tname\n1\tanvil, large\n", b'\t').unwrap();
         assert_eq!(names, ["id", "name"]);
         assert_eq!(rows, [vec![some("1"), some("anvil, large")]]);
+    }
+
+    #[test]
+    fn a_first_line_of_too_many_names_is_refused_at_once() {
+        let line = |columns: usize| -> String {
+            let names: Vec<String> = (0..columns).map(|column| format!("c{column}")).collect();
+            names.join(",")
+        };
+        let began = std::time::Instant::now();
+        // Anyone the server answers can send a first line, so what it costs
+        // to read one does not grow faster than the line does.
+        assert_eq!(
+            Reader::new(line(80_000).as_bytes(), b',').err(),
+            Some(Malformed(
+                "line 1 names 80000 columns, which is more than the 10000 a file of rows may have"
+                    .to_owned()
+            ))
+        );
+        // As many as there may be are read, and a name that comes twice
+        // among them is found.
+        let most = line(MAX_COLUMNS);
+        let most = Reader::new(most.as_bytes(), b',').unwrap();
+        assert_eq!(most.schema().fields().len(), MAX_COLUMNS);
+        assert_eq!(
+            Reader::new(format!("{},c0", line(MAX_COLUMNS - 1)).as_bytes(), b',').err(),
+            Some(Malformed("line 1: two columns are named `c0`".to_owned()))
+        );
+        assert!(
+            began.elapsed() < std::time::Duration::from_secs(5),
+            "the first lines took {:?}",
+            began.elapsed()
+        );
     }
 
     #[test]
