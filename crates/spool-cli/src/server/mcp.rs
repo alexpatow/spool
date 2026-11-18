@@ -46,7 +46,8 @@ use super::{
     RecordsQuery, ReviewQuery, ServerOptions,
 };
 use crate::api::{
-    CommitRequest, DismissRequest, ErrorCode, ErrorResponse, MintRequest, SplitRequest, UndoRequest,
+    CommitRequest, DismissRequest, ErrorBody, ErrorCode, ErrorResponse, MintRequest, SplitRequest,
+    UndoRequest,
 };
 
 /// The largest request the endpoint reads. A request is a tool call, and the
@@ -60,6 +61,11 @@ const MAX_RESULT_BYTES: usize = 256 * 1024;
 
 /// The largest field kept in an answer that was too large to return whole.
 const MAX_FIELD_BYTES: usize = 4 * 1024;
+
+/// The most the rejections of an error take when they cannot all be given.
+/// The rest of an error is its message, which is then no longer than a
+/// field, and as JSON no more than six times that.
+const MAX_REJECTIONS_BYTES: usize = MAX_RESULT_BYTES - 8 * MAX_FIELD_BYTES;
 
 /// The most that is read of what the transport says when it refuses.
 const MAX_REFUSAL_BYTES: usize = 4 * 1024;
@@ -188,7 +194,7 @@ impl ServerHandler for Tools {
     ) -> Result<CallToolResponse, ErrorData> {
         let Some(tool) = self.get_tool(&request.name) else {
             return Err(ErrorData::invalid_params(
-                format!("there is no tool called `{}`", request.name),
+                format!("there is no tool called `{}`", beginning(&request.name)),
                 None,
             ));
         };
@@ -276,9 +282,56 @@ fn shortened(body: &[u8]) -> Vec<u8> {
 }
 
 fn refused(error: ApiError) -> CallToolResult {
-    let body = serde_json::to_string(&ErrorResponse { error: error.body })
-        .unwrap_or_else(|_| "the call failed".to_owned());
+    let mut error = ErrorResponse { error: error.body };
+    if size(&error) > MAX_RESULT_BYTES {
+        error.error = shortened_error(error.error);
+    }
+    let body = serde_json::to_string(&error).unwrap_or_else(|_| "the call failed".to_owned());
     CallToolResult::error(vec![ContentBlock::text(body)])
+}
+
+/// An error too large to return, cut to what a tool returns. A changeset can
+/// be rejected for every one of its operations, and its error then repeats
+/// each of them, twice: in `rejections` and in the message. Any other error
+/// is large only by repeating at length what the caller sent.
+fn shortened_error(mut error: ErrorBody) -> ErrorBody {
+    if let Some(rejections) = &mut error.rejections {
+        let all = rejections.len();
+        let mut room = MAX_REJECTIONS_BYTES;
+        let kept = rejections
+            .iter()
+            .take_while(|rejection| {
+                // One more for the comma between two of them.
+                let takes = size(rejection).saturating_add(1);
+                let fits = takes <= room;
+                room = room.saturating_sub(takes);
+                fits
+            })
+            .count();
+        rejections.truncate(kept);
+        error.message = format!(
+            "changeset rejected for {all} reasons, which is more than a tool returns: \
+             `rejections` has the first {kept}. Nothing was changed. Put these right, or commit \
+             fewer operations at a time, to see the rest."
+        );
+    }
+    let kept = beginning(&error.message).len();
+    error.message.truncate(kept);
+    error
+}
+
+/// As much of the beginning of a text as a field holds.
+fn beginning(text: &str) -> &str {
+    let end = (0..=text.len().min(MAX_FIELD_BYTES))
+        .rev()
+        .find(|&end| text.is_char_boundary(end))
+        .unwrap_or(0);
+    &text[..end]
+}
+
+/// How many bytes a value is as JSON.
+fn size(value: &impl serde::Serialize) -> usize {
+    serde_json::to_vec(value).map_or(usize::MAX, |json| json.len())
 }
 
 /// Reads a tool's arguments. What does not fit is the model's to correct,
