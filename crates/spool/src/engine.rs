@@ -729,7 +729,7 @@ impl Engine {
     /// should be, writes the changeset itself and calls
     /// [`commit`](Self::commit).
     pub fn author(&self, actor: Actor, reason: Option<String>, ops: Vec<Op>) -> Result<Authored> {
-        self.lock().author(actor, reason, ops, true)
+        self.lock().author(actor, reason, ops, true, true)
     }
 
     /// Takes back the changeset at a log position with a new changeset, which
@@ -2306,6 +2306,7 @@ impl Inner {
         reason: Option<String>,
         ops: Vec<Op>,
         commit: bool,
+        along: bool,
     ) -> Result<Authored> {
         let mut changeset = Changeset {
             id: lock(&self.ids).changeset_id(),
@@ -2315,8 +2316,10 @@ impl Inner {
             run: None,
             ops,
         };
-        let along = self.versions_along(&changeset)?;
-        changeset.ops.extend(along);
+        if along {
+            let along = self.versions_along(&changeset)?;
+            changeset.ops.extend(along);
+        }
         retract::refuse_placing(&self.store.conn, &changeset.ops)?;
         let validated = validate(&self.store, changeset.clone())?;
         let committed = match commit {
@@ -2346,7 +2349,9 @@ impl Inner {
             return Err(Error::NothingToUndo(seq));
         }
         let reason = reason.unwrap_or_else(|| format!("undo of the changeset at position {seq}"));
-        self.author(actor, Some(reason), ops, commit)
+        // An undo puts back what the changeset moved and nothing else: a
+        // version it left where it was stays there.
+        self.author(actor, Some(reason), ops, commit, false)
     }
 
     fn split(
@@ -2436,7 +2441,7 @@ impl Inner {
                 });
             }
         }
-        let authored = self.author(actor, reason, ops, true)?;
+        let authored = self.author(actor, reason, ops, true, true)?;
         Ok(SplitReport {
             kept: identity,
             identity: new,

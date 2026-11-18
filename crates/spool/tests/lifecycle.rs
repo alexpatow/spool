@@ -994,6 +994,56 @@ fn an_earlier_version_a_reviewer_moves_or_a_constraint_holds_stays_where_it_is()
 }
 
 #[test]
+fn an_undo_leaves_an_earlier_version_where_the_changeset_found_it() {
+    let engine = engine();
+    load(
+        &engine,
+        "shop",
+        &[("1", Some("anvil"), None), ("2", Some("hammer"), None)],
+    );
+    resolve(&engine);
+    let (anvil, hammer) = (
+        identity(&engine, "shop", "1").unwrap(),
+        identity(&engine, "shop", "2").unwrap(),
+    );
+    load(&engine, "shop", &[("1", Some("anvil"), Some("K9"))]);
+    resolve(&engine);
+    let (versions, _) = placed_versions(&engine);
+    let (first, second) = (versions[0], versions[1]);
+    author(
+        &engine,
+        vec![Op::Assign {
+            record: first,
+            from: Some(anvil),
+            to: Some(hammer),
+        }],
+    );
+
+    // The earlier version is where the latest goes already, so the change
+    // moves only the latest, and taking it back moves only the latest.
+    let moved = author(
+        &engine,
+        vec![Op::Assign {
+            record: second,
+            from: Some(anvil),
+            to: Some(hammer),
+        }],
+    );
+    assert_eq!(placed_versions(&engine).1, [Some(hammer); 2]);
+    let undone = engine.undo(moved.seq, reviewer(), None, true).unwrap();
+    assert_eq!(
+        undone.changeset.ops,
+        [Op::Assign {
+            record: second,
+            from: Some(hammer),
+            to: Some(anvil),
+        }]
+    );
+    assert_eq!(placed_versions(&engine).1, [Some(hammer), Some(anvil)]);
+    engine.verify().unwrap();
+}
+
+#[test]
 fn a_run_that_places_a_new_version_takes_along_an_earlier_one_that_waits() {
     let engine = engine();
     load(
