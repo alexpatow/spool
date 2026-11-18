@@ -168,6 +168,21 @@ jobs:
           path: benchmarks/.cache
           key: datasets-${{ matrix.name }}-${{ hashFiles('benchmarks/datasets.toml') }}-${{ hashFiles('benchmarks/.cache/**') }}
 
+      - name: Measure (temporary, not for main)
+        if: matrix.name == 'stress' || matrix.name == 'studio'
+        run: |
+          lscpu | grep -E 'Model name|Thread|Core|^CPU\(s\)'
+          cd "packages/${{ matrix.name }}"
+          export SPOOL_BIN="$GITHUB_WORKSPACE/target/debug/spool"
+          TIMEFORMAT='%R s wall, %U s user, %S s system'
+          report() { grep -E '^test/|^\((pass|fail)\)|^Ran | pass$| fail$' || true; }
+          for round in 1 2; do
+            echo "== one after another, round $round"
+            time (bun test --timeout 30000 2>&1 | report)
+            echo "== side by side, round $round"
+            time (bun test --timeout 30000 --parallel 2>&1 | report)
+          done
+
       # A build that outgrows the disk fails in whichever test writes next,
       # far from the cause. This says how near that is.
       - name: Disk left
