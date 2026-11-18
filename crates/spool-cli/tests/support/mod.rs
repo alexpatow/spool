@@ -400,12 +400,16 @@ impl<'a> Request<'a> {
             .set_read_timeout(Some(Duration::from_secs(120)))
             .unwrap();
         let mut head = format!(
-            "{} {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nContent-Length: {}\r\n",
+            "{} {} HTTP/1.1\r\nConnection: close\r\nContent-Length: {}\r\n",
             self.method,
             self.path,
-            self.address,
             self.body.len()
         );
+        // The name the server is reached by, unless the request gives another.
+        let named = |(name, _): &(String, String)| name.eq_ignore_ascii_case("Host");
+        if !self.headers.iter().any(named) {
+            head.push_str(&format!("Host: {}\r\n", self.address));
+        }
         for (name, value) in &self.headers {
             head.push_str(&format!("{name}: {value}\r\n"));
         }
