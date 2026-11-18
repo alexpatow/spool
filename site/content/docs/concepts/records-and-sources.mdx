@@ -5,7 +5,9 @@ description: A record is a row as a source sent it. It is never changed, its ID 
 
 A **source** is a place rows come from: a CRM export, a company registry, a table in your warehouse. A **record** is one row from a source, kept as it arrived.
 
-The examples here continue the `companies` project from [Getting started](/docs/getting-started), with `spool dev` running.
+This page says what Spool keeps of a row, and what happens when a row is loaded twice, changes, or is refused. Records are where everything else starts: an [entity type](/docs/concepts/entity-types-and-features) turns them into values to compare, [matching](/docs/concepts/matching) judges pairs of them, and an [identity](/docs/concepts/identities) is a set of them.
+
+The examples continue the `companies` project from [Getting started](/docs/getting-started), with `spool dev` running. If you have not run that page, start there.
 
 ## A source is a file
 

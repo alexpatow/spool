@@ -17,7 +17,8 @@ function yamlString(value: string): string {
 /**
  * Links between pages are written as site paths (`/docs/...`). In the
  * Markdown they become absolute addresses of the other page's Markdown, so
- * an agent can follow them from wherever it has the text. Code is left alone.
+ * an agent can follow them from wherever it has the text. Images become
+ * absolute too. Code is left alone.
  */
 function absoluteLinks(markdown: string): string {
   let fenced = false;
@@ -29,11 +30,13 @@ function absoluteLinks(markdown: string): string {
         return line;
       }
       if (fenced) return line;
-      return line.replace(
-        /\]\((\/docs(?:\/[^)#\s]*)?)(#[^)\s]*)?\)/g,
-        (_match, path: string, hash: string | undefined) =>
-          `](${absoluteUrl(markdownPath(path.replace(/\/$/, "")))}${hash ?? ""})`,
-      );
+      return line
+        .replace(
+          /\]\((\/docs(?:\/[^)#\s]*)?)(#[^)\s]*)?\)/g,
+          (_match, path: string, hash: string | undefined) =>
+            `](${absoluteUrl(markdownPath(path.replace(/\/$/, "")))}${hash ?? ""})`,
+        )
+        .replace(/\]\((\/images\/[^)\s]+)\)/g, (_match, path: string) => `](${absoluteUrl(path)})`);
     })
     .join("\n");
 }

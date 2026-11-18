@@ -5,6 +5,8 @@ description: Block rules pick the pairs worth comparing, match and no-match rule
 
 Matching answers one question about two records: are they the same thing? In Spool the answer is a **judgement**: `match`, `no_match` or `unsure`. Judgements are evidence. They are kept, and they change nothing until a run turns them into identities.
 
+This page covers the three kinds of rule, what a run does with their verdicts, and what to do when a rule gets better. Rules read the [features](/docs/concepts/entity-types-and-features) of two records. What a run decides becomes [identities](/docs/concepts/identities), and what it will not decide goes to [review](/docs/concepts/review).
+
 The examples continue the project from [Entity types and features](/docs/concepts/entity-types-and-features), with `spool dev` running.
 
 ## Three kinds of rule

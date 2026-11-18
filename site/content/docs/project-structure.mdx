@@ -5,31 +5,38 @@ description: Every file a Spool project can hold, what each one declares, and ho
 
 A Spool project is a directory, meant to be kept in Git. It declares where rows come from, what kinds of thing they describe and how those are matched. The server is built from it.
 
-The examples continue the `companies` project from [Getting started](/docs/getting-started).
+This page is a reference: every file a project can hold, with an example of each and a link to the page that explains it. To build a project step by step, start with [Getting started](/docs/getting-started). The examples are the files of the `companies` project as the Concepts pages leave it.
 
 ## The directory
 
 ```text
 companies/
 ├── sources/
-│   └── crm.yaml                the source `crm`: its key and its columns
+│   ├── crm.yaml                    the source `crm`: its key and its columns
+│   └── registry.yaml               the source `registry`
 ├── transforms/
-│   └── name_key.sql            the transform `name_key`: one SQL expression
+│   ├── domain_of.sql               the transform `domain_of`: one SQL expression
+│   └── name_key.sql                the transform `name_key`
 ├── entities/
-│   └── company/                the entity type `company`
-│       ├── entity.yaml         its features, and how each source maps onto them
+│   └── company/                    the entity type `company`
+│       ├── entity.yaml             its features, and how each source maps onto them
 │       ├── rules/
-│       │   ├── block/*.sql     which pairs are compared
-│       │   ├── match/*.sql     which pairs are the same thing
-│       │   └── no_match/*.sql  which pairs are not
-│       ├── strategies/         matching written in Python or TypeScript
-│       └── extract.md          what an extractor is told about the type
-├── extractors/                 code that finds records in documents
-├── Dockerfile                  written once by `spool build`
-└── .spool/                     the compiled manifest and the development store
+│       │   ├── block/              which pairs are compared
+│       │   │   ├── same_domain.sql
+│       │   │   └── same_name.sql
+│       │   ├── match/              which pairs are the same thing
+│       │   │   ├── same_domain.sql
+│       │   │   └── same_name.sql
+│       │   └── no_match/           which pairs are not
+│       │       └── different_country.sql
+│       ├── strategies/             optional: matching written in Python or TypeScript
+│       └── extract.md              optional: what an extractor is told about the type
+├── extractors/                     optional: code that finds records in documents
+├── Dockerfile                      written once by `spool build`
+└── .spool/                         the compiled manifest and the development store
 ```
 
-Only `sources/`, one entity type with its `entity.yaml`, and at least one rule are needed for a project that matches anything. `spool init` writes those.
+`spool init` writes the smallest project that matches anything: one source, one entity type with its `entity.yaml`, one transform, one block rule and one match rule.
 
 ## The path is the name
 
@@ -37,21 +44,83 @@ Nothing is registered by hand. `entities/company/` declares the entity type `com
 
 Use lowercase letters, digits and underscores, starting with a letter: that is accepted for every kind of name. An entity type's name may have 48 characters at most.
 
-## Each file
+## Source files
 
-| Path | Format | What it declares | Read more |
-| --- | --- | --- | --- |
-| `sources/<source>.yaml` | YAML | The columns a row of the source may have, and which one is its key. | [Records and sources](/docs/concepts/records-and-sources) |
-| `transforms/<transform>.sql` | SQL | `lambda`, argument names, and one DuckDB expression that turns column values into a feature. | [Entity types and features](/docs/concepts/entity-types-and-features) |
-| `entities/<type>/entity.yaml` | YAML | The type's features, its label, and the mapping from each source's columns. | [Entity types and features](/docs/concepts/entity-types-and-features) |
-| `entities/<type>/rules/block/<rule>.sql` | SQL | A condition over two feature rows, `l` and `r`, that makes them a pair to compare. | [Matching](/docs/concepts/matching) |
-| `entities/<type>/rules/match/<rule>.sql` | SQL | A condition that judges a pair the same thing. | [Matching](/docs/concepts/matching) |
-| `entities/<type>/rules/no_match/<rule>.sql` | SQL | A condition that judges a pair not the same thing, and wins over match rules. | [Matching](/docs/concepts/matching) |
-| `entities/<type>/strategies/<name>.py` or `.ts` | Code | A matching strategy the server runs as a child process, with `uv` or `bun`. A directory of the same name holds its files. | Page not written yet |
-| `entities/<type>/extract.md` | Markdown | What an extractor is told a thing of this type is. | Page not written yet |
-| `extractors/<name>.py` or `.ts` | Code | An extractor, which reads documents and finds mentions that become records. | Page not written yet |
+`sources/<source>.yaml`. The columns a row of the source may have, and which one is its key. A row with a column that is not listed is refused. Explained in [Records and sources](/docs/concepts/records-and-sources).
 
-A project of YAML and SQL files needs only the `spool` binary. Python strategies and extractors need `uv` on the machine, and TypeScript ones need `bun`.
+{/* sample: existing */}
+
+```yaml title="sources/registry.yaml"
+key: number
+columns: [number, legal_name, country]
+```
+
+## Transform files
+
+`transforms/<transform>.sql`. The word `lambda`, the names of the arguments, and one DuckDB expression that turns column values into a feature. Lines that start with `--` are comments. Explained in [Entity types and features](/docs/concepts/entity-types-and-features#add-a-transform).
+
+{/* sample: existing */}
+
+```sql title="transforms/domain_of.sql"
+-- "https://www.acorn.example/about" becomes "acorn.example".
+lambda website: nullif(regexp_extract(lower(website), '^(?:https?://)?(?:www\.)?([^/:?#]+)', 1), '')
+```
+
+## Entity type files
+
+`entities/<type>/entity.yaml`. The entity type's features, the feature a record is called by (`label`), and for each source the column or transform each feature comes from. Explained in [Entity types and features](/docs/concepts/entity-types-and-features#map-both-sources).
+
+{/* sample: existing */}
+
+```yaml title="entities/company/entity.yaml"
+label: name
+features: [name, name_key, domain, country]
+
+mapping:
+  crm:
+    name: name
+    name_key: { from: name, transform: name_key }
+    domain: { from: website, transform: domain_of }
+    country: { from: country, transform: upper }
+  registry:
+    name: legal_name
+    name_key: { from: legal_name, transform: name_key }
+    country: { from: country, transform: upper }
+```
+
+## Rule files
+
+`entities/<type>/rules/<kind>/<rule>.sql`. One SQL condition over two rows of the type's feature table, `l` and `r`. The directory is the kind of rule. Explained in [Matching](/docs/concepts/matching#three-kinds-of-rule).
+
+| Directory | A rule there says |
+| --- | --- |
+| `rules/block/` | This pair is worth comparing. |
+| `rules/match/` | This pair is the same thing. |
+| `rules/no_match/` | This pair is not the same thing. It wins over every match rule. |
+
+{/* sample: existing */}
+
+```sql title="entities/company/rules/block/same_domain.sql"
+l.domain = r.domain
+```
+
+{/* sample: existing */}
+
+```sql title="entities/company/rules/no_match/different_country.sql"
+l.country <> r.country
+```
+
+## Files for your own code
+
+These are read by this version, and their pages are not written yet, so there is no example here that has been run.
+
+| Path | What it declares |
+| --- | --- |
+| `entities/<type>/strategies/<name>.py` or `.ts` | A matching strategy, which the server runs as a child process. A directory of the same name holds its other files. |
+| `entities/<type>/extract.md` | What an extractor is told a thing of this type is. |
+| `extractors/<name>.py` or `.ts` | An extractor, which reads documents and finds mentions that become records. |
+
+A project of YAML and SQL files needs only the `spool` binary. Python strategies and extractors need [uv](https://docs.astral.sh/uv/) on the machine, and TypeScript ones need [Bun](https://bun.sh). The repository's `benchmarks/resolution/people` project has a strategy that runs Splink.
 
 ## What Spool writes
 
@@ -65,7 +134,7 @@ spool build
 
 ```text title="Output"
 manifest  ./.spool/manifest.json
-hash      0348febc994b9f1fa46efc552547ce0b7a5c8c73fa88b81a4df2ca718c797414
+hash      01173dc505a620db7dfb34cc332e32eb8bf19760525aec74b7d5244efd65b56f
 types     company
 wrote     ./Dockerfile
 wrote     ./.dockerignore
@@ -75,18 +144,34 @@ The manifest has a hash of its content. Every run records the hash it ran with, 
 
 `spool build` also wrote a `Dockerfile` and a `.dockerignore`, because the project had none. They belong to the project from then on: `spool build` never writes them again, and you can edit them. The Dockerfile starts from an image, `ghcr.io/alexpatow/spool`, that is not published yet, so for now it only builds after you build that image yourself from the repository's own `Dockerfile`.
 
+When the project changes, a deployed server's store is brought up to date with `spool apply`, while the server is stopped. It declares new entity types and computes features again where a declaration changed, and it does not touch identities:
+
+```sh
+spool apply --store .spool/example.duckdb
+```
+
+```text title="Output"
+store     .spool/example.duckdb
+manifest  01173dc505a620db7dfb34cc332e32eb8bf19760525aec74b7d5244efd65b56f
+declared  company
+```
+
+`spool dev` does both steps by itself each time a file is saved, on its own store.
+
 ## What is ignored
 
-A file in the project's directories that this version does not use is listed by `spool info` under `not used by this version`, and has no effect. Today that includes `entities/<type>/policy.toml`. Files at the root of the project, such as a README or the batch files from Getting started, are not read at all.
+A file in the project's directories that this version does not use is listed by `spool info` under `not used by this version`, and has no effect. Today that includes `entities/<type>/policy.toml`. Files at the root of the project, such as a README or the batch files from Getting started, are not read at all, and nothing warns about them.
 
 ## Commands that read a project
 
-| Command | What it does with the directory |
-| --- | --- |
-| `spool init [<dir>]` | Writes a starting project. `--entity` and `--source` name the entity type and the source. |
-| `spool info [<dir>]` | Checks every file and lists what the project declares. `--json` prints the same as JSON. |
-| `spool dev [<dir>]` | Runs the server on this machine and applies file changes as they are saved. |
-| `spool build [<dir>]` | Checks the project and writes `.spool/manifest.json`. |
-| `spool apply [<dir>] --store <path>` | Applies a manifest to a store while the server is stopped. A deployed server refuses to start on a store that was applied with another manifest. |
+Each takes the project's directory as an argument and uses the current directory without one.
+
+| Command | What it does with the directory | Example |
+| --- | --- | --- |
+| `spool init` | Writes a starting project. `--entity` and `--source` name the entity type and the source. | `spool init companies --entity company --source crm`, in [Getting started](/docs/getting-started#create-a-project) |
+| `spool info` | Checks every file and lists what the project declares. `--json` prints the same as JSON. | `spool info`, in [Matching](/docs/concepts/matching#add-rules) |
+| `spool dev` | Runs the server on this machine and applies file changes as they are saved. | `spool dev`, in [Getting started](/docs/getting-started#start-the-server) |
+| `spool build` | Checks the project and writes `.spool/manifest.json`. | `spool build`, [above](#what-spool-writes) |
+| `spool apply` | Applies the manifest to a store while the server is stopped. | `spool apply --store .spool/example.duckdb`, [above](#what-spool-writes) |
 
 `spool <command> --help` describes each one in full.

@@ -9,6 +9,14 @@ import { site } from "@/lib/site";
 import { layout, breakpoints } from "@/styles/layout.stylex";
 import { colors, spacing, typography } from "@/styles/shelf/tokens.stylex";
 
+const start = `git clone ${site.repository}.git
+cd spool
+cargo build --release --locked -p spool-cli
+export PATH="$PWD/target/release:$PATH"
+spool init ../companies --entity company --source crm
+cd ../companies
+spool dev`;
+
 const rule = `-- entities/company/rules/match/same_name.sql
 l.name_key = r.name_key`;
 
@@ -58,6 +66,14 @@ export default function Home() {
             <Button variant="ghost" size="sm" nativeButton={false} render={<Link href="/docs" />}>
               Docs
             </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              nativeButton={false}
+              render={<Link href="/docs/limits" />}
+            >
+              Limits
+            </Button>
           </nav>
           <SiteLinks />
         </div>
@@ -65,17 +81,16 @@ export default function Home() {
 
       <main {...stylex.props(styles.main)}>
         <section {...stylex.props(styles.hero)}>
-          <Typography.H1 style={styles.title}>
-            Entity resolution that keeps its IDs
-          </Typography.H1>
-          <Typography.Lead style={styles.lead}>{site.summary}</Typography.Lead>
-          <Typography.Muted style={styles.state}>
-            A server written in Rust, with its data in one DuckDB file. Early: nothing is published
-            yet, so today you build it from source.
+          <Typography.H1 style={styles.title}>{site.summary}</Typography.H1>
+          <Typography.P style={styles.lead}>{site.problem}</Typography.P>
+          <CodeBlock>{start}</CodeBlock>
+          <Typography.Muted>
+            Needs Rust 1.89 or later. Version {site.version}, with no release yet, so the first
+            step is a build from source. {site.licence} licence.
           </Typography.Muted>
           <div {...stylex.props(styles.actions)}>
             <Button size="lg" nativeButton={false} render={<Link href="/docs/getting-started" />}>
-              Get started
+              Getting started
             </Button>
             <Button
               variant="outline"
@@ -83,7 +98,7 @@ export default function Home() {
               nativeButton={false}
               render={<Link href="/docs/limits" />}
             >
-              What it does not do
+              Limits: what it does not do
             </Button>
           </div>
         </section>
@@ -206,16 +221,16 @@ const styles = stylex.create({
     width: "100%",
   },
   hero: {
-    maxWidth: "44rem",
+    maxWidth: "46rem",
   },
   title: {
     fontSize: {
-      default: "3rem",
-      [breakpoints.mobile]: "2.25rem",
+      default: "2rem",
+      [breakpoints.mobile]: "1.5rem",
     },
     lineHeight: {
-      default: "3.25rem",
-      [breakpoints.mobile]: "2.5rem",
+      default: "2.5rem",
+      [breakpoints.mobile]: "2rem",
     },
   },
   lead: {
@@ -225,10 +240,7 @@ const styles = stylex.create({
     gap: spacing["3"],
     display: "flex",
     flexWrap: "wrap",
-    marginTop: "2rem",
-  },
-  state: {
-    marginTop: spacing["4"],
+    marginTop: spacing["6"],
   },
   section: {
     marginTop: "4.5rem",

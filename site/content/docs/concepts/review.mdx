@@ -3,7 +3,9 @@ title: Review
 description: What a run will not decide is kept as a review item for a person or an agent, and a run can leave its whole changeset as a draft to approve.
 ---
 
-A run decides the easy cases and leaves the rest. What it leaves is recorded, so the question outlives the run and someone can answer it later. There are two things to review: **review items**, which are records a run would not place, and **drafts**, which are changesets a run was told not to commit.
+A run decides the cases its rules settle and leaves the rest. What it leaves is recorded, so the question outlives the run and someone can answer it later. There are two things to review: **review items**, which are records a run would not place, and **drafts**, which are changesets a run was told not to commit.
+
+This page shows a review item being raised, decided and dismissed, and a draft being approved. Review is where [matching](/docs/concepts/matching) hands over to people: the changes a reviewer makes are the changesets described in [Identities](/docs/concepts/identities).
 
 The examples continue the project from [Identities](/docs/concepts/identities), with `spool dev` running.
 
@@ -47,6 +49,10 @@ identities they matched
 
 The record matched Acorn Tools and ACORN TOOLS LIMITED by name and Acorn Hardware by domain. Joining any of them would be a guess, and joining all would merge identities, which a run never does. So the record has no identity, and a `possible_merge` item says why.
 
+The studio, the server's browser interface at [http://127.0.0.1:7765/](http://127.0.0.1:7765/), shows the same item on its Review screen. The record is in the first column and each identity it matched has a column of its own, with the values they share and the rule that matched them:
+
+![The studio's Review screen with item 1: the record crm:c-10 beside the three identities it matched, Acorn Tools, ACORN TOOLS LIMITED and Acorn Hardware, and a button to assign it to each](/images/studio-review-item.png)
+
 The other kind of item is a `conflict`: the record matches an identity and a no-match rule holds between it and a member of that identity. The evidence contradicts itself.
 
 ## Decide it
@@ -78,7 +84,7 @@ An item closes in one of three ways:
 
 Open items are looked at again by every later run of their entity type. If the reviewer had merged the identities, or fixed a rule so that the record matched only one of them, the next run would have placed the record and resolved the item.
 
-The studio shows each open item as a card: the record beside the identities it matched, field by field, with what the run found for each pair. The decisions are buttons on the card.
+In the studio the same decision is the button `Assign to Acorn Hardware` on the item.
 
 ## Dismiss one
 

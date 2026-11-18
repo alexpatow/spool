@@ -1,5 +1,6 @@
 import * as stylex from "@stylexjs/stylex";
 import type { MDXComponents } from "mdx/types";
+import Image, { type ImageProps } from "next/image";
 import Link from "next/link";
 import type { ComponentProps } from "react";
 
@@ -7,7 +8,7 @@ import { CodeBlock } from "@/components/code-block";
 import * as Table from "@/components/ui/table";
 import * as Typography from "@/components/ui/typography";
 import { layout } from "@/styles/layout.stylex";
-import { colors, spacing, typography } from "@/styles/shelf/tokens.stylex";
+import { colors, radius, spacing, typography } from "@/styles/shelf/tokens.stylex";
 
 const styles = stylex.create({
   heading: {
@@ -63,6 +64,16 @@ const styles = stylex.create({
   },
   strong: {
     fontWeight: typography.fontWeightSemibold,
+  },
+  image: {
+    marginBlock: spacing["6"],
+    borderColor: colors.border,
+    borderRadius: radius.lg,
+    borderStyle: "solid",
+    borderWidth: 1,
+    display: "block",
+    height: "auto",
+    maxWidth: "100%",
   },
   table: {
     marginBlock: spacing["6"],
@@ -127,6 +138,15 @@ export const mdxComponents: MDXComponents = {
   a: Anchor,
   code: ({ children }) => <Typography.InlineCode>{children}</Typography.InlineCode>,
   pre: CodeBlock,
+  // A page's image is a file under `public/`. The build reads its size, so the
+  // page does not move when it loads.
+  img: (props) => (
+    <Image
+      {...(props as ImageProps)}
+      sizes="(width < 48rem) 100vw, 46rem"
+      {...stylex.props(styles.image)}
+    />
+  ),
   hr: () => <hr {...stylex.props(styles.rule)} />,
   strong: ({ children }) => <strong {...stylex.props(styles.strong)}>{children}</strong>,
   table: ({ children }) => (

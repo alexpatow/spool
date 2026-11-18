@@ -3,7 +3,7 @@ title: Getting started
 description: Build Spool from source, scaffold a project, load rows, match them, and see identities keep their IDs when more rows arrive.
 ---
 
-This page takes you from nothing to a running server that has matched some company records and given each company an ID. It takes about ten minutes.
+This page takes you from nothing to a running server that has matched some company records and given each company an ID. It takes about ten minutes. To find out first whether Spool fits your problem, read [Limits](/docs/limits).
 
 Nothing is published yet: there is no release, package or container image. So the first step is a build from source.
 
@@ -43,7 +43,7 @@ spool 0.1.0
 
 ## Create a project
 
-A Spool project is a directory of files. `spool init` writes a small one. Run it somewhere outside the checkout:
+A Spool project is a directory of files. `spool init` writes a small one. Run it outside the checkout, for example in the directory above it (`cd ..`):
 
 ```sh
 spool init companies --entity company --source crm
@@ -62,7 +62,7 @@ hold and what makes two of them the same thing.
   spool dev     runs the server on localhost and applies your changes as you save
 ```
 
-It declares one source of rows, `crm`, and one entity type, `company`. These are the files that matter.
+It declares one source of rows, `crm`, and one entity type, `company`. An entity type is a kind of thing you want one ID for. These are the files that matter.
 
 The source says which column tells one row from another, and which columns a row may have:
 
@@ -183,7 +183,7 @@ curl -s -X POST http://127.0.0.1:7765/v1/ingest -H 'content-type: application/js
 {"run":{"run":1,"kind":"ingest","status":"succeeded","entity_type":"company","strategy":null,"extractor":null,"started_at":"2026-11-18T14:51:46.703613Z","finished_at":"2026-11-18T14:51:46.714356Z","error":null,"ingest":{"run":1,"received":3,"inserted":3,"duplicates":0,"superseded":0},"extraction":null,"resolution":null}}
 ```
 
-The answer is one line of JSON. The part to read is `"inserted":3`: each row is now a record. Records have no identity yet, because loading does not match.
+The answer is one line of JSON. The part to read is `"inserted":3`: each row is now a record. An identity is one real-world thing, here a company, with its ID and the records that belong to it. These records have no identity yet, because loading does not match.
 
 ## Match
 
@@ -301,7 +301,11 @@ runs that compared them
 
 ## Look at it in a browser
 
-The server has a browser interface, the studio, at the address `spool dev` printed: [http://127.0.0.1:7765/](http://127.0.0.1:7765/). It shows the same records, identities, runs and explanations, and it can make changes: merge two identities, split one, undo a change.
+The server has a browser interface, the studio, at the address `spool dev` printed: [http://127.0.0.1:7765/](http://127.0.0.1:7765/). Its Identities screen lists the three companies:
+
+![The studio's Identities screen: Acorn Tools with 3 records, Larkfield Logistics with 1 and Kestrel Analytics with 1](/images/studio-identities.png)
+
+The studio shows the same records, identities, runs and explanations as `spool show`, and it can make changes: merge two identities, split one, undo a change.
 
 ## Stop and start again
 

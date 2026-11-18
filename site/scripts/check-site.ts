@@ -12,7 +12,8 @@
  *
  * As built, by starting the built site and asking it:
  *   - every page answers, as HTML, as `.md`, and as Markdown when a client
- *     asks for `text/markdown`
+ *     asks for `text/markdown`, and that answer says `Vary: Accept`
+ *   - every image a page shows is there
  *   - every link to a page of this site resolves, and so does its `#fragment`
  *   - `/llms.txt` lists every page, and `/llms-full.txt` holds every page
  *   - `/sitemap.xml` lists every page
@@ -174,7 +175,10 @@ async function checkBuilt(pages: Page[]) {
       await Bun.sleep(200);
     }
 
-    const cache = new Map<string, Promise<{ status: number; type: string; body: string }>>();
+    const cache = new Map<
+      string,
+      Promise<{ status: number; type: string; vary: string; body: string }>
+    >();
     const get = (path: string, headers?: Record<string, string>) => {
       const key = `${path} ${JSON.stringify(headers ?? {})}`;
       let answer = cache.get(key);
@@ -183,6 +187,7 @@ async function checkBuilt(pages: Page[]) {
           async (response) => ({
             status: response.status,
             type: response.headers.get("content-type") ?? "",
+            vary: response.headers.get("vary") ?? "",
             body: await response.text(),
           }),
         );
@@ -249,14 +254,24 @@ async function checkBuilt(pages: Page[]) {
       if (negotiated.body !== markdown.body) {
         fail(page.url, "asked for as text/markdown, does not answer with its Markdown");
       }
+      // Without this a cache in front of the site could hand the Markdown to a browser.
+      if (!/(^|,\s*)accept(,|$)/i.test(negotiated.vary)) {
+        fail(page.url, "asked for as text/markdown, answers without `Vary: Accept`");
+      }
 
       if (!inIndex.has(`${page.url}.md`)) fail("/llms.txt", `does not list ${page.url}`);
       if (!inSitemap.has(page.url)) fail("/sitemap.xml", `does not list ${page.url}`);
     }
 
-    // Links, from every page and from the home page.
+    // Links and images, from every page and from the home page.
     for (const from of ["/", ...pages.map((page) => page.url)]) {
       const html = await get(from);
+      for (const match of html.body.matchAll(/<img\s[^>]*?\ssrc="([^"]+)"/g)) {
+        const src = (match[1] ?? "").replaceAll("&amp;", "&");
+        if (src.startsWith("/") && (await get(src)).status !== 200) {
+          fail(from, `shows the image ${src}, which does not answer`);
+        }
+      }
       for (const href of new Set(linksOf(html.body))) {
         if (!href.startsWith("/") && !href.startsWith("#")) continue;
         const [path = "", fragment] = href.split("#");

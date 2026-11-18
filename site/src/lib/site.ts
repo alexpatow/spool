@@ -5,6 +5,12 @@ export const site = {
     "Spool decides which records are the same real-world thing, and gives each thing an ID that stays the same as more records arrive.",
   description:
     "Entity resolution with persistent identity. Sources and rules are files, records are matched in runs, and identities keep their IDs as data changes.",
+  problem:
+    "Your CRM, your billing system and a public registry each have their own row for the same company. Spool matches them with rules you write, gives the company one ID, and keeps that ID when more rows arrive or the rules improve. The matching is called entity resolution. The lasting ID is what Spool adds to it.",
+  // What `spool --version` prints. The samples check compares the two on the
+  // Getting started page.
+  version: "0.1.0",
+  licence: "MIT",
   repository: "https://github.com/alexpatow/spool",
 } as const;
 

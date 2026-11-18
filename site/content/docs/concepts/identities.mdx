@@ -5,6 +5,8 @@ description: An identity is a minted ID and the records that belong to it. IDs a
 
 An **identity** is one real-world thing as Spool knows it: an ID, an entity type, and the records that belong to it. The ID is what other systems store.
 
+This page says what holds for every identity, how identities change, and how to merge, undo, split and constrain them by hand. Runs create identities from the judgements [matching](/docs/concepts/matching) produces. Everything on this page is about what happens after that.
+
 The examples continue the project from [Matching](/docs/concepts/matching), with `spool dev` running.
 
 ## What an identity is
@@ -73,7 +75,7 @@ The operations are:
 
 Every operation carries its own precondition, which is checked when the changeset is committed. A changeset that fails a check is refused whole, and the answer names the operation.
 
-People and agents write changesets too, with `POST /v1/changesets`, from the studio, or through the server's MCP tools. They pass the same checks as a run's.
+People and agents write changesets too, with `POST /v1/changesets`, from the studio, which is the server's browser interface, or through the tools it offers to AI assistants over the Model Context Protocol (MCP). They pass the same checks as a run's.
 
 ## Merge
 

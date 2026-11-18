@@ -7,6 +7,9 @@
  *                                         or SPOOL_BIN)
  *   bun run check:samples --port <n>      the port `spool dev` listens on, when 7765 is taken
  *   bun run check:samples --keep          leave the session's directory behind, to look at
+ *   bun run check:samples --stop-at <page>:<line>
+ *                                         stop before the block that opens on that line, which
+ *                                         with --keep leaves the project as a reader has it there
  *
  * The pages are read in sidebar order and run as one session in one empty
  * directory, as a reader who follows them would. In a page:
@@ -269,7 +272,10 @@ async function main() {
   }
 
   try {
+    const stopAt = option("--stop-at");
+    let stopped = false;
     for (const file of pagesInOrder()) {
+      if (stopped) break;
       const name = file.slice(docsDir.length + 1);
       const lines = readFileSync(file, "utf8").split("\n");
       const blocks = blocksOf(lines);
@@ -279,6 +285,10 @@ async function main() {
       for (const block of blocks) {
         const where = `${name}:${block.line}`;
         const directive = block.directive ?? "";
+        if (where === stopAt) {
+          stopped = true;
+          break;
+        }
 
         if (directive.startsWith("skip")) {
           skipped.push(`${where}  ${directive.replace(/^skip:?\s*/, "") || "no reason given"}`);

@@ -1,13 +1,29 @@
 ---
 title: Introduction
-description: What Spool does, who it is for, what it is not meant for, and where it stands today.
+description: What Spool is, the commands to start it, how its parts fit together, who it is for and what it is not meant for.
 ---
 
-Spool decides which records are the same real-world thing, and gives each thing an ID that stays the same as more records arrive.
+Spool decides which records are the same real-world thing, and gives each thing an ID that stays the same as more records arrive. The first half is called entity resolution. The lasting ID is what Spool adds to it.
 
-You have rows from several places that describe the same companies, people or products, written differently in each. You want one ID per company that other systems can store. You get more rows every day, and the ID you handed out yesterday must still mean the same company tomorrow, including after you improve the matching.
+The problem it solves: your CRM, your billing system and a public registry each have their own row for the same company, written differently in each. You want one ID per company that other systems can store. More rows arrive every day, and the ID you handed out yesterday must still mean the same company tomorrow, including after you improve the matching.
 
-Spool is a server that does that. It is written in Rust, stores its data in one DuckDB file, and is driven by a directory of YAML and SQL files that you keep in Git.
+Spool is version 0.1.0 and has no release yet, so you build it from source. It is under the MIT licence. [Limits](/docs/limits) says what it is not meant for and what it does not do yet.
+
+## Start
+
+{/* sample: skip these are the first commands of Getting started, which the check runs */}
+
+```sh
+git clone https://github.com/alexpatow/spool.git
+cd spool
+cargo build --release --locked -p spool-cli
+export PATH="$PWD/target/release:$PATH"
+spool init ../companies --entity company --source crm
+cd ../companies
+spool dev
+```
+
+That needs Rust 1.89 or later. It builds one binary, writes a small project beside the checkout and runs the server on your machine. [Getting started](/docs/getting-started) explains each step and goes on to load rows and match them.
 
 ## What it looks like
 
@@ -15,11 +31,11 @@ Three rows from a CRM, loaded and matched. The first two are one company, so the
 
 | Record | Name | Identity |
 | --- | --- | --- |
-| `crm:c-1` | Acorn Tools | `01a1ef26-…-c8ac4f2f4ba2` |
-| `crm:c-2` | ACORN TOOLS | `01a1ef26-…-c8ac4f2f4ba2` |
-| `crm:c-3` | Larkfield Logistics | `01a1ef26-…-c8adb9f7e0e2` |
+| `crm:c-1` | Acorn Tools | `01a1ef24-…-469e735d8cdd` |
+| `crm:c-2` | ACORN TOOLS | `01a1ef24-…-469e735d8cdd` |
+| `crm:c-3` | Larkfield Logistics | `01a1ef24-…-469f8e792cfb` |
 
-The rule that matched them is a line of SQL in a file of the project, over two records `l` and `r`:
+The rule that matched them is one line of SQL in a file of the project, over two records `l` and `r`:
 
 ```sql
 l.name_key = r.name_key
@@ -29,40 +45,43 @@ Later another spelling arrives. It joins the identity that exists, and that iden
 
 | Record | Name | Identity |
 | --- | --- | --- |
-| `crm:c-4` | Acorn tools | `01a1ef26-…-c8ac4f2f4ba2` |
+| `crm:c-4` | Acorn tools | `01a1ef24-…-469e735d8cdd` |
 
-[Getting started](/docs/getting-started) does exactly this, with commands you can run.
+These are the rows and IDs of [Getting started](/docs/getting-started), which has the commands and their full output.
 
-## How it works
+## How the parts fit
+
+Spool is one server. It is written in Rust and keeps its data in one file of [DuckDB](https://duckdb.org), a database that runs inside the server's process. It is driven by a project, which is a directory of YAML and SQL files that you keep in Git.
 
 1. **A project is a directory.** Sources, features and rules are files, and a file's path is its name. [Project structure](/docs/project-structure)
 2. **Rows become records.** A record is a row as it arrived. It is never changed, and loading it twice does nothing. [Records and sources](/docs/concepts/records-and-sources)
-3. **Records are compared by features.** Each source's columns are mapped onto the features of an entity type that you declare. [Entity types and features](/docs/concepts/entity-types-and-features)
+3. **Records are compared by features.** Each source's columns are mapped onto the features of an entity type, such as `company`, that you declare. [Entity types and features](/docs/concepts/entity-types-and-features)
 4. **Rules judge pairs.** A run compares what is new with what is known and writes down a verdict for each pair. [Matching](/docs/concepts/matching)
-5. **Judgements become identities.** New records join an identity or start one. Identities that exist are never merged or split by a run. [Identities](/docs/concepts/identities)
-6. **Every change is in a log.** A merge, a split and an undo are entries in it, with an author and a reason.
-7. **What cannot be decided waits.** A record that fits two identities is left for a person or an agent. [Review](/docs/concepts/review)
+5. **Judgements become identities.** New records join an identity or start one. Identities that exist are never merged or split by a run. Every change is an entry in a log, with an author and a reason, and can be undone. [Identities](/docs/concepts/identities)
+6. **What cannot be decided waits.** A record that fits two identities is left for a person or an agent. [Review](/docs/concepts/review)
 
-There is an HTTP API for all of it, a browser interface for looking at the data and making corrections, and a command line that shows and explains.
+There is an HTTP API for all of it, a browser interface called the studio for looking at the data and making corrections, and a command line that shows and explains.
 
 ## Who it is for
 
-- You maintain a list of entities that several sources feed, and other systems refer to those entities by ID.
+- You maintain a list of companies, people or products that several sources feed, and other systems refer to them by ID.
 - You want to read why two records were matched, and take a wrong match back without rebuilding everything.
 - You want matching rules reviewed like code, in files, with a history.
 - You have people or agents making corrections, and need every correction attributed and reversible.
 
 ## What it is not meant for
 
-- **Deduplicating one file once.** If you will never see more data and nobody stores the IDs, a script or a library such as [Splink](https://moj-analytical-services.github.io/splink/) is less to run. Spool's work is keeping IDs stable over time.
-- **Deciding one record at a time, fast.** Rows are loaded in batches and matched by runs. It is not a lookup service that answers in a request whether a new customer is a duplicate.
-- **Matching without rules of your own.** The built-in matcher runs the SQL rules you write. There is no trained model in the box. A model can be plugged in as a strategy written in Python or TypeScript.
-- **Master data management.** Spool says which records are one thing. It does not build a merged "golden record", choose the best address, or push corrections back to the sources.
+- **Deduplicating one file once.** If you will never see more data and nobody stores the IDs, a library such as [Splink](https://github.com/moj-analytical-services/splink) is less to run.
+- **Deciding one record at a time, in the request.** Rows are loaded in batches and matched by runs. It is not a lookup service that answers whether a new customer is a duplicate.
+- **Matching without rules of your own.** The built-in matcher runs the SQL rules you write. There is no trained model inside.
+- **Golden records.** Spool says which records are one thing. It does not build one merged record with the best name and address, and it does not write corrections back to the sources.
 - **Many tenants or many writers.** One server owns one store. It scales up on a bigger machine, not out across machines.
 - **Embedding in your process.** There are no Python or Node bindings. Your code calls a server.
 
+[Limits](/docs/limits) has the full list, with what fits better in each case and what Spool does not do yet.
+
 ## Where it stands
 
-Spool is early, and nothing is published: no release, no package, no container image. Today you build it from source, as [Getting started](/docs/getting-started) shows. No version has been released, so formats and the API can still change.
+Spool is early. Nothing is published: no release, no package, no container image. Formats and the API can still change. The pages here were written by running every command in them against the current source, and they say where something is awkward.
 
-[Limits](/docs/limits) lists what it does not do yet. The source is at [github.com/alexpatow/spool](https://github.com/alexpatow/spool), under the MIT licence.
+The source is at [github.com/alexpatow/spool](https://github.com/alexpatow/spool).

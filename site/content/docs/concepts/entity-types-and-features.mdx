@@ -7,7 +7,9 @@ An **entity type** is a kind of thing you want one ID for: a company, a person, 
 
 A **feature** is a value records of that type are compared by. Sources name their columns differently and write values differently, so rules never read raw rows. They read features, which every source is mapped onto.
 
-The examples continue the project from [Records and sources](/docs/concepts/records-and-sources), with `spool dev` running.
+This page shows how to declare features and map sources onto them, and what happens to identities when a declaration changes. It sits between [records](/docs/concepts/records-and-sources), which are rows as they arrived, and [matching](/docs/concepts/matching), whose rules read only features.
+
+The examples continue the project from [Records and sources](/docs/concepts/records-and-sources), with `spool dev` running. For a list of every file a project can hold, see [Project structure](/docs/project-structure).
 
 ## An entity type is a directory
 
