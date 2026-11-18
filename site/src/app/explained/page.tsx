@@ -2,6 +2,7 @@ import * as stylex from "@stylexjs/stylex";
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { Hero } from "@/components/explainer/hero";
 import { Explainer } from "@/components/explainer/scenes";
 import { SiteHeader } from "@/components/site-header";
 import { Button } from "@/components/ui/button";
@@ -46,6 +47,7 @@ export default function Explained() {
             which records are the same company, and gives each one an ID that stays. Scroll, and
             watch it happen to the sample data in Getting started.
           </Typography.P>
+          <Hero />
           <div {...stylex.props(styles.cue)} aria-hidden="true">
             <span {...stylex.props(styles.cueLine)} />
           </div>
@@ -143,7 +145,7 @@ const styles = stylex.create({
     textWrap: "pretty",
   },
   cue: {
-    marginTop: "3rem",
+    marginTop: "1.5rem",
     backgroundColor: colors.border,
     height: "3.5rem",
     overflow: "hidden",
