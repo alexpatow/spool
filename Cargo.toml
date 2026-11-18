@@ -29,6 +29,10 @@ tower-sessions = { version = "0.15", default-features = false, features = ["axum
 # answers. Its requests go out through ureq, so none of its HTTP clients.
 openidconnect = { version = "4.1", default-features = false }
 
+# The MCP endpoint: the official Rust SDK of the Model Context Protocol, for
+# the protocol and its Streamable HTTP transport. Only spool-cli depends on it.
+rmcp = { version = "3.11", default-features = false, features = ["server", "transport-streamable-http-server"] }
+
 # duckdb re-exports the arrow version it was built against. Upgrade the two together.
 # spool-cli names arrow itself for the IPC and JSON forms the server speaks.
 arrow = { version = "60.1", default-features = false, features = ["ipc", "json"] }

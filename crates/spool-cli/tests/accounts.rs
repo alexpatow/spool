@@ -604,3 +604,70 @@ fn a_development_server_asks_for_no_token_and_takes_no_made_up_one() {
     let wrote = author(&server, secret);
     assert_eq!(wrote, "agent:review-bot");
 }
+
+#[test]
+fn a_development_server_answers_only_to_the_names_of_its_machine() {
+    let dir = tempfile::tempdir().unwrap();
+    write_things(dir.path());
+    let server = Server::start_with(&["dev", path(dir.path()), "--listen", "127.0.0.1:0"]).unwrap();
+    let port = server.address.rsplit_once(':').unwrap().1;
+    let reads = ["/v1/info", "/auth/session", "/healthz", "/", "/studio.js"];
+    let minted = json!({ "identities": 1 });
+    let listed = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" });
+    let writes = [("/v1/ids", &minted), ("/mcp", &listed)];
+    let write = |at: &str, body: &Value, host: &str| {
+        browse(&server, "POST", at, "")
+            .header("Accept", "application/json, text/event-stream")
+            .header("Host", host)
+            .json(body)
+            .send()
+    };
+
+    // A page of another site reaches this machine by giving it a name of
+    // its own, and nothing else about what it sends says where it is from.
+    // Nobody signs in here, so that name is all there is to refuse it by.
+    for name in [
+        "elsewhere.example",
+        "localhost.elsewhere.example",
+        "127.0.0.1.elsewhere.example",
+        "192.168.1.5",
+    ] {
+        let host = format!("{name}:{port}");
+        for at in reads {
+            let refused = browse(&server, "GET", at, "").header("Host", &host).send();
+            let said = refused.error(403, "forbidden");
+            assert!(said.contains("localhost"), "{at}: {said}");
+        }
+        for (at, body) in writes {
+            write(at, body, &host).error(403, "forbidden");
+        }
+    }
+    // Nor is a request that names nothing.
+    browse(&server, "GET", "/v1/info", "")
+        .header("Host", "")
+        .send()
+        .error(403, "forbidden");
+
+    for name in ["localhost", "LocalHost", "127.0.0.1", "[::1]"] {
+        let host = format!("{name}:{port}");
+        for at in reads {
+            let answered = browse(&server, "GET", at, "").header("Host", &host).send();
+            assert_eq!(answered.status, 200, "{at} as {host}");
+        }
+        for (at, body) in writes {
+            assert_eq!(write(at, body, &host).status, 200, "{at} as {host}");
+        }
+    }
+}
+
+#[test]
+fn a_server_people_sign_in_to_answers_by_whatever_name_it_is_reached() {
+    let dir = tempfile::tempdir().unwrap();
+    let (server, _) = served(dir.path());
+    let reached = server
+        .request("GET", "/v1/info")
+        .header("Host", "spool.example.com");
+    reached.send().ok();
+    let reached = browse(&server, "GET", "/auth/session", "").header("Host", "spool.example.com");
+    reached.send().ok();
+}

@@ -22,6 +22,7 @@ getrandom.workspace = true
 libduckdb-sys.workspace = true
 openidconnect.workspace = true
 password-auth.workspace = true
+rmcp.workspace = true
 rusqlite.workspace = true
 schemars.workspace = true
 serde.workspace = true

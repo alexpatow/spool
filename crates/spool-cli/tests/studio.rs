@@ -297,9 +297,10 @@ fn serve_can_be_told_not_to_serve_the_studio() {
     // It says nothing about a studio either: the first account is made
     // through the API.
     let printed = server.stopped();
-    assert!(printed[0].starts_with("setup     "), "{printed:?}");
+    assert!(printed[0].starts_with("mcp       http://"), "{printed:?}");
+    assert!(printed[1].starts_with("setup     "), "{printed:?}");
     assert!(
-        printed.iter().all(|line| !line.contains("http://")),
+        printed[1..].iter().all(|line| !line.contains("http://")),
         "{printed:?}"
     );
 }

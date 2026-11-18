@@ -17,16 +17,20 @@ env:
   # Lints are errors here, and a new Rust release brings new lints. The
   # toolchain is named so that a release does not fail a build nobody changed.
   RUST_TOOLCHAIN: "1.98.1"
+  NEXTEST_VERSION: "0.9.152"
   # Each test binary carries the debug information of everything it links,
-  # and with all of it the thirty of them fill the runner's disk. Line
-  # numbers are kept, for a backtrace.
+  # and with all of it they fill the runner's disk. Line numbers are kept,
+  # for a backtrace, and only those of this workspace: see `Configure Cargo`.
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
+# The jobs run side by side, and the slowest one is how long a push waits.
+# What `cargo test --workspace -- --include-ignored` runs is divided among
+# the `test` jobs: every test is in exactly one of them.
 jobs:
-  test:
-    name: Format, lint and test
+  lint:
+    name: Format and lint
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 
@@ -35,35 +39,136 @@ jobs:
           rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt,clippy
           rustup default "$RUST_TOOLCHAIN"
 
-      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all -- --check
 
-      # The TypeScript client's tests run from `cargo test`, against the
-      # binary it builds.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
+
+      - name: Lint
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+  test:
+    name: Test (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      # A failure in one part says nothing about the others.
+      fail-fast: false
+      matrix:
+        # `packages` is what a job builds, and `tests` is which of its tests
+        # it runs. The first two groups are named by what they leave out, so
+        # that a new crate or a new test file is in one of them without
+        # being added here. `spool` is built with the feature the server
+        # turns on, as it is when the whole workspace is built.
+        #
+        # Cargo builds a dependency with the features that what is being
+        # built asks of it, so each group has dependencies of its own to
+        # keep. `save` marks the job that keeps them. The stress tests also
+        # run Cargo themselves, for an example of `spool`.
+        include:
+          - name: engine 1/3
+            cache: engine
+            save: true
+            documentation: true
+            packages: --workspace --exclude spool-cli --features spool/schema
+            tests: --partition slice:1/3
+          - name: engine 2/3
+            cache: engine
+            packages: --workspace --exclude spool-cli --features spool/schema
+            tests: --partition slice:2/3
+          - name: engine 3/3
+            cache: engine
+            packages: --workspace --exclude spool-cli --features spool/schema
+            tests: --partition slice:3/3
+          - name: server 1/2
+            cache: server
+            save: true
+            documentation: true
+            packages: -p spool-cli
+            tests: -E 'not (binary_id(spool-cli::stress) | binary_id(spool-cli::studio))' --partition slice:1/2
+          - name: server 2/2
+            cache: server
+            packages: -p spool-cli
+            tests: -E 'not (binary_id(spool-cli::stress) | binary_id(spool-cli::studio))' --partition slice:2/2
+          - name: stress
+            cache: stress
+            save: true
+            packages: -p spool-cli --test stress
+          - name: studio
+            cache: server
+            packages: -p spool-cli --test studio
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+
+      # Dependencies are built without debug information, which halves
+      # what the cache below has to fetch and unpack. This is a file because
+      # Cargo reads no such setting from the environment, and not an
+      # argument because the stress tests run Cargo themselves.
+      - name: Configure Cargo
+        run: printf '[profile.dev.package."*"]\ndebug = false\n' >> "${CARGO_HOME:-$HOME/.cargo}/config.toml"
+
+      # The key does not see the step above: change the number in it when
+      # that step changes.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test-1-${{ matrix.cache }}
+          save-if: ${{ matrix.save == true }}
+          cache-bin: false
+
+      # Runs each test in a process of its own, as many at a time as the
+      # runner has cores, and divides the tests among jobs.
+      - name: Install cargo-nextest
+        run: curl -LsSf "https://get.nexte.st/$NEXTEST_VERSION/linux" | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+
+      # The TypeScript packages' tests run from the Rust tests, against the
+      # binary they build.
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.4.4"
 
       # Python strategies are run with uv, which fetches what each one
-      # depends on. Their tests run from `cargo test` too.
+      # depends on. Their tests run from the Rust tests too.
       - uses: astral-sh/setup-uv@v10.3.3
         with:
           version: "0.13.8"
 
       # Public datasets are downloaded on first use and checked against the
-      # checksums in datasets.toml.
-      - uses: actions/cache@v6
+      # checksums in datasets.toml. Each job keeps the ones its own tests
+      # read: the newest copy it saved is the one restored.
+      - name: Restore datasets
+        id: datasets
+        uses: actions/cache/restore@v6
         with:
           path: benchmarks/.cache
-          key: datasets-${{ hashFiles('benchmarks/datasets.toml') }}
+          key: datasets-${{ matrix.name }}-${{ hashFiles('benchmarks/datasets.toml') }}-
+          restore-keys: datasets-${{ matrix.name }}-${{ hashFiles('benchmarks/datasets.toml') }}-
 
-      - name: Format
-        run: cargo fmt --all -- --check
-
-      - name: Lint
-        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Build
+        run: cargo nextest run --locked --no-run ${{ matrix.packages }}
 
       - name: Test
-        run: cargo test --workspace --locked -- --include-ignored
+        run: cargo nextest run --locked --run-ignored all --no-fail-fast ${{ matrix.packages }} ${{ matrix.tests }}
+
+      # nextest does not run the examples in documentation.
+      - name: Test the documentation
+        if: matrix.documentation
+        run: cargo test --doc --locked ${{ matrix.packages }}
+
+      # Saved again when a test fetched a dataset the job did not have, which
+      # happens when a test is added or moves from one job to another.
+      - name: Save datasets
+        if: hashFiles('benchmarks/.cache/**') != '' && !endsWith(steps.datasets.outputs.cache-matched-key, hashFiles('benchmarks/.cache/**'))
+        uses: actions/cache/save@v6
+        with:
+          path: benchmarks/.cache
+          key: datasets-${{ matrix.name }}-${{ hashFiles('benchmarks/datasets.toml') }}-${{ hashFiles('benchmarks/.cache/**') }}
 
       # A build that outgrows the disk fails in whichever test writes next,
       # far from the cause. This says how near that is.
@@ -74,7 +179,7 @@ jobs:
   msrv:
     name: Build with the oldest supported Rust
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 
@@ -86,6 +191,8 @@ jobs:
           rustup default "$version"
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
 
       - name: Check
         run: cargo check --workspace --all-targets --locked

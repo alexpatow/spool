@@ -9,6 +9,9 @@
 //! through `/v1` as the person signed in. Small values are JSON; candidates, judgements and rows
 //! to ingest can also cross as Arrow IPC streams.
 //!
+//! `/mcp` is the same API as tools for an assistant, over the Model Context
+//! Protocol. It needs the same caller as `/v1` and runs the same handlers.
+//!
 //! A change is recorded under whoever made it. The server says who that is;
 //! a request cannot.
 //!
@@ -78,11 +81,17 @@ use crate::api::{
 use crate::google::{Failed, Google, Provider, Started};
 use crate::studio;
 
+mod local;
+mod mcp;
+
 /// How long a call that starts work waits when it does not say.
 pub const DEFAULT_WAIT_MS: u64 = 30_000;
 
 /// The largest request body the server reads by default.
 pub const DEFAULT_MAX_BODY_BYTES: usize = 256 * 1024 * 1024;
+
+/// The path of the MCP endpoint.
+pub const MCP_PATH: &str = "/mcp";
 
 /// The most entries a list returns in one page.
 const MAX_PAGE: u64 = 1_000;
@@ -322,20 +331,29 @@ pub fn router(engine: Arc<Engine>, options: &ServerOptions) -> Router {
         .route("/tokens/{token}/revoke", post(revoke_token))
         .fallback(not_found)
         .layer(middleware::from_fn_with_state(app.clone(), authorize));
+    let mcp = Router::new()
+        .route_service(MCP_PATH, mcp::service(app.clone(), options))
+        .layer(middleware::map_response(mcp::describe_refusal))
+        .layer(middleware::from_fn_with_state(app.clone(), authorize));
     let mut router = Router::new()
         .route("/healthz", get(health))
         .nest("/auth", auth)
-        .nest(&format!("/{}", api::VERSION), v1);
+        .nest(&format!("/{}", api::VERSION), v1)
+        .merge(mcp);
     if options.studio {
         router = router.merge(studio::routes());
     }
-    router
+    let router = router
         .fallback(not_found)
         .layer(sessions)
         .layer(middleware::from_fn(own_pages_only))
         .layer(DefaultBodyLimit::max(options.max_body_bytes))
         .layer(middleware::map_response(describe_failure))
-        .with_state(app)
+        .with_state(app);
+    match options.dev {
+        true => router.layer(middleware::from_fn(local::this_machine_only)),
+        false => router,
+    }
 }
 
 /// Serves the API on `listener` until `shutdown` completes. Requests in
