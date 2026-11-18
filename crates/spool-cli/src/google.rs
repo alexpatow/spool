@@ -12,13 +12,18 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use openidconnect::core::{
-    CoreAuthPrompt, CoreAuthenticationFlow, CoreClient, CoreProviderMetadata,
+    CoreAuthDisplay, CoreAuthPrompt, CoreAuthenticationFlow, CoreErrorResponseType,
+    CoreGenderClaim, CoreJsonWebKey, CoreJweContentEncryptionAlgorithm, CoreJwsSigningAlgorithm,
+    CoreProviderMetadata, CoreRevocableToken, CoreRevocationErrorResponse,
+    CoreTokenIntrospectionResponse, CoreTokenType,
 };
 use openidconnect::{
-    AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndpointMaybeSet, EndpointNotSet,
-    EndpointSet, HttpRequest, HttpResponse, IssuerUrl, Nonce, PkceCodeChallenge, PkceCodeVerifier,
-    RedirectUrl, RequestTokenError, Scope, TokenResponse,
+    AdditionalClaims, AuthorizationCode, ClientId, ClientSecret, CsrfToken, EmptyExtraTokenFields,
+    EndpointMaybeSet, EndpointNotSet, EndpointSet, HttpRequest, HttpResponse, IdTokenFields,
+    IssuerUrl, Nonce, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, RequestTokenError, Scope,
+    StandardErrorResponse, StandardTokenResponse, TokenResponse,
 };
+use serde::{Deserialize, Serialize};
 use ureq::http::{Method, Response, header::CONTENT_TYPE};
 
 /// Where Google says what its sign-in is.
@@ -108,9 +113,28 @@ pub struct Identity {
     /// What Google calls the account. It stays the same whatever becomes of
     /// the address.
     pub subject: String,
-    /// The account's address, which Google has verified.
-    pub email: String,
+    /// The account's address, if it is one Google answers for: an address
+    /// of Gmail, or of an organisation's Google Workspace. Then whoever has
+    /// the Google account has the address.
+    ///
+    /// A Google account can be made with an address of any other provider.
+    /// Google checked such an address once, and it may have changed hands
+    /// since, so it says nothing of whose it is now and is not given here.
+    pub email: Option<String>,
 }
+
+/// The ending of Gmail's addresses, which are Google's own.
+const GMAIL: &str = "@gmail.com";
+
+/// What Google adds to a token beyond what OpenID Connect names.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct Hosted {
+    /// The domain of the organisation whose Google Workspace the account is
+    /// of. An account that belongs to no organisation has none.
+    hd: Option<String>,
+}
+
+impl AdditionalClaims for Hosted {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Failed {
@@ -131,7 +155,29 @@ impl std::fmt::Display for Failed {
     }
 }
 
-type Client = CoreClient<
+/// `openidconnect`'s client as it is for the usual provider, but for the
+/// tokens, which are read with what Google adds to them.
+type Client = openidconnect::Client<
+    Hosted,
+    CoreAuthDisplay,
+    CoreGenderClaim,
+    CoreJweContentEncryptionAlgorithm,
+    CoreJsonWebKey,
+    CoreAuthPrompt,
+    StandardErrorResponse<CoreErrorResponseType>,
+    StandardTokenResponse<
+        IdTokenFields<
+            Hosted,
+            EmptyExtraTokenFields,
+            CoreGenderClaim,
+            CoreJweContentEncryptionAlgorithm,
+            CoreJwsSigningAlgorithm,
+        >,
+        CoreTokenType,
+    >,
+    CoreTokenIntrospectionResponse,
+    CoreRevocableToken,
+    CoreRevocationErrorResponse,
     EndpointSet,
     EndpointNotSet,
     EndpointNotSet,
@@ -246,7 +292,7 @@ impl Provider {
                 metadata
             }
         };
-        Ok(CoreClient::from_provider_metadata(
+        Ok(Client::from_provider_metadata(
             metadata,
             self.google.client_id.clone(),
             Some(self.google.client_secret.clone()),
@@ -324,9 +370,11 @@ impl Provider {
         if claims.email_verified() != Some(true) {
             return Err(Failed::Unverified);
         }
+        let hosted = claims.additional_claims().hd.is_some();
+        let answered_for = hosted || email.to_lowercase().ends_with(GMAIL);
         Ok(Identity {
             subject: claims.subject().to_string(),
-            email: email.to_string(),
+            email: answered_for.then(|| email.to_string()),
         })
     }
 }

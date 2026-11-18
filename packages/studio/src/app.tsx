@@ -113,6 +113,8 @@ const TURNED_AWAY: Record<string, string> = {
   unknown:
     "No account here has that Google account's email. An admin adds people, by the email they sign in to Google with.",
   unverified: "Google has not verified that account's email address, so it cannot be used to sign in here.",
+  unvouched:
+    "That Google account's email address is not Google's to answer for, so it cannot be used to sign in here. Use a Gmail account or one of your organisation's Google Workspace, or sign in with a password.",
   cancelled: "Sign-in with Google was cancelled.",
   expired: "That sign-in took too long, or began in another browser. Start again.",
   unreachable: "Google could not be reached. Try again in a moment.",

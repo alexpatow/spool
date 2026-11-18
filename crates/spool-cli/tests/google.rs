@@ -94,12 +94,16 @@ struct Who {
     subject: &'static str,
     email: &'static str,
     verified: bool,
+    /// The organisation whose Google Workspace the account is of, as its
+    /// domain. An account anyone made for themselves has none.
+    hosted: Option<&'static str>,
 }
 
 const GRACE: Who = Who {
     subject: "google-1",
     email: "grace@example.com",
     verified: true,
+    hosted: Some("example.com"),
 };
 
 /// A way the token the stand-in hands out is not one to trust.
@@ -299,6 +303,7 @@ async fn exchange(
         "sub": grant.who.subject,
         "email": grant.who.email,
         "email_verified": grant.who.verified,
+        "hd": grant.who.hosted,
         "nonce": grant.nonce,
         "iat": now - if wrong == Some(Wrong::Expired) { 7_200 } else { 0 },
         "exp": if wrong == Some(Wrong::Expired) { now - 3_600 } else { now + 300 },
@@ -570,7 +575,7 @@ fn google_says_who_someone_is_and_not_whether_they_have_an_account() {
     let stranger = Who {
         subject: "google-2",
         email: "mallory@example.com",
-        verified: true,
+        ..GRACE
     };
     turned_away(&stranger, "unknown");
     // An address Google has not checked could be anyone's.
@@ -583,7 +588,7 @@ fn google_says_who_someone_is_and_not_whether_they_have_an_account() {
     let named = Who {
         subject: "google-3",
         email: "ada",
-        verified: true,
+        ..GRACE
     };
     turned_away(&named, "unknown");
 
@@ -660,8 +665,77 @@ fn successor_of(email: &'static str) -> Who {
     Who {
         subject: "google-5",
         email,
-        verified: true,
+        ..GRACE
     }
+}
+
+#[test]
+fn an_account_becomes_a_google_accounts_by_an_address_google_answers_for() {
+    let served = served();
+    let Served {
+        server,
+        stand_in,
+        ada,
+        ..
+    } = &served;
+    let add = |username: &str, email: &str| {
+        let person = json!({ "username": username, "name": username, "email": email });
+        post(server, "/v1/people", ada, person).ok();
+    };
+    let entered = |who: &Who| {
+        let (to, session) = sign_in(server, stand_in, who);
+        session
+            .map(|session| self::who(server, &session)["person"]["username"].clone())
+            .ok_or(to)
+    };
+    let turned_away = Err("/?google=unvouched".to_owned());
+    add("linus", "linus@elsewhere.example");
+    add("ken", "ken@gmail.com");
+    add("eve", "eve@notgmail.com");
+
+    // Anyone makes a Google account with an address of any provider. Google
+    // checked the address then, and whose it is now is not Google's to say:
+    // someone who had it before may still have that Google account.
+    let before = Who {
+        subject: "google-6",
+        email: "linus@elsewhere.example",
+        verified: true,
+        hosted: None,
+    };
+    assert_eq!(entered(&before), turned_away);
+    // The account is not theirs for having tried. It is the Google account
+    // of the organisation that has the address now.
+    let linus = Who {
+        subject: "google-7",
+        hosted: Some("elsewhere.example"),
+        ..before.clone()
+    };
+    assert_eq!(entered(&linus), Ok(json!("linus")));
+    assert_eq!(entered(&before), turned_away);
+
+    // Gmail's addresses are Google's own.
+    let ken = Who {
+        subject: "google-8",
+        email: "Ken@Gmail.com",
+        ..before.clone()
+    };
+    assert_eq!(entered(&ken), Ok(json!("ken")));
+    // One that only ends alike is not.
+    let eve = Who {
+        subject: "google-9",
+        email: "eve@notgmail.com",
+        ..before.clone()
+    };
+    assert_eq!(entered(&eve), turned_away);
+
+    // Once an account is a Google account's, it is known by what Google
+    // calls it, whatever becomes of its address.
+    let moved = Who {
+        email: "linus@another.example",
+        hosted: None,
+        ..linus
+    };
+    assert_eq!(entered(&moved), Ok(json!("linus")));
 }
 
 #[test]

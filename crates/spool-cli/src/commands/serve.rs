@@ -35,8 +35,9 @@ the first account and is the admin, who adds everyone else.
 Passwords are for getting started. A server that people rely on should sign
 them in with Google: with SPOOL_GOOGLE_CLIENT_ID and SPOOL_GOOGLE_CLIENT_SECRET
 set to an OAuth client made in Google's console, the sign-in page offers it,
-and an admin adds a person by the email of their Google account. The server
-prints the redirect URI to give that client when it starts.
+and an admin adds a person by the email of their Google account, which is a
+Gmail address or one of an organisation's Google Workspace. The server prints
+the redirect URI to give that client when it starts.
 
 A caller that is not a person presents a token, which an admin makes on the
 studio's Tokens page and `spool token add` makes on this machine. What it

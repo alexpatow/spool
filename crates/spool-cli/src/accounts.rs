@@ -349,8 +349,10 @@ impl Accounts {
 
     /// The person a Google account is, if they have an account here that is
     /// on. `subject` is what Google calls the account, which stays the same
-    /// whatever becomes of its address, and `email` is an address Google has
-    /// verified to be the account's.
+    /// whatever becomes of its address. `email` is the account's address if
+    /// it is one Google answers for, so that whoever has the Google account
+    /// has the address: without one, only an account that is already that
+    /// Google account's is found.
     ///
     /// The first time, the account is the one an admin gave that email, and
     /// from then on it is that Google account's: another Google account that
@@ -363,9 +365,9 @@ impl Accounts {
     pub fn enter_with_google(
         &self,
         subject: &str,
-        email: &str,
+        email: Option<&str>,
     ) -> Result<Option<(Person, String)>, Refused> {
-        let email = email.trim().to_lowercase();
+        let email = email.map(|email| email.trim().to_lowercase());
         let mut connection = self.connection();
         let transaction = connection.transaction()?;
         // The account and the mark of its Google account, if it has one.
@@ -373,15 +375,16 @@ impl Accounts {
         let known: Option<(Person, Option<String>)> = transaction
             .query_row(&format!("{PEOPLE} WHERE google = ?"), [subject], bound)
             .optional()?;
-        let found = match known {
-            Some(known) => Some(known),
-            None => transaction
+        let found = match (known, email) {
+            (Some(known), _) => Some(known),
+            (None, Some(email)) => transaction
                 .query_row(
                     &format!("{PEOPLE} WHERE email = ? AND google IS NULL"),
                     [&email],
                     bound,
                 )
                 .optional()?,
+            (None, None) => None,
         };
         let Some((person, mark)) = found.filter(|(person, _)| person.active) else {
             return Ok(None);
@@ -925,7 +928,7 @@ mod tests {
 
         // Who a Google account is, and what a session of theirs begins with.
         let begin =
-            |subject: &str, email: &str| accounts.enter_with_google(subject, email).unwrap();
+            |subject: &str, email: &str| accounts.enter_with_google(subject, Some(email)).unwrap();
         let enter = |subject: &str, email: &str| begin(subject, email).map(|(person, _)| person);
         let holder = |began_with: &str| accounts.holder_with_google(&grace.id, began_with).unwrap();
         assert_eq!(enter("g-1", "nobody@example.com"), None);
@@ -939,6 +942,11 @@ mod tests {
         // Each sign-in of the same Google account is a session of the same
         // kind.
         assert_eq!(begin("g-1", "grace@example.com").unwrap().1, first);
+        // An address Google does not answer for finds the account that is
+        // already that Google account's, and no other.
+        let without = |subject: &str| accounts.enter_with_google(subject, None).unwrap();
+        assert_eq!(without("g-1"), Some((grace.clone(), first.clone())));
+        assert_eq!(without("g-2"), None);
 
         // The account is that Google account's now: whatever its address
         // becomes, and whoever else comes to have the address.
@@ -1087,7 +1095,7 @@ mod tests {
         let accounts = Accounts::open(&path).unwrap().with_google(true);
         let ada = accounts.change("p-1", email("ada@example.com")).unwrap();
         let entered = accounts
-            .enter_with_google("g-1", "ada@example.com")
+            .enter_with_google("g-1", Some("ada@example.com"))
             .unwrap();
         assert_eq!(entered.map(|(person, _)| person), Some(ada));
     }

@@ -17,6 +17,8 @@ export interface StandIn {
 
 interface Grant {
   email: string;
+  /** The organisation whose Google Workspace the account is of, if it is of one. */
+  hosted: string | undefined;
   nonce: string;
   challenge: string;
 }
@@ -84,6 +86,8 @@ export async function standInForGoogle(port = 0): Promise<StandIn> {
             `<p>It stands in for Google on this machine, so that signing in with Google can be tried.
 Type the email of the Google account to sign in as. Spool lets in an email that an admin gave an account.</p>
 <form action="/approve">${kept}<label>Email<input type="email" name="email" required autofocus></label>
+<p><label><input type="checkbox" name="personal"> A Google account someone made for themselves with this address.
+Google answers for whose an address is only if it is Gmail's or an organisation's Google Workspace, so Spool refuses this one.</label></p>
 <button>Sign in as this account</button></form>`,
           );
         }
@@ -94,7 +98,11 @@ Type the email of the Google account to sign in as. Spool lets in an email that 
             return new Response("the stand-in sends a browser back to this machine only, as someone", { status: 400 });
           }
           const code = randomBytes(16).toString("hex");
-          grants.set(code, { email, nonce: asked.get("nonce") ?? "", challenge: asked.get("code_challenge") ?? "" });
+          // As Google has it: an account of an organisation names it, and one of Gmail or of nobody does not.
+          const domain = email.slice(email.lastIndexOf("@") + 1);
+          const hosted = asked.has("personal") || domain === "gmail.com" ? undefined : domain;
+          const [nonce, challenge] = [asked.get("nonce") ?? "", asked.get("code_challenge") ?? ""];
+          grants.set(code, { email, hosted, nonce, challenge });
           const to = new URL(back);
           to.searchParams.set("code", code);
           to.searchParams.set("state", asked.get("state") ?? "");
@@ -124,6 +132,7 @@ Type the email of the Google account to sign in as. Spool lets in an email that 
             sub: `stand-in:${grant.email}`,
             email: grant.email,
             email_verified: true,
+            hd: grant.hosted,
             nonce: grant.nonce,
             iat: now,
             exp: now + 300,

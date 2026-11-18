@@ -1032,12 +1032,17 @@ async fn google_callback(
             return Ok(turned_away(&app, next, why));
         }
     };
+    // Without an address Google answers for, nobody is found by it.
+    let why = match identity.email {
+        Some(_) => "unknown",
+        None => "unvouched",
+    };
     let entered = people(&app, move |accounts| {
-        accounts.enter_with_google(&identity.subject, &identity.email)
+        accounts.enter_with_google(&identity.subject, identity.email.as_deref())
     })
     .await?;
     let Some((person, bound)) = entered else {
-        return Ok(turned_away(&app, next, "unknown"));
+        return Ok(turned_away(&app, next, why));
     };
     begin(&session, &person.id, (GOOGLE, &bound)).await?;
     Ok(send_to(&app, next, None))

@@ -186,12 +186,13 @@ describe("the door", () => {
         return call;
       };
       /** Presses "Sign in with Google", signs in at the stand-in as `email`, and returns where that leads. */
-      const throughGoogle = async (call: Fetch, link: string, email: string) => {
+      const throughGoogle = async (call: Fetch, link: string, email: string, personal = false) => {
         const leaving = await call(new URL(link), { method: "GET" });
         const at = new URL(leaving.headers.get("location")!);
         expect(at.origin + at.pathname).toBe(`${google.issuer}/authorize`);
         at.pathname = "/approve";
         at.searchParams.set("email", email);
+        if (personal) at.searchParams.set("personal", "on");
         const approved = await fetch(at, { redirect: "manual" });
         const back = await call(new URL(approved.headers.get("location")!), { method: "GET" });
         expect(back.status).toBe(303);
@@ -235,6 +236,15 @@ describe("the door", () => {
       await waitFor(() =>
         expect(rowsOf(table)[1]?.slice(0, 6)).toEqual(["Grace", "grace", "grace@example.com", "Google", "-", "On"]),
       );
+      cleanup();
+
+      // A Google account that someone made with her address is not hers for that.
+      const theirs = browser();
+      const unvouched = await throughGoogle(theirs, link, "grace@example.com", true);
+      expect(unvouched).toBe("/people?page=1&google=unvouched");
+      window.history.replaceState(null, "", unvouched!);
+      render(<App url={server.url} fetch={theirs} storage={memory()} />);
+      expect((await screen.findByRole("alert")).textContent).toMatch(/is not Google's to answer for/);
       cleanup();
 
       // Now Google's word is enough, and she is at the page she opened.

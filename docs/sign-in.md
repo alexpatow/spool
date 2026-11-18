@@ -51,13 +51,13 @@ Set both of the first two or neither: the server does not start with one. The se
 
 ### 4. Add people by email
 
-The first account is still made with the link and a password. That admin then adds each person on the studio's People page with the email of their Google account. A password is optional once Google is set up, so most people need none. Give the admin's own account its email the same way.
+The first account is still made with the link and a password. That admin then adds each person on the studio's People page with the email of their Google account, which must be a Gmail or Google Workspace address. A password is optional once Google is set up, so most people need none. Give the admin's own account its email the same way.
 
 A person may have an email, a password, or both. An admin who adds an email to an account that has a password lets its owner use either.
 
 ## What to know
 
-- **The email must be verified.** Google says whether an address belongs to the account. One that it does not vouch for is refused.
+- **The email must be one Google answers for**: a Gmail address, or an address of an organisation's Google Workspace. Anyone can make a Google account with an address of another provider. Google checked such an address once, and it may have changed hands since, so a Google account like that is refused: someone who used to have the address could otherwise take the account meant for whoever has it now. A person with such an address needs a password, or a Google account of the first two kinds.
 - **An account is bound to the Google account that first signs in with its email.** Afterwards Spool knows that Google account by Google's own ID for it, not by the address. If the address is later given to someone else, they are refused. To move an account to another Google account, an admin changes its email, which also signs the account out everywhere it signed in with Google. Those sessions stay ended even if the same Google account signs in again under the new address.
 - **Turning an account off ends its access**, whichever way it signed in. Removing someone from the organisation in Google stops them signing in again; a session they already have lasts until it ends, at most twelve hours, or until an admin turns the account off.
 - **Passwords that exist keep working.** Google is added beside them. To rely on Google alone, add people without passwords. An existing password cannot be removed yet, only replaced.
