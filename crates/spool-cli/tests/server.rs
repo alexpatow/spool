@@ -445,6 +445,56 @@ fn a_client_is_told_when_its_connection_will_not_take_another_request() {
     }
 }
 
+#[test]
+fn a_client_refused_while_it_is_still_writing_reads_why() {
+    let (_runtime, address, token) = small_bodied_server();
+    let bearer = format!("Bearer {token}");
+    // More than a connection holds on its way, so the client is still
+    // writing when the server answers, and reads the answer only once it has
+    // written everything. A server that closed as soon as it had answered
+    // would stop the client in the middle of writing. It would also reset
+    // the connection, and some systems then throw away an answer that had
+    // arrived and was not yet read. So the server goes on reading, and the
+    // client writes to the end, reads the answer, and finds no reset.
+    let long = "x".repeat(16_000_000);
+    for (path, authorization, body, status, code) in [
+        (
+            "/auth/sign-in",
+            None,
+            json!({ "username": "ada", "password": long }),
+            413,
+            "too_large",
+        ),
+        (
+            "/v1/ids",
+            Some(&bearer),
+            json!({ "identities": 1, "padding": long }),
+            413,
+            "too_large",
+        ),
+        (
+            "/v1/ids",
+            None,
+            json!({ "identities": 1, "padding": long }),
+            401,
+            "unauthorized",
+        ),
+    ] {
+        // Once as a client that keeps its connections, and once as one that
+        // said it would close this one.
+        for kept in [true, false] {
+            let mut request = Request::to(&address, "POST", path).json(&body);
+            if kept {
+                request = request.kept();
+            }
+            if let Some(authorization) = authorization {
+                request = request.header("Authorization", authorization);
+            }
+            request.send().error(status, code);
+        }
+    }
+}
+
 /// Many rows of the `thing` type, each with a code of its own.
 fn many_things(count: usize) -> Rows {
     let ids: Vec<String> = (0..count).map(|index| index.to_string()).collect();
