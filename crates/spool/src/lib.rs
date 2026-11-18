@@ -36,6 +36,7 @@ mod features;
 mod ingest;
 mod lookup;
 mod metrics;
+mod possible_split;
 mod project;
 mod retract;
 mod review;

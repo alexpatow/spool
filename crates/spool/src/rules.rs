@@ -25,9 +25,13 @@ pub(crate) const SCOPE: &str = "spool_scope";
 /// A condition on `record_id` that leaves out the records of
 /// dismissed review items: a reviewer decided they stay as they are, so no
 /// run looks at them again, whether or not an earlier run got as far as
-/// counting them as examined.
+/// counting them as examined. That is about records an item left without an
+/// identity. A dismissed `possible_split` says nothing of the kind: its
+/// records had an identity, and one that later has none is placed like any
+/// record.
 pub(crate) const NOT_DISMISSED: &str = "record_id NOT IN (
-    SELECT unnest(record_ids) FROM spool.review_item WHERE status = 'dismissed')";
+    SELECT unnest(record_ids) FROM spool.review_item
+    WHERE status = 'dismissed' AND kind <> 'possible_split')";
 
 /// Lists the records that are new to a run: those of the entity type
 /// that were ingested after `after_run` and before the run itself, those

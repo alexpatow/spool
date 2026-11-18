@@ -752,10 +752,14 @@ fn summary(explanation: &Explanation) -> Vec<String> {
             .map(|id| name_of(id).as_str())
             .collect();
         let named = listed(named);
-        let kind = match item.kind {
-            ReviewKind::PossibleMerge => "possible_merge",
-            ReviewKind::Conflict => "conflict",
-        };
+        let kind = item.kind.as_str();
+        // In a `possible_split`, whether the two are in different groups:
+        // then the item asks about this very pair.
+        let group_of = |id| item.groups.iter().position(|group| group.contains(&id));
+        let asked_about = matches!(
+            (group_of(left.id), group_of(right.id)),
+            (Some(one), Some(other)) if one != other
+        );
         match (item.status, &item.dismissed) {
             (ReviewStatus::Open, _) => said.push(format!(
                 "Review item {} (`{kind}`) is open and names {named}: {}",
@@ -765,8 +769,20 @@ fn summary(explanation: &Explanation) -> Vec<String> {
                         "what it matched belongs to more than one identity, and merging identities is left to a reviewer.",
                     ReviewKind::Conflict =>
                         "the evidence about it contradicts itself, which is left to a reviewer.",
+                    ReviewKind::PossibleSplit if asked_about =>
+                        "they share an identity, and what held them together went through a record that its source took back. Nothing the store knows says they are one thing now. Whether to split the identity is left to a reviewer.",
+                    ReviewKind::PossibleSplit =>
+                        "the identity lost a record that its source took back, and nothing the store knows holds all of the records that are left together. Whether to split the identity is left to a reviewer.",
                 }
             )),
+            (ReviewStatus::Dismissed, Some(dismissal))
+                if item.kind == ReviewKind::PossibleSplit =>
+            {
+                said.push(format!(
+                    "Review item {} (`{kind}`), which names {named}, was dismissed by `{}`: it asked whether to split their identity, and the reviewer left it as it is.",
+                    item.id, dismissal.by
+                ));
+            }
             (ReviewStatus::Dismissed, Some(dismissal)) => said.push(format!(
                 "Review item {} (`{kind}`), which names {named}, was dismissed by `{}`. No run looks at a dismissed item's records again.",
                 item.id, dismissal.by

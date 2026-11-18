@@ -28,6 +28,7 @@ use crate::lookup::{
     StoreInfo,
 };
 use crate::metrics::{self, Churn, IdStability, Metrics};
+use crate::possible_split;
 use crate::project::{EntityTypeManifest, Manifest, Strategy, hash_json};
 use crate::retract::{self, RetractReport};
 use crate::review::{self, ReviewCase, ReviewEntry, ReviewFilter};
@@ -1600,6 +1601,12 @@ impl Inner {
             // so when they come back they are new to the next match run.
             let members = retract::members(&inner.store.conn)?;
             let detached = members.len() as u64;
+            let left: Vec<IdentityId> = members
+                .iter()
+                .map(|(_, identity)| *identity)
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect();
             let committed = if members.is_empty() {
                 None
             } else {
@@ -1634,6 +1641,9 @@ impl Inner {
                 run,
                 committed.as_ref().map(|committed| committed.seq),
             )?;
+            // What is left of an identity may have been held together only
+            // through a record that is gone now. That is put to a reviewer.
+            let possible_splits = possible_split::raise(&tx, &name, run, &left)?;
             let report = RetractReport {
                 run,
                 received: named.received,
@@ -1641,6 +1651,7 @@ impl Inner {
                 retracted,
                 detached,
                 committed,
+                possible_splits,
             };
             tx.execute(
                 "UPDATE spool.run
@@ -1945,6 +1956,10 @@ impl Inner {
             let finished = inner.store.clock.now_micros();
             let tx = inner.store.conn.transaction()?;
             review::record(&tx, &entity_type, reconcile_run, &draft.review)?;
+            // The match run may have judged a match between records that
+            // nothing held together. If it commits nothing that touches
+            // their identity, this is where the question is closed.
+            possible_split::supersede_answered(&tx, &entity_type, reconcile_run)?;
             // Whatever this run drafts, an earlier draft of the type was
             // written against a state this one may change.
             drafts::supersede(&tx, &entity_type, reconcile_run)?;
@@ -2356,7 +2371,7 @@ impl Inner {
     /// Whether a type has anything a run would examine: records
     /// ingested since its last match run that succeeded, records that
     /// came back since then after their source had taken them back, or open
-    /// review items.
+    /// review items with records that wait for an identity.
     fn has_work(&self, entity_type: &EntityType) -> Result<bool> {
         let after_run = self.last_match_run(entity_type)?;
         let ingested = self.count(&format!(
@@ -2581,9 +2596,20 @@ impl Inner {
                 "open review items none of whose records waits for an identity".to_owned(),
                 format!(
                     "SELECT count(*) FROM spool.review_item i
-                     WHERE i.status = 'open' AND i.review_id NOT IN ({})",
+                     WHERE i.status = 'open' AND {} AND i.review_id NOT IN ({})",
+                    review::ABOUT_WAITING,
                     retract::WAITING
                 ),
+            ),
+            (
+                "`possible_split` review items that do not name one identity and two groups of its records, or review items of another kind that have groups"
+                    .to_owned(),
+                "SELECT count(*) FROM spool.review_item i
+                 WHERE CASE WHEN i.kind = 'possible_split'
+                   THEN len(i.identity_ids) <> 1 OR i.groups IS NULL OR len(i.groups) < 2
+                        OR list_sort(flatten(i.groups)) <> list_sort(i.record_ids)
+                   ELSE i.groups IS NOT NULL END"
+                    .to_owned(),
             ),
             (
                 "records that were taken back and belong to an identity".to_owned(),
@@ -2715,6 +2741,15 @@ impl Inner {
             if found > 0 {
                 problems.push(format!("{found} {what}"));
             }
+        }
+        // An item is closed in the transaction that answers it, so none
+        // stays open once what the store knows holds its groups together or
+        // they no longer share the identity.
+        let stale = possible_split::stale(&self.store.conn)?;
+        if stale > 0 {
+            problems.push(format!(
+                "{stale} open `possible_split` review items with nothing left to ask"
+            ));
         }
         if problems.is_empty() {
             Ok(())
