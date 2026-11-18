@@ -234,7 +234,7 @@ The same prompt was given four times, each on a store that held only the rows of
 | "Load samples/crm-1.csv into Spool and match it. How many companies are there, and which rows are the same company?", on an empty store | Called `load_rows` with the source `crm-1` and no rows, which was refused with the name of the source to use. Read the file, loaded its six rows, matched, read the four identities, and answered rightly | The six rows, placed |
 | "Load samples/notes-1.txt into Spool as a document, run the extractor over it and match." | Did not read the file. Stored a text it made up under the file's name. Asked for an extractor named `default`, was refused with the name of the project's one, and ran that, which found nothing | A document that is not the file's, for good |
 
-The session with a document ran on a project with a source for notes and an extractor added by hand, because `spool init` does not write them yet.
+The session with a document ran on a project with a source for notes and an extractor added by hand, because `spool init` did not write them then. It writes both now, with another extractor: a Python file that asks a small model.
 
 What these sessions show about the tools, whatever the model:
 

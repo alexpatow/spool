@@ -58,7 +58,7 @@ spool show identities $ACORN
 ```
 
 ```text title="Output"
-identity    01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+identity    01a1efc6-41cd-775d-8758-e7300637659a
 type        company
 created at  log position 1
 
@@ -70,15 +70,15 @@ a780fcfe-cb2f-21dd-25ea-11db898fd6a2  crm:c-2         log position 1
 ab8e9d59-0aaa-96b9-ddb7-db0bff7a9356  crm:c-1         log position 1
 
 history
-  1  2026-11-18T17:12:43Z  engine  reconcile run 3  "reconcile new records"
-      create company identity 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
-      place record 31075f20-6900-838b-f5af-f8c6576744a4 in 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
-      place record a780fcfe-cb2f-21dd-25ea-11db898fd6a2 in 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
-      place record ab8e9d59-0aaa-96b9-ddb7-db0bff7a9356 in 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
-  2  2026-11-18T17:12:43Z  engine  reconcile run 6  "reconcile new records"
-      place record 34c3d52d-e53b-1559-7404-1892fb1fd4e3 in 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
-  3  2026-11-18T17:12:43Z  engine  reconcile run 9  "reconcile new records"
-      place record 875986b9-a764-1450-33d1-2d4612fb4daa in 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+  1  2026-11-18T21:46:59Z  engine  reconcile run 3  "reconcile new records"
+      create company identity 01a1efc6-41cd-775d-8758-e7300637659a
+      place record 31075f20-6900-838b-f5af-f8c6576744a4 in 01a1efc6-41cd-775d-8758-e7300637659a
+      place record a780fcfe-cb2f-21dd-25ea-11db898fd6a2 in 01a1efc6-41cd-775d-8758-e7300637659a
+      place record ab8e9d59-0aaa-96b9-ddb7-db0bff7a9356 in 01a1efc6-41cd-775d-8758-e7300637659a
+  2  2026-11-18T21:46:59Z  engine  reconcile run 6  "reconcile new records"
+      place record 34c3d52d-e53b-1559-7404-1892fb1fd4e3 in 01a1efc6-41cd-775d-8758-e7300637659a
+  3  2026-11-18T21:46:59Z  engine  reconcile run 9  "reconcile new records"
+      place record 875986b9-a764-1450-33d1-2d4612fb4daa in 01a1efc6-41cd-775d-8758-e7300637659a
 ```
 
 An identity has no attributes of its own. It has no name, address or "golden record". It is the set of records, and each record keeps what its source said. The name an identity is shown by is the label most of its records have.
@@ -98,13 +98,13 @@ spool show log
 ```
 
 ```text title="Output"
-position  actor   operations  from             reason
-1         engine  10          reconcile run 3  reconcile new records
-2         engine  4           reconcile run 6  reconcile new records
-3         engine  3           reconcile run 9  reconcile new records
+position  actor   operations  from             started by                                 reason
+1         engine  10          reconcile run 3  user:01a1f0a0-9920-7253-869c-3c01d1dee766  reconcile new records
+2         engine  4           reconcile run 6  user:01a1f0a0-9920-7253-869c-3c01d1dee766  reconcile new records
+3         engine  3           reconcile run 9  user:01a1f0a0-9920-7253-869c-3c01d1dee766  reconcile new records
 ```
 
-Every changeset so far was written by a match. `actor` says who committed it: `engine` for a run, `user:<id>` for a person, `agent:<name>` for a caller with a token.
+Every changeset so far was written by a match. `actor` says who committed it: `engine` for a run, `user:<id>` for a person, `agent:<name>` for a caller with a token. `started by` says who started the run or made the call that led to it. Under `spool dev` that is always the one account `spool dev` makes.
 
 There are six operations: `create_identity`, `assign`, `merge`, `reinstate`, `constrain` and `unconstrain`. [The HTTP API](/docs/api#changesets) has the form of each. Each one says what it expects to find, and that is checked when the changeset is committed. An `assign`, for example, names the identity the record is in now, as `from`, and is refused if the record has moved since. A changeset that fails a check is refused whole, and the answer names the operation.
 
@@ -121,7 +121,7 @@ curl -s -X POST http://127.0.0.1:7765/v1/changesets -d '{"reason": "The Halden G
 ```
 
 ```text title="Output"
-{"seq":4,"changeset":"01a1efa5-8239-7189-a210-85dff7279251","content_hash":"d70a7bb572452adcfbc7d675a01225c1a2b01d74864d3beda1d5b6ae01be5cf1"}
+{"seq":4,"changeset":"01a1f0a8-1fd6-7793-a34a-135f4d04c290","content_hash":"f61c94ca42fcef2f989c85ee67d3fb1af3b99c9e36dda9edc7246f3246fa01ef"}
 ```
 
 `seq` is the position in the log it was committed at. `crm:c-11` now has the identity of `crm:c-5`:
@@ -135,8 +135,8 @@ record    2c53c39b-ba40-34f1-5a6c-f335adbe639c
 type      company
 source    crm
 key       c-11
-ingested  2026-11-18T17:12:43Z by run 7
-identity  01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae
+loaded    2026-11-18T21:46:59Z by run 7
+identity  01a1efc6-41cd-775d-8758-e7329447fd9a
 
 payload
   country  GB
@@ -153,8 +153,8 @@ spool show identities $THE_HALDEN
 ```
 
 ```text title="Output"
-identity     01a1efa5-8185-7558-9c57-8a3662b3284c
-merged into  01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae
+identity     01a1f0a0-99e2-71d0-a422-eb2cb5f32303
+merged into  01a1efc6-41cd-775d-8758-e7329447fd9a
 type         company
 created at   log position 3
 
@@ -163,11 +163,11 @@ record                                source and key  since
 38f040c9-82b9-2f94-813b-697309e52dab  crm:c-5         log position 1
 
 history
-  3  2026-11-18T17:12:43Z  engine  reconcile run 9  "reconcile new records"
-      create company identity 01a1efa5-8185-7558-9c57-8a3662b3284c
-      place record 2c53c39b-ba40-34f1-5a6c-f335adbe639c in 01a1efa5-8185-7558-9c57-8a3662b3284c
-  4  2026-11-18T17:12:43Z  user:01a1efa5-800f-7661-b8c0-9b47e1bb3341  "The Halden Group is Halden Group"
-      merge 01a1efa5-8185-7558-9c57-8a3662b3284c into 01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae
+  3  2026-11-18T21:46:59Z  engine  reconcile run 9  "reconcile new records"
+      create company identity 01a1f0a0-99e2-71d0-a422-eb2cb5f32303
+      place record 2c53c39b-ba40-34f1-5a6c-f335adbe639c in 01a1f0a0-99e2-71d0-a422-eb2cb5f32303
+  4  2026-11-18T21:46:59Z  user:01a1f0a0-9920-7253-869c-3c01d1dee766  "The Halden Group is Halden Group"
+      merge 01a1f0a0-99e2-71d0-a422-eb2cb5f32303 into 01a1efc6-41cd-775d-8758-e7329447fd9a
 ```
 
 Nothing that stored the old ID is left pointing at nothing. [Using the IDs](/docs/using-the-ids) shows the same lookup over HTTP, and how a system that stores IDs learns of a merge.
@@ -184,7 +184,7 @@ curl -s -X POST http://127.0.0.1:7765/v1/changesets/$MERGE/undo -d '{"reason": "
 ```
 
 ```text title="Output"
-{"changeset":{"id":"01a1efa5-82a5-71d7-a6ca-21e1c08fea9e","base":4,"actor":"user:01a1efa5-800f-7661-b8c0-9b47e1bb3341","reason":"merged too early","run":null,"ops":[{"op":"reinstate","identity":"01a1efa5-8185-7558-9c57-8a3662b3284c"},{"op":"assign","record":"2c53c39b-ba40-34f1-5a6c-f335adbe639c","from":"01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae","to":"01a1efa5-8185-7558-9c57-8a3662b3284c"}]},"committed":{"seq":5,"changeset":"01a1efa5-82a5-71d7-a6ca-21e1c08fea9e","content_hash":"333dbfa6e8a6b52253c3a4dcb1ba17bfe85a2fdbd60dc760299ebb2b65518105"}}
+{"changeset":{"id":"01a1f0a8-202a-75f9-b4b0-6a8302b02c94","base":4,"actor":"user:01a1f0a0-9920-7253-869c-3c01d1dee766","reason":"merged too early","run":null,"ops":[{"op":"reinstate","identity":"01a1f0a0-99e2-71d0-a422-eb2cb5f32303"},{"op":"assign","record":"2c53c39b-ba40-34f1-5a6c-f335adbe639c","from":"01a1efc6-41cd-775d-8758-e7329447fd9a","to":"01a1f0a0-99e2-71d0-a422-eb2cb5f32303"}]},"committed":{"seq":5,"changeset":"01a1f0a8-202a-75f9-b4b0-6a8302b02c94","content_hash":"7fba583a5b6fef12c438a1234d45f3f37e496271fbacfe3e9d9651dae8ce3684"}}
 ```
 
 ```sh
@@ -196,8 +196,8 @@ record    2c53c39b-ba40-34f1-5a6c-f335adbe639c
 type      company
 source    crm
 key       c-11
-ingested  2026-11-18T17:12:43Z by run 7
-identity  01a1efa5-8185-7558-9c57-8a3662b3284c
+loaded    2026-11-18T21:46:59Z by run 7
+identity  01a1f0a0-99e2-71d0-a422-eb2cb5f32303
 
 payload
   country  GB
@@ -217,7 +217,7 @@ curl -s -X POST http://127.0.0.1:7765/v1/identities/$ACORN/split -d '{"records":
 ```
 
 ```text title="Output"
-{"kept":"01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada","identity":"01a1efa5-82f4-7467-ac1b-3da52d79dbc8","moved":["875986b9-a764-1450-33d1-2d4612fb4daa"],"changeset":{"id":"01a1efa5-82f4-7467-ac1b-3da66a6859ae","base":5,"actor":"user:01a1efa5-800f-7661-b8c0-9b47e1bb3341","reason":"Acorn Tooling is another company","run":null,"ops":[{"op":"create_identity","identity":"01a1efa5-82f4-7467-ac1b-3da52d79dbc8","entity_type":"company"},{"op":"assign","record":"875986b9-a764-1450-33d1-2d4612fb4daa","from":"01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada","to":"01a1efa5-82f4-7467-ac1b-3da52d79dbc8"},{"op":"constrain","kind":"cannot_link","a":"875986b9-a764-1450-33d1-2d4612fb4daa","b":"31075f20-6900-838b-f5af-f8c6576744a4"}]},"committed":{"seq":6,"changeset":"01a1efa5-82f4-7467-ac1b-3da66a6859ae","content_hash":"6d31cf9a5d53caeaea37c8f8dec86260f3ce9bd8ffde9911ac90f6ab3a2f46bd"}}
+{"kept":"01a1efc6-41cd-775d-8758-e7300637659a","identity":"01a1f0a8-2062-70aa-a42f-c8855877ed84","moved":["875986b9-a764-1450-33d1-2d4612fb4daa"],"changeset":{"id":"01a1f0a8-2062-70aa-a42f-c886c03ea099","base":5,"actor":"user:01a1f0a0-9920-7253-869c-3c01d1dee766","reason":"Acorn Tooling is another company","run":null,"ops":[{"op":"create_identity","identity":"01a1f0a8-2062-70aa-a42f-c8855877ed84","entity_type":"company"},{"op":"assign","record":"875986b9-a764-1450-33d1-2d4612fb4daa","from":"01a1efc6-41cd-775d-8758-e7300637659a","to":"01a1f0a8-2062-70aa-a42f-c8855877ed84"},{"op":"constrain","kind":"cannot_link","a":"875986b9-a764-1450-33d1-2d4612fb4daa","b":"31075f20-6900-838b-f5af-f8c6576744a4"}]},"committed":{"seq":6,"changeset":"01a1f0a8-2062-70aa-a42f-c886c03ea099","content_hash":"ff72f75497b63aa71bc37d580e47ea3cfe0fe3f0697719d814dbac69ab119a21"}}
 ```
 
 ```sh
@@ -225,7 +225,7 @@ spool show identities $ACORN
 ```
 
 ```text title="Output"
-identity    01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+identity    01a1efc6-41cd-775d-8758-e7300637659a
 type        company
 created at  log position 1
 
@@ -239,17 +239,17 @@ constraint   between                               and                          
 cannot_link  31075f20-6900-838b-f5af-f8c6576744a4  875986b9-a764-1450-33d1-2d4612fb4daa  log position 6
 
 history
-  1  2026-11-18T17:12:43Z  engine  reconcile run 3  "reconcile new records"
-      create company identity 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
-      place record 31075f20-6900-838b-f5af-f8c6576744a4 in 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
-      place record a780fcfe-cb2f-21dd-25ea-11db898fd6a2 in 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
-      place record ab8e9d59-0aaa-96b9-ddb7-db0bff7a9356 in 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
-  2  2026-11-18T17:12:43Z  engine  reconcile run 6  "reconcile new records"
-      place record 34c3d52d-e53b-1559-7404-1892fb1fd4e3 in 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
-  3  2026-11-18T17:12:43Z  engine  reconcile run 9  "reconcile new records"
-      place record 875986b9-a764-1450-33d1-2d4612fb4daa in 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
-  6  2026-11-18T17:12:44Z  user:01a1efa5-800f-7661-b8c0-9b47e1bb3341  "Acorn Tooling is another company"
-      move record 875986b9-a764-1450-33d1-2d4612fb4daa from 01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada to 01a1efa5-82f4-7467-ac1b-3da52d79dbc8
+  1  2026-11-18T21:55:12Z  engine  reconcile run 3  "reconcile new records"
+      create company identity 01a1efc6-41cd-775d-8758-e7300637659a
+      place record 31075f20-6900-838b-f5af-f8c6576744a4 in 01a1efc6-41cd-775d-8758-e7300637659a
+      place record a780fcfe-cb2f-21dd-25ea-11db898fd6a2 in 01a1efc6-41cd-775d-8758-e7300637659a
+      place record ab8e9d59-0aaa-96b9-ddb7-db0bff7a9356 in 01a1efc6-41cd-775d-8758-e7300637659a
+  2  2026-11-18T21:55:12Z  engine  reconcile run 6  "reconcile new records"
+      place record 34c3d52d-e53b-1559-7404-1892fb1fd4e3 in 01a1efc6-41cd-775d-8758-e7300637659a
+  3  2026-11-18T21:55:12Z  engine  reconcile run 9  "reconcile new records"
+      place record 875986b9-a764-1450-33d1-2d4612fb4daa in 01a1efc6-41cd-775d-8758-e7300637659a
+  6  2026-11-18T21:55:12Z  user:01a1f0a0-9920-7253-869c-3c01d1dee766  "Acorn Tooling is another company"
+      move record 875986b9-a764-1450-33d1-2d4612fb4daa from 01a1efc6-41cd-775d-8758-e7300637659a to 01a1f0a8-2062-70aa-a42f-c8855877ed84
 ```
 
 The larger side keeps the ID, and the side you did not name keeps it on a tie, so Acorn Tools kept its identity and `crm:c-10` moved to a new one. The split also recorded a `cannot_link` constraint between the two sides, so that a later match does not put them back together. Pass `"keep_apart": false` to leave that out.
@@ -280,7 +280,7 @@ curl -s -X POST http://127.0.0.1:7765/v1/changesets -d '{"reason": "one group", 
 ```
 
 ```text title="Output"
-{"error":{"code":"rejected","message":"changeset rejected: operation 0 (merge): records 34a5d12a-11a0-e461-c6e4-0576f546d165 and 38f040c9-82b9-2f94-813b-697309e52dab have a cannot_link constraint, and would both belong to identity 01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae","rejections":[{"op_index":0,"op":{"op":"merge","from":"01a1ef8e-5a8d-76d4-acb6-2bb65a02262a","into":"01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae"},"reason":{"reason":"constraint_violated","kind":"cannot_link","a":"34a5d12a-11a0-e461-c6e4-0576f546d165","b":"38f040c9-82b9-2f94-813b-697309e52dab","identity_a":"01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae","identity_b":"01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae"}}]}}
+{"error":{"code":"rejected","message":"changeset rejected: operation 0 (merge): records 34a5d12a-11a0-e461-c6e4-0576f546d165 and 38f040c9-82b9-2f94-813b-697309e52dab have a cannot_link constraint, and would both belong to identity 01a1efc6-41cd-775d-8758-e7329447fd9a","rejections":[{"op_index":0,"op":{"op":"merge","from":"01a1efc6-41cd-775d-8758-e731c61371cb","into":"01a1efc6-41cd-775d-8758-e7329447fd9a"},"reason":{"reason":"constraint_violated","kind":"cannot_link","a":"34a5d12a-11a0-e461-c6e4-0576f546d165","b":"38f040c9-82b9-2f94-813b-697309e52dab","identity_a":"01a1efc6-41cd-775d-8758-e7329447fd9a","identity_b":"01a1efc6-41cd-775d-8758-e7329447fd9a"}}]}}
 ```
 
 ## What does not change an identity

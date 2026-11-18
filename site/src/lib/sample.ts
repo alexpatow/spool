@@ -21,14 +21,18 @@ export interface Identity {
   detail?: string;
 }
 
-/** In the order `spool show identities` lists them after the three matches. */
+/**
+ * The six identities after the three matches, with the IDs Getting started and
+ * the README show. The order is the panel's own: `spool show identities` lists
+ * them by ID.
+ */
 export const identities = [
-  { id: "01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada", name: "Acorn Tools" },
-  { id: "01a1ef8e-5a8d-76d4-acb6-2bb802d5ca25", name: "Larkfield Logistics" },
-  { id: "01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae", name: "Halden Group", detail: "GB" },
-  { id: "01a1ef8e-5a8d-76d4-acb6-2bb65a02262a", name: "Halden Group", detail: "US" },
-  { id: "01a1ef8e-5f06-7397-9a0c-445aaacfd3fe", name: "Kestrel Analytics" },
-  { id: "01a1efb4-93c3-7745-8408-dcbf0c81e6f3", name: "Brightwater Foods" },
+  { id: "01a1efc6-41cd-775d-8758-e7300637659a", name: "Acorn Tools" },
+  { id: "01a1efc6-41cd-775d-8758-e733aa086f7d", name: "Larkfield Logistics" },
+  { id: "01a1efc6-41cd-775d-8758-e7329447fd9a", name: "Halden Group", detail: "GB" },
+  { id: "01a1efc6-41cd-775d-8758-e731c61371cb", name: "Halden Group", detail: "US" },
+  { id: "01a1efc6-42c0-7776-b736-83fde0cb4498", name: "Kestrel Analytics" },
+  { id: "01a1efc6-43a9-7403-b9f6-1f8ee76184ed", name: "Brightwater Foods" },
 ] as const satisfies readonly Identity[];
 
 export interface SampleRecord {

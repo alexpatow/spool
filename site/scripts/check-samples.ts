@@ -36,8 +36,6 @@
  *                                         block is compared with what it printed first
  *   sample: stop servers                  what `background` started is stopped first
  *   sample: existing                      a file a command made: compared, not written
- *   sample: without record column         on an output block: the page shows a listing of
- *                                         records without its first column, of record IDs
  *   sample: fails                         the commands are to end with an error, which the
  *                                         output block shows
  *   sample: after                         run when the session ends, not here: another way
@@ -47,9 +45,14 @@
  *                                         built yet, and its output block is not compared
  *
  * What is not built yet is reported in one list, apart from mismatches, and
- * does not fail the check unless `--release` is given. `not-built/shim.ts`
- * stands in for the commands on that list, so the pages that use them are
- * still run and compared.
+ * does not fail the check unless `--release` is given.
+ *
+ * The extractor that `spool init` writes finds names with a small model, and
+ * its first run fetches about 330 MB. Unless SPOOL_TEST_MODEL is set, the
+ * check puts `release/by-legal-form.py` in its place in each new project: the
+ * stand-in that the engine's own tests use, which finds the same three names
+ * in the sample note and fetches no model. A page that shows the extractor's
+ * file is still compared with the file `spool init` wrote.
  *
  * Output is compared line by line. Times are compared by shape. IDs and
  * hashes must agree with themselves, within a block and through a session:
@@ -59,7 +62,7 @@
  */
 import { type Subprocess, spawn, spawnSync } from "bun";
 import {
-  chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync,
+  existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync,
 } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -68,9 +71,7 @@ import { type Ids, asShown, noIds, sameOutput, tidy } from "./compare-output";
 import { notBuilt } from "./not-built";
 import { movePorts } from "./ports";
 import { shownIds } from "./shown-ids";
-import {
-  type Block, blocksOf, directivesOf, shellVariables, withoutRecordColumn,
-} from "./sample-blocks";
+import { type Block, blocksOf, directivesOf, shellVariables } from "./sample-blocks";
 
 const DEFAULT_PORT = 7765;
 const siteDir = resolve(import.meta.dir, "..");
@@ -96,6 +97,28 @@ function pagesInOrder(dir: string = docsDir): string[] {
     if (entry.startsWith("...")) return pagesInOrder(join(dir, entry.slice(3)));
     return [join(dir, `${entry}.mdx`)];
   });
+}
+
+/** Whether the sample extractor runs with its model, which is fetched on its first run. */
+const withModel = (process.env["SPOOL_TEST_MODEL"] ?? "") !== "";
+const modelStandIn = join(siteDir, "../release/by-legal-form.py");
+/** The sample extractor of each new project as `spool init` wrote it, by its path. */
+const sampleExtractors = new Map<string, string>();
+
+/** Puts the stand-in in the place of every sample extractor under `dir` that has not got it yet. */
+function standInForModel(dir: string, depth = 0) {
+  if (withModel || depth > 2) return;
+  const file = join(realpathSync(dir), "extractors/companies.py");
+  if (existsSync(file) && !sampleExtractors.has(file)) {
+    const written = readFileSync(file, "utf8");
+    if (written.includes("fast_gliner")) {
+      sampleExtractors.set(file, written);
+      writeFileSync(file, readFileSync(modelStandIn, "utf8"));
+    }
+  }
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isDirectory() && !entry.name.startsWith(".")) standInForModel(join(dir, entry.name), depth + 1);
+  }
 }
 
 const failures: string[] = [];
@@ -156,23 +179,11 @@ async function main() {
   const address = (text: string) => movePorts(text, DEFAULT_PORT, port);
   const unaddress = (text: string) => movePorts(text, port, DEFAULT_PORT);
 
-  // The stand-in for commands that are not built goes first on the search path.
   const tools = mkdtempSync(join(tmpdir(), "spool-samples-tools-"));
-  const standIn = join(tools, "spool");
-  const standInLog = join(tools, "not-built.log");
-  writeFileSync(
-    standIn,
-    `#!/bin/sh\nexec "${process.execPath}" "${join(siteDir, "scripts/not-built/shim.ts")}" "$@"\n`,
-  );
-  chmodSync(standIn, 0o755);
-  writeFileSync(standInLog, "");
-  const stoodIn = () => readFileSync(standInLog, "utf8").split("\n").filter(Boolean);
 
   const env = {
     ...process.env,
-    PATH: `${tools}:${dirname(spoolBin)}:${process.env["PATH"] ?? ""}`,
-    SPOOL_REAL: spoolBin,
-    SPOOL_NOT_BUILT_LOG: standInLog,
+    PATH: `${dirname(spoolBin)}:${process.env["PATH"] ?? ""}`,
     SPOOL_URL: `http://127.0.0.1:${port}`,
     // What a reader's terminal has not got.
     SPOOL_TOKEN: "",
@@ -227,16 +238,17 @@ async function main() {
 
   /** Runs commands as one script, and keeps the directory and the variables it ends with. */
   function runScript(script: string) {
-    const before = stoodIn().length;
     const set = [...session.variables].map(([name, value]) => `${name}=${value}`).join("\n");
     // From a file: a shell that is given its commands as an argument lists them
     // among its variables, where their lines would be taken for variables.
     const file = join(tools, "block.sh");
     writeFileSync(file, `${set}\n${script}\nprintf '\\n__CWD__%s\\n__SET__\\n' "$PWD"\nset\n`);
-    const result = spawnSync(["sh", "-e", file], { cwd: session.cwd, env });
+    // A block that never ends, such as a server that was meant to be refused, is stopped.
+    const result = spawnSync(["sh", "-e", file], { cwd: session.cwd, env, timeout: 600_000 });
     const [stdout = "", rest] = result.stdout.toString().split("\n__CWD__");
     const [next, set2 = ""] = rest?.split("\n__SET__\n") ?? [];
     const ok = result.exitCode === 0 && next !== undefined;
+    if (/\bspool init\b/.test(script)) standInForModel(session.work);
     if (ok) {
       session.cwd = next;
       for (const [name, value] of shellVariables(set2)) {
@@ -248,7 +260,6 @@ async function main() {
       exitCode: result.exitCode,
       stdout,
       stderr: result.stderr.toString(),
-      stoodIn: stoodIn().slice(before),
     };
   }
 
@@ -297,10 +308,19 @@ async function main() {
     if (!update || session.background.length === 0) return;
     try {
       const answer = (await (await fetch(`http://127.0.0.1:${port}/v1/records?limit=1000`, { headers: { connection: "close" } })).json()) as {
-        records?: { source: string; key: string; identity: string | null }[];
+        records?: {
+          source: string;
+          key: string;
+          identity: string | null;
+          evidence: { key: string; start: number; end: number } | null;
+        }[];
       };
       for (const record of answer.records ?? []) {
-        const shown = shownIds[`${record.source}:${record.key}`];
+        // A record found in a document is named by the document and its place there.
+        const key = record.evidence
+          ? `${record.evidence.key}[${record.evidence.start}-${record.evidence.end}]`
+          : record.key;
+        const shown = shownIds[`${record.source}:${key}`];
         if (!shown || !record.identity) continue;
         if (session.ids.shown.has(shown) || session.ids.printed.has(record.identity)) continue;
         session.ids.shown.set(shown, record.identity);
@@ -365,11 +385,9 @@ async function main() {
             const listens = script.includes("--listen");
             const command = listens || port === DEFAULT_PORT ? script : `${script} --listen 127.0.0.1:${port}`;
             const set = [...session.variables].map(([key, value]) => `${key}=${value}`).join("\n");
-            // Without the stand-in, which would run the server as a child of its
-            // own that stopping it here would leave behind.
             const child = spawn(["sh", "-c", `${set}\nexec ${command} 2>&1`], {
               cwd: session.cwd,
-              env: { ...env, PATH: `${dirname(spoolBin)}:${process.env["PATH"] ?? ""}` },
+              env,
               stdout: "pipe",
             });
             let log = "";
@@ -402,7 +420,6 @@ async function main() {
             }
             const result = runScript(script);
             ran++;
-            for (const stood of result.stoodIn) note(notYet, stood, where);
             const answer = result.stdout + result.stderr;
             const worked = result.ok && !answer.trimStart().startsWith('{"error"');
             if (missing !== undefined) {
@@ -456,8 +473,7 @@ async function main() {
             continue;
           }
           await nameIdentities();
-          const printed = tidy(last.output);
-          const actual = directives.has("without record column") ? withoutRecordColumn(printed) : printed;
+          const actual = tidy(last.output);
           const expected = tidy(block.body);
           compared++;
           if (update) {
@@ -474,7 +490,7 @@ async function main() {
         if (block.title && block.title !== "Output") {
           const target = join(session.cwd, block.title);
           if (directives.has("existing")) {
-            const found = existsSync(target) ? readFileSync(target, "utf8") : undefined;
+            const found = existsSync(target) ? (sampleExtractors.get(realpathSync(target)) ?? readFileSync(target, "utf8")) : undefined;
             compared++;
             if (found === undefined) {
               fail(where, `${block.title} does not exist`);

@@ -29,7 +29,7 @@ spool build
 
 ```text title="Output"
 manifest  ./.spool/manifest.json
-hash      afe4902cdc6e283cd2293de37cce8e95c4d7afc3782464325b2127319ce92290
+hash      d7d4b712d86302152897a67a5924cd1c2e26594e049685c2f007177e20633946
 types     company
 wrote     ./Dockerfile
 wrote     ./.dockerignore
@@ -45,7 +45,7 @@ spool apply --store spool.duckdb
 
 ```text title="Output"
 store     spool.duckdb
-manifest  afe4902cdc6e283cd2293de37cce8e95c4d7afc3782464325b2127319ce92290
+manifest  d7d4b712d86302152897a67a5924cd1c2e26594e049685c2f007177e20633946
 declared  company
 ```
 
@@ -60,12 +60,12 @@ spool serve --store spool.duckdb --listen 127.0.0.1:7765
 ```
 
 ```text title="Output"
-manifest  afe4902cdc6e283cd2293de37cce8e95c4d7afc3782464325b2127319ce92290
+manifest  d7d4b712d86302152897a67a5924cd1c2e26594e049685c2f007177e20633946
 accounts  spool.auth.sqlite
 listening on http://127.0.0.1:7765
 studio    http://127.0.0.1:7765/
 mcp       http://127.0.0.1:7765/mcp
-setup     http://127.0.0.1:7765/setup#5270eb9fbf1cb73f38aa70cab58f5d848c08c33990a3f4bb4d9337abf154dec7
+setup     http://127.0.0.1:7765/setup#8903cd40f174a29b7c4f4151e5f06e9105827d80da047fb278e18ca1cab9193c
 no admin can sign in yet: open that link, at the address people reach this server by, to make the first account
 ```
 
@@ -106,7 +106,7 @@ pipeline  2026-11-18T17:22:33.382Z  spool token add  never
 A caller sends it as a bearer token, and what it changes is recorded as `agent:pipeline`:
 
 ```sh
-curl -s -X POST http://127.0.0.1:7765/v1/ingest -H "Authorization: Bearer $TOKEN" -d '{"source": "crm", "entity_type": "company", "wait_ms": 5000, "rows": [{"id": "c-1", "name": "Acorn Tools", "country": "GB"}]}'
+curl -s -X POST http://127.0.0.1:7765/v1/load -H "Authorization: Bearer $TOKEN" -d '{"source": "crm", "entity_type": "company", "wait_ms": 5000, "rows": [{"id": "c-1", "name": "Acorn Tools", "country": "GB"}]}'
 ```
 
 Without one, the server says so:
@@ -127,8 +127,8 @@ SPOOL_TOKEN=$TOKEN spool show
 
 ```text title="Output"
 server     http://127.0.0.1:7765
-api        v1, engine 0.1.0, store format 9
-manifest   afe4902cdc6e283cd2293de37cce8e95c4d7afc3782464325b2127319ce92290
+api        v1, engine 0.1.0, store format 11
+manifest   d7d4b712d86302152897a67a5924cd1c2e26594e049685c2f007177e20633946
 head       log position 0
 documents  0
 
@@ -137,7 +137,7 @@ entity type `company`
   identities  0
   review      0 items open
 
-extractor `companies` (typescript, extractors/companies.ts)
+extractor `companies` (python, extractors/companies.py)
 ```
 
 There are two kinds of caller. An admin adds people and makes tokens. Everyone else, and every token, can read everything and change identities. There are no finer permissions, and nothing limits a caller to one entity type or one source.
@@ -151,7 +151,7 @@ docker build -t companies .
 docker run -p 7765:7765 -v spool-data:/data companies
 ```
 
-The Dockerfile that `spool build` writes starts from the image `ghcr.io/alexpatow/spool:0.1.0`, builds the manifest in it, and runs `spool serve` with the store at `/data/spool.duckdb`, on a volume. A changed project is applied with the server stopped: `docker run --rm -v spool-data:/data companies apply --manifest /spool/manifest.json`.
+The Dockerfile that `spool build` writes starts from the image `ghcr.io/alexpatow/spool:0.1.0`, builds the manifest in it, and runs `spool serve` with the store at `/data/spool.duckdb`, on a volume. For a project with a Python file, as the sample project has, it also copies `uv` in and runs `spool build --install`, which fetches what each strategy and extractor depends on, the sample extractor's model with it, so that the server fetches nothing as it runs. A changed project is applied with the server stopped: `docker run --rm -v spool-data:/data companies apply`.
 
 ## Backing up
 
@@ -170,6 +170,6 @@ The server stops on Ctrl-C or SIGTERM and prints `stopping`. It takes no new req
 ## What to watch
 
 - **Memory.** A match holds its candidate pairs in memory. Five million records with 76 million candidate pairs peaked at 13.4 GB in the repository's benchmark.
-- **One writer.** Calls that change the store run one after another. A long match holds up an ingest that arrives during it.
-- **`GET /v1/healthz`** answers `{"status":"ok"}` with no sign-in. There are no metrics and no tracing.
+- **One writer.** Calls that change the store run one after another. A long match holds up a load that arrives during it.
+- **`GET /healthz`** answers `{"status":"ok"}` with no sign-in. There are no metrics and no tracing.
 - **User code.** Strategies and extractors that are `.py` files run with `uv`, and `.ts` files with `bun`. Both must be on the server's machine, and each run is limited by `--task-timeout`, 600 seconds unless set.

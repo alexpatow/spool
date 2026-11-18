@@ -28,7 +28,6 @@ An ID that never changes by itself has a price, and this is it.
 - **The result depends on the order rows arrive in.** Two records that arrive together and match become one identity. The same two, each placed alone before a rule matched them, stay apart until someone merges them.
 - **A better rule suggests, and changes nothing.** A rematch under new rules lists the merges the rules now imply. A person or an agent makes them. The suggestions are in the run's report and nowhere else.
 - **A match never splits an identity.** A wrong match that was committed stays until someone splits it. When a row that held an identity together is taken back, a review item asks whether to split, and nothing is split by itself.
-- **A row that changes from A to B and back to A stays at B.** The second A is content the server has seen under that key, so it is ignored. This is a known fault.
 - **An earlier version of a row still counts.** It stays in its identity and still matches, so a row that was corrected can raise a review item through the version it replaced.
 
 [Matching](/docs/concepts/matching#the-cost-of-ids-that-stay) shows the first two with rows.
@@ -37,12 +36,14 @@ An ID that never changes by itself has a price, and this is it.
 
 ### Getting it
 
-- Releases are an archive for Linux on x86-64 and arm64 and for macOS on Apple silicon, and a container image. There is no Homebrew, apt or Cargo package and no Windows build.
+- Releases are an archive for Linux on x86-64 and arm64 and for macOS on Apple silicon, and a container image. There is no Homebrew, apt or Cargo package, and no build for Windows or for a Mac with an Intel processor.
+- The Linux builds need version 2.34 or later of the GNU C library. They do not run on Alpine, whose C library is musl. The container image runs wherever Docker does.
 - Spool is two files, the binary and the DuckDB library in `lib` beside it. The archive and the image hold both. There is no single static binary.
 
 ### Loading and matching
 
 - `spool load` reads CSV files. Nothing reads a database, a warehouse or a file store.
+- A row is at whatever was loaded last. Spool does not know which of two files is newer, so an older file loaded after a newer one moves the rows that changed between them back to what the older one says, as new versions.
 - A row that was loaded by mistake cannot be erased. It can be taken back with `spool retract`: it leaves its identity and no later match looks at it, and it stays in the store. So there is no way to remove a person's data on request.
 - The rules by which a match places a record, starts an identity or leaves a record for review are fixed. There is no setting for them.
 - A rule sees the features of two records and not their sources. It cannot say that one source never holds the same thing twice.
@@ -53,8 +54,9 @@ An ID that never changes by itself has a price, and this is it.
 
 ### Extraction
 
-- A pattern extractor finds what a regular expression finds.
-- An extractor that asks a model is a Python or TypeScript file and needs `uv` or `bun` where the server runs. No model is included, and none has been run in the repository's tests.
+- An extractor is a Python or TypeScript file and needs `uv` or `bun` where the server runs.
+- No model is in the binary. The sample extractor fetches a small one on its first run, about 330 MB with what it needs, and finds what the word it is given asks for: given "company", it misses most universities, parties and charities.
+- The repository's tests run that model only when they are asked to, and no test calls a hosted model.
 - Documents are text: Spool does not read PDF or HTML.
 - An extractor that changed does not read the documents again until it is run with `--again`.
 
@@ -81,7 +83,7 @@ An ID that never changes by itself has a price, and this is it.
 ### Clients
 
 - There is no published client library. `spool schema` prints the JSON Schema of the API.
-- The command line loads, matches, takes rows back, shows and explains. It cannot merge, split, undo, decide a review item or approve a draft. Those are HTTP calls, MCP tools, or buttons in the studio.
+- The command line loads, extracts, matches, takes rows back, shows and explains. It cannot merge, split, undo, decide a review item or approve a draft. Those are HTTP calls, MCP tools, or buttons in the studio.
 - Nothing is pushed to other systems when an identity changes. A consumer reads the log from the position it last saw.
 - A changeset names records by their long IDs. `source:key` works on the command line and for explaining a pair.
 
@@ -89,7 +91,7 @@ An ID that never changes by itself has a price, and this is it.
 
 - There is no backup command. A backup is a copy of the store file, taken while the server is stopped.
 - Until 1.0, nothing is promised about a store written by one version opening in the next.
-- There are no metrics and no tracing. `GET /v1/healthz` says the server is up.
+- There are no metrics and no tracing. `GET /healthz` says the server is up.
 
 ## How large
 
@@ -123,4 +125,4 @@ Each of these works and costs you something.
 - `spool show records` puts `c-10` before `c-2`, because keys are text.
 - `spool dev` says nothing when a broken file is fixed by removing it.
 - A call that is refused still uses up a run number.
-- Strategies and extractors need `uv` or `bun` on the machine, and nothing says so until one is run.
+- Strategies and extractors need `uv` or `bun` on the machine. `spool init` says so when `uv` is missing, and nothing else does until one is run.

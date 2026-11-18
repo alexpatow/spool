@@ -5,7 +5,7 @@ description: Every file a Spool project can hold, with an example of each, the k
 
 A Spool project is a directory, meant to be kept in Git. It declares where records come from, what kinds of thing they describe and how those are matched. `spool dev` reads it as you save, and `spool build` compiles it into the one file a deployed server reads.
 
-This page is a reference: every file a project can hold, with an example of each and a link to the page that explains it. The examples are the files `spool init` writes, and two that it does not.
+This page is a reference: every file a project can hold, with an example of each and a link to the page that explains it. The examples are files `spool init` writes, and one that it does not.
 
 {/* sample: new session */}
 
@@ -36,7 +36,7 @@ companies/
 │       ├── strategies/             optional: matching written in Python or TypeScript
 │       └── extract.md              optional: what an extractor is told about the type
 ├── extractors/
-│   └── companies.yaml              the extractor `companies`: a pattern
+│   └── companies.py                the extractor `companies`: a Python file that asks a small model
 ├── samples/                        sample rows and a sample note. Not read by the server
 ├── .gitignore
 └── .spool/                         the development store and the compiled manifest. Not committed
@@ -72,8 +72,8 @@ There are no other keys, and a file with one is refused.
 {/* sample: existing */}
 
 ```yaml title="sources/notes.yaml"
-# Call notes. The columns are what a record found in a note may say: the
-# attributes an extractor gives it.
+# A source of documents: here, notes of calls. An extractor finds records in
+# them, and `columns` is everything such a record may say.
 columns: [name]
 ```
 
@@ -98,7 +98,8 @@ lambda name: lower(trim(name))
 ```yaml title="entities/company/entity.yaml"
 # `features` is what records are compared by, and `label` is the feature a
 # record is called by. `mapping` says, for each source, which column each
-# feature comes from, and the transform it goes through if it needs one.
+# feature comes from, and the transform it goes through if it needs one. A
+# record found in a note has no country.
 label: name
 features: [name, name_key, country]
 
@@ -158,21 +159,7 @@ l.country <> r.country
 
 ## Extractors
 
-`extractors/<name>.yaml`, `.py` or `.ts`. An extractor finds records in documents. Explained in [Extraction](/docs/concepts/extraction), which writes one of each kind.
-
-{/* sample: existing */}
-
-```yaml title="extractors/companies.yaml"
-entity_type: company
-attribute: name
-pattern: '(?:[A-Z][A-Za-z]+ )+(?:Ltd|Inc|LLC|GmbH|plc)\b'
-```
-
-| Key of a pattern | Meaning |
-| --- | --- |
-| `entity_type` | The type of thing each match is |
-| `pattern` | A regular expression, in the syntax of Rust's `regex` crate |
-| `attribute` | The column of the source that the matched text goes into |
+`extractors/<name>.py` or `.ts`. An extractor finds records in documents. Explained in [Extraction](/docs/concepts/extraction), which shows the one `spool init` writes, `extractors/companies.py`, and writes one in each language.
 
 A `.py` file is run with [uv](https://docs.astral.sh/uv/) and a `.ts` file with [Bun](https://bun.sh), as a child process of the server.
 
@@ -216,23 +203,21 @@ spool dev
 
 ```sh
 spool load samples/crm-1.csv
-curl -s -X POST http://127.0.0.1:7765/v1/runs -d '{"entity_type": "company", "strategy": {"name": "same_key"}, "wait_ms": 60000}'
+curl -s -X POST http://127.0.0.1:7765/v1/match -d '{"entity_type": "company", "strategy": {"name": "same_key"}, "wait_ms": 60000}'
 ```
 
 ```sh
 spool show records
 ```
 
-{/* sample: without record column */}
-
 ```text title="Output"
 source and key  name                 identity
-crm:c-1         Acorn Tools          01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
-crm:c-2         ACORN TOOLS          01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
-crm:c-3         Acorn Tools Ltd      01a1efb8-e2d8-7626-9770-de4fd562e3dd
-crm:c-4         Larkfield Logistics  01a1ef8e-5a8d-76d4-acb6-2bb802d5ca25
-crm:c-5         Halden Group         01a1ef8e-5a8d-76d4-acb6-2bb65a02262a
-crm:c-6         Halden Group         01a1ef8e-5a8d-76d4-acb6-2bb65a02262a
+crm:c-1         Acorn Tools          01a1efc6-41cd-775d-8758-e7300637659a
+crm:c-2         ACORN TOOLS          01a1efc6-41cd-775d-8758-e7300637659a
+crm:c-3         Acorn Tools Ltd      01a1f0a3-638e-74a5-a177-9bffb14d9c38
+crm:c-4         Larkfield Logistics  01a1efc6-41cd-775d-8758-e733aa086f7d
+crm:c-5         Halden Group         01a1efc6-41cd-775d-8758-e7329447fd9a
+crm:c-6         Halden Group         01a1efc6-41cd-775d-8758-e7329447fd9a
 ```
 
 Equal keys are a weaker rule than close names, so "Acorn Tools Ltd" is alone here. A strategy replaces the rules, the country rule among them, so the two Halden Groups are one. `spool info` lists what the project declares:
@@ -243,7 +228,7 @@ spool info
 
 ```text title="Output"
 project   .
-manifest  3510ed2f10cf81a0e15b25b760a429c216db2aa0210d94a2f92133b11ed1493e
+manifest  43818eb1654f89696c341d3bea519c22dd3bfb68f67e8f01edfdb38e59781926
 
 entity type `company`
   features  record_id UUID, name VARCHAR, name_key VARCHAR, country VARCHAR
@@ -254,7 +239,7 @@ entity type `company`
   match     similar_name
   strategy  same_key (python, entities/company/strategies/same_key.py)
 
-extractor `companies` (pattern, extractors/companies.yaml)
+extractor `companies` (python, extractors/companies.py)
 ```
 
 The repository has a strategy that runs Splink, in [`benchmarks/resolution/people`](https://github.com/alexpatow/spool/tree/main/benchmarks/resolution/people/entities/person/strategies).

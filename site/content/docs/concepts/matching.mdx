@@ -113,43 +113,35 @@ spool match
 ```
 
 ```text title="Output"
-source  crm
-type    company
-read    3 rows from crm-3.csv
-loaded  3 new, 0 already held, 0 new versions
+loaded  3 rows into source `crm`, type `company`: 3 new
 next    `spool match` places them in identities
-run         8
-type        company
-examined    3 records
-candidates  5 pairs
+run         8, type `company`
+examined    3 records, 5 candidate pairs
 judgements  3 match, 1 no_match
 placed      3 records, 2 identities created
-left out    0 records in 0 review items
 ```
 
 ```sh
 spool show records
 ```
 
-{/* sample: without record column */}
-
 ```text title="Output"
 source and key  name                 identity
-crm:c-1         Acorn Tools          01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
-crm:c-10        Acorn Tooling        01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
-crm:c-11        The Halden Group     01a1efa3-c04f-72ce-a6fa-c418c8546556
-crm:c-12        Kestrel Analytics    01a1efa3-c04f-72ce-a6fa-c419d96457f4
-crm:c-2         ACORN TOOLS          01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
-crm:c-3         Acorn Tools Ltd      01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
-crm:c-4         Larkfield Logistics  01a1ef8e-5a8d-76d4-acb6-2bb802d5ca25
-crm:c-5         Halden Group         01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae
-crm:c-6         Halden Group         01a1ef8e-5a8d-76d4-acb6-2bb65a02262a
-crm:c-7         Larkfeild Logistics  01a1ef8e-5a8d-76d4-acb6-2bb802d5ca25
-crm:c-8         Kestrel Analytics    01a1ef8e-5f06-7397-9a0c-445aaacfd3fe
-crm:c-9         Acorn Tool           01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
+crm:c-1         Acorn Tools          01a1efc6-41cd-775d-8758-e7300637659a
+crm:c-10        Acorn Tooling        01a1efc6-41cd-775d-8758-e7300637659a
+crm:c-11        The Halden Group     01a1f0a0-8d53-77b4-bc9c-978de1e67f11
+crm:c-12        Kestrel Analytics    01a1f0a0-8d53-77b4-bc9c-978e6d03a9bf
+crm:c-2         ACORN TOOLS          01a1efc6-41cd-775d-8758-e7300637659a
+crm:c-3         Acorn Tools Ltd      01a1efc6-41cd-775d-8758-e7300637659a
+crm:c-4         Larkfield Logistics  01a1efc6-41cd-775d-8758-e733aa086f7d
+crm:c-5         Halden Group         01a1efc6-41cd-775d-8758-e7329447fd9a
+crm:c-6         Halden Group         01a1efc6-41cd-775d-8758-e731c61371cb
+crm:c-7         Larkfeild Logistics  01a1efc6-41cd-775d-8758-e733aa086f7d
+crm:c-8         Kestrel Analytics    01a1efc6-42c0-7776-b736-83fde0cb4498
+crm:c-9         Acorn Tool           01a1efc6-41cd-775d-8758-e7300637659a
 ```
 
-That is the listing without its first column, of record IDs. What happened to each new row:
+What happened to each new row:
 
 - **`crm:c-10`, Acorn Tooling, joined Acorn Tools.** The names are close enough for the match rule. If Acorn Tooling is another company, this is a wrong match, and a looser rule makes more of them. [Identities](/docs/concepts/identities#split) splits it.
 - **`crm:c-11`, The Halden Group, got an identity of its own.** Its name begins with `the `, so the block rule never put it beside `halden group`. That is a miss, and the last section of this page fixes it.
@@ -162,14 +154,14 @@ spool explain crm:c-8 crm:c-12
 ```
 
 ```text title="Output"
-`crm:c-12` belongs to identity 01a1efa3-c04f-72ce-a6fa-c419d96457f4 and `crm:c-8` to identity 01a1ef8e-5f06-7397-9a0c-445aaacfd3fe.
+`crm:c-12` belongs to identity 01a1f0a0-8d53-77b4-bc9c-978e6d03a9bf and `crm:c-8` to identity 01a1efc6-42c0-7776-b736-83fde0cb4498.
 Run 8 (strategy `rules`) judged them `no_match` (no_match rule `different_country` held).
 `crm:c-12` was placed at log position 3 by `engine` (reconcile run 9, "reconcile new records").
 `crm:c-8` was placed at log position 2 by `engine` (reconcile run 6, "reconcile new records").
 By the rules as they are now, block rule `name_prefix` makes them a candidate pair and no_match rule `different_country` holds, so they would be judged `no_match`.
 
-left   56ee88f4-49f2-e913-e596-70c5288afd7f  crm:c-12  identity 01a1efa3-c04f-72ce-a6fa-c419d96457f4
-right  7da2b0d2-3601-e533-efa5-e1068cce5344  crm:c-8   identity 01a1ef8e-5f06-7397-9a0c-445aaacfd3fe
+left   56ee88f4-49f2-e913-e596-70c5288afd7f  crm:c-12  identity 01a1f0a0-8d53-77b4-bc9c-978e6d03a9bf
+right  7da2b0d2-3601-e533-efa5-e1068cce5344  crm:c-8   identity 01a1efc6-42c0-7776-b736-83fde0cb4498
 
 features
             left               right
@@ -193,9 +185,9 @@ spool show runs --limit 2
 ```
 
 ```text title="Output"
-run  kind       status     about           started
-9    reconcile  succeeded                  2026-11-18T17:10:48Z
-8    match      succeeded  company, rules  2026-11-18T17:10:48Z
+run  kind       status     about           started by                                 started
+9    reconcile  succeeded                  user:01a1f0a0-8c93-757a-852f-1cc4a87967ed  2026-11-18T21:46:56Z
+8    match      succeeded  company, rules  user:01a1f0a0-8c93-757a-852f-1cc4a87967ed  2026-11-18T21:46:56Z
 ```
 
 ## The cost of IDs that stay
@@ -220,22 +212,18 @@ spool match --rematch
 ```
 
 ```text title="Output"
-run         10
-type        company
-examined    0 records
-candidates  15 pairs
+run         10, type `company`
+examined    0 records without an identity and every record placed before, 15 candidate pairs
 judgements  11 match, 3 no_match
 placed      0 records, 0 identities created
-left out    0 records in 0 review items
-
-suggested merge: 01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae and 01a1efa3-c04f-72ce-a6fa-c418c8546556 (1 match, 0 no_match between their members)
+suggested   1 merge, 0 splits: `spool show runs 10` lists them
 ```
 
 The run placed nothing and moved nothing. It reports a **suggested merge**: two identities with matches between their members. A person or an agent who agrees merges them, which [Identities](/docs/concepts/identities#merge) shows. A rematch reports suggested splits the same way, when a no_match rule holds between two members of one identity.
 
 A better matcher run over old data produces a list of suggestions, not a change to IDs that other systems have stored.
 
-The suggestions are part of the run's report and are not kept as review items. `spool show runs <run>` prints them again for any run, and `GET /v1/runs/<run>` has them as JSON. Nothing sorts or pages them, so a rule change that suggests thousands of merges gives a report of thousands of lines.
+The suggestions are part of the run's report and are not kept as review items. `spool show runs <run>` lists them for any run, and `GET /v1/runs/<run>` has them as JSON. Nothing sorts or pages them, so a rule change that suggests thousands of merges gives a report of thousands of lines.
 
 ## Other ways to judge
 
