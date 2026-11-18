@@ -359,14 +359,31 @@ fn bun(arguments: &[&str]) {
     );
 }
 
+/// The part of the package's test files that this run takes: `1/2` is the
+/// first of two. All of them, unless `SPOOL_STUDIO_SHARD` names a part, as
+/// it does where the parts are run on machines of their own.
+fn shard() -> Option<String> {
+    std::env::var("SPOOL_STUDIO_SHARD")
+        .ok()
+        .filter(|shard| !shard.is_empty())
+}
+
 #[test]
 #[ignore = "needs bun, and the network the first time"]
 fn the_studio_this_binary_serves_is_built_from_its_source_and_passes_its_tests() {
     bun(&["install", "--frozen-lockfile"]);
-    bun(&["run", "typecheck"]);
-    // The files compiled into the binary are what the source builds to.
-    bun(&["run", "check-build"]);
+    let shard = shard();
+    // The checks are in no test file, so no part holds them: the first part
+    // makes them, as a run of every part does.
+    if shard.as_deref().is_none_or(|shard| shard.starts_with("1/")) {
+        bun(&["run", "typecheck"]);
+        // The files compiled into the binary are what the source builds to.
+        bun(&["run", "check-build"]);
+    }
     // Every screen is rendered against a real server of this binary. The
     // test files run side by side, each with servers of its own.
-    bun(&["run", "test", "--parallel"]);
+    let mut tests = vec!["run", "test", "--parallel"];
+    let part = shard.map(|shard| format!("--shard={shard}"));
+    tests.extend(part.as_deref());
+    bun(&tests);
 }
