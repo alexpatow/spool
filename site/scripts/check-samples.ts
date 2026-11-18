@@ -66,6 +66,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { type Ids, asShown, noIds, sameOutput, tidy } from "./compare-output";
 import { notBuilt } from "./not-built";
+import { movePorts } from "./ports";
 import { shownIds } from "./shown-ids";
 import {
   type Block, blocksOf, directivesOf, shellVariables, withoutRecordColumn,
@@ -152,14 +153,8 @@ async function main() {
     process.exit(2);
   }
   // The pages use 7765 for `spool dev` and 7766 for a second server.
-  const address = (text: string) =>
-    text
-      .replaceAll(`127.0.0.1:${DEFAULT_PORT}`, `127.0.0.1:${port}`)
-      .replaceAll(`127.0.0.1:${DEFAULT_PORT + 1}`, `127.0.0.1:${port + 1}`);
-  const unaddress = (text: string) =>
-    text
-      .replaceAll(`127.0.0.1:${port + 1}`, `127.0.0.1:${DEFAULT_PORT + 1}`)
-      .replaceAll(`127.0.0.1:${port}`, `127.0.0.1:${DEFAULT_PORT}`);
+  const address = (text: string) => movePorts(text, DEFAULT_PORT, port);
+  const unaddress = (text: string) => movePorts(text, port, DEFAULT_PORT);
 
   // The stand-in for commands that are not built goes first on the search path.
   const tools = mkdtempSync(join(tmpdir(), "spool-samples-tools-"));

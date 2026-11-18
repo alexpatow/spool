@@ -74,5 +74,5 @@ The difference in design is where an identity comes from. GoldenMatch clusters e
 
 - **The result depends on arrival order.** Splink and Senzing, each in its own way, give the same answer for the same data whatever order it came in. Spool does not. [Matching](/docs/concepts/matching#the-cost-of-ids-that-stay) says why.
 - **No model.** Splink, dedupe and Zingg each learn one. Spool's built-in matcher runs the rules you write. A model can be plugged in as your own code.
-- **Age.** Every project above but GoldenMatch is years older and has users in production. Spool's first commit was on 14 November 2026, and nobody runs it in production yet.
+- **Age.** Every project above but GoldenMatch is years older and has users in production. Spool's first commit was on 14 November 2026.
 - **Scale.** Spool has been run on 5,000,000 records on one machine. Splink's team reports a run over a billion records, which the [landscape survey](https://github.com/alexpatow/spool/blob/main/docs/landscape-survey.md) quotes.

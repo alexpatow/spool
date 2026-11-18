@@ -39,19 +39,21 @@ export interface SampleRecord {
   country?: string;
   /** The place of its identity in `identities`. */
   identity: number;
+  /** The place in `log` of the match that put it there. */
+  match: number;
 }
 
 /** In the order `spool show records` lists them: by source, then by key. */
 export const records: readonly SampleRecord[] = [
-  { source: "crm", key: "c-1", name: "Acorn Tools", country: "GB", identity: 0 },
-  { source: "crm", key: "c-2", name: "ACORN TOOLS", country: "GB", identity: 0 },
-  { source: "crm", key: "c-3", name: "Acorn Tools Ltd", country: "GB", identity: 0 },
-  { source: "crm", key: "c-4", name: "Larkfield Logistics", country: "GB", identity: 1 },
-  { source: "crm", key: "c-5", name: "Halden Group", country: "GB", identity: 2 },
-  { source: "crm", key: "c-6", name: "Halden Group", country: "US", identity: 3 },
-  { source: "crm", key: "c-7", name: "Larkfeild Logistics", country: "GB", identity: 1 },
-  { source: "crm", key: "c-8", name: "Kestrel Analytics", country: "US", identity: 4 },
-  { source: "crm", key: "c-9", name: "Acorn Tool", country: "GB", identity: 0 },
+  { source: "crm", key: "c-1", name: "Acorn Tools", country: "GB", identity: 0, match: 0 },
+  { source: "crm", key: "c-2", name: "ACORN TOOLS", country: "GB", identity: 0, match: 0 },
+  { source: "crm", key: "c-3", name: "Acorn Tools Ltd", country: "GB", identity: 0, match: 0 },
+  { source: "crm", key: "c-4", name: "Larkfield Logistics", country: "GB", identity: 1, match: 0 },
+  { source: "crm", key: "c-5", name: "Halden Group", country: "GB", identity: 2, match: 0 },
+  { source: "crm", key: "c-6", name: "Halden Group", country: "US", identity: 3, match: 0 },
+  { source: "crm", key: "c-7", name: "Larkfeild Logistics", country: "GB", identity: 1, match: 1 },
+  { source: "crm", key: "c-8", name: "Kestrel Analytics", country: "US", identity: 4, match: 1 },
+  { source: "crm", key: "c-9", name: "Acorn Tool", country: "GB", identity: 0, match: 1 },
   ...mentions(["Acorn Tools Ltd", "Larkfield Logistics Ltd", "Brightwater Foods Ltd"], [0, 1, 5]),
 ];
 
@@ -64,6 +66,7 @@ function mentions(names: string[], placed: number[]): SampleRecord[] {
       key: `${note.key}[${start}-${start + name.length}]`,
       name,
       identity: placed[index] ?? 0,
+      match: 2,
     };
   });
 }

@@ -115,8 +115,7 @@ export default function Home() {
             </Typography.P>
             <CodeBlock>{server}</CodeBlock>
             <Typography.Muted>
-              Linux or macOS on Apple silicon. Version {site.version}, {site.licence} licence. Nobody
-              runs it in production yet.
+              Linux or macOS on Apple silicon. Version {site.version}, {site.licence} licence.
             </Typography.Muted>
           </div>
           <div>

@@ -1,5 +1,7 @@
+"use client";
+
 import * as stylex from "@stylexjs/stylex";
-import { Fragment } from "react";
+import { Fragment, useState } from "react";
 
 import { Mark } from "@/components/brand";
 import { identities, log, note, records } from "@/lib/sample";
@@ -9,13 +11,13 @@ import { colors, display, linen, spacing, typography } from "@/styles/shelf/toke
 /** The heights the threads are drawn against, in pixels: a column's heading, and one row. */
 const HEAD = 36;
 const ROW = 28;
-/** The identity whose thread is drawn in the one colour. */
-const SHOWN = 0;
+/** Room under the last record, which the note beside it needs. */
+const FOOT = 84;
+/** The identity that is lit when nothing else is chosen, and on a page without JavaScript. */
+const DEFAULT = 0;
 
 const rows = records.filter((record) => record.source === "crm");
 const found = records.filter((record) => record.source === "notes");
-/** Room under the last record, which the note beside it needs. */
-const FOOT = 84;
 const BODY = records.length * ROW + FOOT;
 const card = BODY / identities.length;
 
@@ -38,15 +40,51 @@ function members(identity: number) {
   return `${held.length} ${held.length === 1 ? "record" : "records"} · ${sources} ${sources === 1 ? "source" : "sources"}`;
 }
 
+/** The identity of the row, record, name or identity that an event came from, if it came from one. */
+function identityAt(target: EventTarget | null): number | undefined {
+  if (!(target instanceof Element)) return undefined;
+  const value = target.closest("[data-identity]")?.getAttribute("data-identity");
+  return value == null ? undefined : Number(value);
+}
+
 /**
  * The front page's first screen: what came in, the records it became, and the
  * identities they were placed in, with a thread from each record to its
  * identity. It is the sample project of Getting started after its last step.
+ *
+ * One identity is lit at a time, with its records, the rows and the name in
+ * the note they came from, and the matches that placed them. Pointing at any
+ * of those, or moving the focus to a record or an identity, lights its
+ * identity. A tap does the same and stays.
  */
 export function FirstScreen() {
+  const [active, setActive] = useState(DEFAULT);
   const height = HEAD + BODY;
+  const choose = (target: EventTarget | null) => {
+    const identity = identityAt(target);
+    if (identity !== undefined) setActive(identity);
+  };
+  // The lit threads are drawn last, so they lie over the others.
+  const strands = records
+    .map((record, index) => ({ record, index }))
+    .sort((a, b) => Number(a.record.identity === active) - Number(b.record.identity === active));
+
   return (
-    <figure {...stylex.props(styles.figure)} aria-label="The sample project: rows and a note, the records they became, and their identities">
+    <figure
+      {...stylex.props(styles.figure)}
+      aria-label="The sample project: rows and a note, the records they became, and their identities"
+      onPointerOver={(event) => {
+        if (event.pointerType === "mouse") choose(event.target);
+      }}
+      onPointerLeave={(event) => {
+        if (event.pointerType === "mouse") setActive(DEFAULT);
+      }}
+      onFocus={(event) => choose(event.target)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setActive(DEFAULT);
+      }}
+      onClick={(event) => choose(event.target)}
+    >
       <div {...stylex.props(styles.panel)}>
         <div {...stylex.props(styles.column, styles.sources)}>
           <div {...stylex.props(styles.head)}>
@@ -54,7 +92,11 @@ export function FirstScreen() {
             <span {...stylex.props(styles.aside)}>samples/crm-1.csv, crm-2.csv</span>
           </div>
           {rows.map((record) => (
-            <div key={record.key} {...stylex.props(styles.line)}>
+            <div
+              key={record.key}
+              data-identity={record.identity}
+              {...stylex.props(styles.line, record.identity === active && styles.lineLit)}
+            >
               {record.key},{record.name},{record.country}
             </div>
           ))}
@@ -67,7 +109,11 @@ export function FirstScreen() {
               part.identity === undefined ? (
                 <Fragment key={index}>{part.text}</Fragment>
               ) : (
-                <mark key={index} {...stylex.props(styles.mention, part.identity === SHOWN && styles.mentionShown)}>
+                <mark
+                  key={index}
+                  data-identity={part.identity}
+                  {...stylex.props(styles.mention, part.identity === active && styles.mentionLit)}
+                >
                   {part.text}
                 </mark>
               ),
@@ -82,26 +128,34 @@ export function FirstScreen() {
             <span {...stylex.props(styles.count)}>{records.length}</span>
           </div>
           <table {...stylex.props(styles.table)}>
-            <thead {...stylex.props(styles.hidden)}>
+            {/* The header row is read out and not seen. It also sets the widths of the columns. */}
+            <thead>
               <tr>
-                <th>Source and key</th>
-                <th>Name</th>
-                <th>Identity</th>
+                <th {...stylex.props(styles.heading, styles.key)}>
+                  <span {...stylex.props(styles.hidden)}>Source and key</span>
+                </th>
+                <th {...stylex.props(styles.heading)}>
+                  <span {...stylex.props(styles.hidden)}>Name</span>
+                </th>
               </tr>
             </thead>
             <tbody>
-              {records.map((record) => (
-                <tr key={`${record.source}:${record.key}`} {...stylex.props(styles.row)}>
-                  <td {...stylex.props(styles.cell, styles.key)}>
-                    <span {...stylex.props(styles.source)}>{record.source}:</span>
-                    {record.key}
-                  </td>
-                  <td {...stylex.props(styles.cell, styles.name)}>{record.name}</td>
-                  <td {...stylex.props(styles.cell, styles.placed, record.identity === SHOWN && styles.thread)}>
-                    …{identities[record.identity]?.id.slice(-4)}
-                  </td>
-                </tr>
-              ))}
+              {records.map((record) => {
+                const lit = record.identity === active;
+                return (
+                  <tr
+                    key={`${record.source}:${record.key}`}
+                    tabIndex={0}
+                    data-identity={record.identity}
+                    {...stylex.props(styles.row, lit && styles.rowLit)}
+                  >
+                    <td {...stylex.props(styles.cell, styles.key, lit && styles.thread)}>
+                      {record.source}:{record.key}
+                    </td>
+                    <td {...stylex.props(styles.cell, styles.name, lit && styles.nameLit)}>{record.name}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
           <p {...stylex.props(styles.foot)}>
@@ -116,7 +170,7 @@ export function FirstScreen() {
           preserveAspectRatio="none"
           aria-hidden="true"
         >
-          {records.map((record, index) => {
+          {strands.map(({ record, index }) => {
             const from = HEAD + index * ROW + ROW / 2;
             const to = HEAD + record.identity * card + card / 2;
             return (
@@ -125,7 +179,7 @@ export function FirstScreen() {
                 d={`M0 ${from}C50 ${from} 50 ${to} 100 ${to}`}
                 fill="none"
                 vectorEffect="non-scaling-stroke"
-                {...stylex.props(styles.strand, record.identity === SHOWN && styles.strandShown)}
+                {...stylex.props(styles.strand, record.identity === active && styles.strandLit)}
               />
             );
           })}
@@ -137,17 +191,27 @@ export function FirstScreen() {
             <span {...stylex.props(styles.aside)}>one ID each</span>
             <span {...stylex.props(styles.count)}>{identities.length}</span>
           </div>
-          {identities.map((identity, index) => (
-            <div key={identity.id} {...stylex.props(styles.identity)} style={{ height: card }}>
-              <div {...stylex.props(styles.identityTop)}>
-                <Mark width={16} height={16} {...stylex.props(styles.mark, index === SHOWN && styles.thread)} />
-                <span {...stylex.props(styles.identityName)}>{identity.name}</span>
-                {"detail" in identity ? <span {...stylex.props(styles.detail)}>{identity.detail}</span> : null}
-                <span {...stylex.props(styles.members)}>{members(index)}</span>
-              </div>
-              <div {...stylex.props(styles.id, index === SHOWN && styles.thread)}>{identity.id}</div>
-            </div>
-          ))}
+          {identities.map((identity, index) => {
+            const lit = index === active;
+            return (
+              <button
+                key={identity.id}
+                type="button"
+                data-identity={index}
+                aria-pressed={lit}
+                {...stylex.props(styles.identity, lit && styles.identityLit)}
+                style={{ height: card }}
+              >
+                <span {...stylex.props(styles.identityTop)}>
+                  <Mark width={16} height={16} {...stylex.props(styles.mark, lit && styles.thread)} />
+                  <span {...stylex.props(styles.identityName, lit && styles.nameLit)}>{identity.name}</span>
+                  {"detail" in identity ? <span {...stylex.props(styles.detail)}>{identity.detail}</span> : null}
+                  <span {...stylex.props(styles.members)}>{members(index)}</span>
+                </span>
+                <span {...stylex.props(styles.id, lit && styles.thread)}>{identity.id}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -157,12 +221,15 @@ export function FirstScreen() {
           <span {...stylex.props(styles.aside)}>append-only</span>
         </div>
         <ol {...stylex.props(styles.ruler)}>
-          {log.map((entry) => (
-            <li key={entry.after} {...stylex.props(styles.tick)}>
-              <span {...stylex.props(styles.position)}>match after {entry.after}</span>
-              <span {...stylex.props(styles.did)}>{entry.did}</span>
-            </li>
-          ))}
+          {log.map((entry, index) => {
+            const lit = records.some((record) => record.identity === active && record.match === index);
+            return (
+              <li key={entry.after} {...stylex.props(styles.tick, lit && styles.tickLit)}>
+                <span {...stylex.props(styles.position, lit && styles.thread)}>match after {entry.after}</span>
+                <span {...stylex.props(styles.did, lit && styles.nameLit)}>{entry.did}</span>
+              </li>
+            );
+          })}
           <li {...stylex.props(styles.tick, styles.next)}>
             <span {...stylex.props(styles.did)}>next</span>
           </li>
@@ -174,19 +241,38 @@ export function FirstScreen() {
 
 const hairline = { borderColor: colors.border, borderStyle: "solid", borderWidth: 0 } as const;
 
+/** Colour only, and nothing for a reader who asked for less motion. */
+const quietly = {
+  transitionDuration: {
+    default: "140ms",
+    "@media (prefers-reduced-motion: reduce)": "0s",
+  },
+  transitionProperty: "color, background-color, border-color, stroke",
+  transitionTimingFunction: "ease-out",
+} as const;
+
+const ring = {
+  outline: {
+    default: "none",
+    ":focus-visible": `2px solid ${colors.foreground}`,
+  },
+  outlineOffset: -2,
+} as const;
+
 const styles = stylex.create({
   figure: {
     ...hairline,
     margin: 0,
     borderWidth: 1,
     backgroundColor: colors.card,
+    cursor: "default",
     textAlign: "start",
   },
   panel: {
     display: "grid",
     gridTemplateColumns: {
       default: "minmax(0, 1.05fr) minmax(0, 1.45fr) 5rem minmax(0, 1.2fr)",
-      [breakpoints.narrow]: "1fr",
+      [breakpoints.narrow]: "minmax(0, 1fr)",
     },
   },
   column: {
@@ -216,6 +302,10 @@ const styles = stylex.create({
     display: "flex",
     height: HEAD,
   },
+  noteHead: {
+    borderTopWidth: 1,
+    height: ROW,
+  },
   label: {
     color: colors.foreground,
     fontSize: "0.6875rem",
@@ -224,28 +314,25 @@ const styles = stylex.create({
     textTransform: "uppercase",
   },
   aside: {
-    color: linen.faint,
+    color: colors.mutedForeground,
     fontSize: "0.75rem",
   },
   count: {
-    color: linen.faint,
+    color: colors.mutedForeground,
     fontFamily: typography.fontFamilyMono,
     fontSize: "0.75rem",
     marginInlineStart: "auto",
-  },
-  noteHead: {
-    borderTopWidth: 1,
-    height: ROW,
   },
   foot: {
     margin: 0,
     paddingInline: spacing["4"],
     paddingTop: spacing["2"],
-    color: linen.faint,
+    color: colors.mutedForeground,
     fontSize: "0.75rem",
     lineHeight: "1.125rem",
   },
   line: {
+    ...quietly,
     paddingInline: spacing["4"],
     boxSizing: "border-box",
     color: colors.mutedForeground,
@@ -256,6 +343,10 @@ const styles = stylex.create({
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
     height: ROW,
+  },
+  lineLit: {
+    backgroundColor: linen.threadWash,
+    color: colors.foreground,
   },
   note: {
     margin: 0,
@@ -266,6 +357,7 @@ const styles = stylex.create({
     lineHeight: "1.25rem",
   },
   mention: {
+    ...quietly,
     backgroundColor: "transparent",
     color: "inherit",
     textDecorationColor: linen.lineStrong,
@@ -273,7 +365,7 @@ const styles = stylex.create({
     textDecorationThickness: 1,
     textUnderlineOffset: 4,
   },
-  mentionShown: {
+  mentionLit: {
     backgroundColor: linen.threadWash,
     color: linen.thread,
     textDecorationColor: linen.thread,
@@ -283,6 +375,12 @@ const styles = stylex.create({
     tableLayout: "fixed",
     width: "100%",
   },
+  heading: {
+    padding: 0,
+    paddingInlineStart: spacing["4"],
+    height: 0,
+    lineHeight: 0,
+  },
   hidden: {
     position: "absolute",
     clip: "rect(0 0 0 0)",
@@ -291,9 +389,15 @@ const styles = stylex.create({
     width: 1,
   },
   row: {
+    ...quietly,
+    ...ring,
     height: ROW,
   },
+  rowLit: {
+    backgroundColor: linen.threadWash,
+  },
   cell: {
+    ...quietly,
     padding: 0,
     paddingInlineStart: spacing["4"],
     fontFamily: typography.fontFamilyMono,
@@ -303,47 +407,60 @@ const styles = stylex.create({
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   },
-  source: {
-    color: linen.faint,
-  },
   key: {
     color: colors.mutedForeground,
-    width: "13.5rem",
+    width: "12.5rem",
   },
   name: {
-    color: colors.foreground,
+    color: colors.mutedForeground,
     fontFamily: typography.fontFamily,
     fontSize: "0.8125rem",
   },
-  placed: {
-    color: linen.faint,
-    display: { default: "none", [breakpoints.narrow]: "table-cell" },
-    width: "3.5rem",
+  nameLit: {
+    color: colors.foreground,
   },
   thread: {
     color: linen.thread,
   },
   threads: {
     display: { default: "block", [breakpoints.narrow]: "none" },
+    pointerEvents: "none",
     width: "100%",
   },
   strand: {
+    ...quietly,
     stroke: linen.lineStrong,
     strokeWidth: 1,
   },
-  strandShown: {
+  strandLit: {
     stroke: linen.thread,
     strokeWidth: 1.25,
   },
   identity: {
     ...hairline,
+    ...quietly,
+    ...ring,
     gap: 2,
+    margin: 0,
+    paddingBlock: 0,
     paddingInline: spacing["4"],
+    appearance: "none",
+    backgroundColor: "transparent",
     borderBottomWidth: { default: 1, ":last-child": 0 },
+    borderRadius: 0,
     boxSizing: "border-box",
+    color: "inherit",
+    cursor: "default",
     display: "flex",
     flexDirection: "column",
+    fontFamily: typography.fontFamily,
+    fontSize: "inherit",
     justifyContent: "center",
+    textAlign: "start",
+    width: "100%",
+  },
+  identityLit: {
+    backgroundColor: linen.threadWash,
   },
   identityTop: {
     gap: spacing["2"],
@@ -352,12 +469,14 @@ const styles = stylex.create({
     minWidth: 0,
   },
   mark: {
+    ...quietly,
     alignSelf: "center",
-    color: linen.faint,
+    color: colors.mutedForeground,
     flexShrink: 0,
   },
   identityName: {
-    color: colors.foreground,
+    ...quietly,
+    color: colors.mutedForeground,
     fontFamily: display.fontFamily,
     fontSize: "1.0625rem",
     fontVariationSettings: '"opsz" 36',
@@ -368,17 +487,20 @@ const styles = stylex.create({
     whiteSpace: "nowrap",
   },
   detail: {
-    color: linen.faint,
+    color: colors.mutedForeground,
+    fontFamily: typography.fontFamily,
     fontSize: "0.75rem",
   },
   members: {
-    color: linen.faint,
+    color: colors.mutedForeground,
     flexShrink: 0,
+    fontFamily: typography.fontFamily,
     fontSize: "0.75rem",
     marginInlineStart: "auto",
   },
   id: {
-    color: linen.faint,
+    ...quietly,
+    color: colors.mutedForeground,
     fontFamily: typography.fontFamilyMono,
     fontSize: "0.6875rem",
     lineHeight: "1rem",
@@ -412,28 +534,33 @@ const styles = stylex.create({
     listStyle: "none",
   },
   tick: {
+    ...quietly,
     gap: 2,
     paddingBlock: 2,
     paddingInline: spacing["3"],
-    borderInlineStartColor: linen.thread,
+    borderInlineStartColor: linen.lineStrong,
     borderInlineStartStyle: "solid",
     borderInlineStartWidth: 1,
     display: "flex",
     flexDirection: "column",
     flexGrow: 1,
   },
+  tickLit: {
+    borderInlineStartColor: linen.thread,
+  },
   next: {
-    borderInlineStartColor: linen.lineStrong,
     borderInlineStartStyle: "dashed",
     flexGrow: 0,
     justifyContent: "center",
   },
   position: {
-    color: linen.thread,
+    ...quietly,
+    color: colors.mutedForeground,
     fontFamily: typography.fontFamilyMono,
     fontSize: "0.6875rem",
   },
   did: {
+    ...quietly,
     color: colors.mutedForeground,
     fontSize: "0.75rem",
   },
