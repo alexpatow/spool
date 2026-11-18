@@ -257,6 +257,46 @@ pub(crate) fn insert(
     })
 }
 
+/// Why a load that is not to replace rows cannot be kept, if it cannot:
+/// the keys under which it stored a new version of a row that an earlier
+/// run stored. A key sent twice in one call with other content replaces
+/// nothing the store held, and is not among them.
+pub(crate) fn replacing(conn: &Connection, run: RunId) -> Result<Option<String>> {
+    /// As many keys as a message names.
+    const NAMED: usize = 20;
+    let mut statement = conn.prepare(
+        "SELECT n.source_key FROM spool.record n
+         JOIN spool.record o ON o.record_id = n.supersedes
+         WHERE n.load_run = ? AND o.load_run <> ?
+         ORDER BY n.source_key",
+    )?;
+    let keys = statement
+        .query_map([run.0 as i64, run.0 as i64], |row| row.get::<_, String>(0))?
+        .collect::<duckdb::Result<Vec<_>>>()?;
+    if keys.is_empty() {
+        return Ok(None);
+    }
+    let named: Vec<String> = keys
+        .iter()
+        .take(NAMED)
+        .map(|key| format!("`{key}`"))
+        .collect();
+    let more = match keys.len() - named.len() {
+        0 => String::new(),
+        more => format!(" and {more} more"),
+    };
+    let (rows, meant) = match keys.len() {
+        1 => ("1 row has a key".to_owned(), "the row is"),
+        several => (format!("{several} rows have keys"), "the rows are"),
+    };
+    Ok(Some(format!(
+        "{rows} the store holds with other values: {}{more}. Nothing was loaded, because \
+         this load was not to replace rows. If {meant} meant to change, load again with \
+         `replace` set to true",
+        named.join(", "),
+    )))
+}
+
 /// Reads one Arrow column as JSON values. Text, booleans and numbers keep
 /// their type; anything else is stored as the text DuckDB would print.
 enum Reader {

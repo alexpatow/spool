@@ -1671,6 +1671,14 @@
         "entity_type": {
           "type": "string"
         },
+        "replace": {
+          "default": null,
+          "description": "Whether a row may replace one the store holds. Left out or `true`,\na row under a known key with other values becomes the next version\nof that row. With `false` such a row is refused and the whole call\nwith it: nothing is stored, and the error names the keys. That is\nfor a caller that means to add rows and not to change any.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "rows": {
           "description": "One object per row, with the columns the source declares. A column\nholds text, booleans or numbers.",
           "items": {

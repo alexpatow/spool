@@ -96,9 +96,12 @@ Loading and matching: `load_rows` stores rows from one source as records, \
 and `run_match` then places the records no run has examined: each joins the \
 identity it matches or gets a new one, and identities that exist keep their \
 IDs. `describe_store` names each source the project declares in `sources`, \
-with its columns and the entity types it sends rows of. A row that was loaded stays in the store: nothing \
-deletes it, and `retract_rows` takes it out of its identity and keeps it. \
-So load what you were asked to load and nothing else.
+with its columns and the entity types it sends rows of. A row that was \
+loaded stays in the store: nothing deletes it, and `retract_rows` takes it \
+out of its identity and keeps it. So load what you were asked to load and \
+nothing else. `load_rows` refuses a row whose key the store holds with \
+other values, because it would replace that row: set `replace` only when \
+you were asked to change it.
 
 Text is the other way in: `load_documents` stores documents, and \
 `run_extraction` has one of the project's extractors, which \
@@ -516,9 +519,16 @@ struct LoadRows {
     /// One object for each row, such as
     /// `{"id": "c-1", "name": "Acorn Tools", "country": "GB"}`. Its fields
     /// are columns the source declares, and a column it does not declare
-    /// is refused. A value is text, a number or a boolean. The source's
-    /// `key` column tells one row from another: give it in every row.
+    /// is refused. A value is text, a number or a boolean. An empty field
+    /// of a file has no value: leave the column out of that row, or send
+    /// `""` or `null`, which are read the same. The source's `key` column
+    /// tells one row from another: give it in every row.
     rows: Vec<JsonObject>,
+    /// Whether these rows may replace rows the store holds. Left out or
+    /// `false`, a row whose key the store holds with other values is
+    /// refused, and the whole call with it. Set it to `true` only when the
+    /// person asked for those rows to change.
+    replace: Option<bool>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -935,12 +945,15 @@ static TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
              first, and never make a row up. `describe_store` lists the project's sources \
              in `sources`, each with the columns a row may have. A row the store already \
              holds, with the same key and the same values, adds nothing, so loading the \
-             same rows twice is safe. A row with a known key and other values replaces \
-             the row the store held under that key, and loading the old values again \
-             puts them back as one more version, so an older file loaded after a newer \
-             one undoes what the newer one changed: `superseded` in the answer counts \
-             such rows, and is 0 unless a row was meant to change. Loading does not match: follow it with \
-             `run_match`. A loaded row is kept for good and nothing deletes \
+             same rows twice is safe. A row with a known key and other values would \
+             replace the row the store holds under that key, so it is refused, and the \
+             whole call with it: the error names the keys and nothing is loaded. If the \
+             person asked for those rows to change, load again with `replace` set to \
+             true; otherwise the rows are not the file's, so read the file again. Values \
+             the row held before count as other values: loading them changes the row \
+             back, so an older file loaded after a newer one is refused the same way. \
+             Loading does not match: follow it with `run_match`. A loaded row is kept \
+             for good and nothing deletes \
              it, so load only what the person asked for; `retract_rows` takes a row back, \
              which removes it from its identity and keeps it as evidence. This is for a \
              few thousand rows at most: a call is 4 MiB at most, and a pipeline loads \
@@ -1211,12 +1224,28 @@ impl Tools {
                 let beside = LoadParams {
                     source: asked.source.clone(),
                     entity_type: asked.entity_type.clone(),
+                    replace: None,
                     wait_ms: None,
                 };
+                // An empty field of a file reaches a tool as `""`. It is a
+                // value the row does not have, as it is when the file is
+                // sent as CSV. Kept as text it would be a value like any
+                // other, and a rule that compares it would hold or fail
+                // where it should say nothing. The column stays in the
+                // row, so one the source does not list is still refused.
+                let mut rows = asked.rows;
+                for value in rows.iter_mut().flat_map(JsonObject::values_mut) {
+                    if value.as_str() == Some("") {
+                        *value = Value::Null;
+                    }
+                }
+                // The API replaces a row unless it is told not to. An
+                // assistant is to add rows unless it is told to change one.
                 let request = LoadRequest {
                     source: asked.source,
                     entity_type: asked.entity_type,
-                    rows: asked.rows,
+                    rows,
+                    replace: Some(asked.replace.unwrap_or(false)),
                     wait_ms: None,
                 };
                 super::load(app, Ok(Query(beside)), HeaderMap::new(), body(&request)?).await

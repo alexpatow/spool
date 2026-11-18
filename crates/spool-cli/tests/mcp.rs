@@ -893,6 +893,135 @@ fn rows_are_loaded_matched_and_taken_back_through_tools() {
     let record = tool(&server, "get_record", json!({ "record": id("2") }));
     assert!(record["identity"].is_string(), "{record}");
     assert!(record["retracted"].is_null(), "{record}");
+
+    // A row under a key the store holds, with other values, would replace
+    // that row. The tool refuses it unless the call says to, and the rows
+    // that came with it are not loaded either.
+    let held = || server.read("/v1/info")["store"]["entity_types"][0]["records"].clone();
+    let before = (held(), runs());
+    let rows = json!([
+        { "id": "4", "code": "hammer", "colour": "blue" },
+        { "id": "1", "code": "anvil", "colour": "black" },
+        { "id": "7", "code": "tongs", "colour": "black" },
+        { "id": "3", "code": "anvil", "colour": "green" },
+    ]);
+    let mut change = json!({ "source": "shop", "entity_type": "thing", "rows": rows });
+    let error = refused(&server, "load_rows", change.clone(), "invalid");
+    assert_eq!(
+        error["message"],
+        "load rejected: 2 rows have keys the store holds with other values: `3`, `4`. \
+         Nothing was loaded, because this load was not to replace rows. If the rows are \
+         meant to change, load again with `replace` set to true"
+    );
+    change["replace"] = json!(false);
+    refused(&server, "load_rows", change.clone(), "invalid");
+    assert_eq!(held(), before.0);
+    // Each refused load is a run that failed.
+    assert_eq!(runs(), before.1 + 2);
+    let by_key = server.read("/v1/records?source=shop&key=4");
+    assert_eq!(by_key["records"].as_array().unwrap().len(), 1, "{by_key}");
+    change["replace"] = json!(true);
+    let changed = tool(&server, "load_rows", change);
+    assert_eq!(changed["run"]["load"]["inserted"], 3, "{changed}");
+    assert_eq!(changed["run"]["load"]["superseded"], 2, "{changed}");
+    let by_key = server.read("/v1/records?source=shop&key=4");
+    assert_eq!(by_key["records"].as_array().unwrap().len(), 2, "{by_key}");
+    // The row as it was before is other than it is now, so loading it
+    // again is refused the same way, and put back when the call says to.
+    let row = json!({ "id": "4", "code": "hammer", "colour": "red" });
+    let mut back = json!({ "source": "shop", "entity_type": "thing", "rows": [row] });
+    let error = refused(&server, "load_rows", back.clone(), "invalid");
+    assert!(
+        text(&error["message"]).starts_with("load rejected: 1 row has a key"),
+        "{error}"
+    );
+    back["replace"] = json!(true);
+    let put_back = tool(&server, "load_rows", back);
+    assert_eq!(put_back["run"]["load"]["superseded"], 1, "{put_back}");
+    let found = tool(
+        &server,
+        "search_records",
+        json!({ "source": "shop", "key": "4" }),
+    );
+    let versions = found["records"].as_array().unwrap();
+    assert_eq!(versions.len(), 3, "{found}");
+    let current = versions
+        .iter()
+        .find(|version| version["superseded_by"].is_null())
+        .unwrap();
+    assert_eq!(current["payload"]["colour"], "red", "{found}");
+}
+
+#[test]
+fn an_empty_value_is_one_the_row_does_not_have() {
+    let dir = tempfile::tempdir().unwrap();
+    let (server, _) = thing_server(dir.path());
+    let load = |rows: Value| {
+        let rows = json!({ "source": "shop", "entity_type": "thing", "rows": rows });
+        tool(&server, "load_rows", rows)
+    };
+    // Two anvils of different colours are two things.
+    load(json!([
+        { "id": "1", "code": "anvil", "colour": "black" },
+        { "id": "2", "code": "anvil", "colour": "red" },
+    ]));
+    let placed = tool(&server, "run_match", json!({ "entity_type": "thing" }));
+    assert_eq!(placed["run"]["resolution"]["identities_created"], 2);
+
+    // An empty field of a file comes as empty text. The row is stored
+    // without the column, as the same line of CSV is.
+    let loaded = load(json!([{ "id": "3", "code": "anvil", "colour": "", "name": "" }]));
+    assert_eq!(loaded["run"]["load"]["inserted"], 1, "{loaded}");
+    let found = tool(
+        &server,
+        "search_records",
+        json!({ "source": "shop", "key": "3" }),
+    );
+    let record = &found["records"][0];
+    assert_eq!(record["payload"], json!({ "id": "3", "code": "anvil" }));
+    let csv = server
+        .request("POST", "/v1/load?source=shop&entity_type=thing")
+        .header("Content-Type", "text/csv")
+        .body(b"id,code,colour,name\n3,anvil,,\n".as_slice())
+        .send()
+        .ok();
+    assert_eq!(csv["run"]["load"]["duplicates"], 1, "{csv}");
+    assert_eq!(csv["run"]["load"]["inserted"], 0, "{csv}");
+
+    // So no rule reads a colour it does not have. As empty text it would
+    // differ from black and from red, and the anvil would be a third thing
+    // without a word. With no colour it matches both, which someone has to
+    // decide.
+    let matched = tool(&server, "run_match", json!({ "entity_type": "thing" }));
+    let resolution = &matched["run"]["resolution"];
+    assert_eq!(resolution["identities_created"], 0, "{matched}");
+    assert_eq!(resolution["records_unassigned"], 1, "{matched}");
+    let items = tool(&server, "list_review_items", json!({}));
+    let items = items["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "{items:?}");
+    assert!(
+        items[0].to_string().contains(text(&record["id"])),
+        "{items:?}"
+    );
+
+    // The column is still one the row has, so one the source does not list
+    // is refused as before, and the row is not stored.
+    let unlisted = json!({ "source": "shop", "entity_type": "thing",
+        "rows": [{ "id": "4", "code": "saw", "shape": "" }] });
+    let error = refused(&server, "load_rows", unlisted, "invalid");
+    assert!(
+        text(&error["message"]).contains("a column `shape`"),
+        "{error}"
+    );
+    // A value that is only spaces is a value.
+    let spaces = load(json!([{ "id": "4", "code": "saw", "colour": " " }]));
+    assert_eq!(spaces["run"]["load"]["inserted"], 1, "{spaces}");
+    let found = tool(
+        &server,
+        "search_records",
+        json!({ "source": "shop", "key": "4" }),
+    );
+    assert_eq!(found["records"][0]["payload"]["colour"], " ", "{found}");
 }
 
 /// Takes a capitalised word to be a thing, with the word in lower case as
