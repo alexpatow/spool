@@ -35,6 +35,12 @@ A caller that is not a person presents a token, which an admin makes on the
 studio's Tokens page and `spool token add` makes on this machine. What it
 changes is recorded under the token's name, as `agent:<name>`.
 
+An assistant that speaks the Model Context Protocol, such as Claude or
+ChatGPT, is pointed at `/mcp`, where the server offers it tools to look things
+up and to change identities. It presents a token as any other caller does,
+and what it changes is recorded under that token's name. docs/mcp.md says how
+to add the server to each.
+
 Options:
   --manifest <path>   the manifest to run on (default: .spool/manifest.json)
   --store <path>      the store's database file (default: $SPOOL_STORE)
@@ -68,9 +74,13 @@ did keeps running.
 Open the address it listens on in a browser for the studio, which shows what
 the store holds and takes changes. Nobody signs in, and a caller needs no
 token: every change is recorded under an account called `dev`, an admin. So
-it listens on this machine only; `spool serve` runs a server that others
-reach. A caller that does present a token writes as that token, as it would
-there.
+it listens on this machine only, and answers only what is sent to `localhost`
+or to a loopback address; `spool serve` runs a server that others reach. A
+caller that does present a token writes as that token, as it would there.
+
+An assistant on this machine that speaks the Model Context Protocol, such as
+Claude Code, is pointed at `/mcp`, where the server offers it tools to look
+things up and to change identities. docs/mcp.md says how.
 
   <dir>               the project directory (default: the current directory)
 
@@ -329,6 +339,7 @@ fn run(engine: Arc<Engine>, listen: SocketAddr, options: ServerOptions) -> Resul
         if options.studio {
             say!("studio    http://{address}/");
         }
+        say!("mcp       http://{address}{}", server::MCP_PATH);
         match &options.setup {
             Some(code) if options.studio => {
                 say!("setup     http://{address}/setup#{code}");
