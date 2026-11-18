@@ -775,15 +775,25 @@ struct Asked {
     body: Value,
 }
 
-/// Stands in for a model's API: answers every chat completion with `answer`
-/// as the model's message, and reports what it was asked. No test asks a
+/// Stands in for a model's API: answers each chat completion with the next
+/// of `answers` as the content of the model's message, and every one after
+/// the last with the last. It reports what it was asked. No test asks a
 /// model.
-fn model(answer: Value) -> (u16, mpsc::Receiver<Asked>) {
+fn model(answers: Vec<Value>) -> (u16, mpsc::Receiver<Asked>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let (asked, requests) = mpsc::channel();
     std::thread::spawn(move || {
+        let mut answers = answers.into_iter().peekable();
         for stream in listener.incoming() {
+            let answer = match answers.next() {
+                Some(answer) if answers.peek().is_none() => {
+                    answers = vec![answer.clone()].into_iter().peekable();
+                    answer
+                }
+                Some(answer) => answer,
+                None => Value::Null,
+            };
             let mut stream = stream.unwrap();
             let mut reader = BufReader::new(stream.try_clone().unwrap());
             let mut line = String::new();
@@ -805,7 +815,7 @@ fn model(answer: Value) -> (u16, mpsc::Receiver<Asked>) {
             let mut body = vec![0; length];
             reader.read_exact(&mut body).unwrap();
             let reply = json!({
-                "choices": [{"message": {"role": "assistant", "content": answer.to_string()}}]
+                "choices": [{"message": {"role": "assistant", "content": answer}}]
             })
             .to_string();
             write!(
@@ -842,9 +852,19 @@ fn the_example_that_asks_a_model_reads_the_note_of_a_new_project() {
     // gives it no legal form, and one the note does not name at all.
     let note = NOTE.replace("with Dana Reyes", "with Dana Reyes of Halden Group");
     write(&project.join("samples/notes-1.txt"), &note);
-    let (port, requests) = model(json!({
-        "quotes": ["Acorn Tools Ltd", "Halden Group", "Acorn", "Zennor Glass Ltd", 7]
-    }));
+    let said = |answer: Value| Value::String(answer.to_string());
+    let (port, requests) = model(vec![
+        said(json!({
+            "quotes": ["Acorn Tools Ltd", "Halden Group", "Acorn", "Zennor Glass Ltd"]
+        })),
+        // What a model says in place of quotes: other JSON, a quote that is
+        // no text, words, and nothing.
+        said(json!({ "companies": ["Tidewater Marine LLC"] })),
+        said(json!({ "quotes": ["Tidewater Marine LLC", 7] })),
+        json!("I found one company: Tidewater Marine LLC."),
+        Value::Null,
+        said(json!({ "quotes": [] })),
+    ]);
     let server = Server::start_in(
         &[
             "dev",
@@ -907,4 +927,38 @@ next       `spool match` places them in identities
         both.contains("found      3 records in 1 document: 2 new, 1 already held"),
         "{both}"
     );
+
+    // An answer that is not quotes fails the run and says what it was, and
+    // the document is not taken as read with nothing in it: the next run
+    // asks about it again.
+    write(
+        &project.join("visit.txt"),
+        "We visited Tidewater Marine LLC.\n",
+    );
+    let visit = [
+        "extract",
+        "visit.txt",
+        "--source",
+        "notes",
+        "--extractor",
+        "model",
+    ];
+    for answer in [
+        r#"visit.txt: the model's answer is not {"quotes": ["..."]}: {"companies":["Tidewater Marine LLC"]}"#,
+        r#"visit.txt: the model's answer is not {"quotes": ["..."]}: {"quotes":["Tidewater Marine LLC",7]}"#,
+        r#"visit.txt: the model's answer is not {"quotes": ["..."]}: I found one company: Tidewater Marine LLC."#,
+        "visit.txt: the model gave no answer: ",
+    ] {
+        let output = server.spool_in(&project, &visit).output().unwrap();
+        let said = text(&output.stderr);
+        assert_eq!(output.status.code(), Some(1), "{said}");
+        assert!(said.starts_with("spool: extractor `model`: "), "{said}");
+        assert!(said.contains(answer), "{said}");
+    }
+    let nothing = shown(&server, &project, &visit);
+    assert!(
+        nothing.contains("found      0 records in 1 document"),
+        "{nothing}"
+    );
+    assert_eq!(requests.try_iter().count(), 5);
 }

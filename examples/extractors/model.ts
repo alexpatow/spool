@@ -20,7 +20,9 @@
 // The model is asked for quotes and not for positions, because models count
 // characters badly. `document.find` says where each quote is, and a quote
 // that is not in the text letter for letter is dropped, so every record has
-// a place in a document that says what the record says.
+// a place in a document that says what the record says. An answer that is
+// not a list of quotes at all fails the run: the document then counts as
+// unread, and the next run asks about it again.
 
 import { extractor, type Mention } from "spool-strategy";
 
@@ -47,8 +49,12 @@ function instructions(described: string | null): string {
     .join("\n\n");
 }
 
-/** The quotes the model gives for one text. */
-async function ask(system: string, text: string): Promise<string[]> {
+/**
+ * The quotes the model gives for one document. An answer of any other shape
+ * is an error and not "no quotes": a document with nothing found in it is
+ * taken as read, and this one was not.
+ */
+async function ask(system: string, key: string, text: string): Promise<string[]> {
   const response = await fetch(`${BASE_URL}/chat/completions`, {
     method: "POST",
     headers: {
@@ -65,11 +71,23 @@ async function ask(system: string, text: string): Promise<string[]> {
     }),
   });
   if (!response.ok) {
-    throw new Error(`the model's API answered ${response.status}: ${(await response.text()).slice(0, 500)}`);
+    throw new Error(`${key}: the model's API answered ${response.status}: ${(await response.text()).slice(0, 500)}`);
   }
-  const reply = (await response.json()) as { choices: Array<{ message: { content: string } }> };
-  const answer = JSON.parse(reply.choices[0]?.message.content ?? "{}") as { quotes?: unknown };
-  return Array.isArray(answer.quotes) ? answer.quotes.filter((quote) => typeof quote === "string") : [];
+  const reply = (await response.json()) as { choices?: Array<{ message?: { content?: unknown } }> };
+  const content = reply.choices?.[0]?.message?.content;
+  if (typeof content !== "string") {
+    throw new Error(`${key}: the model gave no answer: ${JSON.stringify(reply).slice(0, 500)}`);
+  }
+  let quotes: unknown;
+  try {
+    quotes = (JSON.parse(content) as { quotes?: unknown } | null)?.quotes;
+  } catch {
+    // Not JSON: refused below with what it is.
+  }
+  if (!Array.isArray(quotes) || !quotes.every((quote) => typeof quote === "string")) {
+    throw new Error(`${key}: the model's answer is not {"quotes": ["..."]}: ${content.slice(0, 500)}`);
+  }
+  return quotes;
 }
 
 await extractor(async (task) => {
@@ -79,7 +97,7 @@ await extractor(async (task) => {
     const taken: Array<[number, number]> = [];
     // The longest quote first: "Acorn" is also inside "Acorn Tools Ltd", and
     // that place is the longer name's.
-    const quotes = [...new Set(await ask(system, document.text))].sort((a, b) => b.length - a.length);
+    const quotes = [...new Set(await ask(system, document.key, document.text))].sort((a, b) => b.length - a.length);
     for (const quote of quotes) {
       const places = document.find(quote);
       if (places.length === 0) console.error(`${document.key}: dropped a quote the text does not have: ${quote}`);
