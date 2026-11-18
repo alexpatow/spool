@@ -316,6 +316,27 @@ fn the_endpoint_answers_only_a_caller_the_api_answers() {
     assert_eq!(second["changeset"]["actor"], "agent:api");
     assert_eq!(second["changeset"]["reason"], "by an agent");
 
+    // An assistant with a token of its own is its own author in the log,
+    // until the token is revoked.
+    let store = dir.path().join("store.duckdb");
+    let token = succeed(&["token", "add", "claude", "--store", path(&store)]);
+    let assistant = || {
+        let request = server.request("POST", "/mcp");
+        request.header("Authorization", &format!("Bearer {}", token.trim()))
+    };
+    let more = tool(&server, "mint_identity_ids", json!({}));
+    let create = json!({
+        "ops": [{ "op": "create_identity", "identity": more["identities"][0], "entity_type": "thing" }],
+        "reason": "by an assistant",
+    });
+    let (failed, by_assistant) = call_tool(assistant(), "commit_changeset", create);
+    assert!(!failed, "{by_assistant}");
+    let third = entry(&server, by_assistant["seq"].as_u64().unwrap());
+    assert_eq!(third["changeset"]["actor"], "agent:claude");
+    succeed(&["token", "revoke", "claude", "--store", path(&store)]);
+    let revoked = assistant().header("Accept", ACCEPT).json(&list).send();
+    revoked.error(401, "unauthorized");
+
     // A page of another site cannot use the session of whoever is looking
     // at it.
     let elsewhere = browser()
@@ -695,8 +716,7 @@ fn an_answer_too_large_for_a_model_is_refused_and_says_what_to_do() {
 fn a_development_server_answers_the_endpoint_only_by_this_machines_names() {
     let dir = tempfile::tempdir().unwrap();
     write_things(dir.path());
-    let server =
-        Server::start_with(&["dev", path(dir.path()), "--listen", "127.0.0.1:0"], None).unwrap();
+    let server = Server::start(&["dev", path(dir.path()), "--listen", "127.0.0.1:0"]);
     assert_eq!(
         server.printed("mcp"),
         format!("mcp       http://{}/mcp", server.address)

@@ -37,8 +37,9 @@ changes is recorded under the token's name, as `agent:<name>`.
 
 An assistant that speaks the Model Context Protocol, such as Claude or
 ChatGPT, is pointed at `/mcp`, where the server offers it tools to look things
-up and to change identities. It sends the same token and is the same caller.
-docs/mcp.md says how to add the server to each.
+up and to change identities. It presents a token as any other caller does,
+and what it changes is recorded under that token's name. docs/mcp.md says how
+to add the server to each.
 
 Options:
   --manifest <path>   the manifest to run on (default: .spool/manifest.json)

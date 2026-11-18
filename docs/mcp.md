@@ -4,6 +4,7 @@ The Spool server answers the [Model Context Protocol](https://modelcontextprotoc
 
 ```
 $ spool serve --store spool.duckdb
+accounts  spool.auth.sqlite
 listening on http://0.0.0.0:7765
 studio    http://0.0.0.0:7765/
 mcp       http://0.0.0.0:7765/mcp
@@ -12,7 +13,7 @@ mcp       http://0.0.0.0:7765/mcp
 ## What it is
 
 - **A tool is a call of the API.** Each tool runs the handler that the matching path under `/v1` runs, so it answers what the API answers and is refused what the API refuses. A changeset that breaks a rule is rejected whole, with the operation that broke it.
-- **The caller is whoever the server says it is.** `/mcp` takes the callers `/v1` takes and no others: the bearer token, which writes as `agent:api`, or the session of someone signed in, which writes as `user:<id>`. No tool has an argument that names the author of a change, and a call that sends one is refused.
+- **The caller is whoever the server says it is.** `/mcp` takes the callers `/v1` takes and no others: a token, which writes under its name as `agent:<name>`, or the session of someone signed in, which writes as `user:<id>`. No tool has an argument that names the author of a change, and a call that sends one is refused.
 - **Every change says why.** The tools that write require a `reason`, which the log keeps beside the change. The API leaves it optional. An assistant's change with no reason is hard to review afterwards.
 - **Nothing is kept between requests.** The transport is Streamable HTTP without sessions, and every answer is one JSON response. Each request is authorized on its own. The endpoint speaks the protocol revisions from `2024-11-05` to `2026-07-28`, so a client that starts with the `initialize` handshake and one that sends no handshake both work.
 - **The protocol is the `rmcp` crate's**, the official Rust SDK. It is compiled into the binary: there is no second process and nothing else to install.
@@ -53,7 +54,17 @@ Two limits keep an answer the size a model can use. A list returns 20 entries un
 
 ## Adding it to a client
 
-A client needs two things: the address, `https://<your server>/mcp`, and the server's token, sent as `Authorization: Bearer <token>`. What a client that cannot send a header needs is under [Clients that sign in with OAuth](#clients-that-sign-in-with-oauth).
+A client needs two things: the address, `https://<your server>/mcp`, and a token, sent as `Authorization: Bearer <token>`.
+
+Make a token for each assistant, named after it, so that the log says which one made a change and one can be revoked without the others. An admin makes one on the studio's Tokens page, and on the server's machine:
+
+```
+$ spool token add claude --store spool.duckdb
+```
+
+prints the token once. What that assistant changes is recorded as `agent:claude`. The examples below have the token in `SPOOL_TOKEN`.
+
+What a client that cannot send a header needs is under [Clients that sign in with OAuth](#clients-that-sign-in-with-oauth).
 
 ### Claude Code
 
@@ -118,7 +129,7 @@ Claude on the web without the request-header beta, and ChatGPT on the web, add a
 What can be done about it, none of which is built:
 
 1. **Spool becomes an OAuth authorization server.** The person signs in to Spool in the browser and approves the assistant, and what the assistant changes is recorded under that person. It is the only choice that works in both products with nothing else to run, and the most to build and to get right: metadata documents, client registration, the authorization code flow with PKCE, tokens and their refresh and revocation.
-2. **An OAuth gateway in front of the server.** A proxy that speaks OAuth to the client, signs people in with an identity provider, and sends Spool's token with what it passes on. Nothing changes in Spool. Every change is recorded under the one token.
+2. **An OAuth gateway in front of the server.** A proxy that speaks OAuth to the client, signs people in with an identity provider, and sends a token of Spool's with what it passes on. Nothing changes in Spool. Every change is recorded under that one token, whoever signed in.
 3. **For ChatGPT, OpenAI's Secure MCP Tunnel.** `tunnel-client` runs beside the server, and ChatGPT reaches it through OpenAI with the connection set to Tunnel and no authentication. `tunnel-client` can start a local command as the server, and `mcp-remote` with the header, as under Claude Desktop, is such a command. Who may use the tunnel is then decided in the OpenAI workspace.
 
 ## Where it listens
@@ -135,7 +146,7 @@ Against a server holding the company scenario of `benchmarks/`, in November 2026
 | --- | --- | --- |
 | Claude Code 2.1.327 | `claude mcp add` with the header, then `claude mcp list` and `claude mcp get` | Connected, with a token and against `spool dev`. A wrong token and no token are each reported with the server's reason. No conversation was held, so no model called a tool. |
 | MCP Inspector 2.16.0, command line | Listed the tools and called them | Worked |
-| TypeScript SDK 1.32.2 | Connected, listed, searched, merged two identities, sent an `actor` | Worked on revision `2025-11-25`; the merge is in the log as `agent:api`; the `actor` was refused |
+| TypeScript SDK 1.32.2 | Connected, listed, searched, merged two identities, sent an `actor` | Worked on revision `2025-11-25`; the merge is in the log under the token's name; the `actor` was refused |
 | Python SDK 2.3.0 | Connected, listed, read the log, undid the merge | Worked on revision `2026-07-28`, the one without a handshake |
 | `mcp-remote` 0.16.6 | Called a tool through it from the Inspector, with the header | Worked. Claude Desktop itself was not run. |
 | Codex CLI 0.170.0 | `codex mcp add` and `codex mcp list` | The configuration is accepted. Codex connects only in a session, which needs an account, so no connection was made. |

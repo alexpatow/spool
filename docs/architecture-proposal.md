@@ -640,7 +640,7 @@ The paths that make a caller one are outside `/v1`: `GET /auth/session` says who
 
 The server answers the Model Context Protocol at `/mcp`, so that an assistant such as Claude or ChatGPT can be pointed at it. A tool there is a call of the API: it runs the handler the path under `/v1` runs, as the caller the request came from, so it is held to the same rules and what it changes is recorded under the same name. There are tools to find identities and records, to explain a pair, to read review items, constraints and the log, and to commit a changeset, split an identity, undo a change and dismiss a review item. The tools that write require a reason. Ingesting, match runs, drafts and people are not offered.
 
-The transport is Streamable HTTP with no sessions, and the protocol is the `rmcp` crate's, compiled into the binary. `/mcp` takes the callers `/v1` takes. An assistant that can send a header sends the bearer token. Claude and ChatGPT on the web add a server through OAuth instead, and Spool is not an OAuth authorization server. `docs/mcp.md` lists the tools, says how to add the server to each client, and says what was tried.
+The transport is Streamable HTTP with no sessions, and the protocol is the `rmcp` crate's, compiled into the binary. `/mcp` takes the callers `/v1` takes. An assistant that can send a header presents a token of its own and is that agent in the log. Claude and ChatGPT on the web add a server through OAuth instead, and Spool is not an OAuth authorization server. `docs/mcp.md` lists the tools, says how to add the server to each client, and says what was tried.
 
 Two packaging facts to plan around:
 

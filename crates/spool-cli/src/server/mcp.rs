@@ -216,12 +216,15 @@ impl ServerHandler for Tools {
 /// is a result too, with the API's error in it, so that the model reads why
 /// and can put it right.
 async fn answer(result: ApiResult) -> CallToolResult {
-    let body = match result {
-        Ok(response) => match to_bytes(response.into_body(), usize::MAX).await {
-            Ok(body) => body,
-            Err(_) => return refused(ApiError::internal("the answer could not be read")),
-        },
+    let response = match result {
+        Ok(response) => response,
         Err(error) => return refused(error),
+    };
+    // A handler says a failure with `Err`. One that answered with a failing
+    // status instead is not passed off as a success.
+    let succeeded = response.status().is_success();
+    let Ok(body) = to_bytes(response.into_body(), usize::MAX).await else {
+        return refused(ApiError::internal("the answer could not be read"));
     };
     if body.len() > MAX_RESULT_BYTES {
         return refused(ApiError::new(
@@ -235,7 +238,8 @@ async fn answer(result: ApiResult) -> CallToolResult {
         ));
     }
     match String::from_utf8(body.to_vec()) {
-        Ok(text) => CallToolResult::success(vec![ContentBlock::text(text)]),
+        Ok(text) if succeeded => CallToolResult::success(vec![ContentBlock::text(text)]),
+        Ok(text) => CallToolResult::error(vec![ContentBlock::text(text)]),
         Err(_) => refused(ApiError::internal("the answer is not text")),
     }
 }
