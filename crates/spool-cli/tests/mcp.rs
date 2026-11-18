@@ -926,6 +926,30 @@ fn rows_are_loaded_matched_and_taken_back_through_tools() {
     assert_eq!(changed["run"]["load"]["superseded"], 2, "{changed}");
     let by_key = server.read("/v1/records?source=shop&key=4");
     assert_eq!(by_key["records"].as_array().unwrap().len(), 2, "{by_key}");
+    // The row as it was before is other than it is now, so loading it
+    // again is refused the same way, and put back when the call says to.
+    let row = json!({ "id": "4", "code": "hammer", "colour": "red" });
+    let mut back = json!({ "source": "shop", "entity_type": "thing", "rows": [row] });
+    let error = refused(&server, "load_rows", back.clone(), "invalid");
+    assert!(
+        text(&error["message"]).starts_with("load rejected: 1 row has a key"),
+        "{error}"
+    );
+    back["replace"] = json!(true);
+    let put_back = tool(&server, "load_rows", back);
+    assert_eq!(put_back["run"]["load"]["superseded"], 1, "{put_back}");
+    let found = tool(
+        &server,
+        "search_records",
+        json!({ "source": "shop", "key": "4" }),
+    );
+    let versions = found["records"].as_array().unwrap();
+    assert_eq!(versions.len(), 3, "{found}");
+    let current = versions
+        .iter()
+        .find(|version| version["superseded_by"].is_null())
+        .unwrap();
+    assert_eq!(current["payload"]["colour"], "red", "{found}");
 }
 
 #[test]

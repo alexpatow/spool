@@ -581,8 +581,10 @@ impl Engine {
     /// change any. A row under a key the store holds with other content
     /// would become the next version of that row. Here it is refused, and
     /// the whole call with it: nothing is stored, and the error names the
-    /// keys. A row the store holds as it is creates nothing, as in any
-    /// load, and so does one a source took back and sends again unchanged.
+    /// keys. Content the key held before, and not now, is other content:
+    /// a row that would change back is refused too. A row the store holds
+    /// as it is creates nothing, as in any load, and so does one a source
+    /// took back and sends again unchanged.
     pub fn load_without_replacing(
         &self,
         source: &str,

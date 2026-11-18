@@ -163,6 +163,27 @@ fn a_load_that_is_not_to_replace_rows_refuses_a_changed_row() {
     assert_eq!((report.inserted, report.superseded), (2, 2));
     assert_eq!(records(&engine, "shop", "2").len(), 2);
 
+    // What a row said before is other than it says now, so a load that
+    // would change it back is refused as well: an older file after a newer
+    // one replaces rows as surely as a newer one does.
+    let before = || {
+        rows(&[
+            ("2", Some("bellows"), Some("B")),
+            ("3", Some("chisel"), Some("C")),
+        ])
+    };
+    let error = engine
+        .load_without_replacing("shop", "thing", before())
+        .unwrap_err();
+    assert!(
+        matches!(&error, Error::Load(message) if message.contains(": `2`, `3`. Nothing")),
+        "{error}"
+    );
+    assert_eq!(records(&engine, "shop", "2").len(), 2);
+    let report = engine.load("shop", "thing", before()).unwrap();
+    assert_eq!((report.inserted, report.superseded), (2, 2));
+    assert_eq!(records(&engine, "shop", "2").len(), 3);
+
     // One row is named as one.
     let one = rows(&[("4", Some("drill, hand"), Some("D"))]);
     let error = engine
