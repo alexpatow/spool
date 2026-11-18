@@ -24,6 +24,7 @@ use spool_core::{DocumentId, RecordId, RunId};
 
 use crate::batch::{Column, batch, id_list};
 use crate::error::{Error, Result};
+use crate::order::{Key, Keyed, Sort};
 use crate::project::Extractor;
 use crate::store::parse;
 use crate::time::rfc3339;
@@ -81,16 +82,18 @@ pub struct DocumentExtraction {
     pub mentions: u64,
 }
 
-/// Which documents to list. Results are ordered by ID.
+/// Which documents to list. Results are ordered by ID, or as `sort` says.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DocumentFilter {
     pub source: Option<String>,
     pub key: Option<String>,
     /// Only the version of each document that nothing has replaced.
     pub latest: bool,
-    /// Only those after this ID: the last one of the page before.
+    /// Only those that come after this one in the list: the last one of the
+    /// page before.
     pub after: Option<DocumentId>,
     pub limit: u64,
+    pub sort: Option<Sort<DocumentSort>>,
 }
 
 impl Default for DocumentFilter {
@@ -101,7 +104,47 @@ impl Default for DocumentFilter {
             latest: false,
             after: None,
             limit: 100,
+            sort: None,
         }
+    }
+}
+
+/// What a list of documents can be sorted by. Each ends with the ID.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentSort {
+    Id,
+    /// The key, whatever its case, then the source and the versions of the
+    /// key the oldest first.
+    Key,
+    /// The source, then as `Key`.
+    Source,
+    /// How long the text is.
+    Length,
+    /// When the document was loaded.
+    Loaded,
+}
+
+impl DocumentSort {
+    fn keys(self) -> Vec<Key> {
+        let mut keys = match self {
+            Self::Id => Vec::new(),
+            Self::Key => [
+                &Key::text("d.source_key")[..],
+                &[Key::of("d.source_id"), Key::of("d.load_run")],
+            ]
+            .concat(),
+            Self::Source => [
+                &[Key::of("d.source_id")][..],
+                &Key::text("d.source_key"),
+                &[Key::of("d.load_run")],
+            ]
+            .concat(),
+            Self::Length => vec![Key::of("length(d.text)")],
+            Self::Loaded => vec![Key::of("d.loaded_at"), Key::of("d.load_run")],
+        };
+        keys.push(Key::of("d.document_id"));
+        keys
     }
 }
 
@@ -346,19 +389,44 @@ pub(crate) fn get(conn: &Connection, id: DocumentId) -> Result<Option<DocumentEn
     Ok(Some(found))
 }
 
-/// Documents without their text, ordered by ID.
+/// Documents without their text, ordered by ID or as the filter says.
 pub(crate) fn list(conn: &Connection, filter: &DocumentFilter) -> Result<Vec<DocumentEntry>> {
     let mut found = Vec::new();
     {
-        let mut statement = conn.prepare(&format!(
-            "{DOCUMENT}
-             WHERE ($1::VARCHAR IS NULL OR d.source_id = $1::VARCHAR)
-               AND ($2::VARCHAR IS NULL OR d.source_key = $2::VARCHAR)
-               AND (NOT $3 OR later.document_id IS NULL)
-               AND ($4::VARCHAR IS NULL OR d.document_id > $4::UUID)
-             ORDER BY d.document_id
-             LIMIT $5"
-        ))?;
+        let sql = match filter.sort {
+            None => format!(
+                "{DOCUMENT}
+                 WHERE ($1::VARCHAR IS NULL OR d.source_id = $1::VARCHAR)
+                   AND ($2::VARCHAR IS NULL OR d.source_key = $2::VARCHAR)
+                   AND (NOT $3 OR later.document_id IS NULL)
+                   AND ($4::VARCHAR IS NULL OR d.document_id > $4::UUID)
+                 ORDER BY d.document_id
+                 LIMIT $5"
+            ),
+            Some(sort) => {
+                let keyed = Keyed {
+                    before: None,
+                    from: "spool.document d".to_owned(),
+                    id: "d.document_id".to_owned(),
+                    keys: sort.by.keys(),
+                    direction: sort.direction,
+                };
+                format!(
+                    "{} {DOCUMENT} {}
+                     WHERE ($1::VARCHAR IS NULL OR d.source_id = $1::VARCHAR)
+                       AND ($2::VARCHAR IS NULL OR d.source_key = $2::VARCHAR)
+                       AND (NOT $3 OR later.document_id IS NULL)
+                       AND {}
+                     ORDER BY {}
+                     LIMIT $5",
+                    keyed.with("$4::UUID"),
+                    keyed.join("d.document_id"),
+                    keyed.after("$4::VARCHAR IS NOT NULL"),
+                    keyed.order_by(),
+                )
+            }
+        };
+        let mut statement = conn.prepare(&sql)?;
         let mut rows = statement.query(params![
             filter.source,
             filter.key,

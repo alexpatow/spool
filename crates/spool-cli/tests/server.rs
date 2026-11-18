@@ -1326,6 +1326,101 @@ fn identities_records_and_review_items_are_looked_up() {
     );
 }
 
+/// Every page of a list, read by passing each page's `next` as `after`.
+fn every_page(server: &Server, path: &str, list: &str) -> Vec<Value> {
+    let mut listed = Vec::new();
+    let mut after = String::new();
+    loop {
+        let page = server.read(&format!("{path}{after}"));
+        listed.extend(page[list].as_array().unwrap().iter().cloned());
+        match &page["next"] {
+            Value::Null => break,
+            next => after = format!("&after={}", next.as_str().unwrap()),
+        }
+    }
+    listed
+}
+
+#[test]
+fn lists_are_sorted_as_the_query_says_and_read_in_pages_in_that_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = company_server(dir.path(), 5);
+    run_companies(&server, Encoding::Arrow);
+
+    // Pages of a sorted list walk the order of the whole of it.
+    let whole = server.read("/v1/identities?sort=records&order=desc&limit=1000")["identities"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert!(whole.len() > 8, "{whole:?}");
+    let members: Vec<u64> = whole
+        .iter()
+        .map(|identity| identity["members"].as_u64().unwrap())
+        .collect();
+    assert!(
+        members.windows(2).all(|pair| pair[0] >= pair[1]),
+        "{members:?}"
+    );
+    assert!(members[0] > *members.last().unwrap(), "{members:?}");
+    assert_eq!(
+        every_page(
+            &server,
+            "/v1/identities?sort=records&order=desc&limit=3",
+            "identities"
+        ),
+        whole
+    );
+    let records = server.read("/v1/records?sort=label&limit=1000")["records"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(
+        every_page(&server, "/v1/records?sort=label&limit=4", "records"),
+        records
+    );
+    let labels: Vec<String> = records
+        .iter()
+        .filter_map(|record| record["label"].as_str().map(str::to_lowercase))
+        .collect();
+    assert!(
+        labels.windows(2).all(|pair| pair[0] <= pair[1]),
+        "{labels:?}"
+    );
+
+    // A list that is cut at `limit` is sorted before it is cut.
+    let runs = server.read("/v1/runs?sort=kind&limit=1000")["runs"].clone();
+    assert_eq!(
+        server.read("/v1/runs?sort=kind&limit=2")["runs"]
+            .as_array()
+            .unwrap()[..],
+        runs.as_array().unwrap()[..2]
+    );
+    // `order` alone turns the list's own order: runs are newest first.
+    assert_eq!(
+        server.read("/v1/runs?order=asc&limit=1")["runs"][0]["run"],
+        1
+    );
+    assert_ne!(server.read("/v1/runs?limit=1")["runs"][0]["run"], 1);
+
+    // The log, newest first, a page at a time after a position.
+    let head = server.read("/v1/info")["store"]["head"].as_u64().unwrap();
+    let newest = server.read("/v1/changesets?sort=seq&order=desc&limit=1");
+    assert_eq!(newest["changesets"][0]["seq"], head);
+    let next = server.read(&format!(
+        "/v1/changesets?sort=seq&order=desc&limit=1&after={head}"
+    ));
+    assert_eq!(next["changesets"][0]["seq"], head - 1);
+
+    // What a list cannot be sorted by is refused, with what it can be.
+    let refused = server.get("/v1/identities?sort=colour").expect(400);
+    let said = refused["error"]["message"].as_str().unwrap();
+    assert!(
+        said.contains("colour") && said.contains("records"),
+        "{said}"
+    );
+    server.get("/v1/documents?order=sideways").expect(400);
+}
+
 #[test]
 fn what_is_read_says_what_things_are_called_where_they_came_from_and_what_waits() {
     let library = library(5);

@@ -37,6 +37,7 @@ mod following;
 mod load;
 mod lookup;
 mod metrics;
+mod order;
 mod possible_split;
 mod project;
 mod retract;
@@ -61,8 +62,8 @@ pub use bench::{
     PossibleSplits, RetractSummary, Scenario, StepReport,
 };
 pub use documents::{
-    DocumentEntry, DocumentExtraction, DocumentFilter, ExtractOptions, ExtractReport, ExtractorRef,
-    NewDocument, locator,
+    DocumentEntry, DocumentExtraction, DocumentFilter, DocumentSort, ExtractOptions, ExtractReport,
+    ExtractorRef, NewDocument, locator,
 };
 pub use drafts::{DraftEntry, DraftFilter, DraftStatus, DraftSummary};
 pub use engine::{
@@ -77,13 +78,15 @@ pub use explain::{
 };
 pub use load::LoadReport;
 pub use lookup::{
-    DeclaredSource, HistoryEntry, IdentityFilter, IdentitySummary, IdentityView, LoggedChangeset,
-    Member, RecordEntry, RecordFilter, SourceCount, SourceInfo, StoreInfo, TypeInfo,
+    DeclaredSource, HistoryEntry, IdentityFilter, IdentitySort, IdentitySummary, IdentityView,
+    LogSort, LoggedChangeset, Member, RecordEntry, RecordFilter, RecordSort, SourceCount,
+    SourceInfo, StoreInfo, TypeInfo,
 };
 pub use metrics::{
     BCubed, Churn, EndToEndMetrics, ExtractionMetrics, IdStability, Metrics, OrderSensitivity,
     OverridePersistence, PairMetrics, Rebuild, SplitRecovery, UpgradeStability,
 };
+pub use order::{Direction, Sort};
 pub use project::{
     Declaration, EntityTypeManifest, EntityTypeSource, Extractor, FeatureColumn, Manifest, Project,
     Rule, RuleSet, Runtime, Source, SqlFile, Strategy, StrategySource, Transform, YamlFile,
@@ -94,5 +97,5 @@ pub use review::{
     ReviewFilter, ReviewKind, ReviewStatus,
 };
 pub use rows::Rows;
-pub use runs::{RunEntry, RunFilter, RunKind, RunStatus};
+pub use runs::{RunEntry, RunFilter, RunKind, RunSort, RunStatus};
 pub use usercode::{Code, Running, UserCode};

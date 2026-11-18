@@ -12,6 +12,7 @@ use crate::documents::{ExtractReport, ExtractorRef};
 use crate::engine::{StrategyRef, TypeResolution};
 use crate::error::{Error, Result};
 use crate::load::LoadReport;
+use crate::order::{Key, Keyed, Sort};
 use crate::retract::RetractReport;
 use crate::store::parse;
 use crate::time::rfc3339;
@@ -141,8 +142,46 @@ pub struct RunFilter {
     pub kind: Option<RunKind>,
     pub status: Option<RunStatus>,
     pub entity_type: Option<EntityType>,
-    /// At most this many, newest first.
+    /// At most this many, newest first or the first in the order `sort`
+    /// says: the order is of every run the filter finds, not only of those
+    /// listed.
     pub limit: u64,
+    pub sort: Option<Sort<RunSort>>,
+}
+
+/// What a list of runs can be sorted by. Each ends with the run's ID.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunSort {
+    Run,
+    Kind,
+    Status,
+    /// What it was about: its entity type, strategy and extractor, as a
+    /// list shows them. Those about nothing last.
+    Details,
+    StartedBy,
+    Started,
+}
+
+impl RunSort {
+    fn keys(self) -> Vec<Key> {
+        const DETAILS: &str = "concat_ws(', ', json_extract_string(r.config, '$.entity_type'), \
+             r.strategy, json_extract_string(r.config, '$.extractor.name'))";
+        let mut keys = match self {
+            Self::Run => Vec::new(),
+            Self::Kind => vec![Key::of("r.kind")],
+            Self::Status => vec![Key::of("r.status")],
+            Self::Details => [
+                &[Key::missing_last(&format!("nullif({DETAILS}, '')"))][..],
+                &Key::text(DETAILS),
+            ]
+            .concat(),
+            Self::StartedBy => vec![Key::of("r.started_by")],
+            Self::Started => vec![Key::of("r.started_at")],
+        };
+        keys.push(Key::of("r.run_id"));
+        keys
+    }
 }
 
 impl Default for RunFilter {
@@ -152,6 +191,7 @@ impl Default for RunFilter {
             status: None,
             entity_type: None,
             limit: 100,
+            sort: None,
         }
     }
 }
@@ -257,15 +297,37 @@ pub(crate) fn get(conn: &Connection, run: RunId) -> Result<Option<RunEntry>> {
 
 /// Runs, newest first.
 pub(crate) fn list(conn: &Connection, filter: &RunFilter) -> Result<Vec<RunEntry>> {
-    let mut statement = conn.prepare(&format!(
-        "{RECORD}
-         WHERE ($1::VARCHAR IS NULL OR r.kind = $1::VARCHAR)
+    let filters = "($1::VARCHAR IS NULL OR r.kind = $1::VARCHAR)
            AND ($2::VARCHAR IS NULL OR r.status = $2::VARCHAR)
            AND ($3::VARCHAR IS NULL
-                OR json_extract_string(r.config, '$.entity_type') = $3::VARCHAR)
-         ORDER BY r.run_id DESC
-         LIMIT $4"
-    ))?;
+                OR json_extract_string(r.config, '$.entity_type') = $3::VARCHAR)";
+    let sql = match filter.sort {
+        None => format!(
+            "{RECORD}
+             WHERE {filters}
+             ORDER BY r.run_id DESC
+             LIMIT $4"
+        ),
+        Some(sort) => {
+            let keyed = Keyed {
+                before: None,
+                from: "spool.run r".to_owned(),
+                id: "r.run_id".to_owned(),
+                keys: sort.by.keys(),
+                direction: sort.direction,
+            };
+            format!(
+                "{} {RECORD} {}
+                 WHERE {filters}
+                 ORDER BY {}
+                 LIMIT $4",
+                keyed.with("NULL"),
+                keyed.join("r.run_id"),
+                keyed.order_by(),
+            )
+        }
+    };
+    let mut statement = conn.prepare(&sql)?;
     let mut rows = statement.query(params![
         filter.kind.map(RunKind::as_str),
         filter.status.map(RunStatus::as_str),

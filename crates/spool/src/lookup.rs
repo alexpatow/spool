@@ -14,6 +14,7 @@ use spool_core::{
 };
 
 use crate::error::Result;
+use crate::order::{Key, Keyed, Sort};
 use crate::project::{Extractor, FeatureColumn, Manifest, Strategy};
 use crate::schema;
 use crate::store::{OpRow, op_from_row, parse};
@@ -128,6 +129,8 @@ pub struct RecordFilter {
     /// the page before. A record the store does not hold is refused.
     pub after: Option<RecordId>,
     pub limit: u64,
+    /// Another order than source and key.
+    pub sort: Option<Sort<RecordSort>>,
 }
 
 impl Default for RecordFilter {
@@ -142,6 +145,7 @@ impl Default for RecordFilter {
             unassigned: false,
             after: None,
             limit: 100,
+            sort: None,
         }
     }
 }
@@ -214,7 +218,8 @@ pub struct SourceCount {
     pub records: u64,
 }
 
-/// Which active identities to list. Results are ordered by ID.
+/// Which active identities to list. Results are ordered by ID, or as
+/// `sort` says.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IdentityFilter {
     pub entity_type: Option<EntityType>,
@@ -224,9 +229,49 @@ pub struct IdentityFilter {
     /// Only those among these IDs. One that names no active identity finds
     /// nothing: an identity that was merged away is not in the list.
     pub ids: Option<Vec<IdentityId>>,
-    /// Only those after this ID: the last one of the page before.
+    /// Only those that come after this one in the list: the last one of
+    /// the page before.
     pub after: Option<IdentityId>,
     pub limit: u64,
+    pub sort: Option<Sort<IdentitySort>>,
+}
+
+/// What a list of identities can be sorted by. Each ends with the ID.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IdentitySort {
+    Id,
+    /// The label, whatever its case. Those without one last.
+    Label,
+    EntityType,
+    /// How many records it has.
+    Records,
+    /// How many sources its records came from.
+    Sources,
+    /// The log position that created it.
+    Created,
+}
+
+impl IdentitySort {
+    fn keys(self) -> Vec<Key> {
+        let mut keys = match self {
+            Self::Id => Vec::new(),
+            Self::Label => Key::optional_text("il.label").into(),
+            Self::EntityType => vec![Key::of("i.entity_type")],
+            Self::Records => vec![Key::of(
+                "(SELECT count(*) FROM spool.membership m
+                  WHERE m.identity_id = i.identity_id AND m.to_seq IS NULL)",
+            )],
+            Self::Sources => vec![Key::of(
+                "(SELECT count(DISTINCT o.source_id) FROM spool.membership m
+                  JOIN spool.record o ON o.record_id = m.record_id
+                  WHERE m.identity_id = i.identity_id AND m.to_seq IS NULL)",
+            )],
+            Self::Created => vec![Key::of("i.created_seq")],
+        };
+        keys.push(Key::of("i.identity_id"));
+        keys
+    }
 }
 
 impl Default for IdentityFilter {
@@ -237,6 +282,7 @@ impl Default for IdentityFilter {
             ids: None,
             after: None,
             limit: 100,
+            sort: None,
         }
     }
 }
@@ -447,12 +493,96 @@ fn holds_words(words: &str) -> String {
 /// its document and then at its place there. Its own key begins with the
 /// ID of the document and ends with the span as text, which would put the
 /// documents in no order a reader knows and `[119-142]` before `[54-69]`.
-const RECORD_ORDER: &str = "o.source_id, o.source_key IS NULL, \
-     coalesce(CASE WHEN json_extract_string(o.evidence, '$.document') IS NOT NULL \
-                   THEN json_extract_string(o.evidence, '$.key') END, o.source_key, ''), \
-     coalesce(CASE WHEN json_extract_string(o.evidence, '$.document') IS NOT NULL \
-                   THEN TRY_CAST(json_extract_string(o.evidence, '$.start') AS BIGINT) END, 0), \
-     coalesce(o.source_key, ''), o.entity_type, o.load_run, o.record_id";
+const RECORD_ORDER: [&str; 8] = [
+    "o.source_id",
+    "o.source_key IS NULL",
+    MENTION_KEY,
+    "coalesce(CASE WHEN json_extract_string(o.evidence, '$.document') IS NOT NULL \
+              THEN TRY_CAST(json_extract_string(o.evidence, '$.start') AS BIGINT) END, 0)",
+    "coalesce(o.source_key, '')",
+    "o.entity_type",
+    "o.load_run",
+    "o.record_id",
+];
+
+/// What a record is known by in its source: its key, or for a mention the
+/// key of its document.
+const MENTION_KEY: &str = "coalesce(CASE WHEN json_extract_string(o.evidence, '$.document') IS NOT NULL \
+                   THEN json_extract_string(o.evidence, '$.key') END, o.source_key, '')";
+
+/// What the label of each identity is, as [`labels`] finds it, as a common
+/// table expression `identity_label` of `identity_id` and `label`. Only
+/// an identity that has one is in it.
+const IDENTITY_LABEL: &str = "identity_label AS (
+    SELECT identity_id, label FROM (
+      SELECT identity_id, label,
+             row_number() OVER (PARTITION BY identity_id ORDER BY count(*) DESC, min(nth)) AS rank
+      FROM (
+        SELECT m.identity_id, named.label,
+               row_number() OVER (
+                 PARTITION BY m.identity_id
+                 ORDER BY o.loaded_at, o.load_run, o.record_id) AS nth
+        FROM spool.membership m
+        JOIN spool.record o ON o.record_id = m.record_id
+        LEFT JOIN spool.record_label named ON named.record_id = o.record_id
+        WHERE m.to_seq IS NULL)
+      WHERE nth <= 100 AND label IS NOT NULL
+      GROUP BY identity_id, label)
+    WHERE rank = 1)";
+
+/// What a list of records can be sorted by. Each ends with the order of the
+/// list when nothing is chosen, and that ends with the ID.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecordSort {
+    Id,
+    /// The source and the key, as the list is ordered when nothing is chosen.
+    Source,
+    /// The key, or the document a mention was found in, whatever its case.
+    Key,
+    /// The label, whatever its case. Those without one last.
+    Label,
+    EntityType,
+    /// The label of the identity it belongs to. Those without one last.
+    Identity,
+}
+
+impl RecordSort {
+    fn keys(self) -> Vec<Key> {
+        let order = || {
+            RECORD_ORDER.iter().map(|sql| {
+                if *sql == "o.source_key IS NULL" {
+                    Key::missing_last("o.source_key")
+                } else {
+                    Key::of(*sql)
+                }
+            })
+        };
+        match self {
+            Self::Id => vec![Key::of("o.record_id")],
+            Self::Source => order().collect(),
+            Self::Key => std::iter::once(Key::missing_last("o.source_key"))
+                .chain(Key::text(MENTION_KEY))
+                .chain(order())
+                .collect(),
+            Self::Label => Key::optional_text("named.label")
+                .into_iter()
+                .chain(order())
+                .collect(),
+            Self::EntityType => std::iter::once(Key::of("o.entity_type"))
+                .chain(order())
+                .collect(),
+            Self::Identity => Key::optional_text("il.label")
+                .into_iter()
+                .chain([
+                    Key::missing_last("m.identity_id"),
+                    Key::of("coalesce(m.identity_id::VARCHAR, '')"),
+                ])
+                .chain(order())
+                .collect(),
+        }
+    }
+}
 
 pub(crate) fn records(conn: &Connection, filter: &RecordFilter) -> Result<Vec<RecordEntry>> {
     // A page continues from where a record stands, so the record has to be
@@ -468,23 +598,60 @@ pub(crate) fn records(conn: &Connection, filter: &RecordFilter) -> Result<Vec<Re
             return Err(crate::error::Error::UnknownRecord(after));
         }
     }
-    let mut statement = conn.prepare(&format!(
-        "{RECORD}
-         WHERE ($1::VARCHAR IS NULL OR o.entity_type = $1::VARCHAR)
+    let filters = format!(
+        "($1::VARCHAR IS NULL OR o.entity_type = $1::VARCHAR)
            AND ($2::VARCHAR IS NULL OR o.source_id = $2::VARCHAR)
            AND ($3::VARCHAR IS NULL OR o.source_key = $3::VARCHAR)
-           AND ($4::VARCHAR IS NULL OR row({RECORD_ORDER}) > (
-                 SELECT row({RECORD_ORDER}) FROM spool.record o
-                 WHERE o.record_id = $4::UUID))
            AND (NOT $5::BOOLEAN OR (m.identity_id IS NULL AND taken.record_id IS NULL))
            AND ($7::VARCHAR IS NULL
                 OR json_extract_string(o.evidence, '$.document') = $7::VARCHAR)
            AND ($8::VARCHAR IS NULL OR m.identity_id = $8::UUID)
-           AND {}
-         ORDER BY {RECORD_ORDER}
-         LIMIT $6",
+           AND {}",
         holds_words("$9")
-    ))?;
+    );
+    let sql = match filter.sort {
+        None => {
+            let order = RECORD_ORDER.join(", ");
+            format!(
+                "{RECORD}
+                 WHERE {filters}
+                   AND ($4::VARCHAR IS NULL OR row({order}) > (
+                         SELECT row({order}) FROM spool.record o
+                         WHERE o.record_id = $4::UUID))
+                 ORDER BY {order}
+                 LIMIT $6"
+            )
+        }
+        Some(sort) => {
+            let keyed = Keyed {
+                before: (sort.by == RecordSort::Identity).then(|| IDENTITY_LABEL.to_owned()),
+                from: format!(
+                    "spool.record o
+                     LEFT JOIN spool.membership m ON m.record_id = o.record_id AND m.to_seq IS NULL
+                     LEFT JOIN spool.record_label named ON named.record_id = o.record_id{}",
+                    if sort.by == RecordSort::Identity {
+                        "\n LEFT JOIN identity_label il ON il.identity_id = m.identity_id"
+                    } else {
+                        ""
+                    }
+                ),
+                id: "o.record_id".to_owned(),
+                keys: sort.by.keys(),
+                direction: sort.direction,
+            };
+            format!(
+                "{} {RECORD} {}
+                 WHERE {filters} AND {}
+                 ORDER BY {}
+                 LIMIT $6",
+                keyed.with("$4::UUID"),
+                keyed.join("o.record_id"),
+                keyed.after("$4::VARCHAR IS NOT NULL"),
+                keyed.order_by(),
+            )
+        }
+    };
+    let mut statement = conn.prepare(&sql)?;
     let mut rows = statement.query(params![
         filter.entity_type.as_ref().map(EntityType::as_str),
         filter.source,
@@ -719,25 +886,56 @@ pub(crate) fn identities(
     conn: &Connection,
     filter: &IdentityFilter,
 ) -> Result<Vec<IdentitySummary>> {
-    let mut statement = conn.prepare(&format!(
-        "{IDENTITY}
-         WHERE i.merged_into IS NULL
+    let filters = format!(
+        "i.merged_into IS NULL
            AND ($1::VARCHAR IS NULL OR i.entity_type = $1::VARCHAR)
-           AND ($2::VARCHAR IS NULL OR i.identity_id > $2::UUID)
            AND ($4::VARCHAR IS NULL OR i.identity_id IN (
                  SELECT m.identity_id
                  FROM spool.membership m
                  JOIN spool.record o ON o.record_id = m.record_id
                  WHERE m.to_seq IS NULL AND {}))
-           AND {}
-         ORDER BY i.identity_id
-         LIMIT $3",
+           AND {}",
         holds_words("$4"),
         match &filter.ids {
             Some(ids) => format!("list_contains({}, i.identity_id)", uuid_list(ids)),
             None => "true".to_owned(),
         }
-    ))?;
+    );
+    let sql = match filter.sort {
+        None => format!(
+            "{IDENTITY}
+             WHERE {filters}
+               AND ($2::VARCHAR IS NULL OR i.identity_id > $2::UUID)
+             ORDER BY i.identity_id
+             LIMIT $3"
+        ),
+        Some(sort) => {
+            let labelled = sort.by == IdentitySort::Label;
+            let keyed = Keyed {
+                before: labelled.then(|| IDENTITY_LABEL.to_owned()),
+                from: if labelled {
+                    "spool.identity i LEFT JOIN identity_label il ON il.identity_id = i.identity_id"
+                } else {
+                    "spool.identity i"
+                }
+                .to_owned(),
+                id: "i.identity_id".to_owned(),
+                keys: sort.by.keys(),
+                direction: sort.direction,
+            };
+            format!(
+                "{} {IDENTITY} {}
+                 WHERE {filters} AND {}
+                 ORDER BY {}
+                 LIMIT $3",
+                keyed.with("$2::UUID"),
+                keyed.join("i.identity_id"),
+                keyed.after("$2::VARCHAR IS NOT NULL"),
+                keyed.order_by(),
+            )
+        }
+    };
+    let mut statement = conn.prepare(&sql)?;
     let mut rows = statement.query(params![
         filter.entity_type.as_ref().map(EntityType::as_str),
         filter.after.map(|id| id.to_string()),
@@ -795,9 +993,98 @@ pub(crate) fn history(conn: &Connection, id: IdentityId) -> Result<Vec<HistoryEn
     Ok(entries)
 }
 
-/// The changesets with who started the run each came from.
+/// What the log can be listed by. Each ends with the log position.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LogSort {
+    /// The log position: the order of the log.
+    Seq,
+    Actor,
+    /// How many operations the changeset has.
+    Operations,
+    /// The reconcile run that drafted it. Those that name none last.
+    Run,
+    /// Its reason, whatever the case. Those without one last.
+    Reason,
+}
+
+impl LogSort {
+    fn keys(self) -> Vec<Key> {
+        let mut keys = match self {
+            Self::Seq => Vec::new(),
+            Self::Actor => vec![Key::of("c.actor")],
+            Self::Operations => vec![Key::of(
+                "(SELECT count(*) FROM spool.changeset_op o WHERE o.seq = c.seq)",
+            )],
+            Self::Run => vec![
+                Key::missing_last("c.run_id"),
+                Key::of("coalesce(c.run_id, 0)"),
+            ],
+            Self::Reason => Key::optional_text("c.reason").into(),
+        };
+        keys.push(Key::of("c.seq"));
+        keys
+    }
+}
+
+/// At most `most` committed changesets in the order `sort` says, after
+/// the one at `after` in that order.
+pub(crate) fn changesets(
+    conn: &Connection,
+    sort: Sort<LogSort>,
+    after: Option<Seq>,
+    most: u64,
+) -> Result<Vec<LogEntry>> {
+    let keyed = Keyed {
+        before: None,
+        from: "spool.changeset c".to_owned(),
+        id: "c.seq".to_owned(),
+        keys: sort.by.keys(),
+        direction: sort.direction,
+    };
+    let mut statement = conn.prepare(&format!(
+        "{} SELECT c.seq FROM spool.changeset c {}
+         WHERE {}
+         ORDER BY {}
+         LIMIT $2",
+        keyed.with("$1::BIGINT"),
+        keyed.join("c.seq"),
+        keyed.after("$1::BIGINT IS NOT NULL"),
+        keyed.order_by(),
+    ))?;
+    let after = after.and_then(|seq| i64::try_from(seq.0).ok());
+    let mut rows = statement.query(params![after, self::limit(most)])?;
+    let mut order = Vec::new();
+    while let Some(row) = rows.next()? {
+        order.push(Seq(row.get::<_, i64>(0)? as u64));
+    }
+    // Positions that follow each other are read together, which is the
+    // whole page when the log is listed by position.
+    let mut sorted = order.clone();
+    sorted.sort();
+    let mut read: BTreeMap<Seq, LogEntry> = BTreeMap::new();
+    let mut at = 0;
+    while let Some(&first) = sorted.get(at) {
+        let mut end = at + 1;
+        while sorted
+            .get(end)
+            .is_some_and(|seq| seq.0 == first.0 + (end - at) as u64)
+        {
+            end += 1;
+        }
+        let entries = crate::store::read_log_after(conn, Seq(first.0 - 1), (end - at) as u64)?;
+        read.extend(entries.into_iter().map(|entry| (entry.seq, entry)));
+        at = end;
+    }
+    Ok(order.iter().filter_map(|seq| read.remove(seq)).collect())
+}
+
+/// The changesets with who started the run each came from, in the order given.
 pub(crate) fn logged(conn: &Connection, entries: Vec<LogEntry>) -> Result<Vec<LoggedChangeset>> {
-    let (Some(first), Some(last)) = (entries.first(), entries.last()) else {
+    let (Some(first), Some(last)) = (
+        entries.iter().map(|entry| entry.seq).min(),
+        entries.iter().map(|entry| entry.seq).max(),
+    ) else {
         return Ok(Vec::new());
     };
     // A changeset names the reconcile run that drafted it. A retraction and
@@ -821,7 +1108,7 @@ pub(crate) fn logged(conn: &Connection, entries: Vec<LogEntry>) -> Result<Vec<Lo
              UNION ALL
              SELECT restored_run FROM spool.retraction WHERE restored_run IS NOT NULL)",
     )?;
-    let mut rows = statement.query(params![first.seq.0 as i64, last.seq.0 as i64])?;
+    let mut rows = statement.query(params![first.0 as i64, last.0 as i64])?;
     let mut started: BTreeMap<Seq, Actor> = BTreeMap::new();
     while let Some(row) = rows.next()? {
         started.insert(
