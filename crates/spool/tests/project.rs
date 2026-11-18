@@ -558,5 +558,10 @@ fn the_committed_projects_compile() {
     };
     assert_eq!(types(&companies), ["company"]);
     assert_eq!(types(&people), ["person"]);
+    for (project, entity_type) in [("voters", "person"), ("music", "song")] {
+        let manifest = Manifest::load(benchmarks().join("resolution").join(project)).unwrap();
+        assert_eq!(types(&manifest), [entity_type]);
+        assert_eq!(manifest.sources.len(), 5);
+    }
     assert_ne!(companies.hash, people.hash);
 }

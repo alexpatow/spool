@@ -1,0 +1,46 @@
+# A song on an album. The five sources write the same song in five ways, so
+# each has its own mapping: the title of one holds the album, the title of
+# another the artist, and each has its own unit for a length.
+label: title
+features: [title, artist, album, number, seconds, year, language]
+
+mapping:
+  source_1:
+    title: { from: title, transform: title_before_brackets }
+    artist: { from: artist, transform: folded }
+    album: { from: album, transform: folded }
+    number: { from: number, transform: whole_number }
+    seconds: { from: length, transform: seconds_of_clock }
+    year: { from: year, transform: short_year }
+  source_2:
+    title: { from: title, transform: title_after_artist }
+    artist: { from: title, transform: artist_before_title }
+    album: { from: album, transform: folded }
+    number: { from: number, transform: whole_number }
+    seconds: { from: length, transform: whole_number }
+    year: { from: year, transform: short_year }
+    language: { from: language, transform: language_code }
+  source_3:
+    title: { from: title, transform: title_before_album }
+    artist: { from: artist, transform: folded }
+    album: { from: title, transform: album_after_title }
+    number: { from: number, transform: whole_number }
+    seconds: { from: length, transform: seconds_of_minutes }
+    year: { from: year, transform: short_year }
+    language: { from: language, transform: language_code }
+  source_4:
+    title: { from: title, transform: title_after_number }
+    artist: { from: artist, transform: folded }
+    album: { from: album, transform: album_before_year }
+    number: { from: number, transform: whole_number }
+    seconds: { from: length, transform: seconds_of_words }
+    year: { from: album, transform: year_after_album }
+    language: { from: language, transform: language_code }
+  source_5:
+    title: { from: title, transform: folded }
+    artist: { from: artist, transform: folded }
+    album: { from: album, transform: folded }
+    number: { from: number, transform: whole_number }
+    seconds: { from: length, transform: seconds_of_milliseconds }
+    year: { from: year, transform: short_year }
+    language: { from: language, transform: language_code }

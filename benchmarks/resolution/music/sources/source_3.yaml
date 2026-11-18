@@ -1,0 +1,4 @@
+# Writes a title as "Title - Album" and has no album of its own, a length in
+# minutes as a decimal, and a year as "'95".
+key: TID
+columns: [TID, CTID, SourceID, id, number, title, length, artist, album, year, language]

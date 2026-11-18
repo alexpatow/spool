@@ -228,8 +228,7 @@ fn a_dataset_is_downloaded_once_and_checked_against_its_checksum() {
     write(root, "datasets.toml", &datasets(&sha256("something else")));
     let message = scenario_error(run(root));
     assert!(message.contains("SHA-256"), "{message}");
-    assert!(!root.join(".cache/papers.csv").exists());
-    assert!(!root.join(".cache/papers.csv.part").exists());
+    assert_eq!(fs::read_dir(root.join(".cache")).unwrap().count(), 0);
 
     write(root, "datasets.toml", &datasets(&sha256(PAPERS)));
     assert_eq!(run(root).unwrap().steps[0].ingest[0].inserted, 4);
@@ -256,7 +255,419 @@ fn a_dataset_is_downloaded_once_and_checked_against_its_checksum() {
     assert!(message.contains("no dataset named `posters`"), "{message}");
 }
 
+#[test]
+fn a_dataset_that_several_runs_ask_for_at_once_reaches_each_of_them_whole() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    project(root);
+    // A file that takes a moment to copy, of which each run reads four rows.
+    let mut papers = String::from(PAPERS);
+    for id in 5..200_000 {
+        papers += &format!("{id},A paper that nobody reads but everybody downloads {id},\n");
+    }
+    write(root, "upstream/papers.csv", &papers);
+    write(
+        root,
+        "datasets.toml",
+        &format!(
+            "[[dataset]]\nname = \"papers\"\nurl = \"file://{}\"\nsha256 = \"{}\"\nlicence = \"invented for this test\"\n",
+            root.join("upstream/papers.csv").display(),
+            sha256(&papers)
+        ),
+    );
+    write(
+        root,
+        "bench/scenario.toml",
+        &scenario("dataset = \"papers\"\nwhere = \"id::BIGINT < 5\""),
+    );
+
+    // Tests of one binary run at once, and so do two people's benchmarks.
+    let inserted: Vec<_> = std::thread::scope(|scope| {
+        let runs: Vec<_> = (0..8).map(|_| scope.spawn(|| run(root))).collect();
+        runs.into_iter()
+            .map(|run| {
+                run.join()
+                    .unwrap()
+                    .map(|report| report.steps[0].ingest[0].inserted)
+            })
+            .collect()
+    });
+    for inserted in inserted {
+        assert_eq!(inserted.unwrap(), 4);
+    }
+    assert_eq!(
+        fs::read_to_string(root.join(".cache/papers.csv")).unwrap(),
+        papers
+    );
+    let left: Vec<_> = fs::read_dir(root.join(".cache"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(left, ["papers.csv"]);
+}
+
+#[test]
+fn an_ingest_can_take_only_the_rows_a_condition_holds_for() {
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path());
+    write(dir.path(), "bench/papers.csv", PAPERS);
+    // Every column is text, so a number is cast. A comment in the condition
+    // does not reach past it.
+    write(
+        dir.path(),
+        "bench/scenario.toml",
+        &scenario("file = \"papers.csv\"\nwhere = \"id::BIGINT % 2 = 0 -- even\""),
+    );
+    let report = run(dir.path()).unwrap();
+    let ingest = &report.steps[0].ingest[0];
+    assert_eq!((ingest.received, ingest.inserted), (2, 2));
+    // Truth is read from the rows that were taken, and from no others.
+    assert_eq!(report.steps[0].metrics.records, 2);
+    assert_eq!(report.steps[0].metrics.true_entities, 2);
+
+    let rows =
+        Rows::from_csv_where(dir.path().join("bench/papers.csv"), "title ILIKE '%spools'").unwrap();
+    let batches: Vec<_> = rows.map(Result::unwrap).collect();
+    let ids: Vec<_> = batches
+        .iter()
+        .flat_map(|batch| (0..batch.num_rows()).map(|row| cell(batch, 0, row)))
+        .collect();
+    assert_eq!(ids, [Some("1".to_owned()), Some("2".to_owned())]);
+
+    // A condition that is not SQL over the file's columns names the source
+    // and the condition.
+    write(
+        dir.path(),
+        "bench/scenario.toml",
+        &scenario("file = \"papers.csv\"\nwhere = \"shelf = 3\""),
+    );
+    let message = scenario_error(run(dir.path()));
+    assert!(
+        message.contains("the rows of `library` where `shelf = 3`"),
+        "{message}"
+    );
+    assert!(message.contains("shelf"), "{message}");
+}
+
+#[test]
+fn the_truth_column_may_be_the_key_of_the_source() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    project(root);
+    // Two shelves list the same works under the works' own numbers.
+    for shelf in ["north", "south"] {
+        write(
+            root,
+            &format!("bench/sources/{shelf}.yaml"),
+            "key: work\ncolumns: [work, title]\n",
+        );
+        write(
+            root,
+            &format!("bench/{shelf}.csv"),
+            "work,title\nw1,On Spools\nw2,Threads\n",
+        );
+    }
+    write(
+        root,
+        "bench/entities/paper/entity.yaml",
+        "label: title\nfeatures: [title]\nmapping:\n  north:\n    title: title\n  south:\n    title: title\n",
+    );
+    write(
+        root,
+        "bench/scenario.toml",
+        "[truth]\ncolumn = \"work\"\n\n[[step]]\nname = \"all\"\n\n\
+         [[step.ingest]]\nfile = \"north.csv\"\nsource = \"north\"\nentity_type = \"paper\"\n\n\
+         [[step.ingest]]\nfile = \"south.csv\"\nsource = \"south\"\nentity_type = \"paper\"\n",
+    );
+    let report = run(root).unwrap();
+    let step = &report.steps[0];
+    // The key stays in the rows: each record has it, and is scored by it.
+    assert_eq!(step.ingest[0].inserted, 2);
+    assert_eq!(step.metrics.records, 4);
+    assert_eq!(step.metrics.true_entities, 2);
+    assert_eq!(step.metrics.pairs.precision, Some(1.0));
+    assert_eq!(step.metrics.pairs.recall, Some(1.0));
+}
+
+#[test]
+fn a_dataset_that_is_an_archive_is_unpacked_once_and_an_ingest_names_a_file_in_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    project(root);
+    write(root, "upstream/shelves/papers.csv", PAPERS);
+    write(root, "upstream/shelves/more.csv", MORE);
+    let archive = root.join("upstream/shelves.tar.gz");
+    let packed = std::process::Command::new("tar")
+        .arg("-czf")
+        .arg(&archive)
+        .arg("-C")
+        .arg(root.join("upstream"))
+        .arg("shelves")
+        .status()
+        .unwrap();
+    assert!(packed.success());
+    let checksum: String = Sha256::digest(fs::read(&archive).unwrap())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let datasets = |archive_line: &str| {
+        format!(
+            "[[dataset]]\nname = \"shelves\"\nurl = \"file://{}\"\nsha256 = \"{checksum}\"\n\
+             licence = \"invented for this test\"\n{archive_line}",
+            archive.display()
+        )
+    };
+    let ingest = |member: &str| scenario(&format!("dataset = \"shelves\"\n{member}"));
+
+    write(root, "datasets.toml", &datasets("archive = \"tar\"\n"));
+    write(
+        root,
+        "bench/scenario.toml",
+        &ingest("member = \"shelves/papers.csv\""),
+    );
+    assert_eq!(run(root).unwrap().steps[0].ingest[0].inserted, 4);
+    assert!(root.join(".cache/shelves/shelves/more.csv").is_file());
+    // What is kept is the unpacked copy, not the archive beside it.
+    assert!(!root.join(".cache/shelves.tar").exists());
+
+    // The unpacked copy is used from then on, and another file of it is
+    // there without a second download.
+    fs::remove_file(&archive).unwrap();
+    write(
+        root,
+        "bench/scenario.toml",
+        &ingest("member = \"shelves/more.csv\""),
+    );
+    assert_eq!(run(root).unwrap().steps[0].ingest[0].inserted, 3);
+
+    let cases = [
+        (
+            ingest("member = \"shelves/posters.csv\""),
+            "the archive has no file `shelves/posters.csv`",
+        ),
+        (
+            ingest("member = \"../papers.csv\""),
+            "`../papers.csv` does not name a file within the archive",
+        ),
+        (
+            ingest(""),
+            "dataset `shelves` is an archive: the ingest names the file to read with `member`",
+        ),
+    ];
+    for (scenario, expected) in cases {
+        write(root, "bench/scenario.toml", &scenario);
+        let message = scenario_error(run(root));
+        assert!(
+            message.contains(expected),
+            "expected `{expected}` in: {message}"
+        );
+    }
+
+    // A dataset that is one file has no members, and only `tar` is an archive.
+    write(root, "datasets.toml", &datasets(""));
+    write(
+        root,
+        "bench/scenario.toml",
+        &ingest("member = \"shelves/papers.csv\""),
+    );
+    let message = scenario_error(run(root));
+    assert!(message.contains("is one file"), "{message}");
+    write(root, "datasets.toml", &datasets("archive = \"zip\"\n"));
+    let message = scenario_error(run(root));
+    assert!(message.contains("unknown variant `zip`"), "{message}");
+
+    // `member` belongs to a dataset.
+    write(
+        root,
+        "bench/scenario.toml",
+        &scenario("file = \"papers.csv\"\nmember = \"shelves/papers.csv\""),
+    );
+    let message = scenario_error(Scenario::load(root.join("bench")));
+    assert!(
+        message.contains("`member` names a file within a `dataset`"),
+        "{message}"
+    );
+}
+
 /// Papers in two batches, with a reviewer between them.
+#[test]
+fn a_scenario_is_checked_against_its_project_before_anything_is_downloaded() {
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path());
+    let checked = |ingest: &str| {
+        write(dir.path(), "bench/scenario.toml", &scenario(ingest));
+        scenario_error(run(dir.path()))
+    };
+
+    // The dataset would be fetched from a file that is not there, and the
+    // run never gets that far.
+    write(
+        dir.path(),
+        "datasets.toml",
+        &format!(
+            "[[dataset]]\nname = \"papers\"\nurl = \"file://{}\"\nsha256 = \"{}\"\nlicence = \"test\"\n",
+            dir.path().join("nowhere.csv").display(),
+            sha256(PAPERS)
+        ),
+    );
+    let message = checked("dataset = \"pamphlets\"");
+    assert!(
+        message.contains("the ingest from `library`")
+            && message.contains("no dataset named `pamphlets`"),
+        "{message}"
+    );
+    let message = checked("dataset = \"papers\"\nmember = \"papers.csv\"");
+    assert!(message.contains("is one file"), "{message}");
+    let message = checked("file = \"papers.csv\"");
+    assert!(message.contains("there is no file"), "{message}");
+
+    write(dir.path(), "bench/papers.csv", PAPERS);
+    let unknown = |source: &str, entity_type: &str| {
+        write(
+            dir.path(),
+            "bench/scenario.toml",
+            &format!(
+                "[truth]\ncolumn = \"work\"\n\n[[step]]\nname = \"all\"\n\n[[step.ingest]]\n\
+                 dataset = \"papers\"\nsource = \"{source}\"\nentity_type = \"{entity_type}\"\n"
+            ),
+        );
+        scenario_error(run(dir.path()))
+    };
+    let message = unknown("library", "book");
+    assert!(
+        message.contains("the project has no entity type `book`"),
+        "{message}"
+    );
+    let message = unknown("archive", "paper");
+    assert!(
+        message.contains("the mapping of `paper` has no block for the source"),
+        "{message}"
+    );
+    assert!(!dir.path().join(".cache").exists());
+}
+
+/// Every scenario file under `benchmarks`.
+fn committed_scenarios() -> Vec<std::path::PathBuf> {
+    fn walk(dir: &Path, found: &mut Vec<std::path::PathBuf>) {
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            if path.is_dir() {
+                if !name.starts_with('.') {
+                    walk(&path, found);
+                }
+            } else if name.ends_with(".toml") && name != "datasets.toml" {
+                found.push(path);
+            }
+        }
+    }
+    let mut found = Vec::new();
+    walk(&common::benchmarks(), &mut found);
+    found.sort();
+    found
+}
+
+#[test]
+fn every_committed_scenario_fits_its_project_and_the_datasets_that_are_listed() {
+    // The big scenarios are run by hand, so nothing else would notice one
+    // that names a source its project has lost.
+    let scenarios = committed_scenarios();
+    assert!(scenarios.len() >= 12, "{scenarios:?}");
+    for path in scenarios {
+        Scenario::load(&path)
+            .and_then(|scenario| scenario.check())
+            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    }
+}
+
+#[test]
+fn each_source_of_the_music_project_is_read_in_its_own_way() {
+    let engine = Engine::open_in_memory(Options::seeded(0)).unwrap();
+    let report = Scenario::load(common::benchmarks().join("resolution/music/sample.toml"))
+        .unwrap()
+        .run(&engine, |_| Ok(()))
+        .unwrap();
+    let features = |key: &str| {
+        common::select(
+            &engine,
+            &format!(
+                "SELECT f.title, f.artist, f.album, f.number::VARCHAR, f.seconds::VARCHAR, f.year, f.language
+                 FROM spool.features_song f JOIN spool.record o USING (record_id)
+                 WHERE o.source_key = '{key}'"
+            ),
+        )
+        .remove(0)
+        .into_iter()
+        .map(|value| value.unwrap_or_else(|| "-".to_owned()))
+        .collect::<Vec<_>>()
+        .join(" | ")
+    };
+
+    // One song as each of the five sources has it.
+    assert_eq!(
+        features("116832"),
+        "enslavers | hellbastard | natural order | 6 | 261 | 92 | -"
+    );
+    assert_eq!(
+        features("5800"),
+        "enslavers | hellbastard | natural order | 6 | 261 | 92 | eng"
+    );
+    assert_eq!(
+        features("66518"),
+        "enslavers | hellbastard | natural order | 6 | 261 | 92 | eng"
+    );
+    assert_eq!(
+        features("91071"),
+        "enslavers | hellbastard | natural order | 6 | 261 | 92 | eng"
+    );
+    assert_eq!(
+        features("123090"),
+        "enslavers | hellbastard | natural order | 6 | 261 | 92 | eng"
+    );
+
+    // Values a source has no way of writing, or wrote badly, are missing
+    // and not wrong.
+    assert_eq!(
+        features("8"),
+        "ayebo | djelimady | sigui | - | 278 | 01 | -"
+    );
+    assert_eq!(
+        features("10"),
+        "try acoustic | neil young | 2008 02 15 le grand rex paris france | 6 | - | - | eng"
+    );
+    assert_eq!(
+        features("9"),
+        "i mready | john lee hooker | the collection | 3 | 161 | 06 | eng"
+    );
+    assert_eq!(
+        features("24"),
+        "gimme dat remix | rye rye | ryeot powrr | 16 | 263 | 11 | -"
+    );
+    assert_eq!(
+        features("2"),
+        "双剣乱舞 みょん me | silver forest | silver forest 2006 2012 best1 | 11 | 229 | 12 | jap"
+    );
+    assert_eq!(
+        features("39"),
+        "go the distance hercules | alan menken | disney karaoke volume 1 | 5 | - | - | -"
+    );
+
+    // Two of the four songs that are in every source are found whole. Each
+    // of the other two has a record with the wrong track number, which the
+    // rules take for another song, because an album that came out twice has
+    // the same titles at other numbers. Nothing is put with a song that is
+    // not it.
+    let metrics = &report.steps[0].metrics;
+    assert_eq!((metrics.records, metrics.true_entities), (26, 10));
+    assert_eq!(metrics.false_merges, 0);
+    assert_eq!(metrics.false_splits, 2);
+    assert_eq!(metrics.pairs.true_positives, 10 + 6 + 10 + 6);
+    assert_ne!(
+        common::identity(&engine, "source_3", "101459"),
+        common::identity(&engine, "source_5", "135493")
+    );
+}
+
 const REVIEWED: &str = r#"
 [truth]
 column = "work"

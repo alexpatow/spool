@@ -22,6 +22,8 @@
 //! file = "batch-1.csv"          # or: dataset = "<name in datasets.toml>"
 //! source = "crm"
 //! entity_type = "company"
+//! # member = "dir/part-1.csv"   # the file to read, when the dataset is an archive
+//! # where = "region = 'north'"  # only the rows this holds for: SQL over the file's columns
 //!
 //! [[step]]
 //! name = "review"               # a step may have corrections and no files
@@ -35,6 +37,12 @@
 //! strategy = "splink"           # the strategy this step resolves with
 //! rematch = true                # and it judges every record again
 //! ```
+//!
+//! Every column of a file is text, so a `where` that compares numbers casts
+//! them: `id::BIGINT % 10 = 0` takes a tenth of the rows, and the same tenth
+//! of every file that shares the IDs. The truth column may be the column the
+//! source declares as its key, when the key is what says who a row is; any
+//! other truth column is taken out of the rows before they are ingested.
 //!
 //! A step can also store documents and run extractors over them, before it
 //! resolves:
@@ -90,6 +98,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use duckdb::arrow::array::{Array, AsArray};
 use serde::{Deserialize, Serialize};
@@ -271,6 +280,12 @@ impl Correction<'_> {
 struct IngestSpec {
     file: Option<PathBuf>,
     dataset: Option<String>,
+    /// The file to read within a dataset that is an archive.
+    member: Option<String>,
+    /// A SQL condition on the file's columns. Only the rows it holds for
+    /// are ingested.
+    #[serde(rename = "where")]
+    only: Option<String>,
     source: String,
     entity_type: String,
 }
@@ -285,6 +300,15 @@ struct Dataset {
     sha256: String,
     #[allow(dead_code)]
     licence: String,
+    /// `tar` when the download is a tar archive, compressed or not, of
+    /// which an ingest names one file. Without it the download is the file.
+    archive: Option<Archive>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum Archive {
+    Tar,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -559,6 +583,12 @@ impl Scenario {
                         step.name
                     )));
                 }
+                if ingest.member.is_some() && ingest.dataset.is_none() {
+                    return Err(invalid(format!(
+                        "step `{}`: `member` names a file within a `dataset`, and the ingest reads a `file`",
+                        step.name
+                    )));
+                }
                 if !rows_have_truth {
                     return Err(invalid(format!(
                         "step `{}` ingests rows, and [truth] has no `file` or `column` to say what they are",
@@ -681,6 +711,55 @@ impl Scenario {
         Ok(fed)
     }
 
+    /// Checks the scenario against its project and against `datasets.toml`,
+    /// and returns the project's manifest: every ingest names a source the
+    /// entity type maps, and a file that is there or a dataset that is
+    /// listed. Nothing is downloaded, so a scenario that cannot run says so
+    /// before it has fetched anything.
+    pub fn check(&self) -> Result<Manifest> {
+        let manifest = Manifest::load(self.project_dir())?;
+        for step in &self.spec.steps {
+            for ingest in &step.ingest {
+                let invalid = |message: String| {
+                    Error::Scenario(format!(
+                        "step `{}`, the ingest from `{}`: {message}",
+                        step.name, ingest.source
+                    ))
+                };
+                let Some(entity_type) = manifest
+                    .entity_types
+                    .iter()
+                    .find(|entity_type| entity_type.name.as_str() == ingest.entity_type)
+                else {
+                    return Err(invalid(format!(
+                        "the project has no entity type `{}`",
+                        ingest.entity_type
+                    )));
+                };
+                if !entity_type.sources.contains(&ingest.source) {
+                    return Err(invalid(format!(
+                        "the mapping of `{}` has no block for the source",
+                        ingest.entity_type
+                    )));
+                }
+                match (&ingest.file, &ingest.dataset) {
+                    (Some(file), _) => {
+                        let path = self.dir.join(file);
+                        if !path.is_file() {
+                            return Err(invalid(format!("there is no file {}", path.display())));
+                        }
+                    }
+                    (None, Some(dataset)) => {
+                        find_dataset(&self.dir, dataset, ingest.member.as_deref())
+                            .map_err(|error| invalid(error.to_string()))?;
+                    }
+                    (None, None) => {}
+                }
+            }
+        }
+        Ok(manifest)
+    }
+
     /// Runs every step against an engine with an empty store. `after_step`
     /// is called once a step is committed and scored, while the engine still
     /// holds the state the step left.
@@ -689,7 +768,7 @@ impl Scenario {
         engine: &Engine,
         mut after_step: impl FnMut(&StepReport) -> Result<()>,
     ) -> Result<BenchReport> {
-        let manifest = Manifest::load(self.project_dir())?;
+        let manifest = self.check()?;
         engine.apply(&manifest)?;
         // The project's strategies and extractors are beside the manifest's
         // sources.
@@ -779,7 +858,7 @@ impl Scenario {
     ) -> Result<IngestSummary> {
         let path = match (&ingest.file, &ingest.dataset) {
             (Some(file), _) => self.dir.join(file),
-            (None, Some(dataset)) => fetch_dataset(&self.dir, dataset)?,
+            (None, Some(dataset)) => fetch_dataset(&self.dir, dataset, ingest.member.as_deref())?,
             (None, None) => unreachable!("checked when the scenario was loaded"),
         };
         // Truth is joined to records by the key the source declares.
@@ -793,7 +872,15 @@ impl Scenario {
                 ))
             })?;
         let key = key.as_str();
-        let mut rows = Rows::from_csv(&path)?;
+        let mut rows = match &ingest.only {
+            None => Rows::from_csv(&path)?,
+            Some(condition) => Rows::from_csv_where(&path, condition).map_err(|error| {
+                Error::Scenario(format!(
+                    "the rows of `{}` where `{condition}`: {error}",
+                    ingest.source
+                ))
+            })?,
+        };
         if let Some(column) = &self.spec.truth.column {
             let (rest, pairs) = rows.take_column(column, key)?;
             rows = rest;
@@ -1219,7 +1306,29 @@ fn read_truth_file(path: &Path) -> Result<Vec<(String, String, String)>> {
 /// Returns the local copy of a dataset named in the nearest `datasets.toml`
 /// above the scenario, downloading it if the copy is missing or does not
 /// match its checksum. Copies are kept in `.cache` beside `datasets.toml`.
-fn fetch_dataset(scenario_dir: &Path, name: &str) -> Result<PathBuf> {
+///
+/// A dataset that is an archive is unpacked beside its download, once, and
+/// `member` names the file in it that is wanted.
+fn fetch_dataset(scenario_dir: &Path, name: &str, member: Option<&str>) -> Result<PathBuf> {
+    let (index, dataset) = find_dataset(scenario_dir, name, member)?;
+    let cache = index.with_file_name(".cache");
+    let Some(member) = member else {
+        let path = cache.join(format!("{name}.csv"));
+        if !(path.is_file() && sha256_of(&path)? == dataset.sha256) {
+            download(&cache, name, &dataset, &path)?;
+        }
+        return Ok(path);
+    };
+    unpacked(&cache, name, &dataset, member)
+}
+
+/// Finds a dataset in the `datasets.toml` nearest above the scenario, and
+/// that file. An ingest names a `member` of an archive, and of nothing else.
+fn find_dataset(
+    scenario_dir: &Path,
+    name: &str,
+    member: Option<&str>,
+) -> Result<(PathBuf, Dataset)> {
     let start = std::fs::canonicalize(scenario_dir).map_err(Error::io(scenario_dir))?;
     let index = start
         .ancestors()
@@ -1241,15 +1350,34 @@ fn fetch_dataset(scenario_dir: &Path, name: &str) -> Result<PathBuf> {
         .ok_or_else(|| {
             Error::Scenario(format!("{}: no dataset named `{name}`", index.display()))
         })?;
-
-    let cache = index.with_file_name(".cache");
-    let path = cache.join(format!("{name}.csv"));
-    if path.is_file() && sha256_of(&path)? == dataset.sha256 {
-        return Ok(path);
+    match (dataset.archive, member) {
+        (None, None) | (Some(Archive::Tar), Some(_)) => Ok((index, dataset)),
+        (None, Some(_)) => Err(Error::Scenario(format!(
+            "dataset `{name}` is one file, and the ingest names a `member` of it"
+        ))),
+        (Some(Archive::Tar), None) => Err(Error::Scenario(format!(
+            "dataset `{name}` is an archive: the ingest names the file to read with `member`"
+        ))),
     }
+}
 
-    std::fs::create_dir_all(&cache).map_err(Error::io(&cache))?;
-    let partial = cache.join(format!("{name}.csv.part"));
+/// A path in the cache that no other run uses: two runs that fetch the same
+/// dataset at once each write their own file, and the one that is whole
+/// takes the dataset's name.
+fn scratch(cache: &Path, name: &str, kind: &str) -> PathBuf {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    cache.join(format!(
+        "{name}.{}-{}.{kind}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
+/// Downloads a dataset to `path`, which is kept only if it has the checksum
+/// `datasets.toml` names.
+fn download(cache: &Path, name: &str, dataset: &Dataset, path: &Path) -> Result<()> {
+    std::fs::create_dir_all(cache).map_err(Error::io(cache))?;
+    let partial = scratch(cache, name, "part");
     let status = Command::new("curl")
         .args([
             "--fail",
@@ -1267,6 +1395,7 @@ fn fetch_dataset(scenario_dir: &Path, name: &str) -> Result<PathBuf> {
             ))
         })?;
     if !status.success() {
+        let _ = std::fs::remove_file(&partial);
         return Err(Error::Scenario(format!(
             "dataset `{name}`: downloading {} failed",
             dataset.url
@@ -1280,8 +1409,76 @@ fn fetch_dataset(scenario_dir: &Path, name: &str) -> Result<PathBuf> {
             dataset.sha256
         )));
     }
-    std::fs::rename(&partial, &path).map_err(Error::io(&path))?;
-    Ok(path)
+    std::fs::rename(&partial, path).map_err(Error::io(path))
+}
+
+/// The file `member` of a dataset that is an archive. The archive is
+/// downloaded, checked and unpacked into a directory named for the dataset,
+/// and only the directory is kept. It records the checksum of the archive it
+/// came from, so a dataset whose checksum changed is fetched again.
+fn unpacked(cache: &Path, name: &str, dataset: &Dataset, member: &str) -> Result<PathBuf> {
+    let inside = Path::new(member);
+    let plain = inside
+        .components()
+        .all(|part| matches!(part, std::path::Component::Normal(_)));
+    if !plain || member.is_empty() {
+        return Err(Error::Scenario(format!(
+            "dataset `{name}`: `{member}` does not name a file within the archive"
+        )));
+    }
+    let dir = cache.join(name);
+    let current = |dir: &Path| {
+        std::fs::read_to_string(dir.join(".sha256")).is_ok_and(|kept| kept == dataset.sha256)
+    };
+    if !current(&dir) {
+        let archive = scratch(cache, name, "tar");
+        download(cache, name, dataset, &archive)?;
+        // Unpacked beside where it goes and then given its name, so that
+        // nobody reads a directory that is half there.
+        let unpacking = scratch(cache, name, "unpacking");
+        let unpack = || -> Result<()> {
+            std::fs::create_dir_all(&unpacking).map_err(Error::io(&unpacking))?;
+            let status = Command::new("tar")
+                .arg("-xf")
+                .arg(&archive)
+                .arg("-C")
+                .arg(&unpacking)
+                .status()
+                .map_err(|error| {
+                    Error::Scenario(format!(
+                        "dataset `{name}`: tar is needed to unpack it and could not be run: {error}"
+                    ))
+                })?;
+            if !status.success() {
+                return Err(Error::Scenario(format!(
+                    "dataset `{name}`: the download could not be unpacked with tar"
+                )));
+            }
+            let stamp = unpacking.join(".sha256");
+            std::fs::write(&stamp, &dataset.sha256).map_err(Error::io(&stamp))?;
+            if dir.exists() && !current(&dir) {
+                std::fs::remove_dir_all(&dir).map_err(Error::io(&dir))?;
+            }
+            match std::fs::rename(&unpacking, &dir) {
+                // Another run put the same files there first.
+                Err(_) if current(&dir) => Ok(()),
+                renamed => renamed.map_err(Error::io(&dir)),
+            }
+        };
+        let unpacked = unpack();
+        let _ = std::fs::remove_file(&archive);
+        if unpacking.exists() {
+            let _ = std::fs::remove_dir_all(&unpacking);
+        }
+        unpacked?;
+    }
+    let file = dir.join(inside);
+    if !file.is_file() {
+        return Err(Error::Scenario(format!(
+            "dataset `{name}`: the archive has no file `{member}`"
+        )));
+    }
+    Ok(file)
 }
 
 fn sha256_of(path: &Path) -> Result<String> {

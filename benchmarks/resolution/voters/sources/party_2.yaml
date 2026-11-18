@@ -1,0 +1,5 @@
+# One of the five sources. `recid` is the register's number for the person,
+# which is the same in every source. It is the row's key and the benchmark's
+# truth, and no feature is made from it.
+key: recid
+columns: [recid, givenname, surname, suburb, postcode]

@@ -9,3 +9,40 @@ name = "fake_1000"
 url = "https://raw.githubusercontent.com/moj-analytical-services/splink_datasets/master/data/fake_1000.csv"
 sha256 = "66f9b8f92b9b082ef982fe18c77030fbed8780f06ce1d40d7106be5a72392e2a"
 licence = "The repository that publishes it is MIT-licensed. Whether that covers the data files is not confirmed, so the file is downloaded and never committed."
+
+# The entity-resolution benchmark sets of the database group at Leipzig
+# University: https://dbs.uni-leipzig.de/research/projects/benchmark-datasets-for-entity-resolution
+# Cite Saeedi, Peukert and Rahm, "Scalable Matching and Clustering of Entities
+# with FAMER", ADBIS 2017, when you publish results on them.
+
+# Person records of the North Carolina voter register, in five sources of
+# 1,000,000 rows each. A source has no duplicates. Half of the people are in
+# every source as they are, a quarter are in every source with errors typed
+# in, and a quarter are in some sources with errors. 3,500,840 people.
+[[dataset]]
+name = "ncvoters_5"
+url = "https://dbs.uni-leipzig.de/files/datasets/saeedi/5Party-ocp20.tar.gz"
+sha256 = "4cecc0ddba08793befbc448696268bcf8a26e22e7fd7ff20a3cba327d9e1fd6c"
+archive = "tar"
+licence = "CC BY 4.0: the page says the datasets are made available under the Creative Commons licence, and links those words to version 4.0 of the Attribution licence. The files are downloaded and never committed."
+
+# Songs of the MusicBrainz database in five sources, each with its own way
+# of writing a title, a length and a year. Half of the songs are in two to
+# five sources, heavily corrupted. 19,375, 193,750 and 1,937,500 rows.
+[[dataset]]
+name = "musicbrainz_20k"
+url = "https://dbs.uni-leipzig.de/files/datasets/saeedi/musicbrainz-20-A01.csv.dapo"
+sha256 = "527a94f24f7e813a9bc3fef35a635f13e195516966b308140a0dd2926afbb97d"
+licence = "CC BY 4.0, as for ncvoters_5. Downloaded and never committed, but for the 26 records of resolution/music/sample.csv."
+
+[[dataset]]
+name = "musicbrainz_200k"
+url = "https://dbs.uni-leipzig.de/files/datasets/saeedi/musicbrainz-200-A01.csv.dapo"
+sha256 = "5b6811e75530438e511e4b6f64213e6f99987551d3f32d4ce9f1333d7ebf76e2"
+licence = "CC BY 4.0, as for ncvoters_5. Downloaded and never committed, but for the 26 records of resolution/music/sample.csv."
+
+[[dataset]]
+name = "musicbrainz_2m"
+url = "https://dbs.uni-leipzig.de/files/datasets/saeedi/musicbrainz-2000-A01.csv.dapo"
+sha256 = "32efc65542530549ee16596838634ac4ce07bb613733c64d26f683b6516076ed"
+licence = "CC BY 4.0, as for ncvoters_5. Downloaded and never committed, but for the 26 records of resolution/music/sample.csv."

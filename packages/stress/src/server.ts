@@ -133,7 +133,14 @@ export async function serve({ project, store, seed, args = [], build = true }: S
   // A token is shown once, so a server started again on the same store gets
   // a new one in place of the last.
   Bun.spawnSync([binary(), "token", "revoke", "stress", "--store", store], { stdout: "ignore", stderr: "ignore" });
-  const token = spool("token", "add", "stress", "--store", store).trim();
+  let token: string;
+  try {
+    token = spool("token", "add", "stress", "--store", store).trim();
+  } catch (error) {
+    // Nobody was given the server, so nobody would stop it.
+    child.kill("SIGKILL");
+    throw error;
+  }
 
   return {
     url,

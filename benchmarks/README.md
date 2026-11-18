@@ -1,0 +1,66 @@
+# Benchmarks
+
+Each directory here is a Spool project with one or more scenarios: files that say what to ingest in which order, and what the truth is. `spool bench` runs one and scores the identities it ends with.
+
+```sh
+cargo build --release -p spool-cli
+target/release/spool bench benchmarks/resolution/music/200k.toml
+```
+
+| Project | Records | What it is for |
+| --- | --- | --- |
+| `identity/companies-small` | 39 invented company records in two batches | The hard cases of company identity, small enough to read, with scripted corrections |
+| `resolution/people` | Splink's `fake_1000`, and a committed sample of ten rows | A second entity type, and a Splink strategy beside the rules |
+| `resolution/voters` | North Carolina voters, five sources of up to 1,000,000 | Scale: millions of records, few attributes, light errors |
+| `resolution/music` | MusicBrainz songs, five sources, up to 1,937,500 records | Sources that write the same thing in five ways, and heavy errors |
+| `extraction/company-news` | Ten invented news items | Extraction from text, scored apart from resolution |
+
+## Public data
+
+The voter and song sets are public, and are not in this repository. `datasets.toml` lists where each is from and the checksum it must have. A scenario that names one downloads it into `benchmarks/.cache/` the first time, and refuses a file with another checksum.
+
+Both are from the [benchmark datasets for entity resolution](https://dbs.uni-leipzig.de/research/projects/benchmark-datasets-for-entity-resolution) of the database group at Leipzig University, which publishes them under the Creative Commons Attribution 4.0 licence. Results on them should cite Saeedi, Peukert and Rahm, "Scalable Matching and Clustering of Entities with FAMER", ADBIS 2017. The records are real and the duplicates are made: a generator copied each record into some of the five sources and typed errors into the copies. `resolution/music/sample.csv` is 26 of the song records, committed so that the project can be tried without a download.
+
+- **North Carolina voters.** A given name, a surname, a suburb and a postcode, and nothing else. 5,000,000 records of 3,500,840 people. No source holds a person twice. Half of the people are in every source unchanged, and the rest have errors in two of the four values.
+- **MusicBrainz songs.** A title, an artist, an album, a track number, a length, a year and a language. One source writes the album into the title, another the artist, a third puts the track number before it. Each has its own unit for a length and its own way to write a year. 19,375, 193,750 and 1,937,500 records, of which half are songs that are in one source only.
+
+A scenario takes part of a file with `where`, a condition in SQL on the file's columns, which are all text. `resolution/voters/5x500k.toml` takes the people with an even register number, which is the same half of the people in each of the five sources:
+
+```toml
+[[step.ingest]]
+dataset = "ncvoters_5"
+member = "5Party-ocp20/ncvr_numrec_1000000_modrec_2_ocp_20_myp_0_nump_5.csv"
+source = "party_0"
+entity_type = "person"
+where = "recid::BIGINT % 2 = 0"
+```
+
+## What was measured
+
+On four cores and 16 GB, with the release build, in one process:
+
+| Scenario | Records | Candidate pairs | Seconds | Peak memory | Pair precision | Pair recall | False merges | False splits |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `voters/5x100k.toml` | 500,323 | 1,038,709 | 15 | 1.4 GB | 0.988 | 0.881 | 1,682 | 11,093 |
+| `voters/5x500k.toml` | 2,501,091 | 19,765,295 | 82 | 5.9 GB | 0.938 | 0.881 | 36,569 | 54,855 |
+| `voters/5x1m.toml` | 5,000,000 | 76,148,339 | 210 | 13.4 GB | 0.880 | 0.879 | 128,355 | 109,304 |
+| `music/20k.toml` | 19,375 | 15,981 | 1.5 | 0.2 GB | 1.000 | 0.857 | 0 | 989 |
+| `music/200k.toml` | 193,750 | 215,812 | 8 | 0.7 GB | 0.997 | 0.862 | 112 | 9,633 |
+| `music/2m.toml` | 1,937,500 | 7,985,984 | 67 | 4.3 GB | 0.959 | 0.863 | 8,392 | 96,276 |
+
+Recall stays where it is as a set grows, and precision falls. Twice the people in the same towns is four times the pairs of different people who look alike, and one wrong pair joins two whole identities. The voter rules also leave 201, 3,124 and 13,755 records for review, where a pair the `relatives` rule keeps apart was matched through a third record.
+
+The rules of both projects were written against the truth of a small part and then run on all of it. The first rules for the songs, "four of the six values agree", had precision 0.998 on 19,375 records, 0.955 on 193,750 and 0.157 on 1,937,500, where 2,532 different songs called "Intro" at track 1 became one identity. Rules that look right on a sample have to be measured at the size they will run at.
+
+What the rules cannot say is in the numbers too. A voter source holds no person twice, and a rule cannot use that, because it sees the features of two records and not their sources.
+
+## Over HTTP
+
+`spool bench` uses the engine in its own process. `packages/stress/src/replay.ts` runs a scenario that way, then sends the same rows to a server in the same runs, reads both stores from end to end, and fails unless the two agree on who is with whom:
+
+```sh
+cd packages/stress
+bun src/replay.ts ../../benchmarks/resolution/voters/5x500k.toml
+```
+
+`music/20k.toml` is replayed in the tests. The larger scenarios are run by hand.

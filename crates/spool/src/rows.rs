@@ -203,7 +203,18 @@ impl Rows {
     /// Reads a CSV file with a header row. Every column is read as text, and
     /// an empty field is a missing value.
     pub fn from_csv(path: impl AsRef<Path>) -> Result<Self> {
-        let path = path.as_ref();
+        Self::read_csv(path.as_ref(), None)
+    }
+
+    /// Reads the rows of a CSV file for which `condition` holds, in the
+    /// order of the file. The condition is a SQL expression over the file's
+    /// columns, each of which is text: `region = 'north'`, or
+    /// `id::BIGINT % 10 = 0`.
+    pub fn from_csv_where(path: impl AsRef<Path>, condition: &str) -> Result<Self> {
+        Self::read_csv(path.as_ref(), Some(condition))
+    }
+
+    fn read_csv(path: &Path, condition: Option<&str>) -> Result<Self> {
         if !path.is_file() {
             return Err(Error::Io {
                 path: path.to_owned(),
@@ -211,8 +222,15 @@ impl Rows {
             });
         }
         let conn = Connection::open_in_memory()?;
-        let mut statement =
-            conn.prepare("SELECT * FROM read_csv(?, header = true, all_varchar = true)")?;
+        let filter = match condition {
+            // The condition ends at its own end: a line comment in it would
+            // otherwise take the closing bracket with it.
+            Some(condition) => format!(" WHERE (\n{condition}\n)"),
+            None => String::new(),
+        };
+        let mut statement = conn.prepare(&format!(
+            "SELECT * FROM read_csv(?, header = true, all_varchar = true){filter}"
+        ))?;
         let arrow = statement.query_arrow([path.to_string_lossy().as_ref()])?;
         let schema = arrow.get_schema();
         Ok(Self::new(schema, arrow.collect()))
@@ -220,6 +238,7 @@ impl Rows {
 
     /// Removes a column and returns its values with those of `key_column`,
     /// row by row. Rows where either is missing are left out of the pairs.
+    /// A column that is the key column itself is read and left in place.
     pub fn take_column(
         self,
         column: &str,
@@ -232,7 +251,7 @@ impl Rows {
             .index_of(key_column)
             .map_err(|_| missing(key_column))?;
         let keep: Vec<usize> = (0..self.schema.fields().len())
-            .filter(|index| *index != at)
+            .filter(|index| *index != at || at == key_at)
             .collect();
 
         let mut pairs = Vec::new();

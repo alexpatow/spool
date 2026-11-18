@@ -265,8 +265,14 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
         .flat_map(|resolved| &resolved.review)
         .collect();
     if !review.is_empty() {
-        println!("\nfor review:");
-        let keys = record_keys(engine)?;
+        println!("\nfor review ({}):", review.len());
+        let more = review.len().saturating_sub(list);
+        let review = &review[..review.len() - more];
+        let keys = if review.is_empty() {
+            Default::default()
+        } else {
+            record_keys(engine)?
+        };
         let name = |id: &spool::core::RecordId| {
             keys.get(&id.to_string())
                 .cloned()
@@ -299,6 +305,9 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
                     ),
                 },
             }
+        }
+        if more > 0 {
+            println!("  ... and {more} more; raise --list to print them");
         }
     }
 
