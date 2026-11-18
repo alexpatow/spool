@@ -8,7 +8,8 @@ Working out which records are the same thing is called entity resolution, or rec
 
 ```sh
 curl -fsSL https://github.com/alexpatow/spool/releases/latest/download/install.sh | sh
-spool init companies && cd companies
+spool init companies
+cd companies
 spool dev
 ```
 
@@ -17,28 +18,38 @@ In a second terminal, in `companies`:
 ```sh
 spool load samples/crm-1.csv
 spool match
+spool load samples/crm-2.csv
+spool match
+spool extract samples/notes-1.txt
+spool match
 spool show records
 ```
 
-The last command prints this, after a first column of record IDs that is left out here to fit:
+That loads nine rows of a CRM export from two files, then finds the three companies a call note names, and matches after each. The last command lists the twelve records with the identity of each:
 
 ```text
-source and key  name                 identity
-crm:c-1         Acorn Tools          01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
-crm:c-2         ACORN TOOLS          01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
-crm:c-3         Acorn Tools Ltd      01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
-crm:c-4         Larkfield Logistics  01a1ef8e-5a8d-76d4-acb6-2bb802d5ca25
-crm:c-5         Halden Group         01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae
-crm:c-6         Halden Group         01a1ef8e-5a8d-76d4-acb6-2bb65a02262a
+source and key              name                     identity
+crm:c-1                     Acorn Tools              01a1efc6-41cd-775d-8758-e7300637659a
+crm:c-2                     ACORN TOOLS              01a1efc6-41cd-775d-8758-e7300637659a
+crm:c-3                     Acorn Tools Ltd          01a1efc6-41cd-775d-8758-e7300637659a
+crm:c-4                     Larkfield Logistics      01a1efc6-41cd-775d-8758-e733aa086f7d
+crm:c-5                     Halden Group             01a1efc6-41cd-775d-8758-e7329447fd9a
+crm:c-6                     Halden Group             01a1efc6-41cd-775d-8758-e731c61371cb
+crm:c-7                     Larkfeild Logistics      01a1efc6-41cd-775d-8758-e733aa086f7d
+crm:c-8                     Kestrel Analytics        01a1efc6-42c0-7776-b736-83fde0cb4498
+crm:c-9                     Acorn Tool               01a1efc6-41cd-775d-8758-e7300637659a
+notes:notes-1.txt[54-69]    Acorn Tools Ltd          01a1efc6-41cd-775d-8758-e7300637659a
+notes:notes-1.txt[119-142]  Larkfield Logistics Ltd  01a1efc6-41cd-775d-8758-e733aa086f7d
+notes:notes-1.txt[179-200]  Brightwater Foods Ltd    01a1efc6-43a9-7403-b9f6-1f8ee76184ed
 ```
 
-Three spellings of Acorn Tools share an ID. The two Halden Groups are in different countries, and a rule keeps them apart.
+The twelve records are six companies. Five records are Acorn Tools: four spellings in the rows, and "Acorn Tools Ltd" in the note. Its ID was made by the first match and did not change when the later rows and the note arrived. The two Halden Groups are in different countries, and a rule keeps them apart.
 
-Version 0.1.0, for Linux and macOS. The first commit was on 14 November 2026, and nobody runs it in production yet. It is not for deduplicating one file once, for an answer per request, or for more than one machine: before you spend time on it, read [What it is not for](#what-it-is-not-for) and [What it does not do](#what-it-does-not-do).
+Version 0.1.0, for Linux and macOS. The first commit was on 14 November 2026. It is not for deduplicating one file once, for an answer per request, or for more than one machine: before you spend time on it, read [What it is not for](#what-it-is-not-for) and [What it does not do](#what-it-does-not-do).
 
 ## Getting started
 
-The commands above are all of it. This section says what each needs and does, and then goes on from the result.
+The commands above are all of it. This section says what each needs and does.
 
 You need Linux on x86-64 or arm64, or macOS on Apple silicon, and `curl`. There is no Windows build.
 
@@ -62,10 +73,17 @@ created   companies
 
   cd companies
   spool dev                          runs the server on this machine
+  spool load samples/crm-1.csv       loads the first rows, from a second terminal
   spool extract samples/notes-1.txt  finds the companies in the note
 ```
 
-`company` is an entity type: a kind of thing you want one ID for. The first file of rows is `samples/crm-1.csv`:
+`company` is an entity type: a kind of thing you want one ID for.
+
+**Start the server.** `spool dev` listens on `127.0.0.1:7765` only and asks nobody to sign in. Its data is in `.spool/dev.duckdb` inside the project, and it applies changes to the project's files as you save them. Leave it running.
+
+### Load rows and match
+
+The first file of rows is `samples/crm-1.csv`:
 
 ```csv
 id,name,country
@@ -77,20 +95,16 @@ c-5,Halden Group,GB
 c-6,Halden Group,US
 ```
 
-**Start the server.** `spool dev` listens on `127.0.0.1:7765` only and asks nobody to sign in. Its data is in `.spool/dev.duckdb` inside the project, and it applies changes to the project's files as you save them. Leave it running.
+`spool load` makes each row a record. Loading does not match, and loading the same file again adds nothing. `spool match` judges the records that are new, against each other and against the ones the store holds, and places them in identities. An identity is one company, with its ID and the records that belong to it. That ID is what other systems store. It is minted when the identity is created, so yours will differ from the ones here.
 
-**Load and match.** `spool load` makes each row a record. Loading does not match, and loading the same file again adds nothing. `spool match` judges the records that are new, against each other and against the ones the store holds, and places them in identities. An identity is one company, with its ID and the records that belong to it. That ID, in the last column of `spool show records`, is what other systems store.
-
-The ID of an identity is minted when the identity is created, so yours will differ from the ones here. The ID of a record is derived from its source, its key and its content, so yours will be the same.
-
-### Ask why
+The first match makes four identities of the six rows. `spool explain` says why two records share one, or why they do not:
 
 ```sh
 spool explain crm:c-5 crm:c-6
 ```
 
 ```text
-`crm:c-6` belongs to identity 01a1ef8e-5a8d-76d4-acb6-2bb65a02262a and `crm:c-5` to identity 01a1ef8e-5a8d-76d4-acb6-2bb793e9d0ae.
+`crm:c-6` belongs to identity 01a1efc6-41cd-775d-8758-e731c61371cb and `crm:c-5` to identity 01a1efc6-41cd-775d-8758-e7329447fd9a.
 Run 2 (strategy `rules`) judged them `no_match` (no_match rule `different_country` held).
 ...
 ```
@@ -110,21 +124,7 @@ l.country <> r.country
 
 ### Send more rows
 
-```sh
-spool load samples/crm-2.csv
-spool match
-spool show records
-```
-
-It prints the six lines from before, unchanged, and then three more:
-
-```text
-crm:c-7         Larkfeild Logistics  01a1ef8e-5a8d-76d4-acb6-2bb802d5ca25
-crm:c-8         Kestrel Analytics    01a1ef8e-5f06-7397-9a0c-445aaacfd3fe
-crm:c-9         Acorn Tool           01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
-```
-
-"Larkfeild Logistics" and "Acorn Tool" joined the identities that existed, and those kept their IDs. Kestrel Analytics is new and got a new one. Nothing that was placed before moved.
+`samples/crm-2.csv` has three more rows, c-7 to c-9. After the second match, "Larkfeild Logistics" and "Acorn Tool" are in the identities that existed, and those have the IDs they had. Kestrel Analytics is new and has a new one. Nothing that was placed before moved.
 
 ### Extract records from text
 
@@ -144,20 +144,17 @@ attribute: name
 pattern: '(?:[A-Z][A-Za-z]+ )+(?:Ltd|Inc|LLC|GmbH|plc)\b'
 ```
 
-```sh
-spool extract samples/notes-1.txt
-spool match
-spool show records --source notes
-```
+`spool extract` stores the document and runs the extractor over it. Three records come out of the note, each with the document and the characters it was found at. They are records like the rows, so the same rules match them: "Acorn Tools Ltd" and "Larkfield Logistics Ltd" join the identities the rows made, and Brightwater Foods is new. `spool show identities` lists the six companies:
 
 ```text
-source and key              name                     identity
-notes:notes-1.txt[54-69]    Acorn Tools Ltd          01a1ef8e-5a8d-76d4-acb6-2bb5ad4d4ada
-notes:notes-1.txt[119-142]  Larkfield Logistics Ltd  01a1ef8e-5a8d-76d4-acb6-2bb802d5ca25
-notes:notes-1.txt[179-200]  Brightwater Foods Ltd    01a1efb2-a9b4-769e-8812-53d98f9ad4ca
+identity                              name                   members  created at
+01a1efc6-41cd-775d-8758-e7300637659a  Acorn Tools Ltd        5        log position 1
+01a1efc6-41cd-775d-8758-e731c61371cb  Halden Group           1        log position 1
+01a1efc6-41cd-775d-8758-e7329447fd9a  Halden Group           1        log position 1
+01a1efc6-41cd-775d-8758-e733aa086f7d  Larkfield Logistics    3        log position 1
+01a1efc6-42c0-7776-b736-83fde0cb4498  Kestrel Analytics      1        log position 2
+01a1efc6-43a9-7403-b9f6-1f8ee76184ed  Brightwater Foods Ltd  1        log position 3
 ```
-
-Three records came out of the note, each with the document and the characters it was found at. They are records like the rows, so the same rules matched them: "Acorn Tools Ltd" and "Larkfield Logistics Ltd" joined the identities the rows made, and Brightwater Foods is new.
 
 A pattern finds only what is written the way it expects. An extractor can also be a Python or TypeScript file in `extractors/`, which can call a language model, and which Spool runs with `uv` or `bun`.
 
@@ -193,7 +190,7 @@ The studio is at <http://127.0.0.1:7765/>. It shows the same records, identities
 
 ### Stop, and your own rows
 
-Ctrl-C in the first terminal stops the server. The data stays in `.spool/dev.duckdb`. To start from nothing, stop the server and delete `.spool`. For your own rows, edit the columns in `sources/crm.yaml` and the rules, then run `spool load your-file.csv`.
+Ctrl-C in the first terminal stops the server. The data stays in `.spool/dev.duckdb`. To start from nothing, stop the server and delete `.spool`. For your own rows, edit the columns in `sources/crm.yaml` and the rules, then run `spool load your-file.csv --source crm`.
 
 ## What it is not for
 
