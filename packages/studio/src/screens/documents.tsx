@@ -30,11 +30,13 @@ import { useLabels, useLoad, usePages } from "../hooks.ts";
 import { href } from "../router.ts";
 import type { Route } from "../router.ts";
 
+/** Which extractors read a document, and which is reading it now. */
 function readBy(document: DocumentEntry): string {
-  if (document.extractions.length === 0) return "no extractor";
-  return document.extractions
-    .map((extraction) => `${extraction.extractor} in run ${extraction.run} (${count(extraction.mentions, "mention")})`)
-    .join(", ");
+  const said = document.extractions.map(
+    (extraction) => `${extraction.extractor} in run ${extraction.run} (${count(extraction.mentions, "mention")})`,
+  );
+  if (document.reading) said.push(`being read by ${document.reading.extractor} in run ${document.reading.run}`);
+  return said.length === 0 ? "not read yet" : said.join(", ");
 }
 
 export function Documents({ route }: { route: Route }) {
@@ -159,16 +161,26 @@ function DocumentScreen({ document, found, cut, at }: Loaded & { at: number | nu
           ["Superseded by", document.superseded_by ? <Ref kind="document" id={document.superseded_by} /> : null],
           [
             "Extracted by",
-            document.extractions.length === 0
-              ? "none"
-              : document.extractions.map((extraction, index) => (
+            document.extractions.length === 0 && !document.reading ? (
+              "not read yet"
+            ) : (
+              <>
+                {document.extractions.map((extraction, index) => (
                   <span key={extraction.run}>
                     {index > 0 ? ", " : ""}
                     <Code>{extraction.extractor}</Code> in{" "}
                     <Ref kind="run" id={extraction.run} label={`run ${extraction.run}`} /> (
                     {count(extraction.mentions, "mention")})
                   </span>
-                )),
+                ))}
+                {document.reading ? (
+                  <span>
+                    {document.extractions.length > 0 ? ", " : ""}being read by <Code>{document.reading.extractor}</Code>{" "}
+                    in <Ref kind="run" id={document.reading.run} label={`run ${document.reading.run}`} />
+                  </span>
+                ) : null}
+              </>
+            ),
           ],
         ]}
       />

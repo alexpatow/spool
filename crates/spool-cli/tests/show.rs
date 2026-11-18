@@ -626,7 +626,7 @@ fn a_mention_is_shown_in_its_document() {
     has(
         &listed,
         &format!(
-            "{document}  notes:a.txt     {:<10}  no extractor",
+            "{document}  notes:a.txt     {:<10}  not read yet",
             note.chars().count()
         ),
     );

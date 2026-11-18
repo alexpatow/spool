@@ -1,38 +1,50 @@
 //! `spool extract`: gives a running server documents and has one of the
 //! project's extractors read them.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
-use spool::core::DocumentId;
-use spool::{DeclaredSource, Extractor, RecordEntry, RunEntry, RunStatus};
+use spool::core::{DocumentId, RunId};
+use spool::{DeclaredSource, ExtractReport, Extractor, RecordEntry, RunEntry, RunStatus};
 
 use super::remote::{self, Remote, WAIT_MS, listed, print_json, typed};
 use crate::Failure;
 use crate::args::Spec;
 
 pub const USAGE: &str = "\
-Usage: spool extract [<file>...] [options]
+Usage: spool extract [<path>...] [options]
 
 Finds records in text, on a running server. Each file is one document: the
-server stores its text under the file's name, and one of the project's
-extractors reads it. What the extractor finds are records like the rows of a
-source, and the next match run places them in identities.
+server stores its text, and one of the project's extractors reads it. What
+the extractor finds are records like the rows of a source, and the next match
+run places them in identities.
 
-With no file, the extractor reads the documents the server holds and it has
+A folder stands for every file under it, in the folders under it too. Files
+and folders whose names start with a dot are left out, and every other file
+has to be UTF-8 text. A file that is named is stored under its name, and a
+file found in a folder under its path from that folder: `dev/a.txt` for
+documents/dev/a.txt, when `documents` was named.
+
+With no path, the extractor reads the documents the server holds and it has
 not read.
+
+The extractor reads the documents in batches, and what it finds in a batch
+is kept when the batch ends. A command that is stopped or fails keeps the
+batches before it, and the same command again reads what is left. A batch
+the command no longer waits for goes on on the server and is kept as well.
+Each batch is made to take a small part of the time the server lets user
+code run (`--task-timeout` on `spool dev` or `spool serve`), so a long
+extraction needs no longer limit. When there is more than one batch, the
+command says on standard error how far it is.
 
 An extractor's first run may fetch what it depends on, a model for one. When
 a run takes more than a few seconds, the command says on standard error which
 file is running, and what the file says as it goes.
 
-One run reads every document the extractor has not read, and the server stops
-a run that takes longer than it lets user code run: 600 seconds, unless
-`--task-timeout` said otherwise when the server was started. A run that is
-stopped finds nothing, and the documents stay stored for the next one.
-
-  <file>               a file of UTF-8 text
+  <path>               a file of UTF-8 text, or a folder of them
 
 Options:
   --source <name>      the source the documents belong to (default: the
@@ -40,7 +52,8 @@ Options:
                        after, as notes-1.txt is after `notes`)
   --extractor <name>   the extractor (default: the project's only one)
   --again              read every document of the source, and not only the
-                       ones the extractor has not read
+                       ones the extractor has not read. Stopped, the command
+                       starts over when it is run again
   --url <url>          the server (default: $SPOOL_URL, or http://127.0.0.1:7765)
   --token <token>      a token of that server (default: $SPOOL_TOKEN); `spool dev`
                        asks for none
@@ -60,13 +73,96 @@ const ASK_MS: u64 = 1_000;
 /// The most of a found text that a line shows, in characters.
 const SHOWN: usize = 60;
 
+/// The most documents sent to the server in one request, and the most text.
+const SENT_DOCUMENTS: usize = 1_000;
+const SENT_BYTES: usize = 16 * 1024 * 1024;
+
+/// The documents of the first batch: few, so that an extractor that fails
+/// fails early, and one that is slow is timed before it is given more.
+const FIRST_BATCH: u64 = 5;
+
+/// The most documents of one batch.
+const MAX_BATCH: u64 = 1_000;
+
+/// How much larger a batch may be than the one before it.
+const GROWTH: u64 = 4;
+
+/// What part of the time the server lets user code run a batch is made to
+/// take, and the longest it is made to take whatever that time is. A batch
+/// is sized from how long the ones before it took, and a document can take
+/// longer than the ones before it.
+const PART_OF_TIMEOUT: u32 = 5;
+const LONGEST_BATCH: Duration = Duration::from_secs(120);
+
+/// Whether Ctrl-C was pressed. The first press is caught, and the command
+/// cancels the batch in progress and says what is kept; the second ends
+/// the command at once.
+static INTERRUPTED: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn interrupted(_: libc::c_int) {
+    INTERRUPTED.store(true, Ordering::SeqCst);
+}
+
+/// Catches the first Ctrl-C. A request in flight is not cut short by it, so
+/// the command notices within the second it asks the server again.
+fn catch_ctrl_c() {
+    #[cfg(unix)]
+    // SAFETY: the handler only stores to an atomic, which is safe in a
+    // signal handler, and `SA_RESETHAND` gives the next Ctrl-C its default.
+    unsafe {
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = interrupted as extern "C" fn(libc::c_int) as libc::sighandler_t;
+        action.sa_flags = libc::SA_RESTART | libc::SA_RESETHAND;
+        libc::sigemptyset(&mut action.sa_mask);
+        libc::sigaction(libc::SIGINT, &action, std::ptr::null_mut());
+    }
+}
+
+fn was_interrupted() -> bool {
+    INTERRUPTED.load(Ordering::SeqCst)
+}
+
 /// A file to store as a document.
 struct File {
-    /// As it was named on the command line.
+    /// Where it was read from.
     path: String,
-    /// The file's name, which is the document's key.
+    /// The document's key: the file's name, or its path from the folder
+    /// that was named.
     name: String,
     text: String,
+}
+
+/// What the batches of an extraction found, together.
+#[derive(Default)]
+struct Found {
+    documents: u64,
+    mentions: u64,
+    inserted: u64,
+    duplicates: u64,
+    superseded: u64,
+}
+
+impl Found {
+    fn add(&mut self, report: &ExtractReport) {
+        self.documents += report.documents;
+        self.mentions += report.mentions;
+        self.inserted += report.inserted;
+        self.duplicates += report.duplicates;
+        self.superseded += report.superseded;
+    }
+}
+
+/// The runs the server answered with, for `--json`.
+#[derive(Default)]
+struct Answered {
+    documents: Vec<Value>,
+    extractions: Vec<Value>,
+}
+
+impl Answered {
+    fn print(&self) {
+        print_json(&json!({ "documents": self.documents, "extractions": self.extractions }));
+    }
 }
 
 pub fn extract(arguments: &[String]) -> Result<(), Failure> {
@@ -84,80 +180,151 @@ pub fn extract(arguments: &[String]) -> Result<(), Failure> {
         },
     )?;
     let files = read(&arguments.positional)?;
+    catch_ctrl_c();
 
     let remote = Remote::new(&arguments);
-    let info = remote.info()?.store;
+    let info = remote.info()?;
+    let timeout = info.task_timeout_ms.map(Duration::from_millis);
+    let info = info.store;
     let extractor = extractor(&info.extractors, arguments.value("--extractor"))?;
     let source = source_of(&info.sources, arguments.value("--source"), &files)?;
     if let Some(source) = &source {
         readable(&info.sources, source)?;
     }
     let as_json = arguments.flag("--json");
+    let again = arguments.flag("--again");
+    let mut answered = Answered::default();
 
-    let mut loaded = Value::Null;
     if let Some(source) = &source
         && !files.is_empty()
     {
-        let documents: Vec<Value> = files
-            .iter()
-            .map(|file| json!({ "key": file.name, "text": file.text }))
-            .collect();
-        let (answer, run) = finish(
-            &remote,
-            remote.post(
-                "/documents",
-                &json!({ "source": source, "documents": documents, "wait_ms": WAIT_MS }),
-            )?,
-            as_json,
-        )?;
-        let report = run
-            .load
-            .as_ref()
-            .ok_or_else(|| unreported(&run, "what it stored"))?;
+        let (mut inserted, mut duplicates, mut superseded) = (0, 0, 0);
+        let mut stored = 0;
+        for sent in sending(&files) {
+            if was_interrupted() {
+                return Err(Failure::Stopped(format!(
+                    "stopped: {stored} of {} are stored and none is read yet. The same command \
+                     again stores the rest and reads them.",
+                    plural(files.len() as u64, "document", "documents")
+                )));
+            }
+            let documents: Vec<Value> = sent
+                .iter()
+                .map(|file| json!({ "key": file.name, "text": file.text }))
+                .collect();
+            let (answer, run) = ended(
+                &remote,
+                remote.post(
+                    "/documents",
+                    &json!({ "source": source, "documents": documents, "wait_ms": WAIT_MS }),
+                )?,
+            )?;
+            answered.documents.push(answer["run"].clone());
+            if run.status != RunStatus::Succeeded {
+                if as_json {
+                    answered.print();
+                }
+                return Err(remote::unsuccessful(&run));
+            }
+            let report = run
+                .load
+                .as_ref()
+                .ok_or_else(|| unreported(&run, "what it stored"))?;
+            inserted += report.inserted;
+            duplicates += report.duplicates;
+            superseded += report.superseded;
+            stored += sent.len();
+        }
         if !as_json {
             println!("source     {source}");
             println!(
                 "read       {} from {}",
                 plural(files.len() as u64, "document", "documents"),
-                match files.as_slice() {
-                    [file] => file.path.clone(),
-                    files => plural(files.len() as u64, "file", "files"),
+                match (arguments.positional.as_slice(), files.as_slice()) {
+                    (_, [file]) => file.path.clone(),
+                    ([named], _) if Path::new(named).is_dir() => named.clone(),
+                    (_, files) => plural(files.len() as u64, "file", "files"),
                 }
             );
             println!(
                 "loaded     {} new, {} already held, {}",
-                report.inserted.saturating_sub(report.superseded),
-                report.duplicates,
-                plural(report.superseded, "new version", "new versions"),
+                inserted - superseded,
+                duplicates,
+                plural(superseded, "new version", "new versions"),
             );
         }
-        loaded = answer;
     }
 
-    let started = remote.post(
-        "/extractions",
-        &json!({
+    let target = timeout.map_or(LONGEST_BATCH, |timeout| {
+        (timeout / PART_OF_TIMEOUT).min(LONGEST_BATCH)
+    });
+    let mut progress = Progress::new(extractor);
+    let mut found = Found::default();
+    let mut size = FIRST_BATCH;
+    let mut since: Option<RunId> = None;
+    let began = Instant::now();
+    loop {
+        if was_interrupted() {
+            return Err(Failure::Stopped(stopped(&found, again, None)));
+        }
+        let mut request = json!({
             "extractor": extractor.name,
             "source": source,
-            "again": arguments.flag("--again"),
+            "again": again,
+            "limit": size,
             "wait_ms": QUIET_MS,
-        }),
-    )?;
-    let (answer, run) = finish(&remote, follow(&remote, started, extractor)?, as_json)?;
+        });
+        if let Some(since) = since {
+            request["again_since"] = json!(since);
+        }
+        let batch_began = Instant::now();
+        let started = remote.post("/extractions", &request)?;
+        let (answer, run) = ended(&remote, progress.follow(&remote, started)?)?;
+        answered.extractions.push(answer["run"].clone());
+        if run.status != RunStatus::Succeeded {
+            if as_json {
+                answered.print();
+            }
+            if progress.cancelled {
+                return Err(Failure::Stopped(stopped(&found, again, Some(run.run))));
+            }
+            progress.stopped(found.documents, again, run.run);
+            return Err(remote::unsuccessful(&run));
+        }
+        let report = run
+            .extraction
+            .as_ref()
+            .ok_or_else(|| unreported(&run, "what it found"))?;
+        found.add(report);
+        if was_interrupted() && report.left > 0 {
+            if as_json {
+                answered.print();
+            }
+            return Err(Failure::Stopped(stopped(&found, again, None)));
+        }
+        progress.batches += 1;
+        if again && since.is_none() {
+            since = Some(run.run);
+        }
+        if progress.batches > 1 || report.left > 0 {
+            progress.kept(&found, report.left, began.elapsed());
+        }
+        if report.left == 0 || report.documents == 0 {
+            break;
+        }
+        size = next_batch(report.documents, batch_began.elapsed(), target);
+    }
+
     if as_json {
-        print_json(&json!({ "documents": loaded["run"], "extraction": answer["run"] }));
+        answered.print();
         return Ok(());
     }
-    let report = run
-        .extraction
-        .as_ref()
-        .ok_or_else(|| unreported(&run, "what it found"))?;
     println!("extractor  {}", extractor.name);
-    if report.documents == 0 {
+    if found.documents == 0 {
         let name = &extractor.name;
         println!(
             "found      0 records: {}",
-            if arguments.flag("--again") {
+            if again {
                 match &source {
                     Some(source) => format!("the server holds no document of `{source}`."),
                     None => "the server holds no document.".to_owned(),
@@ -172,11 +339,11 @@ pub fn extract(arguments: &[String]) -> Result<(), Failure> {
     }
     println!(
         "found      {} in {}: {} new, {} already held{}",
-        plural(report.mentions, "record", "records"),
-        plural(report.documents, "document", "documents"),
-        report.inserted.saturating_sub(report.superseded),
-        report.duplicates,
-        match report.superseded {
+        plural(found.mentions, "record", "records"),
+        plural(found.documents, "document", "documents"),
+        found.inserted.saturating_sub(found.superseded),
+        found.duplicates,
+        match found.superseded {
             0 => String::new(),
             changed => format!(", {changed} changed"),
         }
@@ -185,24 +352,93 @@ pub fn extract(arguments: &[String]) -> Result<(), Failure> {
     if let Some(source) = &source
         && !files.is_empty()
     {
-        list(&remote, source, &files, report.mentions)?;
+        list(
+            &remote,
+            source,
+            &files[..files.len().min(LISTED)],
+            found.mentions,
+        )?;
     }
-    if report.inserted > 0 {
+    if found.inserted > 0 {
         println!(
             "\nnext       `spool match` places {} in identities",
-            if report.inserted == 1 { "it" } else { "them" }
+            if found.inserted == 1 { "it" } else { "them" }
         );
     }
     Ok(())
 }
 
-/// Reads the files, each of which is one document.
+/// How many documents the next batch is given: as many as take `target`
+/// at the pace of the batch before, which read `read` documents in `took`.
+/// It is at most `GROWTH` times as many, so that one quick batch does not
+/// make the next one too long.
+fn next_batch(read: u64, took: Duration, target: Duration) -> u64 {
+    let fits = target.as_secs_f64() * read as f64 / took.as_secs_f64().max(0.001);
+    (fits as u64).clamp(1, (read * GROWTH).clamp(1, MAX_BATCH))
+}
+
+/// The files in groups that are each sent in one request.
+fn sending(files: &[File]) -> Vec<&[File]> {
+    let mut groups = Vec::new();
+    let (mut start, mut bytes) = (0, 0);
+    for (index, file) in files.iter().enumerate() {
+        if index > start && (index - start == SENT_DOCUMENTS || bytes + file.text.len() > SENT_BYTES)
+        {
+            groups.push(&files[start..index]);
+            (start, bytes) = (index, 0);
+        }
+        bytes += file.text.len();
+    }
+    if start < files.len() {
+        groups.push(&files[start..]);
+    }
+    groups
+}
+
+/// Reads the files the paths name. A file is one document, stored under its
+/// name, and a folder stands for the files under it, each stored under its
+/// path from the folder.
 fn read(paths: &[String]) -> Result<Vec<File>, Failure> {
-    let mut names = HashSet::new();
-    let mut files = Vec::new();
+    let mut found: Vec<(String, String)> = Vec::new();
     for path in paths {
+        let metadata =
+            std::fs::metadata(path).map_err(|error| Failure::Failed(format!("{path}: {error}")))?;
+        if metadata.is_dir() {
+            let before = found.len();
+            under(Path::new(path), "", &mut found)?;
+            if found.len() == before {
+                return Err(Failure::Failed(format!(
+                    "{path} is a folder with no files in it, other than ones whose names start \
+                     with a dot"
+                )));
+            }
+            continue;
+        }
+        let name = Path::new(path)
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .ok_or_else(|| Failure::Failed(format!("{path} does not name a file")))?;
+        found.push((path.clone(), name));
+    }
+
+    // A second document under the same key would be taken for a new
+    // version of the first.
+    let mut keys: HashMap<&str, &str> = HashMap::new();
+    for (path, name) in &found {
+        if let Some(first) = keys.insert(name, path) {
+            return Err(Failure::Failed(format!(
+                "{first} and {path} would both be stored as `{name}`: a file is stored under its \
+                 name, or under its path from the folder that was named, and a second document \
+                 under one key is taken for a new version of the first. Name the folder that \
+                 holds both, or extract them into sources of their own."
+            )));
+        }
+    }
+
+    let mut files = Vec::with_capacity(found.len());
+    for (path, name) in found {
         let bytes =
-            std::fs::read(path).map_err(|error| Failure::Failed(format!("{path}: {error}")))?;
+            std::fs::read(&path).map_err(|error| Failure::Failed(format!("{path}: {error}")))?;
         let text = String::from_utf8(bytes).map_err(|_| {
             Failure::Failed(format!(
                 "{path} is not text: a document is stored as UTF-8 text. Turn a PDF or a web \
@@ -212,25 +448,47 @@ fn read(paths: &[String]) -> Result<Vec<File>, Failure> {
         if text.trim().is_empty() {
             return Err(Failure::Failed(format!("{path} is empty")));
         }
-        let name = Path::new(path)
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .ok_or_else(|| Failure::Failed(format!("{path} does not name a file")))?;
-        // A document is stored under its file's name, and a second document
-        // under the same name would be taken for a new version of the first.
-        if !names.insert(name.clone()) {
-            return Err(Failure::Failed(format!(
-                "two of the files are called {name}, and a document is stored under its file's \
-                 name: extract them one at a time, from sources of their own"
-            )));
-        }
-        files.push(File {
-            path: path.clone(),
-            name,
-            text,
-        });
+        files.push(File { path, name, text });
     }
     Ok(files)
+}
+
+/// Adds the files under `folder` to `found`, in the order of their names,
+/// each with its key: its path from the folder that was named, after
+/// `prefix`. What starts with a dot is left out. A link to a file is read
+/// and a link to a folder is not followed, since it can lead back up.
+fn under(folder: &Path, prefix: &str, found: &mut Vec<(String, String)>) -> Result<(), Failure> {
+    let unreadable = |error: std::io::Error| Failure::Failed(format!("{}: {error}", folder.display()));
+    let mut entries = std::fs::read_dir(folder)
+        .and_then(|entries| entries.collect::<Result<Vec<_>, _>>())
+        .map_err(unreadable)?;
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') {
+            continue;
+        }
+        let path = entry.path();
+        let key = match prefix {
+            "" => name,
+            prefix => format!("{prefix}/{name}"),
+        };
+        let kind = entry.file_type().map_err(unreadable)?;
+        let is_file = if kind.is_dir() {
+            under(&path, &key, found)?;
+            false
+        } else if kind.is_symlink() {
+            std::fs::metadata(&path)
+                .map_err(|error| Failure::Failed(format!("{}: {error}", path.display())))?
+                .is_file()
+        } else {
+            kind.is_file()
+        };
+        if is_file {
+            found.push((path.display().to_string(), key));
+        }
+    }
+    Ok(())
 }
 
 /// The extractor that was named, or the project's only one.
@@ -342,57 +600,164 @@ fn readable(sources: &[DeclaredSource], source: &str) -> Result<(), Failure> {
     Ok(())
 }
 
-/// Waits for an extraction that did not end at once, and prints what its
-/// extractor says while it runs: the first run of a Python file takes as
-/// long as its downloads, and this is all there is to see of them. Returns
-/// the server's answer once the run has ended.
-///
-/// The lines go to standard error, so that what is printed to standard
-/// output is the same for a run that took long.
-fn follow(remote: &Remote, mut answer: Value, extractor: &Extractor) -> Result<Value, Failure> {
-    let mut last: Option<String> = None;
-    let mut announced = false;
-    loop {
-        if answer["run"].is_null() {
-            return Ok(answer);
+/// What the command says on standard error while an extraction runs, so
+/// that what is printed to standard output is the same for one that took
+/// long.
+struct Progress<'a> {
+    extractor: &'a Extractor,
+    /// The batches that have ended.
+    batches: u64,
+    announced: bool,
+    said: Option<String>,
+    /// Whether the batch in progress was cancelled after Ctrl-C.
+    cancelled: bool,
+}
+
+impl<'a> Progress<'a> {
+    fn new(extractor: &'a Extractor) -> Self {
+        Progress {
+            extractor,
+            batches: 0,
+            announced: false,
+            said: None,
+            cancelled: false,
         }
-        let run: RunEntry = typed(&answer["run"])?;
-        if run.status != RunStatus::Running {
-            return Ok(answer);
+    }
+
+    fn announce(&mut self) {
+        if !self.announced {
+            eprintln!("running    {}", self.extractor.file);
+            self.announced = true;
         }
-        if !announced {
-            eprintln!("running    {}", extractor.file);
-            announced = true;
+    }
+
+    /// Waits for a batch that did not end at once, and returns the
+    /// server's answer once it has. While the first batch runs, what its
+    /// extractor says is printed: the first run of a Python file takes as
+    /// long as its downloads, and this is all there is to see of them. After
+    /// it, what each batch kept says how far the extraction is.
+    fn follow(&mut self, remote: &Remote, mut answer: Value) -> Result<Value, Failure> {
+        loop {
+            if answer["run"].is_null() {
+                return Ok(answer);
+            }
+            let run: RunEntry = typed(&answer["run"])?;
+            if run.status != RunStatus::Running {
+                return Ok(answer);
+            }
+            if was_interrupted() && !self.cancelled {
+                self.cancel(remote, run.run)?;
+            }
+            self.announce();
+            if self.batches == 0
+                && let Some(said) = run.said
+                && self.said.as_ref() != Some(&said)
+            {
+                eprintln!("           {said}");
+                self.said = Some(said);
+            }
+            answer = remote.get(
+                &format!("/runs/{}", run.run),
+                &[("wait_ms", ASK_MS.to_string())],
+                || format!("the server no longer has run {}", run.run),
+            )?;
         }
-        if let Some(said) = run.said
-            && last.as_ref() != Some(&said)
-        {
-            eprintln!("           {said}");
-            last = Some(said);
+    }
+
+    /// Cancels the batch in progress after Ctrl-C. The server stops its
+    /// extractor and keeps nothing it found; what the batches before it
+    /// found is kept.
+    fn cancel(&mut self, remote: &Remote, run: RunId) -> Result<(), Failure> {
+        eprintln!(
+            "stopping   cancelling run {run}, the batch in progress: what the batches before it \
+             read is kept. Ctrl-C again quits without waiting."
+        );
+        self.cancelled = true;
+        // A run that ended meanwhile cannot be cancelled, and what it read
+        // is kept.
+        let _ = remote.post(&format!("/runs/{run}/cancel"), &json!({}));
+        Ok(())
+    }
+
+    /// Says how far the extraction is once a batch has been kept, and how
+    /// long the rest takes at the pace so far.
+    fn kept(&mut self, found: &Found, left: u64, took: Duration) {
+        self.announce();
+        let mut line = format!(
+            "kept       {} of {}, {}",
+            found.documents,
+            plural(found.documents + left, "document", "documents"),
+            plural(found.mentions, "record", "records"),
+        );
+        if left > 0 && found.documents > 0 {
+            let rest = took.mul_f64(left as f64 / found.documents as f64);
+            line.push_str(&format!(", about {} left", about(rest)));
         }
-        answer = remote.get(
-            &format!("/runs/{}", run.run),
-            &[("wait_ms", ASK_MS.to_string())],
-            || format!("the server no longer has run {}", run.run),
-        )?;
+        eprintln!("{line}");
+    }
+
+    /// Says what the batches before a failed one kept.
+    fn stopped(&self, kept: u64, again: bool, failed: RunId) {
+        if kept == 0 {
+            return;
+        }
+        let read = plural(kept, "document", "documents");
+        match again {
+            true => eprintln!("kept       {read} read again before run {failed}"),
+            false => eprintln!(
+                "kept       {read} read before run {failed}: the same command again reads the rest"
+            ),
+        }
     }
 }
 
-/// Waits for the run a call started, and fails as the run did.
-fn finish(remote: &Remote, answer: Value, as_json: bool) -> Result<(Value, RunEntry), Failure> {
-    let (answer, run) = remote.ended(answer)?.ok_or_else(|| {
+/// What a command stopped with Ctrl-C says it left: the documents read
+/// before it stopped are kept, and those of the run it cancelled are not.
+fn stopped(found: &Found, again: bool, cancelled: Option<RunId>) -> String {
+    let mut said = String::from("stopped");
+    if let Some(run) = cancelled {
+        said.push_str(&format!(
+            ": run {run} was cancelled, and nothing it read is kept"
+        ));
+    }
+    let kept = plural(found.documents, "document", "documents");
+    let are = if found.documents == 1 { "is" } else { "are" };
+    match (again, found.documents) {
+        (false, 0) => said.push_str(". The same command again reads the documents."),
+        (false, _) => said.push_str(&format!(
+            ". The {kept} read before it {are} kept, and the same command again reads the rest."
+        )),
+        (true, 0) => said.push('.'),
+        (true, _) => said.push_str(&format!(
+            ". The {kept} read again before it {are} kept. `--again` starts over."
+        )),
+    }
+    said
+}
+
+/// A time to wait, in whole minutes, rounded up.
+fn about(time: Duration) -> String {
+    let minutes = time.as_secs().div_ceil(60).max(1);
+    match (minutes / 60, minutes % 60) {
+        (0, minutes) => plural(minutes, "minute", "minutes"),
+        (hours, 0) => plural(hours, "hour", "hours"),
+        (hours, minutes) => format!(
+            "{} {}",
+            plural(hours, "hour", "hours"),
+            plural(minutes, "minute", "minutes")
+        ),
+    }
+}
+
+/// Waits for the run a call started.
+fn ended(remote: &Remote, answer: Value) -> Result<(Value, RunEntry), Failure> {
+    remote.ended(answer)?.ok_or_else(|| {
         Failure::Failed(
             "the server started no run; is it a Spool server of this version?".to_owned(),
         )
-    })?;
-    if run.status != RunStatus::Succeeded {
-        if as_json {
-            print_json(&answer);
-        }
-        return Err(remote::unsuccessful(&run));
-    }
-    Ok((answer, run))
+    })
 }
+
 
 /// Prints the records of the files' documents, in the order of the files
 /// and of the text. They are what the extractor found there, and what any
@@ -483,7 +848,6 @@ mod tests {
     use spool::DeclaredSource;
 
     use super::{File, source_of};
-    use crate::Failure;
 
     /// What `source_of` says of files called `files` in a project with
     /// `sources`: the source, or why there is none.
@@ -507,7 +871,7 @@ mod tests {
             .collect();
         match source_of(&sources, named, &files) {
             Ok(source) => source.unwrap_or_else(|| "every source".to_owned()),
-            Err(Failure::Failed(message) | Failure::Usage(message)) => message,
+            Err(failure) => failure.message(),
         }
     }
 

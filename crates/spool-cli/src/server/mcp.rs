@@ -1276,6 +1276,7 @@ impl Tools {
                     extractor: asked.extractor,
                     source: asked.source,
                     again: asked.again,
+                    again_since: None,
                     limit: asked.limit,
                     wait_ms: None,
                 };
