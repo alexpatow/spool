@@ -17,9 +17,10 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { Wordmark } from "@/components/brand";
+import { explainer } from "@/lib/explainer";
 import type { NavGroup } from "@/lib/nav";
 import { layout } from "@/styles/layout.stylex";
-import { colors, spacing } from "@/styles/shelf/tokens.stylex";
+import { colors, linen, spacing, typography } from "@/styles/shelf/tokens.stylex";
 
 /** The page tree, on the left. Below 48rem Shelf turns it into a drawer. */
 export function DocsSidebar({ groups }: { groups: NavGroup[] }) {
@@ -43,6 +44,10 @@ export function DocsSidebar({ groups }: { groups: NavGroup[] }) {
       </SidebarHeader>
       <SidebarContent>
         <nav aria-label="Documentation" ref={nav}>
+          <Link href={explainer.path} onClick={close} {...stylex.props(styles.newcomer)}>
+            <span {...stylex.props(styles.newcomerLabel)}>New here?</span>
+            {explainer.title}
+          </Link>
           {groups.map((group) => (
             <SidebarGroup key={group.title}>
               <SidebarGroupLabel>{group.title}</SidebarGroupLabel>
@@ -82,5 +87,33 @@ const styles = stylex.create({
     textDecoration: "none",
     color: colors.foreground,
     display: "flex",
+  },
+  newcomer: {
+    gap: 2,
+    marginBlock: spacing["3"],
+    marginInline: spacing["2"],
+    paddingBlock: spacing["2"],
+    paddingInline: spacing["3"],
+    borderColor: {
+      default: colors.border,
+      ":hover": linen.thread,
+    },
+    borderStyle: "solid",
+    borderWidth: 1,
+    color: colors.foreground,
+    display: "flex",
+    flexDirection: "column",
+    fontSize: "0.8125rem",
+    lineHeight: "1.125rem",
+    textDecoration: "none",
+    transitionDuration: "150ms",
+    transitionProperty: "border-color",
+  },
+  newcomerLabel: {
+    color: linen.thread,
+    fontFamily: typography.fontFamilyMono,
+    fontSize: "0.6875rem",
+    letterSpacing: "0.06em",
+    textTransform: "uppercase",
   },
 });

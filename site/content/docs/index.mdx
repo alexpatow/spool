@@ -5,6 +5,8 @@ description: How Spool's parts fit together, who it is for, and what each page o
 
 Spool pulls records out of text and rows, decides which are the same real-world thing, and gives each thing an ID that stays the same as more arrive. Working out which records are the same thing is called entity resolution, or record linkage. Spool does that, takes records from text as well as from tables, and keeps the IDs.
 
+New to these terms? [What the hell is Entity Extraction and Resolution?](/explained) shows each step on the sample data, in pictures.
+
 ## How the parts fit
 
 Spool is one server. It is written in Rust and keeps its data in one file of [DuckDB](https://duckdb.org), a database that runs inside the server's process. It is driven by a project, which is a directory of YAML and SQL files that you keep in Git.
