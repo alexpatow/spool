@@ -10,12 +10,15 @@ import {
   GitCompareArrowsIcon as GitCompareArrows,
   GitMergeIcon as GitMerge,
   KeyRoundIcon as KeyRound,
+  LogOutIcon as LogOut,
   RefreshCwIcon as RefreshCw,
   Rows3Icon as Rows3,
   ScrollTextIcon as ScrollText,
   SplitIcon as Split,
   Undo2Icon as Undo2,
+  UserPlusIcon as UserPlus,
   UserRoundIcon as UserRound,
+  UsersRoundIcon as UsersRound,
 } from "lucide-react";
 import type { SVGProps } from "react";
 
@@ -49,6 +52,9 @@ export const RefreshIcon = (props: IconProps) => <RefreshCw {...DEFAULTS} {...pr
 export const RunIcon = (props: IconProps) => <Activity {...DEFAULTS} {...props} />;
 export const SourceIcon = (props: IconProps) => <Database {...DEFAULTS} {...props} />;
 export const SplitIcon = (props: IconProps) => <Split {...DEFAULTS} {...props} />;
-export const TokenIcon = (props: IconProps) => <KeyRound {...DEFAULTS} {...props} />;
+export const PasswordIcon = (props: IconProps) => <KeyRound {...DEFAULTS} {...props} />;
+export const PeopleIcon = (props: IconProps) => <UsersRound {...DEFAULTS} {...props} />;
+export const SignOutIcon = (props: IconProps) => <LogOut {...DEFAULTS} {...props} />;
+export const UserPlusIcon = (props: IconProps) => <UserPlus {...DEFAULTS} {...props} />;
 export const UndoIcon = (props: IconProps) => <Undo2 {...DEFAULTS} {...props} />;
 export const UserIcon = (props: IconProps) => <UserRound {...DEFAULTS} {...props} />;

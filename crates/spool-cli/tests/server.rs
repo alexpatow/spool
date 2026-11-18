@@ -133,7 +133,7 @@ fn the_same_seed_gives_the_same_changesets_through_the_library_and_the_server() 
 }
 
 #[test]
-fn every_call_under_v1_needs_the_token() {
+fn every_call_under_v1_needs_a_caller_the_server_knows() {
     let dir = tempfile::tempdir().unwrap();
     let project = dir.path().join("project");
     write_things(&project);
@@ -162,8 +162,7 @@ fn every_call_under_v1_needs_the_token() {
                 None => request,
             }
             .send();
-            let message = response.error(401, "unauthorized");
-            assert!(message.contains("bearer token"), "{message}");
+            response.error(401, "unauthorized");
             assert_eq!(response.header("www-authenticate"), Some("Bearer"));
         }
     }
@@ -282,7 +281,6 @@ fn failures_are_described_the_same_way_whatever_went_wrong() {
         json!({
             "id": minted["changesets"][0],
             "base": 0,
-            "actor": "user:test",
             "reason": null,
             "run": null,
             "ops": [
@@ -310,7 +308,8 @@ fn a_body_over_the_limit_is_refused() {
     let address = listener.local_addr().unwrap().to_string();
     let options = ServerOptions {
         max_body_bytes: 1_000,
-        ..ServerOptions::new(TOKEN)
+        token: Some(TOKEN.to_owned()),
+        ..ServerOptions::new(spool_cli::accounts::Accounts::in_memory())
     };
     runtime.spawn(async move {
         serve(
@@ -587,7 +586,8 @@ fn approving_a_draft_that_went_stale_is_rejected_and_names_the_operation() {
     let minted = server.call("/v1/ids", json!({ "identities": 2, "changesets": 1 }));
     let mut theirs = record["changeset"].clone();
     theirs["id"] = minted["changesets"][0].clone();
-    theirs["actor"] = json!("user:someone");
+    // The author is whoever sends it.
+    theirs.as_object_mut().unwrap().remove("actor");
     theirs["run"] = Value::Null;
     let mut renamed = serde_json::to_string(&theirs).unwrap();
     let created: Vec<&str> = record["changeset"]["ops"]

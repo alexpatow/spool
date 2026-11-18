@@ -5,10 +5,10 @@ import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "b
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
-import { TOKEN } from "../../client/test/server.ts";
+import { PASSWORD, cookies } from "../../client/test/server.ts";
 import type { Server } from "../../client/test/server.ts";
-import type { SpoolClient } from "../src/api.ts";
-import { App, THEME_KEY, TOKEN_KEY } from "../src/app.tsx";
+import { SpoolClient } from "../src/api.ts";
+import { App, THEME_KEY } from "../src/app.tsx";
 import { here } from "../src/router.ts";
 import {
   SEEDING,
@@ -21,6 +21,7 @@ import {
   memory,
   open,
   parts,
+  recording,
   rowsOf,
   screens,
   start,
@@ -28,7 +29,7 @@ import {
   texts,
   wrapped,
 } from "./harness.tsx";
-import { REVIEWER, companies, news, row, seedCompanies, seedNews } from "./seed.ts";
+import { companies, news, row, seedCompanies, seedNews } from "./seed.ts";
 
 afterEach(() => {
   cleanup();
@@ -47,60 +48,99 @@ async function shownFor(client: SpoolClient, identity: string): Promise<string> 
 }
 
 describe("the door", () => {
-  let server: Server;
+  type Within = Pick<typeof screen, "getByLabelText" | "getByRole" | "getByText">;
+  const fill = (label: string, value: string, where: Within = screen) =>
+    fireEvent.change(where.getByLabelText(label), { target: { value } });
+  const press = (name: string, where: Within = screen) => fireEvent.click(where.getByRole("button", { name }));
 
-  beforeAll(async () => {
-    server = await start(companies, 11);
-  }, SEEDING);
+  test(
+    "the first person makes their account from the server's link, and signs in with it after",
+    async () => {
+      const server = await start(companies, 11, { people: false });
+      const browser = cookies();
+      render(<App url={server.url} fetch={browser} storage={memory()} />);
+      // Without the link there is nothing to do.
+      await waitFor(() => expect(document.querySelector("[data-part=notice]")).not.toBeNull());
+      expect(screen.queryByRole("button")).toBeNull();
+      expect(document.title).toBe("Spool studio");
+      cleanup();
 
-  test("asks for the token when the one of `spool dev` is refused, and keeps the one that works", async () => {
-    const storage = open(server, "", memory());
-    expect(await screen.findByText("SPOOL_TOKEN")).toBeTruthy();
-    expect(screen.getByText(server.url)).toBeTruthy();
-    expect(document.title).toBe("Spool studio");
+      window.history.replaceState(null, "", `/setup#${server.setupCode}`);
+      render(<App url={server.url} fetch={browser} storage={memory()} />);
+      await screen.findByLabelText("Name");
+      fill("Name", "Ada");
+      fill("Username", "ada");
+      fill("Password", PASSWORD);
+      press("Create admin account");
+      await heading("Overview");
+      expect(here()).toBe("/");
+      expect(parts("me")).toEqual(["Ada"]);
 
-    const token = screen.getByLabelText("Token") as HTMLInputElement;
-    expect(token.type).toBe("password");
-    fireEvent.change(token, { target: { value: "not-the-token" } });
-    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
-    expect(await screen.findByText("Token rejected.")).toBeTruthy();
+      press("Sign out");
+      await screen.findByLabelText("Username");
+      fill("Username", "ada");
+      fill("Password", "not the password");
+      press("Sign in");
+      await screen.findByRole("alert");
+      fill("Password", PASSWORD);
+      press("Sign in");
+      await heading("Overview");
 
-    fireEvent.change(screen.getByLabelText("Token"), { target: { value: TOKEN } });
-    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
-    await heading("Overview");
-    expect(storage.getItem(TOKEN_KEY)).toBe(TOKEN);
+      // A session that ends while the studio is open leads back to the door.
+      await new SpoolClient({ url: server.url, fetch: browser }).signOut();
+      follow(screens().getByRole("link", { name: "Log" }));
+      await screen.findByLabelText("Username");
+    },
+    SEEDING,
+  );
 
-    fireEvent.click(screen.getByRole("button", { name: "Change token" }));
-    expect(await screen.findByLabelText("Token")).toBeTruthy();
-    expect(storage.getItem(TOKEN_KEY)).toBeNull();
-  });
+  test(
+    "an admin adds a person and turns their account off",
+    async () => {
+      const server = await start(companies, 12);
+      open(server, "/people");
+      await heading("People");
+      const table = await screen.findByRole("table");
+      expect(rowsOf(table).map((cells) => cells.slice(0, 4))).toEqual([["Ada", "ada", "Admin", "On"]]);
 
-  test("opens without asking when the token is the one of `spool dev`", async () => {
-    // A server whose token is `dev`, which is what `spool dev` starts.
-    const sent: Array<string | null> = [];
-    const dev = wrapped((input, init) => {
-      const headers = new Headers(init?.headers);
-      sent.push(headers.get("Authorization"));
-      headers.set("Authorization", `Bearer ${TOKEN}`);
-      return fetch(input, { ...init, headers });
-    });
-    render(<App url={server.url} fetch={dev} storage={memory()} />);
-    await heading("Overview");
-    await screen.findByText("Entity type company");
-    expect(new Set(sent)).toEqual(new Set(["Bearer dev"]));
-  });
+      press("Add person");
+      const adding = within(await screen.findByRole("dialog"));
+      fill("Name", "Grace", adding);
+      fill("Username", "grace", adding);
+      fill("Password", PASSWORD, adding);
+      press("Add person", adding);
+      await screen.findByRole("status");
+      await waitFor(() => expect(rowsOf(table).map((cells) => cells[1])).toEqual(["ada", "grace"]));
+      const grace = new SpoolClient({ url: server.url, fetch: cookies() });
+      expect((await grace.signIn("grace", PASSWORD)).person).toMatchObject({ name: "Grace", admin: false });
 
-  test("says so when the server does not answer, and asks again", async () => {
-    let down = true;
-    const flaky = wrapped((input, init) =>
-      down ? Promise.reject(new TypeError("connection refused")) : fetch(input, init),
-    );
-    render(<App url={server.url} fetch={flaky} storage={memory(TOKEN)} />);
-    expect((await screen.findByRole("alert")).textContent).toBe("The server did not answer: connection refused");
-    down = false;
-    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-    await heading("Overview");
-  });
+      fireEvent.click(within(screen.getAllByRole("row")[2]!).getByRole("button", { name: "Edit" }));
+      const editing = within(await screen.findByRole("dialog"));
+      // The words are pressed, as a label is.
+      fireEvent.click(editing.getByText("Can sign in"));
+      press("Save", editing);
+      await waitFor(() => expect(rowsOf(table)[1]?.slice(0, 4)).toEqual(["Grace", "grace", "-", "Off"]));
+      expect(await grace.session()).toMatchObject({ person: null });
+    },
+    SEEDING,
+  );
+
+  test(
+    "says so when the server does not answer, and asks again",
+    async () => {
+      const server = await start(companies, 13);
+      let down = true;
+      const flaky = wrapped((input, init) =>
+        down ? Promise.reject(new TypeError("connection refused")) : recording(input, init),
+      );
+      render(<App url={server.url} fetch={flaky} storage={memory()} />);
+      expect((await screen.findByRole("alert")).textContent).toBe("The server did not answer: connection refused");
+      down = false;
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      await heading("Overview");
+    },
+    SEEDING,
+  );
 });
 
 describe("company records a reviewer corrected", () => {
@@ -294,7 +334,7 @@ describe("company records a reviewer corrected", () => {
     // Each record says where it came from, and what put it here.
     expect(records.map((line) => line.slice(1, 4))).toEqual([["PIONEER SUPPLIES LTD", "registry", "X0000010"]]);
     expect(records[0]?.[4]).toMatch(/ by run 2$/);
-    expect(records[0]?.[5]).toBe("log position 5 by user:studio-demo “the Bristol company is another company”");
+    expect(records[0]?.[5]).toBe("log position 5 by agent:api “the Bristol company is another company”");
     // Splitting it out said the two are not one company, so that no run joins them again.
     const constraints = rowsOf(screen.getAllByRole("table").at(-1)!);
     expect(constraints).toEqual([["cannot link", "crm:c-110", "registry:X0000010", "log position 5"]]);
@@ -372,9 +412,9 @@ describe("company records a reviewer corrected", () => {
     expect(history).toHaveLength(3);
     expect(history[0]).toMatch(/^Log position 1 \S+ \S+ by engine, drafted by reconcile run 4/);
     expect(history[0]).toContain(`assign record crm:c-109 to ${here}`);
-    expect(history[1]).toMatch(/^Log position 2 \S+ \S+ by user:studio-demo “same name, taken for one company”merge /);
+    expect(history[1]).toMatch(/^Log position 2 \S+ \S+ by agent:api “same name, taken for one company”merge /);
     expect(history[1]).toEndWith(`merge ${here} into ${there}`);
-    expect(history[2]).toMatch(/^Log position 4 \S+ \S+ by user:studio-demo “they are two companies after all”/);
+    expect(history[2]).toMatch(/^Log position 4 \S+ \S+ by agent:api “they are two companies after all”/);
     expect(history[2]).toContain(`reinstate identity ${here}`);
     expect(history[2]).toContain(`move record crm:c-109 from ${there} to ${here}`);
     expect(document.querySelector("[data-part=history] a[href='/log/4']")?.textContent).toBe("Log position 4");
@@ -684,12 +724,12 @@ describe("company records a reviewer corrected", () => {
     const lines = rowsOf(table);
     expect(lines.map((line) => line[0])).toEqual(["1", "2", "3", "4", "5", "6", "7"]);
     expect(lines[0]).toEqual(["1", "engine", "40", "reconcile run 4", "reconcile new records"]);
-    expect(lines[3]).toEqual(["4", REVIEWER, "3", "-", "they are two companies after all"]);
+    expect(lines[3]).toEqual(["4", "agent:api", "3", "-", "they are two companies after all"]);
 
     follow(within(table).getByRole("link", { name: "4" }));
     await heading("Log position 4");
     await counted("Operations", 3);
-    expect(field("Actor")).toBe(REVIEWER);
+    expect(field("Actor")).toBe("agent:api");
     expect(field("Reason")).toBe("“they are two companies after all”");
     expect(field("Base")).toBe("log position 3");
     expect(field("Changeset")).toBe(changesets[0]!.changeset.id);
@@ -757,7 +797,7 @@ describe("company records a reviewer corrected", () => {
     const box = await finding();
     const listed = () => screen.getAllByRole("option").map((option) => option.textContent);
     await waitFor(() => expect(listed()).toContain("Identities"));
-    expect(listed()).toHaveLength(9);
+    expect(listed()).toHaveLength(10);
 
     fireEvent.change(box, { target: { value: "Pioneer" } });
     await screen.findByRole("option", { name: /^PIONEER SUPPLIES LTD company · 1 record/ });
@@ -786,7 +826,7 @@ describe("company records a reviewer corrected", () => {
 
   test("the page can be made dark, and stays so", async () => {
     const names = memory();
-    open(server, "", undefined, names);
+    open(server, "", names);
     await heading("Overview");
     expect(document.documentElement.dataset.theme).toBe("light");
     fireEvent.click(screen.getByRole("button", { name: "Dark theme" }));
@@ -797,7 +837,7 @@ describe("company records a reviewer corrected", () => {
     expect(document.querySelectorAll("style")).toHaveLength(0);
     cleanup();
 
-    open(server, "", undefined, names);
+    open(server, "", names);
     await heading("Overview");
     expect(document.documentElement.dataset.theme).toBe("dark");
     fireEvent.click(screen.getByRole("button", { name: "Light theme" }));
@@ -815,7 +855,7 @@ describe("company records a reviewer corrected", () => {
 
   test("looking at the screens changes nothing", () => {
     expect(calls.length).toBeGreaterThan(60);
-    expect(calls.filter((call) => !call.startsWith("GET /v1/"))).toEqual([]);
+    expect(calls.filter((call) => !call.startsWith("GET "))).toEqual([]);
   });
 
   test("what changed since a screen was read is shown when it is read again", async () => {
@@ -825,7 +865,7 @@ describe("company records a reviewer corrected", () => {
     expect(screens().getByRole("link", { name: /^Review/ }).textContent).toBe("Review1");
 
     // Someone else settles the item while the screen is open.
-    await server.client.dismissReview(1, { actor: REVIEWER, reason: "looked at it" });
+    await server.client.dismissReview(1, { reason: "looked at it" });
     expect(screen.getByRole("article", { name: "Review item 1" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     // It no longer waits, so it leaves the list of those that do.
@@ -835,9 +875,7 @@ describe("company records a reviewer corrected", () => {
 
     follow(within(screen.getByRole("list", { name: "Status" })).getByRole("link", { name: "Dismissed" }));
     const card = within(await screen.findByRole("article", { name: "Review item 1" }));
-    expect(card.getByText(/^Dismissed by/).textContent).toMatch(
-      /^Dismissed by user:studio-demo at \S+ \S+ “looked at it”\.$/,
-    );
+    expect(card.getByText(/^Dismissed by/).textContent).toMatch(/^Dismissed by agent:api at \S+ \S+ “looked at it”\.$/);
     // Nothing is left to decide.
     expect(card.queryAllByRole("button")).toEqual([]);
 
@@ -845,7 +883,7 @@ describe("company records a reviewer corrected", () => {
     await heading("Review item 1");
     await screen.findByRole("article", { name: "Review item 1" });
     expect(field("Status")).toBe("dismissed");
-    expect(field("Dismissed by")).toMatch(/^user:studio-demo at \S+ \S+ “looked at it”$/);
+    expect(field("Dismissed by")).toMatch(/^agent:api at \S+ \S+ “looked at it”$/);
   });
 });
 

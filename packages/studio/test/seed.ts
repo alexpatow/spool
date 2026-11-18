@@ -12,9 +12,6 @@ import type { RecordEntry, SpoolClient } from "../src/api.ts";
 export const companies = join(repository, "benchmarks/identity/companies-small");
 export const news = join(repository, "benchmarks/extraction/company-news");
 
-/** Who made the corrections of the company scenario. */
-export const REVIEWER = "user:studio-demo";
-
 /** Copies what a project is made of, so that building it leaves the original alone. */
 export function copyProject(from: string): string {
   const to = mkdtempSync(join(tmpdir(), "spool-studio-"));
@@ -55,14 +52,12 @@ export async function seedCompanies(client: SpoolClient): Promise<void> {
   await client.startRun({ entity_type: "company" });
 
   const atlas = await client.commit({
-    actor: REVIEWER,
     reason: "same name, taken for one company",
     ops: [
       { op: "merge", from: await identityOf(client, "crm", "c-109"), into: await identityOf(client, "crm", "c-108") },
     ],
   });
   await client.commit({
-    actor: REVIEWER,
     reason: "same name, taken for one company",
     ops: [
       {
@@ -72,14 +67,12 @@ export async function seedCompanies(client: SpoolClient): Promise<void> {
       },
     ],
   });
-  await client.undo(atlas.seq, { actor: REVIEWER, reason: "they are two companies after all" });
+  await client.undo(atlas.seq, { reason: "they are two companies after all" });
   await client.split(await identityOf(client, "registry", "X0000010"), {
-    actor: REVIEWER,
     reason: "the Bristol company is another company",
     records: [(await row(client, "registry", "X0000010")).id],
   });
   await client.commit({
-    actor: REVIEWER,
     reason: "Orchard is Orchard Foods",
     ops: [
       {

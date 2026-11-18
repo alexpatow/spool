@@ -124,7 +124,12 @@ fn dockerfile(base_image: &str) -> String {
 # not in the image: it is a file on the volume at /data.
 #
 #   docker build -t my-spool .
-#   docker run -p 7765:7765 -v spool-data:/data -e SPOOL_TOKEN=... my-spool
+#   docker run -p 7765:7765 -v spool-data:/data my-spool
+#
+# When it first starts, the server prints a link that makes the first account.
+# People sign in over HTTPS: put the server behind something that speaks it,
+# or add `--plain-http` to the command below to try it without. For callers
+# that are not people, pass a token with `-e SPOOL_TOKEN=...`.
 #
 # A changed project is applied to an existing store as a step of its own,
 # with the server stopped:
@@ -183,7 +188,12 @@ fn dockerfile_with_user_code(base_image: &str, python: bool, typescript: bool) -
 # image: it is a file on the volume at /data.
 #
 #   docker build -t my-spool .
-#   docker run -p 7765:7765 -v spool-data:/data -e SPOOL_TOKEN=... my-spool
+#   docker run -p 7765:7765 -v spool-data:/data my-spool
+#
+# When it first starts, the server prints a link that makes the first account.
+# People sign in over HTTPS: put the server behind something that speaks it,
+# or add `--plain-http` to the command below to try it without. For callers
+# that are not people, pass a token with `-e SPOOL_TOKEN=...`.
 #
 # A changed project is applied to an existing store as a step of its own,
 # with the server stopped:

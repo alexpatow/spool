@@ -231,15 +231,6 @@ fn serve_sets_up_an_empty_store_and_refuses_one_applied_with_another_manifest() 
     let manifest = build(&project);
     let store = dir.path().join("store.duckdb");
 
-    // No token, no server.
-    let stopped = Server::start_with(&serve_arguments(&manifest, &store, "1"), None).unwrap_err();
-    assert_eq!(stopped.code, Some(1));
-    assert!(stopped.output.contains("SPOOL_TOKEN"), "{}", stopped.output);
-    let stopped =
-        Server::start_with(&serve_arguments(&manifest, &store, "1"), Some(" ")).unwrap_err();
-    assert_eq!(stopped.code, Some(1));
-    assert!(!store.exists(), "nothing was opened");
-
     // An empty store is set up from the manifest. A token read from a file
     // often ends with a newline, which is not part of it.
     let mut server = Server::start_with(

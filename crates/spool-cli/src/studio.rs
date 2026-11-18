@@ -3,9 +3,9 @@
 //!
 //! It is a few files, built from `packages/studio` and compiled into the
 //! binary: the page, its script, its style sheet and its fonts. They are the
-//! same for every server and say nothing about its store, so they need no
-//! token. The page reads and writes through `/v1` like any other caller, with
-//! the token its reader gives it.
+//! same for every server and say nothing about its store, so anyone may
+//! read them. The page reads and writes through `/v1` like any other caller,
+//! as whoever signed in to it.
 
 use std::sync::LazyLock;
 
@@ -116,7 +116,9 @@ static FILES: LazyLock<Vec<(&'static str, File)>> = LazyLock::new(|| {
 /// The screens of the studio. The address of a screen is a path that begins
 /// with its name, and the page works out the rest, so each is answered with
 /// the page.
-const SCREENS: [&str; 8] = [
+const SCREENS: [&str; 10] = [
+    "setup",
+    "people",
     "review",
     "drafts",
     "identities",

@@ -8,7 +8,8 @@ use std::path::Path;
 use serde_json::{Value, json};
 use support::*;
 
-const REVIEWER: &str = "user:reviewer";
+/// What the test token writes as.
+const REVIEWER: &str = "agent:api";
 
 fn things_server(dir: &Path) -> Server {
     let project = dir.join("project");
@@ -79,7 +80,6 @@ fn identities_are_merged_and_the_merge_is_undone() {
     // A changeset needs no ID and no base: the server mints one and takes
     // the head of the log.
     let merge = json!({
-        "actor": REVIEWER,
         "reason": "one tool",
         "ops": [{ "op": "merge", "from": anvil, "into": hammer }],
     });
@@ -103,10 +103,7 @@ fn identities_are_merged_and_the_merge_is_undone() {
     );
 
     // An undo can be read before it is made.
-    let preview = server.call(
-        "/v1/changesets/2/undo",
-        json!({ "actor": REVIEWER, "commit": false }),
-    );
+    let preview = server.call("/v1/changesets/2/undo", json!({ "commit": false }));
     assert_eq!(preview["committed"], Value::Null);
     let ops: Vec<&str> = preview["changeset"]["ops"]
         .as_array()
@@ -118,7 +115,7 @@ fn identities_are_merged_and_the_merge_is_undone() {
     assert_eq!(head(&server), 2);
 
     // Made, it brings the merged identity back with the member it had.
-    let undone = server.call("/v1/changesets/2/undo", json!({ "actor": REVIEWER }));
+    let undone = server.call("/v1/changesets/2/undo", json!({}));
     assert_eq!(undone["committed"]["seq"], 3);
     assert_eq!(
         undone["changeset"]["reason"],
@@ -134,7 +131,6 @@ fn identities_are_merged_and_the_merge_is_undone() {
         "/v1/changesets",
         json!({
             "base": 1,
-            "actor": REVIEWER,
             "ops": [{ "op": "merge", "from": anvil, "into": hammer }],
         }),
     );
@@ -143,20 +139,19 @@ fn identities_are_merged_and_the_merge_is_undone() {
 
     // What cannot be undone says why.
     server
-        .post("/v1/changesets/99/undo", json!({ "actor": REVIEWER }))
+        .post("/v1/changesets/99/undo", json!({}))
         .error(404, "not_found");
     let minted = server.call("/v1/ids", json!({ "identities": 1 }));
     let created = server.call(
         "/v1/changesets",
         json!({
-            "actor": REVIEWER,
             "ops": [{ "op": "create_identity", "identity": minted["identities"][0], "entity_type": "thing" }],
         }),
     );
     let message = server
         .post(
             &format!("/v1/changesets/{}/undo", created["seq"]),
-            json!({ "actor": REVIEWER }),
+            json!({}),
         )
         .error(409, "conflict");
     assert!(message.contains("only created identities"), "{message}");
@@ -176,7 +171,7 @@ fn an_identity_is_split_and_a_constraint_keeps_the_sides_apart() {
 
     let split = server.call(
         &format!("/v1/identities/{}/split", anvils.as_str().unwrap()),
-        json!({ "records": [third], "actor": REVIEWER, "reason": "another anvil" }),
+        json!({ "records": [third], "reason": "another anvil" }),
     );
     assert_eq!(split["kept"], anvils);
     assert_eq!(split["moved"], json!([third]));
@@ -219,7 +214,6 @@ fn an_identity_is_split_and_a_constraint_keeps_the_sides_apart() {
     let merge = server.post(
         "/v1/changesets",
         json!({
-            "actor": REVIEWER,
             "ops": [{ "op": "merge", "from": other, "into": anvils }],
         }),
     );
@@ -240,7 +234,7 @@ fn an_identity_is_split_and_a_constraint_keeps_the_sides_apart() {
     // leave it alone.
     let dismissed = server.call(
         &format!("/v1/review/{id}/dismiss"),
-        json!({ "actor": REVIEWER, "reason": "not ours" }),
+        json!({ "reason": "not ours" }),
     );
     assert_eq!(dismissed["status"], "dismissed");
     assert_eq!(dismissed["dismissed"]["by"], REVIEWER);
@@ -259,7 +253,6 @@ fn an_identity_is_split_and_a_constraint_keeps_the_sides_apart() {
     let removed = server.call(
         "/v1/changesets",
         json!({
-            "actor": REVIEWER,
             "ops": [{ "op": "unconstrain", "kind": "cannot_link", "a": constraint["a"], "b": constraint["b"] }],
         }),
     );
@@ -268,19 +261,14 @@ fn an_identity_is_split_and_a_constraint_keeps_the_sides_apart() {
     assert_eq!(history["constraints"][0]["to"], removed["seq"]);
 
     // Calls that cannot be made say why.
-    let dismiss = |item: u64| {
-        server.post(
-            &format!("/v1/review/{item}/dismiss"),
-            json!({ "actor": REVIEWER }),
-        )
-    };
+    let dismiss = |item: u64| server.post(&format!("/v1/review/{item}/dismiss"), json!({}));
     dismiss(id).error(409, "conflict");
     dismiss(999).error(404, "not_found");
     server.get("/v1/review/999").error(404, "not_found");
     let split = |identity: &str, records: Value| {
         server.post(
             &format!("/v1/identities/{identity}/split"),
-            json!({ "records": records, "actor": REVIEWER }),
+            json!({ "records": records }),
         )
     };
     split(anvils.as_str().unwrap(), json!([third])).error(409, "conflict");

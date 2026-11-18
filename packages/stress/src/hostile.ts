@@ -297,6 +297,50 @@ function all(): Case[] {
   cases.push({ name: "wrong token", status: 401, path: "/v1/info", token: "nope" });
   cases.push({ name: "token prefix", status: 401, path: "/v1/info", token: TOKEN.slice(0, -1) });
   cases.push({ name: "token longer", status: 401, path: "/v1/info", token: TOKEN + "x" });
+  // People. Nobody has an account here, and the token is not a person.
+  const person = { username: "eve", name: "Eve", password: "a long enough one" };
+  const asNobody = (name: string, status: number, path: string, body?: unknown, headers?: Record<string, string>) =>
+    cases.push({ name, status, method: body === undefined ? "GET" : "POST", path, body, token: null, headers });
+  asNobody("session: nobody", 200, "/auth/session");
+  asNobody("session: a cookie that was made up", 401, "/v1/info", undefined, { cookie: "spool_session=AAAA" });
+  asNobody("sign in: no account", 401, "/auth/sign-in", { username: "root", password: "x" });
+  asNobody("sign in: a username of 10k", 401, "/auth/sign-in", { username: "a".repeat(10_000), password: "x" });
+  asNobody("sign in: a password of 10k", 401, "/auth/sign-in", { username: "root", password: "x".repeat(10_000) });
+  asNobody("sign in: a password of 1M", 413, "/auth/sign-in", { username: "root", password: "x".repeat(1_000_000) });
+  asNobody("setup: a password of 1M", 413, "/auth/setup", { code: "", ...person, password: "x".repeat(1_000_000) });
+  asNobody("sign in: nothing", 400, "/auth/sign-in", {});
+  for (let tried = 0; tried <= 10; tried++) {
+    asNobody(`sign in: guess ${tried + 1}`, tried < 10 ? 401 : 429, "/auth/sign-in", {
+      username: "ada",
+      password: "x",
+    });
+  }
+  asNobody("setup: a code that was made up", 401, "/auth/setup", { code: "0".repeat(64), ...person });
+  asNobody("setup: no code", 401, "/auth/setup", { code: "", ...person });
+  asNobody("password: nobody", 401, "/auth/password", { current: "x", new: person.password });
+  asNobody("sign out: nobody", 200, "/auth/sign-out", {});
+  cases.push({ name: "people: the token adds one", status: 403, method: "POST", path: "/v1/people", body: person });
+  cases.push({
+    name: "people: the token makes an admin",
+    status: 403,
+    method: "POST",
+    path: "/v1/people/00000000-0000-7000-8000-000000000000",
+    body: { admin: true },
+  });
+  const elsewhere: Array<Record<string, string>> = [
+    { origin: "https://elsewhere.example" },
+    { "sec-fetch-site": "cross-site" },
+  ];
+  for (const headers of elsewhere) {
+    cases.push({
+      name: `a write from another site: ${Object.keys(headers)[0]}`,
+      status: 403,
+      method: "POST",
+      path: "/v1/ids",
+      body: { identities: 1 },
+      headers,
+    });
+  }
   cases.push({
     name: "basic auth",
     status: 401,
@@ -319,130 +363,98 @@ function all(): Case[] {
   cases.push({ name: "GET /v1/ingest", status: 405, path: "/v1/ingest" });
 
   // Changes.
-  const actor = "user:stress";
   const nil = "00000000-0000-0000-0000-000000000000";
   const change = (name: string, status: number, path: string, body: unknown) =>
     cases.push({ name, status, method: "POST", path, body });
-  change("commit: no ops", 409, "/v1/changesets", { actor, ops: [] });
-  change("commit: unknown op", 400, "/v1/changesets", { actor, ops: [{ op: "explode" }] });
-  change("commit: nil ids", 409, "/v1/changesets", { actor, ops: [{ op: "merge", from: nil, into: nil }] });
+  change("commit: no ops", 409, "/v1/changesets", { ops: [] });
+  change("commit: unknown op", 400, "/v1/changesets", { ops: [{ op: "explode" }] });
+  change("commit: nil ids", 409, "/v1/changesets", { ops: [{ op: "merge", from: nil, into: nil }] });
   change("commit: merge unknown", 409, "/v1/changesets", {
-    actor,
     ops: [{ op: "merge", from: "11111111-1111-7111-8111-111111111111", into: "22222222-2222-7222-8222-222222222222" }],
   });
   change("commit: assign unknown record", 409, "/v1/changesets", {
-    actor,
     ops: [{ op: "assign", record: nil, from: null, to: nil }],
   });
   change("commit: create identity unknown type", ANY, "/v1/changesets", {
-    actor,
     ops: [{ op: "create_identity", identity: "33333333-3333-7333-8333-333333333333", entity_type: "person" }],
   });
   change("commit: create identity v4 uuid", 200, "/v1/changesets", {
-    actor,
     ops: [{ op: "create_identity", identity: "33333333-3333-4333-8333-333333333333", entity_type: "company" }],
   });
   change("commit: create identity nil", 200, "/v1/changesets", {
-    actor,
     ops: [{ op: "create_identity", identity: nil, entity_type: "company" }],
   });
   change("commit: create identity max uuid", 200, "/v1/changesets", {
-    actor,
     ops: [{ op: "create_identity", identity: "ffffffff-ffff-ffff-ffff-ffffffffffff", entity_type: "company" }],
   });
-  change("commit: actor invalid", 400, "/v1/changesets", {
-    actor: "root",
-    ops: [{ op: "create_identity", identity: "44444444-4444-7444-8444-444444444444", entity_type: "company" }],
-  });
-  change("commit: actor engine", ANY, "/v1/changesets", {
-    actor: "engine",
-    ops: [{ op: "create_identity", identity: "44444444-4444-7444-8444-444444444445", entity_type: "company" }],
-  });
-  change("commit: actor 100k", 200, "/v1/changesets", {
-    actor: "user:" + "a".repeat(100_000),
-    ops: [{ op: "create_identity", identity: "44444444-4444-7444-8444-444444444446", entity_type: "company" }],
-  });
-  change("commit: actor with newline", 200, "/v1/changesets", {
-    actor: "user:a\nb",
-    ops: [{ op: "create_identity", identity: "44444444-4444-7444-8444-444444444447", entity_type: "company" }],
-  });
-  change("commit: actor empty id", 400, "/v1/changesets", {
-    actor: "user:",
-    ops: [{ op: "create_identity", identity: "44444444-4444-7444-8444-444444444448", entity_type: "company" }],
-  });
+  for (const actor of ["engine", "user:someone", "agent:api"]) {
+    change(`commit: names its author ${actor}`, 400, "/v1/changesets", {
+      actor,
+      ops: [{ op: "create_identity", identity: "44444444-4444-7444-8444-444444444444", entity_type: "company" }],
+    });
+  }
   change("commit: base negative", 400, "/v1/changesets", {
-    actor,
     base: -1,
     ops: [{ op: "create_identity", identity: "55555555-5555-7555-8555-555555555555", entity_type: "company" }],
   });
   change("commit: base ahead", 409, "/v1/changesets", {
-    actor,
     base: 1_000_000,
     ops: [{ op: "create_identity", identity: "55555555-5555-7555-8555-555555555556", entity_type: "company" }],
   });
   change("commit: base float", 400, "/v1/changesets", {
-    actor,
     base: 0.5,
     ops: [{ op: "create_identity", identity: "55555555-5555-7555-8555-555555555557", entity_type: "company" }],
   });
   change("commit: reason 1MB", 200, "/v1/changesets", {
-    actor,
     reason: long,
     ops: [{ op: "create_identity", identity: "66666666-6666-7666-8666-666666666666", entity_type: "company" }],
   });
   change("commit: reason NUL", 200, "/v1/changesets", {
-    actor,
     reason: "a\u0000b",
     ops: [{ op: "create_identity", identity: "66666666-6666-7666-8666-666666666667", entity_type: "company" }],
   });
   change("commit: same identity twice", 409, "/v1/changesets", {
-    actor,
     ops: [
       { op: "create_identity", identity: "66666666-6666-7666-8666-666666666668", entity_type: "company" },
       { op: "create_identity", identity: "66666666-6666-7666-8666-666666666668", entity_type: "company" },
     ],
   });
   change("commit: id given twice A", 200, "/v1/changesets", {
-    actor,
     id: "77777777-7777-7777-8777-777777777777",
     ops: [{ op: "create_identity", identity: "66666666-6666-7666-8666-666666666669", entity_type: "company" }],
   });
   change("commit: id given twice B", 409, "/v1/changesets", {
-    actor,
     id: "77777777-7777-7777-8777-777777777777",
     ops: [{ op: "create_identity", identity: "66666666-6666-7666-8666-66666666666a", entity_type: "company" }],
   });
   change("commit: run unknown", ANY, "/v1/changesets", {
-    actor,
     run: 999999,
     ops: [{ op: "create_identity", identity: "66666666-6666-7666-8666-66666666666b", entity_type: "company" }],
   });
   change("commit: 50k creates", 200, "/v1/changesets", {
-    actor,
     ops: Array.from({ length: 50_000 }, (_, i) => ({
       op: "create_identity",
       identity: `88888888-8888-7888-8888-${String(i).padStart(12, "0")}`,
       entity_type: "company",
     })),
   });
-  change("undo: 0", 404, "/v1/changesets/0/undo", { actor });
-  change("undo: huge", 404, "/v1/changesets/18446744073709551615/undo", { actor });
-  change("undo: overflow", 400, "/v1/changesets/18446744073709551616/undo", { actor });
-  change("undo: creates only", 409, "/v1/changesets/1/undo", { actor });
+  change("undo: 0", 404, "/v1/changesets/0/undo", {});
+  change("undo: huge", 404, "/v1/changesets/18446744073709551615/undo", {});
+  change("undo: overflow", 400, "/v1/changesets/18446744073709551616/undo", {});
+  change("undo: creates only", 409, "/v1/changesets/1/undo", {});
   // Positions past what the database counts in. The log has changesets by now, and none is after these.
   for (const after of ["9223372036854775808", "18446744073709551615"]) {
     cases.push({ name: `GET /v1/changesets?after=${after}`, status: 200, path: `/v1/changesets?after=${after}` });
   }
-  change("split: unknown identity", 409, `/v1/identities/${nil}/split`, { actor, records: [nil] });
+  change("split: unknown identity", 409, `/v1/identities/${nil}/split`, { records: [nil] });
   change("split: no records", 409, `/v1/identities/66666666-6666-7666-8666-666666666666/split`, {
-    actor,
     records: [],
   });
   change("mint: too many", 400, "/v1/ids", { identities: 10_001 });
   change("mint: negative", 400, "/v1/ids", { identities: -1 });
   change("mint: zero", 200, "/v1/ids", {});
   change("mint: float", 400, "/v1/ids", { identities: 1.5 });
-  change("dismiss: unknown", 404, "/v1/review/999/dismiss", { actor });
+  change("dismiss: unknown", 404, "/v1/review/999/dismiss", {});
   change("run: unknown type", 400, "/v1/runs", { entity_type: "person" });
   change("run: strategy name sql", 200, "/v1/runs", { entity_type: "company", strategy: { name: sql } });
   change("run: strategy name long", 200, "/v1/runs", {

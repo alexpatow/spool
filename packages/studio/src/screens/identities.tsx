@@ -42,6 +42,7 @@ import { useLabels, useLoad, useNames, usePages, useStudio } from "../hooks.ts";
 import { IdentityIcon, MergeIcon, SplitIcon } from "../icons.tsx";
 import type { Route } from "../router.ts";
 import { colors, spacing, typography } from "../styles/shelf/tokens.stylex";
+import { Who } from "../who.tsx";
 
 /** What to call an identity: what most of its records call it, or its ID when none of them says. */
 export function identityName(identity: Pick<IdentitySummary, "id" | "label">): string {
@@ -286,7 +287,7 @@ function Placed({ since, entry }: { since: number; entry?: HistoryEntry }) {
       {entry ? (
         <span {...stylex.props(styles.aside)}>
           {" "}
-          by {entry.run ? <Ref kind="run" id={entry.run} label={`run ${entry.run}`} /> : <Code>{entry.actor}</Code>}
+          by {entry.run ? <Ref kind="run" id={entry.run} label={`run ${entry.run}`} /> : <Who actor={entry.actor} />}
           {entry.reason ? (
             <>
               {" "}
@@ -408,11 +409,9 @@ function Split({ view, head, chosen }: { view: IdentityView; head: number; chose
             label="Split"
             icon={<SplitIcon />}
             about={would}
-            who
             why="Reason"
-            act={async (client, { actor, reason }) => {
+            act={async (client, { reason }) => {
               const report = await client.split(view.id, {
-                actor,
                 reason,
                 base: head,
                 records: ticked,
@@ -525,13 +524,11 @@ function Merge({ view, head }: { view: IdentityView; head: number }) {
               variant="default"
               title={`Merge ${identityName(other)} into this identity`}
               about={`${count(other.members.length, "record")} ${other.members.length === 1 ? "moves" : "move"} here.`}
-              who
               why="Reason"
-              act={async (client, { actor, reason }) => {
+              act={async (client, { reason }) => {
                 // Written against what this screen read: if the members of
                 // either identity changed since, the engine rejects the merge.
                 const committed = await client.commit({
-                  actor,
                   reason,
                   base: head,
                   ops: [{ op: "merge", from: other.id, into: view.id }],
@@ -568,7 +565,7 @@ export function History({ history, names }: { history: HistoryEntry[]; names: Ma
                 {" "}
                 <When at={entry.committed_at} />
               </span>{" "}
-              by <Code>{entry.actor}</Code>
+              by <Who actor={entry.actor} />
               {entry.run ? (
                 <>
                   , drafted by <Ref kind="run" id={entry.run} label={`reconcile run ${entry.run}`} />

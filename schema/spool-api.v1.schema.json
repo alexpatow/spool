@@ -5,6 +5,34 @@
       "pattern": "^(engine|user:.+|agent:.+)$",
       "type": "string"
     },
+    "AddPersonRequest": {
+      "additionalProperties": false,
+      "description": "`POST /v1/people`: add a person. Only an admin may.",
+      "properties": {
+        "admin": {
+          "default": null,
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "password": {
+          "type": "string"
+        },
+        "username": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "username",
+        "name",
+        "password"
+      ],
+      "type": "object"
+    },
     "Authored": {
       "description": "A changeset the engine wrote for a caller, and its receipt.",
       "properties": {
@@ -106,6 +134,41 @@
       ],
       "type": "object"
     },
+    "ChangePersonRequest": {
+      "additionalProperties": false,
+      "description": "`POST /v1/people/{id}`: change a person. Only an admin may. A field left\nout stays as it is. A new password, or turning the account off, signs\nthe person out everywhere.",
+      "properties": {
+        "active": {
+          "default": null,
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "admin": {
+          "default": null,
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "name": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "password": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "Changeset": {
       "description": "An ordered list of operations that is applied atomically or not at all.",
       "properties": {
@@ -178,11 +241,8 @@
     },
     "CommitRequest": {
       "additionalProperties": false,
-      "description": "`POST /v1/changesets`: a changeset to validate and commit.\n\nA caller that has read the state it is changing says so with `base`: a\nmerge is rejected if the members of either identity changed after it. A\ncaller that leaves `base` out is taken to have read the head of the log.",
+      "description": "`POST /v1/changesets`: a changeset to validate and commit. Its author is\nwhoever sends it: the person signed in, or the agent whose token it is.\n\nA caller that has read the state it is changing says so with `base`: a\nmerge is rejected if the members of either identity changed after it. A\ncaller that leaves `base` out is taken to have read the head of the log.",
       "properties": {
-        "actor": {
-          "$ref": "#/$defs/Actor"
-        },
         "base": {
           "anyOf": [
             {
@@ -233,7 +293,6 @@
         }
       },
       "required": [
-        "actor",
         "ops"
       ],
       "type": "object"
@@ -378,9 +437,6 @@
       "additionalProperties": false,
       "description": "`POST /v1/review/{id}/dismiss`: close a review item without placing its\nrecords.",
       "properties": {
-        "actor": {
-          "$ref": "#/$defs/Actor"
-        },
         "reason": {
           "default": null,
           "type": [
@@ -389,9 +445,6 @@
           ]
         }
       },
-      "required": [
-        "actor"
-      ],
       "type": "object"
     },
     "Dismissal": {
@@ -747,7 +800,17 @@
       "oneOf": [
         {
           "const": "unauthorized",
-          "description": "401: the bearer token is missing or wrong.",
+          "description": "401: nobody is signed in and there is no token, or the username,\npassword or token is wrong.",
+          "type": "string"
+        },
+        {
+          "const": "forbidden",
+          "description": "403: the caller is known and may not do this: only an admin manages\npeople, and a write must come from the server's own pages.",
+          "type": "string"
+        },
+        {
+          "const": "too_many_attempts",
+          "description": "429: too many wrong passwords for this username, or more sign-ins\nat once than the server checks. Wait and try again.",
           "type": "string"
         },
         {
@@ -1850,6 +1913,68 @@
         "other",
         "run",
         "verdict"
+      ],
+      "type": "object"
+    },
+    "PasswordRequest": {
+      "additionalProperties": false,
+      "description": "`POST /auth/password`: change the caller's own password.",
+      "properties": {
+        "current": {
+          "type": "string"
+        },
+        "new": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "current",
+        "new"
+      ],
+      "type": "object"
+    },
+    "Person": {
+      "description": "Someone with an account on this server. The log names a person by `id`,\nas `user:<id>`.",
+      "properties": {
+        "active": {
+          "description": "May sign in. An account that is turned off keeps its name in the log.",
+          "type": "boolean"
+        },
+        "admin": {
+          "description": "May add people and change their accounts.",
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "username": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "username",
+        "name",
+        "admin",
+        "active"
+      ],
+      "type": "object"
+    },
+    "PersonList": {
+      "description": "`GET /v1/people`: everyone with an account, in the order they were added.",
+      "properties": {
+        "people": {
+          "items": {
+            "$ref": "#/$defs/Person"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "people"
       ],
       "type": "object"
     },
@@ -3108,6 +3233,76 @@
       "minimum": 0,
       "type": "integer"
     },
+    "SessionState": {
+      "description": "`GET /auth/session`: who the caller is signed in as.",
+      "properties": {
+        "dev": {
+          "description": "A development server: nobody signs in, and whoever opens it is the\n`dev` account.",
+          "type": "boolean"
+        },
+        "person": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Person"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "setup": {
+          "description": "No admin can sign in yet. The server printed a link when it started\nthat makes the first account.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "setup",
+        "dev"
+      ],
+      "type": "object"
+    },
+    "SetupRequest": {
+      "additionalProperties": false,
+      "description": "`POST /auth/setup`: make the first account, an admin, with the code from\nthe link the server printed.",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "password": {
+          "type": "string"
+        },
+        "username": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "username",
+        "name",
+        "password"
+      ],
+      "type": "object"
+    },
+    "SignInRequest": {
+      "additionalProperties": false,
+      "description": "`POST /auth/sign-in`.",
+      "properties": {
+        "password": {
+          "type": "string"
+        },
+        "username": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "username",
+        "password"
+      ],
+      "type": "object"
+    },
     "SourceCount": {
       "description": "How many records a source gave.",
       "properties": {
@@ -3195,9 +3390,6 @@
       "additionalProperties": false,
       "description": "`POST /v1/identities/{identity}/split`: divide an identity in two.",
       "properties": {
-        "actor": {
-          "$ref": "#/$defs/Actor"
-        },
         "base": {
           "anyOf": [
             {
@@ -3234,8 +3426,7 @@
         }
       },
       "required": [
-        "records",
-        "actor"
+        "records"
       ],
       "type": "object"
     },
@@ -3652,9 +3843,6 @@
       "additionalProperties": false,
       "description": "`POST /v1/changesets/{seq}/undo`: take back the changeset at a log\nposition with a new changeset.",
       "properties": {
-        "actor": {
-          "$ref": "#/$defs/Actor"
-        },
         "commit": {
           "default": null,
           "description": "Commit the undo (the default), or only validate it and return it.",
@@ -3671,9 +3859,6 @@
           ]
         }
       },
-      "required": [
-        "actor"
-      ],
       "type": "object"
     },
     "Verdict": {

@@ -4,29 +4,46 @@
 //   bun scripts/demo.ts             the company records, with a reviewer's corrections
 //   bun scripts/demo.ts news        the news items, with the mentions an extractor found
 //   bun scripts/demo.ts --port 7766
-//   bun scripts/demo.ts --token s3cret   a server the studio has to ask the token of
+//   bun scripts/demo.ts --sign-in   `spool serve`, where people sign in: it prints the link that makes the first account
 //
 // The server is the one `bun run dev` passes its calls on to: it listens on
-// 127.0.0.1:7765 with the token `dev`. It also serves the studio it was built
-// with, at that address.
+// 127.0.0.1:7765. It also serves the studio it was built with, at that
+// address.
 
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 
-import { binary } from "../../client/test/server.ts";
+import { binary, spool } from "../../client/test/server.ts";
 import { SpoolClient } from "../src/api.ts";
 import { companies, copyProject, news, seedCompanies, seedNews } from "../test/seed.ts";
 
 const args = process.argv.slice(2);
 const option = (name: string, otherwise: string) => (args.includes(name) && args[args.indexOf(name) + 1]) || otherwise;
 const port = option("--port", "7765");
-const token = option("--token", "dev");
+const signIn = args.includes("--sign-in");
 const scenario = args.includes("news") ? "news" : "companies";
 
+// What fills a server where people sign in: it is not a person.
+const TOKEN = "demo";
+
 const project = copyProject(scenario === "news" ? news : companies);
+const listen = ["--listen", `127.0.0.1:${port}`, "--store", join(project, "dev.duckdb")];
+if (signIn) spool("build", project);
 const child = Bun.spawn(
-  [binary(), "dev", project, "--listen", `127.0.0.1:${port}`, "--store", join(project, "dev.duckdb"), "--token", token],
-  { stdout: "pipe", stderr: "inherit" },
+  signIn
+    ? [
+        binary(),
+        "serve",
+        "--manifest",
+        join(project, ".spool/manifest.json"),
+        "--project",
+        project,
+        "--tasks",
+        join(project, ".spool/tasks"),
+        ...listen,
+      ]
+    : [binary(), "dev", project, ...listen],
+  { env: { ...process.env, SPOOL_TOKEN: signIn ? TOKEN : undefined }, stdout: "pipe", stderr: "inherit" },
 );
 
 const stop = async (code = 0) => {
@@ -65,7 +82,8 @@ void (async () => {
   }
 })();
 
-const client = new SpoolClient({ url: url!, token });
+// On a development server the corrections are those of its `dev` account.
+const client = new SpoolClient({ url: url!, token: signIn ? TOKEN : undefined });
 await (scenario === "news" ? seedNews(client) : seedCompanies(client));
 console.log(`\nthe ${scenario} scenario is at ${url}`);
 await child.exited;

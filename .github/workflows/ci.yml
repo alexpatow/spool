@@ -17,6 +17,10 @@ env:
   # Lints are errors here, and a new Rust release brings new lints. The
   # toolchain is named so that a release does not fail a build nobody changed.
   RUST_TOOLCHAIN: "1.98.1"
+  # Each test binary carries the debug information of everything it links,
+  # and with all of it the thirty of them fill the runner's disk. Line
+  # numbers are kept, for a backtrace.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
   test:
@@ -60,6 +64,12 @@ jobs:
 
       - name: Test
         run: cargo test --workspace --locked -- --include-ignored
+
+      # A build that outgrows the disk fails in whichever test writes next,
+      # far from the cause. This says how near that is.
+      - name: Disk left
+        if: always()
+        run: df -h /
 
   msrv:
     name: Build with the oldest supported Rust

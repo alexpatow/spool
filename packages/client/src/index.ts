@@ -5,7 +5,9 @@
 // it runs in.
 
 import type {
+  AddPersonRequest,
   Authored,
+  ChangePersonRequest,
   ChangesetId,
   ChangesetList,
   CommitRequest,
@@ -31,6 +33,8 @@ import type {
   Judgement,
   MintedIds,
   NewDocument,
+  PasswordRequest,
+  Person,
   RecordId,
   RecordList,
   RecordEntry,
@@ -43,6 +47,8 @@ import type {
   RunEntry,
   RunStatus,
   Seq,
+  SessionState,
+  SetupRequest,
   SplitReport,
   SplitRequest,
   StartRunRequest,
@@ -61,8 +67,12 @@ export type Fetch = (input: URL, init: RequestInit) => Promise<Response>;
 export interface SpoolClientOptions {
   /** Where the server is, for example `http://localhost:7765`. */
   url: string;
-  /** The server's bearer token. */
-  token: string;
+  /**
+   * The server's bearer token, for a caller that is not a person. Left out,
+   * the client is a page of the server's own, and the browser sends the
+   * session cookie of whoever is signed in.
+   */
+  token?: string;
   /** The `fetch` to call with. Defaults to the runtime's. */
   fetch?: Fetch;
 }
@@ -191,7 +201,7 @@ const POLL_MS = 20_000;
 
 export class SpoolClient {
   private readonly url: string;
-  private readonly token: string;
+  private readonly token: string | undefined;
   private readonly fetch: Fetch;
 
   constructor(options: SpoolClientOptions) {
@@ -207,7 +217,7 @@ export class SpoolClient {
     return this.json("GET", "/v1/info");
   }
 
-  /** Whether the server is up. Needs no token. */
+  /** Whether the server is up. Needs no token and no session. */
   async healthy(): Promise<boolean> {
     try {
       const response = await this.fetch(new URL(`${this.url}/healthz`), { method: "GET" });
@@ -543,6 +553,55 @@ export class SpoolClient {
     return this.json("POST", `/v1/review/${item}/dismiss`, { json: request });
   }
 
+  // People
+
+  /** Who the browser is signed in as, and whether the first account is still to be made. */
+  session(): Promise<SessionState> {
+    return this.json("GET", "/auth/session");
+  }
+
+  /** Signs in. The server sets the session cookie. */
+  signIn(username: string, password: string): Promise<SessionState> {
+    return this.json("POST", "/auth/sign-in", { json: { username, password } });
+  }
+
+  signOut(): Promise<SessionState> {
+    return this.json("POST", "/auth/sign-out", { json: {} });
+  }
+
+  /**
+   * Makes the first account, an admin, and signs in as it. The code is the
+   * one in the link the server printed when it started with no admin who
+   * could sign in.
+   */
+  setUp(request: SetupRequest): Promise<SessionState> {
+    return this.json("POST", "/auth/setup", { json: request });
+  }
+
+  /** Changes the password of whoever is signed in. Their other sessions end. */
+  changePassword(request: PasswordRequest): Promise<SessionState> {
+    return this.json("POST", "/auth/password", { json: request });
+  }
+
+  /** Everyone with an account. The log names a person as `user:<id>`. */
+  async people(): Promise<Person[]> {
+    const { people } = await this.json<{ people: Person[] }>("GET", "/v1/people");
+    return people;
+  }
+
+  /** Adds a person. Only an admin may. */
+  addPerson(request: AddPersonRequest): Promise<Person> {
+    return this.json("POST", "/v1/people", { json: request });
+  }
+
+  /**
+   * Changes a person: their name, password, whether they are an admin, and
+   * whether the account is on. Only an admin may.
+   */
+  changePerson(id: string, request: ChangePersonRequest): Promise<Person> {
+    return this.json("POST", `/v1/people/${encodeURIComponent(id)}`, { json: request });
+  }
+
   // The wire
 
   private async json<T>(method: string, path: string, call: Call = {}): Promise<T> {
@@ -555,7 +614,8 @@ export class SpoolClient {
     for (const [name, value] of Object.entries(call.query ?? {})) {
       if (value !== undefined && value !== null) url.searchParams.set(name, String(value));
     }
-    const headers: Record<string, string> = { Authorization: `Bearer ${this.token}` };
+    const headers: Record<string, string> = {};
+    if (this.token !== undefined) headers.Authorization = `Bearer ${this.token}`;
     if (call.accept !== undefined) headers.Accept = call.accept;
     let body: BodyInit | undefined;
     if (call.arrow !== undefined) {

@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use spool::{ApplyReport, Engine, Manifest, Options};
+use spool_cli::accounts::{self, Accounts};
 use spool_cli::server::{self, ServerOptions};
 
 use super::manifest_path;
@@ -18,14 +19,20 @@ use crate::args::{Arguments, Spec};
 pub const SERVE_USAGE: &str = "\
 Usage: spool serve [options]
 
-Runs the server. It is the only process that opens the store, and it needs a
-bearer token in SPOOL_TOKEN, which every call must carry.
+Runs the server. It is the only process that opens the store.
 
 An empty store is set up from the manifest. A store that was applied with
 another manifest is refused: run `spool apply` on it first.
 
 The server answers a browser at its address with the studio, which shows what
-the store holds and takes a reviewer's changes, once it is given the token.
+the store holds and takes the changes of whoever is signed in. People sign in
+with a username and a password. Their accounts are kept in a file beside the
+store, named after it: `spool.auth.sqlite` for `spool.duckdb`. While no admin
+can sign in, the server prints a link when it starts; whoever opens it makes
+the first account and is the admin, who adds everyone else.
+
+A caller that is not a person sends the bearer token in SPOOL_TOKEN, if one
+is set. What it changes is recorded under `agent:api`.
 
 Options:
   --manifest <path>   the manifest to run on (default: .spool/manifest.json)
@@ -39,6 +46,9 @@ Options:
   --tasks <dir>       where the task directories of user code are made
                       (default: spool-tasks in the temporary directory)
   --no-studio         do not serve the studio
+  --plain-http        browsers reach the server over HTTP, not HTTPS, so the
+                      session cookie may travel over HTTP (the default when
+                      listening on this machine only)
 
 Strategies and extractors that are `.py` files run with `uv`, and `.ts` files
 with `bun`. SPOOL_UV and SPOOL_BUN name the commands if they are not on the
@@ -55,14 +65,17 @@ saved; a change that does not compile is reported and the last version that
 did keeps running.
 
 Open the address it listens on in a browser for the studio, which shows what
-the store holds and takes a reviewer's changes.
+the store holds and takes changes. Nobody signs in: every change is recorded
+under an account called `dev`, an admin. So it listens on this machine only;
+`spool serve` runs a server that others reach.
 
   <dir>               the project directory (default: the current directory)
 
 Options:
-  --listen <addr>     the address to listen on (default: 127.0.0.1:7765)
+  --listen <addr>     the loopback address to listen on (default: 127.0.0.1:7765)
   --store <path>      the store's database file (default: <dir>/.spool/dev.duckdb)
-  --token <token>     the bearer token (default: $SPOOL_TOKEN, or `dev`)
+  --token <token>     the bearer token of callers that are not a browser, which
+                      write as `agent:api` (default: $SPOOL_TOKEN, or `dev`)
   --task-timeout <s>  how long a user-code strategy or an extractor may run,
                       in seconds (default: 600)
   --tasks <dir>       where the task directories of user code are made
@@ -120,7 +133,7 @@ pub fn serve(arguments: &[String]) -> Result<(), Failure> {
                 "--task-timeout",
                 "--tasks",
             ],
-            flags: &["--no-studio"],
+            flags: &["--no-studio", "--plain-http"],
             positional: 0,
         },
     )?;
@@ -131,10 +144,7 @@ pub fn serve(arguments: &[String]) -> Result<(), Failure> {
     let token = std::env::var("SPOOL_TOKEN")
         .ok()
         .map(|token| token.trim().to_owned())
-        .filter(|token| !token.is_empty())
-        .ok_or_else(|| {
-            failed("set SPOOL_TOKEN to the bearer token callers must present; the server does not run without one")
-        })?;
+        .filter(|token| !token.is_empty());
     let manifest_file = arguments
         .path("--manifest")
         .unwrap_or_else(|| manifest_path(Path::new(".")));
@@ -164,7 +174,14 @@ pub fn serve(arguments: &[String]) -> Result<(), Failure> {
         }
     }
     say!("manifest  {}", manifest.hash);
-    let mut options = ServerOptions::new(token);
+    let accounts = open_accounts(&store)?;
+    let empty = accounts
+        .needs_setup()
+        .map_err(|refused| failed(refused.to_string()))?;
+    let mut options = ServerOptions::new(accounts);
+    options.token = token;
+    options.setup = empty.then(accounts::code);
+    options.https = !(arguments.flag("--plain-http") || listen.ip().is_loopback());
     options.studio = !arguments.flag("--no-studio");
     run(Arc::new(engine), listen, options)
 }
@@ -187,6 +204,14 @@ pub fn dev(arguments: &[String]) -> Result<(), Failure> {
     )?;
     let dir = arguments.project_dir();
     let listen = listen_address(&arguments, &format!("127.0.0.1:{DEFAULT_PORT}"))?;
+    // Whoever reaches a development server is its admin.
+    if !listen.ip().is_loopback() {
+        return Err(Failure::Usage(format!(
+            "`spool dev` has no sign-in, so it listens on this machine only: `--listen` needs \
+             an address such as 127.0.0.1:{DEFAULT_PORT}, not `{listen}`. `spool serve` runs a \
+             server that others reach, and they sign in to it."
+        )));
+    }
     let store = arguments
         .path("--store")
         .unwrap_or_else(|| dir.join(".spool").join("dev.duckdb"));
@@ -216,9 +241,23 @@ pub fn dev(arguments: &[String]) -> Result<(), Failure> {
     say!("token     {token}");
     print_applied(&manifest, &report);
 
+    let mut options = ServerOptions::new(open_accounts(&store)?);
+    options.token = Some(token);
+    options.dev = true;
+    options.https = false;
+
     let watched = Arc::clone(&engine);
     std::thread::spawn(move || watch(&dir, &watched, seen));
-    run(engine, listen, ServerOptions::new(token))
+    run(engine, listen, options)
+}
+
+/// The accounts of the server over `store`: a file beside it, named after it.
+fn open_accounts(store: &Path) -> Result<Accounts, Failure> {
+    let path = store.with_extension("auth.sqlite");
+    let accounts = Accounts::open(&path)
+        .map_err(|refused| failed(format!("{}: {refused}", path.display())))?;
+    say!("accounts  {}", path.display());
+    Ok(accounts)
 }
 
 fn print_applied(manifest: &Manifest, report: &ApplyReport) {
@@ -319,6 +358,24 @@ fn run(engine: Arc<Engine>, listen: SocketAddr, options: ServerOptions) -> Resul
         say!("listening on http://{address}");
         if options.studio {
             say!("studio    http://{address}/");
+        }
+        match &options.setup {
+            Some(code) if options.studio => {
+                say!("setup     http://{address}/setup#{code}");
+                say!(
+                    "no admin can sign in yet: open that link, at the address people reach \
+                     this server by, to make the first account"
+                );
+            }
+            // No page asks for it: the code is sent to the API.
+            Some(code) => {
+                say!("setup     {code}");
+                say!(
+                    "no admin can sign in yet: `POST /auth/setup` with that code makes the \
+                     first account"
+                );
+            }
+            None => {}
         }
         server::serve(listener, engine, &options, shutdown())
             .await

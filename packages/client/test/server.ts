@@ -6,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { SpoolClient } from "../src/index.ts";
+import type { Fetch, Person } from "../src/index.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const repository = resolve(here, "../../..");
@@ -75,8 +76,48 @@ export const hasUv = Bun.which(process.env.SPOOL_UV ?? "uv") !== null;
 
 export interface Server {
   url: string;
+  /** A client with the server's token: an agent, not a person. */
   client: SpoolClient;
+  /** The code of the link the server printed, which makes the first account. */
+  setupCode: string;
   stop(): Promise<void>;
+}
+
+/** Someone signed in, as their browser is: it keeps the session cookie. */
+export interface Browser {
+  person: Person;
+  /** A `fetch` that sends the cookie and keeps the one it is given. */
+  fetch: Fetch;
+  /** A client that calls as this person. */
+  client: SpoolClient;
+}
+
+export const PASSWORD = "a long enough one";
+
+/** A `fetch` that keeps the session cookie between calls, as a browser does. */
+export function cookies(): Fetch {
+  let cookie: string | undefined;
+  return async (input, init) => {
+    const headers = new Headers(init.headers);
+    if (cookie !== undefined) headers.set("Cookie", cookie);
+    const response = await fetch(input, { ...init, headers });
+    const set = response.headers.get("set-cookie");
+    if (set !== null) cookie = set.split(";")[0];
+    return response;
+  };
+}
+
+/** Makes the server's first account, an admin, and signs in as it. */
+export async function firstPerson(server: Server, name = "Ada"): Promise<Browser> {
+  const browser = cookies();
+  const client = new SpoolClient({ url: server.url, fetch: browser });
+  const { person } = await client.setUp({
+    code: server.setupCode,
+    username: name.toLowerCase(),
+    name,
+    password: PASSWORD,
+  });
+  return { person: person!, fetch: browser, client };
 }
 
 /**
@@ -106,22 +147,26 @@ export async function serve(project: string, seed: number): Promise<Server> {
     { env: { ...process.env, SPOOL_TOKEN: TOKEN }, stdout: "pipe", stderr: "inherit" },
   );
 
-  // The server prints the address it listens on.
+  // The server prints the address it listens on, and then, as nobody has
+  // an account yet, the link that makes the first one.
   const reader = child.stdout.getReader();
   const decoder = new TextDecoder();
   let printed = "";
   let url: string | undefined;
-  while (url === undefined) {
+  let setupCode: string | undefined;
+  while (url === undefined || setupCode === undefined) {
     const { value, done } = await reader.read();
     if (done) throw new Error(`the server stopped before it listened:\n${printed}`);
     printed += decoder.decode(value, { stream: true });
     url = /listening on (http:\/\/\S+)/.exec(printed)?.[1];
+    setupCode = /\/setup#(\w+)\n/.exec(printed)?.[1];
   }
   reader.releaseLock();
 
   return {
     url,
     client: new SpoolClient({ url, token: TOKEN }),
+    setupCode,
     async stop() {
       child.kill("SIGTERM");
       await child.exited;

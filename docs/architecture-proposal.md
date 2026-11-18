@@ -533,7 +533,7 @@ Why one server, and not an engine in each caller:
 - **A DuckDB file has one owner.** While the engine has the file open, no other process can open it, even read-only (tested). One server that owns the file fits that.
 - **One writer has nothing to synchronise.** Sync transport, conflict policy, and two copies each creating an identity for the same new entity all disappear.
 
-Every path of the API is under `/v1` and needs the bearer token. `GET /healthz` needs none, and neither do the files of the studio, which the Inspection part below describes. Small values are JSON. `spool schema` prints one JSON Schema for all of them, a copy is committed at `schema/spool-api.v1.schema.json`, and a test fails when the two differ.
+Every path of the API is under `/v1` and needs a caller the server knows: a person who signed in, or the bearer token. The Access part below describes both. `GET /healthz` needs neither, and nor do the files of the studio, which the Inspection part describes. Small values are JSON. `spool schema` prints one JSON Schema for all of them, a copy is committed at `schema/spool-api.v1.schema.json`, and a test fails when the two differ.
 
 | Call | What it does | Response |
 | --- | --- | --- |
@@ -561,6 +561,7 @@ Every path of the API is under `/v1` and needs the bearer token. `GET /healthz` 
 | `GET /v1/review`, `GET /v1/review/{id}`, `.../case` | Review items, typed, by status, entity type or a record they name; one of them; one with what a reviewer decides it from | JSON |
 | `GET /v1/explain?a=&b=` | Why two records share an identity, or why they do not | JSON |
 | `POST /v1/review/{id}/dismiss` | Closes a review item without placing its records | The item |
+| `GET /v1/people`, `POST /v1/people`, `POST /v1/people/{id}` | Lists everyone with an account; as an admin, adds a person or changes one | JSON |
 
 - **A call that starts work says how long it will wait.** `POST /v1/ingest`, `POST /v1/documents`, `POST /v1/extractions` and `POST /v1/runs` take `wait_ms`, 30 seconds if left out. If the run finishes within that time, the response is `200` with the finished run. Otherwise it is `202` with the run as far as it has got, and the client reads `GET /v1/runs/{run}?wait_ms=...` until its status is no longer `running`. The work goes on whether or not anyone waits. The run ID is `spool.run.run_id`, so tasks add no new concept. One limit: a call that finds the writer busy has no run to report until its own work starts, so it can wait longer than it asked to.
 - **A run has one of five statuses.** `running` while the engine works on it, `open` while it waits for a caller's judgements, `drafted` while its draft waits for review, and then `succeeded` or `failed`.
@@ -568,7 +569,7 @@ Every path of the API is under `/v1` and needs the bearer token. `GET /healthz` 
 - **Small values are JSON**, defined once with `serde` and described by one versioned JSON Schema. Client types are generated from it. The same serialised form is the log's exchange format. A request with a field the server does not know is refused, so a misspelt `commit` cannot commit by mistake.
 - **Bulk data is Arrow**, as IPC streams in request and response bodies. Clients also accept plain objects for convenience, up to some thousands of rows. Rows sent as JSON become the same records as the same rows sent as Arrow: a number with no fractional part is stored as an integer whichever way it arrived, so a record's ID does not depend on the encoding or on the other rows in its batch. A JSON integer that its column cannot hold exactly is refused, not rounded: one of 2^53 or more beside numbers with a fraction, or one past the signed 64-bit range beside a negative one. A JSON row with no values is still a row.
 - **IDs cross as strings** in the first version. DuckDB exports `UUID` columns to Arrow as strings by default (tested), which is also what JavaScript and pandas users expect.
-- **Errors have one shape.** Every response that is not a success is `{"error": {"code", "message"}}`, with `rejections` when a changeset broke a rule. The codes are `unauthorized`, `invalid`, `not_found`, `conflict`, `rejected`, `too_large`, `strategy_failed`, `extractor_failed` and `internal`.
+- **Errors have one shape.** Every response that is not a success is `{"error": {"code", "message"}}`, with `rejections` when a changeset broke a rule. The codes are `unauthorized`, `forbidden`, `too_many_attempts`, `invalid`, `not_found`, `conflict`, `rejected`, `too_large`, `strategy_failed`, `extractor_failed` and `internal`.
 - **The API is tested by hash.** With a seeded ID generator, the same fixture must produce the same changeset `content_hash` through the library, through the server with Arrow and with JSON bodies, and through the TypeScript client. Only Rust computes record IDs and content hashes.
 
 ### Inspection
@@ -607,18 +608,33 @@ A reviewer also makes changes from it, each on the screen of the thing it change
 - **A change is one call of the API, and the engine decides whether it holds.** The studio keeps no rule of its own. A changeset the engine rejects is shown in the engine's words, with the operations it names, and nothing is changed. Operations are counted from 0 everywhere, as the engine counts them.
 - **A change is written against what the reviewer saw.** A move names the identity the record was in when the screen was read, and a merge is committed with the log position the screen was read at as its base. If either changed since, the engine rejects the change and the reviewer reads again. Before a merge, the other identity is looked up and its members shown. Reading the screen again moves the merge's base on, so what was looked up before that is taken away and is looked up again: a merge never takes in members the reviewer was not shown.
 - **A split says which side stays before it is made.** The engine leaves the larger side under the identity's ID, whichever side was ticked, and the screen says which side that is. Which side is larger depends on every member, so the split carries the log position the screen was read at as its `base`, and the engine refuses it if the identity's members changed after that.
-- **A change is recorded under a name the reviewer gives**, as `user:<name>`, with a reason if they give one. The name is kept in the browser's local storage, which outlives the tab: it is no secret, and the token still is not kept there. Approving or rejecting a draft takes no name, because the API takes none.
+- **A change is recorded under whoever is signed in**, as `user:<id>`, with a reason if they give one. The studio sends no author, because the API takes none: the server knows its caller. Where the log names a person, the studio shows their name.
 - **An undo can be seen before it is made.** The engine writes the changeset that would take another back, and checks it, without committing it.
 
 - **It is a few files compiled into the binary.** `packages/studio` is a React application that Vite builds to a page, one script, one style sheet and the four files of its two fonts, with fixed names. Its components are those of Shelf UI, which are copied into the package as source rather than installed, so they are read, changed and built like the rest of it. The built files are committed under `crates/spool-cli/src/studio`, so building the binary needs neither `bun` nor the network, and a test fails if they are not what the package builds. The script carries the licence text of the packages in it, and the style sheet that of the fonts.
-- **The files need no token, and what they show does.** The files are the same for every server and say nothing about its store. The page asks for the token and keeps it for as long as the tab is open, in the tab's session storage. Before it asks, it tries `dev`, which is the token of `spool dev`, so a development server opens with no question.
+- **The files are open to anyone, and what they show is not.** The files are the same for every server and say nothing about its store. The page asks the server who is signed in, and shows a sign-in form when nobody is. It keeps no secret: the session is a cookie the page cannot read. A development server answers that its reader is the `dev` account, so it opens with no question.
 - **The page can load and call nothing but its server.** It is served with a content security policy that allows its own script, style sheet and fonts and calls to the server it came from, and no inline script, no other origin and no frame. The server sends no CORS headers, so a page from another origin still cannot read the API.
 - **The screen is named by the path of the address**, such as `/identities/<id>` or `/records?source=crm`. The server answers the path of every screen with the one page, and the page names its files from the root, so the studio is served at the root of its origin. A link to a screen, with its filters, can be copied. A browser asks for the files each time and is told when the copy it has is still the one, so a new binary's studio is shown without a hard reload.
 - **`spool serve --no-studio` leaves it out**, for a deployment that wants the API alone. `spool dev` always serves it.
 
 A client is a small package that speaks this API. The first is TypeScript, and a Python client is the same amount of work. No client contains engine code, so there are no native packages to build per platform. An agent built with a framework such as eve reaches Spool the same way: a tool in the agent calls the client.
 
-Scope of the server: one store, one writer and one tenant. Access is a bearer token. It scales up, not out. Tenancy, user management and provisioning compute are out of scope, which keeps Spool short of a hosted control plane. Inside the server, reads run concurrently and commits are serialised, so the log's order is the order of commit. Reads use their own connections to the same DuckDB instance, so reading a run or looking up an identity does not wait for an ingest or a resolve in progress. Each read is one transaction, so it sees one committed state however many queries it takes.
+Scope of the server: one store, one writer and one tenant. It scales up, not out. Tenancy and provisioning compute are out of scope, which keeps Spool short of a hosted control plane. Inside the server, reads run concurrently and commits are serialised, so the log's order is the order of commit. Reads use their own connections to the same DuckDB instance, so reading a run or looking up an identity does not wait for an ingest or a resolve in progress. Each read is one transaction, so it sees one committed state however many queries it takes.
+
+### Access
+
+A caller of `/v1` is a person or an agent, and the server says which made a change. No request names its author.
+
+- **People have accounts, kept by the server** in a SQLite file beside the store and named after it: `spool.duckdb` has `spool.auth.sqlite`. An account is a username, a name, a password hashed with Argon2, whether it is an admin, and whether it is on. The log names a person as `user:<id>`, the ID of the account, which stays when the name changes.
+- **A person signs in with a username and a password** and gets a session: a cookie the page cannot read (`HttpOnly`, `SameSite=Lax`, and `Secure` unless the server listens on loopback or was started with `--plain-http`) that ends twelve hours after signing in. Sessions are rows of the same file, under the hash of their ID, so they outlast a restart and a copy of the file signs nobody in. A session is good while the account is on and its password is the one the session began with, so a sign-in that was under way when the password was replaced starts nothing. Ten wrong passwords for a username within fifteen minutes refuse further tries for it, and the server checks four passwords at once: a sign-in beyond that is turned away, as `too_many_attempts`, so that nobody who reaches the server can have it hash as many passwords as they send. The paths that sign people in read a body of at most 64 KiB, since anyone can send one.
+- **The first account is made with a link the server prints.** A server that starts with no admin who can sign in prints `/setup#<code>`. Whoever opens it makes the first account, an admin, and the code then stops working. No credential is put in the environment.
+- **An admin adds everyone else**, and can change a name, set a new password, make an admin and turn an account off. Nobody signs themselves up. An account is turned off, not deleted, so the log keeps a name for its ID, and one admin who can sign in always remains. Turning an account off, or changing its password, ends its sessions. A person changes their own password with the current one.
+- **An agent sends a bearer token**, `SPOOL_TOKEN`, which a server may be started without. It reads and writes as `agent:api` and cannot manage people. Tokens that are named, made and revoked in the studio are to replace it.
+- **A write must come from the server's own pages.** A browser can send the session cookie with a request that another site's page makes. A write whose `Sec-Fetch-Site` is not `same-origin`, or, from a browser that sends none, whose `Origin` is not the host it was sent to, is refused as `forbidden`. A caller that is not a browser sends neither header and is let through.
+- **`spool dev` has no sign-in.** Whoever opens it is the account `dev`, an admin with no password, so it listens on a loopback address only and refuses any other. Nobody signs in as it, so a store that was developed on and is then served still prints the link, and `dev` does not count as the admin who must remain. What `dev` changed keeps its name in the log.
+- **Passwords are for getting started.** A deployment that people depend on should sign them in through an identity provider, so that leaving the organisation ends their access and a second factor is the provider's to require. Sign-in with Google is planned as the first, with a person still added by an admin beforehand.
+
+The paths that make a caller one are outside `/v1`: `GET /auth/session` says who is signed in and whether the server still waits for its first account, and `POST /auth/sign-in`, `/auth/sign-out`, `/auth/setup` and `/auth/password` do what they are called. The parts are `password-auth` for Argon2, `tower-sessions` for sessions and `rusqlite` for the file.
 
 Two packaging facts to plan around:
 
@@ -916,7 +932,7 @@ Exit criteria, each a test:
 Milestone 2's exit criteria, each a test in `crates/spool-cli/tests` unless it says otherwise:
 
 - With the same seed, the company fixture produces the same changeset content hashes through the library, through the server with Arrow bodies and with JSON bodies, and through the TypeScript client (`packages/client/test`).
-- Every call under `/v1` is refused without the bearer token, and `serve` does not start without one.
+- Every call under `/v1` is refused without a caller the server knows.
 - `serve` sets up an empty store, starts again on a store its manifest was applied to, and refuses a store that was applied with another manifest until `spool apply` has run.
 - A call that outlasts its wait answers `202` with the run, the run is read until it ends, and reads are answered while it is in progress.
 - A run leaves its draft for review when asked. The draft is listed, read, approved or rejected, and approving one that went stale names the operations at fault.
@@ -987,18 +1003,29 @@ Milestone 6 begins with inspection: `crates/spool/src/explain.rs` and the comman
 
 Milestone 6 continues with the studio: `packages/studio`, `crates/spool-cli/src/studio.rs` and the built files beside it. Its exit criteria, each a test:
 
-- The server answers a browser with the studio and asks no token for its files, while `/v1` still does. Every other path is still nothing, and `serve --no-studio` serves no studio (`crates/spool-cli/tests/studio.rs`).
+- The server answers a browser with the studio and asks nothing for its files, while `/v1` still does. Every other path is still nothing, and `serve --no-studio` serves no studio (`crates/spool-cli/tests/studio.rs`).
 - The studio is served with a policy that lets it load only itself and call only its server, and a browser is told when the files it has are still the ones.
 - The files compiled into the binary are what `packages/studio` builds (run with `--include-ignored`, as are the tests of the screens).
 - Each screen shows what the server holds, against a real server with the company and the news scenarios: the overview, runs, identities with their members, constraints and history, records, a document with its mentions in the text, review items, drafts, the log, and an explanation with the engine's sentences (`packages/studio/test`). An identity shows what its records say of each field and which sources say it, a review item shows its record beside the identities it matched with what was found and what was decided, and the box that finds things goes to what an ID or a `source:key` names and lists what holds the words typed.
-- The studio asks for the token when the one of `spool dev` is refused, keeps the one that works, and forgets it when asked.
+- The first person makes their account in the studio from the server's link, signs out and signs in again, and an admin adds a person and turns their account off.
 - Looking at the screens makes no call that changes anything.
 - Each change is made on its screen and is then what the server holds: a draft approved and rejected, a review item's record placed in an identity it matched and in a new one, the identities an item matched merged into one, an item dismissed, a record moved to another identity, to a new one and out of any, an identity split with and without keeping the sides apart, an identity merged into another, a constraint recorded and removed, and a changeset undone after the undo was shown (`packages/studio/test/changes.test.tsx`).
 - A change the engine rejects changes nothing and is shown with the operations it names: a draft whose record was placed elsewhere, a move and a merge of something that changed after the screen was read, a merge from a review item of identities that changed since, a split that a `must_link` constraint forbids, and an undo of what was undone before.
 - An identity that was looked up for a merge is not merged after the screen was read again, until it is looked up again and shows the member it gained meanwhile.
 - A split of the larger side says that side stays, and it does. A split is refused when the identity gained a member after the screen was read, and is made after the screen is read again (also `a_split_based_on_a_log_position_is_refused_when_the_members_changed_after_it` in `crates/spool/tests/lifecycle.rs`, and over HTTP in `packages/client/test/client.test.ts`).
-- A change that needs a name is not sent without one, and the name is kept for the next.
+- A change is recorded under whoever is signed in.
 - `bun run demo` fills only the server it started, and stops when another server already listens at its address.
+
+Accounts are `crates/spool-cli/src/accounts.rs` and the `/auth` and `/v1/people` paths of the server. Their exit criteria, each a test in `crates/spool-cli/tests/accounts.rs`:
+
+- The first account is made with the code of the link the server printed, and only once. A store that `spool dev` ran on still gets one.
+- A change is recorded under the person whose session sent it, and under `agent:api` when the token did. A request that names its author is refused.
+- An admin adds people and changes them, and nobody else does: not another person, and not the token.
+- Signing out, a new password and an account turned off each end sessions, and the last admin stays one.
+- A sign-in beyond the passwords the server checks at once is turned away, and signing in works again afterwards.
+- A body too large to be about an account is refused unread.
+- A write that says it comes from another site is refused.
+- Nobody signs in to a development server, and its changes are the `dev` account's. It does not start on an address others reach (`crates/spool-cli/tests/cli.rs`).
 
 Beside the milestones, `packages/stress` puts a real server under load and abuse. Each part is a command for a run of any size, and runs in a small form with the tests (`crates/spool-cli/tests/stress.rs`, with `--include-ignored`). Every part ends with the server stopped and the store checked by `Engine::verify`, through the `verify` example of the `spool` crate:
 
@@ -1038,7 +1065,7 @@ Milestones 2 and 3 do not depend on each other. Sandbox synchronisation, initial
 | Default policy never merges or splits existing identities automatically; a rematch suggests and does not change | Policy plug-ins; automatic merges above a threshold; applying suggestions in bulk |
 | JSON and Arrow as the only wire forms; the run ID as the task handle; drafts stored on the server | Streaming run progress; an ad hoc SQL endpoint |
 | Inspection through the API only; an explanation computed from what the store holds, with sentences the engine writes | Running a strategy again to explain; explaining a pair as of an earlier log position |
-| A studio served by the server as files compiled into the binary, built from `packages/studio` and committed; the files without a token and the API with one; a policy that lets the page call only its server | Live updates; a studio published apart from the binary |
+| A studio served by the server as files compiled into the binary, built from `packages/studio` and committed; the files open to anyone and the API to callers the server knows; a policy that lets the page call only its server | Live updates; a studio published apart from the binary |
 | Changes from the studio as single calls of the API, written against what the reviewer saw and recorded under a name they give; the engine alone decides whether a change holds | Sign-in and who may change what; a changeset the reviewer puts together from operations of their choice; starting runs, ingesting and extracting from the studio |
 | Scenario-based benchmark with identity metrics and a CI baseline; extraction scored by exact span, apart from resolution | GLEIF scenario generator; a public extraction dataset; partial credit for overlapping spans; one end-to-end score |
 | Two library crates and one for the command and server; injected ID generator and clock; format version in the file; the prebuilt DuckDB library found by run path | Further crate splits; a statically linked DuckDB; indexes and keys |
