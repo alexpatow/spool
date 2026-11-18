@@ -9,7 +9,7 @@ import {
   Fields,
   Filters,
   Id,
-  Identity,
+  Placed,
   Json,
   Labelled,
   Load,
@@ -104,7 +104,7 @@ export function RecordsPage({ route, types }: { route: Route; types: string[] })
           {
             title: "Identity",
             cell: (record) =>
-              record.identity ? <Identity id={record.identity} labels={labels} /> : <Word value="unassigned" />,
+              <Placed record={record} labels={labels} />,
           },
           { title: "ID", cell: (record) => <Ref kind="record" id={record.id} /> },
         ]}
@@ -160,6 +160,15 @@ function RecordScreen({ record, review, document }: Loaded) {
           </span>
         </Notice>
       ) : null}
+      {record.retracted != null ? (
+        <Notice tone="waits">
+          <span>
+            Taken back by its source in{" "}
+            <Ref kind="run" id={record.retracted} label={`run ${record.retracted}`} />. It has no identity, and no run
+            examines it, until the source sends the row again.
+          </span>
+        </Notice>
+      ) : null}
       {waits.length > 0 ? (
         <Notice tone="waits">
           <span>
@@ -188,7 +197,7 @@ function RecordScreen({ record, review, document }: Loaded) {
           ],
           [
             "Identity",
-            record.identity ? <Identity id={record.identity} labels={labels} /> : <Word value="unassigned" />,
+            <Placed record={record} labels={labels} />,
           ],
           ["Supersedes", record.supersedes ? <Ref kind="record" id={record.supersedes} /> : null],
           ["Superseded by", record.superseded_by ? <Ref kind="record" id={record.superseded_by} /> : null],
@@ -219,7 +228,7 @@ function RecordScreen({ record, review, document }: Loaded) {
       <Section title="Explain">
         <ExplainWith record={record} />
       </Section>
-      <Move record={record} />
+      {record.retracted == null ? <Move record={record} /> : null}
     </>
   );
 }

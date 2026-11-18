@@ -468,7 +468,7 @@ fn drafts_and_review_items_are_shown_with_what_they_hold() {
     has(&item, "review item  1");
     has(&item, "kind         possible_merge");
     has(&item, "status       open");
-    has(&item, &format!("{stuck}  crm:c-117"));
+    has(&item, &format!("{stuck}  crm:c-117  waits for an identity"));
     has(&item, "identities they matched");
     let bundle = answered(&server, &["show", "review", "1"]);
     assert_eq!(bundle["item"], server.read("/v1/review/1"));
@@ -501,6 +501,46 @@ fn drafts_and_review_items_are_shown_with_what_they_hold() {
     let (code, complaint) = refused(&server, &["show", "review", "9"]);
     assert_eq!(code, Some(1));
     assert_eq!(complaint, "spool: there is no review item 9\n");
+
+    // The same company under a second key is held back with the first. When
+    // the CRM takes that row back, the item says which of the two still
+    // waits, and which identity a record went to once it is placed.
+    let mut again = server.read(&format!("/v1/records/{stuck}"))["payload"].clone();
+    again["id"] = json!("c-217");
+    let response = server.post(
+        "/v1/ingest",
+        json!({ "source": "crm", "entity_type": "company", "rows": [again] }),
+    );
+    assert_eq!(response.ok()["run"]["status"], "succeeded");
+    resolve(&server, "company");
+    let open = server.read("/v1/review?status=open");
+    let [raised] = &open["items"].as_array().unwrap()[..] else {
+        panic!("one open review item: {open}");
+    };
+    assert_eq!(raised["records"].as_array().unwrap().len(), 2);
+    let raised = raised["id"].to_string();
+    let taken = server.call(
+        "/v1/retract",
+        json!({ "source": "crm", "entity_type": "company", "keys": ["c-217"] }),
+    )["run"]["run"]
+        .clone();
+    let item = shown(&server, &["show", "review", &raised]);
+    has(&item, "status       open");
+    has(&item, &format!("{stuck}  crm:c-117  waits for an identity"));
+    has(
+        &item,
+        &format!(
+            "{}  crm:c-217  taken back by its source in run {taken}, so it does not wait",
+            id_of(&server, "crm", "c-217")
+        ),
+    );
+    server.call(
+        "/v1/changesets",
+        json!({ "ops": [{ "op": "assign", "record": stuck, "from": null, "to": matched }] }),
+    );
+    let item = shown(&server, &["show", "review", &raised]);
+    has(&item, "status       resolved");
+    has(&item, &format!("{stuck}  crm:c-117  in identity {matched}"));
 }
 
 #[test]

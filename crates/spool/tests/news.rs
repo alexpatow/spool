@@ -372,3 +372,81 @@ fn the_example_that_asks_a_language_model_places_what_the_model_quotes() {
     assert_eq!(messages[1]["role"], "user");
     assert_eq!(messages[1]["content"], text);
 }
+
+#[test]
+#[ignore = "runs uv"]
+fn a_mention_that_is_taken_back_is_left_out_of_what_the_store_is_compared_with() {
+    // A mention is taken back by its key, which is its locator.
+    let (engine, _) = run("gold.toml");
+    let key = select(
+        &engine,
+        "SELECT source_key FROM spool.record
+         WHERE json_extract_string(evidence, '$.key') = '01-northwind-expands.txt'
+           AND json_extract_string(evidence, '$.start') = '145'",
+    )[0][0]
+        .clone()
+        .unwrap();
+
+    let dir = tempfile::tempdir().unwrap();
+    let news = news();
+    let scenario = format!(
+        r#"
+project = "{project}"
+
+[truth]
+mentions = "{project}/mentions.csv"
+
+[[step]]
+name = "batch one"
+
+[[step.documents]]
+dir = "{project}/documents/batch-1"
+source = "news"
+
+[[step.extract]]
+extractor = "gold"
+
+[[step]]
+name = "batch two"
+rebuild = true
+
+[[step.documents]]
+dir = "{project}/documents/batch-2"
+source = "news"
+
+[[step.extract]]
+extractor = "gold"
+
+[[step.retract]]
+source = "news"
+entity_type = "company"
+keys = ["{key}"]
+"#,
+        project = news.display(),
+    );
+    let file = dir.path().join("withdrawn.toml");
+    fs::write(&file, scenario).unwrap();
+
+    let work = tempfile::tempdir().unwrap();
+    let engine = Engine::open_in_memory(Options::seeded(0)).unwrap();
+    engine.set_user_code(user_code(work.path()));
+    let report = Scenario::load(&file)
+        .unwrap()
+        .run(&engine, |_| Ok(()))
+        .unwrap();
+
+    let last = &report.steps[1];
+    assert_eq!(
+        (last.retract[0].retracted, last.retract[0].detached),
+        (1, 1)
+    );
+    assert_eq!(last.metrics.records, 24);
+    // The store it is set against extracts the same documents, and holds
+    // the mention no more than this one does.
+    let rebuild = last.rebuild.as_ref().unwrap();
+    assert_eq!(rebuild.records, 24);
+    assert_eq!(rebuild.metrics.records, 24);
+    // Neither do the two orders of arrival.
+    assert_eq!(report.order_sensitivity.as_ref().unwrap().records, 24);
+    engine.verify().unwrap();
+}

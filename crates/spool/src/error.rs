@@ -54,6 +54,16 @@ pub enum Error {
     #[error("ingest rejected: {0}")]
     Ingest(String),
 
+    #[error("retraction rejected: {0}")]
+    Retract(String),
+
+    /// A changeset would give an identity to a record its source took
+    /// back.
+    #[error(
+        "record {0} was taken back by its source and cannot be given an identity; it comes back when the source sends the row again"
+    )]
+    Retracted(RecordId),
+
     #[error("there is no run {0}")]
     UnknownRun(RunId),
 

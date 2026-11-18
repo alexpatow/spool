@@ -1,7 +1,8 @@
-//! Calls to a running server, for the commands that show what it holds.
+//! Calls to a running server, for the commands that show what it holds or
+//! ask it to do something.
 //!
 //! These commands open no store: the server is the only process that does.
-//! They read through the same API as every other client.
+//! They go through the same API as every other client.
 
 use std::time::Duration;
 
@@ -66,7 +67,33 @@ impl Remote {
         for (name, value) in query {
             request = request.query(*name, value);
         }
-        let mut response = request.call().map_err(|error| {
+        self.answer(request.call())
+    }
+
+    /// `POST <path>` under `/v1` with a JSON body, and the JSON it answers.
+    pub fn post(&self, path: &str, body: &Value) -> Result<Value, Failure> {
+        let mut request = self
+            .agent
+            .post(format!("{}/v1{path}", self.url))
+            .header("Content-Type", "application/json");
+        if let Some(token) = &self.token {
+            request = request.header("Authorization", format!("Bearer {token}"));
+        }
+        self.answer(request.send(body.to_string()))?.ok_or_else(|| {
+            Failure::Failed(format!(
+                "{} has no `/v1{path}`; is it a Spool server of this version?",
+                self.url
+            ))
+        })
+    }
+
+    /// What the server answered, as JSON. `Ok(None)` when it has no such
+    /// thing.
+    fn answer(
+        &self,
+        sent: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
+    ) -> Result<Option<Value>, Failure> {
+        let mut response = sent.map_err(|error| {
             Failure::Failed(format!(
                 "the server at {} cannot be reached: {error}\nStart one with `spool dev`, or name another with `--url` or SPOOL_URL.",
                 self.url

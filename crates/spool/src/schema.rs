@@ -7,7 +7,7 @@ use crate::error::{Error, Result};
 
 /// Written to `spool.meta` when a store is created and checked when one is
 /// opened.
-pub(crate) const FORMAT_VERSION: &str = "7";
+pub(crate) const FORMAT_VERSION: &str = "8";
 
 const TABLES: &str = "
 CREATE SCHEMA spool;
@@ -27,6 +27,13 @@ CREATE TABLE spool.record (
   observed_at    TIMESTAMPTZ,          -- when the source says it held, if known
   ingested_at    TIMESTAMPTZ NOT NULL,
   ingest_run     BIGINT      NOT NULL
+);
+
+CREATE TABLE spool.retraction (        -- rows a source took back; kept. One is in force while restored_run IS NULL
+  record_id    UUID   NOT NULL,        -- a record the source no longer holds: it stays as evidence and has no identity
+  retract_run  BIGINT NOT NULL,        -- the retract run that took it back
+  restored_run BIGINT,                 -- the ingest run in which the source sent the row again
+  detached_seq BIGINT                  -- the log position of the changeset that took it out of its identity, if it had one
 );
 
 CREATE TABLE spool.document (          -- text a source holds, kept so that what a mention was found in can be read
@@ -58,7 +65,7 @@ CREATE TABLE spool.entity_type (       -- declared by the project; the engine sh
 
 CREATE TABLE spool.run (               -- also the task record a client reads
   run_id           BIGINT      NOT NULL,
-  kind             VARCHAR     NOT NULL, -- 'ingest' | 'extract' | 'match' | 'reconcile'
+  kind             VARCHAR     NOT NULL, -- 'ingest' | 'extract' | 'match' | 'reconcile' | 'retract'
   status           VARCHAR     NOT NULL, -- 'running' | 'open' | 'drafted' | 'succeeded' | 'failed'
   strategy         VARCHAR,
   strategy_version VARCHAR,
@@ -68,7 +75,7 @@ CREATE TABLE spool.run (               -- also the task record a client reads
   started_at       TIMESTAMPTZ NOT NULL,
   finished_at      TIMESTAMPTZ,
   error            VARCHAR,              -- failed: why
-  result           JSON                  -- what the run reported: an ingest's or an extraction's counts, a match run's resolution
+  result           JSON                  -- what the run reported: an ingest's, an extraction's or a retraction's counts, a match run's resolution
 );
 
 CREATE TABLE spool.candidate (         -- per run, disposable
@@ -96,7 +103,7 @@ CREATE TABLE spool.review_item (       -- what a reconcile run would not decide;
   identity_ids    UUID[]  NOT NULL,    -- the identities they matched; empty when the conflict is among the records
   status          VARCHAR NOT NULL,    -- 'open' | 'resolved' | 'superseded' | 'dismissed'
   closed_seq      BIGINT,              -- resolved: the changeset after which every record had an identity
-  closed_run      BIGINT,              -- superseded: the reconcile run that raised it again in another form
+  closed_run      BIGINT,              -- superseded: the reconcile run that raised it again in another form, or the retract run that took back what it asked about
   closed_by       VARCHAR,             -- dismissed: who decided, as an actor
   closed_at       TIMESTAMPTZ,         -- dismissed: when
   closed_reason   VARCHAR              -- dismissed: why, if the reviewer said
@@ -112,7 +119,7 @@ CREATE TABLE spool.draft (             -- a changeset a reconcile run drafted an
   reason        VARCHAR,
   status        VARCHAR NOT NULL,      -- 'open' | 'committed' | 'rejected' | 'superseded'
   closed_seq    BIGINT,                -- committed: its log position
-  closed_run    BIGINT,                -- superseded: the reconcile run that drafted the type again
+  closed_run    BIGINT,                -- superseded: the reconcile run that drafted the type again, or the retract run that took back a record it places
   closed_at     TIMESTAMPTZ,           -- rejected: when
   closed_reason VARCHAR                -- rejected: why, if the reviewer said
 );
@@ -210,6 +217,17 @@ CREATE VIEW spool.draft_open AS
   WHERE status = 'open';
 ";
 
+/// What format 8 added to format 7: the retractions. Nothing that was there
+/// changed, so a store of format 7 is brought up to date when it is opened.
+const FROM_7: &str = "
+CREATE TABLE spool.retraction (
+  record_id    UUID   NOT NULL,
+  retract_run  BIGINT NOT NULL,
+  restored_run BIGINT,
+  detached_seq BIGINT
+);
+";
+
 /// Creates the schema in an empty database, or checks the format version of
 /// an existing one.
 pub(crate) fn ensure(conn: &mut Connection) -> Result<()> {
@@ -228,7 +246,14 @@ pub(crate) fn ensure(conn: &mut Connection) -> Result<()> {
         tx.commit()?;
         return Ok(());
     }
-    let found = meta(conn, "format_version")?.unwrap_or_else(|| "none".to_owned());
+    let mut found = meta(conn, "format_version")?.unwrap_or_else(|| "none".to_owned());
+    if found == "7" {
+        let tx = conn.transaction()?;
+        tx.execute_batch(FROM_7)?;
+        set_meta(&tx, "format_version", FORMAT_VERSION)?;
+        tx.commit()?;
+        found = FORMAT_VERSION.to_owned();
+    }
     if found != FORMAT_VERSION {
         return Err(Error::FormatVersion {
             found,

@@ -16,6 +16,7 @@ use spool_core::{EntityType, RunId};
 use crate::error::Result;
 use crate::features;
 use crate::project::Rule;
+use crate::retract::{self, NOT_RETRACTED};
 use crate::review;
 
 /// The name of the temporary table that holds a run's new records.
@@ -29,10 +30,12 @@ pub(crate) const NOT_DISMISSED: &str = "record_id NOT IN (
     SELECT unnest(record_ids) FROM spool.review_item WHERE status = 'dismissed')";
 
 /// Lists the records that are new to a run: those of the entity type
-/// that were ingested after `after_run` and before the run itself, and those
-/// of the given review items that still have no identity. A rematch lists
-/// every record that was ingested before the run. The records of
-/// dismissed review items are never among them.
+/// that were ingested after `after_run` and before the run itself, those
+/// that came back in that time after their source had taken them back, and
+/// those of the given review items that still have no identity. A rematch
+/// lists every record that was ingested before the run. The records of
+/// dismissed review items are never among them, nor are records that are
+/// taken back.
 pub(crate) fn create_scope(
     conn: &Connection,
     entity_type: &EntityType,
@@ -50,9 +53,11 @@ pub(crate) fn create_scope(
         "CREATE OR REPLACE TEMP TABLE {SCOPE} AS
          SELECT record_id FROM (
            SELECT record_id FROM spool.record
-           WHERE entity_type = '{entity_type}' AND ingest_run > {after_run} AND ingest_run < {run}
+           WHERE entity_type = '{entity_type}' AND ingest_run < {run}
+             AND (ingest_run > {after_run} OR record_id IN ({restored}))
            {under_review}
-         ) WHERE {NOT_DISMISSED}"
+         ) WHERE {NOT_DISMISSED} AND {NOT_RETRACTED}",
+        restored = retract::restored_between(after_run, run),
     ))?;
     Ok(())
 }

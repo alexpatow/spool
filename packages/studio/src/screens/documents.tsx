@@ -7,7 +7,7 @@ import {
   Fields,
   Filters,
   Id,
-  Identity,
+  Placed,
   LinkTo,
   Load,
   Page,
@@ -200,7 +200,7 @@ function DocumentScreen({ document, found, cut, at }: Loaded & { at: number | nu
             {
               title: "Identity",
               cell: ({ record }) =>
-                record.identity ? <Identity id={record.identity} labels={labels} /> : <Word value="unassigned" />,
+                <Placed record={record} labels={labels} />,
             },
           ]}
           rows={found}

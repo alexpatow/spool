@@ -16,6 +16,7 @@ Commands:
   serve    run the server from a manifest and a store
   dev      run the server on localhost and apply file changes as they are saved
   show     show what a running server holds
+  retract  take back rows a source no longer holds
   explain  say why two records share an identity, or why they do not
   token    make, list and revoke the tokens of callers that are not people
   bench    run a benchmark scenario
@@ -65,6 +66,7 @@ fn main() -> ExitCode {
         "serve" => (commands::serve::SERVE_USAGE, commands::serve::serve),
         "dev" => (commands::serve::DEV_USAGE, commands::serve::dev),
         "show" => (commands::show::SHOW_USAGE, commands::show::show),
+        "retract" => (commands::retract::USAGE, commands::retract::retract),
         "explain" => (commands::show::EXPLAIN_USAGE, commands::show::explain),
         "token" => (commands::token::USAGE, commands::token::token),
         "bench" => (commands::bench::USAGE, commands::bench::bench),
