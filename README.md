@@ -2,9 +2,9 @@
 
 Spool pulls records out of text and rows, decides which are the same real-world thing, and gives each thing an ID that stays the same as more arrive.
 
-It is a server you run yourself: one process, written in Rust, with its data in one [DuckDB](https://duckdb.org) file. It works from files that you keep in Git: extractors, which find the companies, people or products a text names, and matching rules, which are SQL. You drive it from the command line, over HTTP, or from an agent over MCP, and it has a browser interface for looking at the data and correcting it.
+It's a self-hosted server: a single Rust binary with an embedded [DuckDB](https://duckdb.org) store. Your project is a Git repo of extractors and matching rules. Extractors are Python or TypeScript that find the companies, people or products a text names. Rules are one SQL condition per file. Drive Spool from the CLI, the HTTP API or an agent over MCP, and review and fix matches in the studio, its web UI.
 
-Working out which records are the same thing is called entity resolution, or record linkage. Tools that do it give you clusters whose IDs belong to one run. Spool keeps the IDs: a new record joins the identity that exists, and a better rule produces a list of suggested merges, not new IDs.
+Matching records that describe the same thing is called entity resolution, or record linkage. Most tools for it give you clusters whose IDs only mean something within one run. Spool keeps the IDs: a new record joins the identity that already exists, and a better rule produces suggested merges, not new IDs.
 
 ```sh
 curl -fsSL https://github.com/alexpatow/spool/releases/latest/download/install.sh | sh
@@ -25,7 +25,7 @@ spool match
 spool show records
 ```
 
-That loads nine rows of a CRM export from two files, then finds the three companies a call note names, and matches after each. The last command lists the twelve records with the identity of each:
+That loads nine rows of a CRM export in two batches, then finds three companies in a call note, matching after each step:
 
 ```text
 SOURCE AND KEY              NAME                     IDENTITY
@@ -43,19 +43,27 @@ notes:notes-1.txt[119-142]  Larkfield Logistics Ltd  01a1efc6-41cd-775d-8758-e73
 notes:notes-1.txt[179-200]  Brightwater Foods Ltd    01a1efc6-43a9-7403-b9f6-1f8ee76184ed
 ```
 
-The twelve records are six companies. Five records are Acorn Tools: four spellings in the rows, and "Acorn Tools Ltd" in the note. Its ID was made by the first match and did not change when the later rows and the note arrived. The two Halden Groups are in different countries, and a rule keeps them apart.
+Twelve records, six companies. Acorn Tools is five records: four spellings in the CRM and "Acorn Tools Ltd" in the note. Its ID was minted by the first match and survived both later batches. The two Halden Groups are in different countries, and a rule keeps them apart.
 
-Version 0.1.0, for Linux and macOS. The first commit was on 14 November 2026. It is not for deduplicating one file once, for an answer per request, or for more than one machine: before you spend time on it, read [What it is not for](#what-it-is-not-for) and [What it does not do](#what-it-does-not-do).
+Spool 0.1.0 runs on Linux and macOS and is MIT licensed. The [docs](https://spool.alexpatow.com/docs) cover everything below in more depth.
 
 ## Getting started
 
-The commands above are all of it. This section says what each needs and does.
+### Requirements
 
-You need Linux on x86-64 or arm64 with version 2.34 or later of the GNU C library, or macOS on Apple silicon, and `curl` and `tar`. There is no build for Windows, for a Mac with an Intel processor, or for Alpine, whose C library is musl. The step that reads a text also needs [`uv`](https://docs.astral.sh/uv/), which runs the sample extractor.
+- Linux (x86-64 or arm64, glibc 2.34+) or macOS on Apple silicon.
+- `curl` and `tar`.
+- [`uv`](https://docs.astral.sh/uv/), for the step that runs the sample extractor.
 
-**Install.** The script downloads the release for your machine, checks it against its checksum, unpacks it under `~/.local/share/spool/0.1.0` and links `~/.local/bin/spool`. It needs no root and changes nothing else: if `~/.local/bin` is not on your search path, it prints the line that adds it and edits no file. To do it by hand, download `spool-0.1.0-<target>.tar.gz` from the [release](https://github.com/alexpatow/spool/releases/tag/v0.1.0), unpack it and put its `bin` directory on your search path. Keep `bin` and `lib` together: the binary loads the DuckDB library from `../lib`. `spool --version` prints `spool 0.1.0`.
+### Install
 
-**Create a project.** A project is a directory of files that you keep in Git. `spool init companies` makes the directory `companies`, and `--example companies` fills it with the sample project used here. It says what it wrote:
+The script downloads the build for your platform, verifies its checksum, unpacks it to `~/.local/share/spool/0.1.0` and symlinks `~/.local/bin/spool`. It doesn't need root or touch your shell config. If `~/.local/bin` isn't on your `PATH`, it prints the line to add.
+
+To install by hand, unpack `spool-0.1.0-<target>.tar.gz` from the [release](https://github.com/alexpatow/spool/releases/tag/v0.1.0) and put its `bin/` on your `PATH`. Keep `bin/` and `lib/` side by side, because the binary loads DuckDB from `../lib`. `spool --version` prints `spool 0.1.0`.
+
+### Create a project
+
+A project is a directory you keep in Git. `spool init companies --example companies` creates `companies/` with the sample project and lists what it wrote:
 
 ```text
 created   companies
@@ -81,13 +89,13 @@ The extractor is a Python file, which Spool runs with `uv`. Its first run fetche
 about 330 MB, most of it the model, and later runs fetch nothing.
 ```
 
-`company` is an entity type: a kind of thing you want one ID for.
+`company` is an **entity type**: a kind of thing you want one ID for.
 
-**Start the server.** `spool dev` listens on `127.0.0.1:7765` only and asks nobody to sign in. Its data is in `.spool/dev.duckdb` inside the project, and it applies changes to the project's files as you save them. Leave it running.
+`spool dev` serves on `127.0.0.1:7765` with no sign-in, stores data in `.spool/dev.duckdb`, and reloads project files as you save them. Leave it running.
 
 ### Load rows and match
 
-The first file of rows is `samples/crm-1.csv`:
+`samples/crm-1.csv`:
 
 ```csv
 id,name,country
@@ -99,9 +107,9 @@ c-5,Halden Group,GB
 c-6,Halden Group,US
 ```
 
-`spool load` makes each row a record. Loading does not match, and loading the same file again adds nothing. `spool match` judges the records that are new, against each other and against the ones the store holds, and places them in identities. An identity is one company, with its ID and the records that belong to it. That ID is what other systems store. It is minted when the identity is created, so yours will differ from the ones here.
+`spool load` turns each row into a **record**. Loads are idempotent, and they don't match. `spool match` compares new records with each other and with everything already placed, then puts each one in an **identity**: one company, with an ID and its records. The ID is what other systems store. It's minted when the identity is created, so yours will differ from the ones shown here.
 
-The first match makes four identities of the six rows. `spool explain` says why two records share one, or why they do not:
+The first match makes four identities from six rows. `spool explain` says why two records share one, or don't:
 
 ```sh
 spool explain crm:c-5 crm:c-6
@@ -113,7 +121,7 @@ Run 2 (strategy `rules`) judged them `no_match` (no_match rule `different_countr
 ...
 ```
 
-A rule is a file that holds a SQL condition over two records, `l` and `r`. These are the three in the project. The first says which pairs get compared at all, the second matched "Acorn Tools Ltd" to "Acorn Tools", and the third kept the two Halden Groups apart. `name_key` is `lower(trim(name))`.
+A rule is a SQL condition over two records, `l` and `r`. The sample has three. The block rule picks which pairs get compared, the match rule linked "Acorn Tools Ltd" to "Acorn Tools", and the no_match rule kept the Halden Groups apart. `name_key` is `lower(trim(name))`.
 
 ```sql
 -- entities/company/rules/block/name_prefix.sql
@@ -128,11 +136,11 @@ l.country <> r.country
 
 ### Send more rows
 
-`samples/crm-2.csv` has three more rows, c-7 to c-9. After the second match, "Larkfeild Logistics" and "Acorn Tool" are in the identities that existed, and those have the IDs they had. Kestrel Analytics is new and has a new one. Nothing that was placed before moved.
+`samples/crm-2.csv` adds c-7 to c-9. After the second match, "Larkfeild Logistics" and "Acorn Tool" join their existing identities, which keep their IDs. Kestrel Analytics is new and gets a new one. Nothing placed earlier moves.
 
 ### Extract records from text
 
-Rows are one way in. The other is text: an extractor reads a document and says where it names a company, and each place becomes a record. The project has a sample document, `samples/notes-1.txt`:
+An extractor reads a document and reports where it names a company, and each place becomes a record. The sample document is `samples/notes-1.txt`:
 
 ```text
 Call with Dana Reyes on 12 November. She has moved to Acorn Tools Ltd and runs
@@ -140,9 +148,9 @@ purchasing there. They now ship through Larkfield Logistics Ltd, and she asked
 whether we work with Brightwater Foods Ltd, their new supplier.
 ```
 
-It also has a sample extractor, `extractors/companies.py`. It is a Python file, which Spool runs with `uv`, and it asks a small model that runs on your machine where the text names a company. Its first run fetches about 330 MB, most of it the model, and later runs fetch nothing. No document leaves the machine and there is no key to set.
+The sample extractor, `extractors/companies.py`, asks a small local model where the text names a company. Spool runs it with `uv`. The first run downloads about 330 MB, mostly the model, and nothing leaves your machine.
 
-`spool extract` stores the document and runs the extractor over it. Three records come out of the note, each with the document and the characters it was found at. They are records like the rows, so the same rules match them: "Acorn Tools Ltd" and "Larkfield Logistics Ltd" join the identities the rows made, and Brightwater Foods is new. `spool show identities` lists the six companies:
+`spool extract` stores the document and runs the extractor. Each of the three records keeps its document and character range, and the same rules match them as the rows. "Acorn Tools Ltd" and "Larkfield Logistics Ltd" join existing identities, and Brightwater Foods is new. `spool show identities`:
 
 ```text
 IDENTITY                              NAME                   MEMBERS  NAMES  UNLINKED PAIRS  CREATED AT
@@ -154,11 +162,11 @@ IDENTITY                              NAME                   MEMBERS  NAMES  UNL
 01a1efc6-43a9-7403-b9f6-1f8ee76184ed  Brightwater Foods Ltd  1        1      -               log position 3
 ```
 
-The word the model is given decides what it finds, and the file gives it "company". An extractor is a Python or TypeScript file in `extractors/`, which Spool runs with `uv` or `bun`, and one of your own can call a hosted language model.
+Change the word the model looks for, "company", and it finds other things. Extractors are Python or TypeScript files in `extractors/`, run with `uv` or `bun`, and yours can call a hosted model.
 
 ### Over HTTP
 
-Each command is a call to the HTTP API. The four steps with the rows:
+Every command is an HTTP call. The four row steps:
 
 ```sh
 curl -s -X POST 'http://127.0.0.1:7765/v1/load?source=crm&entity_type=company' -H 'content-type: text/csv' --data-binary @samples/crm-1.csv
@@ -167,70 +175,46 @@ curl -s 'http://127.0.0.1:7765/v1/records?source=crm'
 curl -s 'http://127.0.0.1:7765/v1/explain?a=crm:c-5&b=crm:c-6'
 ```
 
-Each answers with one line of JSON. Extraction is two more calls, `POST /v1/documents` and `POST /v1/extractions`.
+Each returns one line of JSON. Extraction is `POST /v1/documents`, then `POST /v1/extractions`.
 
 ### From an agent
 
-The server speaks the Model Context Protocol at `http://127.0.0.1:7765/mcp`, and `spool dev` asks for no token. For Claude Code, and for Codex:
+The server speaks the Model Context Protocol at `http://127.0.0.1:7765/mcp`, with no token under `spool dev`. For Claude Code and Codex:
 
 ```sh
 claude mcp add --transport http spool http://127.0.0.1:7765/mcp
 codex mcp add spool --url http://127.0.0.1:7765/mcp
 ```
 
-The agent gets tools that load rows and documents (`load_rows`, `load_documents`), run an extractor (`run_extraction`), start a match (`run_match`), search records and identities, explain a pair (`explain_pair`), and merge, split and undo. Ask it, for example, to load `samples/crm-2.csv`, match it, and say why c-5 and c-6 are different companies.
+The agent gets tools to load rows and documents (`load_rows`, `load_documents`), run an extractor (`run_extraction`), match (`run_match`), search records and identities, explain a pair (`explain_pair`), and merge, split and undo. Try: "Load samples/crm-2.csv, match it, and tell me why c-5 and c-6 are different companies."
 
-### In a browser
+### In the studio
 
-The studio is at <http://127.0.0.1:7765/>. It shows the same records, identities and explanations, and it can merge two identities, split one and undo a change. This is its page for the identity of Acorn Tools after the note, with four rows and one record from text:
+The studio is at <http://127.0.0.1:7765/>. It shows the same records, identities and explanations, and lets you merge, split and undo. Here's Acorn Tools after the note, with four rows and one record from text:
 
 ![The studio's page for one identity. It is headed Acorn Tools Ltd, shows the identity's ID, says "5 records from 2 sources", and lists the four spellings of the name with the record each came from. The note's record, notes-1.txt[54-69], is beside the row c-3.](docs/studio-identity.png)
 
-### Stop, and your own rows
+### Your own data
 
-Ctrl-C in the first terminal stops the server. The data stays in `.spool/dev.duckdb`. To start from nothing, stop the server and delete `.spool`.
+Ctrl-C stops the server. Data stays in `.spool/dev.duckdb`. Delete `.spool/` to start over.
 
-For your own rows, make a project of your own: `spool init <name>` makes an empty one, with the folders a project uses, a `.gitignore` and a `.env.example`, and nothing of the sample. With no name, `spool init` uses the current folder, but only if it is empty, and otherwise writes nothing. Copy what you need from the sample, then `spool load your-file.csv`. Keys that your extractors and strategies read go in the project's `.env`, which Git ignores: Spool hands them to that code and never prints them.
+`spool init <name>` creates an empty project with the standard folders, a `.gitignore` and a `.env.example`. With no name it uses the current folder, which has to be empty. Copy what you need from the sample, then `spool load your-file.csv`. Put keys for your extractors and strategies in `.env`, which Git ignores. Spool passes them to your code and never prints them.
 
-## What it is not for
+## When to use something else
 
-These follow from the design. Where something else fits better, it is named. What is said about other tools comes from reading their code and documentation in November 2026, not from running them beside Spool: see the [survey](docs/landscape-survey.md).
+- **One file, deduplicated once, with nothing storing the IDs:** [Splink](https://github.com/moj-analytical-services/splink) or [dedupe](https://github.com/dedupeio/dedupe).
+- **A decision inside every request:** [Senzing](https://senzing.com) resolves each record as it arrives.
+- **People and companies already in FollowTheMoney:** [nomenklatura](https://github.com/opensanctions/nomenklatura).
 
-- **Deduplicating one file once.** Spool exists to keep IDs the same as data arrives over time. If you have one file, will get no more, and nobody stores the IDs, use [Splink](https://github.com/moj-analytical-services/splink) or [dedupe](https://github.com/dedupeio/dedupe).
-- **Matching without rules of your own.** The built-in matcher runs SQL conditions that you write. There is no trained model in it. Splink, dedupe and [Zingg](https://github.com/zinggAI/zingg) each learn one. A model can also judge pairs for Spool, through code of yours called a strategy, and Spool keeps the identities: `benchmarks/resolution/people` has one that runs Splink.
-- **An answer per record, inside the request.** Rows are loaded in batches and matched by runs. Loading a row does not say whether it is a duplicate. [Senzing](https://senzing.com), which is proprietary, resolves each record as it arrives.
-- **The same result whatever order rows arrive in.** Two records that were each placed alone stay apart until someone merges them, even when a later rule matches them. That is the cost of IDs that do not move.
-- **Exact matching on a key you trust.** If two rows are the same thing whenever their tax numbers are equal, a join in your database is enough.
-- **Data that is already in the FollowTheMoney format.** [nomenklatura](https://github.com/opensanctions/nomenklatura) keeps stable IDs for people and companies in that format.
-- **Streaming.** There is no connection to Kafka or to a change feed. Something else has to collect rows and send them.
-- **More than one machine, or more than one writer.** One server process owns one DuckDB file and uses the cores and memory of one machine. There is no replication and no clustering.
-- **Several tenants in one server.** A store holds one project.
-- **Embedding in your process.** There are no Python or Node bindings. Your code calls the server over HTTP, and no client library is published for that.
-- **Golden records.** Spool says which records are one thing. It does not produce one merged record with the best name and address, and it writes nothing back to a source.
-
-## What it does not do
-
-- **Packages.** A release is an archive for Linux on x86-64 and arm64 and for macOS on Apple silicon, and a container image. There is no Homebrew, apt or Cargo package, and no build for Windows or for a Mac with an Intel processor. The Linux builds need version 2.34 or later of the GNU C library, so they do not run on Alpine. Spool is two files, the binary and the DuckDB library in `lib` beside it, and there is no single static binary.
-- **Connectors.** `spool load` reads CSV files and `spool extract` reads text files. Nothing reads a database, a warehouse or a file store.
-- **Reading PDF or HTML.** A document is text. Turning a PDF or a web page into text is your work.
-- **Corrections from the command line.** The command line loads, extracts, matches, takes rows back, shows and explains. Merging, splitting, undoing and deciding a review item are HTTP calls, MCP tools or buttons in the studio.
-- **Erasing a row.** `spool retract` takes a row that its source no longer holds out of its identity and out of matching, and the row stays in the store. A row loaded by mistake, by a person or by an agent, cannot be removed, and neither can a person's data on request.
-- **Knowing which of two files is newer.** A row is at whatever was loaded last. An older file loaded after a newer one moves the rows that changed between them back to what the older one says.
-- **Limits on an agent.** Over MCP an agent can load rows and documents and run extractors and matches, in requests of 4 MiB at most. It cannot approve a draft, add a person or make a token.
-- **Access is all or nothing.** A token has full access to the API and does not expire, though it can be revoked, so an agent that may read may also load. People sign in with a password or with Google, and with no other identity provider.
-- **Notifying anyone.** Nothing is pushed when an identity changes. A consumer reads the log of changes from the position it last saw.
-- **Backups and upgrades.** There is no backup command, and nothing is promised about a store written by one version opening in the next.
-- **Runtimes for your own code.** A strategy or an extractor in Python needs [`uv`](https://docs.astral.sh/uv/) on the machine and one in TypeScript needs [`bun`](https://bun.sh). Spool brings neither. `spool init --example companies` says so when `uv` is missing, and nothing else looks for either until such a file runs.
-- **Size.** The largest set it has been measured on is 5,000,000 records: 210 seconds and 13.4 GB of memory on four cores, matching the whole set from nothing, at pair precision 0.880 and recall 0.879. [benchmarks/README.md](benchmarks/README.md) has the measurements and how they were made. A request to the API may be 256 MiB at most.
+[Compared with other tools](https://spool.alexpatow.com/docs/compared) goes through each. [Limits](https://spool.alexpatow.com/docs/limits) lists what 0.1.0 doesn't do.
 
 ## Where next
 
-- `spool` with no arguments lists the commands, and `spool <command> --help` describes each. Every command that prints a result takes `-o json` and `-o ndjson`, and one that prints a list `-o csv` too. The [command reference](https://spool.alexpatow.com/docs/cli-reference) lists every option, and `spool completions <shell>` prints a shell completion script.
-- [docs/mcp.md](docs/mcp.md): the tools an agent gets, and how to connect each client.
-- [docs/sign-in.md](docs/sign-in.md): running a server that other people sign in to.
-- [benchmarks/README.md](benchmarks/README.md): projects with more sources and rules than the one above, on public data, and what was measured on them. `benchmarks/extraction/company-news` has extractors in Python and TypeScript.
-- [docs/landscape-survey.md](docs/landscape-survey.md): the other tools that were read, and where Spool differs.
-- [docs/architecture-proposal.md](docs/architecture-proposal.md): the design. What records, judgements, identities, constraints and changesets are, and how strategies run.
+- `spool` lists the commands and `spool <command> --help` explains each. Commands that print results take `-o json` or `-o ndjson`, and list commands also take `-o csv`. The [command reference](https://spool.alexpatow.com/docs/cli-reference) has every option, and `spool completions <shell>` prints a completion script.
+- [docs/mcp.md](docs/mcp.md): the agent tools, and how to connect each client.
+- [docs/sign-in.md](docs/sign-in.md): running a server other people sign in to.
+- [benchmarks/README.md](benchmarks/README.md): larger projects on public data, benchmarked up to 5,000,000 records. `benchmarks/extraction/company-news` has extractors in Python and TypeScript.
+- [docs/architecture-proposal.md](docs/architecture-proposal.md): the design, covering records, judgements, identities, constraints, changesets and strategies.
 - Bugs and questions: [open an issue](https://github.com/alexpatow/spool/issues).
 
 ## Licence
