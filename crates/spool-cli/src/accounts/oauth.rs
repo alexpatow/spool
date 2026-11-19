@@ -498,6 +498,29 @@ fn issue(
     })
 }
 
+/// Ends the approvals a person gave, and the codes waiting to be exchanged
+/// for one: all of them, or with `began_with`, those given in a sign-in that
+/// began that way ([`MARK`] or [`GOOGLE`]).
+pub(super) fn end_approvals(
+    connection: &Connection,
+    person: &str,
+    began_with: Option<&str>,
+) -> Result<(), Refused> {
+    let like = format!("{}:%", began_with.unwrap_or("%"));
+    connection.execute(
+        "DELETE FROM oauth_token WHERE grant_id IN
+           (SELECT id FROM oauth_grant WHERE person = ? AND began_with LIKE ?)",
+        params![person, like],
+    )?;
+    for table in ["oauth_grant", "oauth_code"] {
+        connection.execute(
+            &format!("DELETE FROM {table} WHERE person = ? AND began_with LIKE ?"),
+            params![person, like],
+        )?;
+    }
+    Ok(())
+}
+
 fn end_grant(connection: &Connection, grant: &str) -> Result<(), Refused> {
     connection.execute("DELETE FROM oauth_token WHERE grant_id = ?", [grant])?;
     connection.execute("DELETE FROM oauth_grant WHERE id = ?", [grant])?;
@@ -734,12 +757,30 @@ mod tests {
                 }
             })
             .unwrap();
+        let waiting = approved(&accounts, &ada, &entered.mark, &client);
         let off = Change {
             active: Some(false),
             ..Change::default()
         };
         accounts.change(&ada.id, off).unwrap();
         assert_eq!(accounts.bearer(&issued.access, NOW).unwrap(), None);
+
+        // Turned on again, the account signs in afresh: what it approved
+        // before stays ended, and so does an approval not yet exchanged.
+        let on = Change {
+            active: Some(true),
+            ..Change::default()
+        };
+        accounts.change(&ada.id, on).unwrap();
+        assert_eq!(accounts.bearer(&issued.access, NOW).unwrap(), None);
+        assert!(
+            accounts
+                .refresh(&issued.refresh, &client.id, NOW)
+                .unwrap()
+                .is_err()
+        );
+        assert!(exchanged(&accounts, &waiting, &client, NOW).is_err());
+        assert!(accounts.grants().unwrap().is_empty());
     }
 
     #[test]
@@ -771,9 +812,31 @@ mod tests {
         };
         let code = accounts.approve(&approval, NOW).unwrap();
         let issued = exchanged(&accounts, &code, &client, NOW).unwrap();
-        assert_eq!(accounts.bearer(&issued.access, NOW).unwrap(), Some(grace));
+        assert_eq!(
+            accounts.bearer(&issued.access, NOW).unwrap(),
+            Some(grace.clone())
+        );
         let without = accounts.clone().with_google(false);
         assert_eq!(without.bearer(&issued.access, NOW).unwrap(), None);
+
+        // Another email ends it for good, even when the same Google account
+        // is bound again under the email it had.
+        let other = |email: &str| Change {
+            email: Some(email.to_owned()),
+            ..Change::default()
+        };
+        accounts
+            .change(&grace.id, other("hopper@example.com"))
+            .unwrap();
+        accounts
+            .change(&grace.id, other("grace@example.com"))
+            .unwrap();
+        accounts
+            .enter_with_google("g-1", Some("grace@example.com"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(accounts.bearer(&issued.access, NOW).unwrap(), None);
+        assert!(accounts.grants().unwrap().is_empty());
     }
 
     #[test]

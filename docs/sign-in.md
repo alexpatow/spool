@@ -66,7 +66,7 @@ A person may have an email, a password, or both. An admin who adds an email to a
 
 ## Assistants that sign in as a person
 
-Claude and ChatGPT on the web connect to `/mcp` with OAuth: the assistant sends someone to the studio, they sign in as above and approve it, and it works as them until the approval ends. An approval lasts as long as the sign-in it was given in would, without the twelve hours: turning the account off, replacing the password it was given with, or changing the account's email for Google ends it. An admin revokes any approval under Assistants on the Tokens page. [The MCP page](mcp.md#clients-that-sign-in-with-oauth) has the details.
+Claude and ChatGPT on the web connect to `/mcp` with OAuth: the assistant sends someone to the studio, they sign in as above and approve it, and it works as them until the approval ends. An approval lasts as long as the sign-in it was given in would, without the twelve hours: turning the account off, replacing the password it was given with, or changing the account's email for Google ends it, and it stays ended when the account is turned on again. An admin revokes any approval under Assistants on the Tokens page. [The MCP page](mcp.md#clients-that-sign-in-with-oauth) has the details.
 
 ## Trying it without Google
 

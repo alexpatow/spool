@@ -162,7 +162,7 @@ Claude and ChatGPT on the web cannot be given a token. They add a remote server 
 | A code | 2 minutes, used once. A second use ends what the first gave |
 | An access token | 1 hour. It works at `/mcp` and is refused at `/v1` |
 | A refresh token | 30 days. Each is used once and gives the next; one used twice ends the approval |
-| An approval | As long as the sign-in it was given in would last, without the 12 hours: until the account is turned off, the password it was given with is replaced, or, for Google, the account's email changes |
+| An approval | As long as the sign-in it was given in would last, without the 12 hours: until the account is turned off, the password it was given with is replaced, or, for Google, the account's email changes. It stays ended if the account is turned on again: the assistant is approved anew |
 
 An admin sees every approval under Assistants on the studio's Tokens page, with who gave it and when it was last used, and revokes one there. A client can revoke its own tokens at `/oauth/revoke` (RFC 7009). There is one scope, `spool`: everything a token may do.
 

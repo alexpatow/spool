@@ -57,7 +57,7 @@ They call the server from Anthropic's and OpenAI's networks, so it needs a publi
 - **Claude**: Customize, Connectors, Add, Add custom connector. Enter `https://spool.example.com/mcp`. Under OAuth client choose **Register automatically**: Spool registers clients itself (dynamic client registration) and does not yet take Claude's published identity, the default. On a Team or Enterprise plan an Owner adds it under Organization settings, Connectors, and each member connects.
 - **ChatGPT**: Plugins, the plus button, Add custom MCP server. Enter the same address, choose OAuth, and create it as a plugin. ChatGPT registers itself.
 
-Either then opens the server's studio. Sign in if need be, check the host the approval goes back to (`claude.ai` or `chatgpt.com`), and approve. The approval holds as long as the sign-in it was given in would: turning the account off, replacing the password it was given with, or changing the account's Google email ends it. An admin sees every approval under Assistants on the Tokens page, and revokes one there.
+Either then opens the server's studio. Sign in if need be, check the host the approval goes back to (`claude.ai` or `chatgpt.com`), and approve. The approval holds as long as the sign-in it was given in would: turning the account off, replacing the password it was given with, or changing the account's Google email ends it, for good: an account turned on again approves its assistants anew. An admin sees every approval under Assistants on the Tokens page, and revokes one there.
 
 | What | How long |
 | --- | --- |

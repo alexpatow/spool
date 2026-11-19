@@ -514,6 +514,7 @@ impl Accounts {
                 ),
                 [id],
             )?;
+            oauth::end_approvals(&transaction, id, Some(GOOGLE))?;
         }
         transaction.execute(
             "UPDATE person SET name = ?, admin = ?, active = ?, password = coalesce(?, password) WHERE id = ?",
@@ -725,12 +726,14 @@ fn insert(connection: &Connection, person: Person, hash: Option<&str>) -> Result
     }
 }
 
+/// Ends every session of a person, and every approval of an assistant they
+/// gave: those stay ended when the account is turned on again.
 fn end_sessions(connection: &Connection, person: &str) -> Result<(), Refused> {
     connection.execute(
         &format!("DELETE FROM session WHERE json_extract(data, '$.{PERSON}') = ?"),
         [person],
     )?;
-    Ok(())
+    oauth::end_approvals(connection, person, None)
 }
 
 /// A new account as it would be stored, with a new ID.
