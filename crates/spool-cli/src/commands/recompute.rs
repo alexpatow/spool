@@ -33,9 +33,10 @@ records there keeps its ID and the others are merged into it, so that their
 IDs stand for it. A group the rules join but something in it says differ
 waits for review without an identity, as records do after a match.
 
-The summary comes first, then the largest changes. It ends with a plan: the
-code that `--apply` takes. Applying works the result out again and refuses
-if it is not that plan, so what is applied is what was shown.
+The summary comes first, then the largest changes. It ends with the command
+that applies it, which names a plan: a hash of where each record is and would
+go. Applying works the result out again and refuses if it is not that plan,
+so what is applied is what was shown.
 
 Options:
   --type <name>      one entity type (default: every type)
@@ -190,10 +191,7 @@ fn print_report(report: &RecomputeReport, entity_type: Option<&str>) -> Result<(
     if let Some(name) = entity_type {
         apply = format!("spool recompute --type {name} --apply {}", report.plan);
     }
-    fields(&[(
-        "plan",
-        format!("{}: nothing was changed. `{apply}` applies it", report.plan),
-    )]);
+    println!("nothing was changed. This applies it:\n{apply}");
     Ok(())
 }
 
@@ -548,13 +546,7 @@ fn print_detail(
     if let Some(name) = entity_type {
         apply = format!("spool recompute --type {name} --apply {}", report.plan);
     }
-    fields(&[(
-        "plan",
-        format!(
-            "{}: nothing was changed. `{apply}` applies every change, not only this one",
-            report.plan
-        ),
-    )]);
+    println!("nothing was changed. This applies every change, not only this one:\n{apply}");
     Ok(())
 }
 

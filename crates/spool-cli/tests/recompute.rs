@@ -100,12 +100,10 @@ fn a_rule_change_is_shown_then_applied() {
         .lines()
         .last()
         .unwrap()
-        .strip_prefix("plan  ")
-        .unwrap()
-        .split(':')
-        .next()
+        .strip_prefix("spool recompute --apply ")
         .unwrap()
         .to_owned();
+    assert_eq!(plan.len(), 64);
     let expected = format!(
         "\
 type `company`: 10 records, in 6 identities now and 7 after
@@ -124,7 +122,8 @@ decisions
 1  split  4        {acorn}  Acorn Tools Ltd (4)  ACORN TOOLS (3, keeps its ID), Acorn Tools Ltd (1, new)
 `--identity <id>` shows a change record by record
 
-plan  {plan}: nothing was changed. `spool recompute --apply {plan}` applies it
+nothing was changed. This applies it:
+spool recompute --apply {plan}
 "
     );
     assert_eq!(printed, expected);
@@ -161,7 +160,11 @@ plan  {plan}: nothing was changed. `spool recompute --apply {plan}` applies it
     let refused = failed(
         &server,
         &project,
-        &["recompute", "--apply", "0123456789abcdef"],
+        &[
+            "recompute",
+            "--apply",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        ],
         1,
     );
     assert!(

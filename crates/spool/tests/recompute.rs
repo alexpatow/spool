@@ -394,7 +394,10 @@ fn an_applied_recompute_is_undone_like_any_changeset() {
         .collect();
     assert_eq!(members_after, members_before);
     // The merge is undone: the halden is an identity of its own again.
-    assert_ne!(identity(&engine, "depot", "Q"), identity(&engine, "shop", "P"));
+    assert_ne!(
+        identity(&engine, "depot", "Q"),
+        identity(&engine, "shop", "P")
+    );
     assert_ne!(engine.snapshot().unwrap(), before, "the log only grows");
     engine.verify().unwrap();
 }
