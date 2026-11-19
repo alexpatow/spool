@@ -3199,6 +3199,7 @@ dependencies = [
  "schemars 1.2.3",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "sha2 0.11.1",
  "snapbox",
  "spool",
@@ -3206,6 +3207,7 @@ dependencies = [
  "tokio",
  "tower-sessions",
  "ureq",
+ "url",
  "uuid",
 ]
 

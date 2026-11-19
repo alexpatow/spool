@@ -140,6 +140,12 @@ const SCREENS: [&str; 11] = [
     "log",
 ];
 
+/// The page, as the path of a screen is answered. The page shows the screen
+/// the path names.
+pub fn page(headers: &HeaderMap) -> Response {
+    FILES[0].1.respond(headers)
+}
+
 /// The studio's paths.
 pub fn routes<S: Clone + Send + Sync + 'static>() -> Router<S> {
     let files = FILES.iter().fold(Router::new(), |router, (path, file)| {

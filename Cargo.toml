@@ -30,6 +30,11 @@ tower-sessions = { version = "0.15", default-features = false, features = ["axum
 # Sign-in with Google: the exchange with Google and the checks of what it
 # answers. Its requests go out through ureq, so none of its HTTP clients.
 openidconnect = { version = "4.1", default-features = false }
+# Spool as the OAuth server of its own MCP endpoint: the forms its token
+# endpoint reads, and the addresses it sends an approval to. Both were in the
+# build already, for axum and openidconnect.
+serde_urlencoded = "0.7"
+url = "2.5"
 
 # The MCP endpoint: the official Rust SDK of the Model Context Protocol, for
 # the protocol and its Streamable HTTP transport. Only spool-cli depends on it.

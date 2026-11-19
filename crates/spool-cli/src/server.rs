@@ -11,6 +11,9 @@
 //!
 //! `/mcp` is the same API as tools for an assistant, over the Model Context
 //! Protocol. It needs the same caller as `/v1` and runs the same handlers.
+//! It also takes an assistant that signed in with OAuth, as the person who
+//! approved it: the server is the OAuth server for `/mcp` alone
+//! (`server/oauth.rs`).
 //!
 //! A change is recorded under whoever made it. The server says who that is;
 //! a request cannot.
@@ -98,7 +101,7 @@ use tower_sessions::cookie::{Cookie, SameSite};
 use tower_sessions::{Expiry, Session, SessionManagerLayer};
 
 use crate::accounts::{
-    Accounts, Change, Entered, GOOGLE, MARK, MAX_USERNAME, New, PERSON, Refused,
+    ACCESS_PREFIX, Accounts, Change, Entered, GOOGLE, MARK, MAX_USERNAME, New, PERSON, Refused,
 };
 use crate::api::{
     self, ARROW_STREAM, AddPersonRequest, AddTokenRequest, AddedToken, AttributeList,
@@ -117,7 +120,10 @@ use crate::studio;
 mod local;
 mod mcp;
 mod newline;
+mod oauth;
 mod unread;
+
+pub use oauth::issuer_of;
 
 /// How long a call that starts work waits when it does not say.
 pub const DEFAULT_WAIT_MS: u64 = 30_000;
@@ -203,6 +209,10 @@ pub struct ServerOptions {
     pub max_body_bytes: usize,
     /// Whether the server answers a browser at `/` with the studio.
     pub studio: bool,
+    /// The address the server is reached by, if it is the OAuth server of
+    /// its own `/mcp`: see `server/oauth.rs`. Approving an assistant is done
+    /// in the studio, so a server without the studio has none.
+    pub issuer: Option<String>,
     /// How long the server goes on answering the requests it has once it
     /// is told to stop.
     pub stop_within: Duration,
@@ -218,6 +228,7 @@ impl ServerOptions {
             google: None,
             max_body_bytes: DEFAULT_MAX_BODY_BYTES,
             studio: true,
+            issuer: None,
             stop_within: STOP_WITHIN,
         }
     }
@@ -235,6 +246,7 @@ struct App {
     https: bool,
     google: Option<Arc<Provider>>,
     asking: Arc<Semaphore>,
+    issuer: Option<Arc<str>>,
     stopping: Stopping,
 }
 
@@ -352,6 +364,11 @@ fn router_until(engine: Arc<Engine>, options: &ServerOptions, stopping: Stopping
         https: options.https,
         google: options.google.clone().map(Provider::new).map(Arc::new),
         asking: Arc::new(Semaphore::new(MAX_ASKING)),
+        issuer: options
+            .issuer
+            .as_deref()
+            .filter(|_| options.studio && !options.dev)
+            .map(Arc::from),
         stopping,
     };
     let sessions = SessionManagerLayer::new(options.accounts.clone())
@@ -368,6 +385,7 @@ fn router_until(engine: Arc<Engine>, options: &ServerOptions, stopping: Stopping
         .route("/password", post(change_password))
         .route("/google", get(google_start))
         .route("/google/callback", get(google_callback))
+        .route("/oauth", get(oauth::describe).post(oauth::decide))
         .fallback(not_found)
         .layer(DefaultBodyLimit::max(
             options.max_body_bytes.min(MAX_AUTH_BODY_BYTES),
@@ -414,17 +432,35 @@ fn router_until(engine: Arc<Engine>, options: &ServerOptions, stopping: Stopping
         .route("/people/{person}", post(change_person))
         .route("/tokens", get(list_tokens).post(add_token))
         .route("/tokens/{token}/revoke", post(revoke_token))
+        .route("/grants", get(oauth::list_grants))
+        .route("/grants/{grant}/revoke", post(oauth::end_grant))
         .fallback(not_found)
         .layer(middleware::from_fn_with_state(app.clone(), authorize));
     let mcp = Router::new()
         .route_service(MCP_PATH, mcp::service(app.clone(), options))
         .layer(middleware::map_response(mcp::describe_refusal))
-        .layer(middleware::from_fn_with_state(app.clone(), authorize));
+        .layer(middleware::from_fn_with_state(app.clone(), authorize_mcp));
+    // Clients send these, and anyone may: what they read is a few fields.
+    let oauth = Router::new()
+        .route(oauth::RESOURCE_METADATA, get(oauth::resource_metadata))
+        .route(
+            &format!("{}{MCP_PATH}", oauth::RESOURCE_METADATA),
+            get(oauth::resource_metadata),
+        )
+        .route(oauth::SERVER_METADATA, get(oauth::server_metadata))
+        .route(oauth::REGISTER, post(oauth::register))
+        .route(oauth::AUTHORIZE, get(oauth::authorize))
+        .route(oauth::TOKEN, post(oauth::token))
+        .route(oauth::REVOKE, post(oauth::revoke))
+        .layer(DefaultBodyLimit::max(
+            options.max_body_bytes.min(MAX_AUTH_BODY_BYTES),
+        ));
     let mut router = Router::new()
         .route("/healthz", get(health))
         .nest("/auth", auth)
         .nest(&format!("/{}", api::VERSION), v1)
-        .merge(mcp);
+        .merge(mcp)
+        .merge(oauth);
     if options.studio {
         router = router.merge(studio::routes());
     }
@@ -632,7 +668,14 @@ impl From<Refused> for ApiError {
         let message = refused.to_string();
         match refused {
             Refused::Invalid(_) | Refused::WrongPassword => Self::invalid(message),
-            Refused::Unknown | Refused::UnknownToken => Self::not_found(message),
+            Refused::Unknown | Refused::UnknownToken | Refused::UnknownGrant => {
+                Self::not_found(message)
+            }
+            Refused::TooMany(_) => Self::new(
+                StatusCode::TOO_MANY_REQUESTS,
+                ErrorCode::TooManyAttempts,
+                message,
+            ),
             Refused::Taken(_)
             | Refused::EmailTaken(_)
             | Refused::TokenTaken(_)
@@ -687,7 +730,7 @@ async fn authorize(
     mut request: Request,
     next: Next,
 ) -> Response {
-    match caller(&app, &session, request.headers()).await {
+    match caller(&app, &session, request.headers(), false).await {
         Ok(caller) => {
             request.extensions_mut().insert(caller);
             next.run(request).await
@@ -696,13 +739,48 @@ async fn authorize(
     }
 }
 
+/// As [`authorize`], for `/mcp`, which also takes the access tokens of
+/// assistants that signed in with OAuth. A refusal says where to read how
+/// to sign in, which is how such an assistant finds out.
+async fn authorize_mcp(
+    State(app): State<App>,
+    session: Session,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    match caller(&app, &session, request.headers(), true).await {
+        Ok(caller) => {
+            request.extensions_mut().insert(caller);
+            next.run(request).await
+        }
+        Err(error) => {
+            let mut response = error.into_response();
+            if let Some(issuer) = &app.issuer
+                && response.status() == StatusCode::UNAUTHORIZED
+            {
+                let sent = request.headers().contains_key(AUTHORIZATION);
+                response
+                    .headers_mut()
+                    .insert(WWW_AUTHENTICATE, oauth::challenge(issuer, sent));
+            }
+            response
+        }
+    }
+}
+
 fn unauthorized(message: &str) -> ApiError {
     ApiError::new(StatusCode::UNAUTHORIZED, ErrorCode::Unauthorized, message)
 }
 
-/// The caller a request is from: the agent whose token it carries, or the
-/// person its session belongs to.
-async fn caller(app: &App, session: &Session, headers: &HeaderMap) -> ApiResult<Caller> {
+/// The caller a request is from: the agent whose token it carries, the
+/// person its session belongs to, or, at `/mcp`, the person who approved
+/// the assistant whose access token it carries.
+async fn caller(
+    app: &App,
+    session: &Session,
+    headers: &HeaderMap,
+    at_mcp: bool,
+) -> ApiResult<Caller> {
     let presented = headers
         .get(AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
@@ -710,6 +788,18 @@ async fn caller(app: &App, session: &Session, headers: &HeaderMap) -> ApiResult<
             let (scheme, token) = value.split_once(' ')?;
             scheme.eq_ignore_ascii_case("bearer").then(|| token.trim())
         });
+    if let Some(presented) = presented.filter(|token| token.starts_with(ACCESS_PREFIX)) {
+        return match (at_mcp, app.issuer.is_some()) {
+            (true, true) => oauth::bearer(app, presented).await,
+            (false, true) => Err(unauthorized(
+                "an assistant's access token works at /mcp and nowhere else",
+            )),
+            (_, false) => Err(unauthorized(
+                "this server does not sign assistants in with OAuth: it needs the address it \
+                 is reached by, with `--public-url`",
+            )),
+        };
+    }
     if let Some(presented) = presented {
         let presented = presented.to_owned();
         return match people(app, move |accounts| accounts.agent(&presented)).await? {

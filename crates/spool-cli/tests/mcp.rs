@@ -285,11 +285,29 @@ fn the_endpoint_answers_only_a_caller_the_api_answers() {
 
     // Nothing is answered without the token or a session, not even what the
     // tools are.
+    // The refusal says where an assistant reads how to sign in with OAuth:
+    // see `oauth.rs`.
     let nobody = message(&server, &list).without("Authorization").send();
     nobody.error(401, "unauthorized");
-    assert_eq!(nobody.header("www-authenticate"), Some("Bearer"));
-    let wrong = message(&server, &list).header("Authorization", "Bearer not-it");
-    wrong.send().error(401, "unauthorized");
+    let metadata = format!(
+        "http://{}/.well-known/oauth-protected-resource/mcp",
+        server.address
+    );
+    assert_eq!(
+        nobody.header("www-authenticate"),
+        Some(format!("Bearer resource_metadata=\"{metadata}\", scope=\"spool\"").as_str())
+    );
+    let wrong = message(&server, &list)
+        .header("Authorization", "Bearer not-it")
+        .send();
+    wrong.error(401, "unauthorized");
+    assert!(
+        wrong
+            .header("www-authenticate")
+            .is_some_and(|said| said.ends_with("error=\"invalid_token\"")),
+        "{:?}",
+        wrong.header("www-authenticate")
+    );
     let hello = json!({
         "jsonrpc": "2.0",
         "id": 1,
@@ -302,17 +320,6 @@ fn the_endpoint_answers_only_a_caller_the_api_answers() {
     });
     let nobody = message(&server, &hello).without("Authorization").send();
     nobody.error(401, "unauthorized");
-
-    // The server is not an OAuth authorization server, and says so to a
-    // client that looks for one after a 401.
-    for at in [
-        "/.well-known/oauth-protected-resource",
-        "/.well-known/oauth-protected-resource/mcp",
-        "/.well-known/oauth-authorization-server",
-    ] {
-        let found = server.request("GET", at).without("Authorization").send();
-        found.error(404, "not_found");
-    }
 
     // Someone signed in is answered, as on the API.
     let account =

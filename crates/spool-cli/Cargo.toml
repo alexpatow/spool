@@ -36,11 +36,13 @@ rusqlite.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_urlencoded.workspace = true
 sha2.workspace = true
 spool = { workspace = true, features = ["schema"] }
 tokio.workspace = true
 tower-sessions.workspace = true
 ureq.workspace = true
+url.workspace = true
 uuid.workspace = true
 
 [target.'cfg(unix)'.dependencies]

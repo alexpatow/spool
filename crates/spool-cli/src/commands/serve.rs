@@ -49,7 +49,11 @@ use crate::Failure;
 /// ChatGPT, is pointed at `/mcp`, where the server offers it tools to load
 /// rows and documents, to match them, to look things up and to change
 /// identities. It presents a token as any other caller does, and what it
-/// changes is recorded under that token's name.
+/// changes is recorded under that token's name. Claude and ChatGPT on the web
+/// cannot be given a token: they sign in with OAuth, a person who has an
+/// account approves them in the studio, and what they change is recorded
+/// under that person. That needs the HTTPS address people reach the server
+/// by, in `--public-url`, unless the server listens on this machine only.
 ///
 /// Strategies and extractors that are `.py` files run with `uv`, and `.ts`
 /// files with `bun`. SPOOL_UV and SPOOL_BUN name the commands if they are not
@@ -459,6 +463,7 @@ fn run(
             .map_err(|error| failed(error.to_string()))?;
         // Tests listen on port 0 and read the port from this line.
         say!("listening on http://{address}");
+        let given = reached.at.is_some();
         let at = reached.at.unwrap_or_else(|| format!("http://{address}"));
         if options.studio {
             say!("studio    {at}/");
@@ -476,6 +481,18 @@ fn run(
             options.google = Some(google);
         }
         say!("mcp       http://{address}{}", server::MCP_PATH);
+        if !options.dev && options.studio {
+            let known = given || address.ip().is_loopback();
+            match known.then(|| server::issuer_of(&at)) {
+                Some(Ok(issuer)) => options.issuer = Some(issuer),
+                Some(Err(why)) => say!("oauth     off: {why}"),
+                None => say!(
+                    "oauth     off: an assistant that signs in with OAuth, such as Claude or \
+                     ChatGPT on the web, needs the address people reach this server by: pass it \
+                     with `--public-url`"
+                ),
+            }
+        }
         match &options.setup {
             Some(code) if options.studio => {
                 say!("setup     {at}/setup#{code}");

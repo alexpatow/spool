@@ -653,6 +653,61 @@ pub struct TokenList {
     pub tokens: Vec<Token>,
 }
 
+/// An assistant that a person let in with OAuth, such as Claude or ChatGPT
+/// on the web. It works at `/mcp` as that person, and what it changes is
+/// recorded under them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Grant {
+    pub id: String,
+    /// The ID of the person who approved it.
+    pub person: String,
+    /// What the assistant calls itself. Nobody checked it.
+    pub client_name: Option<String>,
+    /// Where its approval was sent, which says whose it is: such as
+    /// `https://claude.ai/api/mcp/auth_callback`.
+    pub redirect_uri: String,
+    pub created_at: String,
+    /// When it last called `/mcp`, to the minute. `null` if it never did.
+    pub last_used_at: Option<String>,
+}
+
+/// `GET /v1/grants`: the assistants people let in, in the order they were
+/// approved. Only an admin may read it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct GrantList {
+    pub grants: Vec<Grant>,
+}
+
+/// `GET /auth/oauth?<request>`: what an assistant that sent someone to
+/// `/oauth/authorize` asks for, to show them before they approve it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct OAuthRequest {
+    /// What the assistant calls itself. Nobody checked it.
+    pub client_name: Option<String>,
+    /// Where the approval is sent.
+    pub redirect_uri: String,
+    /// The host of `redirect_uri`, which is who gets the approval.
+    pub host: String,
+    /// Whether the approval goes to a program on the approver's own
+    /// machine, which any program there could be.
+    pub loopback: bool,
+}
+
+/// `POST /auth/oauth`: approve an assistant, or turn it away.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OAuthDecision {
+    /// The query of the `/oauth/authorize` address the assistant sent.
+    pub request: String,
+    pub approve: bool,
+}
+
+/// Where to send the browser with the decision.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct OAuthDecided {
+    pub to: String,
+}
+
 /// Every type that crosses the API, so that one schema describes them all.
 #[derive(JsonSchema)]
 #[allow(dead_code)]
@@ -716,6 +771,10 @@ struct Wire {
     add_token_request: AddTokenRequest,
     added_token: AddedToken,
     token_list: TokenList,
+    grant_list: GrantList,
+    oauth_request: OAuthRequest,
+    oauth_decision: OAuthDecision,
+    oauth_decided: OAuthDecided,
 }
 
 /// The JSON Schema of the API: one definition per type, under `$defs`.
