@@ -50,6 +50,7 @@ export const metadata: Metadata = sharing({
   image: siteCardPath,
   imageAlt: `${site.name}: ${site.headline}`,
   type: "website",
+  video: true,
 });
 
 export default function Home() {

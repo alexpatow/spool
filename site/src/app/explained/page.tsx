@@ -21,6 +21,7 @@ export const metadata: Metadata = {
     image: explainer.card,
     imageAlt: `${explainer.title} ${explainer.description}`,
     type: "article",
+    video: true,
   }),
   title: explainer.title,
   description: explainer.description,

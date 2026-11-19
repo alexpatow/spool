@@ -1,0 +1,676 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Spool: extract, resolve and track entities</title>
+<!--
+  The video a shared link to the site plays: the problem, how Spool solves it,
+  and how it connects to your tools. Every frame is a function
+  of time: `seek(seconds)` draws that moment, so `render.ts` can step through it
+  frame by frame. Open it through `render.ts --serve` and add `?play` to watch it.
+
+  A preview in a phone chat plays this about 300 pixels wide, a sixth of its
+  size, so nothing that has to be read is smaller than about 56px here, and
+  each scene says one thing.
+-->
+<script src="/data.js"></script>
+<style>
+  :root {
+    --bg: #fbfaf8;
+    --fg: #1a1917;
+    --card: #ffffff;
+    --muted: #6b6862;
+    --border: #e4e1da;
+    --thread: #a4442f;
+    --wash: #f6ebe7;
+    --faint: #9d9990;
+    --red: oklch(0.5 0.2 27.3);
+    --sans: "Hanken Grotesk Variable", ui-sans-serif, system-ui, sans-serif;
+    --mono: "Commit Mono", ui-monospace, Menlo, monospace;
+    --display: "Newsreader Variable", "Iowan Old Style", Georgia, serif;
+    --identity-bg: color-mix(in oklab, var(--wash) 70%, var(--card));
+    --identity-border: color-mix(in oklab, var(--thread) 45%, var(--border));
+  }
+  html, body { margin: 0; background: var(--bg); }
+  body {
+    width: 1920px; height: 1080px; overflow: hidden; position: relative;
+    color: var(--fg); font-family: var(--sans); font-synthesis: none;
+    -webkit-font-smoothing: antialiased;
+  }
+  .scene { position: absolute; inset: 0; background: var(--bg); overflow: hidden; visibility: hidden; }
+  .content { position: absolute; inset: 0; transform-origin: 0 0; }
+  .abs { position: absolute; left: 0; top: 0; }
+  .card {
+    background: var(--card); border: 2px solid var(--border); box-sizing: border-box;
+    box-shadow: 0 2px 4px rgb(0 0 0 / 4%), 0 24px 60px -28px rgb(0 0 0 / 24%);
+  }
+  .identity { background: var(--identity-bg); border: 2px solid var(--identity-border); box-sizing: border-box; }
+  .mark { color: var(--thread); flex-shrink: 0; }
+  .display { font-family: var(--display); font-weight: 380; letter-spacing: -0.022em; }
+  .mono { font-family: var(--mono); }
+  .centre { text-align: center; }
+
+  .scrim { position: absolute; left: 0; right: 0; top: 840px; bottom: 0; background: linear-gradient(to bottom, color-mix(in oklab, var(--bg) 0%, transparent), var(--bg) 30%); }
+  .captions { position: absolute; left: 100px; right: 100px; top: 910px; height: 110px; }
+  .caption {
+    position: absolute; inset: 0; text-align: center; font-size: 76px; line-height: 1.2;
+    white-space: nowrap; color: var(--fg); opacity: 0;
+  }
+  .caption b { font-weight: 600; color: var(--thread); }
+
+  .file-head {
+    font-family: var(--mono); font-size: 46px; line-height: 96px; color: var(--muted);
+    padding: 0 40px; border-bottom: 2px solid var(--border);
+  }
+  .row { font-family: var(--mono); font-size: 66px; line-height: 112px; padding: 0 40px; white-space: nowrap; }
+  .chip {
+    display: flex; align-items: center; gap: 24px; padding: 0 32px; box-sizing: border-box;
+    background: var(--card); border: 2px solid var(--border); white-space: nowrap;
+  }
+  .chip .name { flex: 1; font-size: 60px; }
+  .chip .tag { font-family: var(--mono); font-size: 46px; color: var(--muted); }
+
+  .wipe {
+    position: absolute; top: 0; bottom: 0; width: 6px; margin-left: -3px; visibility: hidden; z-index: 50;
+    background: linear-gradient(to bottom, transparent, var(--thread) 20%, var(--thread) 80%, transparent);
+    box-shadow: 0 0 32px 8px color-mix(in oklab, var(--thread) 30%, transparent);
+  }
+</style>
+</head>
+<body>
+<div class="wipe" id="wipe"></div>
+<script>
+"use strict";
+const { brand } = window.SPOOL;
+
+/* ---------------------------------------------------------------- */
+/* Time                                                              */
+/* ---------------------------------------------------------------- */
+
+const FPS = 30;
+const WIPE = 0.7;
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const lerp = (a, b, k) => a + (b - a) * k;
+const out3 = (x) => 1 - Math.pow(1 - x, 3);
+const inOut = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
+/** How far an animation that starts at `at` and lasts `dur` is at `t`, eased. */
+const p = (t, at, dur, ease = out3) => ease(clamp((t - at) / dur));
+/** 1 from `from` to `to`, faded in and out over `fade` seconds. */
+const window_ = (t, from, to, fade = 0.3) => Math.min(p(t, from, fade), 1 - p(t, to - fade, fade, (x) => x));
+
+/* ---------------------------------------------------------------- */
+/* Drawing                                                           */
+/* ---------------------------------------------------------------- */
+
+function el(tag, className, parent, html) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (html !== undefined) node.innerHTML = html;
+  if (parent) parent.appendChild(node);
+  return node;
+}
+
+function place_(node, x, y, w, h) {
+  node.style.left = `${x}px`;
+  node.style.top = `${y}px`;
+  if (w !== undefined) node.style.width = `${w}px`;
+  if (h !== undefined) node.style.height = `${h}px`;
+  return node;
+}
+
+/** Opacity and a transform, in one go. */
+function pose(node, { o = 1, x = 0, y = 0, r = 0, s = 1, sx, sy } = {}) {
+  node.style.opacity = String(clamp(o));
+  node.style.visibility = o <= 0.001 ? "hidden" : "visible";
+  const scale = sx !== undefined ? `scale(${sx}, ${sy})` : `scale(${s})`;
+  node.style.transform = `translate(${x}px, ${y}px) rotate(${r}deg) ${scale}`;
+}
+
+/** Fades and lifts in at `at`. */
+function arrive(node, t, at, { dur = 0.7, dx = 0, dy = 40, r = 0, dr = 0, s0 = 1 } = {}) {
+  const k = p(t, at, dur);
+  pose(node, { o: k, x: dx * (1 - k), y: dy * (1 - k), r: r + dr * (1 - k), s: lerp(s0, 1, k) });
+}
+
+const mark = (size) =>
+  `<svg class="mark" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" aria-hidden="true">` +
+  `<path d="${brand.rules}" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"/>` +
+  `<path d="${brand.threads}" stroke="currentColor" stroke-width="1.35" stroke-linecap="round"/></svg>`;
+
+const wordmark = (height) =>
+  `<svg viewBox="0 0 148.92 50" height="${height}" width="${(height * 148.92) / 50}" fill="none" role="img" aria-label="Spool">` +
+  `<g transform="translate(0 5.5) scale(1.55)">` +
+  `<path d="${brand.rules}" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" pathLength="1" class="rules"/>` +
+  `<path d="${brand.threads}" stroke="var(--thread)" stroke-width="1.35" stroke-linecap="round" pathLength="1" class="threads"/></g>` +
+  `<path d="${brand.letters}" fill="currentColor" class="letters"/></svg>`;
+
+/** An ID as a person reads it at a glance: its start and its end. */
+const short = (id) => `${id.slice(0, 8)}\u2026${id.slice(-4)}`;
+const esc = (text) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+
+function chip(parent, name, tag) {
+  return el("div", "abs chip", parent, `<span class="name">${esc(name)}</span><span class="tag">${esc(tag)}</span>`);
+}
+
+/* ---------------------------------------------------------------- */
+/* Scenes                                                            */
+/* ---------------------------------------------------------------- */
+
+const scenes = [];
+
+/* Scenes measure their text as they are built, so the typefaces must be in first. */
+Promise.all([
+  document.fonts.load('400 40px "Hanken Grotesk Variable"'),
+  document.fonts.load('600 40px "Hanken Grotesk Variable"'),
+  document.fonts.load('380 40px "Newsreader Variable"'),
+  document.fonts.load('400 20px "Commit Mono"'),
+  document.fonts.load('700 20px "Commit Mono"'),
+]).then(build);
+
+function build() {
+
+/**
+ * A full-frame scene. Each one is wiped in by the next. `build` returns a
+ * function that draws the scene at a time counted from its own start.
+ */
+function scene(length, { captions = [], camera } = {}, build) {
+  const start = scenes.reduce((sum, s) => sum + s.length, 0);
+  const root = el("div", "scene", document.body);
+  root.style.zIndex = String(scenes.length + 1);
+  const content = el("div", "content", root);
+  if (captions.length) el("div", "scrim", root);
+  const box = el("div", "captions", root);
+  const lines = captions.map(([at, html]) => ({ at, node: el("div", "caption", box, html) }));
+  const draw = build(content);
+  const shots = camera ?? [[0, 960, 540, 1], [length + WIPE, 960, 540, 1.03]];
+  const s = { start, length, root, content, lines, draw, shots };
+  scenes.push(s);
+  return s;
+}
+
+/** Where the camera looks, and how close: keyframes of [time, x, y, zoom], eased between. */
+function shot(keys, t) {
+  if (t <= keys[0][0]) return keys[0].slice(1);
+  for (let i = 1; i < keys.length; i++) {
+    const [t1, ...b] = keys[i];
+    const [t0, ...a] = keys[i - 1];
+    if (t <= t1) {
+      const k = inOut(clamp((t - t0) / (t1 - t0)));
+      return a.map((v, j) => lerp(v, b[j], k));
+    }
+  }
+  return keys[keys.length - 1].slice(1);
+}
+
+function drawCaptions(s, t) {
+  s.lines.forEach((line, index) => {
+    const next = s.lines[index + 1]?.at ?? s.length + WIPE;
+    const k = p(t, line.at, 0.4);
+    const gone = index + 1 < s.lines.length ? p(t, next - 0.25, 0.25, (x) => x) : 0;
+    pose(line.node, { o: k * (1 - gone), y: 20 * (1 - k) });
+  });
+}
+
+const STILL = [[0, 960, 540, 1]];
+const NS = "http://www.w3.org/2000/svg";
+
+function svgLayer(c) {
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("width", "1920");
+  svg.setAttribute("height", "1080");
+  svg.setAttribute("class", "abs");
+  svg.style.overflow = "visible";
+  c.appendChild(svg);
+  return svg;
+}
+
+function line(svg, d, { stroke = "var(--thread)", width = 5, dash } = {}) {
+  const path = document.createElementNS(NS, "path");
+  path.setAttribute("d", d);
+  path.setAttribute("fill", "none");
+  path.setAttribute("stroke", stroke);
+  path.setAttribute("stroke-width", String(width));
+  path.setAttribute("stroke-linecap", "round");
+  svg.appendChild(path);
+  const length = path.getTotalLength();
+  path.style.strokeDasharray = dash ? dash : `${length}`;
+  return { path, length, dashed: Boolean(dash) };
+}
+
+/** Draws a line from its start: `k` from 0 to 1. A dashed line is revealed with a mask instead. */
+function drawLine(l, k) {
+  if (l.dashed) {
+    l.path.style.opacity = String(k);
+  } else {
+    l.path.style.strokeDashoffset = `${l.length * (1 - k)}`;
+    l.path.style.opacity = k > 0 ? "1" : "0";
+  }
+}
+
+/** The page position of a node, in the scene's own pixels. */
+function rect(c, node) {
+  const box = c.getBoundingClientRect();
+  const r = node.getBoundingClientRect();
+  return { x: r.left - box.left, y: r.top - box.top, w: r.width, h: r.height, cx: r.left - box.left + r.width / 2, cy: r.top - box.top + r.height / 2 };
+}
+
+/** A span that lights up in the thread colour by `k`. */
+function light(node, k) {
+  node.style.color = `color-mix(in oklab, var(--thread) ${k * 100}%, var(--fg))`;
+  node.style.background = `color-mix(in oklab, var(--wash) ${k * 100}%, transparent)`;
+}
+
+/* The video's own data: one company, one person and one place, as four kinds of source write them. */
+const company = { name: "Northwind Robotics", type: "company", id: "01a2c3f0-77d1-7a4e-9c10-5b8e2f4a9b1e" };
+const person = { name: "Maria Okafor", type: "person", id: "01a2c3f0-77d2-7f03-8a61-c2d90b7e44d2" };
+const place = { name: "Lisbon", type: "place", id: "01a2c3f1-0b4c-7e28-b5f7-3a1d6c9e07ac" };
+
+/* The card: the mark, the wordmark and the line. */
+function spoolCard(c) {
+  const logo = place_(el("div", "abs centre", c, wordmark(250)), 0, 268, 1920);
+  const rules = logo.querySelector(".rules");
+  const threads = logo.querySelector(".threads");
+  const letters = logo.querySelector(".letters");
+  rules.style.strokeDasharray = threads.style.strokeDasharray = "1";
+  const tagline = place_(el("div", "abs display centre", c, window.SPOOL.headline), 0, 600, 1920);
+  Object.assign(tagline.style, { fontSize: "96px", lineHeight: "1.1" });
+  return (t) => {
+    pose(logo, { o: p(t, 0, 0.3), s: lerp(0.96, 1, p(t, 0, 1.4)) });
+    rules.style.strokeDashoffset = String(1 - p(t, 0.05, 0.6, inOut));
+    threads.style.strokeDashoffset = String(1 - p(t, 0.3, 0.9, inOut));
+    letters.style.opacity = String(p(t, 0.5, 0.6));
+    arrive(tagline, t, 1.1, { dy: 30, dur: 0.8 });
+  };
+}
+
+/* 0. Spool: the closing card, already drawn, so that a player looping the video goes from the last frame to an identical first one. */
+
+scene(2.6, { camera: STILL }, (c) => {
+  const draw = spoolCard(c);
+  return () => draw(99);
+});
+
+/* 1. The problem: one entity, four sources ------------------------ */
+
+scene(6.6, {
+  captions: [
+    [0.3, "The same entity appears in many sources."],
+    [3.0, "Reconciling them is incredibly difficult."],
+  ],
+}, (c) => {
+  /* Each line is pieces of text; a piece with `is` names an entity. */
+  const sources = [
+    { head: "billing \u00b7 invoices.csv", font: "sans", size: 56, col: 0, y: 110, r: -1.2,
+      lines: [[{ text: "NORTHWIND ROBOTICS LTD", is: "company" }], [{ text: "M. OKAFOR", is: "person" }, { text: ",4200.00" }]] },
+    { head: "support \u00b7 tickets.json", font: "sans", size: 56, col: 1, y: 130, r: 1.2,
+      lines: [[{ text: "\"" }, { text: "maria", is: "person" }, { text: "@" }, { text: "northwind.io", is: "company" }, { text: "\"" }], [{ text: "\"city\": \"" }, { text: "Lisboa", is: "place" }, { text: "\"" }]] },
+    { head: "notes \u00b7 call-12-nov.md", font: "sans", size: 56, col: 0, y: 490, r: 1,
+      lines: [[{ text: "Maria", is: "person" }, { text: " from " }, { text: "Northwind", is: "company" }, { text: " called." }], [{ text: "She\u2019s moving to " }, { text: "Lisbon", is: "place" }, { text: "." }]] },
+    { head: "contracts \u00b7 msa.pdf", font: "sans", size: 56, col: 1, y: 470, r: -1,
+      lines: [[{ text: "Northwind Robotics Ltd.", is: "company" }], [{ text: "Signed: " }, { text: "Maria Okafor", is: "person" }]] },
+  ];
+  const fonts = { mono: "var(--mono)", sans: "var(--sans)", display: "var(--display)" };
+  const svg = svgLayer(c);
+  const marks = [];
+  const cards = sources.map((source, i) => {
+    const card = place_(el("div", "abs card", c), 0, source.y);
+    Object.assign(card.style, { width: "max-content", minWidth: "700px" });
+    const head = el("div", "file-head", card, esc(source.head));
+    Object.assign(head.style, { fontSize: "40px", lineHeight: "80px", padding: "0 32px" });
+    const body = el("div", "", card);
+    Object.assign(body.style, { padding: "14px 32px 22px", fontFamily: fonts[source.font], fontSize: `${source.size}px`, lineHeight: "84px", whiteSpace: "nowrap" });
+    for (const pieces of source.lines) {
+      const row = el("div", "", body);
+      for (const piece of pieces) {
+        const span = el("span", "", row, esc(piece.text));
+        if (piece.is) marks.push({ span, is: piece.is, card: i });
+      }
+    }
+    card.style.left = `${source.col === 0 ? 90 : 1920 - 90 - card.offsetWidth}px`;
+    return { card, r: source.r };
+  });
+  /* The company, in all four: links run behind the cards, so they show in the gaps, where each asks whether two are one. */
+  const box = cards.map(({ card }) => rect(c, card));
+  const companies = marks.filter((m) => m.is === "company").map((m) => rect(c, m.span));
+  const pairs = [[0, 1], [1, 3], [3, 2], [2, 0]];
+  const links = [];
+  const asks = pairs.map(([i, j]) => {
+    const a = companies[i], b = companies[j];
+    links.push(line(svg, `M${a.cx} ${a.cy}L${b.cx} ${b.cy}`, { width: 5, dash: "14 14" }));
+    const across = sources[i].col !== sources[j].col;
+    let x, y;
+    if (across) {
+      const [l, r] = sources[i].col === 0 ? [box[i], box[j]] : [box[j], box[i]];
+      x = (l.x + l.w + r.x) / 2;
+      y = lerp(a.cy, b.cy, (x - a.cx) / (b.cx - a.cx));
+    } else {
+      const [t_, b_] = box[i].y < box[j].y ? [box[i], box[j]] : [box[j], box[i]];
+      y = (t_.y + t_.h + b_.y) / 2;
+      x = lerp(a.cx, b.cx, (y - a.cy) / (b.cy - a.cy));
+    }
+    const q = place_(el("div", "abs mono", c, "?"), x - 46, y - 46, 92, 92);
+    Object.assign(q.style, { fontSize: "64px", lineHeight: "86px", textAlign: "center", borderRadius: "50%", background: "var(--card)", border: "4px solid var(--thread)", color: "var(--thread)", boxSizing: "border-box" });
+    return q;
+  });
+  return (t) => {
+    cards.forEach(({ card, r }, i) => arrive(card, t, 0.15 + 0.35 * i, { dy: 90, r, dr: r * 3 }));
+    marks.forEach((m, i) => light(m.span, p(t, 2.7 + 0.06 * i, 0.4)));
+    links.forEach((l, i) => drawLine(l, p(t, 3.4 + 0.15 * i, 0.4)));
+    asks.forEach((q, i) => arrive(q, t, 3.6 + 0.15 * i, { dy: 0, s0: 0.6, dur: 0.4 }));
+  };
+});
+
+/* 2. Extraction --------------------------------------------------- */
+
+scene(5.6, {
+  camera: [[0, 960, 500, 1.02], [2.6, 960, 470, 1.05], [3.4, 960, 540, 1], [6.3, 960, 540, 1.02]],
+  captions: [
+    [0.2, "Spool pulls the entities out of text,"],
+    [3.0, "and out of tables, feeds and documents."],
+  ],
+}, (c) => {
+  const card = place_(el("div", "abs card", c), 160, 130, 1600);
+  el("div", "file-head", card, "notes \u00b7 call-12-nov.md");
+  const text = el("div", "", card);
+  Object.assign(text.style, { padding: "20px 48px 34px", fontSize: "88px", lineHeight: "128px" });
+  const said = [
+    [{ text: "Maria", is: person }, { text: " from " }, { text: "Northwind", is: company }, { text: " called." }],
+    [{ text: "She\u2019s moving to " }, { text: "Lisbon", is: place }, { text: "." }],
+  ];
+  const marks = [];
+  for (const pieces of said) {
+    const row = el("div", "", text);
+    for (const piece of pieces) {
+      const span = el("span", "", row, esc(piece.text));
+      if (piece.is) {
+        marks.push({ span, entity: piece.is });
+        Object.assign(span.style, { textDecorationLine: "underline", textUnderlineOffset: "16px", textDecorationThickness: "5px", textDecorationColor: "transparent" });
+      }
+    }
+  }
+  const textRect = rect(c, text);
+  const scan = place_(el("div", "abs", c), 0, textRect.y + 16, 8, textRect.h - 32);
+  Object.assign(scan.style, {
+    background: "linear-gradient(to bottom, transparent, var(--thread), transparent)",
+    boxShadow: "0 0 36px 10px color-mix(in oklab, var(--thread) 35%, transparent)",
+  });
+  const SCAN_AT = 0.9, SCAN_DUR = 1.5, X0 = 180, X1 = 1740;
+  const timeAt = (x) => {
+    for (let k = 0; k <= 1; k += 0.005) if (lerp(X0, X1, inOut(k)) >= x) return SCAN_AT + k * SCAN_DUR;
+    return SCAN_AT + SCAN_DUR;
+  };
+  const W = 500, H = 200, Y = 130 + card.offsetHeight + 60;
+  const found = marks.map((m, i) => {
+    const from = rect(c, m.span);
+    const to = { x: 160 + i * (W + 50), y: Y };
+    const node = place_(el("div", "abs card", c), to.x, to.y, W, H);
+    node.style.transformOrigin = "0 0";
+    const inner = el("div", "", node,
+      `<div class="display" style="font-size:76px;line-height:96px;white-space:nowrap">${esc(m.entity.name.split(" ")[0])}</div>` +
+      `<div class="mono" style="font-size:48px;color:var(--thread);margin-top:10px">${m.entity.type}</div>`);
+    inner.style.padding = "26px 40px";
+    return { node, inner, from, to, lit: timeAt(from.x), at: 3.0 + 0.18 * i };
+  });
+  return (t) => {
+    arrive(card, t, 0, { dy: 50, dur: 0.6 });
+    pose(scan, { o: window_(t, SCAN_AT - 0.1, SCAN_AT + SCAN_DUR + 0.15, 0.15), x: lerp(X0, X1, p(t, SCAN_AT, SCAN_DUR, inOut)) });
+    marks.forEach((m, i) => {
+      const k = p(t, found[i].lit, 0.4);
+      light(m.span, k);
+      m.span.style.textDecorationColor = `color-mix(in oklab, var(--thread) ${k * 100}%, transparent)`;
+    });
+    found.forEach(({ node, inner, from, to, at }) => {
+      const g = p(t, at, 0.9, inOut);
+      pose(node, {
+        o: clamp((t - at) / 0.12) * lerp(0.25, 1, clamp(g * 1.6)),
+        x: lerp(from.x - to.x, 0, g), y: lerp(from.y - to.y, 0, g),
+        sx: lerp(from.w / W, 1, g), sy: lerp(from.h / H, 1, g),
+      });
+      inner.style.opacity = String(p(t, at + 0.55, 0.35));
+    });
+  };
+});
+
+/* 3. Resolution --------------------------------------------------- */
+
+scene(7.8, {
+  captions: [
+    [0.2, "Which of these are the same company?"],
+    [1.7, "Rules you write in code find the matches."],
+    [4.8, "Each real entity gets one ID."],
+  ],
+}, (c) => {
+  const names = [
+    ["NORTHWIND ROBOTICS LTD", "billing"],
+    ["northwind.io", "support"],
+    ["Northwind", "notes"],
+    ["Northwind Robotics Ltd.", "contract"],
+  ];
+  const LX = 320, LY = 110, CW = 1160, CH = 104, PITCH = 126;
+  const centre = (i) => LY + i * PITCH + CH / 2;
+  const chips = names.map(([name, tag], i) => place_(chip(c, name, tag), LX, LY + i * PITCH, CW, CH));
+  /* A near miss: a similar name the rules turn down. */
+  const MISS = names.length;
+  const miss = place_(chip(c, "Northwind Logistics", "shipping"), LX, LY + MISS * PITCH, CW, CH);
+  const svg = svgLayer(c);
+  const arcs = [];
+  for (let b = 1; b < names.length; b++) {
+    for (let a = 0; a < b; a++) {
+      const from = centre(a), to = centre(b);
+      const bend = 40 + Math.abs(to - from) * 0.42;
+      arcs.push({ l: line(svg, `M${LX} ${from}C${LX - bend} ${from} ${LX - bend} ${to} ${LX} ${to}`), at: 1.8 + 0.2 * arcs.length });
+    }
+  }
+  const verdict = place_(el("div", "abs mono", c, "match"), LX + CW + 50, centre(1.5) - 40);
+  Object.assign(verdict.style, { fontSize: "64px", color: "var(--thread)", whiteSpace: "nowrap" });
+  const missFrom = centre(MISS - 1), missTo = centre(MISS);
+  const missLine = line(svg, `M${LX} ${missFrom}C${LX - 120} ${missFrom} ${LX - 120} ${missTo} ${LX} ${missTo}`, { stroke: "var(--red)", width: 6 });
+  const cross = place_(el("div", "abs mono", c, "&times; no match"), LX + CW + 40, centre(MISS) - 36);
+  Object.assign(cross.style, { fontSize: "56px", color: "var(--red)", whiteSpace: "nowrap" });
+
+  /* Where the three identities end up, one under another. */
+  const RX = 360, RW = 1200, RH = 176, RY = [140, 350, 560];
+  const identity = (entity, y) => {
+    const node = place_(el("div", "abs identity", c,
+      `<div style="display:flex;align-items:center;justify-content:space-between">` +
+      `<span class="display" style="display:flex;align-items:center;gap:22px;font-size:84px;line-height:96px;white-space:nowrap">${mark(66)}${esc(entity.name)}</span>` +
+      `<span class="mono" style="font-size:46px;color:var(--muted)">${entity.type}</span></div>` +
+      `<div class="mono" style="font-size:50px;color:var(--thread);margin:6px 0 0 88px">${short(entity.id)}</div>`), RX, y, RW, RH);
+    Object.assign(node.style, { padding: "18px 40px", transformOrigin: "50% 50%" });
+    return node;
+  };
+  const rows = [identity(company, RY[0]), identity(person, RY[1]), identity(place, RY[2])];
+
+  const GATHER = 4.7, MISS_AT = 3.4;
+  return (t) => {
+    const leave = 1 - p(t, GATHER, 0.4);
+    drawLine(missLine, p(t, MISS_AT, 0.6, inOut));
+    missLine.path.style.opacity = String(Number(missLine.path.style.opacity) * leave);
+    pose(cross, { o: p(t, MISS_AT + 0.4, 0.4) * leave, x: -20 * (1 - p(t, MISS_AT + 0.4, 0.4)) });
+    const lit = p(t, MISS_AT, 0.4);
+    miss.style.borderColor = `color-mix(in oklab, var(--red) ${lit * 100}%, var(--border))`;
+    pose(miss, { o: p(t, 0.5, 0.5) * leave, y: 16 * (1 - p(t, 0.5, 0.5)) + 40 * (1 - leave) });
+    arcs.forEach(({ l, at }) => {
+      drawLine(l, p(t, at, 0.5, inOut));
+      l.path.style.opacity = String(Number(l.path.style.opacity) * leave);
+    });
+    pose(verdict, { o: p(t, 2.2, 0.5) * leave, x: -20 * (1 - p(t, 2.2, 0.5)) });
+    chips.forEach((node, i) => {
+      const enter = p(t, 0.1 + 0.1 * i, 0.5);
+      const g = p(t, GATHER + 0.05 * i, 0.8, inOut);
+      const dx = RX + RW / 2 - (LX + CW / 2), dy = RY[0] + RH / 2 - centre(i);
+      pose(node, { o: enter * (1 - p(t, GATHER + 0.45 + 0.05 * i, 0.35)), x: dx * g, y: 16 * (1 - enter) + dy * g, s: lerp(1, 0.85, g) });
+    });
+    rows.forEach((node, i) => {
+      const a = p(t, GATHER + 0.55 + 0.35 * i, 0.6);
+      pose(node, { o: a, s: lerp(0.92, 1, a), y: i === 0 ? 0 : 30 * (1 - a) });
+    });
+  };
+});
+
+/* 4. The ID holds ------------------------------------------------- */
+
+scene(7.4, {
+  captions: [
+    [0.2, "New data keeps arriving."],
+    [2.7, "The ID holds as your data changes."],
+    [4.5, "A different company stays out."],
+  ],
+}, (c) => {
+  const CX = 160, CY = 150, CW = 1160, CH = 420;
+  const card = place_(el("div", "abs identity", c), CX, CY, CW, CH);
+  const name = place_(el("div", "abs display", c, `${mark(92)}${company.name}`), CX + 56, CY + 50);
+  Object.assign(name.style, { display: "flex", alignItems: "center", gap: "24px", fontSize: "112px", lineHeight: "130px", whiteSpace: "nowrap" });
+  const id = place_(el("div", "abs mono", c, short(company.id)), CX + 56, CY + 200);
+  Object.assign(id.style, { fontSize: "76px", color: "var(--thread)", padding: "4px 14px", marginLeft: "-14px" });
+  const counts = [4, 5, 6].map((n) => {
+    const node = place_(el("div", "abs", c, `${n} sources`), CX + 56, CY + 320);
+    Object.assign(node.style, { fontSize: "64px", color: "var(--muted)", whiteSpace: "nowrap" });
+    return node;
+  });
+  const same = place_(el("div", "abs", c, "&#10003; same ID"), CX + 470, CY + 320);
+  Object.assign(same.style, { fontSize: "64px", color: "var(--thread)", whiteSpace: "nowrap" });
+
+  const arrivals = [
+    { name: "NORTHWIND ROBOTICS", tag: "warehouse", at: 0.7 },
+    { name: "Northwind Robotics", tag: "web form", at: 2.3 },
+  ];
+  const IW = 1040, IH = 110, IN_X = 1920 - IW - 80, IN_Y = 640;
+  const DOCK_X = CX + (CW - IW) / 2, DOCK_Y = CY + CH + 40;
+  const incoming = arrivals.map(({ name, tag }) => place_(chip(c, name, tag), IN_X, IN_Y, IW, IH));
+  const joined = arrivals.map((a) => a.at + 1.3);
+  const REJECT = 4.4;
+  const stranger = place_(chip(c, "Northwind Bakery", "news feed"), IN_X, IN_Y, IW, IH);
+  const refused = place_(el("div", "abs mono", c, "&times; different company"), DOCK_X, DOCK_Y + IH + 18, IW);
+  Object.assign(refused.style, { fontSize: "52px", color: "var(--red)", whiteSpace: "nowrap", textAlign: "center" });
+  return (t) => {
+    arrive(card, t, 0, { dy: 0, dur: 0.01 });
+    const n = joined.filter((at) => t >= at).length;
+    counts.forEach((node, i) => pose(node, { o: i === n ? 1 : 0 }));
+    const pulse = Math.max(...joined.map((at) => window_(t, at, at + 1.3, 0.3)));
+    {
+      const enter = p(t, REJECT, 0.4);
+      const dock = p(t, REJECT + 0.2, 0.7, inOut);
+      const no = p(t, REJECT + 0.9, 0.3);
+      const away = p(t, REJECT + 1.9, 0.6, inOut);
+      pose(stranger, { o: enter * (1 - away), x: 120 * (1 - enter) + (DOCK_X - IN_X) * dock + 260 * away, y: (DOCK_Y - IN_Y) * dock });
+      stranger.style.borderColor = `color-mix(in oklab, var(--red) ${no * 100}%, var(--border))`;
+      pose(refused, { o: no * (1 - away), y: -10 * (1 - no) });
+    }
+    id.style.background = `color-mix(in oklab, var(--wash) ${pulse * 100}%, transparent)`;
+    pose(same, { o: pulse, x: -10 * (1 - pulse) });
+    incoming.forEach((node, i) => {
+      const { at } = arrivals[i];
+      const enter = p(t, at, 0.4);
+      const dock = p(t, at + 0.2, 0.7, inOut);
+      const merge = p(t, at + 1.0, 0.35);
+      pose(node, { o: enter * (1 - merge), x: 120 * (1 - enter) + (DOCK_X - IN_X) * dock, y: (DOCK_Y - IN_Y) * dock - 70 * merge, s: lerp(1, 0.92, merge) });
+    });
+  };
+});
+
+/* 5. Your tools --------------------------------------------------- */
+
+scene(7.2, {
+  camera: STILL,
+  captions: [
+    [0.2, "Drive it from the CLI or the HTTP API."],
+    [2.6, "Point your agents at it over MCP."],
+    [4.8, "Review and correct it in a browser."],
+  ],
+}, (c) => {
+  const hub = place_(el("div", "abs centre", c, wordmark(130)), 0, 395, 1920);
+  const TW = 580, TH = 230;
+  const tiles = [
+    { title: "Command line", sub: "spool match", x: 120, y: 120, beat: 0 },
+    { title: "HTTP API", sub: "GET /v1/identities", x: 1920 - 120 - TW, y: 120, beat: 0 },
+    { title: "MCP", sub: "for your agents", x: 120, y: 560, beat: 1 },
+    { title: "Studio", sub: "in a browser", x: 1920 - 120 - TW, y: 560, beat: 2 },
+  ].map((tile) => {
+    const node = place_(el("div", "abs card", c,
+      `<div style="font-size:68px;line-height:84px">${tile.title}</div>` +
+      `<div class="mono" style="font-size:46px;color:var(--thread);margin-top:14px;white-space:nowrap">${esc(tile.sub)}</div>`), tile.x, tile.y, TW, TH);
+    Object.assign(node.style, { padding: "34px 44px", boxShadow: "none" });
+    return { ...tile, node };
+  });
+  const svg = svgLayer(c);
+  svg.style.zIndex = "-1";
+  c.prepend(svg);
+  const links = tiles.map((tile) => {
+    const left = tile.x < 960;
+    const x = left ? tile.x + TW : tile.x;
+    const y = tile.y + TH / 2;
+    const hx = left ? 760 : 1160, hy = 460;
+    return line(svg, `M${hx} ${hy}C${(hx + x) / 2} ${hy} ${(hx + x) / 2} ${y} ${x} ${y}`, { width: 4 });
+  });
+  const BEATS = [0.2, 2.6, 4.8];
+  return (t) => {
+    arrive(hub, t, 0, { dy: 0, s0: 0.95, dur: 0.6 });
+    tiles.forEach((tile, i) => {
+      arrive(tile.node, t, 0.2 + 0.12 * i, { dy: 30, dur: 0.5 });
+      drawLine(links[i], p(t, 0.3 + 0.12 * i, 0.6, inOut));
+      const on = window_(t, BEATS[tile.beat], BEATS[tile.beat + 1] ?? 99, 0.3);
+      tile.node.style.background = `color-mix(in oklab, var(--identity-bg) ${on * 100}%, var(--card))`;
+      tile.node.style.borderColor = `color-mix(in oklab, var(--identity-border) ${on * 100}%, var(--border))`;
+      links[i].path.style.strokeWidth = String(lerp(4, 8, on));
+    });
+  };
+});
+
+/* 6. Spool -------------------------------------------------------- */
+
+scene(3.8, { camera: STILL }, spoolCard);
+
+/* ---------------------------------------------------------------- */
+/* Seeking                                                           */
+/* ---------------------------------------------------------------- */
+
+const wipe = document.getElementById("wipe");
+const duration = scenes.reduce((sum, s) => sum + s.length, 0);
+
+function drawAt(t) {
+  let line = -1;
+  scenes.forEach((s, i) => {
+    const next = scenes[i + 1];
+    const visible = t >= s.start && (!next || t < next.start + WIPE);
+    // Not `visibility`: a part drawn visible would show through a hidden scene.
+    s.root.style.display = visible ? "block" : "none";
+    s.root.style.visibility = "visible";
+    if (!visible) return;
+    const local = t - s.start;
+    s.draw(local);
+    drawCaptions(s, local);
+    const [cx, cy, z] = shot(s.shots, local);
+    s.content.style.transform = `translate(${960 - cx * z}px, ${540 - cy * z}px) scale(${z})`;
+    if (i > 0 && local < WIPE) {
+      const k = inOut(local / WIPE);
+      s.root.style.clipPath = `inset(0 ${(1 - k) * 100}% 0 0)`;
+      line = k * 1920;
+    } else {
+      s.root.style.clipPath = "none";
+    }
+  });
+  wipe.style.visibility = line >= 0 ? "visible" : "hidden";
+  wipe.style.left = `${line}px`;
+}
+
+/** Draws the frame at `t` seconds and resolves once it has been painted. */
+window.seek = (t) => {
+  drawAt(Math.min(t, duration - 1 / FPS));
+  return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+};
+window.timeline = { duration, fps: FPS, scenes: scenes.map((s) => ({ start: s.start, length: s.length })) };
+
+drawAt(0);
+if (new URLSearchParams(location.search).has("play")) {
+  const began = performance.now();
+  const tick = () => {
+    drawAt(((performance.now() - began) / 1000) % duration);
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+}
+</script>
+</body>
+</html>
