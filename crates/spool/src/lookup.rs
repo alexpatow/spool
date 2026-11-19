@@ -257,7 +257,7 @@ impl IdentitySort {
         let mut keys = match self {
             Self::Id => Vec::new(),
             Self::Label => Key::optional_text("il.label").into(),
-            Self::EntityType => vec![Key::of("i.entity_type")],
+            Self::EntityType => Key::text("i.entity_type").into(),
             Self::Records => vec![Key::of(
                 "(SELECT count(*) FROM spool.membership m
                   WHERE m.identity_id = i.identity_id AND m.to_seq IS NULL)",
@@ -536,7 +536,8 @@ const IDENTITY_LABEL: &str = "identity_label AS (
 #[serde(rename_all = "snake_case")]
 pub enum RecordSort {
     Id,
-    /// The source and the key, as the list is ordered when nothing is chosen.
+    /// The source, whatever its case, and then the key, as the list is
+    /// ordered when nothing is chosen.
     Source,
     /// The key, or the document a mention was found in, whatever its case.
     Key,
@@ -560,7 +561,10 @@ impl RecordSort {
         };
         match self {
             Self::Id => vec![Key::of("o.record_id")],
-            Self::Source => order().collect(),
+            Self::Source => Key::text("o.source_id")
+                .into_iter()
+                .chain(order())
+                .collect(),
             Self::Key => std::iter::once(Key::missing_last("o.source_key"))
                 .chain(Key::text(MENTION_KEY))
                 .chain(order())
@@ -569,7 +573,8 @@ impl RecordSort {
                 .into_iter()
                 .chain(order())
                 .collect(),
-            Self::EntityType => std::iter::once(Key::of("o.entity_type"))
+            Self::EntityType => Key::text("o.entity_type")
+                .into_iter()
                 .chain(order())
                 .collect(),
             Self::Identity => Key::optional_text("il.label")
@@ -1012,7 +1017,7 @@ impl LogSort {
     fn keys(self) -> Vec<Key> {
         let mut keys = match self {
             Self::Seq => Vec::new(),
-            Self::Actor => vec![Key::of("c.actor")],
+            Self::Actor => Key::text("c.actor").into(),
             Self::Operations => vec![Key::of(
                 "(SELECT count(*) FROM spool.changeset_op o WHERE o.seq = c.seq)",
             )],

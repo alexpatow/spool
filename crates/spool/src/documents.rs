@@ -117,7 +117,7 @@ pub enum DocumentSort {
     /// The key, whatever its case, then the source and the versions of the
     /// key the oldest first.
     Key,
-    /// The source, then as `Key`.
+    /// The source, whatever its case, then the key as `Key` does.
     Source,
     /// How long the text is.
     Length,
@@ -131,11 +131,12 @@ impl DocumentSort {
             Self::Id => Vec::new(),
             Self::Key => [
                 &Key::text("d.source_key")[..],
-                &[Key::of("d.source_id"), Key::of("d.load_run")],
+                &Key::text("d.source_id"),
+                &[Key::of("d.load_run")],
             ]
             .concat(),
             Self::Source => [
-                &[Key::of("d.source_id")][..],
+                &Key::text("d.source_id")[..],
                 &Key::text("d.source_key"),
                 &[Key::of("d.load_run")],
             ]

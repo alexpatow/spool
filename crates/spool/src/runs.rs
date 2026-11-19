@@ -176,7 +176,7 @@ impl RunSort {
                 &Key::text(DETAILS),
             ]
             .concat(),
-            Self::StartedBy => vec![Key::of("r.started_by")],
+            Self::StartedBy => Key::text("r.started_by").into(),
             Self::Started => vec![Key::of("r.started_at")],
         };
         keys.push(Key::of("r.run_id"));

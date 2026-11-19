@@ -11,14 +11,32 @@ use common::*;
 use spool::core::{Actor, Changeset, ConstraintKind, IdentityId, Op, Seq};
 use spool::{
     Direction, DocumentFilter, DocumentSort, Engine, IdentityFilter, IdentitySort, LogSort,
-    NewDocument, RecordFilter, RecordSort, ResolveOptions, RunFilter, RunSort, Sort,
+    NewDocument, Options, RecordFilter, RecordSort, ResolveOptions, RunFilter, RunSort, Sort,
 };
 
 const DIRECTIONS: [Direction; 2] = [Direction::Ascending, Direction::Descending];
 
+/// The tests' things, and a source whose name begins with a capital.
+fn engine() -> Engine {
+    let mut sources = SOURCES.to_vec();
+    sources.push("Zinc");
+    let mut thing = thing();
+    thing.entity = entity(
+        Some("name"),
+        &[("name", "name"), ("code", "code")],
+        &sources,
+    );
+    let mut project = project_of(vec![thing]);
+    project.sources.push(source("Zinc"));
+    let engine = Engine::open_in_memory(Options::seeded(1)).unwrap();
+    engine.apply(&project.compile().unwrap()).unwrap();
+    engine
+}
+
 /// Things whose names differ in case, things with no name, identities of
-/// one record and of three, documents of several lengths and a document
-/// with two versions, and changesets with reasons and without.
+/// one record and of three, sources and actors whose names differ in case,
+/// documents of several lengths and a document with two versions, and
+/// changesets with reasons and without.
 fn populated() -> Engine {
     let engine = engine();
     load(
@@ -47,6 +65,7 @@ fn populated() -> Engine {
     );
     engine.resolve(&ResolveOptions::default()).unwrap();
     load(&engine, "yard", &[("10", Some("easel"), None)]);
+    load(&engine, "Zinc", &[("11", Some("Fork"), None)]);
 
     let document = |key: &str, text: &str| NewDocument {
         key: key.to_owned(),
@@ -67,6 +86,9 @@ fn populated() -> Engine {
         .add_documents("depot", &[document("a.txt", "the depot's")])
         .unwrap();
     engine
+        .add_documents("Zinc", &[document("d.txt", "the zinc's")])
+        .unwrap();
+    engine
         .add_documents("shop", &[document("A.txt", "short, and then some")])
         .unwrap();
 
@@ -80,7 +102,7 @@ fn populated() -> Engine {
     for (index, (reason, actor)) in [
         (Some("Zeta"), "zed"),
         (None, "ada"),
-        (Some("alpha"), "bea"),
+        (Some("alpha"), "Bea"),
         (Some("Beta"), "ada"),
     ]
     .into_iter()
@@ -162,7 +184,7 @@ fn walks<T, Id>(
 fn documents_are_sorted_by_each_column_in_pages() {
     let engine = populated();
     let unsorted = engine.documents(&DocumentFilter::default()).unwrap();
-    assert_eq!(unsorted.len(), 5);
+    assert_eq!(unsorted.len(), 6);
     for by in [
         DocumentSort::Id,
         DocumentSort::Key,
@@ -201,8 +223,8 @@ fn documents_are_sorted_by_each_column_in_pages() {
                     let none = String::new;
                     Some(match by {
                         DocumentSort::Id => (document.id.to_string(), none(), none(), 0),
-                        DocumentSort::Key => (key, exact, document.source.clone(), 0),
-                        DocumentSort::Source => (document.source.clone(), key, exact, 0),
+                        DocumentSort::Key => (key, exact, document.source.to_lowercase(), 0),
+                        DocumentSort::Source => (document.source.to_lowercase(), key, exact, 0),
                         DocumentSort::Length => (none(), none(), none(), document.length),
                         DocumentSort::Loaded => (
                             document.loaded_at.clone(),
@@ -237,9 +259,22 @@ fn documents_are_sorted_by_each_column_in_pages() {
             ("depot", "a.txt"),
             ("shop", "b.txt"),
             ("shop", "c.txt"),
+            ("Zinc", "d.txt"),
         ]
     );
     assert_eq!(by_key[1].supersedes, Some(by_key[0].id));
+    // A source whose name begins with a capital is where its letters put it.
+    let by_source = engine
+        .documents(&DocumentFilter {
+            sort: Some(Sort::ascending(DocumentSort::Source)),
+            ..DocumentFilter::default()
+        })
+        .unwrap();
+    let sources: Vec<&str> = by_source
+        .iter()
+        .map(|document| document.source.as_str())
+        .collect();
+    assert_eq!(sources, ["depot", "shop", "shop", "shop", "shop", "Zinc"]);
 }
 
 /// What each identity is called, as a list of identities says.
@@ -260,7 +295,7 @@ fn records_are_sorted_by_each_column_in_pages() {
     let engine = populated();
     let labels = labels(&engine);
     let unsorted = engine.records(&RecordFilter::default()).unwrap();
-    assert_eq!(unsorted.len(), 10);
+    assert_eq!(unsorted.len(), 11);
     for by in [
         RecordSort::Id,
         RecordSort::Source,
@@ -288,7 +323,7 @@ fn records_are_sorted_by_each_column_in_pages() {
                 .iter()
                 .map(|record| match by {
                     RecordSort::Id => Some(record.id.to_string()),
-                    RecordSort::Source => Some(record.source.clone()),
+                    RecordSort::Source => Some(record.source.to_lowercase()),
                     RecordSort::Key => record.key.as_deref().map(str::to_lowercase),
                     RecordSort::Label => record.label.as_deref().map(str::to_lowercase),
                     RecordSort::EntityType => Some(record.entity_type.to_string()),
@@ -301,15 +336,23 @@ fn records_are_sorted_by_each_column_in_pages() {
             walks(&all, |record| record.id, list, &what);
         }
     }
-    // Sorted by source and key, the records are as they are when no order
-    // is chosen.
+    // Sorted by source whatever its case, and then by key.
     let by_source = engine
         .records(&RecordFilter {
             sort: Some(Sort::ascending(RecordSort::Source)),
             ..RecordFilter::default()
         })
         .unwrap();
-    assert_eq!(by_source, unsorted);
+    assert_eq!(
+        by_source
+            .iter()
+            .map(|record| record.source.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "depot", "depot", "depot", "kiosk", "kiosk", "shop", "shop", "shop", "shop", "yard",
+            "Zinc"
+        ]
+    );
 }
 
 #[test]
@@ -422,7 +465,7 @@ fn runs_are_sorted_over_all_of_them_before_the_limit() {
                         .collect();
                         (!details.is_empty()).then(|| (details.join(", ").to_lowercase(), 0))
                     }
-                    RunSort::StartedBy => Some((run.started_by.to_string(), 0)),
+                    RunSort::StartedBy => Some((run.started_by.to_string().to_lowercase(), 0)),
                     RunSort::Started => Some((run.started_at.clone(), 0)),
                 })
                 .collect();
@@ -472,7 +515,7 @@ fn the_log_is_sorted_by_each_column_in_pages() {
                     let changeset = &logged.entry.changeset;
                     match by {
                         LogSort::Seq => Some((String::new(), logged.entry.seq.0)),
-                        LogSort::Actor => Some((changeset.actor.to_string(), 0)),
+                        LogSort::Actor => Some((changeset.actor.to_string().to_lowercase(), 0)),
                         LogSort::Operations => Some((String::new(), changeset.ops.len() as u64)),
                         LogSort::Run => changeset.run.map(|run| (String::new(), run.0)),
                         LogSort::Reason => changeset
