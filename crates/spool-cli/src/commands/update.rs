@@ -140,6 +140,12 @@ fn kept(path: impl Into<String>, note: impl Into<String>) -> Change {
 }
 
 const EDITED: &str = "edited since Spool wrote it: --force replaces it";
+const LINKED: &str = "its folder is a link, which Spool does not write through";
+
+/// Whether `path` is a link: what it points to is somebody else's.
+fn is_link(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|found| found.file_type().is_symlink())
+}
 
 pub fn update(arguments: UpdateArgs) -> Result<(), Failure> {
     let out = Output::report(&arguments.output, "`spool update`")?;
@@ -189,7 +195,11 @@ pub fn write_agent_files(dir: &Path, force: bool) -> Result<Vec<Change>, Failure
     changes.push(claude_md(dir)?);
     for (name, source) in SKILLS {
         let path = format!("{SKILLS_DIR}/{name}/SKILL.md");
-        changes.push(owned_file(dir, &path, &stamp_skill(source), force)?);
+        if is_link(&dir.join(SKILLS_DIR).join(name)) {
+            changes.push(kept(path, LINKED));
+        } else {
+            changes.push(owned_file(dir, &path, &stamp_skill(source), force)?);
+        }
         changes.push(link(dir, name, force)?);
     }
     changes.extend(remove_old_skills(dir)?);
@@ -340,6 +350,10 @@ fn remove_old_skills(dir: &Path) -> Result<Vec<Change>, Failure> {
     for name in names {
         let path = format!("{SKILLS_DIR}/{name}/SKILL.md");
         let folder = skills.join(&name);
+        if is_link(&folder) {
+            changes.push(kept(path, LINKED));
+            continue;
+        }
         let only_the_skill = std::fs::read_dir(&folder)
             .map(|entries| {
                 entries
@@ -646,6 +660,37 @@ mod tests {
             std::fs::read_to_string(&file).unwrap(),
             format!("Before.\n\n{}\n\nAfter.\n", agents_section())
         );
+    }
+
+    #[test]
+    fn a_skill_folder_that_is_a_link_is_never_written_through() {
+        let dir = tempfile::tempdir().unwrap();
+        let shared = tempfile::tempdir().unwrap();
+        let skills = dir.path().join(SKILLS_DIR);
+        std::fs::create_dir_all(&skills).unwrap();
+        let stamped = |name: &str| {
+            stamp_skill(&format!(
+                "---\nname: {name}\ndescription: Shared.\n---\n\nShared.\n"
+            ))
+        };
+        for name in ["spool-gone", "spool-rules"] {
+            std::fs::create_dir_all(shared.path().join(name)).unwrap();
+            std::fs::write(shared.path().join(name).join("SKILL.md"), stamped(name)).unwrap();
+            std::os::unix::fs::symlink(shared.path().join(name), skills.join(name)).unwrap();
+        }
+
+        for force in [false, true] {
+            let changes = written(dir.path(), force);
+            for name in ["spool-gone", "spool-rules"] {
+                let path = format!(".agents/skills/{name}/SKILL.md");
+                assert_eq!(status_of(&changes, &path), Status::Kept, "{name}");
+                assert_eq!(
+                    std::fs::read_to_string(shared.path().join(name).join("SKILL.md")).unwrap(),
+                    stamped(name)
+                );
+                assert!(is_link(&skills.join(name)));
+            }
+        }
     }
 
     #[test]
