@@ -292,7 +292,9 @@ spool explain crm:c-15 crm:c-1
 ```text title="Output"
 `crm:c-15` and `crm:c-1` belong to the same identity, 01a1efc6-41cd-775d-8758-e7300637659a.
 Run 14 (strategy `rules`) made them a candidate pair (block rule `name_prefix`) and gave no judgement.
-Nothing links the two directly. They are joined through 1 other member: `crm:c-15` → 31075f20-6900-838b-f5af-f8c6576744a4 (`match` in run 14) → `crm:c-1` (`match` in run 2).
+Nothing links the two directly. They are joined through 1 other member: `crm:c-15` → `Acorn Tools Ltd` (crm:c-3) (`match` in run 14, rule `similar_name`: name_key "acorn tools limited" and "acorn tools ltd") → `crm:c-1` (`match` in run 2, rule `similar_name`: name_key "acorn tools ltd" and "acorn tools").
+Without the links only rule `similar_name` made, they would not be together.
+Removing 1 link would part them, leaving 1 record with `crm:c-15` (1 × `Acorn Tools Limited`) and 4 records with `crm:c-1` (2 × `ACORN TOOLS`, 1 × `Acorn Tool`, 1 × `Acorn Tools Ltd`).
 `crm:c-15` was placed at log position 4 by `engine` (reconcile run 15, "reconcile new records").
 `crm:c-1` was placed at log position 1 by `engine` (reconcile run 3, "reconcile new records").
 By the rules as they are now, block rule `name_prefix` makes them a candidate pair and no `no_match` or `match` rule holds, so they would get no judgement.
@@ -315,8 +317,17 @@ runs that compared them
   run 14  rules  succeeded  block: name_prefix  no judgement
 
 what joins them
-  8342b5e7-9fe2-8b68-d800-f7478cab83e5 and 31075f20-6900-838b-f5af-f8c6576744a4: match in run 14
-  31075f20-6900-838b-f5af-f8c6576744a4 and ab8e9d59-0aaa-96b9-ddb7-db0bff7a9356: match in run 2
+  1. Acorn Tools Limited  crm:c-15
+     `match` in run 14, rule `similar_name`: name_key "acorn tools limited" and "acorn tools ltd"
+  2. Acorn Tools Ltd  crm:c-3
+     `match` in run 2, rule `similar_name`: name_key "acorn tools ltd" and "acorn tools"
+  3. Acorn Tools  crm:c-1
+
+what would part them
+  Acorn Tools Limited  crm:c-15 – Acorn Tools Ltd  crm:c-3
+      `match` in run 14, rule `similar_name`: name_key "acorn tools limited" and "acorn tools ltd"
+  with left: 1 record (1 × Acorn Tools Limited)
+  with right: 4 records (2 × ACORN TOOLS, 1 × Acorn Tool, 1 × Acorn Tools Ltd)
 ```
 
 It joined Acorn Tools through `crm:c-3`, Acorn Tools Ltd. Now the CRM deletes `c-3`, and the row is taken back:
