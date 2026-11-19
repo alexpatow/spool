@@ -28,7 +28,7 @@ spool show records
 That loads nine rows of a CRM export from two files, then finds the three companies a call note names, and matches after each. The last command lists the twelve records with the identity of each:
 
 ```text
-source and key              name                     identity
+SOURCE AND KEY              NAME                     IDENTITY
 crm:c-1                     Acorn Tools              01a1efc6-41cd-775d-8758-e7300637659a
 crm:c-2                     ACORN TOOLS              01a1efc6-41cd-775d-8758-e7300637659a
 crm:c-3                     Acorn Tools Ltd          01a1efc6-41cd-775d-8758-e7300637659a
@@ -53,7 +53,7 @@ The commands above are all of it. This section says what each needs and does.
 
 You need Linux on x86-64 or arm64 with version 2.34 or later of the GNU C library, or macOS on Apple silicon, and `curl` and `tar`. There is no build for Windows, for a Mac with an Intel processor, or for Alpine, whose C library is musl. The step that reads a text also needs [`uv`](https://docs.astral.sh/uv/), which runs the sample extractor.
 
-**Install.** The script downloads the release for your machine, checks it against its checksum, unpacks it under `~/.local/share/spool/0.1.0` and links `~/.local/bin/spool`, with its man pages and its bash, zsh and fish completions under `~/.local/share`. It needs no root and changes nothing else: if `~/.local/bin` is not on your search path, it prints the line that adds it and edits no file. To do it by hand, download `spool-0.1.0-<target>.tar.gz` from the [release](https://github.com/alexpatow/spool/releases/tag/v0.1.0), unpack it and put its `bin` directory on your search path. Keep `bin` and `lib` together: the binary loads the DuckDB library from `../lib`. `spool --version` prints `spool 0.1.0`.
+**Install.** The script downloads the release for your machine, checks it against its checksum, unpacks it under `~/.local/share/spool/0.1.0` and links `~/.local/bin/spool`. It needs no root and changes nothing else: if `~/.local/bin` is not on your search path, it prints the line that adds it and edits no file. To do it by hand, download `spool-0.1.0-<target>.tar.gz` from the [release](https://github.com/alexpatow/spool/releases/tag/v0.1.0), unpack it and put its `bin` directory on your search path. Keep `bin` and `lib` together: the binary loads the DuckDB library from `../lib`. `spool --version` prints `spool 0.1.0`.
 
 **Create a project.** A project is a directory of files that you keep in Git. `spool init companies` makes the directory `companies`, and `--example companies` fills it with the sample project used here. It says what it wrote:
 
@@ -225,7 +225,7 @@ These follow from the design. Where something else fits better, it is named. Wha
 
 ## Where next
 
-- `spool` with no arguments lists the commands, and `spool <command> --help` describes each. Every command that prints a result takes `-o json` and `-o ndjson`, and one that prints a list `-o csv` too.
+- `spool` with no arguments lists the commands, and `spool <command> --help` describes each. Every command that prints a result takes `-o json` and `-o ndjson`, and one that prints a list `-o csv` too. The [command reference](https://spool.alexpatow.com/docs/cli-reference) lists every option, and `spool completions <shell>` prints a shell completion script.
 - [docs/mcp.md](docs/mcp.md): the tools an agent gets, and how to connect each client.
 - [docs/sign-in.md](docs/sign-in.md): running a server that other people sign in to.
 - [benchmarks/README.md](benchmarks/README.md): projects with more sources and rules than the one above, on public data, and what was measured on them. `benchmarks/extraction/company-news` has extractors in Python and TypeScript.
