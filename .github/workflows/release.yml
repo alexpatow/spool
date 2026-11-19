@@ -116,7 +116,7 @@ jobs:
   # archive made there would be published without ever having started.
   macos:
     name: Apple silicon archive
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 60
     env:
       # The oldest macOS the build runs on, which is also the oldest the
