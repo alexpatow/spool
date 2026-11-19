@@ -115,7 +115,7 @@ An agent usually starts by asking what the store holds:
 ```
 
 ```text title="Output"
-{"api":"v1","store":{"engine_version":"0.1.0","format_version":"12","manifest_hash":"d7d4b712d86302152897a67a5924cd1c2e26594e049685c2f007177e20633946","head":2,"entity_types":[{"name":"company","declaration_version":1,"features":[{"name":"record_id","data_type":"UUID"},{"name":"name","data_type":"VARCHAR"},{"name":"name_key","data_type":"VARCHAR"},{"name":"country","data_type":"VARCHAR"}],"strategies":[],"records":10,"unassigned":1,"retracted":0,"sources":[{"source":"crm","records":10,"unassigned":1,"retracted":0,"last_loaded_at":"2026-11-18T21:55:15.653351Z"}],"identities":5,"open_review_items":1,"open_draft":null}],"sources":[{"name":"crm","key":"id","columns":["id","name","country"],"entity_types":["company"]},{"name":"notes","key":null,"columns":["name"],"entity_types":["company"]}],"extractors":[{"name":"companies","runtime":"python","file":"extractors/companies.py","hash":"eacb9397cacc366a1cd065d8f328039484a5e5d4fbf49b8ca1f2a3cbd34f8c92"}],"documents":0},"task_timeout_ms":600000}
+{"api":"v1","store":{"engine_version":"0.1.0","format_version":"12","manifest_hash":"23bbe93da95b1a8eb2db113e84015a42ce7cce7d0a3fc431369c4114a59bbacb","head":2,"entity_types":[{"name":"company","declaration_version":1,"features":[{"name":"record_id","data_type":"UUID"},{"name":"name","data_type":"VARCHAR"},{"name":"name_key","data_type":"VARCHAR"},{"name":"country","data_type":"VARCHAR"}],"strategies":[],"records":10,"unassigned":1,"retracted":0,"sources":[{"source":"crm","records":10,"unassigned":1,"retracted":0,"last_loaded_at":"2026-11-19T01:23:03.831510Z"}],"identities":5,"open_review_items":1,"open_draft":null}],"sources":[{"name":"crm","key":"id","evidence":null,"columns":["id","name","country"],"entity_types":["company"]},{"name":"notes","key":null,"evidence":null,"columns":["name"],"entity_types":["company"]}],"extractors":[{"name":"companies","runtime":"python","file":"extractors/companies.py","hash":"54a7e9bc0ebaf914bc4327056706be8490be84cd2949c8e95d15b079d5af732f"}],"documents":0},"task_timeout_ms":600000}
 ```
 
 Identities are found by words in their records:
@@ -172,7 +172,7 @@ What is waiting for a decision, and one case with what is needed to decide it:
 ```
 
 ```text title="Output"
-{"items":[{"id":1,"run":9,"entity_type":"company","kind":"possible_merge","records":["621ab95e-5f9e-6b91-e660-455831fe854a"],"identities":["01a1efc6-41cd-775d-8758-e731c61371cb","01a1efc6-41cd-775d-8758-e7329447fd9a"],"groups":[],"status":"open","resolved_seq":null,"superseded_by":null,"dismissed":null}]}
+{"items":[{"id":1,"run":9,"entity_type":"company","kind":"possible_merge","records":["621ab95e-5f9e-6b91-e660-455831fe854a"],"identities":["01a1efc6-41cd-775d-8758-e731c61371cb","01a1efc6-41cd-775d-8758-e7329447fd9a"],"groups":[],"status":"open","resolved_seq":null,"superseded_by":null,"dismissed":null}],"next":null}
 ```
 
 ```json title="MCP tool call"

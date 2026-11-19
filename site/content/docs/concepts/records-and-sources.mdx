@@ -117,32 +117,32 @@ next    `spool match` places it in an identity
 ```
 
 ```sh
-spool show records --source crm --key c-4 --ids
+spool show records --source crm --key c-4 --ids --all-versions
 ```
 
 ```text title="Output"
-record                                source and key  name                 identity
-4b1bc703-9041-0989-d0eb-4df5e9eae0f2  crm:c-4         Larkfield Logistics  01a1efc6-41cd-775d-8758-e733aa086f7d
-69c75f0d-bc65-b5f2-39aa-5c6d017a1531  crm:c-4         Larkfield Logistics  -
+record                                source and key  name                 identity                              version
+4b1bc703-9041-0989-d0eb-4df5e9eae0f2  crm:c-4         Larkfield Logistics  01a1efc6-41cd-775d-8758-e733aa086f7d  replaced
+69c75f0d-bc65-b5f2-39aa-5c6d017a1531  crm:c-4         Larkfield Logistics  -                                     current
 
 1 record has no identity. `spool match` places new records in identities,
 and `spool show review` lists the ones a match left out.
 ```
 
-Both versions are kept. The new one has no identity yet. The next match gives it the identity of the version it replaces, whatever the rules say about the pair:
+Both versions are kept, and `--all-versions` lists the one that was replaced beside the current one, which a list of records otherwise leaves out. The new one has no identity yet. The next match gives it the identity of the version it replaces, whatever the rules say about the pair:
 
 ```sh
 spool match
 ```
 
 ```sh
-spool show records --source crm --key c-4 --ids
+spool show records --source crm --key c-4 --ids --all-versions
 ```
 
 ```text title="Output"
-record                                source and key  name                 identity
-4b1bc703-9041-0989-d0eb-4df5e9eae0f2  crm:c-4         Larkfield Logistics  01a1efc6-41cd-775d-8758-e733aa086f7d
-69c75f0d-bc65-b5f2-39aa-5c6d017a1531  crm:c-4         Larkfield Logistics  01a1efc6-41cd-775d-8758-e733aa086f7d
+record                                source and key  name                 identity                              version
+4b1bc703-9041-0989-d0eb-4df5e9eae0f2  crm:c-4         Larkfield Logistics  01a1efc6-41cd-775d-8758-e733aa086f7d  replaced
+69c75f0d-bc65-b5f2-39aa-5c6d017a1531  crm:c-4         Larkfield Logistics  01a1efc6-41cd-775d-8758-e733aa086f7d  current
 ```
 
 The earlier version stays a member of the identity and can still be matched by later records. That keeps history intact, and it has a cost: an old version that lacks a value can match something the new version would not. [Review](/docs/concepts/review#a-conflict) shows what a missing value does.

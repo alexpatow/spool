@@ -119,6 +119,66 @@ export interface ApprovedPlacement {
 }
 
 /**
+ * The attributes of the records one source gave of one entity type.
+ */
+export interface AttributeGroup {
+  /**
+   * The columns the source declares, in its order and without its
+   * evidence column, and then any other attribute a record has, by name.
+   */
+  attributes: AttributeSummary[];
+  entity_type: EntityType;
+  /**
+   * The records that stand: the latest version of each row or mention,
+   * not one its source took back, and not a mention found in a version
+   * of a document that a later version replaced.
+   */
+  records: number;
+  source: string;
+}
+
+/**
+ * `GET /v1/attributes`: what the attributes of the records that stand
+ * hold, for each entity type and source.
+ */
+export interface AttributeList {
+  /**
+   * By entity type, then by source.
+   */
+  groups: AttributeGroup[];
+}
+
+/**
+ * One attribute of a group's records.
+ */
+export interface AttributeSummary {
+  /**
+   * The values most records have, the most common first, and of values
+   * as common the first in text order. When every value is held by one
+   * record, these are examples. Each is cut at 200 characters.
+   */
+  common: ValueCount[];
+  /**
+   * How many different values those records have.
+   */
+  distinct: number;
+  /**
+   * The features the entity type computes from it, for records of this
+   * source.
+   */
+  features: DerivedFeature[];
+  /**
+   * The records that have a value for it that is not empty text.
+   */
+  filled: number;
+  /**
+   * Whether it is the column that holds each row's key in its source.
+   */
+  key: boolean;
+  name: string;
+}
+
+/**
  * A changeset the engine wrote for a caller, and its receipt.
  */
 export interface Authored {
@@ -462,11 +522,31 @@ export interface DeclaredSource {
    */
   entity_types: EntityType[];
   /**
+   * The column of JSON text that says where each row was found, if the
+   * source names one. It is a record's evidence, not part of its payload.
+   */
+  evidence?: string | null;
+  /**
    * The column that holds each row's key within the source, if the
    * source names one.
    */
   key?: string | null;
   name: string;
+}
+
+/**
+ * A feature, and how the source's columns become it.
+ */
+export interface DerivedFeature {
+  /**
+   * Every column it is computed from, this one among them.
+   */
+  from: string[];
+  name: string;
+  /**
+   * The transform, or the function, the columns go through.
+   */
+  transform?: string | null;
 }
 
 /**
@@ -2135,6 +2215,11 @@ export type ReviewKind = "possible_merge" | "conflict" | "possible_split";
 
 export interface ReviewList {
   items: ReviewEntry[];
+  /**
+   * With `limit`: pass as `after` for the next page. `null` on the last
+   * page, and without `limit`, which lists every item.
+   */
+  next?: number | null;
 }
 
 export type ReviewStatus = "open" | "resolved" | "superseded" | "dismissed";
@@ -2718,6 +2803,11 @@ export interface UndoRequest {
    */
   commit?: boolean | null;
   reason?: string | null;
+}
+
+export interface ValueCount {
+  records: number;
+  value: string;
 }
 
 export type Verdict = "match" | "no_match" | "unsure";

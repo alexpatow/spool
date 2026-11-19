@@ -127,9 +127,6 @@ Each of these works and costs you something.
 - The API answers in JSON on one line. `spool show` is the readable way to see what a call did.
 - An identity is addressed only by its ID, which differs in every store, so a correction starts with a lookup.
 - `spool show records` puts `c-10` before `c-2`, because keys are text.
-- `spool show records` lists every version of a row or a mention beside the latest, so a mention found in two versions of a document is listed twice. It has no `--latest`, which `spool show documents` has.
-- `spool show records` lists each record's label and no other attribute, and `spool info` lists each entity type's features and not each source's columns, which only `spool info --json` has. A record's values are shown one record at a time, by `spool show records <record>`.
-- Starting the development store over has no command: stop `spool dev` and delete `.spool/`.
 - `spool dev` says nothing when a broken file is fixed by removing it.
 - A call that is refused still uses up a run number.
 - Strategies and extractors need `uv` or `bun` on the machine. `spool init --example companies` says so when `uv` is missing, and nothing else does until one is run.

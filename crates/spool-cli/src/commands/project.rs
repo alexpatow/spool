@@ -12,9 +12,13 @@ use crate::args::Spec;
 pub const INFO_USAGE: &str = "\
 Usage: spool info [<dir>] [options]
 
-Lists what the project directory declares: its sources, its entity types,
-their feature columns, their rules and their user-code strategies, and its extractors.
-Every SQL file is checked on the way.
+Lists what the project directory declares: its sources, with the columns
+each has and the features each column becomes; its entity types, with their
+feature columns, their rules and their user-code strategies; and its
+extractors. Every SQL file is checked on the way.
+
+What the records hold in those columns is on the server: `spool show
+attributes` says how many records have each and the values most have.
 
   <dir>     the project directory (default: the current directory)
 
@@ -258,6 +262,7 @@ pub fn info(arguments: &[String]) -> Result<(), Failure> {
                 "label": entity_type.declaration.label,
                 "features": entity_type.declaration.columns,
                 "sources": entity_type.sources,
+                "mapping": entity_type.mapping,
                 "rules": {
                     "block": names(&entity_type.rules.block),
                     "no_match": names(&entity_type.rules.no_match),
@@ -279,6 +284,9 @@ pub fn info(arguments: &[String]) -> Result<(), Failure> {
 
     println!("project   {}", dir.display());
     println!("manifest  {}", manifest.hash);
+    for source in &manifest.sources {
+        print_source(&manifest, source);
+    }
     if manifest.entity_types.is_empty() {
         println!("\nno entity types: add a directory under entities/ with an entity.yaml");
     }
@@ -335,6 +343,87 @@ pub fn info(arguments: &[String]) -> Result<(), Failure> {
         println!("\nwarning: {warning}");
     }
     Ok(())
+}
+
+/// A source: its columns, and the features of each entity type that each
+/// column becomes, as the types' mappings say.
+fn print_source(manifest: &Manifest, source: &spool::Source) {
+    let readers: Vec<&spool::EntityTypeManifest> = manifest
+        .entity_types
+        .iter()
+        .filter(|entity_type| entity_type.sources.contains(&source.name))
+        .collect();
+    println!("\nsource `{}`", source.name);
+    println!(
+        "  read by   {}",
+        match readers.is_empty() {
+            true => "no entity type: no mapping in entities/*/entity.yaml names it".to_owned(),
+            false => readers
+                .iter()
+                .map(|entity_type| entity_type.name.to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+        }
+    );
+    let mut rows = vec![vec![
+        "  column".to_owned(),
+        match readers.len() {
+            1 => format!("becomes, in `{}`", readers[0].name),
+            _ => "becomes".to_owned(),
+        },
+    ]];
+    for column in &source.columns {
+        let mut becomes = Vec::new();
+        if source.key.as_ref() == Some(column) {
+            becomes.push("the key of each row".to_owned());
+        }
+        if source.evidence.as_ref() == Some(column) {
+            becomes.push("the evidence of each record".to_owned());
+        }
+        for entity_type in &readers {
+            let Some(mapping) = entity_type.mapping.get(&source.name) else {
+                continue;
+            };
+            let features: Vec<String> = entity_type
+                .declaration
+                .columns
+                .iter()
+                .filter_map(|feature| {
+                    let mapped = mapping.get(&feature.name)?;
+                    mapped
+                        .from
+                        .contains(column)
+                        .then(|| match &mapped.transform {
+                            None => feature.name.clone(),
+                            Some(transform) => format!(
+                                "{} = {transform}({})",
+                                feature.name,
+                                mapped.from.join(", ")
+                            ),
+                        })
+                })
+                .collect();
+            if features.is_empty() {
+                continue;
+            }
+            becomes.push(match readers.len() {
+                1 => features.join(", "),
+                _ => format!("{}: {}", entity_type.name, features.join(", ")),
+            });
+        }
+        if becomes.is_empty() {
+            becomes.push("no feature".to_owned());
+        }
+        rows.push(vec![format!("  {column}"), becomes.join("; ")]);
+    }
+    let width = rows
+        .iter()
+        .map(|row| row[0].chars().count())
+        .max()
+        .unwrap_or(0);
+    for row in rows {
+        println!("{:<width$}  {}", row[0], row[1]);
+    }
 }
 
 pub fn build(arguments: &[String]) -> Result<(), Failure> {

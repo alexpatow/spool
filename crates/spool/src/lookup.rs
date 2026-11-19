@@ -140,6 +140,10 @@ pub struct RecordFilter {
     /// Only those that wait for an identity: they have none, and their
     /// source has not taken them back.
     pub unassigned: bool,
+    /// Only the version of each row or mention that nothing has replaced,
+    /// and no mention found in a version of a document that a later one
+    /// replaced.
+    pub latest: bool,
     /// Only those that come after this record in the list: the last one of
     /// the page before. A record the store does not hold is refused.
     pub after: Option<RecordId>,
@@ -158,6 +162,7 @@ impl Default for RecordFilter {
             identity: None,
             q: None,
             unassigned: false,
+            latest: false,
             after: None,
             limit: 100,
             sort: None,
@@ -422,6 +427,10 @@ pub struct DeclaredSource {
     /// The column that holds each row's key within the source, if the
     /// source names one.
     pub key: Option<String>,
+    /// The column of JSON text that says where each row was found, if the
+    /// source names one. It is a record's evidence, not part of its payload.
+    #[serde(default)]
+    pub evidence: Option<String>,
     /// The columns a row of it may have. A row with any other is refused.
     pub columns: Vec<String>,
     /// The entity types whose mapping reads the source, by name. Its rows
@@ -635,6 +644,15 @@ impl RecordSort {
     }
 }
 
+/// SQL for whether the record `o` is not a mention found in a version of
+/// a document that a later version replaced. A mention's key names its
+/// document, so one found in the new version does not replace one found in
+/// the old: they are records of their own.
+pub(crate) const DOCUMENT_STANDS: &str = "NOT EXISTS (
+       SELECT 1 FROM spool.document replaced
+       WHERE replaced.supersedes
+             = TRY_CAST(json_extract_string(o.evidence, '$.document') AS UUID))";
+
 pub(crate) fn records(conn: &Connection, filter: &RecordFilter) -> Result<Vec<RecordEntry>> {
     // A page continues from where a record stands, so the record has to be
     // one the store holds. Records are never deleted, so the last one of a
@@ -657,7 +675,9 @@ pub(crate) fn records(conn: &Connection, filter: &RecordFilter) -> Result<Vec<Re
            AND ($7::VARCHAR IS NULL
                 OR json_extract_string(o.evidence, '$.document') = $7::VARCHAR)
            AND ($8::VARCHAR IS NULL OR m.identity_id = $8::UUID)
+           AND (NOT $10::BOOLEAN OR (later.record_id IS NULL AND {}))
            AND {}",
+        DOCUMENT_STANDS,
         holds_words("$9")
     );
     let sql = match filter.sort {
@@ -713,6 +733,7 @@ pub(crate) fn records(conn: &Connection, filter: &RecordFilter) -> Result<Vec<Re
         filter.document.map(|id| id.to_string()),
         filter.identity.map(|id| id.to_string()),
         words(filter.q.as_deref()),
+        filter.latest,
     ])?;
     let mut found = Vec::new();
     while let Some(row) = rows.next()? {
@@ -1252,6 +1273,7 @@ fn declared_sources(manifest: &Manifest) -> Vec<DeclaredSource> {
         .map(|source| DeclaredSource {
             name: source.name.clone(),
             key: source.key.clone(),
+            evidence: source.evidence.clone(),
             columns: source.columns.clone(),
             entity_types: manifest
                 .entity_types

@@ -215,6 +215,100 @@
       ],
       "type": "object"
     },
+    "AttributeGroup": {
+      "description": "The attributes of the records one source gave of one entity type.",
+      "properties": {
+        "attributes": {
+          "description": "The columns the source declares, in its order and without its\nevidence column, and then any other attribute a record has, by name.",
+          "items": {
+            "$ref": "#/$defs/AttributeSummary"
+          },
+          "type": "array"
+        },
+        "entity_type": {
+          "$ref": "#/$defs/EntityType"
+        },
+        "records": {
+          "description": "The records that stand: the latest version of each row or mention,\nnot one its source took back, and not a mention found in a version\nof a document that a later version replaced.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "entity_type",
+        "source",
+        "records",
+        "attributes"
+      ],
+      "type": "object"
+    },
+    "AttributeList": {
+      "description": "`GET /v1/attributes`: what the attributes of the records that stand\nhold, for each entity type and source.",
+      "properties": {
+        "groups": {
+          "description": "By entity type, then by source.",
+          "items": {
+            "$ref": "#/$defs/AttributeGroup"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "groups"
+      ],
+      "type": "object"
+    },
+    "AttributeSummary": {
+      "description": "One attribute of a group's records.",
+      "properties": {
+        "common": {
+          "description": "The values most records have, the most common first, and of values\nas common the first in text order. When every value is held by one\nrecord, these are examples. Each is cut at 200 characters.",
+          "items": {
+            "$ref": "#/$defs/ValueCount"
+          },
+          "type": "array"
+        },
+        "distinct": {
+          "description": "How many different values those records have.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "features": {
+          "description": "The features the entity type computes from it, for records of this\nsource.",
+          "items": {
+            "$ref": "#/$defs/DerivedFeature"
+          },
+          "type": "array"
+        },
+        "filled": {
+          "description": "The records that have a value for it that is not empty text.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "key": {
+          "description": "Whether it is the column that holds each row's key in its source.",
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "key",
+        "filled",
+        "distinct",
+        "common",
+        "features"
+      ],
+      "type": "object"
+    },
     "Authored": {
       "description": "A changeset the engine wrote for a caller, and its receipt.",
       "properties": {
@@ -938,6 +1032,14 @@
           },
           "type": "array"
         },
+        "evidence": {
+          "default": null,
+          "description": "The column of JSON text that says where each row was found, if the\nsource names one. It is a record's evidence, not part of its payload.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "key": {
           "description": "The column that holds each row's key within the source, if the\nsource names one.",
           "type": [
@@ -953,6 +1055,33 @@
         "name",
         "columns",
         "entity_types"
+      ],
+      "type": "object"
+    },
+    "DerivedFeature": {
+      "description": "A feature, and how the source's columns become it.",
+      "properties": {
+        "from": {
+          "description": "Every column it is computed from, this one among them.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "name": {
+          "type": "string"
+        },
+        "transform": {
+          "description": "The transform, or the function, the columns go through.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "from"
       ],
       "type": "object"
     },
@@ -4436,6 +4565,16 @@
             "$ref": "#/$defs/ReviewEntry"
           },
           "type": "array"
+        },
+        "next": {
+          "default": null,
+          "description": "With `limit`: pass as `after` for the next page. `null` on the last\npage, and without `limit`, which lists every item.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         }
       },
       "required": [
@@ -5557,6 +5696,23 @@
           ]
         }
       },
+      "type": "object"
+    },
+    "ValueCount": {
+      "properties": {
+        "records": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "records"
+      ],
       "type": "object"
     },
     "Verdict": {

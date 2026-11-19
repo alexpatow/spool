@@ -455,6 +455,22 @@ fn init_scaffolds_a_project_that_info_lists_and_build_compiles() {
     assert!(listing.contains("block     name_prefix"), "{listing}");
     assert!(listing.contains("no_match  different_country"), "{listing}");
     assert!(listing.contains("match     similar_name"), "{listing}");
+    // Each source's columns, and the features each becomes.
+    assert!(
+        listing.contains(
+            "\nsource `crm`\n  read by   company\n  column   becomes, in `company`\n  \
+             id       the key of each row\n  name     name, name_key = name_key(name)\n  \
+             country  country\n"
+        ),
+        "{listing}"
+    );
+    assert!(
+        listing.contains(
+            "\nsource `notes`\n  read by   company\n  column  becomes, in `company`\n  \
+             name    name, name_key = name_key(name)\n"
+        ),
+        "{listing}"
+    );
     // The sample rows are the reader's to load, and no part of the project.
     assert!(!listing.contains("samples"), "{listing}");
     assert!(!listing.contains("not used"), "{listing}");
@@ -469,8 +485,36 @@ fn init_scaffolds_a_project_that_info_lists_and_build_compiles() {
             "match": ["similar_name"],
         })
     );
+    assert_eq!(
+        listing["entity_types"][0]["mapping"]["crm"]["name_key"],
+        json!({ "from": ["name"], "transform": "name_key" })
+    );
+    assert_eq!(
+        listing["sources"][0],
+        json!({ "name": "crm", "key": "id", "columns": ["id", "name", "country"] })
+    );
     assert_eq!(listing["ignored"], json!([]));
     assert_eq!(listing["warnings"], json!([]));
+
+    // With more than one type, each column says which type it serves, and
+    // a source no type reads says so.
+    let two = dir.path().join("two");
+    write_two_of_each(&two);
+    let two_listing = succeed(&["info", path(&two)]);
+    assert!(
+        two_listing.contains(
+            "\nsource `crm`\n  read by   company, person\n  column  becomes\n  \
+             id      the key of each row\n  name    company: name; person: name\n"
+        ),
+        "{two_listing}"
+    );
+    assert!(
+        two_listing.contains(
+            "\nsource `spare`\n  read by   no entity type: no mapping in entities/*/entity.yaml names it\n  \
+             column  becomes\n  id      the key of each row\n  name    no feature\n"
+        ),
+        "{two_listing}"
+    );
 
     let built = succeed(&["build", path(&project)]);
     let manifest: Value =

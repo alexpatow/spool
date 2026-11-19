@@ -512,7 +512,7 @@ fn a_tool_that_looks_something_up_answers_what_the_api_answers() {
         "list_review_items",
         json!({ "status": "dismissed" }),
     );
-    assert_eq!(none, json!({ "items": [] }));
+    assert_eq!(none, json!({ "items": [], "next": null }));
     assert_eq!(
         tool(&server, "get_review_case", json!({ "item": 1 })),
         server.read("/v1/review/1/case")
@@ -713,7 +713,7 @@ fn a_tool_that_changes_something_is_held_to_the_rules_of_the_api() {
     assert_eq!(dismissed["dismissed"]["reason"], "too little to go on");
     assert_eq!(
         tool(&server, "list_review_items", json!({})),
-        json!({ "items": [] })
+        json!({ "items": [], "next": null })
     );
     let again = json!({ "item": 1, "reason": "again" });
     refused(&server, "dismiss_review_item", again, "conflict");
@@ -746,6 +746,7 @@ fn rows_are_loaded_matched_and_taken_back_through_tools() {
     let shop = json!({
         "name": "shop",
         "key": "id",
+        "evidence": null,
         "columns": ["id", "code", "colour", "name", "weight"],
         "entity_types": ["thing"],
     });

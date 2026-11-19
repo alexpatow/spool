@@ -362,6 +362,23 @@ impl DuckStore {
     }
 }
 
+/// A store's file held the way a reader holds it: no server opens the
+/// store until this is dropped, and nothing is written to the file.
+pub struct StoreHold {
+    _conn: Connection,
+}
+
+/// Holds the store's file, so that it can be removed while no server can
+/// open it. [`Error::StoreInUse`] if a server has it open. A file that
+/// DuckDB cannot read as a database is another error.
+pub fn hold_store(path: &Path) -> Result<StoreHold> {
+    let conn = Connection::open_in_memory()?;
+    let file = path.to_string_lossy().replace('\'', "''");
+    conn.execute_batch(&format!("ATTACH '{file}' AS {CATALOG} (READ_ONLY)"))
+        .map_err(|error| in_use(path, error))?;
+    Ok(StoreHold { _conn: conn })
+}
+
 /// What opening the file at `path` failed with. DuckDB lets one process
 /// write to a database file, and refuses a second in words of its own: the
 /// file, the program and process that has it, and a page of DuckDB's

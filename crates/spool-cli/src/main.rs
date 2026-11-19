@@ -15,6 +15,7 @@ Commands:
   apply      apply a manifest to a store
   serve      run the server from a manifest and a store
   dev        run the server on localhost and apply file changes as they are saved
+  reset      start the development store of `spool dev` over
   load       send the rows of a file to a running server
   extract    find records in documents with one of the project's extractors
   match      match the new records on a running server and place them in identities
@@ -83,6 +84,7 @@ fn main() -> ExitCode {
         "apply" => (commands::project::APPLY_USAGE, commands::project::apply),
         "serve" => (commands::serve::SERVE_USAGE, commands::serve::serve),
         "dev" => (commands::serve::DEV_USAGE, commands::serve::dev),
+        "reset" => (commands::reset::USAGE, commands::reset::reset),
         "load" => (commands::load::USAGE, commands::load::load),
         "extract" => (commands::extract::USAGE, commands::extract::extract),
         "match" => (commands::matching::USAGE, commands::matching::run),

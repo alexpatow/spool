@@ -18,6 +18,7 @@ use spool_core::{
     ValidationError, Verdict, inverse, reconcile, validate,
 };
 
+use crate::attributes::{AttributeFilter, AttributeGroup};
 use crate::drafts::{self, DraftEntry, DraftFilter, DraftStatus, DraftSummary};
 use crate::error::{Error, Result};
 use crate::explain::{self, Explanation, IdentityExplanation};
@@ -1124,6 +1125,13 @@ impl Engine {
     /// them.
     pub fn records(&self, filter: &RecordFilter) -> Result<Vec<RecordEntry>> {
         self.read(|conn| lookup::records(conn, filter))
+    }
+
+    /// What the attributes of the records that stand hold, for each
+    /// entity type and source the filter takes: see [`AttributeGroup`].
+    pub fn attributes(&self, filter: &AttributeFilter) -> Result<Vec<AttributeGroup>> {
+        let manifest = self.manifest();
+        self.read(|conn| crate::attributes::attributes(conn, manifest.as_deref(), filter))
     }
 
     /// Why two records share an identity, or do not: where each is,

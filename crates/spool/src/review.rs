@@ -251,6 +251,10 @@ pub struct ReviewFilter {
     pub id: Option<u64>,
     /// Only the items that name this record.
     pub record: Option<RecordId>,
+    /// Only the items after this ID: the last one of the page before.
+    pub after: Option<u64>,
+    /// At most this many. `None` is every item.
+    pub limit: Option<u64>,
 }
 
 impl ReviewFilter {
@@ -276,13 +280,19 @@ pub(crate) fn list(conn: &Connection, filter: &ReviewFilter) -> Result<Vec<Revie
            AND ($2::VARCHAR IS NULL OR entity_type = $2::VARCHAR)
            AND ($3::BIGINT IS NULL OR review_id = $3::BIGINT)
            AND ($4::VARCHAR IS NULL OR list_contains(record_ids, $4::UUID))
-         ORDER BY review_id",
+           AND ($5::BIGINT IS NULL OR review_id > $5::BIGINT)
+         ORDER BY review_id
+         LIMIT $6",
     )?;
     let mut rows = statement.query(params![
         filter.status.map(ReviewStatus::as_str),
         filter.entity_type.as_ref().map(EntityType::as_str),
         filter.id.map(|id| id as i64),
         filter.record.map(|id| id.to_string()),
+        filter.after.map(|id| id.min(i64::MAX as u64) as i64),
+        filter
+            .limit
+            .map_or(i64::MAX, |limit| limit.min(i64::MAX as u64) as i64),
     ])?;
     let mut items = Vec::new();
     while let Some(row) = rows.next()? {

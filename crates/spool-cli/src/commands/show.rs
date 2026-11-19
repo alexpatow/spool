@@ -11,9 +11,10 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use spool::core::{ChangesetId, ConstraintEntry, DocumentId, IdentityId, Op, RecordId, ReviewItem};
 use spool::{
-    DocumentEntry, DraftEntry, DraftSummary, Explanation, HistoryEntry, IdentityExplanation,
-    IdentitySummary, IdentityView, Link, LoggedChangeset, Member, Named, RecordEntry, ReviewEntry,
-    ReviewKind, ReviewStatus, RuleResult, RunEntry, Split, how_linked,
+    AttributeGroup, AttributeSummary, DerivedFeature, DocumentEntry, DraftEntry, DraftSummary,
+    Explanation, HistoryEntry, IdentityExplanation, IdentitySummary, IdentityView, Link,
+    LoggedChangeset, Member, Named, RecordEntry, ReviewEntry, ReviewKind, ReviewStatus, RuleResult,
+    RunEntry, Split, how_linked,
 };
 use spool_cli::api::{DocumentList, Info, RecordList};
 
@@ -33,6 +34,10 @@ much there is of each.
   records [<record>]             records by source and key, or one with its
                                  payload, its evidence and, for a mention, the
                                  place in the document it was found in
+  attributes                     for each entity type and source, the
+                                 attributes its records have: how many have
+                                 each, how many values it takes, the most
+                                 common, and the features made from it
   documents [<document>]         documents, or one with its text
   review [<item>]                review items, or one with its records
   drafts [<draft>]               drafts, or one with the changeset it would commit
@@ -50,18 +55,25 @@ A record is named by its ID or as <source>:<key>, which names the
 latest version of that row. A record found in a document is named as the
 lists name it, <source>:<document>[<start>-<end>].
 
+Lists of records and documents show the version of each that nothing
+replaced; `--all-versions` shows the versions that later loads replaced as
+well. Attributes are counted over the records that stand: the latest
+version of each, and not one its source took back.
+
 Options:
   --type <name>      only this entity type (runs, identities, records,
-                     review, drafts)
+                     attributes, review, drafts)
   --status <status>  only this status (runs, review, drafts)
   --kind <kind>      only runs of this kind: load, extract, match, reconcile,
                      retract
-  --source <name>    only this source (records, documents)
+  --source <name>    only this source (records, attributes, documents)
   --key <key>        only this key within its source (records, documents)
   --document <id>    only the mentions found in this document (records)
   --unassigned       only records that wait for an identity: they have
                      none, and their source has not taken them back
-  --latest           only the version of each document that nothing replaced
+  --all-versions     every version, the replaced ones too (records,
+                     documents)
+  --attributes       a column for each attribute of the records (records)
   --ids              list each record's ID as well (records)
   --sort <column>    list identities by this, with --order: records (how
                      many records), names (how many different labels),
@@ -69,8 +81,10 @@ Options:
   --order <order>    asc or desc (default: asc). `--sort records --order desc`
                      lists the largest identities first
   --after <id>       continue a list after this ID, or the log after this
-                     position, in the order of the list
-  --limit <n>        list at most this many
+                     position, in the order of the list (identities,
+                     records, documents, review, log)
+  --limit <n>        list at most this many (runs, identities, records,
+                     documents, review, log)
   --url <url>        the server (default: $SPOOL_URL, or http://127.0.0.1:7765)
   --token <token>    a token of that server (default: $SPOOL_TOKEN); `spool dev`
                      asks for none
@@ -110,7 +124,7 @@ Options:
 
 /// The options that narrow a list, each with the query parameter it becomes
 /// and whether it takes a value.
-const FILTERS: [(&str, &str, bool); 12] = [
+const FILTERS: [(&str, &str, bool); 11] = [
     ("--type", "entity_type", true),
     ("--sort", "sort", true),
     ("--order", "order", true),
@@ -122,7 +136,6 @@ const FILTERS: [(&str, &str, bool); 12] = [
     ("--after", "after", true),
     ("--limit", "limit", true),
     ("--unassigned", "unassigned", false),
-    ("--latest", "latest", false),
 ];
 
 /// How much of a document is shown on either side of a mention, in
@@ -147,7 +160,13 @@ pub fn show(arguments: &[String]) -> Result<(), Failure> {
                 remote::VALUES[0],
                 remote::VALUES[1],
             ],
-            flags: &["--unassigned", "--latest", "--ids", "--json"],
+            flags: &[
+                "--unassigned",
+                "--all-versions",
+                "--attributes",
+                "--ids",
+                "--json",
+            ],
             positional: 2,
         },
     )?;
@@ -159,9 +178,21 @@ pub fn show(arguments: &[String]) -> Result<(), Failure> {
     };
     let what = arguments.positional.first().map(String::as_str);
     let id = arguments.positional.get(1).map(String::as_str);
-    if arguments.flag("--ids") && !matches!((what, id), (Some("record" | "records"), None)) {
+    for flag in ["--ids", "--attributes"] {
+        if arguments.flag(flag) && !matches!((what, id), (Some("record" | "records"), None)) {
+            return Err(Failure::Usage(format!(
+                "`{flag}` goes with the list of records"
+            )));
+        }
+    }
+    if arguments.flag("--all-versions")
+        && !matches!(
+            (what, id),
+            (Some("record" | "records" | "document" | "documents"), None)
+        )
+    {
         return Err(Failure::Usage(
-            "`--ids` goes with the list of records".to_owned(),
+            "`--all-versions` goes with the lists of records and documents".to_owned(),
         ));
     }
     match (what, id) {
@@ -172,6 +203,10 @@ pub fn show(arguments: &[String]) -> Result<(), Failure> {
         (Some("identity" | "identities"), Some(id)) => view.identity(id),
         (Some("record" | "records"), None) => view.records(),
         (Some("record" | "records"), Some(id)) => view.record(id),
+        (Some("attribute" | "attributes"), None) => view.attributes(),
+        (Some("attribute" | "attributes"), Some(id)) => {
+            Err(Failure::Usage(format!("unexpected argument `{id}`")))
+        }
         (Some("document" | "documents"), None) => view.documents(),
         (Some("document" | "documents"), Some(id)) => view.document(id),
         (Some("review" | "reviews"), None) => view.review_items(),
@@ -415,6 +450,134 @@ impl View<'_> {
         }
         self.arguments.number("--limit").map_err(Failure::Usage)?;
         Ok(query)
+    }
+
+    /// The documents that the mentions among `records` were found in and
+    /// that a later version replaced. Such a mention is not current, though
+    /// nothing replaced the mention itself: one found in the new version is
+    /// a record of its own.
+    fn replaced_documents(&self, records: &[RecordEntry]) -> Result<Vec<DocumentId>, Failure> {
+        let mut documents: Vec<DocumentId> = records.iter().filter_map(mention_document).collect();
+        documents.sort_unstable();
+        documents.dedup();
+        let mut replaced = Vec::new();
+        for document in documents {
+            if let Some(found) = self.remote.find(&format!("/documents/{document}"), &[])?
+                && !found["superseded_by"].is_null()
+            {
+                replaced.push(document);
+            }
+        }
+        Ok(replaced)
+    }
+
+    /// Whether a list shows every version. Without `--all-versions` it asks
+    /// for the ones nothing replaced.
+    fn all_versions(&self, query: &mut Vec<(&'static str, String)>) -> bool {
+        let all = self.arguments.flag("--all-versions");
+        if !all {
+            query.push(("latest", "true".to_owned()));
+        }
+        all
+    }
+
+    /// The attributes a list of records shows a column for: the columns
+    /// each record's source declares, in its order, other than its key,
+    /// which the list shows already, and its evidence. Then any other a
+    /// record has, such as a column the source no longer declares.
+    fn attribute_columns(&self, records: &[RecordEntry]) -> Result<Vec<String>, Failure> {
+        let info: Info = typed(&self.remote.list("/info", &[])?)?;
+        let mut columns: Vec<String> = Vec::new();
+        let mut add = |column: &String| {
+            if !columns.contains(column) {
+                columns.push(column.clone());
+            }
+        };
+        for record in records {
+            let source = info
+                .store
+                .sources
+                .iter()
+                .find(|source| source.name == record.source);
+            let shown = |column: &&String| {
+                source.is_none_or(|source| {
+                    source.key.as_ref() != Some(*column)
+                        && source.evidence.as_ref() != Some(*column)
+                })
+            };
+            if let Some(source) = source {
+                source.columns.iter().filter(shown).for_each(&mut add);
+            }
+            if let Some(payload) = record.payload.as_object() {
+                payload.keys().filter(shown).for_each(&mut add);
+            }
+        }
+        Ok(columns)
+    }
+
+    fn attributes(&self) -> Result<(), Failure> {
+        let query = self.query("attributes", &["--type", "--source"])?;
+        let answer = self.remote.list("/attributes", &query)?;
+        if self.json {
+            print_json(&answer);
+            return Ok(());
+        }
+        let groups: Vec<AttributeGroup> = typed(&answer["groups"])?;
+        if groups.is_empty() {
+            println!(
+                "no records{}",
+                match query.is_empty() {
+                    true =>
+                        ": `spool load <file>` sends rows, and `spool extract` finds them in documents",
+                    false => " of that entity type and source",
+                }
+            );
+            return Ok(());
+        }
+        for (number, group) in groups.iter().enumerate() {
+            if number > 0 {
+                println!();
+            }
+            println!(
+                "entity type `{}`, source `{}`: {}",
+                group.entity_type,
+                group.source,
+                match group.records {
+                    0 => "no records yet".to_owned(),
+                    records => count(records, "record"),
+                }
+            );
+            let rows = group
+                .attributes
+                .iter()
+                .map(|attribute| {
+                    vec![
+                        match attribute.key {
+                            true => format!("{} (key)", attribute.name),
+                            false => attribute.name.clone(),
+                        },
+                        filled(attribute.filled, group.records),
+                        attribute.distinct.to_string(),
+                        common_values(attribute),
+                        becomes(&attribute.features),
+                    ]
+                })
+                .collect();
+            table(
+                "attributes",
+                &["attribute", "filled", "distinct", "most common", "features"],
+                rows,
+            );
+        }
+        let source = match &groups[..] {
+            [only] => format!(" --source {}", only.source),
+            _ => String::new(),
+        };
+        println!(
+            "
+`spool show records{source} --attributes` lists the values record by record."
+        );
+        Ok(())
     }
 
     /// A single thing takes no options that narrow a list.
@@ -943,7 +1106,7 @@ impl View<'_> {
     }
 
     fn records(&self) -> Result<(), Failure> {
-        let query = self.query(
+        let mut query = self.query(
             "records",
             &[
                 "--type",
@@ -955,17 +1118,23 @@ impl View<'_> {
                 "--limit",
             ],
         )?;
+        let narrowed = !query.is_empty();
+        let all_versions = self.all_versions(&mut query);
         let answer = self.remote.list("/records", &query)?;
         if self.json {
             print_json(&answer);
             return Ok(());
         }
         let records: Vec<RecordEntry> = typed(&answer["records"])?;
-        if records.is_empty() && query.is_empty() {
+        if records.is_empty() && !narrowed {
             println!("no records: `spool load <file>` sends rows");
             return Ok(());
         }
         let ids = self.arguments.flag("--ids");
+        let attributes = match self.arguments.flag("--attributes") {
+            true => self.attribute_columns(&records)?,
+            false => Vec::new(),
+        };
         let typed_rows = mixed(records.iter().map(|record| &record.entity_type));
         let mut headers = Vec::new();
         if ids {
@@ -974,7 +1143,20 @@ impl View<'_> {
         if typed_rows {
             headers.push("type");
         }
-        headers.extend(["source and key", "name", "identity"]);
+        headers.push("source and key");
+        if self.arguments.flag("--attributes") {
+            headers.extend(attributes.iter().map(String::as_str));
+        } else {
+            headers.push("name");
+        }
+        headers.push("identity");
+        let replaced_documents = match all_versions {
+            true => self.replaced_documents(&records)?,
+            false => Vec::new(),
+        };
+        if all_versions {
+            headers.push("version");
+        }
         table(
             "records",
             &headers,
@@ -988,13 +1170,27 @@ impl View<'_> {
                     if typed_rows {
                         row.push(record.entity_type.to_string());
                     }
-                    row.extend([
-                        record_name(record),
-                        label(record.label.as_deref()),
+                    row.push(record_name(record));
+                    if self.arguments.flag("--attributes") {
+                        row.extend(attributes.iter().map(|attribute| {
+                            match record.payload.get(attribute) {
+                                Some(value) if !value.is_null() => label(Some(&plain(value))),
+                                _ => "-".to_owned(),
+                            }
+                        }));
+                    } else {
+                        row.push(label(record.label.as_deref()));
+                    }
+                    row.push(
                         record
                             .identity
                             .map_or_else(|| "-".to_owned(), |identity| identity.to_string()),
-                    ]);
+                    );
+                    if all_versions {
+                        let in_replaced = mention_document(record)
+                            .is_some_and(|document| replaced_documents.contains(&document));
+                        row.push(version(record.superseded_by.is_some() || in_replaced));
+                    }
                     row
                 })
                 .collect(),
@@ -1169,28 +1365,34 @@ impl View<'_> {
     }
 
     fn documents(&self) -> Result<(), Failure> {
-        let query = self.query(
-            "documents",
-            &["--source", "--key", "--latest", "--after", "--limit"],
-        )?;
+        let mut query = self.query("documents", &["--source", "--key", "--after", "--limit"])?;
+        let all_versions = self.all_versions(&mut query);
         let answer = self.remote.list("/documents", &query)?;
         if self.json {
             print_json(&answer);
             return Ok(());
         }
         let documents: Vec<DocumentEntry> = typed(&answer["documents"])?;
+        let mut headers = vec!["document", "source and key", "characters", "read by"];
+        if all_versions {
+            headers.push("version");
+        }
         table(
             "documents",
-            &["document", "source and key", "characters", "read by"],
+            &headers,
             documents
                 .iter()
                 .map(|document| {
-                    vec![
+                    let mut row = vec![
                         document.id.to_string(),
                         named(&document.source, Some(&document.key)),
                         document.length.to_string(),
                         read_by(document),
-                    ]
+                    ];
+                    if all_versions {
+                        row.push(version(document.superseded_by.is_some()));
+                    }
+                    row
                 })
                 .collect(),
         );
@@ -1239,7 +1441,7 @@ impl View<'_> {
     }
 
     fn review_items(&self) -> Result<(), Failure> {
-        let query = self.query("review", &["--type", "--status"])?;
+        let query = self.query("review", &["--type", "--status", "--after", "--limit"])?;
         let answer = self.remote.list("/review", &query)?;
         if self.json {
             print_json(&answer);
@@ -1263,6 +1465,7 @@ impl View<'_> {
                 })
                 .collect(),
         );
+        more(&answer);
         Ok(())
     }
 
@@ -2064,6 +2267,100 @@ fn record_name(record: &RecordEntry) -> String {
     }
 }
 
+/// The document a mention was found in, or `None` for a record that is
+/// not a mention.
+fn mention_document(record: &RecordEntry) -> Option<DocumentId> {
+    record.evidence.as_ref()?["document"].as_str()?.parse().ok()
+}
+
+/// What a list that shows every version says of each.
+fn version(replaced: bool) -> String {
+    match replaced {
+        true => "replaced".to_owned(),
+        false => "current".to_owned(),
+    }
+}
+
+/// How many records have a value, and what part of all of them that is.
+/// A part that is not all is never written as 100%, nor some as 0%.
+fn filled(filled: u64, records: u64) -> String {
+    if records == 0 {
+        return filled.to_string();
+    }
+    let percent = filled * 100 / records;
+    let percent = match (filled, percent) {
+        (0, _) => "0%".to_owned(),
+        (_, 0) => "<1%".to_owned(),
+        (filled, 100) if filled < records => "99%".to_owned(),
+        (_, percent) => format!("{percent}%"),
+    };
+    format!("{filled} ({percent})")
+}
+
+/// The most characters of a value the list of attributes shows.
+const VALUE_CHARACTERS: usize = 24;
+
+/// The values most records have, with how many have each. When each is
+/// held by one record they are examples, and said to be.
+fn common_values(attribute: &AttributeSummary) -> String {
+    if attribute.common.is_empty() {
+        return "-".to_owned();
+    }
+    let short = |value: &str| -> String {
+        let line: String = value
+            .chars()
+            .map(|character| match character {
+                '\n' | '\r' | '\t' => ' ',
+                other => other,
+            })
+            .collect();
+        match line.chars().count() > VALUE_CHARACTERS {
+            true => {
+                let kept: String = line.chars().take(VALUE_CHARACTERS - 1).collect();
+                format!("{}…", kept.trim_end())
+            }
+            false => line,
+        }
+    };
+    let examples = attribute.common.iter().all(|value| value.records == 1);
+    let mut values: Vec<String> = attribute
+        .common
+        .iter()
+        .map(|value| match examples {
+            true => short(&value.value),
+            false => format!("{} ({})", short(&value.value), value.records),
+        })
+        .collect();
+    if attribute.distinct > attribute.common.len() as u64 {
+        values.push("…".to_owned());
+    }
+    match examples && attribute.distinct > 1 {
+        true => format!("e.g. {}", values.join(", ")),
+        false => values.join(", "),
+    }
+}
+
+/// The features made from an attribute: a feature that is the column as it
+/// is by its name, and one computed from it as the feature, `=`, and what
+/// computes it.
+fn becomes(features: &[DerivedFeature]) -> String {
+    if features.is_empty() {
+        return "-".to_owned();
+    }
+    features
+        .iter()
+        .map(|feature| match &feature.transform {
+            None => feature.name.clone(),
+            Some(transform) => format!(
+                "{} = {transform}({})",
+                feature.name,
+                feature.from.join(", ")
+            ),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn versioned(name: &str, version: Option<&str>) -> String {
     match version {
         Some(version) => format!("{name}, version {version}"),
@@ -2212,7 +2509,9 @@ pub(super) fn aligned(rows: &[Vec<String>], indent: &str) {
 
 /// Says how to go on when a list has more than was shown.
 fn more(answer: &Value) {
-    if let Some(next) = answer["next"].as_str() {
-        println!("\nmore: add `--after {next}`");
+    match &answer["next"] {
+        Value::String(next) => println!("\nmore: add `--after {next}`"),
+        Value::Number(next) => println!("\nmore: add `--after {next}`"),
+        _ => {}
     }
 }

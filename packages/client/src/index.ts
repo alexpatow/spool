@@ -208,6 +208,8 @@ export interface RecordFilter extends Sorted<RecordSort> {
   q?: string;
   /** Only records that have no identity. */
   unassigned?: boolean;
+  /** Only the latest version of each row or mention. Default: every version. */
+  latest?: boolean;
   /** The `next` of the page before. */
   after?: RecordId;
   limit?: number;

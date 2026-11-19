@@ -12,7 +12,7 @@ use spool::core::{
     RecordId, Rejection, RunId, Seq, Verdict,
 };
 use spool::{
-    Authored, DocumentEntry, DraftEntry, DraftSummary, Explanation, HistoryEntry,
+    AttributeGroup, Authored, DocumentEntry, DraftEntry, DraftSummary, Explanation, HistoryEntry,
     IdentityExplanation, IdentitySummary, IdentityView, LoggedChangeset, MintedIds, NewDocument,
     RecomputeApplied, RecomputeReport, RecordEntry, ReviewCase, ReviewEntry, RunEntry, SplitReport,
     StoreInfo, StrategyRef, TypeResolution,
@@ -411,6 +411,14 @@ pub struct RecordList {
     pub next: Option<RecordId>,
 }
 
+/// `GET /v1/attributes`: what the attributes of the records that stand
+/// hold, for each entity type and source.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AttributeList {
+    /// By entity type, then by source.
+    pub groups: Vec<AttributeGroup>,
+}
+
 /// `POST /v1/records/identities`: the identities of many records
 /// in one call.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -429,6 +437,10 @@ pub struct IdentitiesOfResponse {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ReviewList {
     pub items: Vec<ReviewEntry>,
+    /// With `limit`: pass as `after` for the next page. `null` on the last
+    /// page, and without `limit`, which lists every item.
+    #[serde(default)]
+    pub next: Option<u64>,
 }
 
 /// `GET /v1/info`.
@@ -685,6 +697,7 @@ struct Wire {
     history: History,
     record_list: RecordList,
     record_from_row: RecordEntry,
+    attribute_list: AttributeList,
     identities_of_request: IdentitiesOfRequest,
     identities_of_response: IdentitiesOfResponse,
     review_list: ReviewList,
