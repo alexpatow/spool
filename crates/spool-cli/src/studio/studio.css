@@ -4,9 +4,9 @@
  *
  * The fonts this file names are served beside it. They are of the following.
  *
- * @fontsource-variable/geist 5.3.0
+ * @fontsource-variable/hanken-grotesk 5.3.0
  *
- * Copyright 2024 The Geist Project Authors (https://github.com/vercel/geist-font) Geist-Italic[wght].ttf: Copyright 2024 The Geist Project Authors (https://github.com/vercel/geist-font)
+ * Copyright 2021 The Hanken Grotesk Project Authors (https://github.com/marcologous/hanken-grotesk) HankenGrotesk-Italic[wght].ttf: Copyright 2021 The Hanken Grotesk Project Authors (https://github.com/marcologous/hanken-grotesk)
  *
  * This Font Software is licensed under the SIL Open Font License, Version 1.1.
  * This license is copied below, and is also available with a FAQ at:
@@ -100,14 +100,107 @@
  * FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
  * OTHER DEALINGS IN THE FONT SOFTWARE.
  *
- * @fontsource-variable/geist-mono 5.3.0
+ * @fontsource-variable/newsreader 5.3.0
  *
- * Copyright 2024 The Geist Project Authors (https://github.com/vercel/geist-font.git) GeistMono-Italic[wght].ttf: Copyright 2024 The Geist Project Authors (https://github.com/vercel/geist-font.git)
+ * Copyright 2020 The Newsreader Project Authors (http://github.com/productiontype/Newsreader) Newsreader-Italic[opsz,wght].ttf: Copyright 2020 The Newsreader Project Authors (http://github.com/productiontype/Newsreader)
  *
  * This Font Software is licensed under the SIL Open Font License, Version 1.1.
  * This license is copied below, and is also available with a FAQ at:
  * http://scripts.sil.org/OFL
  *
+ *
+ * -----------------------------------------------------------
+ * SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
+ * -----------------------------------------------------------
+ *
+ * PREAMBLE
+ * The goals of the Open Font License (OFL) are to stimulate worldwide
+ * development of collaborative font projects, to support the font creation
+ * efforts of academic and linguistic communities, and to provide a free and
+ * open framework in which fonts may be shared and improved in partnership
+ * with others.
+ *
+ * The OFL allows the licensed fonts to be used, studied, modified and
+ * redistributed freely as long as they are not sold by themselves. The
+ * fonts, including any derivative works, can be bundled, embedded,
+ * redistributed and/or sold with any software provided that any reserved
+ * names are not used by derivative works. The fonts and derivatives,
+ * however, cannot be released under any other type of license. The
+ * requirement for fonts to remain under this license does not apply
+ * to any document created using the fonts or their derivatives.
+ *
+ * DEFINITIONS
+ * "Font Software" refers to the set of files released by the Copyright
+ * Holder(s) under this license and clearly marked as such. This may
+ * include source files, build scripts and documentation.
+ *
+ * "Reserved Font Name" refers to any names specified as such after the
+ * copyright statement(s).
+ *
+ * "Original Version" refers to the collection of Font Software components as
+ * distributed by the Copyright Holder(s).
+ *
+ * "Modified Version" refers to any derivative made by adding to, deleting,
+ * or substituting -- in part or in whole -- any of the components of the
+ * Original Version, by changing formats or by porting the Font Software to a
+ * new environment.
+ *
+ * "Author" refers to any designer, engineer, programmer, technical
+ * writer or other person who contributed to the Font Software.
+ *
+ * PERMISSION & CONDITIONS
+ * Permission is hereby granted, free of charge, to any person obtaining
+ * a copy of the Font Software, to use, study, copy, merge, embed, modify,
+ * redistribute, and sell modified and unmodified copies of the Font
+ * Software, subject to the following conditions:
+ *
+ * 1) Neither the Font Software nor any of its individual components,
+ * in Original or Modified Versions, may be sold by itself.
+ *
+ * 2) Original or Modified Versions of the Font Software may be bundled,
+ * redistributed and/or sold with any software, provided that each copy
+ * contains the above copyright notice and this license. These can be
+ * included either as stand-alone text files, human-readable headers or
+ * in the appropriate machine-readable metadata fields within text or
+ * binary files as long as those fields can be easily viewed by the user.
+ *
+ * 3) No Modified Version of the Font Software may use the Reserved Font
+ * Name(s) unless explicit written permission is granted by the corresponding
+ * Copyright Holder. This restriction only applies to the primary font name as
+ * presented to the users.
+ *
+ * 4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font
+ * Software shall not be used to promote, endorse or advertise any
+ * Modified Version, except to acknowledge the contribution(s) of the
+ * Copyright Holder(s) and the Author(s) or with their explicit written
+ * permission.
+ *
+ * 5) The Font Software, modified or unmodified, in part or in whole,
+ * must be distributed entirely under this license, and must not be
+ * distributed under any other license. The requirement for fonts to
+ * remain under this license does not apply to any document created
+ * using the Font Software.
+ *
+ * TERMINATION
+ * This license becomes null and void if any of the above conditions are
+ * not met.
+ *
+ * DISCLAIMER
+ * THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT
+ * OF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE
+ * COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
+ * DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
+ * OTHER DEALINGS IN THE FONT SOFTWARE.
+ *
+ * @fontsource/commit-mono 5.3.0
+ *
+ * This Font Software is licensed under the SIL Open Font License, Version 1.1.
+ * This license is copied below, and is also available with a FAQ at:
+ * http://scripts.sil.org/OFL
  *
  * -----------------------------------------------------------
  * SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
@@ -197,14 +290,14 @@
  * OTHER DEALINGS IN THE FONT SOFTWARE.
  */
 
-@font-face{font-family:Geist Variable;font-style:normal;font-display:swap;font-weight:100 900;src:url(/geist-latin-wght-normal.woff2)format("woff2-variations");unicode-range:U+??,U+131,U+152-153,U+2BB-2BC,U+2C6,U+2DA,U+2DC,U+304,U+308,U+329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}@font-face{font-family:Geist Variable;font-style:normal;font-display:swap;font-weight:100 900;src:url(/geist-latin-ext-wght-normal.woff2)format("woff2-variations");unicode-range:U+100-2BA,U+2BD-2C5,U+2C7-2CC,U+2CE-2D7,U+2DD-2FF,U+304,U+308,U+329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF}@font-face{font-family:Geist Mono Variable;font-style:normal;font-display:swap;font-weight:100 900;src:url(/geist-mono-latin-wght-normal.woff2)format("woff2-variations");unicode-range:U+??,U+131,U+152-153,U+2BB-2BC,U+2C6,U+2DA,U+2DC,U+304,U+308,U+329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}@font-face{font-family:Geist Mono Variable;font-style:normal;font-display:swap;font-weight:100 900;src:url(/geist-mono-latin-ext-wght-normal.woff2)format("woff2-variations");unicode-range:U+100-2BA,U+2BD-2C5,U+2C7-2CC,U+2CE-2D7,U+2DD-2FF,U+304,U+308,U+329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF}html{-webkit-text-size-adjust:100%;-moz-text-size-adjust:100%;text-size-adjust:100%}body{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;margin:0}
+@font-face{font-family:Hanken Grotesk Variable;font-style:normal;font-display:swap;font-weight:100 900;src:url(/hanken-grotesk-latin-wght-normal.woff2)format("woff2-variations");unicode-range:U+??,U+131,U+152-153,U+2BB-2BC,U+2C6,U+2DA,U+2DC,U+304,U+308,U+329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}@font-face{font-family:Hanken Grotesk Variable;font-style:normal;font-display:swap;font-weight:100 900;src:url(/hanken-grotesk-latin-ext-wght-normal.woff2)format("woff2-variations");unicode-range:U+100-2BA,U+2BD-2C5,U+2C7-2CC,U+2CE-2D7,U+2DD-2FF,U+304,U+308,U+329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF}@font-face{font-family:Newsreader Variable;font-style:normal;font-display:swap;font-weight:200 800;src:url(/newsreader-latin-opsz-normal.woff2)format("woff2-variations");unicode-range:U+??,U+131,U+152-153,U+2BB-2BC,U+2C6,U+2DA,U+2DC,U+304,U+308,U+329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}@font-face{font-family:Newsreader Variable;font-style:normal;font-display:swap;font-weight:200 800;src:url(/newsreader-latin-ext-opsz-normal.woff2)format("woff2-variations");unicode-range:U+100-2BA,U+2BD-2C5,U+2C7-2CC,U+2CE-2D7,U+2DD-2FF,U+304,U+308,U+329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF}@font-face{font-family:Commit Mono;font-style:normal;font-display:swap;font-weight:400;src:url(/commit-mono-latin-400-normal.woff2)format("woff2")}@font-face{font-family:Commit Mono;font-style:normal;font-display:swap;font-weight:700;src:url(/commit-mono-latin-700-normal.woff2)format("woff2")}html{-webkit-text-size-adjust:100%;-moz-text-size-adjust:100%;text-size-adjust:100%}body{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;margin:0}
 
 @layer priority1 {
   :root, .xprfje {
     --x161q150: none;
-    --xc9vy4g: 0 1px 1px 0 #0000000a;
-    --xu6asn0: 0 1px 2px 0 #0000000f, 0 1px 1px -1px #0000000a;
-    --x1okqch6: 0 8px 24px -6px #00000029, 0 2px 6px -2px #00000014;
+    --xc9vy4g: none;
+    --xu6asn0: none;
+    --x1okqch6: none;
   }
 
   :root, .xuogmel {
@@ -232,8 +325,8 @@
   }
 
   :root, .x13k8756 {
-    --x37hpqa: var(--font-sans, "Geist Variable"), ui-sans-serif, system-ui, sans-serif;
-    --x12c8438: var(--font-mono, "Geist Mono Variable"), ui-monospace, SFMono-Regular, Menlo, monospace;
+    --x37hpqa: var(--font-sans, "Hanken Grotesk Variable"), ui-sans-serif, system-ui, sans-serif;
+    --x12c8438: var(--font-mono, "Commit Mono"), ui-monospace, SFMono-Regular, Menlo, monospace;
     --x1sk2u8: .75rem;
     --xd6o1bt: 1rem;
     --x18bs3v0: .875rem;
@@ -244,39 +337,47 @@
     --x1fs3fme: 1.75rem;
     --x1p1th7j: 400;
     --x1f7vnxc: 500;
-    --x1q9m7rh: 600;
+    --x1q9m7rh: 500;
   }
 
   :root, .xe268mg {
     --xbmdzb9: 0;
-    --x1yxe7r5: .25rem;
-    --xy60fe0: .375rem;
-    --x1a4u8t6: .625rem;
+    --x1yxe7r5: 0;
+    --xy60fe0: 0;
+    --x1a4u8t6: 0;
     --xpwpikg: 9999px;
   }
 
+  :root, .x1tmg0r6 {
+    --xlovjd4: #a4442f;
+    --xakuq7b: #f6ebe7;
+    --x1rjdda0: #9d9990;
+    --x16mh2za: #cfcbc2;
+    --x1tipq3k: 380;
+  }
+
   :root, .x19rqg6r {
-    --xndo7ai: #fff;
-    --x1typ4ju: #0a0a0a;
-    --x1rhre1c: #fafafa;
-    --x1dtkkni: #0a0a0a;
+    --xndo7ai: #fbfaf8;
+    --x1typ4ju: #1a1917;
+    --x1rhre1c: #fff;
+    --x1dtkkni: #1a1917;
     --x1gn7q1w: #fff;
-    --x13au14k: #0a0a0a;
-    --xbr7yly: #171717;
-    --x1vuv18r: #fff;
-    --x14ih6fv: #f2f2f2;
-    --x19rbxi2: #0a0a0a;
-    --x86hsr3: #f2f2f2;
-    --xemhn50: #666;
-    --x1unqhr7: #ebebeb;
-    --xml7qkw: #0a0a0a;
+    --x13au14k: #1a1917;
+    --xbr7yly: #1a1917;
+    --x1vuv18r: #fbfaf8;
+    --x14ih6fv: #f2f0eb;
+    --x19rbxi2: #1a1917;
+    --x86hsr3: #f2f0eb;
+    --xemhn50: #6b6862;
+    --x1unqhr7: #eceae4;
+    --xml7qkw: #1a1917;
     --x1dcx541: #e40015;
     --x198crm2: #fff;
     --xx0i3kz: #cb0013;
     --x3s2xbj: #bb0914;
-    --x8quhzo: #eaeaea;
-    --x1fxom7c: #e0e0e0;
-    --xzszglm: #8f8f8f;
+    --x8quhzo: #e4e1da;
+    --x1fxom7c: #cfcbc2;
+    --xzszglm: #85817a;
     --x1iegw8b: #0006;
     --x1gj1t5q: #161616;
     --xwf3d17: #4d4d4d;
@@ -284,7 +385,7 @@
     --x8eonfw: #9e9e9e;
     --x16dh696: #bebebe;
     --xcf5mrq: #d7d7d7;
-    --xim4ozu: #d4d4d4;
+    --xim4ozu: #cfcbc2;
     --xj8jinc: #0000000d;
   }
 
@@ -313,7 +414,6 @@
     --xb66lv1: #ffefed;
     --xxzrp91: #f13936;
     --xv20ehn: #a3a3a3;
-    --xvf2jw1: #1e4eac;
     --xgmbuik: #3186e9;
     --x10zjubx: #e4762c;
     --xly8ejg: #009f68;
@@ -333,7 +433,6 @@
       --xsx2xr4: lab(39.9882% 63.0863 47.4658);
       --xb66lv1: lab(95.7181% 7.53275 4.42754);
       --xxzrp91: lab(54.8953% 69.1589 47.6117);
-      --xvf2jw1: lab(34.4888% 12.5936 -56.1542);
       --xgmbuik: lab(54.7552% 1.47966 -58.5327);
       --x10zjubx: lab(61.8931% 40.4661 57.9743);
       --xly8ejg: lab(57.8876% -50.4687 19.7736);
@@ -343,13 +442,21 @@
     }
   }
 
-  .xjbacxl.xjbacxl, .xjbacxl.xjbacxl:root {
-    --x1unqhr7: #232323;
-    --xml7qkw: #ededed;
-    --xndo7ai: #0a0a0a;
-    --x8quhzo: #262626;
-    --x1rhre1c: #111;
-    --x1dtkkni: #ededed;
+  .x1q4bh25.x1q4bh25, .x1q4bh25.x1q4bh25:root {
+    --x1tipq3k: 360;
+    --x1rjdda0: #6a6862;
+    --x16mh2za: #3b3a37;
+    --xlovjd4: #d08a75;
+    --xakuq7b: #261b18;
+  }
+
+  .x115img4.x115img4, .x115img4.x115img4:root {
+    --x1unqhr7: #252523;
+    --xml7qkw: #ecebe7;
+    --xndo7ai: #111110;
+    --x8quhzo: #292826;
+    --x1rhre1c: #161615;
+    --x1dtkkni: #ecebe7;
     --x1gj1t5q: #f8f8f8;
     --xwf3d17: #b7b7b7;
     --xnov76v: #868686;
@@ -357,27 +464,27 @@
     --x16dh696: #484848;
     --xcf5mrq: #333;
     --xj8jinc: #ffffff12;
-    --xim4ozu: #3a3a3a;
+    --xim4ozu: #3b3a37;
     --x1dcx541: #ff6568;
     --x198crm2: #fff;
     --xx0i3kz: #cb0013;
     --x3s2xbj: #ff6568;
-    --x1typ4ju: #ededed;
-    --x1fxom7c: #333;
-    --x86hsr3: #1a1a1a;
-    --xemhn50: #a1a1a1;
+    --x1typ4ju: #ecebe7;
+    --x1fxom7c: #3b3a37;
+    --x86hsr3: #1e1e1c;
+    --xemhn50: #9a978f;
     --x1iegw8b: #0009;
-    --x1gn7q1w: #171717;
-    --x13au14k: #ededed;
-    --xbr7yly: #ededed;
-    --x1vuv18r: #0a0a0a;
-    --xzszglm: #707070;
-    --x14ih6fv: #1f1f1f;
-    --x19rbxi2: #ededed;
+    --x1gn7q1w: #161615;
+    --x13au14k: #ecebe7;
+    --xbr7yly: #ecebe7;
+    --x1vuv18r: #111110;
+    --xzszglm: #6a6862;
+    --x14ih6fv: #1e1e1c;
+    --x19rbxi2: #ecebe7;
   }
 
   @supports (color: lab(0% 0 0)) {
-    .xjbacxl.xjbacxl, .xjbacxl.xjbacxl:root {
+    .x115img4.x115img4, .x115img4.x115img4:root {
       --x1gj1t5q: lab(97.68% -.0000298023 .0000119209);
       --xwf3d17: lab(74.48% -.0000298023 0);
       --xnov76v: lab(55.92% -.0000298023 0);
@@ -390,14 +497,13 @@
     }
   }
 
-  .x1u97c1b.x1u97c1b, .x1u97c1b.x1u97c1b:root {
+  .x7aq7ih.x7aq7ih, .x7aq7ih.x7aq7ih:root {
     --xsx2xr4: #ff8987;
     --xxzrp91: #f75d59;
     --xb66lv1: #3f1917;
     --xr0pt70: #6ad895;
     --x1esjfoc: #3fc168;
     --x1uuch1g: #0f2e1b;
-    --xvf2jw1: #87bafd;
     --xv20ehn: #737373;
     --xgmbuik: #59a0f9;
     --x10zjubx: #ed914c;
@@ -411,14 +517,13 @@
   }
 
   @supports (color: lab(0% 0 0)) {
-    .x1u97c1b.x1u97c1b, .x1u97c1b.x1u97c1b:root {
+    .x7aq7ih.x7aq7ih, .x7aq7ih.x7aq7ih:root {
       --xsx2xr4: lab(70.6429% 47.5512 23.42);
       --xxzrp91: lab(60.9896% 59.8331 35.3706);
       --xb66lv1: lab(14.7327% 18.8008 10.762);
       --xr0pt70: lab(78.6312% -44.3812 22.8495);
       --x1esjfoc: lab(69.6529% -51.4113 33.9912);
       --x1uuch1g: lab(15.9725% -15.8813 8.18039);
-      --xvf2jw1: lab(74.0112% -4.29925 -38.6694);
       --xgmbuik: lab(64.3535% -2.00111 -52.0287);
       --x10zjubx: lab(69.1589% 31.8527 51.0321);
       --xly8ejg: lab(69.3693% -46.5313 18.2964);
@@ -945,8 +1050,8 @@
     box-shadow: 0 0 0 3px color-mix(in oklab,var(--x1dcx541) 20%,transparent);
   }
 
-  .xvf80od {
-    box-shadow: 0 1px 2px #00000014;
+  .xpdzsrc {
+    box-shadow: inset 0 0 0 1px var(--x8quhzo);
   }
 
   .x9f619 {
@@ -1001,12 +1106,12 @@
     color: var(--x3s2xbj);
   }
 
-  .x1igkfcc {
-    color: var(--xbr7yly);
-  }
-
   .x1ayxirp {
     color: var(--xemhn50);
+  }
+
+  .x13c7azt {
+    color: var(--xlovjd4);
   }
 
   .x11i7u6r {
@@ -1019,10 +1124,6 @@
 
   .x1jee34i {
     color: var(--xsx2xr4);
-  }
-
-  .x1fytmj1 {
-    color: var(--xvf2jw1);
   }
 
   .x1xtg9zv {
@@ -1085,10 +1186,6 @@
     display: none;
   }
 
-  .x1wf40yz {
-    fill: var(--x1vuv18r);
-  }
-
   .xdt5ytf {
     flex-direction: column;
   }
@@ -1109,6 +1206,10 @@
     flex-wrap: wrap;
   }
 
+  .xrpp1k0 {
+    font-family: Newsreader Variable, Iowan Old Style, Georgia, serif;
+  }
+
   .x1tmyuoe {
     font-family: var(--x12c8438);
   }
@@ -1125,8 +1226,16 @@
     font-size: .8rem;
   }
 
+  .x1603h9y {
+    font-size: 1.25rem;
+  }
+
   .xngnso2 {
     font-size: 1.5rem;
+  }
+
+  .xcg35fi {
+    font-size: 1.875rem;
   }
 
   .x1jchvi3 {
@@ -1157,8 +1266,20 @@
     font-synthesis: none;
   }
 
+  .x1j4x3al {
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+
   .xss6m8b {
     font-variant-numeric: tabular-nums;
+  }
+
+  .x1kqfm38 {
+    font-variation-settings: "opsz" 24;
+  }
+
+  .x1g92cr6 {
+    font-variation-settings: "opsz" 36;
   }
 
   .x5s5w1l {
@@ -1171,6 +1292,10 @@
 
   .x1s3fast {
     font-weight: var(--x1q9m7rh);
+  }
+
+  .x1rl8n94 {
+    font-weight: var(--x1tipq3k);
   }
 
   .x1mt6kc2 {
@@ -1225,8 +1350,12 @@
     letter-spacing: -.01em;
   }
 
-  .x72az59 {
-    letter-spacing: -.02em;
+  .xqs5cx0 {
+    letter-spacing: -.022em;
+  }
+
+  .x1i21sxh {
+    letter-spacing: normal;
   }
 
   .xdpg8n2 {
@@ -1241,8 +1370,8 @@
     line-height: 1;
   }
 
-  .xhacrq1 {
-    line-height: 2rem;
+  .x16n75kc {
+    line-height: 2.25rem;
   }
 
   .x1xlucqe {
@@ -1385,10 +1514,6 @@
     row-gap: var(--x1gkage9);
   }
 
-  .x13xktcq {
-    stroke: var(--x1vuv18r);
-  }
-
   .x2b8uid {
     text-align: center;
   }
@@ -1401,16 +1526,29 @@
     text-align: start;
   }
 
+  .x8m037c {
+    -webkit-text-decoration-color: var(--xzszglm);
+    text-decoration-color: var(--xzszglm);
+  }
+
   .xkrqix3 {
     text-decoration-line: none;
+  }
+
+  .xujl8zx {
+    text-decoration-line: underline;
+  }
+
+  .xyi4chj {
+    text-decoration-thickness: 1px;
   }
 
   .xlyipyv {
     text-overflow: ellipsis;
   }
 
-  .xg830sg {
-    text-underline-offset: .15em;
+  .x1ohr1zr {
+    text-underline-offset: .2em;
   }
 
   .x3pynha {
@@ -1659,8 +1797,9 @@
     color: var(--xndo7ai);
   }
 
-  .x1sur9pj:hover {
-    text-decoration-line: underline;
+  .x1en6m90:hover {
+    -webkit-text-decoration-color: var(--x1typ4ju);
+    text-decoration-color: var(--x1typ4ju);
   }
 
   .xymg228:active {
@@ -2003,6 +2142,10 @@
 
   .x1m118sy {
     padding-bottom: var(--x1ljrziv);
+  }
+
+  .xrhwvvd {
+    padding-top: .125rem;
   }
 
   .x3m8u43 {

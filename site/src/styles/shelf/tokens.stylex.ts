@@ -28,7 +28,8 @@ export const colors = stylex.defineVars({
   destructiveText: "oklch(0.5 0.2 27.3)",
   border: "#e4e1da",
   input: "#cfcbc2",
-  ring: "#9d9990",
+  /** Focus rings: 3:1 against `background`, `card`, and `muted`. */
+  ring: "#85817a",
   /** Covers the page behind modal surfaces such as dialogs. */
   overlay: "rgb(0 0 0 / 40%)",
   /**

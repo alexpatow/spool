@@ -12,28 +12,38 @@ fn repository() -> PathBuf {
 }
 
 /// The files, with the path and the media type each is served at.
-const FILES: [(&str, &str, &str); 7] = [
+const FILES: [(&str, &str, &str); 9] = [
     ("/", "index.html", "text/html; charset=utf-8"),
     ("/studio.js", "studio.js", "text/javascript; charset=utf-8"),
     ("/studio.css", "studio.css", "text/css; charset=utf-8"),
     (
-        "/geist-latin-wght-normal.woff2",
-        "geist-latin-wght-normal.woff2",
+        "/hanken-grotesk-latin-wght-normal.woff2",
+        "hanken-grotesk-latin-wght-normal.woff2",
         "font/woff2",
     ),
     (
-        "/geist-latin-ext-wght-normal.woff2",
-        "geist-latin-ext-wght-normal.woff2",
+        "/hanken-grotesk-latin-ext-wght-normal.woff2",
+        "hanken-grotesk-latin-ext-wght-normal.woff2",
         "font/woff2",
     ),
     (
-        "/geist-mono-latin-wght-normal.woff2",
-        "geist-mono-latin-wght-normal.woff2",
+        "/newsreader-latin-opsz-normal.woff2",
+        "newsreader-latin-opsz-normal.woff2",
         "font/woff2",
     ),
     (
-        "/geist-mono-latin-ext-wght-normal.woff2",
-        "geist-mono-latin-ext-wght-normal.woff2",
+        "/newsreader-latin-ext-opsz-normal.woff2",
+        "newsreader-latin-ext-opsz-normal.woff2",
+        "font/woff2",
+    ),
+    (
+        "/commit-mono-latin-400-normal.woff2",
+        "commit-mono-latin-400-normal.woff2",
+        "font/woff2",
+    ),
+    (
+        "/commit-mono-latin-700-normal.woff2",
+        "commit-mono-latin-700-normal.woff2",
         "font/woff2",
     ),
 ];
@@ -57,6 +67,35 @@ fn serve_things(dir: &Path, more: &[&str]) -> Server {
     ];
     arguments.extend(more);
     Server::start(&arguments)
+}
+
+/// What the studio takes from the site, as `(site, studio)` under each's `src`.
+const SHARED: [(&str, &str); 5] = [
+    (
+        "styles/shelf/tokens.stylex.ts",
+        "styles/shelf/tokens.stylex.ts",
+    ),
+    ("styles/shelf/themes.ts", "styles/shelf/themes.ts"),
+    (
+        "styles/shelf/conditions.stylex.ts",
+        "styles/shelf/conditions.stylex.ts",
+    ),
+    ("styles/shelf/fonts.css", "styles/shelf/fonts.css"),
+    ("components/brand.tsx", "brand.tsx"),
+];
+
+#[test]
+fn the_studio_looks_as_the_site_does_from_the_sites_own_files() {
+    for (site, studio) in SHARED {
+        let theirs = std::fs::read_to_string(repository().join("site/src").join(site)).unwrap();
+        let ours =
+            std::fs::read_to_string(repository().join("packages/studio/src").join(studio)).unwrap();
+        // The copy says where it came from, and then is the site's file.
+        assert!(
+            ours.contains(&format!("site/src/{site}")) && ours.ends_with(&theirs),
+            "packages/studio/src/{studio} is not site/src/{site}: run `bun run build` in packages/studio"
+        );
+    }
 }
 
 #[test]
@@ -210,8 +249,10 @@ fn the_studio_is_its_own_paths_and_takes_only_reads() {
         "/index.html",
         "/studio",
         "/studio.js.map",
-        "/geist-latin-wght-normal.woff",
-        "/fonts/geist-latin-wght-normal.woff2",
+        "/commit-mono-latin-400-normal.woff",
+        "/fonts/hanken-grotesk-latin-wght-normal.woff2",
+        // The studio's typeface before it took the site's.
+        "/geist-latin-wght-normal.woff2",
         "/record",
         "/runs/",
         "/runsheet",

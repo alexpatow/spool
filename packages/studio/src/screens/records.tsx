@@ -400,8 +400,11 @@ const styles = stylex.create({
     fontWeight: typography.fontWeightMedium,
   },
   link: {
-    color: tones.link,
-    textDecorationLine: { default: "none", ":hover": "underline" },
+    color: colors.foreground,
+    textDecorationColor: { default: colors.ring, ":hover": colors.foreground },
+    textDecorationLine: "underline",
+    textDecorationThickness: "1px",
+    textUnderlineOffset: "0.2em",
   },
   excerpt: {
     margin: 0,

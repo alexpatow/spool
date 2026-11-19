@@ -27,7 +27,7 @@ import {
 } from "./icons.tsx";
 import { href, navigate } from "./router.ts";
 import type { QueryValue, Route } from "./router.ts";
-import { colors, radius, spacing, typography } from "./styles/shelf/tokens.stylex";
+import { colors, display, linen, radius, spacing, typography } from "./styles/shelf/tokens.stylex";
 import { tones } from "./styles/tones.stylex";
 
 export function message(error: unknown): string {
@@ -555,7 +555,11 @@ export function Ref({ kind, id, label }: { kind: Kind; id: string | number; labe
       href={href([SCREENS[kind], text])}
       title={text}
       data-kind={kind}
-      {...stylex.props(styles.link, bare && typeof id === "string" && styles.id)}
+      {...stylex.props(
+        styles.link,
+        bare && (kind === "identity" || kind === "log") && styles.thread,
+        bare && typeof id === "string" && styles.id,
+      )}
     >
       {bare ? short(text) : label}
     </a>
@@ -930,10 +934,12 @@ const styles = stylex.create({
   },
   h1: {
     margin: 0,
-    fontSize: "1.5rem",
-    fontWeight: typography.fontWeightSemibold,
-    letterSpacing: "-0.02em",
-    lineHeight: "2rem",
+    fontFamily: display.fontFamily,
+    fontSize: "1.875rem",
+    fontVariationSettings: '"opsz" 36',
+    fontWeight: linen.displayWeight,
+    letterSpacing: display.tracking,
+    lineHeight: "2.25rem",
     overflowWrap: "anywhere",
   },
   about: {
@@ -967,15 +973,20 @@ const styles = stylex.create({
   },
   h2: {
     margin: 0,
-    fontSize: typography.fontSizeBase,
-    fontWeight: typography.fontWeightSemibold,
-    letterSpacing: "-0.01em",
-    lineHeight: typography.lineHeightBase,
+    fontFamily: display.fontFamily,
+    fontSize: "1.25rem",
+    fontVariationSettings: '"opsz" 24',
+    fontWeight: linen.displayWeight,
+    letterSpacing: display.tracking,
+    lineHeight: typography.lineHeightLg,
   },
   count: {
     color: colors.mutedForeground,
+    fontFamily: typography.fontFamily,
+    fontSize: typography.fontSizeSm,
     fontVariantNumeric: "tabular-nums",
     fontWeight: typography.fontWeightRegular,
+    letterSpacing: "normal",
   },
   panel: {
     borderColor: colors.border,
@@ -1154,7 +1165,7 @@ const styles = stylex.create({
     justifyContent: "center",
   },
   word: {
-    borderRadius: radius.full,
+    borderRadius: radius.sm,
     gap: spacing["1.5"],
     paddingBlock: "0.0625rem",
     paddingInline: spacing["2"],
@@ -1204,9 +1215,15 @@ const styles = stylex.create({
     flexWrap: "wrap",
   },
   link: {
-    color: tones.link,
-    textDecorationLine: { default: "none", ":hover": "underline" },
-    textUnderlineOffset: "0.15em",
+    color: colors.foreground,
+    textDecorationColor: { default: colors.ring, ":hover": colors.foreground },
+    textDecorationLine: "underline",
+    textDecorationThickness: "1px",
+    textUnderlineOffset: "0.2em",
+  },
+  // The site's one colour is for identities and the log: here their IDs.
+  thread: {
+    color: linen.thread,
   },
   onward: {
     gap: spacing["1"],
@@ -1299,7 +1316,7 @@ const styles = stylex.create({
   },
   choiceCurrent: {
     backgroundColor: colors.background,
-    boxShadow: "0 1px 2px 0 rgb(0 0 0 / 0.08)",
+    boxShadow: `inset 0 0 0 1px ${colors.border}`,
     color: colors.foreground,
   },
   filters: {

@@ -1,3 +1,6 @@
+// Copied from site/src/styles/shelf/tokens.stylex.ts by packages/studio/scripts/build.ts.
+// Do not edit: change the site's file and run `bun run build` in packages/studio.
+
 import * as stylex from "@stylexjs/stylex";
 
 /**
@@ -5,30 +8,31 @@ import * as stylex from "@stylexjs/stylex";
  * text and icons on it. Light values are the default; see `themes.ts` for dark.
  */
 export const colors = stylex.defineVars({
-  background: "#ffffff",
-  foreground: "#0a0a0a",
-  card: "#fafafa",
-  cardForeground: "#0a0a0a",
+  background: "#fbfaf8",
+  foreground: "#1a1917",
+  card: "#ffffff",
+  cardForeground: "#1a1917",
   popover: "#ffffff",
-  popoverForeground: "#0a0a0a",
-  primary: "#171717",
-  primaryForeground: "#ffffff",
-  secondary: "#f2f2f2",
-  secondaryForeground: "#0a0a0a",
-  muted: "#f2f2f2",
+  popoverForeground: "#1a1917",
+  primary: "#1a1917",
+  primaryForeground: "#fbfaf8",
+  secondary: "#f2f0eb",
+  secondaryForeground: "#1a1917",
+  muted: "#f2f0eb",
   /** 4.5:1 against `background`, `card`, and `muted`. */
-  mutedForeground: "#666666",
-  accent: "#ebebeb",
-  accentForeground: "#0a0a0a",
+  mutedForeground: "#6b6862",
+  accent: "#eceae4",
+  accentForeground: "#1a1917",
   destructive: "oklch(0.577 0.245 27.3)",
   destructiveForeground: "#ffffff",
   /** Filled destructive controls; darker than `destructive` to keep 4.5:1 text contrast. */
   destructiveSurface: "oklch(0.53 0.22 27.3)",
   /** Error messages; 4.5:1 against both `background` and `card`. */
   destructiveText: "oklch(0.5 0.2 27.3)",
-  border: "#eaeaea",
-  input: "#e0e0e0",
-  ring: "#8f8f8f",
+  border: "#e4e1da",
+  input: "#cfcbc2",
+  /** Focus rings: 3:1 against `background`, `card`, and `muted`. */
+  ring: "#85817a",
   /** Covers the page behind modal surfaces such as dialogs. */
   overlay: "rgb(0 0 0 / 40%)",
   /**
@@ -42,7 +46,7 @@ export const colors = stylex.defineVars({
   chart5: "oklch(0.8 0 0)",
   chart6: "oklch(0.88 0 0)",
   /** Gridlines behind a chart. Quieter than `border`, still 1.5:1 against `background`. */
-  chartGrid: "#d4d4d4",
+  chartGrid: "#cfcbc2",
   /** The band or line that follows the pointer across a chart. */
   chartCursor: "rgb(0 0 0 / 5%)",
 });
@@ -52,10 +56,9 @@ export const colors = stylex.defineVars({
  * `--font-mono` (with next/font: `variable: "--font-sans"`), or edit these two values.
  */
 export const typography = stylex.defineVars({
-  fontFamily: 'var(--font-sans, "Geist Variable"), ui-sans-serif, system-ui, sans-serif',
+  fontFamily: 'var(--font-sans, "Hanken Grotesk Variable"), ui-sans-serif, system-ui, sans-serif',
   /** Code, keyboard keys, and one-time codes. */
-  fontFamilyMono:
-    'var(--font-mono, "Geist Mono Variable"), ui-monospace, SFMono-Regular, Menlo, monospace',
+  fontFamilyMono: 'var(--font-mono, "Commit Mono"), ui-monospace, SFMono-Regular, Menlo, monospace',
   fontSizeXs: "0.75rem",
   lineHeightXs: "1rem",
   fontSizeSm: "0.875rem",
@@ -67,7 +70,7 @@ export const typography = stylex.defineVars({
   // Components set `fontSynthesis: "none"`, so a typeface without a weight never renders a faux bold.
   fontWeightRegular: "400",
   fontWeightMedium: "500",
-  fontWeightSemibold: "600",
+  fontWeightSemibold: "500",
 });
 
 /** A 0.25rem scale keyed by multiples, so `2.5` is 0.625rem. */
@@ -84,17 +87,17 @@ export const spacing = stylex.defineVars({
 /** `sm` for small parts such as checkboxes and menu items, `md` for controls, `lg` for surfaces. */
 export const radius = stylex.defineVars({
   none: "0",
-  sm: "0.25rem",
-  md: "0.375rem",
-  lg: "0.625rem",
+  sm: "0",
+  md: "0",
+  lg: "0",
   full: "9999px",
 });
 
 export const elevation = stylex.defineVars({
   none: "none",
-  xs: "0 1px 1px 0 rgb(0 0 0 / 0.04)",
-  sm: "0 1px 2px 0 rgb(0 0 0 / 0.06), 0 1px 1px -1px rgb(0 0 0 / 0.04)",
-  lg: "0 8px 24px -6px rgb(0 0 0 / 0.16), 0 2px 6px -2px rgb(0 0 0 / 0.08)",
+  xs: "none",
+  sm: "none",
+  lg: "none",
 });
 
 export const motion = stylex.defineVars({
@@ -112,4 +115,25 @@ export const sizes = stylex.defineVars({
   controlSm: "1.75rem",
   controlDefault: "2rem",
   controlLg: "2.25rem",
+});
+
+/**
+ * What the site adds to Shelf's colours. `thread` is the one colour, and it is
+ * used only for an identity and for the log. Light values are the default; see
+ * `themes.ts` for dark.
+ */
+export const linen = stylex.defineVars({
+  thread: "#a4442f",
+  threadWash: "#f6ebe7",
+  /** Text quieter than `mutedForeground`: positions, counts, rulers. */
+  faint: "#9d9990",
+  lineStrong: "#cfcbc2",
+  /** The weight of a headline, which is lighter on a dark ground. */
+  displayWeight: "380",
+});
+
+/** Headlines only. Text is `typography.fontFamily`. */
+export const display = stylex.defineConsts({
+  fontFamily: '"Newsreader Variable", "Iowan Old Style", Georgia, serif',
+  tracking: "-0.022em",
 });

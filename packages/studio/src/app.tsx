@@ -64,7 +64,8 @@ import { NewPassword, People, password, typed } from "./screens/people.tsx";
 import { Tokens } from "./screens/tokens.tsx";
 import { ReviewItem, ReviewItems } from "./screens/review.tsx";
 import { Run, Runs } from "./screens/runs.tsx";
-import { colors, radius, spacing, typography } from "./styles/shelf/tokens.stylex";
+import { Mark, Wordmark } from "./brand.tsx";
+import { colors, display, linen, radius, spacing, typography } from "./styles/shelf/tokens.stylex";
 import { applyTheme } from "./styles/themes.ts";
 import type { Theme } from "./styles/themes.ts";
 import { tones } from "./styles/tones.stylex";
@@ -254,13 +255,14 @@ export function App({ url = window.location.origin, fetch, storage = window.loca
   );
 }
 
-function Mark() {
+/** The site's wordmark, and what this is of Spool. Where the sidebar is narrow, the mark alone. */
+function Brand({ narrow = false }: { narrow?: boolean }) {
+  if (narrow) return <Mark {...stylex.props(styles.mark)} aria-label="Spool studio" role="img" />;
   return (
-    <svg viewBox="0 0 32 32" aria-hidden {...stylex.props(styles.mark)}>
-      <rect width="32" height="32" rx="8" fill="currentColor" />
-      <circle cx="16" cy="16" r="7.5" fill="none" strokeWidth="3" {...stylex.props(styles.markRing)} />
-      <circle cx="16" cy="16" r="2" {...stylex.props(styles.markDot)} />
-    </svg>
+    <span {...stylex.props(styles.brandName)}>
+      <Wordmark {...stylex.props(styles.wordmark)} />
+      <span {...stylex.props(styles.brandKind)}>studio</span>
+    </span>
   );
 }
 
@@ -273,8 +275,9 @@ function Door({ url, children }: { url: string; children: ReactNode }) {
     <main {...stylex.props(styles.door)}>
       <div {...stylex.props(styles.doorCard)}>
         <div {...stylex.props(styles.doorHead)}>
-          <Mark />
-          <h1 {...stylex.props(styles.doorTitle)}>Spool studio</h1>
+          <h1 {...stylex.props(styles.doorTitle)}>
+            <Brand />
+          </h1>
         </div>
         <Quiet>
           Server <Code>{url}</Code>
@@ -554,12 +557,8 @@ function Shell({
     <SidebarProvider>
       <Sidebar collapsible="icon">
         <SidebarHeader>
-          <a href={href([])} {...stylex.props(styles.brand)}>
-            <Mark />
-            <Hidden>
-              <span {...stylex.props(styles.brandName)}>Spool</span>
-              <span {...stylex.props(styles.brandKind)}>studio</span>
-            </Hidden>
+          <a href={href([])} aria-label="Spool studio" {...stylex.props(styles.brand)}>
+            <SidebarBrand />
           </a>
         </SidebarHeader>
         <SidebarContent>
@@ -647,6 +646,11 @@ function Shell({
   );
 }
 
+function SidebarBrand() {
+  const { open, isMobile } = useSidebar();
+  return <Brand narrow={!open && !isMobile} />;
+}
+
 /** What the sidebar shows only while it is wide enough to. */
 function Hidden({ children }: { children: ReactNode }) {
   const { open, isMobile } = useSidebar();
@@ -694,16 +698,15 @@ function Nowhere() {
 
 const styles = stylex.create({
   mark: {
-    color: colors.primary,
+    color: colors.foreground,
     flexShrink: 0,
     height: "1.5rem",
     width: "1.5rem",
   },
-  markRing: {
-    stroke: colors.primaryForeground,
-  },
-  markDot: {
-    fill: colors.primaryForeground,
+  wordmark: {
+    color: colors.foreground,
+    display: "block",
+    flexShrink: 0,
   },
   door: {
     padding: spacing["6"],
@@ -739,10 +742,7 @@ const styles = stylex.create({
   },
   doorTitle: {
     margin: 0,
-    fontSize: typography.fontSizeLg,
-    fontWeight: typography.fontWeightSemibold,
-    letterSpacing: "-0.01em",
-    lineHeight: typography.lineHeightLg,
+    display: "flex",
   },
   doorForm: {
     gap: spacing["4"],
@@ -758,19 +758,27 @@ const styles = stylex.create({
     textDecorationLine: "none",
   },
   brandName: {
-    fontSize: typography.fontSizeBase,
-    fontWeight: typography.fontWeightSemibold,
-    letterSpacing: "-0.01em",
+    gap: spacing["2"],
+    alignItems: "center",
+    display: "inline-flex",
   },
+  // Set as the site sets its headlines, beside the wordmark.
   brandKind: {
     color: colors.mutedForeground,
+    fontFamily: display.fontFamily,
+    fontSize: typography.fontSizeLg,
+    fontVariationSettings: '"opsz" 24',
+    fontWeight: linen.displayWeight,
+    letterSpacing: display.tracking,
+    lineHeight: 1,
+    paddingTop: "0.125rem",
   },
   nav: {
     display: "flex",
     flexDirection: "column",
   },
   waiting: {
-    borderRadius: radius.full,
+    borderRadius: radius.sm,
     paddingInline: spacing["1.5"],
     backgroundColor: tones.waitsSurface,
     color: tones.waits,
