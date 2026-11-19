@@ -215,7 +215,9 @@ spool explain crm:c-1 registry:X001
 ```text title="Output"
 `registry:X001` and `crm:c-1` belong to the same identity, 01a1efc6-41cd-775d-8758-e7300637659a.
 Run 8 (strategy `rules`) made them a candidate pair (block rule `name_prefix`) and gave no judgement.
-Nothing links the two directly. They are joined through 1 other member: `registry:X001` → 31075f20-6900-838b-f5af-f8c6576744a4 (`match` in run 8) → `crm:c-1` (`match` in run 2).
+Nothing links the two directly. They are joined through 1 other member: `registry:X001` → `Acorn Tools Ltd` (crm:c-3) (`match` in run 8, rule `similar_name`: name_key "acorn tools limited" and "acorn tools ltd") → `crm:c-1` (`match` in run 2, rule `similar_name`: name_key "acorn tools ltd" and "acorn tools").
+Without the links only rule `similar_name` made, they would not be together.
+Removing 1 link would part them, leaving 1 record with `registry:X001` (1 × `ACORN TOOLS LIMITED`) and 4 records with `crm:c-1` (2 × `ACORN TOOLS`, 1 × `Acorn Tool`, 1 × `Acorn Tools Ltd`).
 `registry:X001` was placed at log position 3 by `engine` (reconcile run 9, "reconcile new records").
 `crm:c-1` was placed at log position 1 by `engine` (reconcile run 3, "reconcile new records").
 By the rules as they are now, block rule `name_prefix` makes them a candidate pair and no `no_match` or `match` rule holds, so they would get no judgement.
@@ -240,8 +242,17 @@ runs that compared them
   run 8  rules  succeeded  block: name_prefix  no judgement
 
 what joins them
-  32edb5c4-9bd7-9633-f683-c99b029df37b and 31075f20-6900-838b-f5af-f8c6576744a4: match in run 8
-  31075f20-6900-838b-f5af-f8c6576744a4 and ab8e9d59-0aaa-96b9-ddb7-db0bff7a9356: match in run 2
+  1. ACORN TOOLS LIMITED  registry:X001
+     `match` in run 8, rule `similar_name`: name_key "acorn tools limited" and "acorn tools ltd"
+  2. Acorn Tools Ltd  crm:c-3
+     `match` in run 2, rule `similar_name`: name_key "acorn tools ltd" and "acorn tools"
+  3. Acorn Tools  crm:c-1
+
+what would part them
+  ACORN TOOLS LIMITED  registry:X001 – Acorn Tools Ltd  crm:c-3
+      `match` in run 8, rule `similar_name`: name_key "acorn tools limited" and "acorn tools ltd"
+  with left: 1 record (1 × ACORN TOOLS LIMITED)
+  with right: 4 records (2 × ACORN TOOLS, 1 × Acorn Tool, 1 × Acorn Tools Ltd)
 ```
 
 The CRM rows have no website yet and no founding date, so the `domain` of both and the `founded` of `crm:c-1` are empty, shown as `-`. The first lines also say how the two came to share an identity: no rule matched them directly, and each matched `crm:c-3`, Acorn Tools Ltd.
