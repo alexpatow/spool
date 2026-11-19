@@ -1,11 +1,9 @@
 ---
 title: Compared with other tools
-description: What Splink, dedupe, Zingg, Senzing, nomenklatura, GoldenMatch and a GROUP BY each do with IDs between runs, and when to pick each over Spool.
+description: What Splink, dedupe, Zingg, Senzing, nomenklatura, GoldenMatch and a GROUP BY do with IDs between runs, and when to pick each over Spool.
 ---
 
-Most tools for entity resolution answer "which of these records are the same thing" for the data you give them in one run. Spool answers that and keeps the answer: the ID a thing got yesterday is the ID it has tomorrow. If you do not need that, one of the tools below is less to run.
-
-What this page says about other projects comes from reading their code and documentation in November 2026, not from running them side by side. Each claim links to the passage it rests on, and the repository's [landscape survey](https://github.com/alexpatow/spool/blob/main/docs/landscape-survey.md) has the commit of each project that was read. If a line here is wrong about your project, [open an issue](https://github.com/alexpatow/spool/issues).
+Most entity resolution tools answer "which of these records are the same thing?" for one run's data. Spool answers that and keeps the answer: the ID a thing got yesterday is the ID it has tomorrow. If you don't need that, one of the tools below is less to run. Each claim about another project links to its source.
 
 ## In one table
 
@@ -15,64 +13,62 @@ What this page says about other projects comes from reading their code and docum
 | [Splink](https://github.com/moj-analytical-services/splink) | A statistical model that needs no labels, as SQL on DuckDB or Spark | The lowest record ID in the cluster | Clusters are computed again, and an ID changes when a lower record joins |
 | [dedupe](https://github.com/dedupeio/dedupe) | A model learned from pairs you label | A number within one run | Run again |
 | [Zingg](https://github.com/zinggAI/zingg), open source | A model learned from pairs you label, on Spark | A cluster number within one run | Rebuilt from nothing on each run |
-| [Senzing](https://senzing.com) | A proprietary engine that resolves each record as it arrives | An entity ID that can move | Earlier decisions are looked at again as data loads |
+| [Senzing](https://senzing.com) | A proprietary engine that resolves each record as it arrives | An entity ID that can move | Earlier decisions are revisited as data loads |
 | [nomenklatura](https://github.com/opensanctions/nomenklatura) | Rules and a regression model over FollowTheMoney entities | The highest-ranked ID in a group of judgements | Kept, and it can change when a higher-ranked ID joins |
 | [GoldenMatch](https://github.com/benseverndev-oss/goldenmatch) | Fuzzy and statistical matching that configures itself | A minted ID, carried over to the cluster that overlaps | Kept by overlap with the last run's clusters |
 | Spool | SQL rules you write, or your own code | A minted ID that belongs to the identity | Kept. A run adds to identities and never merges or splits them |
 
 ## A GROUP BY and a hash
 
-If two rows are the same thing exactly when a tax number is equal, join on the tax number. If a cleaned name is enough, `md5(lower(trim(name)))` is an ID that stays the same for as long as the cleaning does.
+If two rows are the same thing exactly when their tax numbers are equal, join on the tax number. If a cleaned name is enough, `md5(lower(trim(name)))` is an ID that's stable for as long as the cleaning is.
 
-It stops working when the key is not exact. "Acorn Tools" and "Acorn Tools Ltd" hash differently, and the day you strip "Ltd" before hashing, every ID that had it changes. Spool is for the case where the match is fuzzy and the ID still has to stay.
+That breaks when the key isn't exact. "Acorn Tools" and "Acorn Tools Ltd" hash differently, and the day you start stripping "Ltd", every ID that had it changes. Spool is for fuzzy matches whose IDs still have to stay put.
 
 ## Splink
 
-Pick Splink to deduplicate or link tables once, or on a schedule where nothing outside stores the cluster IDs. It is a Python library that generates SQL, it needs no labelled examples, and it has run on far more data than Spool has.
+Pick Splink to deduplicate or link tables once, or on a schedule where nothing downstream stores the cluster IDs. It's a Python library that generates SQL, needs no labelled examples, and scales to very large datasets on Spark.
 
-Its cluster ID is the lowest record ID in the connected component ([connected_components.py](https://github.com/moj-analytical-services/splink/blob/master/splink/internals/connected_components.py)), so it is a function of the members. The Ministry of Justice's [write-up of running it in production](https://moj-analytical-services.github.io/splink/blog/2026/01/29/running-splink-in-production.html) describes a weekly batch that publishes a new lookup table for each snapshot date, with lineage kept by the pipeline around Splink.
+Its cluster ID is the lowest record ID in the connected component ([connected_components.py](https://github.com/moj-analytical-services/splink/blob/master/splink/internals/connected_components.py)), so it's a function of the members. The Ministry of Justice's [write-up of running it in production](https://moj-analytical-services.github.io/splink/blog/2026/01/29/running-splink-in-production.html) describes a weekly batch that publishes a new lookup table for each snapshot date, with lineage kept by the pipeline around Splink.
 
-The two fit together. A Spool strategy can run Splink to judge pairs, and Spool keeps the identities. The repository has one in [`benchmarks/resolution/people`](https://github.com/alexpatow/spool/tree/main/benchmarks/resolution/people).
+The two fit together: a Spool strategy can run Splink to judge pairs while Spool keeps the identities. [`benchmarks/resolution/people`](https://github.com/alexpatow/spool/tree/main/benchmarks/resolution/people) does exactly that.
 
 ## dedupe
 
-Pick dedupe when you would sooner label pairs than write rules, and the data fits in one Python process. It learns its blocking and its classifier from the pairs you label, and clusters in a way that resists chains of weak matches ([clustering.py](https://github.com/dedupeio/dedupe/blob/main/dedupe/clustering.py)). It has no notion of an identity across runs. Its last release was in August 2024.
+Pick dedupe when you'd rather label pairs than write rules, and the data fits in one Python process. It learns blocking and a classifier from your labels, and its clustering resists chains of weak matches ([clustering.py](https://github.com/dedupeio/dedupe/blob/main/dedupe/clustering.py)). It has no notion of identity across runs. Its last release was in August 2024.
 
 ## Zingg
 
-Pick Zingg when the data is already on Spark or Snowflake and you want a learned model. The open-source edition writes a cluster column that its documentation calls non-persistent: "Each time you run the match job, Zingg rebuilds the identity graph from scratch" ([Z Cluster and Zingg ID](https://docs.zingg.ai/zingg/zingg-concepts/z-cluster-and-zingg-id)).
+Pick Zingg when your data is already on Spark or Snowflake and you want a learned model. The open-source edition writes a cluster column its documentation calls non-persistent: "Each time you run the match job, Zingg rebuilds the identity graph from scratch" ([Z Cluster and Zingg ID](https://docs.zingg.ai/zingg/zingg-concepts/z-cluster-and-zingg-id)).
 
-Zingg Enterprise, which is not open source, adds a persistent `ZINGG_ID` and incremental runs. Its documentation says that if a cluster splits the ID "may be reassigned", and that it should be treated "as stable within a deployment lifecycle, not as an indefinitely immutable identifier" ([reassign Zingg ID](https://docs.zingg.ai/zingg/running-zingg/reassign-zingg-id)).
+Zingg Enterprise, which isn't open source, adds a persistent `ZINGG_ID` and incremental runs. Its documentation says that if a cluster splits, the ID "may be reassigned", and that it should be treated "as stable within a deployment lifecycle, not as an indefinitely immutable identifier" ([reassign Zingg ID](https://docs.zingg.ai/zingg/running-zingg/reassign-zingg-id)).
 
 ## Senzing
 
-Pick Senzing when each record has to be resolved the moment it arrives, or when you want an engine with years of production use and a company behind it. It is proprietary. It resolves a record against the entities that exist and looks at earlier decisions again as data loads, so its result is meant not to depend on load order ([how it works](https://senzing.com/how-entity-resolution-works-with-senzing/)). Spool's does.
+Pick Senzing when each record has to be resolved the moment it arrives, or you want a commercially supported engine. It's proprietary. It resolves each record against existing entities and revisits earlier decisions as data loads, so its results aim to be independent of load order ([how it works](https://senzing.com/how-entity-resolution-works-with-senzing/)). Spool's aren't, by design.
 
-Its `ENTITY_ID` is not a stable identifier: the documentation says the values "depend on load order" ([audit tutorial](https://senzing.com/docs/tutorials/eda/eda_audit/)), and the stable key is the data source and record ID. It gives the entities a change affected and no ordered log ([replication guide](https://senzing.com/docs/tutorials/advanced_replication/)).
+Its `ENTITY_ID` isn't a stable identifier: the documentation says the values "depend on load order" ([audit tutorial](https://senzing.com/docs/tutorials/eda/eda_audit/)), and the stable key is the data source and record ID. It reports which entities a change affected, without an ordered log ([replication guide](https://senzing.com/docs/tutorials/advanced_replication/)).
 
 ## nomenklatura
 
-Pick nomenklatura when your data is people and companies in the [FollowTheMoney](https://followthemoney.tech) format: sanctions lists, registries, due diligence. It is the library behind OpenSanctions and the closest working precedent for Spool's model. It keeps judgements between IDs, including negative ones, and derives the canonical ID from them ([resolver.py](https://github.com/opensanctions/nomenklatura/blob/main/nomenklatura/resolver/resolver.py)). OpenSanctions publishes what consumers can rely on, including that a retired ID is kept as a referent ([identifiers](https://www.opensanctions.org/docs/identifiers/)).
+Pick nomenklatura when your data is people and companies in the [FollowTheMoney](https://followthemoney.tech) format: sanctions lists, registries, due diligence. It's the library behind OpenSanctions and the closest precedent for Spool's model. It keeps judgements between IDs, including negative ones, and derives the canonical ID from them ([resolver.py](https://github.com/opensanctions/nomenklatura/blob/main/nomenklatura/resolver/resolver.py)). OpenSanctions publishes what consumers can rely on, including that a retired ID is kept as a referent ([identifiers](https://www.opensanctions.org/docs/identifiers/)).
 
-Spool differs in that the ID is state and not derived, every change is a checked changeset, and it is not tied to one schema.
+In Spool, the ID is state rather than derived, every change is a validated changeset, and there's no fixed schema.
 
 ## GoldenMatch
 
-GoldenMatch, started in 2026, is the open-source project closest to what Spool sets out to do: minted IDs, merge and split, an append-only event log, and matching that needs no configuration ([identity/store.py](https://github.com/benseverndev-oss/goldenmatch/blob/main/packages/python/goldenmatch/goldenmatch/identity/store.py)). Pick it when you want matching without writing rules, or a Python or TypeScript library in your own process. Look at both.
+GoldenMatch, started in 2026, is the open-source project closest to Spool: minted IDs, merge and split, an append-only event log, and zero-configuration matching ([identity/store.py](https://github.com/benseverndev-oss/goldenmatch/blob/main/packages/python/goldenmatch/goldenmatch/identity/store.py)). Pick it when you want matching without writing rules, or a Python or TypeScript library in your own process.
 
-The difference in design is where an identity comes from. GoldenMatch clusters each run and then decides, for each cluster, which existing identity it overlaps ([identity/resolve.py](https://github.com/benseverndev-oss/goldenmatch/blob/main/packages/python/goldenmatch/goldenmatch/identity/resolve.py)). Spool has no clusters: a run places each new record against the identities that exist, by four fixed rules, and never merges or splits them.
+The design difference is where an identity comes from. GoldenMatch clusters each run, then decides which existing identity each cluster overlaps ([identity/resolve.py](https://github.com/benseverndev-oss/goldenmatch/blob/main/packages/python/goldenmatch/goldenmatch/identity/resolve.py)). Spool has no clusters: a run places each new record against existing identities by four fixed rules, and never merges or splits them.
 
 ## When Spool fits
 
-- Other systems store the ID, so it must mean the same thing next month.
+- Other systems store the ID, so it has to mean the same thing next month.
 - Rows keep arriving, from more than one source.
-- You want to read why two records match, and write the rules yourself.
-- People or agents correct the result, and each correction has to be attributed and reversible.
-- The data is thousands to a few million records, and one machine is enough.
+- You want to see why two records matched, and write the rules yourself.
+- People or agents correct the results, and every correction has to be attributed and reversible.
+- You have thousands to millions of records on one machine. Spool is benchmarked at 5,000,000.
 
-## What you give up
+## Trade-offs
 
-- **The result depends on arrival order.** Splink and Senzing, each in its own way, give the same answer for the same data whatever order it came in. Spool does not. [Matching](/docs/concepts/matching#the-cost-of-ids-that-stay) says why.
-- **No model.** Splink, dedupe and Zingg each learn one. Spool's built-in matcher runs the rules you write. A model can be plugged in as your own code.
-- **Age.** Every project above but GoldenMatch is years older and has users in production. Spool's first commit was on 14 November 2026.
-- **Scale.** Spool has been run on 5,000,000 records on one machine. Splink's team reports a run over a billion records, which the [landscape survey](https://github.com/alexpatow/spool/blob/main/docs/landscape-survey.md) quotes.
+- **Arrival order matters.** Splink and Senzing each aim to give the same answer for the same data in any order. Spool keeps IDs stable instead. [Matching](/docs/concepts/matching#the-cost-of-ids-that-stay) explains the trade.
+- **Rules, not a built-in model.** Splink, dedupe and Zingg learn a model. Spool runs the rules you write, and you can plug in a model as a strategy.
