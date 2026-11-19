@@ -1,9 +1,9 @@
 ---
 title: Use cases
-description: Where Spool fits and where it does not, case by case, from venture capital data and sales accounts to due diligence, support, KYC name matching, agent memory and catalogs.
+description: Where Spool fits, case by case, from venture capital data and sales accounts to due diligence, support, KYC name matching, agent memory and catalogs.
 ---
 
-Spool fits when several sources name the same things, some of them in text, and other systems keep the ID. Each case below says what the data looks like, what Spool does with it, a small example in Spool's own terms, and when to use something else.
+Spool fits when several sources name the same things, some of them in text, and other systems keep the ID. Each case below says what the data looks like, what Spool does with it, and a small example in Spool's own terms.
 
 The examples were run by hand on version 0.1.0. Unlike the commands on the other pages, they are not in the samples check.
 
@@ -11,11 +11,11 @@ The examples were run by hand on version 0.1.0. Unlike the commands on the other
 
 This one is from Alex Patow, who wrote Spool.
 
-I have built software for venture capital funds since 2020, at EQT on Motherbrain and at Inflection, and I wrote [Building for VC](https://buildingfor.vc), a guide for engineers who join a fund. I built Spool because mapping a huge number of data sources into one representation of each company, person and deal was one of the hardest problems I had there. Most datasets held some piece of the truth, and the complete picture came from several that overlapped. It was just as hard to reason about why two records had been merged, and to separate them when they should not have been.
+I have built software for venture capital funds since 2020, and I wrote [Building for VC](https://buildingfor.vc), a guide for engineers who join a fund. I built Spool because mapping a huge number of data sources into one representation of each company, person and deal was one of the hardest problems I had there. Most datasets held some piece of the truth, and the complete picture came from several that overlapped. It was just as hard to reason about why two records had been merged, and to separate them when they should not have been.
 
 **The mess.** A fund buys data about the same companies, people and investors from several providers, and each provider has its own IDs. Funding rounds from PitchBook, hiring from a people-data provider and the team's notes in the CRM can all name one company differently. Guess wrong and you double-count its funding, or miss that a partner already passed. Investors have it too: the CRM names the firm, one provider names its Fund II, another repeats the firm's name, and adding up the three inflates the totals.
 
-Much of what a fund knows is text. At Inflection the partners' research lived in Notion, Signal threads and personal documents. A memo from last year names Acme Systems. The company is called Acme Robotics now, and whoever looks it up should find it and still see which name the memo used.
+Much of what a fund knows is text: research, meeting notes and memos, spread across documents and chat threads. A memo from last year names Acme Systems. The company is called Acme Robotics now, and whoever looks it up should find it and still see which name the memo used.
 
 **In Spool's terms.**
 
@@ -64,12 +64,6 @@ Run 4 (strategy `rules`) made them a candidate pair (block rule `name_prefix`) a
 `people:319` was placed at log position 3 by `user:01a1f134-c5cc-7462-bd8e-190729dee5e1` ("Acme Systems is the former name of Acme Robotics").
 ```
 
-**Not the right tool when**
-
-- **One provider answers the question.** If one provider covers the market a partner asks about, run the analysis there. You need this only when the answer joins records from different places.
-- **You want the relationships.** Who founded what, and which fund was in which round, are links between identities of different types. A rule compares records of one type. Keep the links in your warehouse, keyed by Spool's IDs.
-- **You want it to fetch the data.** Spool reads CSV files and text. Calling a provider's API and writing the file is your code.
-
 ## Sales accounts and contacts
 
 **The mess.** Two reps added the same account, as "Acorn Tools" and "Acorn Tools Ltd". Contacts arrive from email and the calendar with an address and no account. Call notes name accounts the CRM has under another spelling, or not at all. An enrichment tool adds a third spelling.
@@ -98,13 +92,6 @@ An email domain is a good feature until it is `gmail.com`. A transform that give
 lambda email: CASE WHEN lower(split_part(email, '@', 2)) IN ('gmail.com', 'outlook.com', 'yahoo.com')
   THEN NULL ELSE lower(split_part(email, '@', 2)) END
 ```
-
-**Not the right tool when**
-
-- **You want the duplicates fixed in the CRM.** Spool writes nothing back to a source and makes no merged record. Start with the CRM's own duplicate tools.
-- **A form has to say, as it is sent, that the lead exists.** Matching runs in batches.
-- **A contact asks to be deleted.** A row can be taken back out of its identity, and it stays in the store. Spool cannot erase a person's data on request.
-- **You want people from notes matched to contacts.** A person found in a note has a name and little else, and two people can share a name. Let notes find accounts, and match contacts by email address.
 
 ## Research and due diligence
 
@@ -135,12 +122,6 @@ identities they matched
 
 A reviewer who reads the item assigns the mention to one of them, with a reason. [Review](/docs/concepts/review#decide-it) shows how.
 
-**Not the right tool when**
-
-- **The documents are PDFs or web pages.** Spool reads text. Turning them into text is your work.
-- **You want answers or summaries.** Spool says where a document names something and which thing it is. It does not read for meaning.
-- **The extractor misses.** What is found depends on the extractor. The sample one, given "company", misses most universities and charities. [Extraction](/docs/concepts/extraction#how-good-is-it) says how to measure yours.
-
 ## Support and customer records
 
 **The mess.** The helpdesk knows a requester's email and an organization an agent typed. Billing knows accounts and invoice addresses. The product's database knows users and workspaces. "Which customers open the most tickets" needs one customer ID across the three.
@@ -168,11 +149,6 @@ helpdesk:t-2    Larkfield                01a1f135-5b53-7714-bbf0-581b5bbd86d9
 ```
 
 `t-1` shares a domain with the account. `t-2` came from a Gmail address, so it has no domain, and an organization an agent typed is not enough to match on. It gets an identity of its own until someone who knows merges it.
-
-**Not the right tool when**
-
-- **A ticket has to be routed to its customer as it arrives.** Matching runs in batches, and nothing connects to a helpdesk's stream of events. Something else collects rows and sends them.
-- **A customer asks to be deleted.** A row cannot be erased from the store.
 
 ## Compliance and KYC name matching
 
@@ -215,15 +191,6 @@ list:L-90       HOLT, Maren  01a1f136-777c-7294-a038-849dbed83c87
 
 `k-1` has the date of birth of `L-88` and joined it: a hit. `k-2` matched both entries, so it waits in a `possible_merge` item. Without a date of birth, picking either would be a guess.
 
-**Not the right tool when**
-
-- **Screening has to answer at onboarding, in the request.** Matching runs in batches. [Senzing](https://senzing.com) resolves each record as it arrives.
-- **The list is in the FollowTheMoney format.** [nomenklatura](https://github.com/opensanctions/nomenklatura), the library behind OpenSanctions, works in that format and keeps its own stable IDs.
-- **Names come in more than one script.** Nothing in Spool transliterates or knows that two forms of a name are one. That is a transform or a [strategy](/docs/concepts/matching#other-ways-to-judge) of your own.
-- **Data has to be deleted after a retention period.** A row cannot be erased from the store.
-
-Spool ships no lists and has not been assessed against any regulation.
-
 ## Agent memory and knowledge bases
 
 **The mess.** An agent remembers what it reads and hears: conversations, notes, wiki pages, tickets. "Dana", "Dana Reyes" and "the purchasing lead at Acorn" are one person, and "Acorn" and "ACORN TOOLS" are one company. A memory that stores each as written grows duplicates. One that merges them by guesswork mixes two people's facts, and nobody can say later why.
@@ -235,13 +202,6 @@ Spool ships no lists and has not been assessed against any regulation.
 - An agent connected to [`/mcp`](/docs/mcp) looks identities up, asks why two records were matched with `explain_pair`, and corrects a wrong match with a merge, a split or an undo. Each correction is a changeset with its author and reason.
 
 **Example.** In the sample project, an agent asked which notes name Acorn Tools needs two tools. `search_identities` finds the identity by a word in its records, and `get_identity` lists its five records. One is `notes:notes-1.txt[54-69]`: the note, and the characters that say "Acorn Tools Ltd".
-
-**Not the right tool when**
-
-- **You want the facts kept.** An identity has its records and a label. Spool keeps no attributes of its own on it, and no links between identities: "Dana Reyes works at Acorn Tools" is yours to store, keyed by the two IDs.
-- **You want search.** Spool does not index text or make embeddings.
-- **Memory has to update inside one turn.** Extraction and matching are calls that run in batches. A match of a few rows takes well under a second, and it is still a second call.
-- **An agent should only read.** A token has full access, so an agent that may look things up may also load rows and change identities.
 
 ## Catalogs
 
@@ -263,11 +223,6 @@ Moonlight Serenade - The Persuasive Trombone of Urbie Green  2.87     Urbie Gree
 
 On 193,750 records its rules ran in 8 seconds on four cores, at pair precision 0.997 and recall 0.862. Its first rules, "four of the six values agree", had precision 0.998 on 19,375 records and 0.157 on 1,937,500, where 2,532 different songs called "Intro" at track 1 became one identity. Measure rules at the size they will run at.
 
-**Not the right tool when**
+## What it does not do yet
 
-- **You merge two catalogs once.** [Splink](https://github.com/moj-analytical-services/splink) or [dedupe](https://github.com/dedupeio/dedupe) is less to run.
-- **You want one record with the best title and price.** Spool says which records are one product. It does not build the merged record.
-
-## None of these
-
-If what you have is one file to deduplicate once, a decision per record inside a request, or more data than one machine holds, [Limits](/docs/limits) says what Spool is not meant for, and [Compared with other tools](/docs/compared) says what to use.
+[Limits](/docs/limits) lists what version 0.1.0 does not do, and [Compared with other tools](/docs/compared) says what to use instead.
