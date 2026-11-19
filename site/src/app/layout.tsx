@@ -1,4 +1,5 @@
 import * as stylex from "@stylexjs/stylex";
+import { Analytics } from "@vercel/analytics/next";
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 
@@ -48,7 +49,10 @@ export default function Layout({ children }: { children: ReactNode }) {
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript() }} />
       </head>
-      <body {...stylex.props(styles.body)}>{children}</body>
+      <body {...stylex.props(styles.body)}>
+        {children}
+        <Analytics />
+      </body>
     </html>
   );
 }
