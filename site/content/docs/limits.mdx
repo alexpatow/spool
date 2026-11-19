@@ -75,7 +75,8 @@ An ID that never changes by itself has a price, and this is it.
 - Over MCP an agent can load rows and documents, run extractors and matches, look things up and change identities. It cannot approve a draft, add a person or make a token.
 - A token has full access, so an agent that may read may also load and change. There are no read-only tokens and no tokens limited to one entity type.
 - A request to `/mcp` may be 4 MiB at most, and a tool's answer 256 KiB.
-- ChatGPT on the web and Claude on the web cannot connect to a server that asks for a token, because Spool is not an OAuth server.
+- ChatGPT and Claude on the web sign in with OAuth, which needs the server on a public HTTPS address. Spool registers them by dynamic client registration only: in Claude, choose "Register automatically", not Claude's published identity.
+- An assistant that signed in with OAuth has the access of the person who approved it, and nothing narrower.
 - How well an agent reviews has not been measured.
 
 ### Access

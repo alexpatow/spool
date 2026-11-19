@@ -13,7 +13,7 @@ mcp       http://0.0.0.0:7765/mcp
 ## What it is
 
 - **A tool is a call of the API.** Each tool runs the handler that the matching path under `/v1` runs, so it answers what the API answers and is refused what the API refuses. A changeset that breaks a rule is rejected whole, with the operation that broke it.
-- **The caller is whoever the server says it is.** `/mcp` takes the callers `/v1` takes and no others: a token, which writes under its name as `agent:<name>`, or the session of someone signed in, which writes as `user:<id>`. No tool has an argument that names the author of a change, and a call that sends one is refused.
+- **The caller is whoever the server says it is.** `/mcp` takes the callers `/v1` takes, a token, which writes under its name as `agent:<name>`, or the session of someone signed in, which writes as `user:<id>`, and one more: an assistant that signed in with OAuth, which writes as the person who approved it. No tool has an argument that names the author of a change, and a call that sends one is refused.
 - **A change made under the caller's name says why.** The tools that change identities or take rows back require a `reason`, which the log keeps beside the change. The API leaves it optional. An assistant's change with no reason is hard to review afterwards. A load, an extraction and a match run take no reason: a run records who started it, and what it did is in its report. See [Loading and matching](#loading-and-matching).
 - **Nothing is kept between requests.** The transport is Streamable HTTP without sessions, and every answer is one JSON response. Each request is authorized on its own. The endpoint speaks the protocol revisions from `2024-11-05` to `2026-07-28`, so a client that starts with the `initialize` handshake and one that sends no handshake both work.
 - **The protocol is the `rmcp` crate's**, the official Rust SDK. It is compiled into the binary: there is no second process and nothing else to install.
@@ -120,13 +120,13 @@ This runs on the person's own machine, so it also reaches a server on a private 
 
 ### Claude on the web, and connectors added in Claude Desktop
 
-In Claude, go to Customize, Connectors, Add custom connector, and enter the address. Claude calls the server from Anthropic's network, so the server needs a public HTTPS address.
+In Claude, go to Customize, Connectors, Add, Add custom connector, and enter the address. Under OAuth client, choose **Register automatically**. Claude calls the server from Anthropic's network, so the server needs a public HTTPS address on port 443. Claude then signs in with OAuth: see [Clients that sign in with OAuth](#clients-that-sign-in-with-oauth).
 
-Claude then needs a way to send the token. An organization whose Owner sees a **Request headers** section when adding the connector enters `Authorization` and `Bearer <token>` there. Anthropic describes that section as a beta for a limited set of organizations. Without it, a custom connector signs in with OAuth or not at all, and Spool is not an OAuth server: see below.
+An organization whose Owner sees a **Request headers** section when adding the connector can instead enter `Authorization` and `Bearer <token>` there, and the connector works as that token. Anthropic describes that section as a beta for a limited set of organizations.
 
 ### ChatGPT
 
-In ChatGPT on the web, go to Plugins, the plus button, Add custom MCP server. The authentication it offers is OAuth, no authentication, or both. There is no field for a token, so ChatGPT on the web cannot be pointed straight at a Spool server that asks for one: see below.
+In ChatGPT on the web, go to Plugins, the plus button, Add custom MCP server. Enter the address, choose OAuth, and create it as a plugin. ChatGPT signs in with OAuth: see [Clients that sign in with OAuth](#clients-that-sign-in-with-oauth).
 
 ### Codex
 
@@ -148,13 +148,27 @@ The MCP SDKs take the address and a header. So do the model APIs that call an MC
 
 ## Clients that sign in with OAuth
 
-Claude on the web without the request-header beta, and ChatGPT on the web, add a remote server either with no sign-in or through OAuth 2.1: the client finds the server's authorization server, registers itself, sends the person to sign in and approve, and gets a token of its own. Spool has no authorization server. Asked for one, it answers `404`, and such a client reports that it could not connect.
+Claude and ChatGPT on the web cannot be given a token. They add a remote server through OAuth 2.1, as the Model Context Protocol's authorization specification says, and the server is the OAuth authorization server of its own `/mcp`:
 
-What can be done about it, none of which is built:
+1. A call of `/mcp` without a token is answered `401`, with `WWW-Authenticate: Bearer resource_metadata="<address>/.well-known/oauth-protected-resource/mcp"`.
+2. That document (RFC 9728) names `<address>/mcp` as the resource and the server as its authorization server, whose metadata is at `/.well-known/oauth-authorization-server` (RFC 8414).
+3. The client registers itself at `/oauth/register` (RFC 7591), as a public client that proves itself with PKCE. Registration is open: a client is a name and the addresses its approvals may go to, HTTPS or a loopback address. One nobody approved is forgotten after a day.
+4. It sends the person to `/oauth/authorize` with a PKCE challenge (S256 only) and `resource`. That address opens the studio, which signs them in if need be, the usual way, and shows what asks, the host the approval goes back to, and a warning when that host is the person's own machine. They approve or turn it away.
+5. The browser goes back to the client with a code, `state`, and `iss` (RFC 9207). The client exchanges the code at `/oauth/token` for an access token and a refresh token.
+6. It calls `/mcp` with the access token, as the person who approved it. What it changes is recorded under them, as `user:<id>`.
 
-1. **Spool becomes an OAuth authorization server.** The person signs in to Spool in the browser and approves the assistant, and what the assistant changes is recorded under that person. It is the only choice that works in both products with nothing else to run, and the most to build and to get right: metadata documents, client registration, the authorization code flow with PKCE, tokens and their refresh and revocation.
-2. **An OAuth gateway in front of the server.** A proxy that speaks OAuth to the client, signs people in with an identity provider, and sends a token of Spool's with what it passes on. Nothing changes in Spool. Every change is recorded under that one token, whoever signed in.
-3. **For ChatGPT, OpenAI's Secure MCP Tunnel.** `tunnel-client` runs beside the server, and ChatGPT reaches it through OpenAI with the connection set to Tunnel and no authentication. `tunnel-client` can start a local command as the server, and `mcp-remote` with the header, as under Claude Desktop, is such a command. Who may use the tunnel is then decided in the OpenAI workspace.
+| What | How long |
+| --- | --- |
+| A code | 2 minutes, used once. A second use ends what the first gave |
+| An access token | 1 hour. It works at `/mcp` and is refused at `/v1` |
+| A refresh token | 30 days. Each is used once and gives the next; one used twice ends the approval |
+| An approval | As long as the sign-in it was given in would last, without the 12 hours: until the account is turned off, the password it was given with is replaced, or, for Google, the account's email changes |
+
+An admin sees every approval under Assistants on the studio's Tokens page, with who gave it and when it was last used, and revokes one there. A client can revoke its own tokens at `/oauth/revoke` (RFC 7009). There is one scope, `spool`: everything a token may do.
+
+The issuer is the address the server is reached by: `--public-url`, on Render the address Render gives the service, or the address it listens on when that is on this machine only. A server that knows no such address, whose address is plain HTTP and not on this machine, or that runs without the studio, has none of this: it prints `oauth     off` and the reason when it starts, and answers the paths above with `404`. `spool dev` has none either; it asks nobody to sign in.
+
+Clients are registered dynamically only. Client ID Metadata Documents, which the specification now prefers and which Claude offers as "Claude's published identity", are not supported yet: they have the server fetch an address the client names.
 
 ## Where it listens
 
@@ -175,6 +189,7 @@ Against a server holding the company scenario of `benchmarks/`, in November 2026
 | `mcp-remote` 0.16.6 | Called a tool through it from the Inspector, with the header | Worked. Claude Desktop itself was not run. |
 | Codex CLI 0.170.0 | `codex mcp add` and `codex mcp list`, then `codex exec --oss` with a model run by Ollama | The configuration is accepted, and in a session Codex connects and lists the tools. With `qwen2.5:7b` it called them, with rows it made up. With `qwen3:8b` it called none. No session was held with an OpenAI model, which needs an account. |
 | MCPHost 0.34.0 | Sessions with `qwen2.5:14b` run by Ollama 0.40.16 | Connected, and the model loaded rows, matched and explained a pair: see [A session with a small local model](#a-session-with-a-small-local-model) |
+| An OAuth client driven by the tests | Registered, had a person approve it in the studio, exchanged the code, called `/mcp`, refreshed, and was revoked | Worked, against `spool serve` on this machine |
 | Claude on the web, ChatGPT on the web, the two model APIs, Secure MCP Tunnel | Not tried | They need an account and a server on a public address. What is said about them above is from their documentation. |
 
 ## A session with a small local model

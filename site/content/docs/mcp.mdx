@@ -1,12 +1,12 @@
 ---
 title: MCP
-description: The tools an agent has at /mcp, a call of each, how to connect Claude Code and Codex, and what an agent cannot do.
+description: The tools an agent has at /mcp, a call of each, how to connect Claude Code, Codex, and Claude and ChatGPT on the web, and what an agent cannot do.
 ---
 
 The server answers the [Model Context Protocol](https://modelcontextprotocol.io) at `/mcp`, in the same process as the HTTP API and the studio. An agent that is pointed at it can load rows and documents, run the project's extractors, match what was loaded, look things up and change identities.
 
 - **A tool is a call of the HTTP API.** It answers what the API answers and is refused what the API refuses.
-- **The caller is whoever the server says it is.** With `spool dev` that is the `dev` account. With `spool serve` it is the token the agent presents, and what it changes is recorded as `agent:<name>`. No tool has an argument that names the author of a change.
+- **The caller is whoever the server says it is.** With `spool dev` that is the `dev` account. With `spool serve` it is the token the agent presents, and what it changes is recorded as `agent:<name>`, or the person who approved an assistant that signed in with OAuth. No tool has an argument that names the author of a change.
 - **A change made under the caller's name says why.** The tools that change identities or take rows back require a `reason`, which the log keeps beside the change. A load, an extraction and a match take none: the run records who started it.
 - **Nothing is kept between requests.** The transport is Streamable HTTP without sessions, and every answer is one JSON response.
 
@@ -48,7 +48,24 @@ Claude Desktop reaches it through the `mcp-remote` package, a local server that 
 
 The MCP SDKs, the MCP connector of the Claude API and the `mcp` tool of the OpenAI Responses API take the address and the token too.
 
-**ChatGPT on the web and Claude on the web cannot connect to a server that asks for a token.** They add a remote server with no sign-in or through OAuth, and Spool is not an OAuth server. An organisation with Anthropic's request-headers beta can enter the header in Claude. Nothing else is built for it.
+### Claude and ChatGPT on the web
+
+These cannot be given a token. They sign in with OAuth: the server is the OAuth server of its own `/mcp`, a person with an account approves the assistant in the studio, and what the assistant changes is recorded under that person, as `user:<id>`.
+
+They call the server from Anthropic's and OpenAI's networks, so it needs a public HTTPS address on port 443, given with `--public-url` (on [Render](/docs/deploying#on-render) the address Render gives it is taken). A server that listens on `0.0.0.0` without one, or whose address is plain HTTP, has no OAuth and says `oauth off` when it starts.
+
+- **Claude**: Customize, Connectors, Add, Add custom connector. Enter `https://spool.example.com/mcp`. Under OAuth client choose **Register automatically**: Spool registers clients itself (dynamic client registration) and does not yet take Claude's published identity, the default. On a Team or Enterprise plan an Owner adds it under Organization settings, Connectors, and each member connects.
+- **ChatGPT**: Plugins, the plus button, Add custom MCP server. Enter the same address, choose OAuth, and create it as a plugin. ChatGPT registers itself.
+
+Either then opens the server's studio. Sign in if need be, check the host the approval goes back to (`claude.ai` or `chatgpt.com`), and approve. The approval holds as long as the sign-in it was given in would: turning the account off, replacing the password it was given with, or changing the account's Google email ends it. An admin sees every approval under Assistants on the Tokens page, and revokes one there.
+
+| What | How long |
+| --- | --- |
+| The code the browser takes back | 2 minutes, used once |
+| An access token | 1 hour, at `/mcp` only, not `/v1` |
+| A refresh token | 30 days, used once: each refresh gives the next. One used twice ends the approval |
+
+There is one scope, `spool`, which is everything a token may do: read and change data, not manage people or tokens.
 
 ## Before you start
 
