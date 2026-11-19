@@ -79,6 +79,8 @@ created   companies
   samples/notes-1.txt                a call note that names three companies
   .gitignore                         keeps the server's data, .spool/, and .env out of Git
   .env.example                       the form of .env, where your code's secrets go
+  AGENTS.md                          what a coding agent should know here; CLAUDE.md imports it
+  .agents/skills/                    skills that teach coding agents Spool, linked from .claude/skills/
 
   cd companies
   spool dev                          runs the server on this machine
@@ -199,6 +201,10 @@ The studio is at <http://127.0.0.1:7765/>. It shows the same records, identities
 Ctrl-C stops the server. Data stays in `.spool/dev.duckdb`. Delete `.spool/` to start over.
 
 `spool init <name>` creates an empty project with the standard folders, a `.gitignore` and a `.env.example`. With no name it uses the current folder, which has to be empty. Copy what you need from the sample, then `spool load your-file.csv`. Put keys for your extractors and strategies in `.env`, which Git ignores. Spool passes them to your code and never prints them.
+
+### With a coding agent
+
+From the release after 0.1.0, `spool init` also sets a project up for Claude Code, Codex and Cursor. It writes an `AGENTS.md` and skills in `.agents/skills/`, symlinked from `.claude/skills/`, that teach the agent to declare sources, write rules and extractors, and run the commands for your version of `spool`. After an upgrade, `spool update-skills` refreshes them. See [Coding agents](https://spool.alexpatow.com/docs/agents).
 
 ## When to use something else
 

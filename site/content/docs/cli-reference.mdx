@@ -38,6 +38,8 @@ Create a project, empty or from an example
 
 Creates a project: the standard folders, a .gitignore and a .env.example. With --example, it's a complete project with sample rows and documents to load.
 
+Either way, it writes what coding agents read: AGENTS.md (imported by CLAUDE.md) and skills for using Spool, in .agents/skills/ with a symlink to each from .claude/skills/. `spool update-skills` updates them to a later version's.
+
 The folder has to be empty apart from `.git` and `.DS_Store`. Otherwise it's refused and nothing is written.
 
 Spool passes the variables in the project's .env to the extractors and strategies it runs, and never prints their values. Variables already set in Spool's environment win. Git ignores .env, and .env.example shows the format.
@@ -580,6 +582,30 @@ Options:
 
   It must be directly under `<DIR>/.spool/`.
 - `--yes`: Remove it without asking, which is needed where nobody can answer, as in a script
+
+It takes the [output options](#output-options).
+
+## spool update-skills
+
+Update the skills and AGENTS.md that tell coding agents how to use Spool
+
+Rewrites the coding-agent files `spool init` creates, as this version of spool ships them: a skill per task in .agents/skills/ (read by Codex and Cursor), a symlink to each from .claude/skills/ (read by Claude Code), Spool's section of AGENTS.md, and a CLAUDE.md that imports AGENTS.md if there isn't one.
+
+Files you've edited since Spool wrote them are kept, and the command lists them. --force replaces them too. Spool's section of AGENTS.md sits between two marker lines, and the rest of the file is never touched. Skills this version no longer ships are removed, unless you edited them.
+
+To update spool itself, rerun the install script.
+
+```text
+spool update-skills [OPTIONS] [DIR]
+```
+
+Arguments:
+
+- `[DIR]`: The project directory [default: the current directory]
+
+Options:
+
+- `--force`: Replace edited files too
 
 It takes the [output options](#output-options).
 

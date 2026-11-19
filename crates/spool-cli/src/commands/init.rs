@@ -17,6 +17,11 @@ use crate::output::{Output, OutputArgs, hint};
 /// With --example, it's a complete project with sample rows and documents
 /// to load.
 ///
+/// Either way, it writes what coding agents read: AGENTS.md (imported by
+/// CLAUDE.md) and skills for using Spool, in .agents/skills/ with a symlink
+/// to each from .claude/skills/. `spool update-skills` updates them to a
+/// later version's.
+///
 /// The folder has to be empty apart from `.git` and `.DS_Store`. Otherwise
 /// it's refused and nothing is written.
 ///
@@ -171,7 +176,7 @@ const EXAMPLES: &[Example] = &[Example {
 }];
 
 /// What is listed of every project, after what is in it.
-const ALWAYS: [(&str, &str); 2] = [
+const ALWAYS: [(&str, &str); 4] = [
     (
         ".gitignore",
         "keeps the server's data, .spool/, and .env out of Git",
@@ -179,6 +184,14 @@ const ALWAYS: [(&str, &str); 2] = [
     (
         ".env.example",
         "the form of .env, where your code's secrets go",
+    ),
+    (
+        "AGENTS.md",
+        "what a coding agent should know here; CLAUDE.md imports it",
+    ),
+    (
+        ".agents/skills/",
+        "skills that teach coding agents Spool, linked from .claude/skills/",
     ),
 ];
 
@@ -214,6 +227,7 @@ pub fn init(arguments: InitArgs) -> Result<(), Failure> {
     for (file, contents) in &files {
         write(&dir.join(file), contents)?;
     }
+    super::update_skills::write_agent_files(&dir, false)?;
 
     // What was written has to be a project that builds.
     Manifest::load(&dir)?;
