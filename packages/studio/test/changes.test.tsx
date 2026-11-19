@@ -234,13 +234,15 @@ describe("a review item", () => {
       `/explain?a=${kept!.a}&b=${kept!.b}`,
     );
 
-    // The engine would refuse the merge, so it is not offered, and the item says why.
+    // The engine would refuse the merge, so it is not offered, and the answer says why.
     expect(merging()).toBe(0);
-    expect(parts("apart")).toHaveLength(1);
+    expect(document.querySelector("[data-answer=merge]")!.textContent).toContain(
+      "Not possible: a cannot_link constraint is between records of these identities",
+    );
     // The record can still go to either, or to an identity of its own.
     expect(card.getAllByRole("button").map((button) => button.textContent)).toEqual([
-      "New identity",
       ...found.candidates.map((candidate) => `Assign to ${candidate.identity.label}`),
+      "New identity",
       "Dismiss",
     ]);
     expect(changes()).toEqual([]);
@@ -260,7 +262,9 @@ describe("a review item", () => {
 
     await waitFor(() => expect(parts("constraint")).toHaveLength(3));
     expect(card.queryAllByRole("button", { name: `Assign to ${other.label}` })).toHaveLength(0);
-    expect(card.getByText("Blocked by a constraint")).toBeTruthy();
+    expect(document.querySelector("[data-answer=assign]")!.textContent).toContain(
+      `Not ${other.label}: a cannot_link keeps it apart from one of its records.`,
+    );
     // Nor is it a choice where the record is placed from another button.
     const dialog = await asked(`Assign to ${into.label}`);
     const where = dialog.getByLabelText("crm:c-117") as HTMLSelectElement;
@@ -284,7 +288,11 @@ describe("a review item", () => {
     await screen.findByRole("button", { name: "Merge identities" });
     await idle();
     expect(parts("constraint")).toEqual([]);
-    expect(parts("apart")).toEqual([]);
+    // Before it is made, the answer says what the merge does to each identity and its ID.
+    const merge = document.querySelector("[data-answer=merge]")!.textContent!;
+    expect(merge).toContain(`${other.label} is merged into ${into.label}, which has the most records and keeps its ID.`);
+    expect(merge).toContain(`${into.label} then has ${into.members + other.members + 1} records.`);
+    expect(merge).toContain("No constraint is recorded.");
 
     const dialog = await asked("Merge identities");
     expect(dialog.getByRole("heading").textContent).toBe("Merge 2 identities");
@@ -339,7 +347,7 @@ describe("a review item", () => {
     // Read again, the item shows what the identity holds now, and the merge is made of that.
     await cancel();
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
-    await screen.findByText("3 records");
+    await screen.findAllByText("3 records");
     await idle();
     await make("Merge identities");
     expect(await said()).toBe("2 identities merged and 1 record assigned at log position 10.");
@@ -364,7 +372,7 @@ describe("a review item", () => {
     follow(screens().getByRole("link", { name: /^Review/ }));
     await heading("Review");
     await screen.findByRole("article", { name: "Review item 1" });
-    await screen.findByText("3 records");
+    await screen.findAllByText("3 records");
     await idle();
     await make("Merge identities");
     expect(await said()).toBe("2 identities merged and 1 record assigned at log position 10.");
@@ -398,7 +406,7 @@ describe("a review item", () => {
 
     open(server, "/review/1");
     await item();
-    await screen.findByText("32 records");
+    await screen.findAllByText("32 records");
     const column = found.candidates.findIndex((candidate) => candidate.identity.id === into.id);
     // The card says that it compares some of the identity's records, and how many.
     expect(parts("sample")).toEqual(["25 shown"]);
@@ -624,7 +632,7 @@ describe("a review item that asks whether an identity is still one thing", () =>
     const card = await shown(raised.id);
     expect(field("Kind")).toBe("possible split");
     expect(field("Run")).toBe(`run ${taken.run}`);
-    expect(within(card).getByRole("heading", { level: 2 }).textContent).toBe("Are these 2 records still one thing?");
+    expect(within(card).getByRole("heading", { level: 2 }).textContent).toBe(`Is ${label} still one thing?`);
     expect(parts("why", card)).toEqual([
       `They share ${label}. What held them together went through a record that its source took back. Each group still holds together. Nothing the store knows joins one group to another: no match found by a run, no must_link, and no decision by a reviewer or an agent.`,
     ]);
@@ -636,11 +644,27 @@ describe("a review item that asks whether an identity is still one thing", () =>
     expect(found.some((line) => line.startsWith("matchwith crm:c-302 by same_domain"))).toBe(true);
     expect(bridge.id).not.toBe(wren.id);
 
+    // Each answer says what it does before it is given.
+    const does = (name: string) => card.querySelector(`[data-answer=${name}]`)!.textContent!;
+    expect([...card.querySelectorAll("[data-answer]")].map((answer) => answer.getAttribute("data-answer"))).toEqual([
+      "split",
+      "keep",
+      "dismiss",
+      "leave",
+    ]);
+    expect(does("split")).toContain(`The other 1 record stays in ${label}, which keeps its ID.`);
+    expect(does("split")).toContain("one cannot_link between a record of each side is recorded");
+    expect(does("split")).toContain("The new identity is not taken back: its ID stays, with no records.");
+    expect(does("keep")).toContain(`A must_link is recorded between crm:${first!.key} and crm:${second!.key}`);
+    expect(does("dismiss")).toContain("asked again if another of its records is taken back by its source");
+
     // Of two groups, splitting off either is the same split, so it is offered once.
     expect(within(card).queryByRole("button", { name: "Split off group 1" })).toBeNull();
     const dialog = await asked("Split off group 2");
     expect(
-      dialog.getByText(`crm:${second!.key} moves to a new identity. The other 1 record stays in ${label}.`),
+      dialog.getByText(
+        `crm:${second!.key} moves to a new identity, with an ID made when the split is made. The other 1 record stays in ${label}, which keeps its ID.`,
+      ),
     ).toBeTruthy();
     expect(changes()).toEqual([]);
     await make("Split off group 2", { Reason: "two companies at one address" });

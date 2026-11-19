@@ -747,7 +747,39 @@ describe("company records a reviewer corrected", () => {
     open(server, "/review");
     await heading("Review");
     const card = within(await screen.findByRole("article", { name: "Review item 1" }));
-    expect(card.getByRole("heading", { level: 2 }).textContent).toBe("Pioneer Supplies matched 2 identities");
+    expect(card.getByRole("heading", { level: 2 }).textContent).toBe(
+      "Pioneer Supplies matches both Pioneer Supplies and PIONEER SUPPLIES LTD. Are they the same thing?",
+    );
+    expect(parts("lead", card.getByRole("heading", { level: 2 }).closest("article")!)[0]).toContain(
+      "Until someone answers, it has no identity, and every match run of company looks at it again.",
+    );
+
+    // The two identities side by side: what each is called, how many records it has, some of them, and what links it.
+    const sides = card.getAllByRole("region", { name: "The identities" })[0]!;
+    expect(parts("size", sides)).toEqual(["2 recordscrm1registry1", "1 recordregistry1"]);
+    expect(parts("members", sides)).toEqual([
+      expect.stringContaining("crm:c-110"),
+      expect.stringContaining("registry:X0000010"),
+    ]);
+    expect(parts("links", sides)).toEqual([
+      "Linked by 2 matches with 2 of its records, by same_name_and_country.",
+      "Linked by 1 match with 1 of its records, by same_name_and_country.",
+    ]);
+
+    // Before anything is done, each answer says what it does.
+    const answers = card.getByRole("region", { name: "Answers" });
+    expect([...answers.querySelectorAll("[data-answer]")].map((answer) => answer.getAttribute("data-answer"))).toEqual(
+      ["merge", "assign", "new", "dismiss", "leave"],
+    );
+    const does = (name: string) => answers.querySelector(`[data-answer=${name}]`)!.textContent!;
+    expect(does("assign")).toContain(
+      "Pioneer Supplies is placed in the one you choose, which then has 3 records for Pioneer Supplies and 2 records for PIONEER SUPPLIES LTD.",
+    );
+    expect(does("assign")).toContain("a later record that matches more than one of them is asked about again");
+    expect(does("assign")).toContain("No match run asks about them then, only a rematch (spool match --rematch).");
+    expect(does("new")).toContain("Pioneer Supplies becomes an identity of its own");
+    expect(does("dismiss")).toContain("no later match run looks at it again, a rematch included");
+    expect(does("leave")).toContain("Every match run of company looks at it again");
     expect(card.getByRole("link", { name: "Item 1" }).getAttribute("href")).toBe("/review/1");
 
     // The record that waits and the identities it matched are side by side.
@@ -809,16 +841,14 @@ describe("company records a reviewer corrected", () => {
     ]);
     await waitFor(() => expect(decided.textContent).toContain("crm:c-110 and registry:X0000010, since log position 5"));
 
-    // Under each column is the decision it stands for. Merging the two is not one: they are kept apart.
+    // Merging the two is not offered: they are kept apart, and the answer says so.
     expect(card.getAllByRole("button").map((button) => button.textContent)).toEqual([
-      "New identity",
       "Assign to Pioneer Supplies",
       "Assign to PIONEER SUPPLIES LTD",
+      "New identity",
       "Dismiss",
     ]);
-    expect(parts("apart", card.getByRole("table").closest("article")!)).toEqual([
-      "Cannot be merged: a cannot_link constraint is between them.",
-    ]);
+    expect(does("merge")).toContain("Not possible: a cannot_link constraint is between records of these identities");
   });
 
   test("the review items that are no longer open are a choice away", async () => {
