@@ -415,9 +415,14 @@ pub(crate) fn judge_for_preview(
     rules: &RuleSet,
 ) -> Result<String> {
     create_scope(conn, entity_type, RunId(i64::MAX as u64))?;
+    // Declared column by column: a copy made with `CREATE TABLE .. AS
+    // SELECT .. WHERE false` read back the IDs of a large insert as null.
     conn.execute_batch(&format!(
-        "CREATE OR REPLACE TEMP TABLE {CANDIDATES} AS SELECT * FROM spool.candidate WHERE false;
-         CREATE OR REPLACE TEMP TABLE {JUDGEMENTS} AS SELECT * FROM spool.judgement WHERE false;"
+        "CREATE OR REPLACE TEMP TABLE {CANDIDATES} (
+           run_id BIGINT NOT NULL, left_id UUID NOT NULL, right_id UUID NOT NULL, rule VARCHAR);
+         CREATE OR REPLACE TEMP TABLE {JUDGEMENTS} (
+           run_id BIGINT NOT NULL, left_id UUID NOT NULL, right_id UUID NOT NULL,
+           verdict VARCHAR NOT NULL, score DOUBLE, detail JSON);"
     ))?;
     rules::generate_candidates_into(conn, entity_type, RunId(0), &rules.block, CANDIDATES)?;
     rules::judge_candidates_into(
@@ -1159,6 +1164,10 @@ impl Outcome {
                 parent.len() - 1
             })
         };
+        let mut merged_into: BTreeMap<IdentityId, Vec<IdentityId>> = BTreeMap::new();
+        for (from, into) in &self.merged {
+            merged_into.entry(*into).or_default().push(*from);
+        }
         let mut edges: Vec<(RecordId, usize, usize)> = Vec::new();
         for record in &self.records {
             let Some(target) = self.target(*record) else {
@@ -1265,11 +1274,7 @@ impl Outcome {
                             Some(kept) => (
                                 Fate::Kept,
                                 Some(kept),
-                                self.merged
-                                    .iter()
-                                    .filter(|(_, into)| **into == kept)
-                                    .map(|(from, _)| *from)
-                                    .collect(),
+                                merged_into.get(&kept).cloned().unwrap_or_default(),
                             ),
                             None => (Fate::New, None, Vec::new()),
                         },

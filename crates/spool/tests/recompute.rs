@@ -546,3 +546,51 @@ fn every_type_is_recomputed_unless_one_is_named() {
         Err(Error::UndeclaredType(_))
     ));
 }
+
+/// What a store of Linked-DocRED's size gives: the preview and the apply
+/// judge in different tables, on different connections, and agree.
+#[test]
+fn a_hundred_thousand_records_are_previewed_and_applied_alike() {
+    let n: usize = 100_000;
+    let engine = Engine::open_in_memory(Options::seeded(1)).unwrap();
+    engine.apply(&manifest_of(vec![loose()])).unwrap();
+    // Names that four records share, and a few that very many share, as
+    // "United States" is; codes that two records share.
+    let data: Vec<(String, String, String)> = (0..n)
+        .map(|i| {
+            let name = match i % 50 {
+                0 => format!("common {}", i % 7),
+                _ => format!("name {}", i / 4),
+            };
+            (i.to_string(), name, format!("code {}", i / 2))
+        })
+        .collect();
+    for chunk in data.chunks(20_000) {
+        let rows: Vec<(&str, Option<&str>, Option<&str>)> = chunk
+            .iter()
+            .map(|(id, name, code)| (id.as_str(), Some(name.as_str()), Some(code.as_str())))
+            .collect();
+        load(&engine, "shop", &rows);
+    }
+    engine.resolve(&ResolveOptions::default()).unwrap();
+    engine.apply(&manifest_of(vec![thing()])).unwrap();
+
+    let preview = engine.recompute(&RecomputeRequest::default()).unwrap();
+    let thing = &preview.types[0];
+    assert_eq!(thing.summary.records, n as u64);
+    assert_eq!(thing.summary.identities_after, (n / 2) as u64);
+    assert_eq!(thing.changes.len(), 10);
+    assert!(thing.changes_total > 10_000);
+    assert!(
+        thing
+            .changes
+            .windows(2)
+            .all(|pair| pair[0].records >= pair[1].records)
+    );
+
+    let applied = engine.apply_recompute(None, &preview.plan, None).unwrap();
+    assert_eq!(applied.types[0].summary, thing.summary);
+    assert!(applied.types[0].committed.is_some());
+    let again = engine.recompute(&RecomputeRequest::default()).unwrap();
+    assert_eq!(again.types[0].changes_total, 0);
+}
