@@ -5,7 +5,7 @@ description: Every file a Spool project can hold, with an example of each, the k
 
 A Spool project is a directory, meant to be kept in Git. It declares where records come from, what kinds of thing they describe and how those are matched. `spool dev` reads it as you save, and `spool build` compiles it into the one file a deployed server reads.
 
-This page is a reference: every file a project can hold, with an example of each and a link to the page that explains it. The examples are files `spool init --example companies` writes, and one that it does not. Without `--example`, `spool init` writes the folders, each with an empty `.gitkeep` so that Git keeps it, `.gitignore` and `.env.example`, and nothing else.
+This page is a reference: every file a project can hold, with an example of each and a link to the page that explains it. The examples are files `spool init --example companies` writes, and one that it does not. Without `--example`, `spool init` writes the folders, each with an empty `.gitkeep` so that Git keeps it, `.gitignore`, `.env.example` and the files for coding agents, and nothing else.
 
 {/* sample: new session */}
 
@@ -38,6 +38,10 @@ companies/
 ├── extractors/
 │   └── companies.py                the extractor `companies`: a Python file that asks a small model
 ├── samples/                        sample rows and a sample note. Not read by the server
+├── AGENTS.md                       what a coding agent should know here. Not read by the server
+├── CLAUDE.md                       imports AGENTS.md, for Claude Code
+├── .agents/skills/                 skills that teach coding agents Spool
+├── .claude/skills/                 a link to each of those, for Claude Code
 ├── .gitignore                      leaves out .spool/ and .env
 ├── .env.example                    the form of .env
 ├── .env                            yours: secrets for the project's code. Not committed
@@ -275,6 +279,10 @@ An extractor or a strategy runs in the project directory, with the environment S
 No command starts the development store over. Stop `spool dev` and delete `.spool/`: the next `spool dev` compiles the project again and starts with an empty store and no accounts. The project's own files are not in `.spool/`, and nothing else is lost.
 
 Every run records the hash of the manifest it ran with, so a judgement can be traced to the version of the project that produced it. `spool info` and `spool dev` print that hash.
+
+## Files for coding agents
+
+`AGENTS.md`, `CLAUDE.md`, `.agents/skills/` and `.claude/skills/` are for coding agents such as Claude Code, Codex and Cursor, and the server reads none of them. `spool init` writes them and `spool update` brings them to a later version's. [Coding agents](/docs/agents) says what is in them and what each agent reads.
 
 ## What is ignored
 

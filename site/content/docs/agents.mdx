@@ -1,0 +1,87 @@
+---
+title: Coding agents
+description: The skills and AGENTS.md that spool init writes into every project, so that Claude Code, Codex, Cursor and other coding agents can write extractors and rules and run Spool, and how spool update keeps them current.
+---
+
+A coding agent that has not seen Spool guesses at it, from documentation of other tools. So `spool init` writes into every project what such an agent reads: an `AGENTS.md` with what it should know of any Spool project, and skills, short files that each teach one part of the work with the exact commands and file shapes of the `spool` that wrote them. They come with the release after 0.1.0.
+
+{/* sample: new session */}
+
+```sh
+spool init companies --example companies
+cd companies
+```
+
+## What is written
+
+| File | What it holds | Read by |
+| --- | --- | --- |
+| `AGENTS.md` | What to know of a Spool project, and a list of the skills | Codex, Cursor, and Claude Code where there is no `CLAUDE.md` |
+| `CLAUDE.md` | One line, `@AGENTS.md`, which imports it | Claude Code |
+| `.agents/skills/<skill>/SKILL.md` | One skill each | Codex, Cursor, and other agents that read the [Agent Skills](https://agentskills.io) format |
+| `.claude/skills/<skill>` | A link to the skill's folder in `.agents/skills/` | Claude Code |
+
+The skills are links in `.claude/skills/` and not copies, so that one file is edited, and Cursor, which reads both folders, lists each skill once. Commit all of them with the project. Spool runs on Linux and macOS, where Git keeps a link as a link.
+
+An agent reads only the name and description of each skill until a task needs one, and then reads that file. The five:
+
+| Skill | For |
+| --- | --- |
+| `spool-project` | Sources, entity types, features and transforms, checked with `spool info` |
+| `spool-rules` | Block, match and no_match rules, `spool explain`, and what a rule change would do with `spool match --rematch` and `spool recompute` |
+| `spool-extractor` | An extractor in Python or TypeScript, with a local or a hosted model, and running it with `spool extract` |
+| `spool-data` | `spool dev`, `spool load`, `spool match`, `spool show`, `spool explain`, `spool retract`, and their output as JSON |
+| `spool-api` | The HTTP API and MCP, correcting identities with changesets, and deploying with `spool build`, `spool apply`, `spool serve` and `spool token` |
+
+They are in the repository under [`crates/spool-cli/src/agents`](https://github.com/alexpatow/spool/tree/main/crates/spool-cli/src/agents), and the binary carries them.
+
+## Use them
+
+Open the project in the agent and ask for the work, as you would ask a colleague who has read the skills:
+
+```text
+Write an extractor that finds the people and companies in the call notes in
+notes/, using the OpenAI API, and show me what it finds in the first three.
+```
+
+```text
+Why are crm:c-5 and crm:c-6 not one company? Change the rules so that a
+leading "The" does not matter, and show me what that changes before applying.
+```
+
+An agent can also reach the running server over [MCP](/docs/mcp), and the skills say when to use which. `AGENTS.md` tells an agent to ask before it starts `spool dev`, never to start the store over to get a better match, and never to print `.env`.
+
+## Keep them current
+
+The skills are those of the `spool` that wrote them. After you install a new release, bring them to its version:
+
+```sh
+spool update
+```
+
+```text title="Output"
+project  .
+
+  unchanged  AGENTS.md
+  unchanged  CLAUDE.md
+  unchanged  .agents/skills/spool-project/SKILL.md
+  unchanged  .claude/skills/spool-project
+  unchanged  .agents/skills/spool-rules/SKILL.md
+  unchanged  .claude/skills/spool-rules
+  unchanged  .agents/skills/spool-extractor/SKILL.md
+  unchanged  .claude/skills/spool-extractor
+  unchanged  .agents/skills/spool-data/SKILL.md
+  unchanged  .claude/skills/spool-data
+  unchanged  .agents/skills/spool-api/SKILL.md
+  unchanged  .claude/skills/spool-api
+
+The files for agents are this version's already.
+```
+
+`spool update` also writes them into a project made before `spool init` wrote them.
+
+Edit them as you like. Each skill carries a hash of itself, as `spool-sha256` under `metadata` in its frontmatter, and so does the first marker line of Spool's part of `AGENTS.md`. A file whose hash is its own is as Spool wrote it, and `spool update` replaces it. A file somebody edited is kept and listed as `kept`, and `spool update --force` replaces it too.
+
+- Write notes of your own in `AGENTS.md` above or below Spool's part, the lines from `<!-- spool:begin` to `<!-- spool:end -->`. The rest of the file is never changed, and an `AGENTS.md` that was there before gets Spool's part after what it says.
+- A `CLAUDE.md` that was there before is kept. Add a line `@AGENTS.md` to it for Claude Code to read `AGENTS.md`.
+- Give a skill of your own a name that does not begin with `spool-`. A `spool-` skill that this version does not have is removed, unless it was edited.

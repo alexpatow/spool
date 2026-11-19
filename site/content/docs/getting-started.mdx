@@ -50,6 +50,8 @@ created   companies
   samples/notes-1.txt                a call note that names three companies
   .gitignore                         keeps the server's data, .spool/, and .env out of Git
   .env.example                       the form of .env, where your code's secrets go
+  AGENTS.md                          what a coding agent should know here; CLAUDE.md imports it
+  .agents/skills/                    skills that teach coding agents Spool, linked from .claude/skills/
 
   cd companies
   spool dev                          runs the server on this machine
@@ -454,6 +456,8 @@ codex mcp add spool --url http://127.0.0.1:7765/mcp
 ```
 
 Then ask it, for example: "Load samples/crm-2.csv into Spool, match it, and tell me why c-5 and c-6 are different companies." The tools it has for that are `load_rows`, `run_match`, `search_records` and `explain_pair`, with `load_documents` and `run_extraction` for text. [MCP](/docs/mcp) lists every tool and what an agent cannot do.
+
+A coding agent opened in the project, to write an extractor or a rule, finds the `AGENTS.md` and the skills that `spool init` wrote. [Coding agents](/docs/agents) lists them.
 
 ## Look at it in a browser
 
