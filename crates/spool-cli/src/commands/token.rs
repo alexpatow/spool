@@ -140,7 +140,7 @@ fn list(arguments: &TokenArgs) -> Result<(), Failure> {
         ]);
     }
     let answer = serde_json::to_value(TokenList { tokens }).expect("tokens serialise to JSON");
-    out.items(&answer, "tokens", &table);
+    out.items(&answer, "tokens", &table)?;
     Ok(())
 }
 

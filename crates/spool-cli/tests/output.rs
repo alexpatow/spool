@@ -401,3 +401,37 @@ fn piped_output_has_no_progress() {
     );
     assert_eq!(beside, "");
 }
+
+#[test]
+fn csv_has_whole_values_and_a_write_that_fails_fails_the_command() {
+    let dir = tempfile::tempdir().unwrap();
+    let (server, project) = matched(dir.path());
+    let long = "Acorn Tools International Holdings Limited";
+    std::fs::write(
+        project.join("long.csv"),
+        format!("id,name,country\nl-1,{long},GB\nl-2,{long},GB\n"),
+    )
+    .unwrap();
+    printed(&server, &project, &["load", "long.csv", "--source", "crm"]);
+
+    // A table cuts the common value short, and CSV has it whole.
+    let (table, _) = printed(&server, &project, &["show", "attributes"]);
+    assert!(!table.contains(long), "{table}");
+    let (csv, _) = printed(&server, &project, &["show", "attributes", "-o", "csv"]);
+    assert!(csv.contains(&format!("{long} (2)")), "{csv}");
+
+    #[cfg(target_os = "linux")]
+    {
+        let full = std::fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/full")
+            .unwrap();
+        let output = server
+            .spool_in(&project, &["show", "records", "-o", "csv"])
+            .stdout(full)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1), "{}", text(&output.stderr));
+        assert!(text(&output.stderr).starts_with("error: standard output: "));
+    }
+}

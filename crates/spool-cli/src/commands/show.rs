@@ -695,12 +695,15 @@ impl View<'_> {
                         attribute.key.to_string().into(),
                         attribute.filled.to_string().into(),
                         attribute.distinct.to_string().into(),
-                        common_values(attribute).into(),
+                        Cell::shortened(
+                            common_values(attribute, true),
+                            common_values(attribute, false),
+                        ),
                         becomes(&attribute.features).into(),
                     ]);
                 }
             }
-            self.out.items(&answer, "groups", &table);
+            self.out.items(&answer, "groups", &table)?;
             return Ok(());
         }
         if groups.is_empty() {
@@ -744,7 +747,7 @@ impl View<'_> {
                     .into(),
                     filled(attribute.filled, group.records).into(),
                     attribute.distinct.to_string().into(),
-                    common_values(attribute).into(),
+                    common_values(attribute, true).into(),
                     becomes(&attribute.features).into(),
                 ]);
             }
@@ -870,7 +873,7 @@ impl View<'_> {
                 Cell::shortened(when(&run.started_at), &run.started_at),
             ]);
         }
-        self.out.items(&answer, "runs", &table);
+        self.out.items(&answer, "runs", &table)?;
         Ok(())
     }
 
@@ -1122,7 +1125,7 @@ impl View<'_> {
                 position(identity.created),
             ]);
         }
-        self.out.items(&answer, "identities", &table);
+        self.out.items(&answer, "identities", &table)?;
         self.more(&answer);
         Ok(())
     }
@@ -1281,7 +1284,7 @@ impl View<'_> {
         let answer = self.remote.list("/records", &query.0)?;
         // JSON is the answer as it is, which needs nothing more.
         if self.out.is_json() {
-            self.out.items(&answer, "records", &Table::new("records"));
+            self.out.items(&answer, "records", &Table::new("records"))?;
             return Ok(());
         }
         let records: Vec<RecordEntry> = typed(&answer["records"])?;
@@ -1340,7 +1343,7 @@ impl View<'_> {
             }
             table.row(row);
         }
-        self.out.items(&answer, "records", &table);
+        self.out.items(&answer, "records", &table)?;
         self.more(&answer);
         // A `-` in the last column says nothing about why, or what to do.
         let waiting = records
@@ -1540,7 +1543,7 @@ impl View<'_> {
             }
             table.row(row);
         }
-        self.out.items(&answer, "documents", &table);
+        self.out.items(&answer, "documents", &table)?;
         self.more(&answer);
         Ok(())
     }
@@ -1608,7 +1611,7 @@ impl View<'_> {
                 about(item).into(),
             ]);
         }
-        self.out.items(&answer, "items", &table);
+        self.out.items(&answer, "items", &table)?;
         self.more(&answer);
         Ok(())
     }
@@ -1738,7 +1741,7 @@ impl View<'_> {
                 ),
             ]);
         }
-        self.out.items(&answer, "drafts", &table);
+        self.out.items(&answer, "drafts", &table)?;
         Ok(())
     }
 
@@ -1833,7 +1836,7 @@ impl View<'_> {
                     .into(),
             ]);
         }
-        self.out.items(&answer, "changesets", &table);
+        self.out.items(&answer, "changesets", &table)?;
         if let (Some(last), Some(head)) = (entries.last(), answer["head"].as_u64())
             && last.entry.seq.0 < head
         {
@@ -2446,8 +2449,9 @@ fn filled(filled: u64, records: u64) -> String {
 const VALUE_CHARACTERS: usize = 24;
 
 /// The values most records have, with how many have each. When each is
-/// held by one record they are examples, and said to be.
-fn common_values(attribute: &AttributeSummary) -> String {
+/// held by one record they are examples, and said to be. A table cuts a
+/// long value short, and CSV has it whole.
+fn common_values(attribute: &AttributeSummary, cut: bool) -> String {
     if attribute.common.is_empty() {
         return "-".to_owned();
     }
@@ -2459,7 +2463,7 @@ fn common_values(attribute: &AttributeSummary) -> String {
                 other => other,
             })
             .collect();
-        match line.chars().count() > VALUE_CHARACTERS {
+        match cut && line.chars().count() > VALUE_CHARACTERS {
             true => {
                 let kept: String = line.chars().take(VALUE_CHARACTERS - 1).collect();
                 format!("{}…", kept.trim_end())

@@ -149,7 +149,7 @@ impl Output {
 
     /// Prints a list: the answer as it is, its items one per line, its table
     /// as CSV, or the table.
-    pub fn items(&self, answer: &Value, items: &str, table: &Table) {
+    pub fn items(&self, answer: &Value, items: &str, table: &Table) -> Result<(), Failure> {
         match self.format {
             Format::Table => table.print(),
             Format::Json => self.json(answer),
@@ -161,8 +161,9 @@ impl Output {
                 }
                 None => self.json(answer),
             },
-            Format::Csv => table.print_csv(),
+            Format::Csv => return table.print_csv(),
         }
+        Ok(())
     }
 }
 
@@ -283,8 +284,8 @@ impl Table {
     }
 
     /// The rows as CSV: a header of the columns' names, then each row with
-    /// its whole values.
-    pub fn print_csv(&self) {
+    /// its whole values. A failure to write them fails the command.
+    pub fn print_csv(&self) -> Result<(), Failure> {
         let mut writer = csv::Writer::from_writer(std::io::stdout().lock());
         let header = self
             .columns
@@ -299,10 +300,7 @@ impl Table {
             }
             writer.flush().map_err(csv::Error::from)
         });
-        // A reader that has gone ends the command, as SIGPIPE does.
-        if let Err(error) = written {
-            eprintln!("{} {error}", paint(style::ERROR, "error:"));
-        }
+        written.map_err(|error| Failure::failed(format!("standard output: {error}")))
     }
 }
 
