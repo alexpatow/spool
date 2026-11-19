@@ -181,11 +181,11 @@ spool match
 
 ```text title="Output"
 loaded  2 rows into source `registry`, type `company`: 2 new
-next    `spool match` places them in identities
 run         8, type `company`
 examined    2 records, 6 candidate pairs
 judgements  3 match, 0 no_match
 placed      2 records, 0 identities created
+next: `spool match` places them in identities
 ```
 
 ```sh
@@ -193,7 +193,7 @@ spool show records --source registry
 ```
 
 ```text title="Output"
-source and key  name                 identity
+SOURCE AND KEY  NAME                 IDENTITY
 registry:X001   ACORN TOOLS LIMITED  01a1efc6-41cd-775d-8758-e7300637659a
 registry:X002   Larkfield Logistics  01a1efc6-41cd-775d-8758-e733aa086f7d
 ```
@@ -295,7 +295,7 @@ spool info
 ```
 
 ```text title="Output"
-spool: ./entities/company/entity.yaml: mapping of `name` from `registry`: `legal_nmae` is not a column of sources/registry.yaml
+error: ./entities/company/entity.yaml: mapping of `name` from `registry`: `legal_nmae` is not a column of sources/registry.yaml
 ```
 
 `spool dev` says the same when the file is saved, and keeps running the last version that worked. Put the name right again:

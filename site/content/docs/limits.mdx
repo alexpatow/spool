@@ -62,7 +62,7 @@ An ID that never changes by itself has a price, and this is it.
 - A document an extractor cannot read is failed and read again by the next `spool extract`, every time: nothing gives up on a document that always fails, and each attempt costs what the model costs.
 - One exception that leaves an extractor called once with every document, or an extractor that exits with an error, fails its whole batch, and nothing of the batch is stored or counted as read. `spool extract` reads in batches, so the batches before it are kept.
 - `spool extract --again` that is stopped starts over when it is run again.
-- An extractor's standard error is shown as it is written only during the first batch of `spool extract`; for the batches after it, it is shown when the batch ends. A run keeps only its last 100 lines.
+- An extractor's standard error is shown by `spool extract` when its batch ends. While the first batch runs, its last line is shown beside the spinner on a terminal. A run keeps only its last 100 lines.
 
 ### Review
 

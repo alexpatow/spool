@@ -7,6 +7,8 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use anstream::println;
+use clap::{Args, Subcommand};
 use serde::Serialize;
 use serde_json::{Value, json};
 use spool::core::{ChangesetId, ConstraintEntry, DocumentId, IdentityId, Op, RecordId, ReviewItem};
@@ -18,228 +20,371 @@ use spool::{
 };
 use spool_cli::api::{DocumentList, Info, RecordList};
 
-use super::remote::{self, Remote, print_json, typed};
-use crate::Failure;
-use crate::args::{Arguments, Spec};
+use super::remote::{Remote, RemoteArgs, typed};
+use crate::output::{Cell, Output, OutputArgs, Table, aligned, fields, hint, indented, table};
+use crate::{Failure, Kind};
 
-pub const SHOW_USAGE: &str = "\
-Usage: spool show [<what> [<id>]] [options]
+/// Show what a running server holds
+///
+/// Shows what a running server holds. Without a subcommand: its entity types
+/// and how much there is of each.
+///
+/// A record is named by its ID or as <source>:<key>, which names the latest
+/// version of that row. A record found in a document is named as the lists
+/// name it, <source>:<document>[<start>-<end>].
+#[derive(Args)]
+#[command(
+    after_help = "Examples:\n  spool show\n  spool show identities --sort records --order desc\n  spool show records crm:c-1"
+)]
+pub struct ShowArgs {
+    #[command(subcommand)]
+    pub what: Option<What>,
+    #[command(flatten)]
+    output: OutputArgs,
+    #[command(flatten)]
+    remote: RemoteArgs,
+}
 
-Shows what a running server holds. Without <what>: its entity types and how
-much there is of each.
+#[derive(Subcommand)]
+pub enum What {
+    Runs(RunsArgs),
+    Identities(IdentitiesArgs),
+    Records(RecordsArgs),
+    Attributes(AttributesArgs),
+    Documents(DocumentsArgs),
+    Review(ReviewArgs),
+    Drafts(DraftsArgs),
+    Log(LogArgs),
+}
 
-  runs [<run>]                   the latest runs, or one run and what it reported
-  identities [<identity>]        identities, or one with its members, the
-                                 constraints on them and its history
-  records [<record>]             records by source and key, or one with its
-                                 payload, its evidence and, for a mention, the
-                                 place in the document it was found in
-  attributes                     for each entity type and source, the
-                                 attributes its records have: how many have
-                                 each, how many values it takes, the most
-                                 common, and the features made from it
-  documents [<document>]         documents, or one with its text
-  review [<item>]                review items, or one with its records
-  drafts [<draft>]               drafts, or one with the changeset it would commit
-  log                            the changeset log
+impl What {
+    pub fn name(&self) -> &'static str {
+        match self {
+            What::Runs(_) => "runs",
+            What::Identities(_) => "identities",
+            What::Records(_) => "records",
+            What::Attributes(_) => "attributes",
+            What::Documents(_) => "documents",
+            What::Review(_) => "review",
+            What::Drafts(_) => "drafts",
+            What::Log(_) => "log",
+        }
+    }
+}
 
-The list of identities says, for each, how many records it has, how many
-different names (labels, whatever their case) they have, and what part of
-its pairs of records no link joins directly: those are together only
-through a chain of others. An identity with many names and mostly unlinked
-pairs is where different things were joined, and `spool explain <identity>`
-says which rule joined them. `--sort records --order desc` lists the largest
-first.
+/// List the latest runs, or show one and what it reported
+#[derive(Args)]
+pub struct RunsArgs {
+    /// A run, to show what it reported
+    run: Option<u64>,
+    /// Only this entity type
+    #[arg(long = "type", value_name = "NAME", conflicts_with = "run")]
+    entity_type: Option<String>,
+    /// Only this status
+    #[arg(
+        long,
+        value_parser = ["running", "open", "drafted", "succeeded", "failed"],
+        conflicts_with = "run"
+    )]
+    status: Option<String>,
+    /// Only runs of this kind
+    #[arg(
+        long,
+        value_parser = ["load", "extract", "match", "reconcile", "retract"],
+        conflicts_with = "run"
+    )]
+    kind: Option<String>,
+    /// List at most this many
+    #[arg(long, conflicts_with = "run")]
+    limit: Option<u64>,
+}
 
-A record is named by its ID or as <source>:<key>, which names the
-latest version of that row. A record found in a document is named as the
-lists name it, <source>:<document>[<start>-<end>].
+/// List identities, or show one with its members and history
+///
+/// The list of identities says, for each, how many records it has, how many
+/// different names (labels, whatever their case) they have, and what part of
+/// its pairs of records no link joins directly: those are together only
+/// through a chain of others. An identity with many names and mostly unlinked
+/// pairs is where different things were joined, and `spool explain
+/// <identity>` says which rule joined them.
+///
+/// One identity is shown with its members, the constraints on them and its
+/// history.
+#[derive(Args)]
+#[command(
+    after_help = "Examples:\n  spool show identities --sort records --order desc\n  spool show identities --type company --limit 10"
+)]
+pub struct IdentitiesArgs {
+    /// An identity's ID, to show it
+    identity: Option<IdentityId>,
+    /// Only this entity type
+    #[arg(long = "type", value_name = "NAME", conflicts_with = "identity")]
+    entity_type: Option<String>,
+    /// Sort by this column
+    ///
+    /// `records` is how many records each has, and `names` how many different
+    /// labels.
+    #[arg(
+        long,
+        value_parser = ["records", "names", "sources", "label", "entity_type", "created", "id"],
+        conflicts_with = "identity"
+    )]
+    sort: Option<String>,
+    /// The order of the sort [default: asc]
+    #[arg(long, value_parser = ["asc", "desc"], conflicts_with = "identity")]
+    order: Option<String>,
+    /// Continue the list after this ID, in its order
+    #[arg(long, value_name = "ID", conflicts_with = "identity")]
+    after: Option<String>,
+    /// List at most this many
+    #[arg(long, conflicts_with = "identity")]
+    limit: Option<u64>,
+}
 
-Lists of records and documents show the version of each that nothing
-replaced; `--all-versions` shows the versions that later loads replaced as
-well. Attributes are counted over the records that stand: the latest
-version of each, and not one its source took back.
+/// List records by source and key, or show one with its payload and evidence
+///
+/// A list shows the version of each record that nothing replaced;
+/// `--all-versions` shows the versions that later loads replaced as well.
+///
+/// One record is shown with its payload, its evidence and, for a mention, the
+/// place in the document it was found in. It is named by its ID or as
+/// <source>:<key>, which names the latest version of that row. A record found
+/// in a document is named as the lists name it,
+/// <source>:<document>[<start>-<end>].
+#[derive(Args)]
+#[command(
+    after_help = "Examples:\n  spool show records --source crm --attributes\n  spool show records --unassigned\n  spool show records crm:c-1"
+)]
+pub struct RecordsArgs {
+    /// A record, by its ID or as <source>:<key>, to show it
+    record: Option<String>,
+    /// Only this entity type
+    #[arg(long = "type", value_name = "NAME", conflicts_with = "record")]
+    entity_type: Option<String>,
+    /// Only this source
+    #[arg(long, value_name = "NAME", conflicts_with = "record")]
+    source: Option<String>,
+    /// Only this key within its source
+    #[arg(long, conflicts_with = "record")]
+    key: Option<String>,
+    /// Only the mentions found in this document
+    #[arg(long, value_name = "ID", conflicts_with = "record")]
+    document: Option<String>,
+    /// Only records that wait for an identity
+    ///
+    /// They have none, and their source has not taken them back.
+    #[arg(long, conflicts_with = "record")]
+    unassigned: bool,
+    /// Every version, the replaced ones too
+    #[arg(long, conflicts_with = "record")]
+    all_versions: bool,
+    /// A column for each attribute of the records
+    #[arg(long, conflicts_with = "record")]
+    attributes: bool,
+    /// List each record's ID as well
+    #[arg(long, conflicts_with = "record")]
+    ids: bool,
+    /// Continue the list after this ID, in its order
+    #[arg(long, value_name = "ID", conflicts_with = "record")]
+    after: Option<String>,
+    /// List at most this many
+    #[arg(long, conflicts_with = "record")]
+    limit: Option<u64>,
+}
 
-Options:
-  --type <name>      only this entity type (runs, identities, records,
-                     attributes, review, drafts)
-  --status <status>  only this status (runs, review, drafts)
-  --kind <kind>      only runs of this kind: load, extract, match, reconcile,
-                     retract
-  --source <name>    only this source (records, attributes, documents)
-  --key <key>        only this key within its source (records, documents)
-  --document <id>    only the mentions found in this document (records)
-  --unassigned       only records that wait for an identity: they have
-                     none, and their source has not taken them back
-  --all-versions     every version, the replaced ones too (records,
-                     documents)
-  --attributes       a column for each attribute of the records (records)
-  --ids              list each record's ID as well (records)
-  --sort <column>    list identities by this, with --order: records (how
-                     many records), names (how many different labels),
-                     sources, label, entity_type, created, or id
-  --order <order>    asc or desc (default: asc). `--sort records --order desc`
-                     lists the largest identities first
-  --after <id>       continue a list after this ID, or the log after this
-                     position, in the order of the list (identities,
-                     records, documents, review, log)
-  --limit <n>        list at most this many (runs, identities, records,
-                     documents, review, log)
-  --url <url>        the server (default: $SPOOL_URL, or http://127.0.0.1:7765)
-  --token <token>    a token of that server (default: $SPOOL_TOKEN); `spool dev`
-                     asks for none
-  --json             print what the server answered, as JSON
-";
+/// For each entity type and source, the attributes its records have
+///
+/// For each entity type and source, the attributes its records have: how many
+/// have each, how many values it takes, the most common, and the features
+/// made from it. Attributes are counted over the records that stand: the
+/// latest version of each, and not one its source took back.
+#[derive(Args)]
+pub struct AttributesArgs {
+    /// Only this entity type
+    #[arg(long = "type", value_name = "NAME")]
+    entity_type: Option<String>,
+    /// Only this source
+    #[arg(long, value_name = "NAME")]
+    source: Option<String>,
+}
 
-pub const EXPLAIN_USAGE: &str = "\
-Usage: spool explain <record> <record> [options]
-       spool explain <identity> [options]
+/// List documents, or show one with its text
+///
+/// A list shows the version of each document that nothing replaced;
+/// `--all-versions` shows the versions that later loads replaced as well.
+#[derive(Args)]
+pub struct DocumentsArgs {
+    /// A document's ID, to show it with its text
+    document: Option<DocumentId>,
+    /// Only this source
+    #[arg(long, value_name = "NAME", conflicts_with = "document")]
+    source: Option<String>,
+    /// Only this key within its source
+    #[arg(long, conflicts_with = "document")]
+    key: Option<String>,
+    /// Every version, the replaced ones too
+    #[arg(long, conflicts_with = "document")]
+    all_versions: bool,
+    /// Continue the list after this ID, in its order
+    #[arg(long, value_name = "ID", conflicts_with = "document")]
+    after: Option<String>,
+    /// List at most this many
+    #[arg(long, conflicts_with = "document")]
+    limit: Option<u64>,
+}
 
-With two records: says why they share an identity, or why they do not:
-where each is and what placed it there, what each run that compared them
-concluded, the constraints and review items that name them, and what the
-project's rules say about the pair as it is now. When they share an
-identity, it shows the chain of links between them, each record by its
-label and its name and each link by the rule that made it and the values
-that satisfied the rule; the rules every chain between them goes through;
-and the fewest links whose removal would part the records named as the one
-from those named as the other.
+/// List review items, or show one with its records
+#[derive(Args)]
+pub struct ReviewArgs {
+    /// A review item's number, to show it with its records
+    item: Option<u64>,
+    /// Only this entity type
+    #[arg(long = "type", value_name = "NAME", conflicts_with = "item")]
+    entity_type: Option<String>,
+    /// Only this status
+    #[arg(
+        long,
+        value_parser = ["open", "resolved", "superseded", "dismissed"],
+        conflicts_with = "item"
+    )]
+    status: Option<String>,
+    /// Continue the list after this item, in its order
+    #[arg(long, value_name = "ITEM", conflicts_with = "item")]
+    after: Option<String>,
+    /// List at most this many
+    #[arg(long, conflicts_with = "item")]
+    limit: Option<u64>,
+}
 
-With one identity: how much of it is held together only through chains,
-the pieces it would fall into without the links each rule alone made, and
-its weakest links: the fewest links whose removal would part it, each with
-the two sides it would leave. Those are where a wrong merge entered. An
-identity is named by its ID, or by any of its records.
+/// List drafts, or show one with the changeset it would commit
+#[derive(Args)]
+pub struct DraftsArgs {
+    /// A draft's ID, to show the changeset it would commit
+    draft: Option<ChangesetId>,
+    /// Only this entity type
+    #[arg(long = "type", value_name = "NAME", conflicts_with = "draft")]
+    entity_type: Option<String>,
+    /// Only this status
+    #[arg(
+        long,
+        value_parser = ["open", "committed", "rejected", "superseded"],
+        conflicts_with = "draft"
+    )]
+    status: Option<String>,
+}
 
-A record is named by its ID or as <source>:<key>, which names the
-latest version of that row. A record found in a document is named as the
-lists name it, <source>:<document>[<start>-<end>].
+/// List the changeset log
+#[derive(Args)]
+pub struct LogArgs {
+    /// Continue the log after this position
+    #[arg(long, value_name = "POSITION")]
+    after: Option<String>,
+    /// List at most this many
+    #[arg(long)]
+    limit: Option<u64>,
+}
 
-Options:
-  --url <url>        the server (default: $SPOOL_URL, or http://127.0.0.1:7765)
-  --token <token>    a token of that server (default: $SPOOL_TOKEN); `spool dev`
-                     asks for none
-  --json             print what the server answered, as JSON
-";
-
-/// The options that narrow a list, each with the query parameter it becomes
-/// and whether it takes a value.
-const FILTERS: [(&str, &str, bool); 11] = [
-    ("--type", "entity_type", true),
-    ("--sort", "sort", true),
-    ("--order", "order", true),
-    ("--status", "status", true),
-    ("--kind", "kind", true),
-    ("--source", "source", true),
-    ("--key", "key", true),
-    ("--document", "document", true),
-    ("--after", "after", true),
-    ("--limit", "limit", true),
-    ("--unassigned", "unassigned", false),
-];
+/// Say why two records share an identity, or what holds one together
+///
+/// With two records: says why they share an identity, or why they do not:
+/// where each is and what placed it there, what each run that compared them
+/// concluded, the constraints and review items that name them, and what the
+/// project's rules say about the pair as it is now. When they share an
+/// identity, it shows the chain of links between them, each record by its
+/// label and its name and each link by the rule that made it and the values
+/// that satisfied the rule; the rules every chain between them goes through;
+/// and the fewest links whose removal would part the records named as the one
+/// from those named as the other.
+///
+/// With one identity: how much of it is held together only through chains,
+/// the pieces it would fall into without the links each rule alone made, and
+/// its weakest links: the fewest links whose removal would part it, each with
+/// the two sides it would leave. Those are where a wrong merge entered. An
+/// identity is named by its ID, or by any of its records.
+///
+/// A record is named by its ID or as <source>:<key>, which names the latest
+/// version of that row. A record found in a document is named as the lists
+/// name it, <source>:<document>[<start>-<end>].
+#[derive(Args)]
+#[command(after_help = "Examples:\n  spool explain crm:c-1 crm:c-2\n  spool explain crm:c-1")]
+pub struct ExplainArgs {
+    /// A record; alone, an identity, by its ID or by any of its records
+    #[arg(value_name = "RECORD")]
+    first: String,
+    /// A second record, to say why the two share an identity or do not
+    #[arg(value_name = "RECORD")]
+    second: Option<String>,
+    #[command(flatten)]
+    output: OutputArgs,
+    #[command(flatten)]
+    remote: RemoteArgs,
+}
 
 /// How much of a document is shown on either side of a mention, in
 /// characters.
 const CONTEXT: usize = 80;
 
-pub fn show(arguments: &[String]) -> Result<(), Failure> {
-    let arguments = super::arguments(
-        arguments,
-        &Spec {
-            values: &[
-                "--type",
-                "--status",
-                "--kind",
-                "--source",
-                "--key",
-                "--document",
-                "--after",
-                "--limit",
-                "--sort",
-                "--order",
-                remote::VALUES[0],
-                remote::VALUES[1],
-            ],
-            flags: &[
-                "--unassigned",
-                "--all-versions",
-                "--attributes",
-                "--ids",
-                "--json",
-            ],
-            positional: 2,
-        },
-    )?;
-    let remote = Remote::new(&arguments);
+pub fn show(arguments: ShowArgs) -> Result<(), Failure> {
+    let remote = Remote::new(&arguments.remote);
+    let out = Output::list(&arguments.output);
+    // One thing is a report, and only a list is CSV.
+    let one = match &arguments.what {
+        None => Some("`spool show`"),
+        Some(What::Runs(what)) => what.run.map(|_| "`spool show runs <RUN>`"),
+        Some(What::Identities(what)) => what.identity.map(|_| "`spool show identities <IDENTITY>`"),
+        Some(What::Records(what)) => what
+            .record
+            .as_ref()
+            .map(|_| "`spool show records <RECORD>`"),
+        Some(What::Documents(what)) => what.document.map(|_| "`spool show documents <DOCUMENT>`"),
+        Some(What::Review(what)) => what.item.map(|_| "`spool show review <ITEM>`"),
+        Some(What::Drafts(what)) => what.draft.map(|_| "`spool show drafts <DRAFT>`"),
+        Some(What::Attributes(_) | What::Log(_)) => None,
+    };
+    if let Some(one) = one {
+        out.refuse_csv(one)?;
+    }
     let view = View {
         remote: &remote,
-        arguments: &arguments,
-        json: arguments.flag("--json"),
+        out,
     };
-    let what = arguments.positional.first().map(String::as_str);
-    let id = arguments.positional.get(1).map(String::as_str);
-    for flag in ["--ids", "--attributes"] {
-        if arguments.flag(flag) && !matches!((what, id), (Some("record" | "records"), None)) {
-            return Err(Failure::Usage(format!(
-                "`{flag}` goes with the list of records"
-            )));
-        }
-    }
-    if arguments.flag("--all-versions")
-        && !matches!(
-            (what, id),
-            (Some("record" | "records" | "document" | "documents"), None)
-        )
-    {
-        return Err(Failure::Usage(
-            "`--all-versions` goes with the lists of records and documents".to_owned(),
-        ));
-    }
-    match (what, id) {
-        (None, _) => view.overview(),
-        (Some("run" | "runs"), None) => view.runs(),
-        (Some("run" | "runs"), Some(id)) => view.run(id),
-        (Some("identity" | "identities"), None) => view.identities(),
-        (Some("identity" | "identities"), Some(id)) => view.identity(id),
-        (Some("record" | "records"), None) => view.records(),
-        (Some("record" | "records"), Some(id)) => view.record(id),
-        (Some("attribute" | "attributes"), None) => view.attributes(),
-        (Some("attribute" | "attributes"), Some(id)) => {
-            Err(Failure::Usage(format!("unexpected argument `{id}`")))
-        }
-        (Some("document" | "documents"), None) => view.documents(),
-        (Some("document" | "documents"), Some(id)) => view.document(id),
-        (Some("review" | "reviews"), None) => view.review_items(),
-        (Some("review" | "reviews"), Some(id)) => view.review_item(id),
-        (Some("draft" | "drafts"), None) => view.drafts(),
-        (Some("draft" | "drafts"), Some(id)) => view.draft(id),
-        (Some("log"), None) => view.log(),
-        (Some("log"), Some(id)) => Err(Failure::Usage(format!("unexpected argument `{id}`"))),
-        (Some(other), _) => Err(Failure::Usage(format!(
-            "`{other}` is not something `show` shows"
-        ))),
+    match &arguments.what {
+        None => view.overview(),
+        Some(What::Runs(what)) => match what.run {
+            Some(run) => view.run(run),
+            None => view.runs(what),
+        },
+        Some(What::Identities(what)) => match what.identity {
+            Some(identity) => view.identity(identity),
+            None => view.identities(what),
+        },
+        Some(What::Records(what)) => match &what.record {
+            Some(record) => view.record(record),
+            None => view.records(what),
+        },
+        Some(What::Attributes(what)) => view.attributes(what),
+        Some(What::Documents(what)) => match what.document {
+            Some(document) => view.document(document),
+            None => view.documents(what),
+        },
+        Some(What::Review(what)) => match what.item {
+            Some(item) => view.review_item(item),
+            None => view.review_items(what),
+        },
+        Some(What::Drafts(what)) => match what.draft {
+            Some(draft) => view.draft(draft),
+            None => view.drafts(what),
+        },
+        Some(What::Log(what)) => view.log(what),
     }
 }
 
-pub fn explain(arguments: &[String]) -> Result<(), Failure> {
-    let arguments = super::arguments(
-        arguments,
-        &Spec {
-            values: &remote::VALUES,
-            flags: &["--json"],
-            positional: 2,
-        },
-    )?;
-    let remote = Remote::new(&arguments);
-    let json = arguments.flag("--json");
-    let (a, b) = match &arguments.positional[..] {
-        [one] => return explain_identity(&remote, one, json),
-        [a, b] => (a, b),
-        _ => {
-            return Err(Failure::Usage(
-                "`explain` needs two records, or an identity".to_owned(),
-            ));
-        }
+pub fn explain(arguments: ExplainArgs) -> Result<(), Failure> {
+    let remote = Remote::new(&arguments.remote);
+    let out = Output::report(&arguments.output, "`spool explain`")?;
+    let (a, b) = match &arguments.second {
+        None => return explain_identity(&remote, &arguments.first, out),
+        Some(second) => (&arguments.first, second),
     };
     let a = find_record(&remote, a)?;
     let b = find_record(&remote, b)?;
@@ -247,16 +392,15 @@ pub fn explain(arguments: &[String]) -> Result<(), Failure> {
         "/explain",
         &[("a", a.id.to_string()), ("b", b.id.to_string())],
     )?;
-    if json {
-        print_json(&answer);
-    } else {
-        print_explanation(&typed(&answer)?);
+    match out.is_table() {
+        true => print_explanation(&typed(&answer)?),
+        false => out.json(&answer),
     }
     Ok(())
 }
 
 /// `spool explain <identity>`: by its ID, or by a record of it.
-fn explain_identity(remote: &Remote, reference: &str, json: bool) -> Result<(), Failure> {
+fn explain_identity(remote: &Remote, reference: &str, out: Output) -> Result<(), Failure> {
     let identity = match reference.parse::<IdentityId>() {
         Ok(identity)
             if remote
@@ -266,24 +410,23 @@ fn explain_identity(remote: &Remote, reference: &str, json: bool) -> Result<(), 
             identity
         }
         _ => {
-            let record = find_record(remote, reference).map_err(|failure| match failure {
-                Failure::Failed(_) if reference.parse::<IdentityId>().is_ok() => {
-                    Failure::Failed(format!("there is no identity or record {reference}"))
+            let record = find_record(remote, reference).map_err(|failure| {
+                match failure.kind() == Kind::Failed && reference.parse::<IdentityId>().is_ok() {
+                    true => Failure::failed(format!("there is no identity or record {reference}")),
+                    false => failure,
                 }
-                other => other,
             })?;
             record
                 .identity
-                .ok_or_else(|| Failure::Failed(format!("`{}` has no identity", record.name())))?
+                .ok_or_else(|| Failure::failed(format!("`{}` has no identity", record.name())))?
         }
     };
     let answer = remote.get(&format!("/identities/{identity}/explain"), &[], || {
         format!("there is no identity {identity}")
     })?;
-    if json {
-        print_json(&answer);
-    } else {
-        print_identity_explanation(&typed(&answer)?);
+    match out.is_table() {
+        true => print_identity_explanation(&typed(&answer)?),
+        false => out.json(&answer),
     }
     Ok(())
 }
@@ -299,7 +442,7 @@ fn find_record(remote: &Remote, reference: &str) -> Result<RecordEntry, Failure>
         return typed(&found);
     }
     let Some((source, key)) = reference.split_once(':') else {
-        return Err(Failure::Usage(format!(
+        return Err(Failure::usage(format!(
             "`{reference}` does not name a record: give its ID, or <source>:<key>"
         )));
     };
@@ -330,7 +473,7 @@ fn find_record(remote: &Remote, reference: &str) -> Result<RecordEntry, Failure>
     if let Some(mention) = find_mention(remote, reference, source, key)? {
         return Ok(mention);
     }
-    Err(Failure::Failed(format!(
+    Err(Failure::failed(format!(
         "there is no record with key `{key}` from source `{source}`"
     )))
 }
@@ -392,7 +535,7 @@ fn find_mention(
             1 => return Ok(found.pop()),
             several => {
                 let ids: Vec<String> = found.iter().map(|record| record.id.to_string()).collect();
-                return Err(Failure::Failed(format!(
+                return Err(Failure::failed(format!(
                     "{several} records are named `{reference}`: name one by its ID, of {}",
                     ids.join(", ")
                 )));
@@ -426,32 +569,27 @@ fn newest_first(versions: Vec<DocumentEntry>) -> Vec<DocumentEntry> {
 
 struct View<'a> {
     remote: &'a Remote,
-    arguments: &'a Arguments,
-    json: bool,
+    out: Output,
+}
+
+/// The query of a list: a parameter for each option that was given.
+#[derive(Default)]
+struct Query(Vec<(&'static str, String)>);
+
+impl Query {
+    fn add(mut self, parameter: &'static str, value: Option<impl ToString>) -> Self {
+        if let Some(value) = value {
+            self.0.push((parameter, value.to_string()));
+        }
+        self
+    }
+
+    fn flag(self, parameter: &'static str, given: bool) -> Self {
+        self.add(parameter, given.then_some("true"))
+    }
 }
 
 impl View<'_> {
-    /// The query of a list, from the options that narrow it. An option that
-    /// says nothing about `what` is a mistake, not something to ignore.
-    fn query(&self, what: &str, allowed: &[&str]) -> Result<Vec<(&'static str, String)>, Failure> {
-        let mut query = Vec::new();
-        for (option, parameter, takes_value) in FILTERS {
-            let value = match takes_value {
-                true => self.arguments.value(option).map(str::to_owned),
-                false => self.arguments.flag(option).then(|| "true".to_owned()),
-            };
-            let Some(value) = value else { continue };
-            if !allowed.contains(&option) {
-                return Err(Failure::Usage(format!(
-                    "`{option}` does not go with `{what}`"
-                )));
-            }
-            query.push((parameter, value));
-        }
-        self.arguments.number("--limit").map_err(Failure::Usage)?;
-        Ok(query)
-    }
-
     /// The documents that the mentions among `records` were found in and
     /// that a later version replaced. Such a mention is not current, though
     /// nothing replaced the mention itself: one found in the new version is
@@ -471,14 +609,27 @@ impl View<'_> {
         Ok(replaced)
     }
 
-    /// Whether a list shows every version. Without `--all-versions` it asks
-    /// for the ones nothing replaced.
-    fn all_versions(&self, query: &mut Vec<(&'static str, String)>) -> bool {
-        let all = self.arguments.flag("--all-versions");
-        if !all {
-            query.push(("latest", "true".to_owned()));
+    /// Says how to go on when a list has more than was shown.
+    fn more(&self, answer: &Value) {
+        match &answer["next"] {
+            Value::String(next) => self.hint_more(next),
+            Value::Number(next) => self.hint_more(&next.to_string()),
+            _ => {}
         }
-        all
+    }
+
+    fn hint_more(&self, after: &str) {
+        if self.out.is_table() {
+            hint(format!("more: add `--after {after}`"));
+        }
+    }
+
+    /// Asks a list for the versions nothing replaced, unless it is to show
+    /// every version.
+    fn latest(query: &mut Query, all_versions: bool) {
+        if !all_versions {
+            query.0.push(("latest", "true".to_owned()));
+        }
     }
 
     /// The attributes a list of records shows a column for: the columns
@@ -515,23 +666,56 @@ impl View<'_> {
         Ok(columns)
     }
 
-    fn attributes(&self) -> Result<(), Failure> {
-        let query = self.query("attributes", &["--type", "--source"])?;
+    fn attributes(&self, what: &AttributesArgs) -> Result<(), Failure> {
+        let query = Query::default()
+            .add("entity_type", what.entity_type.as_ref())
+            .add("source", what.source.as_ref())
+            .0;
         let answer = self.remote.list("/attributes", &query)?;
-        if self.json {
-            print_json(&answer);
+        let groups: Vec<AttributeGroup> = typed(&answer["groups"])?;
+        if !self.out.is_table() {
+            let mut table = Table::new("attributes").columns([
+                "entity type",
+                "source",
+                "records",
+                "attribute",
+                "key",
+                "filled",
+                "distinct",
+                "most common",
+                "features",
+            ]);
+            for group in &groups {
+                for attribute in &group.attributes {
+                    table.row(vec![
+                        group.entity_type.to_string().into(),
+                        group.source.clone().into(),
+                        group.records.to_string().into(),
+                        attribute.name.clone().into(),
+                        attribute.key.to_string().into(),
+                        attribute.filled.to_string().into(),
+                        attribute.distinct.to_string().into(),
+                        Cell::shortened(
+                            common_values(attribute, true),
+                            common_values(attribute, false),
+                        ),
+                        becomes(&attribute.features).into(),
+                    ]);
+                }
+            }
+            self.out.items(&answer, "groups", &table)?;
             return Ok(());
         }
-        let groups: Vec<AttributeGroup> = typed(&answer["groups"])?;
         if groups.is_empty() {
-            println!(
-                "no records{}",
-                match query.is_empty() {
-                    true =>
-                        ": `spool load <file>` sends rows, and `spool extract` finds them in documents",
-                    false => " of that entity type and source",
+            match query.is_empty() {
+                true => {
+                    println!("no records");
+                    hint(
+                        "`spool load <file>` sends rows, and `spool extract` finds them in documents",
+                    );
                 }
-            );
+                false => println!("no records of that entity type and source"),
+            }
             return Ok(());
         }
         for (number, group) in groups.iter().enumerate() {
@@ -547,49 +731,42 @@ impl View<'_> {
                     records => count(records, "record"),
                 }
             );
-            let rows = group
-                .attributes
-                .iter()
-                .map(|attribute| {
-                    vec![
-                        match attribute.key {
-                            true => format!("{} (key)", attribute.name),
-                            false => attribute.name.clone(),
-                        },
-                        filled(attribute.filled, group.records),
-                        attribute.distinct.to_string(),
-                        common_values(attribute),
-                        becomes(&attribute.features),
-                    ]
-                })
-                .collect();
-            table(
-                "attributes",
-                &["attribute", "filled", "distinct", "most common", "features"],
-                rows,
-            );
+            let mut table = Table::new("attributes").columns([
+                "attribute",
+                "filled",
+                "distinct",
+                "most common",
+                "features",
+            ]);
+            for attribute in &group.attributes {
+                table.row(vec![
+                    match attribute.key {
+                        true => format!("{} (key)", attribute.name),
+                        false => attribute.name.clone(),
+                    }
+                    .into(),
+                    filled(attribute.filled, group.records).into(),
+                    attribute.distinct.to_string().into(),
+                    common_values(attribute, true).into(),
+                    becomes(&attribute.features).into(),
+                ]);
+            }
+            table.print();
         }
         let source = match &groups[..] {
             [only] => format!(" --source {}", only.source),
             _ => String::new(),
         };
-        println!(
-            "
-`spool show records{source} --attributes` lists the values record by record."
-        );
+        hint(format!(
+            "`spool show records{source} --attributes` lists the values record by record"
+        ));
         Ok(())
     }
 
-    /// A single thing takes no options that narrow a list.
-    fn one(&self, what: &str) -> Result<(), Failure> {
-        self.query(what, &[]).map(|_| ())
-    }
-
     fn overview(&self) -> Result<(), Failure> {
-        self.one("the overview")?;
         let answer = self.remote.list("/info", &[])?;
-        if self.json {
-            print_json(&answer);
+        if !self.out.is_table() {
+            self.out.json(&answer);
             return Ok(());
         }
         let info: Info = typed(&answer)?;
@@ -663,50 +840,49 @@ impl View<'_> {
         Ok(())
     }
 
-    fn runs(&self) -> Result<(), Failure> {
-        let query = self.query("runs", &["--type", "--status", "--kind", "--limit"])?;
+    fn runs(&self, what: &RunsArgs) -> Result<(), Failure> {
+        let query = Query::default()
+            .add("entity_type", what.entity_type.as_ref())
+            .add("status", what.status.as_ref())
+            .add("kind", what.kind.as_ref())
+            .add("limit", what.limit)
+            .0;
         let answer = self.remote.list("/runs", &query)?;
-        if self.json {
-            print_json(&answer);
-            return Ok(());
-        }
         let runs: Vec<RunEntry> = typed(&answer["runs"])?;
-        table(
-            "runs",
-            &["run", "kind", "status", "about", "started by", "started"],
-            runs.iter()
-                .map(|run| {
-                    let about = [
-                        run.entity_type.as_ref().map(ToString::to_string),
-                        run.strategy.as_ref().map(|strategy| strategy.name.clone()),
-                        run.extractor
-                            .as_ref()
-                            .map(|extractor| extractor.name.clone()),
-                    ];
-                    vec![
-                        run.run.to_string(),
-                        word(&run.kind),
-                        run.status.to_string(),
-                        about.into_iter().flatten().collect::<Vec<_>>().join(", "),
-                        run.started_by.to_string(),
-                        when(&run.started_at),
-                    ]
-                })
-                .collect(),
-        );
+        let mut table =
+            Table::new("runs").columns(["run", "kind", "status", "about", "started by", "started"]);
+        for run in &runs {
+            let about = [
+                run.entity_type.as_ref().map(ToString::to_string),
+                run.strategy.as_ref().map(|strategy| strategy.name.clone()),
+                run.extractor
+                    .as_ref()
+                    .map(|extractor| extractor.name.clone()),
+            ];
+            table.row(vec![
+                run.run.to_string().into(),
+                word(&run.kind).into(),
+                run.status.to_string().into(),
+                about
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+                    .into(),
+                run.started_by.to_string().into(),
+                Cell::shortened(when(&run.started_at), &run.started_at),
+            ]);
+        }
+        self.out.items(&answer, "runs", &table)?;
         Ok(())
     }
 
-    fn run(&self, id: &str) -> Result<(), Failure> {
-        self.one("a run")?;
-        let run: u64 = id
-            .parse()
-            .map_err(|_| Failure::Usage(format!("`{id}` is not a run ID")))?;
+    fn run(&self, run: u64) -> Result<(), Failure> {
         let answer = self.remote.get(&format!("/runs/{run}"), &[], || {
             format!("there is no run {run}")
         })?;
-        if self.json {
-            print_json(&answer);
+        if !self.out.is_table() {
+            self.out.json(&answer);
             return Ok(());
         }
         let run: RunEntry = typed(&answer["run"])?;
@@ -918,55 +1094,43 @@ impl View<'_> {
         Ok(())
     }
 
-    fn identities(&self) -> Result<(), Failure> {
-        let query = self.query(
-            "identities",
-            &["--type", "--after", "--limit", "--sort", "--order"],
-        )?;
+    fn identities(&self, what: &IdentitiesArgs) -> Result<(), Failure> {
+        let query = Query::default()
+            .add("entity_type", what.entity_type.as_ref())
+            .add("sort", what.sort.as_ref())
+            .add("order", what.order.as_ref())
+            .add("after", what.after.as_ref())
+            .add("limit", what.limit)
+            .0;
         let answer = self.remote.list("/identities", &query)?;
-        if self.json {
-            print_json(&answer);
-            return Ok(());
-        }
         let identities: Vec<IdentitySummary> = typed(&answer["identities"])?;
         // The type is said once, by the option that chose it or by there
         // being one, and per row only when the rows differ.
         let typed_rows = mixed(identities.iter().map(|identity| &identity.entity_type));
-        let mut headers = vec!["identity"];
-        if typed_rows {
-            headers.push("type");
+        let mut table = Table::new("identities")
+            .column("identity")
+            .column_if("type", typed_rows)
+            .columns(["name", "members", "names", "unlinked pairs", "created at"]);
+        for identity in &identities {
+            table.row(vec![
+                identity.id.to_string().into(),
+                identity.entity_type.to_string().into(),
+                label_cell(identity.label.as_deref()),
+                identity.members.to_string().into(),
+                identity.names.to_string().into(),
+                Cell::shortened(
+                    share(identity.unlinked_pairs, identity.linked_pairs),
+                    identity.unlinked_pairs.to_string(),
+                ),
+                position(identity.created),
+            ]);
         }
-        headers.extend(["name", "members", "names", "unlinked pairs", "created at"]);
-        table(
-            "identities",
-            &headers,
-            identities
-                .iter()
-                .map(|identity| {
-                    let mut row = vec![identity.id.to_string()];
-                    if typed_rows {
-                        row.push(identity.entity_type.to_string());
-                    }
-                    row.extend([
-                        label(identity.label.as_deref()),
-                        identity.members.to_string(),
-                        identity.names.to_string(),
-                        share(identity.unlinked_pairs, identity.linked_pairs),
-                        format!("log position {}", identity.created),
-                    ]);
-                    row
-                })
-                .collect(),
-        );
-        more(&answer);
+        self.out.items(&answer, "identities", &table)?;
+        self.more(&answer);
         Ok(())
     }
 
-    fn identity(&self, id: &str) -> Result<(), Failure> {
-        self.one("an identity")?;
-        let identity: IdentityId = id
-            .parse()
-            .map_err(|_| Failure::Usage(format!("`{id}` is not an identity ID")))?;
+    fn identity(&self, identity: IdentityId) -> Result<(), Failure> {
         let missing = || format!("there is no identity {identity}");
         let view = self
             .remote
@@ -982,8 +1146,8 @@ impl View<'_> {
         let constraints = self
             .remote
             .list("/constraints", &[("identity", current.clone())])?;
-        if self.json {
-            print_json(&json!({
+        if !self.out.is_table() {
+            self.out.json(&json!({
                 "identity": view,
                 "constraints": constraints["constraints"],
                 "history": history["history"],
@@ -1105,124 +1269,108 @@ impl View<'_> {
         }
     }
 
-    fn records(&self) -> Result<(), Failure> {
-        let mut query = self.query(
-            "records",
-            &[
-                "--type",
-                "--source",
-                "--key",
-                "--document",
-                "--unassigned",
-                "--after",
-                "--limit",
-            ],
-        )?;
-        let narrowed = !query.is_empty();
-        let all_versions = self.all_versions(&mut query);
-        let answer = self.remote.list("/records", &query)?;
-        if self.json {
-            print_json(&answer);
+    fn records(&self, what: &RecordsArgs) -> Result<(), Failure> {
+        let mut query = Query::default()
+            .add("entity_type", what.entity_type.as_ref())
+            .add("source", what.source.as_ref())
+            .add("key", what.key.as_ref())
+            .add("document", what.document.as_ref())
+            .flag("unassigned", what.unassigned)
+            .add("after", what.after.as_ref())
+            .add("limit", what.limit);
+        let narrowed = !query.0.is_empty();
+        let all_versions = what.all_versions;
+        Self::latest(&mut query, all_versions);
+        let answer = self.remote.list("/records", &query.0)?;
+        // JSON is the answer as it is, which needs nothing more.
+        if self.out.is_json() {
+            self.out.items(&answer, "records", &Table::new("records"))?;
             return Ok(());
         }
         let records: Vec<RecordEntry> = typed(&answer["records"])?;
-        if records.is_empty() && !narrowed {
-            println!("no records: `spool load <file>` sends rows");
+        if records.is_empty() && !narrowed && self.out.is_table() {
+            println!("no records");
+            hint("`spool load <file>` sends rows");
             return Ok(());
         }
-        let ids = self.arguments.flag("--ids");
-        let attributes = match self.arguments.flag("--attributes") {
+        let attributes = match what.attributes {
             true => self.attribute_columns(&records)?,
             false => Vec::new(),
         };
         let typed_rows = mixed(records.iter().map(|record| &record.entity_type));
-        let mut headers = Vec::new();
-        if ids {
-            headers.push("record");
+        let mut table = Table::new("records")
+            .column_if("record", what.ids)
+            .column_if("type", typed_rows)
+            .column("source and key");
+        match what.attributes {
+            true => table = table.columns(attributes.iter().map(String::as_str)),
+            false => table = table.column("name"),
         }
-        if typed_rows {
-            headers.push("type");
-        }
-        headers.push("source and key");
-        if self.arguments.flag("--attributes") {
-            headers.extend(attributes.iter().map(String::as_str));
-        } else {
-            headers.push("name");
-        }
-        headers.push("identity");
+        table = table.column("identity");
         let replaced_documents = match all_versions {
             true => self.replaced_documents(&records)?,
             false => Vec::new(),
         };
         if all_versions {
-            headers.push("version");
+            table = table.column("version");
         }
-        table(
-            "records",
-            &headers,
-            records
-                .iter()
-                .map(|record| {
-                    let mut row = Vec::new();
-                    if ids {
-                        row.push(record.id.to_string());
-                    }
-                    if typed_rows {
-                        row.push(record.entity_type.to_string());
-                    }
-                    row.push(record_name(record));
-                    if self.arguments.flag("--attributes") {
-                        row.extend(attributes.iter().map(|attribute| {
-                            match record.payload.get(attribute) {
-                                Some(value) if !value.is_null() => label(Some(&plain(value))),
-                                _ => "-".to_owned(),
-                            }
-                        }));
-                    } else {
-                        row.push(label(record.label.as_deref()));
-                    }
-                    row.push(
-                        record
-                            .identity
-                            .map_or_else(|| "-".to_owned(), |identity| identity.to_string()),
-                    );
-                    if all_versions {
-                        let in_replaced = mention_document(record)
-                            .is_some_and(|document| replaced_documents.contains(&document));
-                        row.push(version(record.superseded_by.is_some() || in_replaced));
-                    }
-                    row
-                })
-                .collect(),
-        );
-        more(&answer);
+        for record in &records {
+            let mut row: Vec<Cell> = vec![
+                record.id.to_string().into(),
+                record.entity_type.to_string().into(),
+                record_name(record).into(),
+            ];
+            if what.attributes {
+                row.extend(attributes.iter().map(
+                    |attribute| match record.payload.get(attribute) {
+                        Some(value) if !value.is_null() => label_cell(Some(&plain(value))),
+                        _ => "-".into(),
+                    },
+                ));
+            } else {
+                row.push(label_cell(record.label.as_deref()));
+            }
+            row.push(
+                record
+                    .identity
+                    .map_or_else(|| "-".to_owned(), |identity| identity.to_string())
+                    .into(),
+            );
+            if all_versions {
+                let in_replaced = mention_document(record)
+                    .is_some_and(|document| replaced_documents.contains(&document));
+                row.push(version(record.superseded_by.is_some() || in_replaced).into());
+            }
+            table.row(row);
+        }
+        self.out.items(&answer, "records", &table)?;
+        self.more(&answer);
         // A `-` in the last column says nothing about why, or what to do.
         let waiting = records
             .iter()
             .filter(|record| record.identity.is_none() && record.retracted.is_none())
             .count() as u64;
         if waiting > 0 {
-            println!(
-                "\n{} no identity. `spool match` places new records in identities,\n\
-                 and `spool show review` lists the ones a match left out.",
+            hint(format!(
+                "{} no identity: `spool match` places new records in identities, and `spool show \
+                 review` lists the ones a match left out",
                 match waiting {
                     1 => "1 record has".to_owned(),
                     several => format!("{several} records have"),
                 }
-            );
+            ));
         }
         Ok(())
     }
 
     fn record(&self, reference: &str) -> Result<(), Failure> {
-        self.one("a record")?;
         let record = find_record(self.remote, reference)?;
         let review = self
             .remote
             .list("/review", &[("record", record.id.to_string())])?;
         let mention = self.mention(&record)?;
-        if self.json {
-            print_json(&json!({
+        if !self.out.is_table() {
+            self.out.json(&json!({
                 "record": record,
                 "mention": mention,
                 "review_items": review["items"],
@@ -1364,54 +1512,50 @@ impl View<'_> {
         }))
     }
 
-    fn documents(&self) -> Result<(), Failure> {
-        let mut query = self.query("documents", &["--source", "--key", "--after", "--limit"])?;
-        let all_versions = self.all_versions(&mut query);
-        let answer = self.remote.list("/documents", &query)?;
-        if self.json {
-            print_json(&answer);
-            return Ok(());
-        }
+    fn documents(&self, what: &DocumentsArgs) -> Result<(), Failure> {
+        let mut query = Query::default()
+            .add("source", what.source.as_ref())
+            .add("key", what.key.as_ref())
+            .add("after", what.after.as_ref())
+            .add("limit", what.limit);
+        let all_versions = what.all_versions;
+        Self::latest(&mut query, all_versions);
+        let answer = self.remote.list("/documents", &query.0)?;
         let documents: Vec<DocumentEntry> = typed(&answer["documents"])?;
-        let mut headers = vec!["document", "source and key", "characters", "read by"];
+        let mut table = Table::new("documents").columns([
+            "document",
+            "source and key",
+            "characters",
+            "read by",
+        ]);
         if all_versions {
-            headers.push("version");
+            table = table.column("version");
         }
-        table(
-            "documents",
-            &headers,
-            documents
-                .iter()
-                .map(|document| {
-                    let mut row = vec![
-                        document.id.to_string(),
-                        named(&document.source, Some(&document.key)),
-                        document.length.to_string(),
-                        read_by(document),
-                    ];
-                    if all_versions {
-                        row.push(version(document.superseded_by.is_some()));
-                    }
-                    row
-                })
-                .collect(),
-        );
-        more(&answer);
+        for document in &documents {
+            let mut row: Vec<Cell> = vec![
+                document.id.to_string().into(),
+                named(&document.source, Some(&document.key)).into(),
+                document.length.to_string().into(),
+                read_by(document).into(),
+            ];
+            if all_versions {
+                row.push(version(document.superseded_by.is_some()).into());
+            }
+            table.row(row);
+        }
+        self.out.items(&answer, "documents", &table)?;
+        self.more(&answer);
         Ok(())
     }
 
-    fn document(&self, id: &str) -> Result<(), Failure> {
-        self.one("a document")?;
-        let document: DocumentId = id
-            .parse()
-            .map_err(|_| Failure::Usage(format!("`{id}` is not a document ID")))?;
+    fn document(&self, document: DocumentId) -> Result<(), Failure> {
         let answer = self
             .remote
             .get(&format!("/documents/{document}"), &[], || {
                 format!("there is no document {document}")
             })?;
-        if self.json {
-            print_json(&answer);
+        if !self.out.is_table() {
+            self.out.json(&answer);
             return Ok(());
         }
         let document: DocumentEntry = typed(&answer)?;
@@ -1440,40 +1584,39 @@ impl View<'_> {
         Ok(())
     }
 
-    fn review_items(&self) -> Result<(), Failure> {
-        let query = self.query("review", &["--type", "--status", "--after", "--limit"])?;
+    fn review_items(&self, what: &ReviewArgs) -> Result<(), Failure> {
+        let query = Query::default()
+            .add("entity_type", what.entity_type.as_ref())
+            .add("status", what.status.as_ref())
+            .add("after", what.after.as_ref())
+            .add("limit", what.limit)
+            .0;
         let answer = self.remote.list("/review", &query)?;
-        if self.json {
-            print_json(&answer);
-            return Ok(());
-        }
         let items: Vec<ReviewEntry> = typed(&answer["items"])?;
-        table(
-            "review items",
-            &["item", "kind", "status", "type", "raised by", "about"],
-            items
-                .iter()
-                .map(|item| {
-                    vec![
-                        item.id.to_string(),
-                        word(&item.kind),
-                        word(&item.status),
-                        item.entity_type.to_string(),
-                        format!("run {}", item.run),
-                        about(item),
-                    ]
-                })
-                .collect(),
-        );
-        more(&answer);
+        let mut table = Table::new("review items").columns([
+            "item",
+            "kind",
+            "status",
+            "type",
+            "raised by",
+            "about",
+        ]);
+        for item in &items {
+            table.row(vec![
+                item.id.to_string().into(),
+                word(&item.kind).into(),
+                word(&item.status).into(),
+                item.entity_type.to_string().into(),
+                Cell::shortened(format!("run {}", item.run), item.run.to_string()),
+                about(item).into(),
+            ]);
+        }
+        self.out.items(&answer, "items", &table)?;
+        self.more(&answer);
         Ok(())
     }
 
-    fn review_item(&self, id: &str) -> Result<(), Failure> {
-        self.one("a review item")?;
-        let item: u64 = id
-            .parse()
-            .map_err(|_| Failure::Usage(format!("`{id}` is not a review item ID")))?;
+    fn review_item(&self, item: u64) -> Result<(), Failure> {
         let answer = self.remote.get(&format!("/review/{item}"), &[], || {
             format!("there is no review item {item}")
         })?;
@@ -1496,12 +1639,12 @@ impl View<'_> {
                 .clone(),
             false => Value::Null,
         };
-        if self.json {
+        if !self.out.is_table() {
             let mut bundle = json!({ "item": answer, "records": records });
             if split {
                 bundle["taken_back"] = taken_back;
             }
-            print_json(&bundle);
+            self.out.json(&bundle);
             return Ok(());
         }
         let records: Vec<RecordEntry> = typed(&Value::Array(records))?;
@@ -1577,43 +1720,37 @@ impl View<'_> {
         Ok(())
     }
 
-    fn drafts(&self) -> Result<(), Failure> {
-        let query = self.query("drafts", &["--type", "--status"])?;
+    fn drafts(&self, what: &DraftsArgs) -> Result<(), Failure> {
+        let query = Query::default()
+            .add("entity_type", what.entity_type.as_ref())
+            .add("status", what.status.as_ref())
+            .0;
         let answer = self.remote.list("/drafts", &query)?;
-        if self.json {
-            print_json(&answer);
-            return Ok(());
-        }
         let drafts: Vec<DraftSummary> = typed(&answer["drafts"])?;
-        table(
-            "drafts",
-            &["draft", "type", "status", "operations", "from"],
-            drafts
-                .iter()
-                .map(|draft| {
-                    vec![
-                        draft.id.to_string(),
-                        draft.entity_type.to_string(),
-                        draft.status.to_string(),
-                        draft.operations.to_string(),
-                        format!("match run {}", draft.match_run),
-                    ]
-                })
-                .collect(),
-        );
+        let mut table =
+            Table::new("drafts").columns(["draft", "type", "status", "operations", "from"]);
+        for draft in &drafts {
+            table.row(vec![
+                draft.id.to_string().into(),
+                draft.entity_type.to_string().into(),
+                draft.status.to_string().into(),
+                draft.operations.to_string().into(),
+                Cell::shortened(
+                    format!("match run {}", draft.match_run),
+                    draft.match_run.to_string(),
+                ),
+            ]);
+        }
+        self.out.items(&answer, "drafts", &table)?;
         Ok(())
     }
 
-    fn draft(&self, id: &str) -> Result<(), Failure> {
-        self.one("a draft")?;
-        let draft: ChangesetId = id
-            .parse()
-            .map_err(|_| Failure::Usage(format!("`{id}` is not a draft ID")))?;
+    fn draft(&self, draft: ChangesetId) -> Result<(), Failure> {
         let answer = self.remote.get(&format!("/drafts/{draft}"), &[], || {
             format!("there is no draft {draft}")
         })?;
-        if self.json {
-            print_json(&answer);
+        if !self.out.is_table() {
+            self.out.json(&answer);
             return Ok(());
         }
         let entry: DraftEntry = typed(&answer)?;
@@ -1660,50 +1797,50 @@ impl View<'_> {
         Ok(())
     }
 
-    fn log(&self) -> Result<(), Failure> {
-        let query = self.query("log", &["--after", "--limit"])?;
+    fn log(&self, what: &LogArgs) -> Result<(), Failure> {
+        let query = Query::default()
+            .add("after", what.after.as_ref())
+            .add("limit", what.limit)
+            .0;
         let answer = self.remote.list("/changesets", &query)?;
-        if self.json {
-            print_json(&answer);
-            return Ok(());
-        }
         let entries: Vec<LoggedChangeset> = typed(&answer["changesets"])?;
         // The actor decided the operations. Who asked for the run that
         // committed them is beside it, where a run did.
-        table(
-            "changesets",
-            &[
-                "position",
-                "actor",
-                "operations",
-                "from",
-                "started by",
-                "reason",
-            ],
-            entries
-                .iter()
-                .map(|logged| {
-                    let changeset = &logged.entry.changeset;
-                    vec![
-                        logged.entry.seq.to_string(),
-                        changeset.actor.to_string(),
-                        changeset.ops.len().to_string(),
-                        changeset
-                            .run
-                            .map_or_else(|| "-".to_owned(), |run| format!("reconcile run {run}")),
-                        logged
-                            .started_by
-                            .as_ref()
-                            .map_or_else(|| "-".to_owned(), ToString::to_string),
-                        changeset.reason.clone().unwrap_or_else(|| "-".to_owned()),
-                    ]
-                })
-                .collect(),
-        );
+        let mut table = Table::new("changesets").columns([
+            "position",
+            "actor",
+            "operations",
+            "from",
+            "started by",
+            "reason",
+        ]);
+        for logged in &entries {
+            let changeset = &logged.entry.changeset;
+            table.row(vec![
+                logged.entry.seq.to_string().into(),
+                changeset.actor.to_string().into(),
+                changeset.ops.len().to_string().into(),
+                changeset
+                    .run
+                    .map_or_else(|| "-".to_owned(), |run| format!("reconcile run {run}"))
+                    .into(),
+                logged
+                    .started_by
+                    .as_ref()
+                    .map_or_else(|| "-".to_owned(), ToString::to_string)
+                    .into(),
+                changeset
+                    .reason
+                    .clone()
+                    .unwrap_or_else(|| "-".to_owned())
+                    .into(),
+            ]);
+        }
+        self.out.items(&answer, "changesets", &table)?;
         if let (Some(last), Some(head)) = (entries.last(), answer["head"].as_u64())
             && last.entry.seq.0 < head
         {
-            println!("\nmore: add `--after {}`", last.entry.seq);
+            self.hint_more(&last.entry.seq.to_string());
         }
         Ok(())
     }
@@ -1747,7 +1884,7 @@ fn print_explanation(explanation: &Explanation) {
             ]
         })
         .collect();
-    aligned(&rows, "");
+    aligned(&rows, 0);
 
     let mut names: Vec<&String> = Vec::new();
     for (_, explained) in &sides {
@@ -1775,7 +1912,7 @@ fn print_explanation(explanation: &Explanation) {
             };
             rows.push(vec![name.clone(), value(0), value(1)]);
         }
-        aligned(&rows, "  ");
+        aligned(&rows, 2);
     }
 
     if let Some(rules) = &explanation.rules {
@@ -1805,7 +1942,7 @@ fn print_explanation(explanation: &Explanation) {
         if rows.is_empty() {
             println!("  the entity type has none");
         }
-        aligned(&rows, "  ");
+        aligned(&rows, 2);
         if let Some(failed) = &rules.failed {
             println!("  applying the `no_match` and `match` rules failed: {failed}");
         }
@@ -1846,7 +1983,7 @@ fn print_explanation(explanation: &Explanation) {
                 ]
             })
             .collect();
-        aligned(&rows, "  ");
+        aligned(&rows, 2);
     }
 
     if !explanation.constraints.is_empty() {
@@ -2145,7 +2282,7 @@ fn possible_split(item: &ReviewEntry, records: &[RecordEntry], taken_back: &[Rec
                 ]
             })
             .collect();
-        aligned(&rows, "  ");
+        aligned(&rows, 2);
     }
     if !taken_back.is_empty() {
         println!("\ntaken back by their source, and no longer in the identity");
@@ -2161,7 +2298,7 @@ fn possible_split(item: &ReviewEntry, records: &[RecordEntry], taken_back: &[Rec
                 ]
             })
             .collect();
-        aligned(&rows, "  ");
+        aligned(&rows, 2);
     }
     if item.status != ReviewStatus::Open {
         return;
@@ -2242,6 +2379,17 @@ fn label(label: Option<&str>) -> String {
     }
 }
 
+/// A label as a cell: cut short in a table, and whole in CSV.
+fn label_cell(whole: Option<&str>) -> Cell {
+    Cell::shortened(label(whole), whole.unwrap_or_default())
+}
+
+/// A position in the log as a cell: said as one in a table, and the
+/// number in CSV.
+fn position(seq: impl std::fmt::Display) -> Cell {
+    Cell::shortened(format!("log position {seq}"), seq.to_string())
+}
+
 /// Whether the rows of a list are of more than one entity type.
 fn mixed<'a, T: PartialEq + 'a>(mut types: impl Iterator<Item = &'a T>) -> bool {
     match types.next() {
@@ -2301,8 +2449,9 @@ fn filled(filled: u64, records: u64) -> String {
 const VALUE_CHARACTERS: usize = 24;
 
 /// The values most records have, with how many have each. When each is
-/// held by one record they are examples, and said to be.
-fn common_values(attribute: &AttributeSummary) -> String {
+/// held by one record they are examples, and said to be. A table cuts a
+/// long value short, and CSV has it whole.
+fn common_values(attribute: &AttributeSummary, cut: bool) -> String {
     if attribute.common.is_empty() {
         return "-".to_owned();
     }
@@ -2314,7 +2463,7 @@ fn common_values(attribute: &AttributeSummary) -> String {
                 other => other,
             })
             .collect();
-        match line.chars().count() > VALUE_CHARACTERS {
+        match cut && line.chars().count() > VALUE_CHARACTERS {
             true => {
                 let kept: String = line.chars().take(VALUE_CHARACTERS - 1).collect();
                 format!("{}…", kept.trim_end())
@@ -2439,23 +2588,6 @@ pub(super) fn count(number: u64, what: &str) -> String {
     format!("{number} {plural}")
 }
 
-/// Label and value, one pair per line, the values in one column.
-pub(super) fn fields(rows: &[(&str, String)]) {
-    let rows: Vec<Vec<String>> = rows
-        .iter()
-        .map(|(label, value)| vec![(*label).to_owned(), value.clone()])
-        .collect();
-    aligned(&rows, "");
-}
-
-fn indented(rows: &[(&str, String)]) {
-    let rows: Vec<Vec<String>> = rows
-        .iter()
-        .map(|(label, value)| vec![(*label).to_owned(), value.clone()])
-        .collect();
-    aligned(&rows, "  ");
-}
-
 /// The members of a JSON object, one per line. Anything else on one line.
 fn object(value: &Value) {
     match value.as_object() {
@@ -2464,54 +2596,8 @@ fn object(value: &Value) {
                 .iter()
                 .map(|(name, value)| vec![name.clone(), plain(value)])
                 .collect();
-            aligned(&rows, "  ");
+            aligned(&rows, 2);
         }
         None => println!("  {}", plain(value)),
-    }
-}
-
-/// A list under its column names, or a line that says there is nothing.
-pub(super) fn table(what: &str, headers: &[&str], rows: Vec<Vec<String>>) {
-    if rows.is_empty() {
-        println!("no {what}");
-        return;
-    }
-    let mut lines = vec![headers.iter().map(|header| (*header).to_owned()).collect()];
-    lines.extend(rows);
-    aligned(&lines, "");
-}
-
-/// Prints rows with their cells in columns. The last cell is as long as it
-/// is.
-pub(super) fn aligned(rows: &[Vec<String>], indent: &str) {
-    let columns = rows.iter().map(Vec::len).max().unwrap_or(0);
-    let widths: Vec<usize> = (0..columns)
-        .map(|column| {
-            rows.iter()
-                .filter_map(|row| row.get(column))
-                .map(|cell| cell.chars().count())
-                .max()
-                .unwrap_or(0)
-        })
-        .collect();
-    for row in rows {
-        let mut line = String::from(indent);
-        for (column, cell) in row.iter().enumerate() {
-            line.push_str(cell);
-            if column + 1 < row.len() {
-                let padding = widths[column] - cell.chars().count() + 2;
-                line.push_str(&" ".repeat(padding));
-            }
-        }
-        println!("{}", line.trim_end());
-    }
-}
-
-/// Says how to go on when a list has more than was shown.
-fn more(answer: &Value) {
-    match &answer["next"] {
-        Value::String(next) => println!("\nmore: add `--after {next}`"),
-        Value::Number(next) => println!("\nmore: add `--after {next}`"),
-        _ => {}
     }
 }

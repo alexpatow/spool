@@ -9,8 +9,8 @@ use std::path::Path;
 use serde_json::{Value, json};
 use support::*;
 
-/// What `spool <arguments>` printed in `dir`. It has to succeed and say
-/// nothing beside.
+/// What `spool <arguments>` printed in `dir`: its result, then what it said
+/// beside on standard error. It has to succeed.
 fn shown(server: &Server, dir: &Path, arguments: &[&str]) -> String {
     let output = server.spool_in(dir, arguments).output().unwrap();
     assert!(
@@ -19,8 +19,7 @@ fn shown(server: &Server, dir: &Path, arguments: &[&str]) -> String {
         text(&output.stdout),
         text(&output.stderr)
     );
-    assert_eq!(text(&output.stderr), "", "spool {arguments:?}");
-    text(&output.stdout)
+    format!("{}{}", text(&output.stdout), text(&output.stderr))
 }
 
 /// What `spool match <arguments>` complained of. It has to fail with status
@@ -39,7 +38,7 @@ fn refused(server: &Server, dir: &Path, arguments: &[&str]) -> String {
     assert_eq!(text(&output.stdout), "", "nothing is printed on a failure");
     let complaint = text(&output.stderr);
     complaint
-        .strip_prefix("spool: ")
+        .strip_prefix("error: ")
         .unwrap_or_else(|| panic!("{complaint}"))
         .trim_end()
         .to_owned()
@@ -79,7 +78,7 @@ nothing to match: there are no `company` records yet
     );
     assert_eq!(
         shown(&["show", "records"]),
-        "no records: `spool load <file>` sends rows\n"
+        "no records\n`spool load <file>` sends rows\n"
     );
     assert_eq!(match_runs(&server), Vec::<Value>::new());
 
@@ -87,23 +86,21 @@ nothing to match: there are no `company` records yet
         shown(&["load", "samples/crm-1.csv"]),
         "\
 loaded  6 rows into source `crm`, type `company`: 6 new
-next    `spool match` places them in identities
+next: `spool match` places them in identities
 "
     );
     // Loaded and not matched: the list says what is missing.
     assert_eq!(
         shown(&["show", "records"]),
         "\
-source and key  name                 identity
+SOURCE AND KEY  NAME                 IDENTITY
 crm:c-1         Acorn Tools          -
 crm:c-2         ACORN TOOLS          -
 crm:c-3         Acorn Tools Ltd      -
 crm:c-4         Larkfield Logistics  -
 crm:c-5         Halden Group         -
 crm:c-6         Halden Group         -
-
-6 records have no identity. `spool match` places new records in identities,
-and `spool show review` lists the ones a match left out.
+6 records have no identity: `spool match` places new records in identities, and `spool show review` lists the ones a match left out
 "
     );
 
@@ -122,7 +119,7 @@ placed      6 records, 4 identities created
     let other_halden = identity_of(&server, "c-6");
     let first = format!(
         "\
-source and key  name                 identity
+SOURCE AND KEY  NAME                 IDENTITY
 crm:c-1         Acorn Tools          {acorn}
 crm:c-2         ACORN TOOLS          {acorn}
 crm:c-3         Acorn Tools Ltd      {acorn}
@@ -163,7 +160,7 @@ nothing to match: no `company` record is new since the last match
         shown(&["load", "samples/crm-2.csv"]),
         "\
 loaded  3 rows into source `crm`, type `company`: 3 new
-next    `spool match` places them in identities
+next: `spool match` places them in identities
 "
     );
     assert_eq!(
@@ -194,7 +191,7 @@ crm:c-9         Acorn Tool           {acorn}
     assert!(
         with_ids.starts_with(&format!(
             "\
-record                                source and key  name                 identity
+RECORD                                SOURCE AND KEY  NAME                 IDENTITY
 ab8e9d59-0aaa-96b9-ddb7-db0bff7a9356  crm:c-1         Acorn Tools          {acorn}
 "
         )),
@@ -203,7 +200,7 @@ ab8e9d59-0aaa-96b9-ddb7-db0bff7a9356  crm:c-1         Acorn Tools          {acor
     let identities = shown(&["show", "identities"]);
     assert!(
         identities.starts_with(
-            "identity                              name                 members  names  unlinked pairs  created at\n"
+            "IDENTITY                              NAME                 MEMBERS  NAMES  UNLINKED PAIRS  CREATED AT\n"
         ),
         "{identities}"
     );
@@ -254,7 +251,7 @@ fn match_says_what_it_left_out_and_where_to_look() {
         shown(&["load", "unclear.csv"]),
         "\
 loaded  1 row into source `crm`, type `company`: 1 new
-next    `spool match` places it in an identity
+next: `spool match` places it in an identity
 "
     );
     assert_eq!(
@@ -277,9 +274,7 @@ left out    1 record in 1 review item: `spool show review` says why
         records.ends_with(
             "\
 crm:c-7         Halden Group         -
-
-1 record has no identity. `spool match` places new records in identities,
-and `spool show review` lists the ones a match left out.
+1 record has no identity: `spool match` places new records in identities, and `spool show review` lists the ones a match left out
 "
         ),
         "{records}"
@@ -383,17 +378,15 @@ nothing to match: there are no `person` records yet
         refused(&server, &project, &["--type", "place"]),
         "the project has no entity type `place`. It has `company`, `person`."
     );
+    let output = server
+        .spool_in(&project, &["match", "--type", "person"])
+        .output()
+        .unwrap();
+    assert_eq!(text(&output.stderr), "`spool load <file>` sends rows\n");
     assert_eq!(
-        text(
-            &server
-                .spool_in(&project, &["match", "--type", "person"])
-                .output()
-                .unwrap()
-                .stdout
-        ),
+        text(&output.stdout),
         "\
 nothing to match: there are no `person` records yet
-`spool load <file>` sends rows
 "
     );
 
@@ -401,11 +394,11 @@ nothing to match: there are no `person` records yet
     for (arguments, complaint) in [
         (
             &["match", "samples/crm-1.csv"][..],
-            "spool: unexpected argument `samples/crm-1.csv`\n\nUsage: spool match [options]\n",
+            "error: unexpected argument 'samples/crm-1.csv' found\n\nUsage: spool match [OPTIONS]\n",
         ),
         (
             &["match", "--all"],
-            "spool: unknown option `--all`\n\nUsage: spool match [options]\n",
+            "error: unexpected argument '--all' found\n\nUsage: spool match [OPTIONS]\n",
         ),
     ] {
         let output = server.spool_in(&project, arguments).output().unwrap();
@@ -425,7 +418,9 @@ nothing to match: there are no `person` records yet
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
     assert!(
-        text(&output.stderr).starts_with(&format!("spool: the server at {url} asks for a token: ")),
+        text(&output.stderr).starts_with(&format!(
+            "error: the server at {url} asks for a token\nhint: pass one with `--token`"
+        )),
         "{}",
         text(&output.stderr)
     );
@@ -445,12 +440,12 @@ fn match_says_when_no_server_answers() {
     assert_eq!(text(&output.stdout), "");
     let complaint = text(&output.stderr);
     assert!(
-        complaint.starts_with(&format!("spool: the server at {url} cannot be reached: ")),
+        complaint.starts_with(&format!("error: the server at {url} cannot be reached: ")),
         "{complaint}"
     );
     assert!(
         complaint.ends_with(
-            "\nStart one with `spool dev`, or name another with `--url` or SPOOL_URL.\n"
+            "\nhint: start one with `spool dev`, or name another with `--url` or SPOOL_URL\n"
         ),
         "{complaint}"
     );
@@ -583,7 +578,7 @@ fn a_type_whose_match_fails_does_not_stop_the_others() {
     );
     let complaint = text(&output.stderr);
     assert!(
-        complaint.starts_with("spool: type `company`: "),
+        complaint.starts_with("error: type `company`: "),
         "{complaint}"
     );
     assert!(complaint.contains("INTEGER"), "{complaint}");

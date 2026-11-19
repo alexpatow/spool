@@ -56,10 +56,18 @@ if [ -n "${SPOOL_TEST_URL:-}" ]; then
     holds "$homes/first" .local
     holds "$homes/first/.local" bin share
     holds "$homes/first/.local/bin" spool
-    holds "$homes/first/.local/share" spool
+    holds "$homes/first/.local/share" spool man bash-completion zsh fish
     holds "$homes/first/.local/share/spool" "$version"
-    holds "$release" bin lib LICENSE LICENSE-duckdb
+    holds "$release" bin lib share LICENSE LICENSE-duckdb
     holds "$release/bin" spool
+    # The man pages and completions are links into the release.
+    for file in man/man1/spool.1 man/man1/spool-show-identities.1 bash-completion/completions/spool \
+        zsh/site-functions/_spool fish/vendor_completions.d/spool.fish; do
+        linked=$homes/first/.local/share/$file
+        [ -L "$linked" ] || fail "$linked is not a link"
+        [ -f "$linked" ] || fail "$linked does not lead to a file"
+        cmp -s "$linked" "$release/share/$file" || fail "$linked is not the release's"
+    done
     [ -f "$release/lib/libduckdb.so" ] || [ -f "$release/lib/libduckdb.dylib" ] || fail "$release/lib holds no DuckDB library"
     [ -L "$link" ] || fail "$link is not a link"
     [ "$("$link" --version)" = "spool $version" ] || fail "$link --version does not say \`spool $version\`"
@@ -68,7 +76,7 @@ if [ -n "${SPOOL_TEST_URL:-}" ]; then
     echo "not the release" > "$release/stale"
     install "$homes/first" "$url"
     holds "$homes/first/.local/share/spool" "$version"
-    holds "$release" bin lib LICENSE LICENSE-duckdb
+    holds "$release" bin lib share LICENSE LICENSE-duckdb
     [ "$("$link" --version)" = "spool $version" ] || fail "$link does not run after a second install"
 
     echo "== an archive that is not the one SHA256SUMS lists"

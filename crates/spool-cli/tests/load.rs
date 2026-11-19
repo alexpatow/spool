@@ -46,7 +46,7 @@ fn failure(output: &Output, arguments: &[&str]) -> String {
     assert_eq!(text(&output.stdout), "", "nothing is printed on a failure");
     let complaint = text(&output.stderr);
     complaint
-        .strip_prefix("spool: ")
+        .strip_prefix("error: ")
         .unwrap_or_else(|| panic!("{complaint}"))
         .trim_end()
         .to_owned()
@@ -87,10 +87,9 @@ fn load_sends_the_rows_of_a_file_and_says_what_became_of_them() {
         printed,
         "\
 loaded  6 rows into source `crm`, type `company`: 6 new
-next    `spool match` places them in identities
 "
     );
-    assert_eq!(beside, "");
+    assert_eq!(beside, "next: `spool match` places them in identities\n");
 
     // Each row is a record, with every value as the text the file has, and
     // the ID the same row has when it comes as JSON.
@@ -123,7 +122,6 @@ next    `spool match` places them in identities
         printed,
         "\
 loaded  3 rows into source `crm`, type `company`: 1 new, 1 new version of a row held before, 1 already held
-next    `spool match` places them in identities
 "
     );
     let versions = server.read("/v1/records?source=crm&key=c-1")["records"].clone();
@@ -140,7 +138,6 @@ next    `spool match` places them in identities
         printed,
         "\
 loaded  3 rows into source `crm`, type `company`: 3 new
-next    `spool match` places them in identities
 "
     );
 
@@ -167,7 +164,7 @@ fn a_row_that_is_loaded_as_it_was_before_it_changed_is_that_again() {
     let server = Server::dev(&project);
     let named = |reference: &str| -> Value {
         let output = server
-            .spool_in(&project, &["show", "record", reference, "--json"])
+            .spool_in(&project, &["show", "records", reference, "--json"])
             .output()
             .unwrap();
         assert!(output.status.success(), "{}", text(&output.stderr));
@@ -196,7 +193,6 @@ fn a_row_that_is_loaded_as_it_was_before_it_changed_is_that_again() {
         printed,
         "\
 loaded  6 rows into source `crm`, type `company`: 0 new, 1 new version of a row held before, 5 already held
-next    `spool match` places it in an identity
 "
     );
     server.call("/v1/match", json!({ "entity_type": "company" }));
@@ -280,7 +276,6 @@ fn load_reads_standard_input_and_other_characters_between_the_fields() {
         text(&output.stdout),
         "\
 loaded  1 row into source `crm`, type `company`: 1 new
-next    `spool match` places it in an identity
 "
     );
 
@@ -338,7 +333,7 @@ next    `spool match` places it in an identity
     assert_eq!(output.status.code(), Some(2));
     assert!(
         text(&output.stderr).starts_with(
-            "spool: `--delimiter` needs one character such as `;`, or `tab`, not `::`\n"
+            "error: `--delimiter` needs one character such as `;`, or `tab`, not `::`\n"
         ),
         "{}",
         text(&output.stderr)
@@ -357,10 +352,10 @@ fn a_file_is_sent_in_parts() {
         printed,
         "\
 loaded  6 rows into source `crm`, type `company`: 6 new
-next    `spool match` places them in identities
 "
     );
-    assert_eq!(beside, "4 rows sent\n");
+    // Piped, no bar is drawn: what it says is the same as for one part.
+    assert_eq!(beside, "next: `spool match` places them in identities\n");
     let runs = load_runs(&server);
     let received: Vec<&Value> = runs.iter().map(|run| &run["load"]["received"]).collect();
     assert_eq!(received, [&json!(2), &json!(4)], "the latest run first");
@@ -425,7 +420,7 @@ next    `spool match` places them in identities
         .unwrap();
     assert_eq!(output.status.code(), Some(2));
     assert!(
-        text(&output.stderr).starts_with("spool: `--batch` needs at least 1\n"),
+        text(&output.stderr).contains("invalid value '0' for '--batch <ROWS>': 0 is not in 1.."),
         "{}",
         text(&output.stderr)
     );
@@ -532,7 +527,7 @@ fn load_says_what_is_wrong_with_the_file() {
         beside,
         "note: keyless.csv has no column `id`, which is the key of source `crm`. Its rows are \
          kept without a key: none can be named as crm:<key>, and a changed row does not replace \
-         the one loaded before.\n"
+         the one loaded before.\nnext: `spool match` places it in an identity\n"
     );
     assert_eq!(records(&server, "crm")[0].0, Value::Null);
 
@@ -540,7 +535,8 @@ fn load_says_what_is_wrong_with_the_file() {
     let output = server.spool_in(&project, &["load"]).output().unwrap();
     assert_eq!(output.status.code(), Some(2));
     assert!(
-        text(&output.stderr).starts_with("spool: name the file to load\n\nUsage: spool load"),
+        text(&output.stderr)
+            .contains("required arguments were not provided:\n  <FILE>\n\nUsage: spool load"),
         "{}",
         text(&output.stderr)
     );
@@ -569,8 +565,9 @@ fn load_says_when_no_server_answers_or_it_asks_for_a_token() {
         "{complaint}"
     );
     assert!(
-        complaint
-            .ends_with("\nStart one with `spool dev`, or name another with `--url` or SPOOL_URL."),
+        complaint.ends_with(
+            "\nhint: start one with `spool dev`, or name another with `--url` or SPOOL_URL"
+        ),
         "{complaint}"
     );
 
@@ -598,7 +595,7 @@ fn load_says_when_no_server_answers_or_it_asks_for_a_token() {
         .unwrap();
     let complaint = failure(&without, &["rows.csv"]);
     assert!(
-        complaint.starts_with(&format!("the server at {url} asks for a token: ")),
+        complaint.starts_with(&format!("the server at {url} asks for a token\nhint: ")),
         "{complaint}"
     );
     let wrong = spool()
@@ -609,7 +606,9 @@ fn load_says_when_no_server_answers_or_it_asks_for_a_token() {
         .unwrap();
     let complaint = failure(&wrong, &["rows.csv"]);
     assert!(
-        complaint.starts_with(&format!("the server at {url} did not accept the token: ")),
+        complaint.starts_with(&format!(
+            "the server at {url} did not accept the token\nhint: "
+        )),
         "{complaint}"
     );
     // With its token, in the environment or as an option.
@@ -618,7 +617,6 @@ fn load_says_when_no_server_answers_or_it_asks_for_a_token() {
         printed,
         "\
 loaded  1 row into source `shop`, type `thing`: 1 new
-next    `spool match` places it in an identity
 "
     );
     let named = spool()
@@ -712,7 +710,6 @@ fn load_asks_which_source_and_type_when_the_project_has_several() {
         printed,
         "\
 loaded  1 row into source `crm`, type `person`: 1 new
-next    `spool match --type person` places it in an identity
 "
     );
     let (printed, _) = load(&server, &project, &["rows.csv", "--source", "registry"]);
@@ -720,7 +717,6 @@ next    `spool match --type person` places it in an identity
         printed,
         "\
 loaded  1 row into source `registry`, type `company`: 1 new
-next    `spool match --type company` places it in an identity
 "
     );
     // A file named after a source holds that source's rows: the name up to
@@ -790,7 +786,6 @@ fn a_project_with_a_source_of_documents_loads_its_rows_by_the_name_of_the_file()
             format!(
                 "\
 loaded  {rows} rows into source `crm`, type `company`: {rows} new
-next    `spool match` places them in identities
 "
             )
         );
@@ -803,16 +798,16 @@ next    `spool match` places them in identities
         refused(&["samples/notes-1.txt"]),
         "samples/notes-1.txt does not look like rows: its first line names no column that a \
          source of the project lists. `spool load` reads CSV, with the names of the columns on \
-         its first line.\n\
-         If it is a document, `spool extract samples/notes-1.txt` reads it: an extractor finds \
-         the records in its text."
+         its first line.\nhint: \
+         if it is a document, `spool extract samples/notes-1.txt` reads it: an extractor finds \
+         the records in its text"
     );
     write(
         &project.join("call.md"),
         "# A call\n\nWith Acorn Tools Ltd.\n",
     );
     assert!(
-        refused(&["call.md"]).ends_with("\nIf it is a document, `spool extract call.md` reads it: an extractor finds the records in its text."),
+        refused(&["call.md"]).ends_with("\nhint: if it is a document, `spool extract call.md` reads it: an extractor finds the records in its text"),
     );
     // A first line that cannot name columns is said as it is of any file,
     // with where a document goes.
@@ -821,8 +816,8 @@ next    `spool match` places them in identities
         refused(&["letter.txt"]),
         "letter.txt cannot be read as CSV: line 1: column 2 has no name. The first line has to \
          name the columns\n\
-         If it is a document, `spool extract letter.txt` reads it: an extractor finds the \
-         records in its text."
+         hint: if it is a document, `spool extract letter.txt` reads it: an extractor finds the \
+         records in its text"
     );
     // Nothing is said of documents where they are not the question: a file
     // with nothing in it, a file of rows, and one said to hold rows.

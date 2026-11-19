@@ -1,0 +1,34 @@
+Show what a running server holds
+
+Usage: spool show [OPTIONS] [COMMAND]
+
+Commands:
+  runs        List the latest runs, or show one and what it reported
+  identities  List identities, or show one with its members and history
+  records     List records by source and key, or show one with its payload and evidence
+  attributes  For each entity type and source, the attributes its records have
+  documents   List documents, or show one with its text
+  review      List review items, or show one with its records
+  drafts      List drafts, or show one with the changeset it would commit
+  log         List the changeset log
+  help        Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help  Print help (see more with '--help')
+
+Output options:
+  -o, --output <OUTPUT>  Output format [default: table] [possible values: table, json, ndjson, csv]
+      --json             Shorthand for `--output json`
+
+Server options:
+      --url <URL>      The server [env: SPOOL_URL] [default: http://127.0.0.1:7765]
+      --token <TOKEN>  A token for that server; `spool dev` needs none [env: SPOOL_TOKEN]
+
+Global options:
+      --color <WHEN>  When to use colour [default: auto] [possible values: auto, always, never]
+  -q, --quiet         Print only the result and errors: no hints or progress
+
+Examples:
+  spool show
+  spool show identities --sort records --order desc
+  spool show records crm:c-1

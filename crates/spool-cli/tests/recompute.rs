@@ -16,8 +16,7 @@ fn shown(server: &Server, dir: &Path, arguments: &[&str]) -> String {
         text(&output.stdout),
         text(&output.stderr)
     );
-    assert_eq!(text(&output.stderr), "", "spool {arguments:?}");
-    text(&output.stdout)
+    format!("{}{}", text(&output.stdout), text(&output.stderr))
 }
 
 fn failed(server: &Server, dir: &Path, arguments: &[&str], code: i32) -> String {
@@ -118,10 +117,9 @@ decisions
   constraints  0 must_links and 1 cannot_link in force, each holding whatever the rules say
 
 1 change, the largest first
-#  kind   records  identity                              now                  after
+#  KIND   RECORDS  IDENTITY                              NOW                  AFTER
 1  split  4        {acorn}  Acorn Tools Ltd (4)  ACORN TOOLS (3, keeps its ID), Acorn Tools Ltd (1, new)
 `--identity <id>` shows a change record by record
-
 nothing was changed. This applies it:
 spool recompute --apply {plan}
 "
@@ -233,15 +231,18 @@ fn the_api_pages_the_changes_and_refuses_what_it_cannot_do() {
     assert_eq!(wrong.status, 400);
 
     let usage = failed(&server, &project, &["recompute", "--reason", "why"], 2);
-    assert!(usage.contains("`--reason` goes with `--apply`"), "{usage}");
+    assert!(usage.contains("--apply <PLAN>"), "{usage}");
     let usage = failed(&server, &project, &["recompute", "--identity", "acorn"], 2);
-    assert!(usage.contains("takes an identity ID"), "{usage}");
+    assert!(
+        usage.contains("invalid value 'acorn' for '--identity <ID>'"),
+        "{usage}"
+    );
 }
 
 #[test]
 fn the_help_says_what_it_does() {
     let help = succeed(&["recompute", "--help"]);
-    assert!(help.starts_with("Usage: spool recompute [options]\n"));
-    assert!(help.contains("--apply <plan>"));
+    assert!(help.contains("\nUsage: spool recompute [OPTIONS]\n"));
+    assert!(help.contains("--apply <PLAN>"));
     assert!(succeed(&["--help"]).contains("\n  recompute  "));
 }

@@ -1,0 +1,19 @@
+Run a server on localhost that applies file changes as they are saved
+
+Usage: spool dev [OPTIONS] [DIR]
+
+Arguments:
+  [DIR]  The project directory [default: the current directory]
+
+Options:
+      --listen <ADDR>  The loopback address to listen on [default: 127.0.0.1:7765]
+      --store <PATH>   The store's database file [default: <DIR>/.spool/dev.duckdb]
+  -h, --help           Print help (see more with '--help')
+
+User code options:
+      --task-timeout <SECONDS>  How long a user-code strategy or an extractor may run [default: 600]
+      --tasks <DIR>             Where the task directories of user code are made
+
+Global options:
+      --color <WHEN>  When to use colour [default: auto] [possible values: auto, always, never]
+  -q, --quiet         Print only the result and errors: no hints or progress

@@ -113,7 +113,7 @@ spool load changed.csv --source crm
 
 ```text title="Output"
 loaded  1 row into source `crm`, type `company`: 0 new, 1 new version of a row held before
-next    `spool match` places it in an identity
+next: `spool match` places it in an identity
 ```
 
 ```sh
@@ -121,12 +121,10 @@ spool show records --source crm --key c-4 --ids --all-versions
 ```
 
 ```text title="Output"
-record                                source and key  name                 identity                              version
+RECORD                                SOURCE AND KEY  NAME                 IDENTITY                              VERSION
 4b1bc703-9041-0989-d0eb-4df5e9eae0f2  crm:c-4         Larkfield Logistics  01a1efc6-41cd-775d-8758-e733aa086f7d  replaced
 69c75f0d-bc65-b5f2-39aa-5c6d017a1531  crm:c-4         Larkfield Logistics  -                                     current
-
-1 record has no identity. `spool match` places new records in identities,
-and `spool show review` lists the ones a match left out.
+1 record has no identity: `spool match` places new records in identities, and `spool show review` lists the ones a match left out
 ```
 
 Both versions are kept, and `--all-versions` lists the one that was replaced beside the current one, which a list of records otherwise leaves out. The new one has no identity yet. The next match gives it the identity of the version it replaces, whatever the rules say about the pair:
@@ -140,7 +138,7 @@ spool show records --source crm --key c-4 --ids --all-versions
 ```
 
 ```text title="Output"
-record                                source and key  name                 identity                              version
+RECORD                                SOURCE AND KEY  NAME                 IDENTITY                              VERSION
 4b1bc703-9041-0989-d0eb-4df5e9eae0f2  crm:c-4         Larkfield Logistics  01a1efc6-41cd-775d-8758-e733aa086f7d  replaced
 69c75f0d-bc65-b5f2-39aa-5c6d017a1531  crm:c-4         Larkfield Logistics  01a1efc6-41cd-775d-8758-e733aa086f7d  current
 ```
@@ -220,8 +218,7 @@ found      3 records in 1 document: 3 new, 0 already held
   company  Acorn Tools Ltd          notes:notes-1.txt[54-69]
   company  Larkfield Logistics Ltd  notes:notes-1.txt[119-142]
   company  Brightwater Foods Ltd    notes:notes-1.txt[179-200]
-
-next       `spool match` places them in identities
+next: `spool match` places them in identities
 ```
 
 [Extraction](/docs/concepts/extraction) goes through it, with an extractor in each language.

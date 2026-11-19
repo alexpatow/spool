@@ -1,0 +1,23 @@
+Run the server from a manifest and a store
+
+Usage: spool serve [OPTIONS]
+
+Options:
+      --manifest <PATH>   The manifest to run on [default: .spool/manifest.json]
+      --store <PATH>      The store's database file [env: SPOOL_STORE]
+      --listen <ADDR>     The address to listen on [default: 0.0.0.0:7765]
+      --public-url <URL>  The address people reach the server by, such as https://spool.example.com
+                          [env: SPOOL_PUBLIC_URL]
+      --project <DIR>     The project directory, where the files the manifest names are found
+                          [default: the current directory]
+      --no-studio         Do not serve the studio
+      --plain-http        Browsers reach the server over HTTP, not HTTPS
+  -h, --help              Print help (see more with '--help')
+
+User code options:
+      --task-timeout <SECONDS>  How long a user-code strategy or an extractor may run [default: 600]
+      --tasks <DIR>             Where the task directories of user code are made
+
+Global options:
+      --color <WHEN>  When to use colour [default: auto] [possible values: auto, always, never]
+  -q, --quiet         Print only the result and errors: no hints or progress

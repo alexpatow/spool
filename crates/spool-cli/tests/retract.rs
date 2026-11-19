@@ -339,18 +339,15 @@ fn spool_retract_says_what_it_needs_and_what_the_server_refused() {
     let server = workshop(dir.path());
 
     for (arguments, expected) in [
-        (
-            &["retract", "--type", "thing", "2"][..],
-            "`--source` is needed",
-        ),
-        (&["retract", "--source", "shop", "2"], "`--type` is needed"),
+        (&["retract", "--type", "thing", "2"][..], "--source <NAME>"),
+        (&["retract", "--source", "shop", "2"], "--type <NAME>"),
         (
             &["retract", "--source", "shop", "--type", "thing"],
-            "name the keys of the rows to take back",
+            "<KEYS>...",
         ),
         (
             &["retract", "--source", "shop", "--type", "thing", "--all"],
-            "unknown option `--all`",
+            "unexpected argument '--all'",
         ),
     ] {
         let (code, complaint) = refused(&server, arguments);
@@ -422,7 +419,7 @@ fn spool_show_says_what_was_taken_back() {
         "{runs}"
     );
 
-    let shown = said(&server, &["show", "run", &number.to_string()]);
+    let shown = said(&server, &["show", "runs", &number.to_string()]);
     has(&shown, "kind        retract");
     has(&shown, "keys        2 named, 1 unknown");
     has(&shown, "taken back  1 record, 1 of them left an identity");
@@ -434,7 +431,7 @@ fn spool_show_says_what_was_taken_back() {
         "{shown}"
     );
 
-    let shown = said(&server, &["show", "record", "shop:2"]);
+    let shown = said(&server, &["show", "records", "shop:2"]);
     has(
         &shown,
         &format!("identity  none: its source took it back in run {number}"),
@@ -443,7 +440,7 @@ fn spool_show_says_what_was_taken_back() {
     assert_eq!(unassigned, "no records\n");
 
     let run = load(&server, &[&["id", "code"], &["2", "anvil"]]);
-    let shown = said(&server, &["show", "run", &run["run"].to_string()]);
+    let shown = said(&server, &["show", "runs", &run["run"].to_string()]);
     has(
         &shown,
         "came back  1 record the source had taken back, 1 of them to the identity they left",
@@ -507,7 +504,7 @@ fn an_identity_that_a_retraction_left_without_what_held_it_together_is_shown_for
         printed.lines().last().unwrap(),
         "1 identity was left for review: what held its records together went through a record that was taken back. See `spool show review --status open`."
     );
-    let shown = said(&server, &["show", "run", &number.to_string()]);
+    let shown = said(&server, &["show", "runs", &number.to_string()]);
     has(
         &shown,
         "left for review  1 identity with records that nothing holds together now (`possible_split`)",
@@ -568,7 +565,7 @@ The review screen of the studio does each of these.
     assert_eq!(bundle["taken_back"][0]["id"], id("3").as_str());
 
     has(
-        &said(&server, &["show", "record", "shop:1"]),
+        &said(&server, &["show", "records", "shop:1"]),
         "review item 1 (possible_split, open)",
     );
     let explanation = said(&server, &["explain", "shop:1", "shop:2"]);
@@ -654,7 +651,7 @@ fn a_row_that_comes_back_where_what_held_it_is_still_gone_is_left_for_review() {
     assert_eq!(run["load"]["returned"], 1);
     assert_eq!(run["load"]["possible_splits"], 1);
     assert_eq!(record(&server, "4")["identity"], identity);
-    let shown = said(&server, &["show", "run", &run["run"].to_string()]);
+    let shown = said(&server, &["show", "runs", &run["run"].to_string()]);
     has(
         &shown,
         "left for review  1 identity with records that nothing holds together now (`possible_split`)",

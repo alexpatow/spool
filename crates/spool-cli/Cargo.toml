@@ -15,9 +15,16 @@ name = "spool"
 path = "src/main.rs"
 
 [dependencies]
+anstream.workspace = true
+anstyle.workspace = true
 arrow.workspace = true
 async-trait.workspace = true
 axum.workspace = true
+clap.workspace = true
+clap_complete.workspace = true
+clap_mangen.workspace = true
+comfy-table.workspace = true
+indicatif.workspace = true
 csv.workspace = true
 getrandom.workspace = true
 http-body.workspace = true
@@ -40,4 +47,5 @@ uuid.workspace = true
 libc.workspace = true
 
 [dev-dependencies]
+snapbox.workspace = true
 tempfile.workspace = true

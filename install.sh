@@ -5,20 +5,27 @@
 #
 # It downloads the release for this machine, checks it against the release's
 # checksums, unpacks it under ~/.local/share/spool/<version> and links
-# ~/.local/bin/spool. It needs no root and changes nothing else: if
-# ~/.local/bin is not on your search path, it says what to add and adds
-# nothing itself.
+# ~/.local/bin/spool, and links the man pages and the bash, zsh and fish
+# completions into ~/.local/share, where `man`, bash and fish look. It needs
+# no root and changes nothing else: if ~/.local/bin is not on your search
+# path, it says what to add and adds nothing itself.
 #
 # It reads these from the environment, and none has to be set:
 #
 #   SPOOL_VERSION       the release to install (default: the one this script
 #                       came with)
 #   SPOOL_INSTALL_DIR   where releases are unpacked (default: ~/.local/share/spool)
-#   SPOOL_BIN_DIR       where `spool` is linked (default: ~/.local/bin)
+#   SPOOL_BIN_DIR       where `spool` is linked (default: ~/.local/bin). The
+#                       man pages and completions are linked under the
+#                       share directory beside it
 #   SPOOL_DOWNLOAD_URL  where the release's files are, for a copy of them
 #                       kept elsewhere (default: the release on GitHub)
 #
-# To remove Spool: rm -rf ~/.local/share/spool ~/.local/bin/spool
+# To remove Spool:
+#
+#   rm -rf ~/.local/share/spool ~/.local/bin/spool ~/.local/share/man/man1/spool*.1 \
+#     ~/.local/share/bash-completion/completions/spool ~/.local/share/zsh/site-functions/_spool \
+#     ~/.local/share/fish/vendor_completions.d/spool.fish
 
 set -eu
 
@@ -107,6 +114,25 @@ check_libc() {
     fi
 }
 
+# Links the man pages and the completions a release holds under <from> into
+# <to>, where `man`, bash and fish find them. A file there that is not a
+# link is someone's own and is left alone. A release that holds none, as
+# 0.1.0 does not, links nothing.
+share_files() {
+    [ -d "$1" ] || return 0
+    for file in "$1"/man/man1/*.1 "$1/bash-completion/completions/spool" \
+        "$1/zsh/site-functions/_spool" "$1/fish/vendor_completions.d/spool.fish"; do
+        [ -f "$file" ] || continue
+        place=$2${file#"$1"}
+        if [ -e "$place" ] && [ ! -L "$place" ]; then
+            echo "$place is a file and not a link to a release, so it is left alone"
+            continue
+        fi
+        mkdir -p "$(dirname "$place")"
+        ln -sf "$file" "$place"
+    done
+}
+
 main() {
     [ -n "${HOME:-}" ] || fail "HOME is not set, so there is nowhere to install to"
 
@@ -183,11 +209,15 @@ main() {
     mv "$work/$name" "$root/$version"
     mkdir -p "$bin"
     ln -sf "$root/$version/bin/spool" "$link"
+    share_files "$root/$version/share" "$(dirname "$bin")/share"
 
     echo
     echo "installed  spool $version"
     echo "release    $root/$version"
     echo "command    $link"
+    if [ -L "$(dirname "$bin")/share/man/man1/spool.1" ]; then
+        echo "manual     man spool, and completions for bash, zsh and fish"
+    fi
     echo
     case ":$PATH:" in
         *":$bin:"*)
@@ -204,6 +234,18 @@ main() {
             echo
             echo "Put the same line in your shell's profile to keep it."
             echo
+            ;;
+    esac
+    case "${SHELL:-}" in
+        */zsh)
+            if [ -L "$(dirname "$bin")/share/zsh/site-functions/_spool" ]; then
+                echo "zsh completes \`spool\` once $(dirname "$bin")/share/zsh/site-functions is on its fpath:"
+                echo
+                echo "  fpath=($(dirname "$bin")/share/zsh/site-functions \$fpath)"
+                echo
+                echo "Put that line in ~/.zshrc, before \`compinit\`."
+                echo
+            fi
             ;;
     esac
     echo "Next, a project to try it on: spool init companies --example companies"

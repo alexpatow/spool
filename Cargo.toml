@@ -35,6 +35,23 @@ openidconnect = { version = "4.1", default-features = false }
 # the protocol and its Streamable HTTP transport. Only spool-cli depends on it.
 rmcp = { version = "3.11", default-features = false, features = ["server", "transport-streamable-http-server"] }
 
+# The `spool` command's arguments, help and usage errors. Only spool-cli
+# depends on it.
+clap = { version = "4.6", features = ["derive", "env", "wrap_help"] }
+# Shell completions and man pages, from the same definition of the commands.
+clap_complete = "4.6"
+clap_mangen = "0.3"
+# Colour: written as ANSI styles and taken out where the output is not a
+# terminal, or NO_COLOR or `--color never` says so.
+anstream = "1"
+anstyle = "1"
+# Progress on standard error, while a command waits: shown on a terminal
+# only.
+indicatif = "0.18"
+# The tables the commands print: it measures wide characters and colour,
+# and wraps a table to the terminal.
+comfy-table = { version = "8", default-features = false, features = ["custom_styling"] }
+
 # duckdb re-exports the arrow version it was built against. Upgrade the two together.
 # spool-cli names arrow itself for the IPC and JSON forms the server speaks.
 arrow = { version = "60.1", default-features = false, features = ["ipc", "json"] }
@@ -58,6 +75,8 @@ serde_json = "1"
 serde-saphyr = { version = "2.1", default-features = false, features = ["deserialize"] }
 sha2 = "0.11"
 tempfile = "3"
+# Snapshots of the `spool` command's help and usage errors, in its tests.
+snapbox = "1.2"
 thiserror = "2"
 toml = "1"
 # The commands that read from a running server. The build of the `duckdb`

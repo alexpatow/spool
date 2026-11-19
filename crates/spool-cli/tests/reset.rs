@@ -38,11 +38,13 @@ fn reset_removes_the_development_store_and_keeps_everything_else() {
     assert_eq!(refused.status.code(), Some(1));
     let said = text(&refused.stderr);
     assert!(
-        said.starts_with("spool: the store .spool/dev.duckdb is open in another process (PID "),
+        said.starts_with("error: the store .spool/dev.duckdb is open in another process (PID "),
         "{said}"
     );
     assert!(
-        said.contains("Stop it with Ctrl-C, then run `spool reset` again. Nothing was removed."),
+        said.ends_with(
+            "Nothing was removed.\nhint: stop it with Ctrl-C, then run `spool reset` again\n"
+        ),
         "{said}"
     );
     assert!(spool_dir.join("dev.duckdb").is_file());
@@ -72,13 +74,14 @@ fn reset_removes_the_development_store_and_keeps_everything_else() {
     }
     assert_eq!(
         text(&unasked.stderr),
-        "spool: nothing was removed: nobody can be asked here, so add `--yes` to remove it\n"
+        "error: nothing was removed: nobody can be asked here, so add `--yes` to remove it\n"
     );
     assert!(spool_dir.join("dev.duckdb").is_file());
 
     let done = reset(&[at, "--yes"]);
     assert!(done.status.success(), "{}", text(&done.stderr));
-    let done = text(&done.stdout);
+    assert!(text(&done.stdout).ends_with("\nremoved  .spool/dev.duckdb\n"));
+    let done = format!("{}{}", text(&done.stdout), text(&done.stderr));
     assert!(done.contains("\nremoved  .spool/dev.duckdb\n"), "{done}");
     assert!(
         done.ends_with(
@@ -143,7 +146,7 @@ fn reset_starts_over_only_a_store_under_the_projects_spool_directory() {
         assert_eq!(refused.status.code(), Some(2));
         let said = text(&refused.stderr);
         assert!(
-            said.starts_with("spool: `spool reset` removes only a development store: a .duckdb file directly under "),
+            said.starts_with("error: `spool reset` removes only a development store: a .duckdb file directly under "),
             "{said}"
         );
         assert!(said.contains("which no command removes."), "{said}");

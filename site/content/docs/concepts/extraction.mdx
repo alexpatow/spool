@@ -167,8 +167,7 @@ found      3 records in 1 document: 3 new, 0 already held
   company  Acorn Tools Ltd          notes:notes-1.txt[54-69]
   company  Larkfield Logistics Ltd  notes:notes-1.txt[119-142]
   company  Brightwater Foods Ltd    notes:notes-1.txt[179-200]
-
-next       `spool match` places them in identities
+next: `spool match` places them in identities
 ```
 
 The document's key is its file's name. A file of the same name with other text is the next version of the document, and the same text again adds nothing.
@@ -182,7 +181,7 @@ spool show records --source notes
 ```
 
 ```text title="Output"
-source and key              name                     identity
+SOURCE AND KEY              NAME                     IDENTITY
 notes:notes-1.txt[54-69]    Acorn Tools Ltd          01a1efc6-41cd-775d-8758-e7300637659a
 notes:notes-1.txt[119-142]  Larkfield Logistics Ltd  01a1efc6-41cd-775d-8758-e733aa086f7d
 notes:notes-1.txt[179-200]  Brightwater Foods Ltd    01a1efc6-43a9-7403-b9f6-1f8ee76184ed
@@ -229,7 +228,7 @@ spool show documents
 ```
 
 ```text title="Output"
-document                              source and key     characters  read by
+DOCUMENT                              SOURCE AND KEY     CHARACTERS  READ BY
 fb9a1372-e552-f564-d2b5-c2a510bd408a  notes:notes-1.txt  222         companies in run 5 (3 mentions)
 ```
 
@@ -283,9 +282,8 @@ found      3 records in 2 documents: 3 new, 0 already held
 
   company  Acorn Tools        notes:notes-2.txt[19-30]
   company  Kestrel Analytics  notes:notes-2.txt[59-76]
-  and more: `spool show records --source notes` lists every record of the source
-
-next       `spool match` places them in identities
+and more: `spool show records --source notes` lists every record of the source
+next: `spool match` places them in identities
 ```
 
 It read both notes, because an extractor reads every document it has not read. In the first note it found "Acorn Tools" inside "Acorn Tools Ltd", which the sample extractor had found too. Those are two records for nearly the same place, from two extractors, and a match puts both in Acorn's identity:
@@ -299,7 +297,7 @@ spool show records --source notes
 ```
 
 ```text title="Output"
-source and key              name                     identity
+SOURCE AND KEY              NAME                     IDENTITY
 notes:notes-1.txt[54-65]    Acorn Tools              01a1efc6-41cd-775d-8758-e7300637659a
 notes:notes-1.txt[54-69]    Acorn Tools Ltd          01a1efc6-41cd-775d-8758-e7300637659a
 notes:notes-1.txt[119-142]  Larkfield Logistics Ltd  01a1efc6-41cd-775d-8758-e733aa086f7d

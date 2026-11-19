@@ -62,7 +62,7 @@ identity    01a1efc6-41cd-775d-8758-e7300637659a
 type        company
 created at  log position 1
 
-record                                source and key  since
+RECORD                                SOURCE AND KEY  SINCE
 31075f20-6900-838b-f5af-f8c6576744a4  crm:c-3         log position 1
 34c3d52d-e53b-1559-7404-1892fb1fd4e3  crm:c-9         log position 2
 875986b9-a764-1450-33d1-2d4612fb4daa  crm:c-10        log position 3
@@ -98,7 +98,7 @@ spool show log
 ```
 
 ```text title="Output"
-position  actor   operations  from             started by                                 reason
+POSITION  ACTOR   OPERATIONS  FROM             STARTED BY                                 REASON
 1         engine  10          reconcile run 3  user:01a1f0a0-9920-7253-869c-3c01d1dee766  reconcile new records
 2         engine  4           reconcile run 6  user:01a1f0a0-9920-7253-869c-3c01d1dee766  reconcile new records
 3         engine  3           reconcile run 9  user:01a1f0a0-9920-7253-869c-3c01d1dee766  reconcile new records
@@ -158,7 +158,7 @@ merged into  01a1efc6-41cd-775d-8758-e7329447fd9a
 type         company
 created at   log position 3
 
-record                                source and key  since
+RECORD                                SOURCE AND KEY  SINCE
 2c53c39b-ba40-34f1-5a6c-f335adbe639c  crm:c-11        log position 4
 38f040c9-82b9-2f94-813b-697309e52dab  crm:c-5         log position 1
 
@@ -229,13 +229,13 @@ identity    01a1efc6-41cd-775d-8758-e7300637659a
 type        company
 created at  log position 1
 
-record                                source and key  since
+RECORD                                SOURCE AND KEY  SINCE
 31075f20-6900-838b-f5af-f8c6576744a4  crm:c-3         log position 1
 34c3d52d-e53b-1559-7404-1892fb1fd4e3  crm:c-9         log position 2
 a780fcfe-cb2f-21dd-25ea-11db898fd6a2  crm:c-2         log position 1
 ab8e9d59-0aaa-96b9-ddb7-db0bff7a9356  crm:c-1         log position 1
 
-constraint   between                               and                                   since
+CONSTRAINT   BETWEEN                               AND                                   SINCE
 cannot_link  31075f20-6900-838b-f5af-f8c6576744a4  875986b9-a764-1450-33d1-2d4612fb4daa  log position 6
 
 history

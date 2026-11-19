@@ -5,8 +5,9 @@
 #
 #   docker build -t ghcr.io/alexpatow/spool:0.1.0 .
 #
-# A release's archives for Linux hold the two files this builds, and
-# `release/linux.sh` takes them from the `archive` stage.
+# A release's archives for Linux hold the two files this builds, with the man
+# pages and completions they write, and `release/linux.sh` takes them from
+# the `archive` stage.
 
 # The compiler runs on the architecture of the machine that builds, whichever
 # one the image is for, and cross-compiles when the two differ. An image for
@@ -42,9 +43,24 @@ RUN target="$(cat /cpu)-unknown-linux-gnu" \
     && find target -path '*/duckdb-download/*' -name 'libduckdb.so' -exec cp {} /out/lib/ \; \
     && test -f /out/lib/libduckdb.so
 
-# What a release's archive for Linux is made from: bin/spool and lib/libduckdb.so.
+# The man pages and the shell completions, which the binary writes from the
+# definition of its commands. It runs here, under emulation for the
+# architecture the machine that builds is not.
+FROM debian:bookworm-slim AS share
+COPY --from=build /out/bin/spool /usr/local/bin/spool
+COPY --from=build /out/lib/libduckdb.so /usr/local/lib/libduckdb.so
+RUN mkdir -p /share/bash-completion/completions /share/zsh/site-functions \
+        /share/fish/vendor_completions.d \
+    && spool man /share/man/man1 \
+    && spool completions bash > /share/bash-completion/completions/spool \
+    && spool completions zsh > /share/zsh/site-functions/_spool \
+    && spool completions fish > /share/fish/vendor_completions.d/spool.fish
+
+# What a release's archive for Linux is made from: bin/spool,
+# lib/libduckdb.so, and the man pages and completions under share/.
 FROM scratch AS archive
 COPY --from=build /out/ /
+COPY --from=share /share /share
 
 FROM debian:bookworm-slim
 LABEL org.opencontainers.image.title="Spool" \

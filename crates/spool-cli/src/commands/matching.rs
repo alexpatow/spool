@@ -1,74 +1,77 @@
 //! `spool match`: starts a match run on a running server and says what it
 //! did.
 
+use anstream::println;
+use clap::Args;
 use serde_json::{Value, json};
 use spool::core::EntityType;
 use spool::{RunEntry, RunStatus, StrategyRef, TypeInfo};
 
-use super::remote::{self, Remote, WAIT_MS, print_json, unsuccessful};
-use super::show::{count, fields, placed};
+use super::remote::{Remote, RemoteArgs, WAIT_MS, unsuccessful};
+use super::show::{count, placed};
 use crate::Failure;
-use crate::args::Spec;
+use crate::output::{Output, OutputArgs, fields, hint};
+use crate::progress;
 
-pub const USAGE: &str = "\
-Usage: spool match [options]
+/// Match new records and place them in identities
+///
+/// Matches the records that no match has examined, on a running server, and
+/// places them in identities: the rules judge pairs of records, and each new
+/// record joins the identity of the records it matches or gets a new one.
+/// Identities that exist keep their IDs and their members.
+///
+/// Each entity type the project declares is matched in a run of its own, one
+/// after the other, and the command reports each. A run that fails does not
+/// stop the ones after it, and the command then fails. `--type` matches one.
+///
+/// `spool show runs <run>` shows the whole report of a run, and `spool show
+/// records` what each record belongs to now.
+///
+/// As JSON it is, with `--type`, the run the server answered with, and
+/// without, `runs`: each type's `entity_type` and `run`.
+#[derive(Args)]
+pub struct MatchArgs {
+    /// Only this entity type [default: every one the project declares]
+    #[arg(long = "type", value_name = "NAME")]
+    entity_type: Option<String>,
+    /// Examine every record again, not only the new ones
+    ///
+    /// Records that have an identity keep it, and the run reports where the
+    /// rules disagree with the identities.
+    #[arg(long)]
+    rematch: bool,
+    /// Who judges: `rules`, or one of the project's strategies for the type
+    ///
+    /// A strategy is for one entity type, which `--type` names when the
+    /// project declares more than one.
+    #[arg(long, value_name = "NAME", default_value = StrategyRef::RULES)]
+    strategy: String,
+    #[command(flatten)]
+    output: OutputArgs,
+    #[command(flatten)]
+    remote: RemoteArgs,
+}
 
-Matches the records that no match has examined, on a running server, and
-places them in identities: the rules judge pairs of records, and each new
-record joins the identity of the records it matches or gets a new one.
-Identities that exist keep their IDs and their members.
-
-Each entity type the project declares is matched in a run of its own, one
-after the other, and the command reports each. A run that fails does not
-stop the ones after it, and the command then fails. `--type` matches one.
-
-`spool show runs <run>` shows the whole report of a run, and
-`spool show records` what each record belongs to now.
-
-Options:
-  --type <name>      only this entity type (default: every one the project
-                     declares)
-  --rematch          examine every record again, not only the new ones.
-                     Records that have an identity keep it, and the run
-                     reports where the rules disagree with the identities
-  --strategy <name>  who judges: `rules`, or one of the project's strategies
-                     for the type, which `--type` names when the project
-                     declares more than one (default: rules)
-  --url <url>        the server (default: $SPOOL_URL, or http://127.0.0.1:7765)
-  --token <token>    a token of that server (default: $SPOOL_TOKEN); `spool dev`
-                     asks for none
-  --json             print the runs the server answered with, as JSON: with
-                     `--type`, its answer, and without, `runs`, a list of
-                     each type's `entity_type` and `run`
-";
-
-pub fn run(arguments: &[String]) -> Result<(), Failure> {
-    let arguments = super::arguments(
-        arguments,
-        &Spec {
-            values: &["--type", "--strategy", remote::VALUES[0], remote::VALUES[1]],
-            flags: &["--rematch", "--json"],
-            positional: 0,
-        },
-    )?;
-    let remote = Remote::new(&arguments);
+pub fn run(arguments: MatchArgs) -> Result<(), Failure> {
+    let out = Output::report(&arguments.output, "`spool match`")?;
+    let remote = Remote::new(&arguments.remote);
     let info = remote.info()?;
     let types = &info.store.entity_types;
     if types.is_empty() {
-        return Err(Failure::Failed(
+        return Err(Failure::failed(
             "the project declares no entity type, so there is nothing to match. An entity \
              type is a directory entities/<name> with an entity.yaml."
                 .to_owned(),
         ));
     }
-    let named = arguments.value("--type");
+    let named = arguments.entity_type.as_deref();
     let chosen: Vec<&TypeInfo> = match named {
         Some(name) => vec![
             types
                 .iter()
                 .find(|declared| declared.name.as_str() == name)
                 .ok_or_else(|| {
-                    Failure::Failed(format!(
+                    Failure::failed(format!(
                         "the project has no entity type `{name}`. It has {}.",
                         declared(types)
                     ))
@@ -80,12 +83,10 @@ pub fn run(arguments: &[String]) -> Result<(), Failure> {
     // The server takes a name it does not know for a strategy the caller
     // runs, and starts a run that waits for judgements. Nobody would send
     // them here.
-    let strategy = arguments.value("--strategy");
-    if let Some(strategy) = strategy
-        && strategy != StrategyRef::RULES
-    {
+    let strategy = Some(arguments.strategy.as_str()).filter(|name| *name != StrategyRef::RULES);
+    if let Some(strategy) = strategy {
         let [entity_type] = chosen.as_slice() else {
-            return Err(Failure::Failed(format!(
+            return Err(Failure::failed(format!(
                 "a strategy judges one entity type: say which `{strategy}` is for with \
                  `--type`. The project has {}.",
                 declared(types)
@@ -105,7 +106,7 @@ pub fn run(arguments: &[String]) -> Result<(), Failure> {
                 )
                 .map(|known| format!("`{known}`"))
                 .collect();
-            return Err(Failure::Failed(format!(
+            return Err(Failure::failed(format!(
                 "`{}` has no strategy `{strategy}`. It has {}.",
                 entity_type.name,
                 known.join(", ")
@@ -113,8 +114,8 @@ pub fn run(arguments: &[String]) -> Result<(), Failure> {
         }
     }
 
-    let rematch = arguments.flag("--rematch");
-    let as_json = arguments.flag("--json");
+    let rematch = arguments.rematch;
+    let as_json = !out.is_table();
     let mut answered = Vec::new();
     let mut hints: Vec<&str> = Vec::new();
     let mut failures = Vec::new();
@@ -137,10 +138,12 @@ pub fn run(arguments: &[String]) -> Result<(), Failure> {
         }
         // A run that fails within the wait is refused as the answer, and
         // one type's failure does not keep the others from being matched.
-        let ended = match remote
+        let waiting = progress::spinner(format!("Matching `{name}`"));
+        let ended = remote
             .post("/match", &request)
-            .and_then(|started| remote.ended(started))
-        {
+            .and_then(|started| remote.ended(started));
+        waiting.finish_and_clear();
+        let ended = match ended {
             Ok(ended) => ended,
             Err(failure) if named.is_none() => {
                 let message = failure.message();
@@ -150,7 +153,7 @@ pub fn run(arguments: &[String]) -> Result<(), Failure> {
                     part(false);
                     println!("failed      type `{name}`: the match did not run to the end");
                 }
-                failures.push(Failure::Failed(format!("type `{name}`: {message}")));
+                failures.push(Failure::failed(format!("type `{name}`: {message}")));
                 continue;
             }
             Err(failure) => return Err(failure),
@@ -160,7 +163,7 @@ pub fn run(arguments: &[String]) -> Result<(), Failure> {
                 .as_ref()
                 .map_or(Value::Null, |(answer, _)| answer["run"].clone());
             match named {
-                Some(_) => print_json(&json!({ "run": run })),
+                Some(_) => out.json(&json!({ "run": run })),
                 None => answered.push(json!({ "entity_type": name, "run": run })),
             }
         }
@@ -178,7 +181,7 @@ pub fn run(arguments: &[String]) -> Result<(), Failure> {
         if run.status != RunStatus::Succeeded {
             let failure = match named {
                 Some(_) => unsuccessful(&run),
-                None => Failure::Failed(format!("type `{name}`: {}", unsuccessful(&run).message())),
+                None => Failure::failed(format!("type `{name}`: {}", unsuccessful(&run).message())),
             };
             if !as_json {
                 part(false);
@@ -193,15 +196,15 @@ pub fn run(arguments: &[String]) -> Result<(), Failure> {
         }
     }
     if as_json && named.is_none() {
-        print_json(&json!({ "runs": answered }));
+        out.json(&json!({ "runs": answered }));
     }
-    for hint in hints.iter().filter(|hint| !hint.is_empty()) {
-        println!("{hint}");
+    for said in hints.iter().filter(|said| !said.is_empty()) {
+        hint(said);
     }
     match failures.len() {
         0 => Ok(()),
         1 => Err(failures.remove(0)),
-        _ => Err(Failure::Failed(
+        _ => Err(Failure::failed(
             failures
                 .into_iter()
                 .map(Failure::message)
@@ -242,7 +245,7 @@ fn nothing(entity_type: &TypeInfo, rematch: bool) -> (String, &'static str) {
 /// Prints the report of a match run that succeeded.
 fn report(run: &RunEntry, name: &EntityType, rematch: bool) -> Result<(), Failure> {
     let report = run.resolution.as_ref().ok_or_else(|| {
-        Failure::Failed(format!(
+        Failure::failed(format!(
             "run {} succeeded and reported no match; is the server of this version?",
             run.run
         ))

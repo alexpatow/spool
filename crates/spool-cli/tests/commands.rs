@@ -110,9 +110,13 @@ fn init_makes_an_empty_project_and_says_what_goes_where() {
     // The first thing a reader sees of a project, every line of it.
     let created = init_in(dir.path(), &["my-data"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
-    assert_eq!(text(&created.stderr), "");
+    // What it made is the result, and what to do next is said beside it.
+    assert!(
+        text(&created.stdout)
+            .ends_with("  .env.example      the form of .env, where your code's secrets go\n")
+    );
     assert_eq!(
-        text(&created.stdout),
+        format!("{}{}", text(&created.stdout), text(&created.stderr)),
         "\
 created   my-data
 
@@ -183,12 +187,12 @@ works first, with sample rows: spool init companies --example companies
     std::fs::create_dir(&empty).unwrap();
     let created = init_in(dir.path(), &["empty"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
-    assert!(text(&created.stdout).contains("\n  cd empty\n"));
+    assert!(text(&created.stderr).contains("\n  cd empty\n"));
 
     // A directory that is not a plain word is quoted for the shell.
     let created = init_in(dir.path(), &["it's here"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
-    let created = text(&created.stdout);
+    let created = text(&created.stderr);
     assert!(created.contains("\n  cd 'it'\\''s here'\n"), "{created}");
 }
 
@@ -209,7 +213,7 @@ fn init_writes_nothing_into_a_folder_that_holds_files() {
     assert_eq!(text(&refused.stdout), "");
     assert_eq!(
         text(&refused.stderr),
-        "spool: this folder already holds files (Documents, Downloads, notes.txt and 2 more), \
+        "error: this folder already holds files (Documents, Downloads, notes.txt and 2 more), \
          and `spool init` makes a project only in an empty one. Nothing was written. \
          `spool init <name>` makes the project in a new folder of that name\n"
     );
@@ -224,7 +228,7 @@ fn init_writes_nothing_into_a_folder_that_holds_files() {
     assert_eq!(refused.status.code(), Some(1));
     assert_eq!(
         text(&refused.stderr),
-        "spool: taken already holds files (rows.csv). `spool init` makes a project only in a \
+        "error: taken already holds files (rows.csv). `spool init` makes a project only in a \
          new or empty folder: give it another name\n"
     );
     assert_eq!(files_of(&taken), ["rows.csv"]);
@@ -235,13 +239,13 @@ fn init_writes_nothing_into_a_folder_that_holds_files() {
     assert_eq!(refused.status.code(), Some(1));
     assert_eq!(
         text(&refused.stderr),
-        "spool: project is a project already: it has an entities/ folder\n"
+        "error: project is a project already: it has an entities/ folder\n"
     );
     assert!(!dir.path().join("project/samples").exists());
     let refused = init_in(&dir.path().join("project"), &[]);
     assert_eq!(
         text(&refused.stderr),
-        "spool: this folder is a project already: it has an entities/ folder\n"
+        "error: this folder is a project already: it has an entities/ folder\n"
     );
 
     // A file.
@@ -250,7 +254,7 @@ fn init_writes_nothing_into_a_folder_that_holds_files() {
     assert_eq!(refused.status.code(), Some(1));
     assert_eq!(
         text(&refused.stderr),
-        "spool: a-file is a file, and a project is a folder\n"
+        "error: a-file is a file, and a project is a folder\n"
     );
     assert_eq!(read(&dir.path().join("a-file")), "mine\n");
 }
@@ -261,8 +265,9 @@ fn init_with_an_example_says_what_it_wrote_and_what_to_run_next() {
 
     let created = init_in(dir.path(), &["companies", "--example", "companies"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
+    assert!(text(&created.stderr).starts_with("\n  cd companies\n"));
     assert_eq!(
-        text(&created.stdout),
+        format!("{}{}", text(&created.stdout), text(&created.stderr)),
         "\
 created   companies
 
@@ -355,7 +360,7 @@ c-9,Acorn Tool,GB
     let complaint = text(&refused.stderr);
     assert!(
         complaint.starts_with(
-            "spool: there is no example `people`: the examples are `companies`\n\nUsage: spool init"
+            "error: invalid value 'people' for '--example <NAME>'\n  [possible values: companies]\n"
         ),
         "{complaint}"
     );
@@ -381,8 +386,7 @@ c-9,Acorn Tool,GB
         .output()
         .unwrap();
     assert!(created.status.success(), "{}", text(&created.stderr));
-    assert_eq!(text(&created.stderr), "");
-    let created = text(&created.stdout);
+    let created = text(&created.stderr);
     assert!(
         created.ends_with(
             "
@@ -413,9 +417,9 @@ about 330 MB, most of it the model, and later runs fetch nothing.
         .unwrap();
     assert!(created.status.success(), "{}", text(&created.stderr));
     assert!(
-        text(&created.stdout).ends_with("and later runs fetch nothing.\n"),
+        text(&created.stderr).ends_with("and later runs fetch nothing.\n"),
         "{}",
-        text(&created.stdout)
+        text(&created.stderr)
     );
     // An empty project has no code to run, and says nothing of `uv`.
     let created = spool()
@@ -427,11 +431,8 @@ about 330 MB, most of it the model, and later runs fetch nothing.
         .output()
         .unwrap();
     assert!(created.status.success(), "{}", text(&created.stderr));
-    assert!(
-        !text(&created.stdout).contains("uv"),
-        "{}",
-        text(&created.stdout)
-    );
+    let said = format!("{}{}", text(&created.stdout), text(&created.stderr));
+    assert!(!said.contains("uv"), "{said}");
 }
 
 #[test]
@@ -566,7 +567,7 @@ fn a_project_that_does_not_compile_is_reported_with_its_file() {
         let output = run(&[command, path(dir.path())]);
         assert_eq!(output.status.code(), Some(1), "{command}");
         let stderr = text(&output.stderr);
-        assert!(stderr.starts_with("spool: "), "{stderr}");
+        assert!(stderr.starts_with("error: "), "{stderr}");
         assert!(stderr.contains("same_code.sql"), "{stderr}");
         assert!(stderr.contains("no_such_column"), "{stderr}");
     }
@@ -590,7 +591,7 @@ fn apply_declares_types_and_rebuilds_the_features_of_a_changed_declaration() {
         "--store",
         path(&store),
     ]);
-    assert!(again.contains("unchanged thing"), "{again}");
+    assert!(again.contains("unchanged  thing"), "{again}");
     assert!(again.contains("already at this manifest"), "{again}");
 
     // The store path can come from the environment, as it does in an image.
@@ -785,7 +786,7 @@ fn dev_serves_a_project_directory_and_applies_changes_as_they_are_saved() {
     // with what it had.
     std::fs::write(&entity, "features: [code\n").unwrap();
     let complaint = server.complained("entity.yaml");
-    assert!(complaint.starts_with("spool: "), "{complaint}");
+    assert!(complaint.starts_with("error: "), "{complaint}");
     server.complained("still running the last version that compiled");
     assert_eq!(server.read("/v1/info")["store"]["manifest_hash"], second);
 
@@ -1032,7 +1033,7 @@ fn a_second_server_on_a_store_or_a_port_says_what_is_wrong() {
     let said = stopped.output;
     assert!(
         said.starts_with(&format!(
-            "spool: the store {} is open in another process",
+            "error: the store {} is open in another process",
             store.display()
         )),
         "{said}"
@@ -1053,7 +1054,7 @@ fn a_second_server_on_a_store_or_a_port_says_what_is_wrong() {
     let said = text(&applied.stderr);
     assert!(
         said.starts_with(&format!(
-            "spool: the store at {} is open in another process",
+            "error: the store at {} is open in another process",
             store.display()
         )),
         "{said}"
@@ -1075,7 +1076,7 @@ fn a_second_server_on_a_store_or_a_port_says_what_is_wrong() {
     let next = format!("{host}:{next}");
     assert!(
         said.contains(&format!(
-            "spool: cannot listen on {}: something else is listening there",
+            "error: cannot listen on {}: something else is listening there",
             running.address
         )),
         "{said}"

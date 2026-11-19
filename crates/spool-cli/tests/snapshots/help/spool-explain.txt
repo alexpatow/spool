@@ -1,0 +1,26 @@
+Say why two records share an identity, or what holds one together
+
+Usage: spool explain [OPTIONS] <RECORD> [RECORD]
+
+Arguments:
+  <RECORD>  A record; alone, an identity, by its ID or by any of its records
+  [RECORD]  A second record, to say why the two share an identity or do not
+
+Options:
+  -h, --help  Print help (see more with '--help')
+
+Output options:
+  -o, --output <OUTPUT>  Output format [default: table] [possible values: table, json, ndjson, csv]
+      --json             Shorthand for `--output json`
+
+Server options:
+      --url <URL>      The server [env: SPOOL_URL] [default: http://127.0.0.1:7765]
+      --token <TOKEN>  A token for that server; `spool dev` needs none [env: SPOOL_TOKEN]
+
+Global options:
+      --color <WHEN>  When to use colour [default: auto] [possible values: auto, always, never]
+  -q, --quiet         Print only the result and errors: no hints or progress
+
+Examples:
+  spool explain crm:c-1 crm:c-2
+  spool explain crm:c-1

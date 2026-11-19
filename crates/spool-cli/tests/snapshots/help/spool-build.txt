@@ -1,0 +1,19 @@
+Check a project and compile it into a manifest
+
+Usage: spool build [OPTIONS] [DIR]
+
+Arguments:
+  [DIR]  The project directory [default: the current directory]
+
+Options:
+      --base-image <IMAGE>  The image the written Dockerfile starts from
+      --install             Start each strategy and extractor once, to fetch what it needs
+  -h, --help                Print help (see more with '--help')
+
+Output options:
+  -o, --output <OUTPUT>  Output format [default: table] [possible values: table, json, ndjson, csv]
+      --json             Shorthand for `--output json`
+
+Global options:
+      --color <WHEN>  When to use colour [default: auto] [possible values: auto, always, never]
+  -q, --quiet         Print only the result and errors: no hints or progress

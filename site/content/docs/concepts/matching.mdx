@@ -114,11 +114,11 @@ spool match
 
 ```text title="Output"
 loaded  3 rows into source `crm`, type `company`: 3 new
-next    `spool match` places them in identities
 run         8, type `company`
 examined    3 records, 5 candidate pairs
 judgements  3 match, 1 no_match
 placed      3 records, 2 identities created
+next: `spool match` places them in identities
 ```
 
 ```sh
@@ -126,7 +126,7 @@ spool show records
 ```
 
 ```text title="Output"
-source and key  name                 identity
+SOURCE AND KEY  NAME                 IDENTITY
 crm:c-1         Acorn Tools          01a1efc6-41cd-775d-8758-e7300637659a
 crm:c-10        Acorn Tooling        01a1efc6-41cd-775d-8758-e7300637659a
 crm:c-11        The Halden Group     01a1f0a0-8d53-77b4-bc9c-978de1e67f11
@@ -185,7 +185,7 @@ spool show runs --limit 2
 ```
 
 ```text title="Output"
-run  kind       status     about           started by                                 started
+RUN  KIND       STATUS     ABOUT           STARTED BY                                 STARTED
 9    reconcile  succeeded                  user:01a1f0a0-8c93-757a-852f-1cc4a87967ed  2026-11-18T21:46:56Z
 8    match      succeeded  company, rules  user:01a1f0a0-8c93-757a-852f-1cc4a87967ed  2026-11-18T21:46:56Z
 ```
@@ -242,10 +242,9 @@ moved      1 record would change identity
 pairs      11 pairs share an identity now, 12 would after, 11 of them both
 
 1 change, the largest first
-#  kind   records  identity                              now                                     after
+#  KIND   RECORDS  IDENTITY                              NOW                                     AFTER
 1  merge  2        01a1efc6-41cd-775d-8758-e7329447fd9a  Halden Group (1), The Halden Group (1)  Halden Group (2, keeps its ID, 1 identity merged in)
 `--identity <id>` shows a change record by record
-
 nothing was changed. This applies it:
 spool recompute --apply 0f0ae22918643710b875675543062faa05f144d428242c6efd7be2f9cce68d69
 ```
@@ -272,20 +271,19 @@ after
   1  01a1efc6-41cd-775d-8758-e7329447fd9a, keeps its ID  Halden Group  2 records
   01a1f0a0-8d53-77b4-bc9c-978de1e67f11 is merged into 1, and its ID stands for it
 
-record                                source and key  label             now                                   after
+RECORD                                SOURCE AND KEY  LABEL             NOW                                   AFTER
 2c53c39b-ba40-34f1-5a6c-f335adbe639c  crm:c-11        The Halden Group  01a1f0a0-8d53-77b4-bc9c-978de1e67f11  1
 38f040c9-82b9-2f94-813b-697309e52dab  crm:c-5         Halden Group      01a1efc6-41cd-775d-8758-e7329447fd9a  1
-
 nothing was changed. This applies every change, not only this one:
 spool recompute --apply 0f0ae22918643710b875675543062faa05f144d428242c6efd7be2f9cce68d69
 ```
 
 Which identity keeps its ID follows the rule a split follows. An identity keeps its ID with the group that gets most of its records. Where several identities have their most in one group, the one with the most records there keeps its ID, the older one on a tie, and the others are merged into it, so that a system that stored their IDs still finds the entity. A group in which no identity has its most is a new identity.
 
-Applying is a separate step. The last line of the preview is the command, and the long hash in it is the plan:
+Applying is a separate step. The preview ends with the command, and the long hash in it is the plan, which is also in its JSON:
 
 ```sh
-PLAN=$(spool recompute | awk 'END {print $NF}')
+PLAN=$(spool recompute --json | jq -r .plan)
 spool recompute --apply $PLAN --reason "names without a leading the"
 ```
 

@@ -6,74 +6,84 @@
 
 use std::path::PathBuf;
 
+use anstream::println;
+use clap::{Args, Subcommand};
 use spool_cli::accounts::Accounts;
-use spool_cli::api::TokenList;
+use spool_cli::api::{AddedToken, TokenList};
 
-use super::show::table;
 use crate::Failure;
-use crate::args::{Arguments, Spec};
+use crate::output::{Output, OutputArgs, Table, hint};
 
-pub const USAGE: &str = "\
-Usage: spool token add <name> [options]
-       spool token list [options]
-       spool token revoke <name> [options]
+/// Make, list and revoke the tokens of callers that are not people
+///
+/// Makes, lists and revokes the tokens of a server, on the server's machine.
+/// A token is what a caller that is not a person presents: an agent or a
+/// pipeline. What it changes is recorded under the token's name, as
+/// `agent:<name>`. An admin does the same on the studio's Tokens page.
+///
+/// These work whether or not the server is running.
+#[derive(Args)]
+pub struct TokenArgs {
+    #[command(subcommand)]
+    pub action: Action,
+    /// The store's database file; the tokens are in the accounts file beside it
+    #[arg(
+        long,
+        env = "SPOOL_STORE",
+        value_parser = super::any_path(),
+        hide_env_values = true,
+        value_name = "PATH",
+        global = true
+    )]
+    store: Option<PathBuf>,
+    #[command(flatten)]
+    output: OutputArgs,
+}
 
-Makes, lists and revokes the tokens of a server, on the server's machine. A
-token is what a caller that is not a person presents: an agent or a pipeline.
-What it changes is recorded under the token's name, as `agent:<name>`. An
-admin does the same on the studio's Tokens page.
+#[derive(Subcommand)]
+pub enum Action {
+    /// Make a token, and print it
+    ///
+    /// Makes a token and prints it, and nothing else, on standard output. It
+    /// is shown this once: the server keeps a hash of it. A caller sends it
+    /// as `Authorization: Bearer <token>`.
+    Add {
+        /// The token's name: 1 to 64 letters, digits, `.`, `_` or `-`
+        name: String,
+    },
+    /// List the tokens
+    List,
+    /// Revoke a token: the server no longer accepts it
+    Revoke {
+        /// The token's name
+        name: String,
+    },
+}
 
-`add` prints the token, and nothing else, on standard output. It is shown
-this once: the server keeps a hash of it. A caller sends it as
-`Authorization: Bearer <token>`.
+impl Action {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Action::Add { .. } => "add",
+            Action::List => "list",
+            Action::Revoke { .. } => "revoke",
+        }
+    }
+}
 
-These work whether or not the server is running.
-
-  <name>             1 to 64 letters, digits, `.`, `_` or `-`
-
-Options:
-  --store <path>     the store's database file (default: $SPOOL_STORE). The
-                     tokens are in the accounts file beside it.
-  --json             print the tokens as JSON (list)
-";
-
-pub fn token(arguments: &[String]) -> Result<(), Failure> {
-    let arguments = super::arguments(
-        arguments,
-        &Spec {
-            values: &["--store"],
-            flags: &["--json"],
-            positional: 2,
-        },
-    )?;
-    let words: Vec<&str> = arguments.positional.iter().map(String::as_str).collect();
-    match words[..] {
-        ["add", name] => add(&arguments, name),
-        ["list"] => list(&arguments),
-        ["revoke", name] => revoke(&arguments, name),
-        ["add"] | ["revoke"] => Err(Failure::Usage(format!(
-            "`spool token {}` needs the token's name",
-            words[0]
-        ))),
-        [] => Err(Failure::Usage(
-            "say what to do: `add`, `list` or `revoke`".to_owned(),
-        )),
-        [other, ..] if !["add", "list", "revoke"].contains(&other) => Err(Failure::Usage(format!(
-            "`spool token` does `add`, `list` and `revoke`, not `{other}`"
-        ))),
-        _ => Err(Failure::Usage(format!(
-            "unexpected argument `{}`",
-            words[words.len() - 1]
-        ))),
+pub fn token(arguments: TokenArgs) -> Result<(), Failure> {
+    match &arguments.action {
+        Action::Add { name } => add(&arguments, name),
+        Action::List => list(&arguments),
+        Action::Revoke { name } => revoke(&arguments, name),
     }
 }
 
 /// The accounts beside the store the arguments name. The store has to be
 /// there: a token made beside a path nobody serves would open nothing.
-fn accounts(arguments: &Arguments) -> Result<(Accounts, PathBuf), Failure> {
-    let store = super::store_path(arguments)?;
+fn accounts(arguments: &TokenArgs) -> Result<(Accounts, PathBuf), Failure> {
+    let store = super::store_path(&arguments.store)?;
     if !store.is_file() {
-        return Err(Failure::Failed(format!(
+        return Err(Failure::failed(format!(
             "there is no store at {}: `spool serve` or `spool apply` makes one",
             store.display()
         )));
@@ -82,33 +92,32 @@ fn accounts(arguments: &Arguments) -> Result<(Accounts, PathBuf), Failure> {
 }
 
 fn refused(refused: spool_cli::accounts::Refused) -> Failure {
-    Failure::Failed(refused.to_string())
+    Failure::failed(refused.to_string())
 }
 
-fn add(arguments: &Arguments, name: &str) -> Result<(), Failure> {
+fn add(arguments: &TokenArgs, name: &str) -> Result<(), Failure> {
+    let out = Output::report(&arguments.output, "`spool token add`")?;
     let (accounts, path) = accounts(arguments)?;
     let (token, secret) = accounts.add_token(name, None).map_err(refused)?;
+    if !out.is_table() {
+        out.json(&AddedToken { token, secret });
+        return Ok(());
+    }
     println!("{secret}");
-    eprintln!(
+    hint(format!(
         "That is the token `{name}`, kept in {path}. It is shown this once.\n\
          A caller sends it as `Authorization: Bearer <token>`, and what it changes is recorded \
          under `agent:{name}`.",
         name = token.name,
         path = path.display(),
-    );
+    ));
     Ok(())
 }
 
-fn list(arguments: &Arguments) -> Result<(), Failure> {
+fn list(arguments: &TokenArgs) -> Result<(), Failure> {
+    let out = Output::list(&arguments.output);
     let (accounts, _) = accounts(arguments)?;
     let tokens = accounts.tokens().map_err(refused)?;
-    if arguments.flag("--json") {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&TokenList { tokens }).expect("tokens serialise to JSON")
-        );
-        return Ok(());
-    }
     let people = accounts.list().map_err(refused)?;
     let made_by = |id: &Option<String>| match id {
         None => "spool token add".to_owned(),
@@ -117,30 +126,31 @@ fn list(arguments: &Arguments) -> Result<(), Failure> {
             .find(|person| &person.id == id)
             .map_or_else(|| id.clone(), |person| person.username.clone()),
     };
-    table(
-        "tokens",
-        &["token", "made at", "made by", "last used"],
-        tokens
-            .iter()
-            .map(|token| {
-                vec![
-                    token.name.clone(),
-                    token.created_at.clone(),
-                    made_by(&token.created_by),
-                    token
-                        .last_used_at
-                        .clone()
-                        .unwrap_or_else(|| "never".to_owned()),
-                ]
-            })
-            .collect(),
-    );
+    let mut table = Table::new("tokens").columns(["token", "made at", "made by", "last used"]);
+    for token in &tokens {
+        table.row(vec![
+            token.name.clone().into(),
+            token.created_at.clone().into(),
+            made_by(&token.created_by).into(),
+            token
+                .last_used_at
+                .clone()
+                .unwrap_or_else(|| "never".to_owned())
+                .into(),
+        ]);
+    }
+    let answer = serde_json::to_value(TokenList { tokens }).expect("tokens serialise to JSON");
+    out.items(&answer, "tokens", &table)?;
     Ok(())
 }
 
-fn revoke(arguments: &Arguments, name: &str) -> Result<(), Failure> {
+fn revoke(arguments: &TokenArgs, name: &str) -> Result<(), Failure> {
+    let out = Output::report(&arguments.output, "`spool token revoke`")?;
     let (accounts, _) = accounts(arguments)?;
     let token = accounts.revoke_token_named(name).map_err(refused)?;
-    println!("revoked `{}`: the server no longer accepts it", token.name);
+    match out.is_table() {
+        true => println!("revoked `{}`: the server no longer accepts it", token.name),
+        false => out.json(&token),
+    }
     Ok(())
 }

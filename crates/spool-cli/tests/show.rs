@@ -28,7 +28,8 @@ fn ask(server: &Server, arguments: &[&str]) -> Output {
     command.output().unwrap()
 }
 
-/// What a command that has to succeed printed.
+/// What a command that has to succeed printed: its result, then what it
+/// said beside on standard error.
 fn shown(server: &Server, arguments: &[&str]) -> String {
     let output = ask(server, arguments);
     assert!(
@@ -37,7 +38,7 @@ fn shown(server: &Server, arguments: &[&str]) -> String {
         text(&output.stdout),
         text(&output.stderr)
     );
-    text(&output.stdout)
+    format!("{}{}", text(&output.stdout), text(&output.stderr))
 }
 
 /// What a command printed with `--json`.
@@ -127,7 +128,7 @@ fn show_lists_what_a_server_holds() {
 
     let runs = shown(&server, &["show", "runs"]);
     assert!(
-        runs.starts_with("run  kind       status     about         started by  started\n"),
+        runs.starts_with("RUN  KIND       STATUS     ABOUT         STARTED BY  STARTED\n"),
         "{runs}"
     );
     assert!(
@@ -148,7 +149,7 @@ fn show_lists_what_a_server_holds() {
         server.read("/v1/runs?kind=match&limit=1")
     );
 
-    let run = shown(&server, &["show", "run", "2"]);
+    let run = shown(&server, &["show", "runs", "2"]);
     has(&run, "kind           match");
     has(&run, "started by     agent:api");
     has(&run, "strategy       rules, version 0.1.0");
@@ -174,7 +175,7 @@ fn show_lists_what_a_server_holds() {
     assert_eq!(identities.lines().count(), 4, "{identities}");
     assert!(
         identities
-            .starts_with("identity                              name    members  names  unlinked pairs  created at\n"),
+            .starts_with("IDENTITY                              NAME    MEMBERS  NAMES  UNLINKED PAIRS  CREATED AT\n"),
         "{identities}"
     );
     let page = shown(
@@ -198,12 +199,12 @@ fn show_lists_what_a_server_holds() {
         .as_str()
         .unwrap()
         .to_owned();
-    let identity = shown(&server, &["show", "identity", &anvils]);
+    let identity = shown(&server, &["show", "identities", &anvils]);
     has(&identity, &format!("identity    {anvils}"));
     has(&identity, "created at  log position 1");
     has(
         &identity,
-        "record                                source and key  since",
+        "RECORD                                SOURCE AND KEY  SINCE",
     );
     for (id, name) in [(&one, "shop:1"), (&two, "shop:2")] {
         has(&identity, &format!("{id}  {name}          log position 1"));
@@ -230,7 +231,7 @@ fn show_lists_what_a_server_holds() {
     let records = shown(&server, &["show", "records", "--source", "shop"]);
     let listed: Vec<&str> = records.lines().collect();
     assert_eq!(listed.len(), 5, "{records}");
-    assert_eq!(listed[0], "source and key  name    identity");
+    assert_eq!(listed[0], "SOURCE AND KEY  NAME    IDENTITY");
     assert_eq!(listed[1], format!("shop:1          anvil   {anvils}"));
     assert_eq!(listed[2], format!("shop:2          anvil   {anvils}"));
     assert!(
@@ -245,7 +246,7 @@ fn show_lists_what_a_server_holds() {
     assert_eq!(with_ids.lines().count(), 5, "{with_ids}");
     has(
         &with_ids,
-        "record                                source and key  name    identity",
+        "RECORD                                SOURCE AND KEY  NAME    IDENTITY",
     );
     has(&with_ids, &format!("{one}  shop:1  anvil  {anvils}"));
     let page = shown(&server, &["show", "records", "--limit", "2"]);
@@ -256,15 +257,15 @@ fn show_lists_what_a_server_holds() {
     let none = shown(&server, &["show", "records", "--unassigned"]);
     assert_eq!(none, "no records\n");
     // `--ids` is an option of the list.
-    let (code, complaint) = refused(&server, &["show", "record", "shop:1", "--ids"]);
+    let (code, complaint) = refused(&server, &["show", "records", "shop:1", "--ids"]);
     assert_eq!(code, Some(2));
     assert!(
-        complaint.starts_with("spool: `--ids` goes with the list of records\n"),
+        complaint.starts_with("error: the argument '[RECORD]' cannot be used with '--ids'\n"),
         "{complaint}"
     );
 
     // A record is named by its ID or by its source and key.
-    let record = shown(&server, &["show", "record", "shop:1"]);
+    let record = shown(&server, &["show", "records", "shop:1"]);
     assert_eq!(record, shown(&server, &["show", "records", &one]));
     has(&record, &format!("record  {one}"));
     has(&record, "source       shop");
@@ -274,7 +275,7 @@ fn show_lists_what_a_server_holds() {
     has(&record, "  code    anvil");
     has(&record, "  colour  black");
     assert!(record.contains(" by run 1\n"), "{record}");
-    let bundle = answered(&server, &["show", "record", "shop:1"]);
+    let bundle = answered(&server, &["show", "records", "shop:1"]);
     assert_eq!(bundle["record"], server.read(&format!("/v1/records/{one}")));
     assert_eq!(bundle["mention"], Value::Null);
     assert_eq!(bundle["review_items"], json!([]));
@@ -282,7 +283,7 @@ fn show_lists_what_a_server_holds() {
     let log = shown(&server, &["show", "log"]);
     has(
         &log,
-        "position  actor   operations  from             started by  reason",
+        "POSITION  ACTOR   OPERATIONS  FROM             STARTED BY  REASON",
     );
     has(
         &log,
@@ -374,10 +375,10 @@ fn explain_says_why_two_records_are_together_or_apart() {
         &split,
         "`shop:2` was placed at log position 2 by `agent:api` (\"a replica\").",
     );
-    let identity = shown(&server, &["show", "identity", identity]);
+    let identity = shown(&server, &["show", "identities", identity]);
     has(
         &identity,
-        "constraint   between                               and                                   since",
+        "CONSTRAINT   BETWEEN                               AND                                   SINCE",
     );
     assert!(identity.contains("\ncannot_link  "), "{identity}");
     assert!(
@@ -392,7 +393,7 @@ fn explain_says_why_two_records_are_together_or_apart() {
     let (code, complaint) = refused(&server, &["explain"]);
     assert_eq!(code, Some(2));
     assert!(
-        complaint.contains("`explain` needs two records, or an identity"),
+        complaint.contains("required arguments were not provided:\n  <RECORD>"),
         "{complaint}"
     );
     let (code, complaint) = refused(&server, &["explain", "shop:1", "anvil"]);
@@ -405,7 +406,7 @@ fn explain_says_why_two_records_are_together_or_apart() {
     assert_eq!(code, Some(1));
     assert_eq!(
         complaint,
-        "spool: there is no record with key `9` from source `shop`\n"
+        "error: there is no record with key `9` from source `shop`\n"
     );
     let (code, complaint) = refused(&server, &["explain", "shop:1", "shop:1"]);
     assert_eq!(code, Some(1));
@@ -413,7 +414,7 @@ fn explain_says_why_two_records_are_together_or_apart() {
     let unknown = "00000000-0000-7000-8000-000000000000";
     let (code, complaint) = refused(&server, &["explain", "shop:1", unknown]);
     assert_eq!(code, Some(1));
-    assert_eq!(complaint, format!("spool: there is no record {unknown}\n"));
+    assert_eq!(complaint, format!("error: there is no record {unknown}\n"));
 }
 
 /// Things matched by code and by name: an anvil and a tongs that share no
@@ -540,7 +541,7 @@ fn explain_names_each_link_of_a_chain_by_its_records_and_its_rule() {
     assert_eq!(
         lines[0].split_whitespace().collect::<Vec<_>>(),
         [
-            "identity", "name", "members", "names", "unlinked", "pairs", "created", "at"
+            "IDENTITY", "NAME", "MEMBERS", "NAMES", "UNLINKED", "PAIRS", "CREATED", "AT"
         ]
     );
     assert_eq!(
@@ -560,12 +561,15 @@ fn explain_names_each_link_of_a_chain_by_its_records_and_its_rule() {
     assert_eq!(listed["identities"][0]["unlinked_pairs"], 3);
     assert_eq!(listed["identities"][0]["linked_pairs"], 3);
     let (code, complaint) = refused(&server, &["show", "identities", "--sort", "size"]);
-    assert_eq!(code, Some(1));
-    assert!(complaint.contains("unknown variant `size`"), "{complaint}");
+    assert_eq!(code, Some(2));
+    assert!(
+        complaint.contains("invalid value 'size' for '--sort <SORT>'"),
+        "{complaint}"
+    );
     let (code, complaint) = refused(&server, &["show", "runs", "--sort", "records"]);
     assert_eq!(code, Some(2));
     assert!(
-        complaint.contains("`--sort` does not go with `runs`"),
+        complaint.contains("unexpected argument '--sort'"),
         "{complaint}"
     );
 
@@ -619,7 +623,7 @@ fn explain_names_each_link_of_a_chain_by_its_records_and_its_rule() {
     assert_eq!(code, Some(1));
     assert_eq!(
         complaint,
-        format!("spool: there is no identity or record {unknown}\n")
+        format!("error: there is no identity or record {unknown}\n")
     );
     server
         .get(&format!("/v1/identities/{unknown}/explain"))
@@ -651,7 +655,7 @@ fn drafts_and_review_items_are_shown_with_what_they_hold() {
     let drafts = shown(&server, &["show", "drafts"]);
     has(
         &drafts,
-        "draft                                 type     status  operations  from",
+        "DRAFT                                 TYPE     STATUS  OPERATIONS  FROM",
     );
     assert!(
         drafts.contains(&format!("\n{draft}  company  open    ")),
@@ -666,11 +670,11 @@ fn drafts_and_review_items_are_shown_with_what_they_hold() {
         &overview,
         &format!("  draft       {draft} waits for a decision"),
     );
-    let waiting = shown(&server, &["show", "run", &run["run"].to_string()]);
+    let waiting = shown(&server, &["show", "runs", &run["run"].to_string()]);
     has(&waiting, "status         drafted");
     has(&waiting, &format!("draft          {draft}"));
 
-    let one = shown(&server, &["show", "draft", draft]);
+    let one = shown(&server, &["show", "drafts", draft]);
     has(&one, &format!("draft            {draft}"));
     has(&one, "status           open");
     has(&one, "written against  log position 0");
@@ -678,7 +682,7 @@ fn drafts_and_review_items_are_shown_with_what_they_hold() {
     assert!(one.contains("\n  create company identity "), "{one}");
     assert!(one.contains("\n  place record "), "{one}");
     assert_eq!(
-        answered(&server, &["show", "draft", draft]),
+        answered(&server, &["show", "drafts", draft]),
         server.read(&format!("/v1/drafts/{draft}"))
     );
     server.call(&format!("/v1/drafts/{draft}/approve"), json!({}));
@@ -695,7 +699,7 @@ fn drafts_and_review_items_are_shown_with_what_they_hold() {
     let stuck = id_of(&server, "crm", "c-117");
 
     let review = shown(&server, &["show", "review", "--status", "open"]);
-    has(&review, "item  kind  status  type  raised by  about");
+    has(&review, "ITEM  KIND  STATUS  TYPE  RAISED BY  ABOUT");
     assert!(
         review.contains("\n1     possible_merge  open    company  run "),
         "{review}"
@@ -719,18 +723,16 @@ fn drafts_and_review_items_are_shown_with_what_they_hold() {
     assert_eq!(bundle["records"][0]["id"], stuck.as_str());
 
     // The record says it is under review, and an explanation says why.
-    let record = shown(&server, &["show", "record", "crm:c-117"]);
+    let record = shown(&server, &["show", "records", "crm:c-117"]);
     has(&record, "identity     none");
     has(&record, "review       item 1 (possible_merge, open)");
     let unassigned = shown(&server, &["show", "records", "--unassigned"]);
     assert_eq!(
         unassigned,
         "\
-source and key  name              identity
+SOURCE AND KEY  NAME              IDENTITY
 crm:c-117       Pioneer Supplies  -
-
-1 record has no identity. `spool match` places new records in identities,
-and `spool show review` lists the ones a match left out.
+1 record has no identity: `spool match` places new records in identities, and `spool show review` lists the ones a match left out
 "
     );
     let matched = server.read("/v1/review/1")["identities"][0]
@@ -753,7 +755,7 @@ and `spool show review` lists the ones a match left out.
 
     let (code, complaint) = refused(&server, &["show", "review", "9"]);
     assert_eq!(code, Some(1));
-    assert_eq!(complaint, "spool: there is no review item 9\n");
+    assert_eq!(complaint, "error: there is no review item 9\n");
 
     // The same company under a second key is held back with the first. When
     // the CRM takes that row back, the item says which of the two still
@@ -801,7 +803,7 @@ and `spool show review` lists the ones a match left out.
     assert!(every["items"].as_array().unwrap().len() >= 2, "{every}");
     assert_eq!(every["next"], Value::Null);
     let page = shown(&server, &["show", "review", "--limit", "1"]);
-    assert_eq!(page.lines().count(), 4, "{page}");
+    assert_eq!(page.lines().count(), 3, "{page}");
     assert!(page.contains("\n1     possible_merge  "), "{page}");
     assert!(page.ends_with("\nmore: add `--after 1`\n"), "{page}");
     let rest = shown(&server, &["show", "review", "--after", "1"]);
@@ -847,7 +849,7 @@ fn a_mention_is_shown_in_its_document() {
     let listed = shown(&server, &["show", "documents", "--source", "notes"]);
     has(
         &listed,
-        "document                              source and key  characters  read by",
+        "DOCUMENT                              SOURCE AND KEY  CHARACTERS  READ BY",
     );
     has(
         &listed,
@@ -857,12 +859,12 @@ fn a_mention_is_shown_in_its_document() {
         ),
     );
     assert_eq!(listed.lines().count(), 3, "{listed}");
-    let one = shown(&server, &["show", "document", document]);
+    let one = shown(&server, &["show", "documents", document]);
     has(&one, &format!("document    {document}"));
     has(&one, "uri         file:///notes/a.txt");
     assert!(one.ends_with(&format!("\n\n{note}\n")), "{one}");
 
-    let record = shown(&server, &["show", "record", "notes:m1"]);
+    let record = shown(&server, &["show", "records", "notes:m1"]);
     has(&record, "evidence");
     has(&record, &format!("  document  {document}"));
     has(&record, "in document notes:a.txt, characters 105 to 110");
@@ -875,7 +877,7 @@ fn a_mention_is_shown_in_its_document() {
             "x".repeat(54)
         ),
     );
-    let bundle = answered(&server, &["show", "record", "notes:m1"]);
+    let bundle = answered(&server, &["show", "records", "notes:m1"]);
     assert_eq!(bundle["mention"]["text"], "Anvil");
     assert_eq!(bundle["mention"]["document"], document);
     assert_eq!(bundle["mention"]["cut_before"], true);
@@ -884,14 +886,14 @@ fn a_mention_is_shown_in_its_document() {
     let found = shown(&server, &["show", "records", "--document", document]);
     has(&found, "notes:a.txt[105-110]  anvil  -");
     assert_eq!(
-        shown(&server, &["show", "record", "notes:a.txt[105-110]"]),
+        shown(&server, &["show", "records", "notes:a.txt[105-110]"]),
         record
     );
-    let (code, complaint) = refused(&server, &["show", "record", "notes:a.txt[1-2]"]);
+    let (code, complaint) = refused(&server, &["show", "records", "notes:a.txt[1-2]"]);
     assert_eq!(code, Some(1));
     assert_eq!(
         complaint,
-        "spool: there is no record with key `a.txt[1-2]` from source `notes`\n"
+        "error: there is no record with key `a.txt[1-2]` from source `notes`\n"
     );
 
     // Evidence that points outside the document is shown as it is.
@@ -904,7 +906,7 @@ fn a_mention_is_shown_in_its_document() {
             "rows": [{ "id": "m2", "code": "tongs", "where": evidence.to_string() }],
         }),
     );
-    let record = shown(&server, &["show", "record", "notes:m2"]);
+    let record = shown(&server, &["show", "records", "notes:m2"]);
     has(&record, "  end       5000");
     assert!(!record.contains("in document"), "{record}");
 
@@ -989,15 +991,15 @@ fn a_mention_named_by_its_place_is_the_latest_there_is() {
 
     // The name is that of the mention in the latest version that has one.
     let name = "notes:a.txt[4-9]";
-    let record = shown(&server, &["show", "record", name]);
+    let record = shown(&server, &["show", "records", name]);
     has(&record, "key          m4");
     has(&record, "  code    v4");
-    assert_eq!(record, shown(&server, &["show", "record", "notes:m4"]));
+    assert_eq!(record, shown(&server, &["show", "records", "notes:m4"]));
 
     // A mention that was found again with other values is a version of the
     // same record, and the name is the latest of them, as a key is.
     mention("m4", "v4 again", &versions[3]);
-    let record = shown(&server, &["show", "record", name]);
+    let record = shown(&server, &["show", "records", name]);
     has(&record, "key          m4");
     has(&record, "  code    v4 again");
     let explanation = shown(&server, &["explain", name, "notes:m1"]);
@@ -1006,7 +1008,7 @@ fn a_mention_named_by_its_place_is_the_latest_there_is() {
     // Two records at one place in one version are two, and the name does
     // not choose.
     mention("other", "tongs", &versions[3]);
-    let (code, complaint) = refused(&server, &["show", "record", name]);
+    let (code, complaint) = refused(&server, &["show", "records", name]);
     assert_eq!(code, Some(1));
     let (first, second) = (
         id_of(&server, "notes", "m4"),
@@ -1014,7 +1016,7 @@ fn a_mention_named_by_its_place_is_the_latest_there_is() {
     );
     assert!(
         complaint
-            .starts_with("spool: 2 records are named `notes:a.txt[4-9]`: name one by its ID, of "),
+            .starts_with("error: 2 records are named `notes:a.txt[4-9]`: name one by its ID, of "),
         "{complaint}"
     );
     assert!(complaint.contains(&second), "{complaint}");
@@ -1060,7 +1062,7 @@ fn a_source_and_key_name_the_latest_version_however_many_there_were() {
         "the latest version is not on the first page, or this tests nothing"
     );
 
-    let latest = answered(&server, &["show", "record", "shop:1"]);
+    let latest = answered(&server, &["show", "records", "shop:1"]);
     assert_eq!(latest["record"]["payload"]["code"], "anvil-250");
     assert_eq!(latest["record"]["superseded_by"], Value::Null);
 
@@ -1112,7 +1114,7 @@ fn the_attributes_of_the_records_that_stand_are_shown_across_them() {
 
     let shop = shown(&server, &["show", "attributes", "--source", "shop"]);
     has(&shop, "entity type `thing`, source `shop`: 3 records");
-    has(&shop, "attribute filled distinct most common features");
+    has(&shop, "ATTRIBUTE FILLED DISTINCT MOST COMMON FEATURES");
     has(&shop, "id (key)  3 (100%)  3  e.g. 1, 2, 3  -");
     has(&shop, "code  3 (100%)  1  anvil (3)  code");
     has(&shop, "colour  3 (100%)  3  e.g. black, grey, red  colour");
@@ -1120,7 +1122,7 @@ fn the_attributes_of_the_records_that_stand_are_shown_across_them() {
     has(&shop, "weight  2 (66%)  1  40 (2)  -");
     has(
         &shop,
-        "`spool show records --source shop --attributes` lists the values record by record.",
+        "`spool show records --source shop --attributes` lists the values record by record",
     );
 
     // Every source the type maps is there, with records or without, and a
@@ -1174,7 +1176,7 @@ fn the_attributes_of_the_records_that_stand_are_shown_across_them() {
             "--all-versions",
         ],
     );
-    has(&history, "source and key  name  identity  version");
+    has(&history, "SOURCE AND KEY  NAME  IDENTITY  VERSION");
     has(&history, "shop:1  anvil  -  replaced");
     has(&history, "shop:1  anvil  -  current");
     let latest = answered(
@@ -1188,7 +1190,7 @@ fn the_attributes_of_the_records_that_stand_are_shown_across_them() {
     let wide = shown(&server, &["show", "records", "--attributes"]);
     has(
         &wide,
-        "source and key  code  colour  name  weight  identity",
+        "SOURCE AND KEY  CODE  COLOUR  NAME  WEIGHT  IDENTITY",
     );
     has(&wide, "shop:1  anvil  grey  Big anvil  40  -");
     has(&wide, "shop:3  anvil  red  Red anvil  -  -");
@@ -1206,7 +1208,7 @@ fn the_attributes_of_the_records_that_stand_are_shown_across_them() {
     assert_eq!(every.lines().count(), 3, "{every}");
     has(
         &every,
-        "document  source and key  characters  read by  version",
+        "DOCUMENT  SOURCE AND KEY  CHARACTERS  READ BY  VERSION",
     );
     assert_eq!(every.matches(" replaced\n").count(), 1, "{every}");
     assert_eq!(every.matches(" current\n").count(), 1, "{every}");
@@ -1262,24 +1264,24 @@ fn the_attributes_of_the_records_that_stand_are_shown_across_them() {
     for (arguments, complaint) in [
         (
             &["show", "attributes", "--key", "1"][..],
-            "`--key` does not go with `attributes`",
+            "unexpected argument '--key'",
         ),
         (
-            &["show", "record", "shop:1", "--attributes"],
-            "`--attributes` goes with the list of records",
+            &["show", "records", "shop:1", "--attributes"],
+            "the argument '[RECORD]' cannot be used with '--attributes'",
         ),
         (
             &["show", "runs", "--all-versions"],
-            "`--all-versions` goes with the lists of records and documents",
+            "unexpected argument '--all-versions'",
         ),
         (
             &["show", "documents", "--latest"],
-            "unknown option `--latest`",
+            "unexpected argument '--latest'",
         ),
     ] {
         let (code, said) = refused(&server, arguments);
         assert_eq!(code, Some(2), "{arguments:?}");
-        assert!(said.starts_with(&format!("spool: {complaint}\n")), "{said}");
+        assert!(said.starts_with(&format!("error: {complaint}")), "{said}");
     }
 }
 
@@ -1308,7 +1310,7 @@ fn an_attribute_the_source_no_longer_declares_is_still_listed() {
     );
     has(
         &wide,
-        "source and key  code  colour  name  weight  identity",
+        "SOURCE AND KEY  CODE  COLOUR  NAME  WEIGHT  IDENTITY",
     );
     has(&wide, "shop:1  anvil  -  -  40  -");
     let profile = shown(&server, &["show", "attributes", "--source", "shop"]);
@@ -1349,14 +1351,14 @@ fn a_merged_identity_is_shown_with_the_constraints_of_the_one_it_became() {
     let expected =
         server.read(&format!("/v1/constraints?identity={hammers}"))["constraints"].clone();
     assert_eq!(expected.as_array().unwrap().len(), 1);
-    let bundle = answered(&server, &["show", "identity", &anvils]);
+    let bundle = answered(&server, &["show", "identities", &anvils]);
     assert_eq!(bundle["identity"]["current"], hammers.as_str());
     assert_eq!(bundle["identity"]["members"].as_array().unwrap().len(), 3);
     assert_eq!(bundle["constraints"], expected);
-    let merged = shown(&server, &["show", "identity", &anvils]);
+    let merged = shown(&server, &["show", "identities", &anvils]);
     has(&merged, &format!("merged into  {hammers}"));
     assert!(merged.contains("\nmust_link   "), "{merged}");
-    let current = shown(&server, &["show", "identity", &hammers]);
+    let current = shown(&server, &["show", "identities", &hammers]);
     assert!(current.contains("\nmust_link   "), "{current}");
 }
 
@@ -1432,73 +1434,76 @@ fn a_mistake_or_a_server_that_does_not_answer_is_said_plainly() {
     for (arguments, expected) in [
         (
             &["show", "weather"][..],
-            "`weather` is not something `show` shows",
+            "unrecognized subcommand 'weather'",
         ),
-        (&["show", "runs", "first"], "`first` is not a run ID"),
         (
-            &["show", "identity", "anvil"],
-            "`anvil` is not an identity ID",
+            &["show", "runs", "first"],
+            "invalid value 'first' for '[RUN]'",
         ),
-        (&["show", "draft", "anvil"], "`anvil` is not a draft ID"),
         (
-            &["show", "document", "anvil"],
-            "`anvil` is not a document ID",
+            &["show", "identities", "anvil"],
+            "invalid value 'anvil' for '[IDENTITY]'",
+        ),
+        (
+            &["show", "drafts", "anvil"],
+            "invalid value 'anvil' for '[DRAFT]'",
+        ),
+        (
+            &["show", "documents", "anvil"],
+            "invalid value 'anvil' for '[DOCUMENT]'",
         ),
         (
             &["show", "review", "first"],
-            "`first` is not a review item ID",
+            "invalid value 'first' for '[ITEM]'",
         ),
         (
-            &["show", "record", "anvil"],
+            &["show", "records", "anvil"],
             "`anvil` does not name a record",
         ),
         (
             &["show", "runs", "--source", "shop"],
-            "`--source` does not go with `runs`",
+            "unexpected argument '--source'",
         ),
         (
-            &["show", "run", "1", "--kind", "match"],
-            "`--kind` does not go with `a run`",
+            &["show", "runs", "1", "--kind", "match"],
+            "the argument '[RUN]' cannot be used with '--kind <KIND>'",
         ),
-        (
-            &["show", "--type", "thing"],
-            "`--type` does not go with `the overview`",
-        ),
-        (&["show", "log", "1"], "unexpected argument `1`"),
-        (&["show", "runs", "1", "2"], "unexpected argument `2`"),
+        (&["show", "--type", "thing"], "unexpected argument '--type'"),
+        (&["show", "log", "1"], "unexpected argument '1'"),
+        (&["show", "runs", "1", "2"], "unexpected argument '2'"),
         (
             &["show", "runs", "--limit", "few"],
-            "`--limit` needs a whole number",
+            "invalid value 'few' for '--limit <LIMIT>'",
         ),
-        (&["show", "runs", "--all"], "unknown option `--all`"),
+        (&["show", "runs", "--all"], "unexpected argument '--all'"),
     ] {
         let (code, complaint) = refused(&server, arguments);
         assert_eq!(code, Some(2), "{arguments:?}: {complaint}");
         assert!(complaint.contains(expected), "{arguments:?}: {complaint}");
-        assert!(complaint.contains("Usage: spool show"), "{complaint}");
+        assert!(complaint.starts_with("error: "), "{complaint}");
     }
 
     // What the server refuses is said in the server's words.
     for (arguments, expected) in [
         (
             &["show", "runs", "99"][..],
-            "spool: there is no run 99\n".to_owned(),
+            "error: there is no run 99\n".to_owned(),
         ),
         (
-            &["show", "identity", "00000000-0000-7000-8000-000000000000"],
-            "spool: there is no identity 00000000-0000-7000-8000-000000000000\n".to_owned(),
+            &["show", "identities", "00000000-0000-7000-8000-000000000000"],
+            "error: there is no identity 00000000-0000-7000-8000-000000000000\n".to_owned(),
         ),
         (
-            &["show", "record", "shop:9"],
-            "spool: there is no record with key `9` from source `shop`\n".to_owned(),
+            &["show", "records", "shop:9"],
+            "error: there is no record with key `9` from source `shop`\n".to_owned(),
         ),
         (
-            &["show", "document", "00000000-0000-7000-8000-000000000000"],
-            "spool: there is no document 00000000-0000-7000-8000-000000000000\n".to_owned(),
+            &["show", "documents", "00000000-0000-7000-8000-000000000000"],
+            "error: there is no document 00000000-0000-7000-8000-000000000000\n".to_owned(),
         ),
         (
-            &["show", "draft", "00000000-0000-7000-8000-000000000000"],
-            "spool: there is no draft 00000000-0000-7000-8000-000000000000\n".to_owned(),
+            &["show", "drafts", "00000000-0000-7000-8000-000000000000"],
+            "error: there is no draft 00000000-0000-7000-8000-000000000000\n".to_owned(),
         ),
     ] {
         let (code, complaint) = refused(&server, arguments);
@@ -1506,8 +1511,11 @@ fn a_mistake_or_a_server_that_does_not_answer_is_said_plainly() {
         assert_eq!(complaint, expected, "{arguments:?}");
     }
     let (code, complaint) = refused(&server, &["show", "runs", "--status", "asleep"]);
-    assert_eq!(code, Some(1));
-    assert!(complaint.contains("asleep"), "{complaint}");
+    assert_eq!(code, Some(2));
+    assert!(
+        complaint.contains("invalid value 'asleep' for '--status <STATUS>'"),
+        "{complaint}"
+    );
 
     // The token is taken from the option before the environment.
     let wrong = spool()
@@ -1552,7 +1560,7 @@ fn a_mistake_or_a_server_that_does_not_answer_is_said_plainly() {
     let complaint = text(&gone.stderr);
     assert!(
         complaint.starts_with(&format!(
-            "spool: the server at http://{address} cannot be reached: "
+            "error: the server at http://{address} cannot be reached: "
         )),
         "{complaint}"
     );
@@ -1639,7 +1647,7 @@ fn what_an_extractor_found_is_shown_and_explained() {
     let overview = shown(&server, &["show"]);
     has(&overview, "documents  2");
     has(&overview, "extractor `words` (python, extractors/words.py)");
-    let extraction = shown(&server, &["show", "run", &run["run"].to_string()]);
+    let extraction = shown(&server, &["show", "runs", &run["run"].to_string()]);
     has(&extraction, "kind       extract");
     has(&extraction, "documents  2 read");
     has(
@@ -1656,7 +1664,7 @@ fn what_an_extractor_found_is_shown_and_explained() {
     let [first, second] = &mentions["records"].as_array().unwrap()[..] else {
         panic!("two mentions: {mentions}");
     };
-    let record = shown(&server, &["show", "record", first["id"].as_str().unwrap()]);
+    let record = shown(&server, &["show", "records", first["id"].as_str().unwrap()]);
     has(&record, "  extractor  words");
     assert!(
         record.contains("\n  the [Anvil] rang\n") || record.contains("\n  an [Anvil], again\n"),

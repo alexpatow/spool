@@ -15,34 +15,39 @@ pub mod token;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use anstream::println;
+use clap::Args;
 use spool::UserCode;
 use spool_cli::accounts::Accounts;
 
 use crate::Failure;
-use crate::args::{self, Arguments, Spec};
-
-/// Parses a command's arguments, turning a mistake into a usage failure.
-fn arguments(arguments: &[String], spec: &Spec) -> Result<Arguments, Failure> {
-    args::parse(arguments, spec).map_err(Failure::Usage)
-}
 
 /// Where `spool build` writes the manifest of a project.
 fn manifest_path(project: &Path) -> PathBuf {
     project.join(".spool").join("manifest.json")
 }
 
-/// The store's database file: `--store`, or `$SPOOL_STORE`.
-fn store_path(arguments: &Arguments) -> Result<PathBuf, Failure> {
-    arguments
-        .path("--store")
-        .or_else(|| {
-            std::env::var_os("SPOOL_STORE")
-                .filter(|path| !path.is_empty())
-                .map(PathBuf::from)
-        })
+/// The project directory: the one named, or the current directory.
+fn project_dir(dir: &Option<PathBuf>) -> PathBuf {
+    dir.clone().unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// The store's database file, from `--store` or `SPOOL_STORE`, which may be
+/// set and empty.
+fn store_path(store: &Option<PathBuf>) -> Result<PathBuf, Failure> {
+    store
+        .clone()
+        .filter(|path| !path.as_os_str().is_empty())
         .ok_or_else(|| {
-            Failure::Usage("say where the store is with `--store` or `SPOOL_STORE`".to_owned())
+            Failure::usage("say where the store is with `--store` or `SPOOL_STORE`".to_owned())
         })
+}
+
+/// A path that may be empty, as a variable that is set and empty is: the
+/// command then says what it needs, as it does when nothing is set.
+fn any_path() -> impl clap::builder::TypedValueParser<Value = PathBuf> {
+    use clap::builder::TypedValueParser;
+    clap::builder::OsStringValueParser::new().map(PathBuf::from)
 }
 
 /// Where the accounts of the server over `store` are: a file beside it,
@@ -54,23 +59,38 @@ fn accounts_path(store: &Path) -> PathBuf {
 fn open_accounts(store: &Path) -> Result<Accounts, Failure> {
     let path = accounts_path(store);
     Accounts::open(&path)
-        .map_err(|refused| Failure::Failed(format!("{}: {refused}", path.display())))
+        .map_err(|refused| Failure::failed(format!("{}: {refused}", path.display())))
 }
 
-/// How user code of the project at `project` is run: `--task-timeout` and
-/// `--tasks`, and the `uv` and `bun` that `SPOOL_UV` and `SPOOL_BUN` name.
-fn user_code(arguments: &Arguments, project: &Path) -> Result<UserCode, Failure> {
+/// How user code is run, for the commands that run it.
+#[derive(Args, Debug)]
+#[command(next_help_heading = "User code options")]
+pub struct UserCodeArgs {
+    /// How long a user-code strategy or an extractor may run
+    #[arg(
+        long,
+        value_name = "SECONDS",
+        default_value_t = 600,
+        value_parser = clap::value_parser!(u64).range(1..)
+    )]
+    task_timeout: u64,
+    /// Where the task directories of user code are made
+    ///
+    /// The default is `spool-tasks` in the temporary directory.
+    #[arg(long, value_name = "DIR")]
+    tasks: Option<PathBuf>,
+}
+
+/// How user code of the project at `project` is run: the `uv` and `bun` that
+/// `SPOOL_UV` and `SPOOL_BUN` name, and the options, if the command takes
+/// them.
+fn user_code(options: Option<&UserCodeArgs>, project: &Path) -> UserCode {
     let mut user_code = UserCode::new(project);
-    if let Some(seconds) = arguments.number("--task-timeout").map_err(Failure::Usage)? {
-        if seconds == 0 {
-            return Err(Failure::Usage(
-                "`--task-timeout` needs at least one second".to_owned(),
-            ));
+    if let Some(options) = options {
+        user_code.timeout = Duration::from_secs(options.task_timeout);
+        if let Some(dir) = &options.tasks {
+            user_code.work_dir = dir.clone();
         }
-        user_code.timeout = Duration::from_secs(seconds);
-    }
-    if let Some(dir) = arguments.path("--tasks") {
-        user_code.work_dir = dir;
     }
     let named = |variable: &str| std::env::var_os(variable).filter(|value| !value.is_empty());
     if let Some(uv) = named("SPOOL_UV") {
@@ -79,25 +99,17 @@ fn user_code(arguments: &Arguments, project: &Path) -> Result<UserCode, Failure>
     if let Some(bun) = named("SPOOL_BUN") {
         user_code.bun = bun;
     }
-    Ok(user_code)
+    user_code
 }
 
-pub const SCHEMA_USAGE: &str = "\
-Usage: spool schema
+/// Print the JSON Schema of the server's API
+///
+/// Prints the JSON Schema of every value the server's API takes and returns.
+/// Client types are generated from it.
+#[derive(Args)]
+pub struct SchemaArgs {}
 
-Prints the JSON Schema of every value the server's API takes and returns.
-Client types are generated from it.
-";
-
-pub fn schema(arguments: &[String]) -> Result<(), Failure> {
-    self::arguments(
-        arguments,
-        &Spec {
-            values: &[],
-            flags: &[],
-            positional: 0,
-        },
-    )?;
+pub fn schema(_: SchemaArgs) -> Result<(), Failure> {
     println!(
         "{}",
         serde_json::to_string_pretty(&spool_cli::api::schema())

@@ -53,7 +53,7 @@ The commands above are all of it. This section says what each needs and does.
 
 You need Linux on x86-64 or arm64 with version 2.34 or later of the GNU C library, or macOS on Apple silicon, and `curl` and `tar`. There is no build for Windows, for a Mac with an Intel processor, or for Alpine, whose C library is musl. The step that reads a text also needs [`uv`](https://docs.astral.sh/uv/), which runs the sample extractor.
 
-**Install.** The script downloads the release for your machine, checks it against its checksum, unpacks it under `~/.local/share/spool/0.1.0` and links `~/.local/bin/spool`. It needs no root and changes nothing else: if `~/.local/bin` is not on your search path, it prints the line that adds it and edits no file. To do it by hand, download `spool-0.1.0-<target>.tar.gz` from the [release](https://github.com/alexpatow/spool/releases/tag/v0.1.0), unpack it and put its `bin` directory on your search path. Keep `bin` and `lib` together: the binary loads the DuckDB library from `../lib`. `spool --version` prints `spool 0.1.0`.
+**Install.** The script downloads the release for your machine, checks it against its checksum, unpacks it under `~/.local/share/spool/0.1.0` and links `~/.local/bin/spool`, with its man pages and its bash, zsh and fish completions under `~/.local/share`. It needs no root and changes nothing else: if `~/.local/bin` is not on your search path, it prints the line that adds it and edits no file. To do it by hand, download `spool-0.1.0-<target>.tar.gz` from the [release](https://github.com/alexpatow/spool/releases/tag/v0.1.0), unpack it and put its `bin` directory on your search path. Keep `bin` and `lib` together: the binary loads the DuckDB library from `../lib`. `spool --version` prints `spool 0.1.0`.
 
 **Create a project.** A project is a directory of files that you keep in Git. `spool init companies` makes the directory `companies`, and `--example companies` fills it with the sample project used here. It says what it wrote:
 
@@ -145,13 +145,13 @@ It also has a sample extractor, `extractors/companies.py`. It is a Python file, 
 `spool extract` stores the document and runs the extractor over it. Three records come out of the note, each with the document and the characters it was found at. They are records like the rows, so the same rules match them: "Acorn Tools Ltd" and "Larkfield Logistics Ltd" join the identities the rows made, and Brightwater Foods is new. `spool show identities` lists the six companies:
 
 ```text
-identity                              name                   members  created at
-01a1efc6-41cd-775d-8758-e7300637659a  Acorn Tools Ltd        5        log position 1
-01a1efc6-41cd-775d-8758-e731c61371cb  Halden Group           1        log position 1
-01a1efc6-41cd-775d-8758-e7329447fd9a  Halden Group           1        log position 1
-01a1efc6-41cd-775d-8758-e733aa086f7d  Larkfield Logistics    3        log position 1
-01a1efc6-42c0-7776-b736-83fde0cb4498  Kestrel Analytics      1        log position 2
-01a1efc6-43a9-7403-b9f6-1f8ee76184ed  Brightwater Foods Ltd  1        log position 3
+IDENTITY                              NAME                   MEMBERS  NAMES  UNLINKED PAIRS  CREATED AT
+01a1efc6-41cd-775d-8758-e7300637659a  Acorn Tools Ltd        5        3      0%              log position 1
+01a1efc6-41cd-775d-8758-e731c61371cb  Halden Group           1        1      -               log position 1
+01a1efc6-41cd-775d-8758-e7329447fd9a  Halden Group           1        1      -               log position 1
+01a1efc6-41cd-775d-8758-e733aa086f7d  Larkfield Logistics    3        3      0%              log position 1
+01a1efc6-42c0-7776-b736-83fde0cb4498  Kestrel Analytics      1        1      -               log position 2
+01a1efc6-43a9-7403-b9f6-1f8ee76184ed  Brightwater Foods Ltd  1        1      -               log position 3
 ```
 
 The word the model is given decides what it finds, and the file gives it "company". An extractor is a Python or TypeScript file in `extractors/`, which Spool runs with `uv` or `bun`, and one of your own can call a hosted language model.
@@ -225,7 +225,7 @@ These follow from the design. Where something else fits better, it is named. Wha
 
 ## Where next
 
-- `spool` with no arguments lists the commands, and `spool <command> --help` describes each.
+- `spool` with no arguments lists the commands, and `spool <command> --help` describes each. Every command that prints a result takes `-o json` and `-o ndjson`, and one that prints a list `-o csv` too.
 - [docs/mcp.md](docs/mcp.md): the tools an agent gets, and how to connect each client.
 - [docs/sign-in.md](docs/sign-in.md): running a server that other people sign in to.
 - [benchmarks/README.md](benchmarks/README.md): projects with more sources and rules than the one above, on public data, and what was measured on them. `benchmarks/extraction/company-news` has extractors in Python and TypeScript.

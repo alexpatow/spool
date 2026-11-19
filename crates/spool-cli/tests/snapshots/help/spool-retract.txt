@@ -1,0 +1,29 @@
+Take back rows a source no longer holds
+
+Usage: spool retract [OPTIONS] --source <NAME> --type <NAME> [KEYS]...
+
+Arguments:
+  [KEYS]...  The keys of the rows to take back
+
+Options:
+      --source <NAME>  The source that held the rows
+      --type <NAME>    Their entity type
+      --keys <FILE>    A file of keys, one per line; `-` reads standard input
+      --reason <TEXT>  Why, for the changeset that detaches the records
+  -h, --help           Print help (see more with '--help')
+
+Output options:
+  -o, --output <OUTPUT>  Output format [default: table] [possible values: table, json, ndjson, csv]
+      --json             Shorthand for `--output json`
+
+Server options:
+      --url <URL>      The server [env: SPOOL_URL] [default: http://127.0.0.1:7765]
+      --token <TOKEN>  A token for that server; `spool dev` needs none [env: SPOOL_TOKEN]
+
+Global options:
+      --color <WHEN>  When to use colour [default: auto] [possible values: auto, always, never]
+  -q, --quiet         Print only the result and errors: no hints or progress
+
+Examples:
+  spool retract --source crm --type company c-6 --reason "deleted in the CRM"
+  spool retract --source crm --type company --keys gone.txt

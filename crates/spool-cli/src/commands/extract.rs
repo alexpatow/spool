@@ -6,61 +6,76 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use anstream::println;
+use indicatif::ProgressBar;
 use serde_json::{Value, json};
 use spool::core::{DocumentId, RunId};
 use spool::{
     DeclaredSource, ExtractReport, Extractor, FailedDocument, RecordEntry, RunEntry, RunStatus,
 };
 
-use super::remote::{self, Remote, WAIT_MS, listed, print_json, typed};
+use super::remote::{self, Remote, RemoteArgs, WAIT_MS, listed, typed};
 use crate::Failure;
-use crate::args::Spec;
+use crate::output::{Output, OutputArgs, aligned, hint};
+use crate::progress;
 
-pub const USAGE: &str = "\
-Usage: spool extract [<path>...] [options]
-
-Finds records in text, on a running server. Each file is one document: the
-server stores its text, and one of the project's extractors reads it. What
-the extractor finds are records like the rows of a source, and the next match
-run places them in identities.
-
-A folder stands for every file under it, in the folders under it too. Files
-and folders whose names start with a dot are left out, and every other file
-has to be UTF-8 text. A file that is named is stored under its name, and a
-file found in a folder under its path from that folder: `dev/a.txt` for
-documents/dev/a.txt, when `documents` was named.
-
-With no path, the extractor reads the documents the server holds and it has
-not read.
-
-The extractor reads the documents in batches, and what it finds in a batch
-is kept when the batch ends. A command that is stopped or fails keeps the
-batches before it, and the same command again reads what is left. A batch
-the command no longer waits for goes on on the server and is kept as well.
-Each batch is made to take a small part of the time the server lets user
-code run (`--task-timeout` on `spool dev` or `spool serve`), so a long
-extraction needs no longer limit. When there is more than one batch, the
-command says on standard error how far it is.
-
-An extractor's first run may fetch what it depends on, a model for one. When
-a run takes more than a few seconds, the command says on standard error which
-file is running, and what the file says as it goes.
-
-  <path>               a file of UTF-8 text, or a folder of them
-
-Options:
-  --source <name>      the source the documents belong to (default: the
-                       project's only source, or the one the files are named
-                       after, as notes-1.txt is after `notes`)
-  --extractor <name>   the extractor (default: the project's only one)
-  --again              read every document of the source, and not only the
-                       ones the extractor has not read. Stopped, the command
-                       starts over when it is run again
-  --url <url>          the server (default: $SPOOL_URL, or http://127.0.0.1:7765)
-  --token <token>      a token of that server (default: $SPOOL_TOKEN); `spool dev`
-                       asks for none
-  --json               print the runs the server answered with, as JSON
-";
+/// Find records in documents with one of the project's extractors
+///
+/// Finds records in text, on a running server. Each file is one document: the
+/// server stores its text, and one of the project's extractors reads it. What
+/// the extractor finds are records like the rows of a source, and the next
+/// match run places them in identities.
+///
+/// A folder stands for every file under it, in the folders under it too.
+/// Files and folders whose names start with a dot are left out, and every
+/// other file has to be UTF-8 text. A file that is named is stored under its
+/// name, and a file found in a folder under its path from that folder:
+/// `dev/a.txt` for documents/dev/a.txt, when `documents` was named.
+///
+/// With no path, the extractor reads the documents the server holds and it
+/// has not read.
+///
+/// The extractor reads the documents in batches, and what it finds in a batch
+/// is kept when the batch ends. A command that is stopped or fails keeps the
+/// batches before it, and the same command again reads what is left. A batch
+/// the command no longer waits for goes on on the server and is kept as well.
+/// Each batch is made to take a small part of the time the server lets user
+/// code run (`--task-timeout` on `spool dev` or `spool serve`), so a long
+/// extraction needs no longer limit.
+///
+/// An extractor's first run may fetch what it depends on, a model for one. On
+/// a terminal, a spinner shows what the extractor says while its first batch
+/// starts, and a bar then shows how many documents are read. On standard
+/// error the command says how long a slow start took, what the batches came
+/// to when there was more than one, and what the extractor wrote, once its
+/// batch ends.
+#[derive(clap::Args)]
+#[command(
+    after_help = "Examples:\n  spool extract samples/notes-1.txt\n  spool extract documents/ --source notes\n  spool extract --again"
+)]
+pub struct ExtractArgs {
+    /// Files of UTF-8 text, or folders of them
+    #[arg(value_name = "PATH")]
+    paths: Vec<String>,
+    /// The source the documents belong to
+    ///
+    /// The default is the project's only source, or the one the files are
+    /// named after, as notes-1.txt is after `notes`.
+    #[arg(long, value_name = "NAME")]
+    source: Option<String>,
+    /// The extractor [default: the project's only one]
+    #[arg(long, value_name = "NAME")]
+    extractor: Option<String>,
+    /// Read every document of the source again, not only the new ones
+    ///
+    /// Stopped, the command starts over when it is run again.
+    #[arg(long)]
+    again: bool,
+    #[command(flatten)]
+    output: OutputArgs,
+    #[command(flatten)]
+    remote: RemoteArgs,
+}
 
 /// The most records that are listed.
 const LISTED: usize = 20;
@@ -167,39 +182,27 @@ struct Answered {
 }
 
 impl Answered {
-    fn print(&self) {
-        print_json(&json!({ "documents": self.documents, "extractions": self.extractions }));
+    fn print(&self, out: Output) {
+        out.json(&json!({ "documents": self.documents, "extractions": self.extractions }));
     }
 }
 
-pub fn extract(arguments: &[String]) -> Result<(), Failure> {
-    let arguments = super::arguments(
-        arguments,
-        &Spec {
-            values: &[
-                "--source",
-                "--extractor",
-                remote::VALUES[0],
-                remote::VALUES[1],
-            ],
-            flags: &["--again", "--json"],
-            positional: usize::MAX,
-        },
-    )?;
-    let files = read(&arguments.positional)?;
+pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
+    let out = Output::report(&arguments.output, "`spool extract`")?;
+    let files = read(&arguments.paths)?;
     catch_ctrl_c();
 
-    let remote = Remote::new(&arguments);
+    let remote = Remote::new(&arguments.remote);
     let info = remote.info()?;
     let timeout = info.task_timeout_ms.map(Duration::from_millis);
     let info = info.store;
-    let extractor = extractor(&info.extractors, arguments.value("--extractor"))?;
-    let source = source_of(&info.sources, arguments.value("--source"), &files)?;
+    let extractor = extractor(&info.extractors, arguments.extractor.as_deref())?;
+    let source = source_of(&info.sources, arguments.source.as_deref(), &files)?;
     if let Some(source) = &source {
         readable(&info.sources, source)?;
     }
-    let as_json = arguments.flag("--json");
-    let again = arguments.flag("--again");
+    let as_json = !out.is_table();
+    let again = arguments.again;
     let mut answered = Answered::default();
 
     if let Some(source) = &source
@@ -207,9 +210,20 @@ pub fn extract(arguments: &[String]) -> Result<(), Failure> {
     {
         let (mut inserted, mut duplicates, mut superseded) = (0, 0, 0);
         let mut stored = 0;
-        for sent in sending(&files) {
+        let parts = sending(&files);
+        let storing = match parts.len() {
+            1 => ProgressBar::hidden(),
+            _ => progress::bar(
+                "Storing",
+                files.len() as u64,
+                " documents",
+                0,
+                String::new(),
+            ),
+        };
+        for sent in parts {
             if was_interrupted() {
-                return Err(Failure::Stopped(format!(
+                return Err(Failure::stopped(format!(
                     "stopped: {stored} of {} are stored and none is read yet. The same command \
                      again stores the rest and reads them.",
                     plural(files.len() as u64, "document", "documents")
@@ -238,14 +252,14 @@ pub fn extract(arguments: &[String]) -> Result<(), Failure> {
                 Ok(run) => run,
                 Err(failure) => {
                     if as_json {
-                        answered.print();
+                        answered.print(out);
                     }
                     if stored > 0 {
-                        eprintln!(
+                        hint(format!(
                             "stored     {stored} of {} before this: the same command again \
                              stores the rest and reads them",
                             plural(files.len() as u64, "document", "documents")
-                        );
+                        ));
                     }
                     return Err(failure);
                 }
@@ -258,13 +272,15 @@ pub fn extract(arguments: &[String]) -> Result<(), Failure> {
             duplicates += report.duplicates;
             superseded += report.superseded;
             stored += sent.len();
+            storing.set_position(stored as u64);
         }
+        storing.finish_and_clear();
         if !as_json {
             println!("source     {source}");
             println!(
                 "read       {} from {}",
                 plural(files.len() as u64, "document", "documents"),
-                match (arguments.positional.as_slice(), files.as_slice()) {
+                match (arguments.paths.as_slice(), files.as_slice()) {
                     (_, [file]) => file.path.clone(),
                     ([named], _) if Path::new(named).is_dir() => named.clone(),
                     (_, files) => plural(files.len() as u64, "file", "files"),
@@ -286,10 +302,9 @@ pub fn extract(arguments: &[String]) -> Result<(), Failure> {
     let mut found = Found::default();
     let mut size = FIRST_BATCH;
     let mut since: Option<RunId> = None;
-    let began = Instant::now();
     loop {
         if was_interrupted() {
-            return Err(Failure::Stopped(stopped(&found, again, None)));
+            return Err(Failure::stopped(stopped(&found, again, None)));
         }
         let mut request = json!({
             "extractor": extractor.name,
@@ -313,7 +328,7 @@ pub fn extract(arguments: &[String]) -> Result<(), Failure> {
             Ok(ended) => ended,
             Err(failure) => {
                 if as_json {
-                    answered.print();
+                    answered.print(out);
                 }
                 progress.stopped(found.documents, again, None);
                 return Err(failure);
@@ -322,10 +337,10 @@ pub fn extract(arguments: &[String]) -> Result<(), Failure> {
         answered.extractions.push(answer["run"].clone());
         if run.status != RunStatus::Succeeded {
             if as_json {
-                answered.print();
+                answered.print(out);
             }
             if progress.cancelled {
-                return Err(Failure::Stopped(stopped(&found, again, Some(run.run))));
+                return Err(Failure::stopped(stopped(&found, again, Some(run.run))));
             }
             progress.stopped(found.documents, again, Some(run.run));
             return Err(remote::unsuccessful(&run));
@@ -340,24 +355,24 @@ pub fn extract(arguments: &[String]) -> Result<(), Failure> {
         // found before, which is what a broken one does too. It is taken
         // back all the same, and comes back when it is found again.
         if report.mentions == 0 && report.taken_back > 0 {
-            eprintln!(
-                "taken back {} that run {} found nowhere, though it found nothing at all: if the \
-                 extractor is wrong, mend it and run `spool extract --again`, and what it finds \
-                 again goes back to the identity it left",
+            progress.say(&format!(
+                "warning: took back {} that run {} found nowhere, though it found nothing at all: \
+                 if the extractor is wrong, mend it and run `spool extract --again`, and what it \
+                 finds again goes back to the identity it left",
                 plural(report.taken_back, "record", "records"),
                 run.run
-            );
+            ));
         }
         // A batch none of whose documents could be read says more about the
         // extractor than about them: a key that is wrong, a model that is
         // not there. Going on would fail every batch after it.
         if report.documents > 0 && report.failed.len() as u64 == report.documents {
             if as_json {
-                answered.print();
+                answered.print(out);
             }
             progress.stopped(found.documents, again, Some(run.run));
             let first = &report.failed[0];
-            return Err(Failure::Failed(format!(
+            return Err(Failure::failed(format!(
                 "run {} could not read any of its {}, as {}:{} says: {}. They are not \
                  read, and the same command reads them again.",
                 run.run,
@@ -369,25 +384,23 @@ pub fn extract(arguments: &[String]) -> Result<(), Failure> {
         }
         if was_interrupted() && report.left > 0 {
             if as_json {
-                answered.print();
+                answered.print(out);
             }
-            return Err(Failure::Stopped(stopped(&found, again, None)));
+            return Err(Failure::stopped(stopped(&found, again, None)));
         }
-        progress.batches += 1;
         if since.is_none() {
             since = Some(run.run);
         }
-        if progress.batches > 1 || report.left > 0 {
-            progress.kept(&found, report.left, began.elapsed());
-        }
+        progress.kept(&found, report.left);
         if report.left == 0 || report.documents == 0 {
             break;
         }
         size = next_batch(report.documents, batch_began.elapsed(), target);
     }
+    progress.finish(&found);
 
     if as_json {
-        answered.print();
+        answered.print(out);
         return Ok(());
     }
     println!("extractor  {}", extractor.name);
@@ -432,19 +445,20 @@ pub fn extract(arguments: &[String]) -> Result<(), Failure> {
             "failed     {}: they are not read, and the same command reads them again",
             plural(found.failed.len() as u64, "document", "documents")
         );
-        let width = found
+        let rows: Vec<Vec<String>> = found
             .failed
             .iter()
             .take(LISTED)
-            .map(|failed| failed.source.chars().count() + 1 + failed.key.chars().count())
-            .max()
-            .unwrap_or(0);
-        for failed in found.failed.iter().take(LISTED) {
-            let name = format!("{}:{}", failed.source, failed.key);
-            println!("  {name:<width$}  {}", shown(&failed.reason));
-        }
+            .map(|failed| {
+                vec![
+                    format!("{}:{}", failed.source, failed.key),
+                    shown(&failed.reason),
+                ]
+            })
+            .collect();
+        aligned(&rows, 2);
         if found.failed.len() > LISTED {
-            println!("  and more: `spool show documents` says why each failed");
+            hint("and more: `spool show documents` says why each failed");
         }
     }
 
@@ -459,10 +473,10 @@ pub fn extract(arguments: &[String]) -> Result<(), Failure> {
         )?;
     }
     if found.inserted > 0 {
-        println!(
-            "\nnext       `spool match` places {} in identities",
+        hint(format!(
+            "next: `spool match` places {} in identities",
             if found.inserted == 1 { "it" } else { "them" }
-        );
+        ));
     }
     Ok(())
 }
@@ -502,12 +516,12 @@ fn read(paths: &[String]) -> Result<Vec<File>, Failure> {
     let mut found: Vec<(String, String)> = Vec::new();
     for path in paths {
         let metadata =
-            std::fs::metadata(path).map_err(|error| Failure::Failed(format!("{path}: {error}")))?;
+            std::fs::metadata(path).map_err(|error| Failure::failed(format!("{path}: {error}")))?;
         if metadata.is_dir() {
             let before = found.len();
             under(Path::new(path), "", &mut found)?;
             if found.len() == before {
-                return Err(Failure::Failed(format!(
+                return Err(Failure::failed(format!(
                     "{path} is a folder with no files in it, other than ones whose names start \
                      with a dot"
                 )));
@@ -517,7 +531,7 @@ fn read(paths: &[String]) -> Result<Vec<File>, Failure> {
         let name = Path::new(path)
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
-            .ok_or_else(|| Failure::Failed(format!("{path} does not name a file")))?;
+            .ok_or_else(|| Failure::failed(format!("{path} does not name a file")))?;
         found.push((path.clone(), name));
     }
 
@@ -526,7 +540,7 @@ fn read(paths: &[String]) -> Result<Vec<File>, Failure> {
     let mut keys: HashMap<&str, &str> = HashMap::new();
     for (path, name) in &found {
         if let Some(first) = keys.insert(name, path) {
-            return Err(Failure::Failed(format!(
+            return Err(Failure::failed(format!(
                 "{first} and {path} would both be stored as `{name}`: a file is stored under its \
                  name, or under its path from the folder that was named, and a second document \
                  under one key is taken for a new version of the first. Name the folder that \
@@ -538,15 +552,15 @@ fn read(paths: &[String]) -> Result<Vec<File>, Failure> {
     let mut files = Vec::with_capacity(found.len());
     for (path, name) in found {
         let bytes =
-            std::fs::read(&path).map_err(|error| Failure::Failed(format!("{path}: {error}")))?;
+            std::fs::read(&path).map_err(|error| Failure::failed(format!("{path}: {error}")))?;
         let text = String::from_utf8(bytes).map_err(|_| {
-            Failure::Failed(format!(
+            Failure::failed(format!(
                 "{path} is not text: a document is stored as UTF-8 text. Turn a PDF or a web \
                  page into text first."
             ))
         })?;
         if text.trim().is_empty() {
-            return Err(Failure::Failed(format!("{path} is empty")));
+            return Err(Failure::failed(format!("{path} is empty")));
         }
         files.push(File { path, name, text });
     }
@@ -559,7 +573,7 @@ fn read(paths: &[String]) -> Result<Vec<File>, Failure> {
 /// and a link to a folder is not followed, since it can lead back up.
 fn under(folder: &Path, prefix: &str, found: &mut Vec<(String, String)>) -> Result<(), Failure> {
     let unreadable =
-        |error: std::io::Error| Failure::Failed(format!("{}: {error}", folder.display()));
+        |error: std::io::Error| Failure::failed(format!("{}: {error}", folder.display()));
     let mut entries = std::fs::read_dir(folder)
         .and_then(|entries| entries.collect::<Result<Vec<_>, _>>())
         .map_err(unreadable)?;
@@ -580,7 +594,7 @@ fn under(folder: &Path, prefix: &str, found: &mut Vec<(String, String)>) -> Resu
             false
         } else if kind.is_symlink() {
             std::fs::metadata(&path)
-                .map_err(|error| Failure::Failed(format!("{}: {error}", path.display())))?
+                .map_err(|error| Failure::failed(format!("{}: {error}", path.display())))?
                 .is_file()
         } else {
             kind.is_file()
@@ -599,7 +613,7 @@ fn extractor<'a>(known: &'a [Extractor], named: Option<&str>) -> Result<&'a Extr
         .map(|extractor| extractor.name.as_str())
         .collect();
     match (named, known) {
-        (_, []) => Err(Failure::Failed(
+        (_, []) => Err(Failure::failed(
             "the project has no extractors: one is a file under extractors/, and \
              `spool init <dir> --example companies` makes a project with a sample"
                 .to_owned(),
@@ -608,13 +622,13 @@ fn extractor<'a>(known: &'a [Extractor], named: Option<&str>) -> Result<&'a Extr
             .iter()
             .find(|extractor| extractor.name == named)
             .ok_or_else(|| {
-                Failure::Failed(format!(
+                Failure::failed(format!(
                     "the project has no extractor `{named}`: it has {}",
                     listed(&names)
                 ))
             }),
         (None, [only]) => Ok(only),
-        (None, _) => Err(Failure::Failed(format!(
+        (None, _) => Err(Failure::failed(format!(
             "the project has the extractors {}: say which with `--extractor`",
             listed(&names)
         ))),
@@ -633,7 +647,7 @@ fn source_of(
     let names: Vec<&str> = sources.iter().map(|source| source.name.as_str()).collect();
     if let Some(named) = named {
         if !names.is_empty() && !names.contains(&named) {
-            return Err(Failure::Failed(format!(
+            return Err(Failure::failed(format!(
                 "the project has no source `{named}`: there is no sources/{named}.yaml. It has \
                  {}.",
                 listed(&names)
@@ -646,7 +660,7 @@ fn source_of(
     }
     match names.as_slice() {
         [] => {
-            return Err(Failure::Failed(
+            return Err(Failure::failed(
                 "the project declares no source, so there is nothing a document can belong to. \
                  A source is a file sources/<name>.yaml that lists what a record found in its \
                  documents may say."
@@ -659,7 +673,7 @@ fn source_of(
     let mut found: Option<&str> = None;
     for file in files {
         let Some(source) = remote::named_after(&file.name, &names) else {
-            return Err(Failure::Failed(format!(
+            return Err(Failure::failed(format!(
                 "the project has the sources {}, and {} is named after {}: say which its \
                  documents belong to with `--source`",
                 listed(&names),
@@ -672,7 +686,7 @@ fn source_of(
         };
         match found {
             Some(first) if first != source => {
-                return Err(Failure::Failed(format!(
+                return Err(Failure::failed(format!(
                     "the files are named after different sources, `{first}` and `{source}`: \
                      extract them one source at a time, or say which they all belong to with \
                      `--source`"
@@ -693,7 +707,7 @@ fn readable(sources: &[DeclaredSource], source: &str) -> Result<(), Failure> {
         return Ok(());
     };
     if declared.entity_types.is_empty() {
-        return Err(Failure::Failed(format!(
+        return Err(Failure::failed(format!(
             "no entity type reads source `{source}`, so nothing found in its documents can be \
              a record. Add the source to the `mapping` in an entities/<type>/entity.yaml."
         )));
@@ -701,17 +715,18 @@ fn readable(sources: &[DeclaredSource], source: &str) -> Result<(), Failure> {
     Ok(())
 }
 
-/// What the command says on standard error while an extraction runs, so
-/// that what is printed to standard output is the same for one that took
-/// long.
+/// What the command shows on standard error while an extraction runs: a
+/// spinner with what the extractor says while its first batch starts, then
+/// a bar of the documents, and what the extractor wrote above them. What it
+/// prints on standard output is the same however long it took.
 struct Progress<'a> {
     extractor: &'a Extractor,
     /// The batches that have ended.
     batches: u64,
-    announced: bool,
-    said: Option<String>,
-    /// What was printed of what the batch in progress said, as it said it.
-    live: Vec<String>,
+    /// The spinner, then the bar once the documents are counted.
+    bar: ProgressBar,
+    counted: bool,
+    began: Instant,
     /// Whether the batch in progress was cancelled after Ctrl-C.
     cancelled: bool,
 }
@@ -721,25 +736,17 @@ impl<'a> Progress<'a> {
         Progress {
             extractor,
             batches: 0,
-            announced: false,
-            said: None,
-            live: Vec::new(),
+            bar: progress::spinner(format!("{}: starting", extractor.file)),
+            counted: false,
+            began: Instant::now(),
             cancelled: false,
         }
     }
 
-    fn announce(&mut self) {
-        if !self.announced {
-            eprintln!("running    {}", self.extractor.file);
-            self.announced = true;
-        }
-    }
-
     /// Waits for a batch that did not end at once, and returns the
-    /// server's answer once it has. While the first batch runs, what its
-    /// extractor says is printed: the first run of a Python file takes as
-    /// long as its downloads, and this is all there is to see of them. After
-    /// it, what each batch kept says how far the extraction is.
+    /// server's answer once it has. While the first batch runs, the spinner
+    /// says what its extractor says: the first run of a Python file takes as
+    /// long as its downloads, and this is all there is to see of them.
     fn follow(&mut self, remote: &Remote, mut answer: Value) -> Result<Value, Failure> {
         loop {
             if answer["run"].is_null() {
@@ -752,14 +759,11 @@ impl<'a> Progress<'a> {
             if was_interrupted() && !self.cancelled {
                 self.cancel(remote, run.run)?;
             }
-            self.announce();
             if self.batches == 0
                 && let Some(said) = run.said
-                && self.said.as_ref() != Some(&said)
             {
-                eprintln!("           {said}");
-                self.live.push(said.clone());
-                self.said = Some(said);
+                self.bar
+                    .set_message(format!("{}: {said}", self.extractor.file));
             }
             answer = remote.get(
                 &format!("/runs/{}", run.run),
@@ -769,31 +773,30 @@ impl<'a> Progress<'a> {
         }
     }
 
-    /// Prints what the extractor of a batch that ended wrote to standard
-    /// error, but for what was printed as it ran and the helpers' own count
-    /// of how far a run is, which what each batch kept says better.
-    fn relay(&mut self, stderr: &[String]) {
-        let mut live = std::mem::take(&mut self.live);
-        for line in stderr {
-            if let Some(at) = live.iter().position(|said| said == line) {
-                live.remove(at);
-                continue;
-            }
-            if counts_documents(line) {
-                continue;
-            }
-            self.announce();
-            eprintln!("           {line}");
+    /// Says what the extractor of a batch that ended wrote to standard
+    /// error, but for the helpers' own count of how far a run is, which the
+    /// bar says better.
+    fn relay(&self, stderr: &[String]) {
+        for line in stderr.iter().filter(|line| !counts_documents(line)) {
+            self.say(&format!("{:>12} {line}", ""));
         }
+    }
+
+    fn say(&self, line: &str) {
+        progress::say(&self.bar, line);
     }
 
     /// Cancels the batch in progress after Ctrl-C. The server stops its
     /// extractor and keeps nothing it found; what the batches before it
     /// found is kept.
     fn cancel(&mut self, remote: &Remote, run: RunId) -> Result<(), Failure> {
-        eprintln!(
-            "stopping   cancelling run {run}, the batch in progress: what the batches before it \
-             read is kept. Ctrl-C again quits without waiting."
+        progress::note(
+            &self.bar,
+            "Stopping",
+            &format!(
+                "run {run}, the batch in progress: what the batches before it read is kept. \
+                 Ctrl-C again quits without waiting"
+            ),
         );
         self.cancelled = true;
         // A run that ended meanwhile cannot be cancelled, and what it read
@@ -802,30 +805,59 @@ impl<'a> Progress<'a> {
         Ok(())
     }
 
-    /// Says how far the extraction is once a batch has been kept, and how
-    /// long the rest takes at the pace so far.
-    fn kept(&mut self, found: &Found, left: u64, took: Duration) {
-        self.announce();
-        let failed = found.failed.len() as u64;
-        let mut line = format!(
-            "kept       {} of {}, ",
-            found.documents,
-            plural(found.documents + failed + left, "document", "documents"),
-        );
-        if failed > 0 {
-            line.push_str(&format!("{failed} failed, "));
+    /// Moves on once a batch has been kept: says how long the first took,
+    /// when that was long enough to be worth saying, and moves the bar.
+    fn kept(&mut self, found: &Found, left: u64) {
+        self.batches += 1;
+        if self.batches == 1 && self.began.elapsed() >= Duration::from_millis(QUIET_MS) {
+            progress::done(
+                &self.bar,
+                "Prepared",
+                &format!(
+                    "{} in {}",
+                    self.extractor.file,
+                    progress::took(self.began.elapsed())
+                ),
+            );
         }
-        line.push_str(&plural(found.mentions, "record", "records"));
-        if left > 0 && found.documents + failed > 0 {
-            let rest = took.mul_f64(left as f64 / (found.documents + failed) as f64);
-            line.push_str(&format!(", about {} left", about(rest)));
+        if self.batches == 1 && left == 0 {
+            return;
         }
-        eprintln!("{line}");
+        let read = found.documents + found.failed.len() as u64;
+        let records = format!(", {}", plural(found.mentions, "record", "records"));
+        if self.counted {
+            self.bar.set_position(read);
+            self.bar.set_message(records);
+            return;
+        }
+        self.bar.finish_and_clear();
+        self.bar = progress::bar("Extracting", read + left, " documents", read, records);
+        self.counted = true;
+    }
+
+    /// Takes the bar away, and says what the batches came to when there
+    /// was more than one.
+    fn finish(&self, found: &Found) {
+        self.bar.finish_and_clear();
+        if self.batches > 1 {
+            progress::done(
+                &self.bar,
+                "Extracted",
+                &format!(
+                    "{} in {}: {}, {} failed",
+                    plural(found.documents, "document", "documents"),
+                    progress::took(self.began.elapsed()),
+                    plural(found.mentions, "record", "records"),
+                    found.failed.len()
+                ),
+            );
+        }
     }
 
     /// Says what the batches before a failed one kept: the run that failed,
     /// when the server started one.
     fn stopped(&self, kept: u64, again: bool, failed: Option<RunId>) {
+        self.bar.finish_and_clear();
         if kept == 0 {
             return;
         }
@@ -835,9 +867,15 @@ impl<'a> Progress<'a> {
             None => "the batch that failed".to_owned(),
         };
         match again {
-            true => eprintln!("kept       {read} read again before {before}"),
-            false => eprintln!(
-                "kept       {read} read before {before}: the same command again reads the rest"
+            true => progress::done(
+                &self.bar,
+                "Kept",
+                &format!("{read} read again before {before}"),
+            ),
+            false => progress::done(
+                &self.bar,
+                "Kept",
+                &format!("{read} read before {before}: the same command again reads the rest"),
             ),
         }
     }
@@ -880,24 +918,10 @@ fn stopped(found: &Found, again: bool, cancelled: Option<RunId>) -> String {
     said
 }
 
-/// A time to wait, in whole minutes, rounded up.
-fn about(time: Duration) -> String {
-    let minutes = time.as_secs().div_ceil(60).max(1);
-    match (minutes / 60, minutes % 60) {
-        (0, minutes) => plural(minutes, "minute", "minutes"),
-        (hours, 0) => plural(hours, "hour", "hours"),
-        (hours, minutes) => format!(
-            "{} {}",
-            plural(hours, "hour", "hours"),
-            plural(minutes, "minute", "minutes")
-        ),
-    }
-}
-
 /// Waits for the run a call started.
 fn ended(remote: &Remote, answer: Value) -> Result<(Value, RunEntry), Failure> {
     remote.ended(answer)?.ok_or_else(|| {
-        Failure::Failed(
+        Failure::failed(
             "the server started no run; is it a Spool server of this version?".to_owned(),
         )
     })
@@ -941,26 +965,20 @@ fn list(remote: &Remote, source: &str, files: &[File], mentions: u64) -> Result<
     if lines.is_empty() {
         return Ok(());
     }
-    let width = |column: fn(&(String, String, String)) -> &String| {
-        lines
-            .iter()
-            .take(LISTED)
-            .map(|line| column(line).chars().count())
-            .max()
-            .unwrap_or(0)
-    };
-    let (types, texts) = (width(|line| &line.0), width(|line| &line.1));
+    let rows: Vec<Vec<String>> = lines
+        .iter()
+        .take(LISTED)
+        .map(|(entity_type, text, place)| vec![entity_type.clone(), text.clone(), place.clone()])
+        .collect();
     println!();
-    for (entity_type, text, place) in lines.iter().take(LISTED) {
-        println!("  {entity_type:<types$}  {text:<texts$}  {place}");
-    }
+    aligned(&rows, 2);
     let listed = lines.len().min(LISTED) as u64;
     // The extractor read whatever the source held that it had not read, and
     // that may be more than the files.
     if mentions > listed || lines.len() > LISTED {
-        println!(
-            "  and more: `spool show records --source {source}` lists every record of the source"
-        );
+        hint(format!(
+            "and more: `spool show records --source {source}` lists every record of the source"
+        ));
     }
     Ok(())
 }
@@ -981,7 +999,7 @@ fn plural(number: u64, one: &str, many: &str) -> String {
 }
 
 fn unreported(run: &RunEntry, what: &str) -> Failure {
-    Failure::Failed(format!(
+    Failure::failed(format!(
         "run {} succeeded and did not report {what}; is the server of this version?",
         run.run
     ))
@@ -993,7 +1011,7 @@ mod tests {
 
     use std::time::Duration;
 
-    use super::{File, about, next_batch, read, sending, source_of};
+    use super::{File, next_batch, read, sending, source_of};
 
     /// The files the paths name, which have to be read.
     fn read_all(paths: &[String]) -> Vec<File> {
@@ -1108,17 +1126,6 @@ mod tests {
         let sizes: Vec<usize> = sending(&large).iter().map(|group| group.len()).collect();
         assert_eq!(sizes, vec![1, 1, 1]);
         assert!(sending(&[]).is_empty());
-    }
-
-    #[test]
-    fn what_is_left_is_said_in_minutes_and_hours() {
-        assert_eq!(about(Duration::from_secs(5)), "1 minute");
-        assert_eq!(about(Duration::from_secs(61)), "2 minutes");
-        assert_eq!(about(Duration::from_secs(3600)), "1 hour");
-        assert_eq!(
-            about(Duration::from_secs(2 * 3600 + 5 * 60)),
-            "2 hours 5 minutes"
-        );
     }
 
     #[test]

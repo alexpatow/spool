@@ -3,57 +3,68 @@
 use std::io::{BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
+use anstream::{eprint, eprintln, println};
+use clap::Args;
+
 use super::accounts_path;
 use crate::Failure;
-use crate::args::Spec;
+use crate::output::{Output, OutputArgs, hint, render};
 
-pub const USAGE: &str = "\
-Usage: spool reset [<dir>] [options]
+/// Start the development store of `spool dev` over
+///
+/// Starts the development store of `spool dev` over: removes the store under
+/// <DIR>/.spool/, with every row, document, identity, run and changeset it
+/// holds, so that the next `spool dev` begins with an empty one. It says what
+/// it removes and what it keeps, and asks first.
+///
+/// It keeps the project's files, the accounts and tokens of `spool dev` (the
+/// .auth.sqlite file beside the store), the manifest `spool build` wrote, and
+/// everything else under .spool/, such as what an extractor keeps there.
+///
+/// It removes nothing else than these, and each only if it is what DuckDB
+/// makes: <store>.wal, a file; <store>.tmp, a directory, with what is in it,
+/// where a link in it is removed and not what the link points to; and
+/// <store>, a file, last. <store> is a .duckdb file directly under
+/// <DIR>/.spool/. If any of them, or .spool itself, is a link or of another
+/// kind, it removes nothing.
+///
+/// It removes nothing while a `spool dev` has the store open: stop that one
+/// with Ctrl-C first. It starts over only a store under <DIR>/.spool/, never
+/// one a `spool serve` runs on.
+#[derive(Args)]
+pub struct ResetArgs {
+    /// The project directory [default: the current directory]
+    dir: Option<PathBuf>,
+    /// The development store, if `spool dev` was given one with `--store` [default: <DIR>/.spool/dev.duckdb]
+    ///
+    /// It must be directly under <DIR>/.spool/.
+    #[arg(long, value_name = "PATH")]
+    store: Option<PathBuf>,
+    /// Remove it without asking, which is needed where nobody can answer, as in a script
+    #[arg(long)]
+    yes: bool,
+    #[command(flatten)]
+    output: OutputArgs,
+}
 
-Starts the development store of `spool dev` over: removes the store under
-<dir>/.spool/, with every row, document, identity, run and changeset it
-holds, so that the next `spool dev` begins with an empty one. It says what it
-removes and what it keeps, and asks first.
-
-It keeps the project's files, the accounts and tokens of `spool dev` (the
-.auth.sqlite file beside the store), the manifest `spool build` wrote, and
-everything else under .spool/, such as what an extractor keeps there.
-
-It removes nothing else than these, and each only if it is what DuckDB makes:
-  <store>.wal   a file
-  <store>.tmp   a directory, with what is in it; a link in it is removed,
-                not what the link points to
-  <store>       a file, last
-where <store> is a .duckdb file directly under <dir>/.spool/. If any of them,
-or .spool itself, is a link or of another kind, it removes nothing.
-
-It removes nothing while a `spool dev` has the store open: stop that one with
-Ctrl-C first. It starts over only a store under <dir>/.spool/, never one a
-`spool serve` runs on.
-
-  <dir>           the project directory (default: the current directory)
-
-Options:
-  --store <path>  the development store, if `spool dev` was given one with
-                  `--store`; it must be under <dir>/.spool/
-                  (default: <dir>/.spool/dev.duckdb)
-  --yes           remove it without asking, which is needed where nobody
-                  can answer, as in a script
-";
-
-pub fn reset(arguments: &[String]) -> Result<(), Failure> {
-    let arguments = super::arguments(
-        arguments,
-        &Spec {
-            values: &["--store"],
-            flags: &["--yes"],
-            positional: 1,
-        },
-    )?;
-    let dir = arguments.project_dir();
+pub fn reset(arguments: ResetArgs) -> Result<(), Failure> {
+    let out = Output::report(&arguments.output, "`spool reset`")?;
+    // What it removes and keeps is the report, or with JSON what the
+    // question is about, which goes to standard error.
+    let say = |line: &str| match out.is_table() {
+        true => println!("{line}"),
+        false => eprintln!("{line}"),
+    };
+    let nothing = || {
+        if !out.is_table() {
+            out.json(&serde_json::json!({ "removed": [], "kept": [] }));
+        }
+    };
+    let dir = super::project_dir(&arguments.dir);
     let spool_dir = dir.join(".spool");
     let store = arguments
-        .path("--store")
+        .store
+        .clone()
         .unwrap_or_else(|| spool_dir.join("dev.duckdb"));
     let shown = |path: &Path| -> String {
         path.strip_prefix(&dir)
@@ -64,17 +75,18 @@ pub fn reset(arguments: &[String]) -> Result<(), Failure> {
 
     let spool_kind = std::fs::symlink_metadata(&spool_dir).map(|found| found.file_type());
     if spool_kind.as_ref().is_ok_and(|kind| kind.is_symlink()) {
-        return Err(Failure::Failed(format!(
+        return Err(Failure::failed(format!(
             "{} is a link to another place, and `spool reset` removes nothing outside the \
              project. Nothing was removed.",
             spool_dir.display()
         )));
     }
     if !spool_kind.is_ok_and(|kind| kind.is_dir()) {
-        println!(
+        say(&format!(
             "{} does not exist, so there is no development store to remove",
             spool_dir.display()
-        );
+        ));
+        nothing();
         return Ok(());
     }
     let inside = store
@@ -87,7 +99,7 @@ pub fn reset(arguments: &[String]) -> Result<(), Failure> {
             .extension()
             .is_none_or(|extension| extension != "duckdb")
     {
-        return Err(Failure::Usage(format!(
+        return Err(Failure::usage(format!(
             "`spool reset` removes only a development store: a .duckdb file directly under {}. \
              {} is not one, and may be the store of a `spool serve`, which no command removes.",
             spool_dir.display(),
@@ -114,7 +126,7 @@ pub fn reset(arguments: &[String]) -> Result<(), Failure> {
             Ok(true) => removed.push((path, kind)),
             Ok(false) => {}
             Err(is) => {
-                return Err(Failure::Failed(format!(
+                return Err(Failure::failed(format!(
                     "{} is {is}, where `spool reset` expects {}. It removes only what DuckDB \
                      makes, so nothing was removed.",
                     path.display(),
@@ -124,10 +136,11 @@ pub fn reset(arguments: &[String]) -> Result<(), Failure> {
         }
     }
     if removed.is_empty() {
-        println!(
+        say(&format!(
             "there is no development store at {}: nothing to remove",
             shown(&store)
-        );
+        ));
+        nothing();
         return Ok(());
     }
 
@@ -136,12 +149,13 @@ pub fn reset(arguments: &[String]) -> Result<(), Failure> {
     let _held = match spool::hold_store(&store) {
         Ok(held) => Some(held),
         Err(spool::Error::StoreInUse { holder, .. }) => {
-            return Err(Failure::Failed(format!(
+            return Err(Failure::failed(format!(
                 "the store {} is open in another process{}, most likely a `spool dev` on this \
-                 project.\nStop it with Ctrl-C, then run `spool reset` again. Nothing was removed.",
+                 project. Nothing was removed.",
                 shown(&store),
                 holder.map_or_else(String::new, |pid| format!(" (PID {pid})")),
-            )));
+            ))
+            .hint("stop it with Ctrl-C, then run `spool reset` again"));
         }
         Err(_) => None,
     };
@@ -149,7 +163,7 @@ pub fn reset(arguments: &[String]) -> Result<(), Failure> {
     let mut kept: Vec<(String, String)> = Vec::new();
     let accounts = accounts_path(&store);
     let mut entries: Vec<PathBuf> = std::fs::read_dir(&spool_dir)
-        .map_err(|error| Failure::Failed(format!("{}: {error}", spool_dir.display())))?
+        .map_err(|error| Failure::failed(format!("{}: {error}", spool_dir.display())))?
         .filter_map(|entry| Some(entry.ok()?.path()))
         .filter(|path| !removed.iter().any(|(gone, _)| gone == path))
         .collect();
@@ -181,41 +195,50 @@ pub fn reset(arguments: &[String]) -> Result<(), Failure> {
         kept.push((shown, what.to_owned()));
     }
 
-    println!(
-        "This starts the development store of {} over.",
-        match arguments.positional.first() {
-            Some(given) => given.clone(),
-            None => "this project".to_owned(),
-        }
-    );
-    println!("\nremoves");
-    for (path, _) in &removed {
-        println!("  {}", shown(path));
-    }
-    println!("\nkeeps");
     kept.push((
         "the project's files".to_owned(),
         "everything outside .spool/".to_owned(),
     ));
-    columns(&kept);
-    println!();
+    if out.is_table() || !arguments.yes {
+        say(&format!(
+            "This starts the development store of {} over.",
+            match &arguments.dir {
+                Some(given) => given.display().to_string(),
+                None => "this project".to_owned(),
+            }
+        ));
+        say("\nremoves");
+        for (path, _) in &removed {
+            say(&format!("  {}", shown(path)));
+        }
+        say("\nkeeps");
+        let rows: Vec<Vec<String>> = kept
+            .iter()
+            .map(|(path, what)| vec![path.clone(), what.clone()])
+            .collect();
+        for line in render(None, &rows, 2) {
+            say(&line);
+        }
+        say("");
+    }
 
-    if !arguments.flag("--yes") {
+    if !arguments.yes {
         if !std::io::stdin().is_terminal() {
-            return Err(Failure::Failed(
+            return Err(Failure::failed(
                 "nothing was removed: nobody can be asked here, so add `--yes` to remove it"
                     .to_owned(),
             ));
         }
-        print!("Remove the store? [y/N] ");
-        let _ = std::io::stdout().flush();
+        eprint!("Remove the store? [y/N] ");
+        let _ = std::io::stderr().flush();
         let mut answer = String::new();
         std::io::stdin()
             .lock()
             .read_line(&mut answer)
-            .map_err(|error| Failure::Failed(format!("reading the answer: {error}")))?;
+            .map_err(|error| Failure::failed(format!("reading the answer: {error}")))?;
         if !matches!(answer.trim().to_lowercase().as_str(), "y" | "yes") {
-            println!("nothing was removed");
+            say("nothing was removed");
+            nothing();
             return Ok(());
         }
     }
@@ -223,7 +246,7 @@ pub fn reset(arguments: &[String]) -> Result<(), Failure> {
     for (path, kind) in &removed {
         // Checked again: it may have changed while the question was asked.
         if let Err(is) = kind.check(path) {
-            return Err(Failure::Failed(format!(
+            return Err(Failure::failed(format!(
                 "{} is {is} now, where `spool reset` expects {}; it stopped there",
                 path.display(),
                 kind.expected()
@@ -235,26 +258,26 @@ pub fn reset(arguments: &[String]) -> Result<(), Failure> {
             Kind::Directory => std::fs::remove_dir_all(path),
             Kind::File => std::fs::remove_file(path),
         };
-        gone.map_err(|error| Failure::Failed(format!("{}: {error}", path.display())))?;
-        println!("removed  {}", shown(path));
+        gone.map_err(|error| Failure::failed(format!("{}: {error}", path.display())))?;
+        if out.is_table() {
+            println!("removed  {}", shown(path));
+        }
     }
-    println!(
+    if !out.is_table() {
+        out.json(&serde_json::json!({
+            "store": store,
+            "removed": removed.iter().map(|(path, _)| path).collect::<Vec<_>>(),
+            "kept": kept
+                .iter()
+                .map(|(path, what)| serde_json::json!({ "path": path, "what": what }))
+                .collect::<Vec<_>>(),
+        }));
+    }
+    hint(
         "\nThe next `spool dev` starts with an empty store. `spool load` and `spool extract` \
-         fill it again."
+         fill it again.",
     );
     Ok(())
-}
-
-/// Two columns, indented.
-fn columns(rows: &[(String, String)]) {
-    let width = rows
-        .iter()
-        .map(|(left, _)| left.chars().count())
-        .max()
-        .unwrap_or(0);
-    for (left, right) in rows {
-        println!("  {left:<width$}  {right}");
-    }
 }
 
 /// What a path `spool reset` removes must be.

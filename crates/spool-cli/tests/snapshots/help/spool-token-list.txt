@@ -1,0 +1,16 @@
+List the tokens
+
+Usage: spool token list [OPTIONS]
+
+Options:
+      --store <PATH>  The store's database file; the tokens are in the accounts file beside it [env:
+                      SPOOL_STORE]
+  -h, --help          Print help (see more with '--help')
+
+Output options:
+  -o, --output <OUTPUT>  Output format [default: table] [possible values: table, json, ndjson, csv]
+      --json             Shorthand for `--output json`
+
+Global options:
+      --color <WHEN>  When to use colour [default: auto] [possible values: auto, always, never]
+  -q, --quiet         Print only the result and errors: no hints or progress

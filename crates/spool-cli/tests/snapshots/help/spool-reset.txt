@@ -1,0 +1,21 @@
+Start the development store of `spool dev` over
+
+Usage: spool reset [OPTIONS] [DIR]
+
+Arguments:
+  [DIR]  The project directory [default: the current directory]
+
+Options:
+      --store <PATH>  The development store, if `spool dev` was given one with `--store` [default:
+                      <DIR>/.spool/dev.duckdb]
+      --yes           Remove it without asking, which is needed where nobody can answer, as in a
+                      script
+  -h, --help          Print help (see more with '--help')
+
+Output options:
+  -o, --output <OUTPUT>  Output format [default: table] [possible values: table, json, ndjson, csv]
+      --json             Shorthand for `--output json`
+
+Global options:
+      --color <WHEN>  When to use colour [default: auto] [possible values: auto, always, never]
+  -q, --quiet         Print only the result and errors: no hints or progress

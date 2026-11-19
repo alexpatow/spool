@@ -7,49 +7,61 @@
 use std::io::Read;
 use std::path::Path;
 
+use anstream::println;
 use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatch;
+use indicatif::ProgressBar;
 use serde_json::{Value, json};
 use spool::{DeclaredSource, LoadReport, RunStatus};
 use spool_cli::api::{ARROW_STREAM, Info};
 use spool_cli::delimited::{EMPTY, Reader};
 
-use super::remote::{self, Remote, WAIT_MS, print_json, unsuccessful};
-use super::show::{count, fields};
+use super::remote::{self, Remote, RemoteArgs, WAIT_MS, unsuccessful};
+use super::show::count;
 use crate::Failure;
-use crate::args::Spec;
+use crate::output::{Output, OutputArgs, fields, hint};
+use crate::progress;
 
-pub const USAGE: &str = "\
-Usage: spool load <file> [options]
-
-Sends the rows of a CSV file to a running server, which keeps each row as a
-record. The first line of the file names the columns, and each has to be a
-column the source lists in its sources/<name>.yaml. Every value is text, and
-an empty field is a missing value.
-
-Loading does not match: `spool match` places the records in identities.
-Loading the same rows again adds nothing. A row that comes again under the
-same key with other content is a new version of that row.
-
-  <file>             the file to read; `-` reads standard input. A file whose
-                     name ends in .tsv or .tab has tabs between its fields
-
-Options:
-  --source <name>    the source the rows come from (default: the only source
-                     the project declares, the one the file is named after,
-                     as crm-1.csv is after `crm`, or else the one that lists
-                     most of the file's columns)
-  --type <name>      the entity type they are records of (default: the only
-                     type whose mapping reads the source)
-  --delimiter <c>    the character between the fields, or `tab` (default: a
-                     comma, or a tab for .tsv and .tab)
-  --batch <n>        send at most this many rows in one request (default: as
-                     many as make about 32 MiB)
-  --url <url>        the server (default: $SPOOL_URL, or http://127.0.0.1:7765)
-  --token <token>    a token of that server (default: $SPOOL_TOKEN); `spool dev`
-                     asks for none
-  --json             print the load runs the server answered with, as JSON
-";
+/// Send the rows of a file to a running server
+///
+/// Sends the rows of a CSV file to a running server, which keeps each row as
+/// a record. The first line of the file names the columns, and each has to be
+/// a column the source lists in its sources/<name>.yaml. Every value is text,
+/// and an empty field is a missing value.
+///
+/// Loading does not match: `spool match` places the records in identities.
+/// Loading the same rows again adds nothing. A row that comes again under the
+/// same key with other content is a new version of that row.
+#[derive(clap::Args)]
+#[command(
+    after_help = "Examples:\n  spool load samples/crm-1.csv\n  spool load export.tsv --source crm\n  cat rows.csv | spool load - --source crm"
+)]
+pub struct LoadArgs {
+    /// The file to read; `-` reads standard input
+    ///
+    /// A file whose name ends in .tsv or .tab has tabs between its fields.
+    file: String,
+    /// The source the rows come from
+    ///
+    /// The default is the only source the project declares, the one the file
+    /// is named after, as crm-1.csv is after `crm`, or else the one that lists
+    /// most of the file's columns.
+    #[arg(long, value_name = "NAME")]
+    source: Option<String>,
+    /// The entity type they are records of [default: the only type whose mapping reads the source]
+    #[arg(long = "type", value_name = "NAME")]
+    entity_type: Option<String>,
+    /// The character between the fields, or `tab` [default: a comma, or a tab for .tsv and .tab]
+    #[arg(long, value_name = "CHAR")]
+    delimiter: Option<String>,
+    /// Send at most this many rows in one request [default: as many as make about 32 MiB]
+    #[arg(long, value_name = "ROWS", value_parser = clap::value_parser!(u64).range(1..))]
+    batch: Option<u64>,
+    #[command(flatten)]
+    output: OutputArgs,
+    #[command(flatten)]
+    remote: RemoteArgs,
+}
 
 /// About how much one request holds. A server reads 256 MiB unless it was
 /// told otherwise, and this is well inside that.
@@ -59,48 +71,39 @@ const PART_BYTES: usize = 32 * 1024 * 1024;
 /// one it was read with.
 const OTHER_DELIMITERS: [char; 4] = [';', '\t', '|', ','];
 
-pub fn load(arguments: &[String]) -> Result<(), Failure> {
-    let arguments = super::arguments(
-        arguments,
-        &Spec {
-            values: &[
-                "--source",
-                "--type",
-                "--delimiter",
-                "--batch",
-                remote::VALUES[0],
-                remote::VALUES[1],
-            ],
-            flags: &["--json"],
-            positional: 1,
-        },
-    )?;
-    let Some(file) = arguments.positional.first() else {
-        return Err(Failure::Usage("name the file to load".to_owned()));
-    };
-    let most_rows = match arguments.number("--batch").map_err(Failure::Usage)? {
-        Some(0) => return Err(Failure::Usage("`--batch` needs at least 1".to_owned())),
+pub fn load(arguments: LoadArgs) -> Result<(), Failure> {
+    let out = Output::report(&arguments.output, "`spool load`")?;
+    let file = &arguments.file;
+    let most_rows = match arguments.batch {
         Some(rows) => usize::try_from(rows).unwrap_or(usize::MAX),
         None => usize::MAX,
     };
-    let delimiter = delimiter(arguments.value("--delimiter"), file)?;
+    let delimiter = delimiter(arguments.delimiter.as_deref(), file)?;
 
     // The file first: what is wrong with it can be said without a server.
     let (input, name) = open(file)?;
+    let bar = match std::fs::metadata(file) {
+        Ok(found) if file != "-" && found.is_file() => progress::bytes("Loading", found.len()),
+        _ => progress::spinner(format!("Loading {name}")),
+    };
+    let input = Counted {
+        inner: input,
+        bar: bar.clone(),
+    };
     let unreadable = |why: &dyn std::fmt::Display| {
-        Failure::Failed(format!(
+        Failure::failed(format!(
             "{name} cannot be read as {}: {why}",
             format(delimiter)
         ))
     };
     // A text file that was not said to hold rows may be a document.
-    let may_be_text = arguments.value("--delimiter").is_none() && named_as_text(file);
+    let may_be_text = arguments.delimiter.is_none() && named_as_text(file);
     let mut reader = Reader::new(input, delimiter).map_err(|why| {
-        let said = unreadable(&why).message();
-        Failure::Failed(match may_be_text && why.0 != EMPTY {
-            true => format!("{said}\n{}", extract_reads(&name)),
+        let said = unreadable(&why);
+        match may_be_text && why.0 != EMPTY {
+            true => said.hint(extract_reads(&name)),
             false => said,
-        })
+        }
     })?;
     let columns: Vec<String> = reader
         .schema()
@@ -109,7 +112,7 @@ pub fn load(arguments: &[String]) -> Result<(), Failure> {
         .map(|field| field.name().clone())
         .collect();
 
-    let remote = Remote::new(&arguments);
+    let remote = Remote::new(&arguments.remote);
     let info = remote.info()?;
     // A first line that names no column of any source is prose, unless
     // it is the columns with another character between them.
@@ -125,33 +128,32 @@ pub fn load(arguments: &[String]) -> Result<(), Failure> {
                     .any(|part| listed(part.trim()))
         })
     {
-        return Err(Failure::Failed(format!(
+        return Err(Failure::failed(format!(
             "{name} does not look like rows: its first line names no column that a source of \
              the project lists. `spool load` reads CSV, with the names of the columns on its \
-             first line.\n{}",
-            extract_reads(&name)
-        )));
+             first line."
+        ))
+        .hint(extract_reads(&name)));
     }
     let (source, entity_type) = target(
         &info,
         (file != "-").then_some(file.as_str()),
         &columns,
-        arguments.value("--source"),
-        arguments.value("--type"),
+        arguments.source.as_deref(),
+        arguments.entity_type.as_deref(),
     )?;
     check_columns(&name, &columns, delimiter, source)?;
 
-    let json = arguments.flag("--json");
+    let json = !out.is_table();
     if let Some(key) = &source.key
         && !columns.contains(key)
-        && !json
     {
-        eprintln!(
+        hint(format!(
             "note: {name} has no column `{key}`, which is the key of source `{}`. Its rows are \
              kept without a key: none can be named as {}:<key>, and a changed row does not \
              replace the one loaded before.",
             source.name, source.name
-        );
+        ));
     }
 
     // What is kept of a part is its counts, so that a file of any size is
@@ -164,19 +166,18 @@ pub fn load(arguments: &[String]) -> Result<(), Failure> {
             Ok(None) => break,
             Err(why) => return Err(total.before(unreadable(&why), &name)),
         };
-        if total.rows > 0 && !json {
-            eprintln!("{} sent", count(total.rows, "row"));
-        }
         let (answer, report) = send(&remote, &source.name, entity_type, &batch)
             .map_err(|failure| total.before(failure, &name))?;
         total.add(batch.num_rows() as u64, &report);
+        bar.set_message(format!(", {} sent", count(total.rows, "row")));
         if json {
             runs.push(answer);
         }
     }
 
+    bar.finish_and_clear();
     if json {
-        print_json(&json!({
+        out.json(&json!({
             "source": source.name,
             "entity_type": entity_type,
             "rows": total.rows,
@@ -188,7 +189,7 @@ pub fn load(arguments: &[String]) -> Result<(), Failure> {
         println!("loaded  0 rows: {name} has no rows after its first line");
         return Ok(());
     }
-    let mut rows = vec![(
+    fields(&[(
         "loaded",
         format!(
             "{} into source `{}`, type `{entity_type}`: {}",
@@ -196,7 +197,7 @@ pub fn load(arguments: &[String]) -> Result<(), Failure> {
             source.name,
             total.outcome()
         ),
-    )];
+    )]);
     let waiting = total.waiting();
     if waiting > 0 {
         let command = match info.store.entity_types.len() {
@@ -208,10 +209,23 @@ pub fn load(arguments: &[String]) -> Result<(), Failure> {
         } else {
             "places them in identities"
         };
-        rows.push(("next", format!("`{command}` {places}")));
+        hint(format!("next: `{command}` {places}"));
     }
-    fields(&rows);
     Ok(())
+}
+
+/// The file's rows, read as they are sent, moving the bar as they are.
+struct Counted {
+    inner: Box<dyn Read>,
+    bar: ProgressBar,
+}
+
+impl Read for Counted {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.inner.read(buffer)?;
+        self.bar.inc(read as u64);
+        Ok(read)
+    }
 }
 
 /// What the parts of a file came to.
@@ -271,19 +285,18 @@ impl Total {
 
     /// A failure, with what was loaded before it if anything was.
     fn before(&self, failure: Failure, name: &str) -> Failure {
-        let why = failure.message();
         if self.rows == 0 {
-            return Failure::Failed(why);
+            return failure;
         }
         let runs = match self.runs {
             Some((1, run, _)) => format!("run {run}"),
             Some((count, first, last)) => format!("{count} runs, {first} to {last}"),
             None => "no run".to_owned(),
         };
-        Failure::Failed(format!(
-            "{why}\nThis was after the first {} of {name} {} loaded, in {runs}. In what the \
-             server says, rows are counted from the one after them. Loading the file again \
-             sends them once more and adds nothing.",
+        failure.and(format!(
+            "This was after the first {} of {name} {} loaded, in {runs}. In what the server \
+             says, rows are counted from the one after them. Loading the file again sends them \
+             once more and adds nothing.",
             count(self.rows, "row"),
             if self.rows == 1 { "was" } else { "were" },
         ))
@@ -298,7 +311,7 @@ fn send(
     batch: &RecordBatch,
 ) -> Result<(Value, LoadReport), Failure> {
     let cannot_write = |error: arrow::error::ArrowError| {
-        Failure::Failed(format!("the rows cannot be sent: {error}"))
+        Failure::failed(format!("the rows cannot be sent: {error}"))
     };
     let mut body = Vec::new();
     let mut writer = StreamWriter::try_new(&mut body, &batch.schema()).map_err(cannot_write)?;
@@ -317,7 +330,7 @@ fn send(
         &body,
     )?;
     let unexpected = || {
-        Failure::Failed(
+        Failure::failed(
             "the server took the rows and reported no load run; is it of this version?".to_owned(),
         )
     };
@@ -338,16 +351,16 @@ fn open(file: &str) -> Result<(Box<dyn Read>, String), Failure> {
         ));
     }
     if Path::new(file).is_dir() {
-        return Err(Failure::Failed(format!(
+        return Err(Failure::failed(format!(
             "`{file}` is a directory: name a file of rows"
         )));
     }
     match std::fs::File::open(file) {
         Ok(opened) => Ok((Box::new(opened), file.to_owned())),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            Err(Failure::Failed(format!("there is no file `{file}`")))
+            Err(Failure::failed(format!("there is no file `{file}`")))
         }
-        Err(error) => Err(Failure::Failed(format!(
+        Err(error) => Err(Failure::failed(format!(
             "`{file}` cannot be opened: {error}"
         ))),
     }
@@ -360,7 +373,7 @@ fn delimiter(asked: Option<&str>, file: &str) -> Result<u8, Failure> {
         Some("tab" | "\\t" | "\t") => Ok(b'\t'),
         Some(other) => match other.as_bytes() {
             [one] if one.is_ascii() && !matches!(one, b'"' | b'\n' | b'\r') => Ok(*one),
-            _ => Err(Failure::Usage(format!(
+            _ => Err(Failure::usage(format!(
                 "`--delimiter` needs one character such as `;`, or `tab`, not `{other}`"
             ))),
         },
@@ -393,8 +406,8 @@ fn named_as_text(file: &str) -> bool {
 /// Where a document goes: said of a file that is no rows.
 fn extract_reads(name: &str) -> String {
     format!(
-        "If it is a document, `spool extract {name}` reads it: an extractor finds the records \
-         in its text."
+        "if it is a document, `spool extract {name}` reads it: an extractor finds the records \
+         in its text"
     )
 }
 
@@ -430,7 +443,7 @@ fn target<'a>(
     };
     let source_names = || quoted(sources.iter().map(|source| source.name.as_str()).collect());
     if sources.is_empty() {
-        return Err(Failure::Failed(
+        return Err(Failure::failed(
             "the project declares no source, so there is nothing rows can be loaded as. A \
              source is a file sources/<name>.yaml that lists the columns of its rows."
                 .to_owned(),
@@ -443,7 +456,7 @@ fn target<'a>(
             .iter()
             .any(|declared| declared.name.as_str() == entity_type)
     {
-        return Err(Failure::Failed(format!(
+        return Err(Failure::failed(format!(
             "the project has no entity type `{entity_type}`. It has {}.",
             quoted(
                 info.store
@@ -466,7 +479,7 @@ fn target<'a>(
             .iter()
             .find(|source| source.name == name)
             .ok_or_else(|| {
-                Failure::Failed(format!(
+                Failure::failed(format!(
                     "the project has no source `{name}`: there is no sources/{name}.yaml. It \
                      has {}.",
                     source_names()
@@ -481,7 +494,7 @@ fn target<'a>(
             match (fitting.as_slice(), entity_type) {
                 ([only], _) => *only,
                 ([], Some(entity_type)) => {
-                    return Err(Failure::Failed(format!(
+                    return Err(Failure::failed(format!(
                         "the mapping of `{entity_type}` reads no source, so no rows can be \
                          loaded as `{entity_type}` records. Add a source to the `mapping` in \
                          entities/{entity_type}/entity.yaml."
@@ -503,7 +516,7 @@ fn target<'a>(
                             None => "the project has".to_owned(),
                         };
                         let listed = remote::listed(&names);
-                        return Err(Failure::Failed(match file {
+                        return Err(Failure::failed(match file {
                             Some(file) => format!(
                                 "{has} the sources {listed}, and {file} is named after {}: say \
                                  which its rows come from with `--source`",
@@ -531,14 +544,14 @@ fn target<'a>(
     let entity_type = match (entity_type, readers.as_slice()) {
         (Some(entity_type), _) if reads(source, entity_type) => entity_type,
         (Some(entity_type), []) => {
-            return Err(Failure::Failed(format!(
+            return Err(Failure::failed(format!(
                 "the mapping of `{entity_type}` has nothing for source `{}`: add it to \
                  entities/{entity_type}/entity.yaml",
                 source.name
             )));
         }
         (Some(entity_type), _) => {
-            return Err(Failure::Failed(format!(
+            return Err(Failure::failed(format!(
                 "the mapping of `{entity_type}` has nothing for source `{}`, so its rows \
                  cannot be `{entity_type}` records. They can be loaded as {}.",
                 source.name,
@@ -547,14 +560,14 @@ fn target<'a>(
         }
         (None, [only]) => *only,
         (None, []) => {
-            return Err(Failure::Failed(format!(
+            return Err(Failure::failed(format!(
                 "no entity type reads source `{}`, so its rows cannot be loaded yet. Add the \
                  source to the `mapping` in an entities/<type>/entity.yaml.",
                 source.name
             )));
         }
         (None, _) => {
-            return Err(Failure::Failed(format!(
+            return Err(Failure::failed(format!(
                 "say which entity type the rows are records of with `--type`: source `{}` is \
                  read by {}",
                 source.name,
@@ -624,13 +637,13 @@ fn check_columns(
             '\t' => ("a tab".to_owned(), "tab".to_owned()),
             other => (format!("`{other}`"), format!("'{other}'")),
         };
-        return Err(Failure::Failed(format!(
+        return Err(Failure::failed(format!(
             "the first line of {name} is one column, `{only}`, and sources/{}.yaml lists \
              {listed}. If {between} stands between its fields, add `--delimiter {option}`.",
             source.name,
         )));
     }
-    Err(Failure::Failed(format!(
+    Err(Failure::failed(format!(
         "{name} has {} {}, which sources/{}.yaml does not list. It lists {listed}. Add {} to \
          that file to keep {}, or leave {} out of the rows.",
         if unknown.len() == 1 {

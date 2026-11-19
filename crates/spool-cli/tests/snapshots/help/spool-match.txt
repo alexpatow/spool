@@ -1,0 +1,22 @@
+Match new records and place them in identities
+
+Usage: spool match [OPTIONS]
+
+Options:
+      --type <NAME>      Only this entity type [default: every one the project declares]
+      --rematch          Examine every record again, not only the new ones
+      --strategy <NAME>  Who judges: `rules`, or one of the project's strategies for the type
+                         [default: rules]
+  -h, --help             Print help (see more with '--help')
+
+Output options:
+  -o, --output <OUTPUT>  Output format [default: table] [possible values: table, json, ndjson, csv]
+      --json             Shorthand for `--output json`
+
+Server options:
+      --url <URL>      The server [env: SPOOL_URL] [default: http://127.0.0.1:7765]
+      --token <TOKEN>  A token for that server; `spool dev` needs none [env: SPOOL_TOKEN]
+
+Global options:
+      --color <WHEN>  When to use colour [default: auto] [possible values: auto, always, never]
+  -q, --quiet         Print only the result and errors: no hints or progress
