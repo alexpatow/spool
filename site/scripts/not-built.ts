@@ -1,7 +1,7 @@
 /**
  * What the pages describe that is not built yet.
  *
- * The pages are written for version 0.2.0, and some of what they show does not
+ * The pages are written for version 0.3.0, and some of what they show does not
  * exist. The samples check reports each use of such a thing under its name
  * here, in one list that is kept apart from real mismatches. The list is done
  * when it is empty.

@@ -45,7 +45,7 @@ notes:notes-1.txt[179-200]  Brightwater Foods Ltd    01a1efc6-43a9-7403-b9f6-1f8
 
 Twelve records, six companies. Acorn Tools is five records: four spellings in the CRM and "Acorn Tools Ltd" in the note. Its ID was minted by the first match and survived both later batches. The two Halden Groups are in different countries, and a rule keeps them apart.
 
-Spool 0.2.0 runs on Linux and macOS and is MIT licensed. The [docs](https://spool.alexpatow.com/docs) cover everything below in more depth.
+Spool 0.3.0 runs on Linux and macOS and is MIT licensed. The [docs](https://spool.alexpatow.com/docs) cover everything below in more depth.
 
 ## Getting started
 
@@ -58,9 +58,9 @@ Spool 0.2.0 runs on Linux and macOS and is MIT licensed. The [docs](https://spoo
 
 ### Install
 
-The script downloads the build for your platform, verifies its checksum, unpacks it to `~/.local/share/spool/0.2.0` and symlinks `~/.local/bin/spool`. It also links the man pages and the bash, zsh and fish completions under `~/.local/share`. It doesn't need root or touch your shell config. If `~/.local/bin` isn't on your `PATH`, it prints the line to add.
+The script downloads the build for your platform, verifies its checksum, unpacks it to `~/.local/share/spool/0.3.0` and symlinks `~/.local/bin/spool`. It also links the man pages and the bash, zsh and fish completions under `~/.local/share`. It doesn't need root or touch your shell config. If `~/.local/bin` isn't on your `PATH`, it prints the line to add.
 
-To install by hand, unpack `spool-0.2.0-<target>.tar.gz` from the [release](https://github.com/alexpatow/spool/releases/tag/v0.2.0) and put its `bin/` on your `PATH`. Keep `bin/` and `lib/` side by side, because the binary loads DuckDB from `../lib`. `spool --version` prints `spool 0.2.0`.
+To install by hand, unpack `spool-0.3.0-<target>.tar.gz` from the [release](https://github.com/alexpatow/spool/releases/tag/v0.3.0) and put its `bin/` on your `PATH`. Keep `bin/` and `lib/` side by side, because the binary loads DuckDB from `../lib`. `spool --version` prints `spool 0.3.0`.
 
 `spool update` brings an installation made with the script to the latest stable release. Run it from a project to refresh that project's coding-agent skills too.
 
@@ -215,7 +215,7 @@ Ctrl-C stops the server. Data stays in `.spool/dev.duckdb`. Delete `.spool/` to 
 - **A decision inside every request:** [Senzing](https://senzing.com) resolves each record as it arrives.
 - **People and companies already in FollowTheMoney:** [nomenklatura](https://github.com/opensanctions/nomenklatura).
 
-[Compared with other tools](https://spool.alexpatow.com/docs/compared) goes through each. [Limits](https://spool.alexpatow.com/docs/limits) lists what 0.2.0 doesn't do.
+[Compared with other tools](https://spool.alexpatow.com/docs/compared) goes through each. [Limits](https://spool.alexpatow.com/docs/limits) lists what 0.3.0 doesn't do.
 
 ## Where next
 

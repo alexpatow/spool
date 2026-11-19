@@ -1,6 +1,6 @@
 ---
 title: Limits
-description: What Spool is built for and what it isn't, the trade-off behind stable IDs, what 0.2.0 doesn't include, and the sizes it's benchmarked at.
+description: What Spool is built for and what it isn't, the trade-off behind stable IDs, what 0.3.0 doesn't include, and the sizes it's benchmarked at.
 ---
 
 Spool keeps entity IDs stable while data keeps arriving, on one machine. That focus rules some things out.
@@ -8,7 +8,7 @@ Spool keeps entity IDs stable while data keeps arriving, on one machine. That fo
 ## What it isn't for
 
 - **One-off deduplication.** If you have one file and nothing stores the IDs, [Splink](https://github.com/moj-analytical-services/splink) or [dedupe](https://github.com/dedupeio/dedupe) is less to run.
-- **An answer inside each request.** Rows load in batches and match in runs. A match of a few rows takes well under a second, but it's a separate call. [Senzing](https://senzing.com) resolves each record as it arrives.
+- **Automatic matching after bulk loads.** [Add a single record](/docs/cli#spool-add) to match it to existing identities in one call using SQL rules. Bulk loads match in a separate run.
 - **Streaming.** There's no Kafka or change-data-capture connector. Something else collects rows and sends them.
 - **Clusters and multi-tenancy.** One process owns one [DuckDB](https://duckdb.org) file on one machine, and a store holds one project.
 - **In-process use.** There are no Python or Node bindings. Your code calls the HTTP API.
@@ -27,7 +27,7 @@ A match never merges or splits identities that exist. That's what makes an ID sa
 
 [Matching](/docs/concepts/matching#the-cost-of-ids-that-stay) shows the first two with rows.
 
-## Not in 0.2.0
+## Not in 0.3.0
 
 - **Platforms.** Linux on x86-64 or arm64 with glibc 2.34+, macOS on Apple silicon, and a container image. There are no Windows, Intel Mac or Alpine builds, and no Homebrew, apt or Cargo packages.
 - **Connectors.** `spool load` reads CSV. The API takes CSV, JSON and Arrow. Nothing reads a database or a warehouse directly.

@@ -4,7 +4,7 @@ name: Release
 # their checksums, and the image that the Dockerfile of `spool build` starts
 # from.
 #
-# It starts when a tag such as v0.2.0 is pushed, and when it is started by
+# It starts when a tag such as v0.3.0 is pushed, and when it is started by
 # hand. It does not start for a push of commits or for a pull request: `push`
 # below names tags and no branches.
 #
@@ -16,11 +16,11 @@ name: Release
 # release without signing in, and while the repository is private that
 # answers 404 to everyone but its owner, so `publish` refuses to run then.
 #
-# To release version 0.2.0:
+# To release version 0.3.0:
 #
-#   1. `version` in Cargo.toml and VERSION in install.sh say 0.2.0, on main.
+#   1. `version` in Cargo.toml and VERSION in install.sh say 0.3.0, on main.
 #   2. Start this workflow by hand on main, and see it pass.
-#   3. git tag v0.2.0 && git push origin v0.2.0
+#   3. git tag v0.3.0 && git push origin v0.3.0
 #   4. Nothing for the image. The package `spool` on ghcr.io has been
 #      public since this workflow first pushed it, from the public
 #      repository. If a pull is ever refused, look under Package settings.
@@ -287,7 +287,7 @@ jobs:
             exit 1
           fi
 
-      # A version with a hyphen in it, such as 0.2.0-rc.1, is a prerelease:
+      # A version with a hyphen in it, such as 0.3.0-rc.1, is a prerelease:
       # it is neither the image's `latest` nor the release that
       # `releases/latest` names.
       - name: Push the image
