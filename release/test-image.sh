@@ -86,13 +86,13 @@ server=$(docker run --detach --network none spool-test-project)
 # A token is made beside a store, and the server makes the store as it
 # starts, which `docker run --detach` does not wait for.
 tries=0
-until token=$(docker exec --user spool "$server" spool token add test 2> /dev/null); do
+until token=$(docker exec "$server" spool token add test 2> /dev/null); do
     tries=$((tries + 1))
     [ "$tries" -lt 150 ] || fail "the project's server made no store to add a token to: $(docker logs "$server" 2>&1)"
     sleep 0.2
 done
 spool() {
-    docker exec --interactive --user spool --env SPOOL_TOKEN="$token" "$server" spool "$@"
+    docker exec --interactive --env SPOOL_TOKEN="$token" "$server" spool "$@"
 }
 tries=0
 until spool show > /dev/null 2>&1; do
@@ -100,9 +100,7 @@ until spool show > /dev/null 2>&1; do
     [ "$tries" -lt 150 ] || fail "the project's server did not answer: $(docker logs "$server" 2>&1)"
     sleep 0.2
 done
-# The container starts as root, to give /data to `spool`, and the server runs as `spool`.
-server_uid=$(docker exec "$server" awk '/^Uid:/ { print $2 }' /proc/1/status)
-[ "$server_uid" = "$(docker exec "$server" id -u spool)" ] || fail "the project's server does not run as the user \`spool\`"
+[ "$(docker exec "$server" id -un)" = spool ] || fail "the project's server does not run as the user \`spool\`"
 spool load - --source crm < "$project/companies/samples/crm-1.csv"
 spool match
 # The note is the copy in the image: a command starts in the project directory.

@@ -1,6 +1,6 @@
 ---
 title: Deploying
-description: Run Spool for a team with spool build, spool apply and spool serve, on your own machine or on Render. Sign people in, give programs tokens, ship a container, and back up the store.
+description: Run Spool for a team with spool build, spool apply and spool serve. Sign people in, give programs tokens, ship the image, and back up the store.
 ---
 
 `spool dev` is for one person on one machine. `spool serve` is the server your team and your pipelines reach. Same binary, same store format. The differences: every caller is authenticated, and the server runs from a compiled manifest instead of the project's files.
@@ -153,60 +153,35 @@ The generated Dockerfile starts from `ghcr.io/alexpatow/spool:0.1.0`, builds the
 
 The generated `.dockerignore` keeps `.env` out of the image. Pass your code's variables at runtime, for example with `docker run --env-file .env`. Without Docker, set them in `spool serve`'s environment, or put a `.env` in the project directory named by `--project`.
 
-The container starts as root, gives `/data` to the user `spool`, and runs the server as that user, so a volume works whoever owns it. Run commands in it as that user too: `docker exec -u spool <container> spool token add <name>`.
+The image runs as the user `spool`, uid 10001. The store is a file on the volume at `/data`, so that volume has to be writable by `spool`. That user has no login shell. The Dockerfile is the project's once `spool build` has written it, so give `spool` a shell there if you need one in the container.
 
-## On Render
+## Running the image
 
-[Render](https://render.com) builds the same Dockerfile, keeps the store on a persistent disk at `/data`, and gives the server an HTTPS address. A disk needs a paid instance, and the service then runs as one instance, which is what Spool needs.
+Any host that builds a Dockerfile can run the image `spool build` writes. It needs four things, and one instance: one process opens the store.
 
-Put the project in a Git repository Render can read: its files, the `Dockerfile` and `.dockerignore` that `spool build` wrote, and this `render.yaml` beside them. Leave out `.spool/`, `.env` and any data you load: the store goes on the disk, not in the image.
+Leave `.spool/`, `.env` and any data you load out of what the host builds. The store goes on the disk, not in the image.
 
-```yaml title="render.yaml"
-services:
-  - type: web
-    name: spool
-    runtime: docker
-    plan: 0.5c-512mb
-    healthCheckPath: /healthz
-    disk:
-      name: data
-      mountPath: /data
-      sizeGB: 1
-    envVars:
-      - key: PORT
-        value: "7765"
-```
+- **The image** is that Dockerfile. It starts from `ghcr.io/alexpatow/spool:<version>` and runs `spool serve`.
+- **The public URL.** Set `SPOOL_PUBLIC_URL` to the HTTPS address people open, such as `https://spool.example.com`. Sign-in with Google and an agent that signs in with OAuth both use the address you set. Google's redirect URI is that address followed by `/auth/google/callback`.
+- **The disk.** Mount a persistent disk at `/data`. It has to outlive a new container, and it has to be writable by uid 10001 before the server starts. The store is `/data/spool.duckdb` unless `SPOOL_STORE` names another file there.
+- **The start command.** The image listens on `0.0.0.0:7765`. The `CMD` at the bottom of the Dockerfile is the command. If the host chooses the port and puts it in `PORT`, set `--listen` to `0.0.0.0:$PORT`.
 
-In the Render Dashboard, choose New, Blueprint, and the repository. Render builds the image and starts the server at an address such as `https://spool-a1b2.onrender.com`.
-
-1. **Make the first account.** The server prints the setup link in the service's logs, at that address. Open it before anyone else does: whoever opens it is the admin. Then add people on the People page.
-2. **Sign people in with Google**, if you want to: set `SPOOL_GOOGLE_CLIENT_ID` and `SPOOL_GOOGLE_CLIENT_SECRET` under the service's Environment, with the redirect URI the address followed by `/auth/google/callback`. See [Signing people in](https://github.com/alexpatow/spool/blob/main/docs/sign-in.md).
-3. **Connect Claude and ChatGPT on the web** to the address followed by `/mcp`, as [MCP](/docs/mcp#claude-and-chatgpt-on-the-web) says. Each sends you to the studio to approve it.
+The server prints the setup link in its logs. Open it before anyone else does: whoever opens it is the admin. Connect Claude and ChatGPT on the web to the public URL followed by `/mcp`, as [MCP](/docs/mcp#claude-and-chatgpt-on-the-web) says.
 
 What to know:
 
-- **The address** is the one Render gives the service, which it hands the server as `RENDER_EXTERNAL_URL`. With a custom domain, set `SPOOL_PUBLIC_URL` to it under Environment.
-- **Memory.** `0.5c-512mb` holds rows and rules on a small store. A project whose extractor loads a model in the server, as the sample project's does, needs `1c-2g`.
-- **Secrets your code reads**, such as a model's API key, go under Environment. Without one, an extractor that needs it fails rather than calling anyone.
-- **A deploy** stops the server for a few seconds: a service with a disk is stopped before the next one starts. Render takes a snapshot of the disk each day and keeps it for seven days.
-- **A changed project** builds a new manifest, and the server refuses a store applied with another until it is applied again. Render runs nothing on the disk while the server is stopped, so set the service's Docker Command to the `apply` command at the top of the project's Dockerfile, the part after the image's name. Deploy, and when the logs show the `manifest` line of `spool apply`, clear the Docker Command and deploy again. The first deploy is reported as failed, because `apply` ends.
+- **Memory.** Half a gigabyte holds rows and rules on a small store. A project whose extractor loads a model in the server, as the sample project's does, needs about 2 GB.
+- **Secrets your code reads**, such as a model's API key, go in the service's environment. Without one, an extractor that needs it fails rather than calling anyone.
+- **A deploy** replaces the container and has to keep the disk. The server stops while that happens, because the next process cannot open the store until this one has let go of it.
+- **A changed project** builds a new manifest, and the server refuses a store applied with another until it is applied again. With the server stopped, set the start command to the `apply` command at the top of the Dockerfile, the part after the image's name. When the logs show the `manifest` line of `spool apply`, set the start command back to `serve`. That first run is reported as failed, because `apply` ends.
 
-### Moving a store to Render
+### Moving a store
 
-A store made elsewhere, with `spool dev` or another server, moves as its file. The server on Render has to run on a manifest with the same hash, which the same project files give.
+A store made elsewhere, with `spool dev` or another server, moves as its file. The server has to run on a manifest with the same hash, which the same project files give.
 
 1. Stop the server that has the store open. Copy `<name>.duckdb`, and `<name>.duckdb.wal` if there is one: it holds the last changes.
-2. Set up SSH for the service, as [Render's docs](https://render.com/docs/ssh) say.
-3. Copy the files to the disk under a name the running server does not use:
-
-{/* sample: skip needs a Render service */}
-
-```sh
-scp -s spool.duckdb <service>@ssh.<region>.render.com:/data/moved.duckdb
-scp -s spool.duckdb.wal <service>@ssh.<region>.render.com:/data/moved.duckdb.wal
-```
-
-4. Set `SPOOL_STORE` to `/data/moved.duckdb` under Environment. Render deploys again and the server opens the moved store. The accounts are kept beside a store and named after it, so the server prints a setup link again for `/data/moved.auth.sqlite`. To keep the people and approvals you had, copy `/data/spool.auth.sqlite` to `/data/moved.auth.sqlite` over SSH before this step.
+2. Put the files on the disk under a name the running server is not using, owned by uid 10001: `/data/moved.duckdb`, and `/data/moved.duckdb.wal` when you have one.
+3. Set `SPOOL_STORE` to `/data/moved.duckdb` and start the server. Accounts live beside a store and are named after it, so the server prints a setup link for `/data/moved.auth.sqlite`. To keep the people and approvals you had, copy the accounts file to `/data/moved.auth.sqlite` first, also owned by uid 10001.
 
 ## Backing up
 

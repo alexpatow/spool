@@ -98,7 +98,7 @@ These can't be given a token. They sign in with OAuth 2.1, and the server is the
 
 An admin sees every approval under Assistants on the Tokens page and can revoke one. A client revokes its own tokens at `/oauth/revoke`. There is one scope, `spool`.
 
-The issuer is the address the server is reached at: `--public-url`, on Render the address Render assigns, or the listen address when that's only on this machine. Without one, over plain HTTP off this machine, or without the studio, the server prints `oauth off` and answers those paths with `404`. `spool dev` has no OAuth either.
+The issuer is the address the server is reached at: `--public-url` or `SPOOL_PUBLIC_URL`, or the listen address when that's only on this machine. Without one, over plain HTTP off this machine, or without the studio, the server prints `oauth off` and answers those paths with `404`. `spool dev` has no OAuth either.
 
 Clients register dynamically only. Client ID Metadata Documents, which the spec now prefers and which Claude offers as "Claude's published identity", aren't supported yet: the server would have to fetch an address the client names. In Claude, choose **Register automatically**. Claude calls from Anthropic's network, so the server needs public HTTPS on port 443. An organisation whose Owner sees **Request headers** can instead send `Authorization: Bearer <token>`.
 
