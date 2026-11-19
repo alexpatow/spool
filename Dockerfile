@@ -5,9 +5,8 @@
 #
 #   docker build -t ghcr.io/alexpatow/spool:0.2.0 .
 #
-# A release's archives for Linux hold the two files this builds, with the man
-# pages and completions they write, and `release/linux.sh` takes them from
-# the `archive` stage.
+# The `archive` stage combines the two release files with the man pages
+# and completions they write.
 
 # The compiler runs on the architecture of the machine that builds, whichever
 # one the image is for, and cross-compiles when the two differ. An image for
@@ -36,12 +35,14 @@ COPY crates crates
 # The build downloads the DuckDB shared library that matches the `duckdb`
 # crate. The binary looks for it beside itself and in ../lib, and with
 # SPOOL_RELEASE_BUILD nowhere else.
+# Keep just the release files in the build layer that CI caches.
 RUN target="$(cat /cpu)-unknown-linux-gnu" \
     && SPOOL_RELEASE_BUILD=1 cargo build --release --locked -p spool-cli --target "$target" \
     && mkdir -p /out/bin /out/lib \
     && cp "target/$target/release/spool" /out/bin/spool \
     && find target -path '*/duckdb-download/*' -name 'libduckdb.so' -exec cp {} /out/lib/ \; \
-    && test -f /out/lib/libduckdb.so
+    && test -f /out/lib/libduckdb.so \
+    && rm -rf target "$CARGO_HOME/registry"
 
 # The man pages and the shell completions, which the binary writes from the
 # definition of its commands. It runs here, under emulation for the
@@ -62,7 +63,13 @@ FROM scratch AS archive
 COPY --from=build /out/ /
 COPY --from=share /share /share
 
+# Release CI replaces this stage with the files from the tested archives.
+FROM scratch AS release-files
+ARG TARGETARCH
+COPY --from=build /out/ /${TARGETARCH}/
+
 FROM debian:bookworm-slim
+ARG TARGETARCH
 LABEL org.opencontainers.image.title="Spool" \
       org.opencontainers.image.description="Extract, resolve and track entities." \
       org.opencontainers.image.source="https://github.com/alexpatow/spool" \
@@ -73,8 +80,8 @@ LABEL org.opencontainers.image.title="Spool" \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=build /out/bin/spool /usr/local/bin/spool
-COPY --from=build /out/lib/libduckdb.so /usr/local/lib/libduckdb.so
+COPY --from=release-files /${TARGETARCH}/bin/spool /usr/local/bin/spool
+COPY --from=release-files /${TARGETARCH}/lib/libduckdb.so /usr/local/lib/libduckdb.so
 COPY LICENSE release/LICENSE-duckdb /usr/local/share/doc/spool/
 # The server does not need to be root. The store lives on a volume at /data.
 RUN useradd --system --uid 10001 --home-dir /data --shell /usr/sbin/nologin spool \
