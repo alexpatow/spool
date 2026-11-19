@@ -31,7 +31,7 @@ concurrency:
 jobs:
   site:
     name: Build and check the site
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
       run:
@@ -88,7 +88,7 @@ jobs:
   samples:
     name: Run the samples in the pages
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
       CARGO_TERM_COLOR: always
