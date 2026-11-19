@@ -13,12 +13,12 @@ export function llmsIndex(): string {
     "",
     `> ${site.summary}`,
     "",
-    "These are the Spool docs for agents and other programs. Every page is also plain Markdown: add `.md` to its address, or ask for it with `Accept: text/markdown`. Each line below links to a page's Markdown and says what the page covers.",
+    "The Spool docs, for agents and other programs. Every page is also plain Markdown: add `.md` to its address, or request it with `Accept: text/markdown`. Each line below links to a page's Markdown with a one-line summary.",
     "",
     `- All pages in one file: ${absoluteUrl("/llms-full.txt")}`,
     `- Source code: ${site.repository}`,
     "",
-    "Spool is early: these pages are for version 0.1.0, which Getting started installs from its release, and the Limits page says what it does not do.",
+    "These pages document version 0.1.0, which Getting started installs from the release.",
   ];
 
   for (const group of navGroups()) {
