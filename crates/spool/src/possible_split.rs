@@ -161,6 +161,18 @@ fn groups_by(
         // A pair is stored once, the smaller ID first, in each of the three
         // places, and two members of one identity are all that is asked
         // about: a record belongs to one identity.
+        //
+        // What people put together is judged whole by any match a run
+        // concluded, not only the latest judgement of the pair: a later run
+        // under other rules, such as the one that applies a recomputation,
+        // does not take apart what the decision was about.
+        let (latest, held_by) = match judgements {
+            true => (
+                "QUALIFY j.run_id = max(j.run_id) OVER (PARTITION BY j.left_id, j.right_id)",
+                "bool_or(verdict = 'match') AND NOT bool_or(verdict = 'no_match')",
+            ),
+            false => ("", "bool_or(verdict = 'match')"),
+        };
         let mut statement = conn.prepare(&format!(
             "WITH {MEMBERS},
              judged AS (
@@ -169,10 +181,10 @@ fn groups_by(
                JOIN member a ON a.record_id = j.left_id
                JOIN member b ON b.record_id = j.right_id AND b.identity_id = a.identity_id
                JOIN spool.run r ON r.run_id = j.run_id AND {reconciled}
-               QUALIFY j.run_id = max(j.run_id) OVER (PARTITION BY j.left_id, j.right_id))
+               {latest})
              SELECT left_id::VARCHAR, right_id::VARCHAR, true FROM judged
              GROUP BY left_id, right_id
-             HAVING bool_or(verdict = 'match') AND NOT bool_or(verdict = 'no_match')
+             HAVING {held_by}
              UNION ALL
              SELECT c.record_a::VARCHAR, c.record_b::VARCHAR, false
              FROM spool.constraint_link c

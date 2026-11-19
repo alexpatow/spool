@@ -520,6 +520,43 @@ fn records_a_person_placed_stay_with_the_identity_they_placed_them_in() {
 }
 
 #[test]
+fn what_a_reviewer_merged_stays_merged_after_a_recompute_is_applied() {
+    let engine = Engine::open_in_memory(Options::seeded(1)).unwrap();
+    engine.apply(&manifest_of(vec![loose()])).unwrap();
+    load(
+        &engine,
+        "shop",
+        &[
+            ("A", Some("acorn"), Some("K1")),
+            ("B", Some("acorn"), Some("K2")),
+            ("C", Some("zed"), Some("Z")),
+        ],
+    );
+    engine.resolve(&ResolveOptions::default()).unwrap();
+    let acorn = identity(&engine, "shop", "A").unwrap();
+    let zed = identity(&engine, "shop", "C").unwrap();
+    engine
+        .author(
+            reviewer(),
+            None,
+            vec![Op::Merge {
+                from: zed,
+                into: acorn,
+            }],
+        )
+        .unwrap();
+    // The strict rules say A and B differ. The reviewer's merge was of A
+    // and B together, so they stay.
+    engine.apply(&manifest_of(vec![thing()])).unwrap();
+    for _ in 0..2 {
+        let preview = engine.recompute(&everything()).unwrap();
+        assert_eq!(preview.types[0].changes_total, 0);
+        engine.apply_recompute(None, &preview.plan, None).unwrap();
+    }
+    assert_eq!(members(&engine, acorn).len(), 3);
+}
+
+#[test]
 fn records_taken_back_have_no_part_in_it() {
     let engine = store();
     engine
@@ -619,4 +656,57 @@ fn a_hundred_thousand_records_are_previewed_and_applied_alike() {
     assert!(applied.types[0].committed.is_some());
     let again = engine.recompute(&RecomputeRequest::default()).unwrap();
     assert_eq!(again.types[0].changes_total, 0);
+}
+
+/// A long chain the rules join, with one `cannot_link` between its ends:
+/// the whole chain waits, and what stops it is named.
+#[test]
+fn a_long_chain_with_one_cannot_link_waits_and_says_why() {
+    let n: usize = 3_000;
+    let chained = EntityTypeSource {
+        no_match: Vec::new(),
+        ..thing()
+    };
+    let engine = Engine::open_in_memory(Options::seeded(1)).unwrap();
+    engine.apply(&manifest_of(vec![chained])).unwrap();
+    // Each record shares its code with the one after it, or its name.
+    let data: Vec<(String, String, String)> = (0..n)
+        .map(|i| {
+            (
+                i.to_string(),
+                format!("n{}", (i + 1) / 2),
+                format!("c{}", i / 2),
+            )
+        })
+        .collect();
+    let rows: Vec<(&str, Option<&str>, Option<&str>)> = data
+        .iter()
+        .map(|(id, name, code)| (id.as_str(), Some(name.as_str()), Some(code.as_str())))
+        .collect();
+    load(&engine, "shop", &rows);
+    engine
+        .author(
+            reviewer(),
+            Some("the ends differ".to_owned()),
+            vec![Op::Constrain {
+                kind: ConstraintKind::CannotLink,
+                a: record_id(&engine, "shop", "0"),
+                b: record_id(&engine, "shop", &(n - 1).to_string()),
+            }],
+        )
+        .unwrap();
+
+    let started = std::time::Instant::now();
+    let preview = engine.recompute(&everything()).unwrap();
+    let thing = &preview.types[0];
+    assert_eq!(thing.summary.records_waiting, n as u64);
+    assert_eq!(thing.summary.review_items, 1);
+    assert_eq!(thing.decisions.blocked_by_constraints, 1);
+    // Every record waited before, so nothing changes for an identity.
+    assert_eq!(thing.changes_total, 0);
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(30),
+        "{:?}",
+        started.elapsed()
+    );
 }

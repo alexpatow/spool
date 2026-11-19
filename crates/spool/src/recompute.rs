@@ -741,31 +741,32 @@ pub(crate) fn compute(
         }
     }
 
-    let blocked: Vec<Vec<Contradiction>> = waiting
-        .iter()
-        .map(|group| {
-            let mut found = Vec::new();
-            for (i, a) in group.iter().enumerate() {
-                for b in &group[i + 1..] {
-                    let pair = (*a, *b);
-                    if verdicts.get(&pair) != Some(&Verdict::NoMatch) {
-                        continue;
-                    }
-                    found.push(Contradiction {
-                        records: [*a, *b],
-                        constraint: by_constraint.get(&pair).cloned(),
-                        rules: match by_constraint.contains_key(&pair) {
-                            true => Vec::new(),
-                            false => rule_names.get(&pair).cloned().unwrap_or_default(),
-                        },
-                    });
-                }
-            }
-            // A constraint is the decision of a person, so those come first.
-            found.sort_by_key(|contradiction| contradiction.constraint.is_none());
-            found
-        })
-        .collect();
+    // The `no_match` pairs inside each waiting group, found from the
+    // verdicts rather than from every pair of its records.
+    let mut blocked: Vec<Vec<Contradiction>> = vec![Vec::new(); waiting.len()];
+    for ((a, b), verdict) in &verdicts {
+        if *verdict != Verdict::NoMatch {
+            continue;
+        }
+        if let (Some(Place::Waiting(at)), Some(Place::Waiting(other))) =
+            (place.get(a), place.get(b))
+            && at == other
+        {
+            let pair = (*a, *b);
+            blocked[*at].push(Contradiction {
+                records: [*a, *b],
+                constraint: by_constraint.get(&pair).cloned(),
+                rules: match by_constraint.contains_key(&pair) {
+                    true => Vec::new(),
+                    false => rule_names.get(&pair).cloned().unwrap_or_default(),
+                },
+            });
+        }
+    }
+    // A constraint is the decision of a person, so those come first.
+    for found in &mut blocked {
+        found.sort_by_key(|contradiction| contradiction.constraint.is_none());
+    }
 
     // Which identity each group becomes. An identity's home is the group
     // that holds most of its records, on a tie the first group.
