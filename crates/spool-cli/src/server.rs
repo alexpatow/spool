@@ -188,8 +188,14 @@ const GOOGLE_MINUTES: i64 = 10;
 const MAX_ASKING: usize = 8;
 
 /// The longest address to go back to after signing in with Google. It
-/// travels in a cookie, which has little room.
+/// travels in a cookie, which has little room. An authorization that does
+/// not fit is kept on the server instead, for as long as that cookie lasts.
 const MAX_NEXT_BYTES: usize = 1024;
+
+/// The longest authorization address kept while a browser is at Google, and
+/// how many are kept. Past these, the sign-in comes back to the first page.
+const MAX_HELD_BYTES: usize = 8 * 1024;
+const MAX_HELD: usize = 256;
 
 #[derive(Clone, Debug)]
 pub struct ServerOptions {
@@ -246,6 +252,8 @@ struct App {
     https: bool,
     google: Option<Arc<Provider>>,
     asking: Arc<Semaphore>,
+    /// Authorization addresses that do not fit in the Google sign-in cookie.
+    held: Held,
     issuer: Option<Arc<str>>,
     stopping: Stopping,
 }
@@ -364,6 +372,7 @@ fn router_until(engine: Arc<Engine>, options: &ServerOptions, stopping: Stopping
         https: options.https,
         google: options.google.clone().map(Provider::new).map(Arc::new),
         asking: Arc::new(Semaphore::new(MAX_ASKING)),
+        held: Held::default(),
         issuer: options
             .issuer
             .as_deref()
@@ -1062,16 +1071,73 @@ fn send_to(app: &App, to: &str, kept: Option<&str>) -> Response {
     response
 }
 
+/// An address of this server's own pages: one path, with no way out of it.
+fn own(next: &str) -> bool {
+    next.starts_with('/')
+        && !next[1..].starts_with(['/', '\\'])
+        && !next.contains(|c: char| c.is_control() || c == '\\')
+}
+
 /// An address of this server's own pages to go back to: `next` if it is
 /// one, and the first page if it could lead anywhere else.
 fn own_page(next: Option<&str>) -> &str {
-    let own = |next: &&str| {
-        next.len() <= MAX_NEXT_BYTES
-            && next.starts_with('/')
-            && !next[1..].starts_with(['/', '\\'])
-            && !next.contains(|c: char| c.is_control() || c == '\\')
-    };
-    next.filter(own).unwrap_or("/")
+    next.filter(|next| next.len() <= MAX_NEXT_BYTES && own(next))
+        .unwrap_or("/")
+}
+
+/// Where a browser goes back to after Google. An authorization carries the
+/// assistant's whole request, which can be longer than the sign-in cookie,
+/// and that one is kept whole up to a limit. Anything else too long to keep
+/// in the cookie, or that could lead off this server, is the first page.
+fn return_page(next: Option<&str>) -> String {
+    match next {
+        Some(next) if authorization(next) && own(next) && next.len() <= MAX_HELD_BYTES => {
+            next.to_owned()
+        }
+        other => own_page(other).to_owned(),
+    }
+}
+
+/// Whether `next` is the studio page where an assistant is approved. The
+/// query is the request, and it is what has to survive the sign-in.
+fn authorization(next: &str) -> bool {
+    let path = next
+        .split_once(['?', '#'])
+        .map(|(path, _)| path)
+        .unwrap_or(next);
+    path == oauth::AUTHORIZE && next.contains('?')
+}
+
+/// Authorization addresses waiting out a sign-in at Google. The cookie
+/// carries `held:<id>` and the address stays here, so a long `state` or
+/// redirect URI is not cut down to the first page.
+#[derive(Clone, Default)]
+struct Held(Arc<Mutex<Vec<(String, String, Instant)>>>);
+
+impl Held {
+    fn keep(&self, next: &str) -> String {
+        let mut held = self.0.lock().unwrap_or_else(|held| held.into_inner());
+        let now = Instant::now();
+        let for_so_long = Duration::from_secs(GOOGLE_MINUTES as u64 * 60);
+        held.retain(|(_, _, at)| now.saturating_duration_since(*at) < for_so_long);
+        if held.len() >= MAX_HELD {
+            held.remove(0);
+        }
+        let id = crate::accounts::code();
+        held.push((id.clone(), next.to_owned(), now));
+        format!("held:{id}")
+    }
+
+    fn take(&self, next: &str) -> Option<String> {
+        let id = next.strip_prefix("held:")?;
+        let mut held = self.0.lock().unwrap_or_else(|held| held.into_inner());
+        let now = Instant::now();
+        let for_so_long = Duration::from_secs(GOOGLE_MINUTES as u64 * 60);
+        let index = held.iter().position(|(found, _, at)| {
+            found == id && now.saturating_duration_since(*at) < for_so_long
+        })?;
+        Some(held.remove(index).1)
+    }
 }
 
 /// Sends the browser back to the page it came from, which says why nobody
@@ -1185,7 +1251,7 @@ async fn google_start(
         return Err(not_found().await);
     };
     let start = query(start)?;
-    let next = own_page(start.next.as_deref());
+    let next = return_page(start.next.as_deref());
     // Sending a browser there asks Google nothing once the server knows
     // where its sign-in is. Until then, it is one of the questions the
     // server has only so many of at once.
@@ -1193,7 +1259,7 @@ async fn google_start(
         true => None,
         false => match Arc::clone(&app.asking).try_acquire_owned() {
             Ok(permit) => Some(permit),
-            Err(_) => return Ok(turned_away(&app, next, "busy")),
+            Err(_) => return Ok(turned_away(&app, &next, "busy")),
         },
     };
     let start = move |provider: &Provider| {
@@ -1201,10 +1267,19 @@ async fn google_start(
         provider.start()
     };
     Ok(match asked(provider, start).await {
-        Ok(started) => send_to(&app, &started.url, Some(&Kept::written(&started, next))),
+        Ok(started) => {
+            // The cookie has room for a short address. A long authorization
+            // stays on the server, and the cookie carries only its reference.
+            let kept = if next.len() <= MAX_NEXT_BYTES {
+                next.clone()
+            } else {
+                app.held.keep(&next)
+            };
+            send_to(&app, &started.url, Some(&Kept::written(&started, &kept)))
+        }
         Err(failed) => {
             complain(&failed);
-            turned_away(&app, next, "unreachable")
+            turned_away(&app, &next, "unreachable")
         }
     })
 }
@@ -1239,14 +1314,22 @@ async fn google_callback(
     let Some(kept) = kept else {
         return Ok(turned_away(&app, "/", "expired"));
     };
-    let next = own_page(Some(&kept.next));
+    let next = match app.held.take(&kept.next) {
+        Some(address)
+            if authorization(&address) && own(&address) && address.len() <= MAX_HELD_BYTES =>
+        {
+            address
+        }
+        Some(_) => "/".to_owned(),
+        None => own_page(Some(&kept.next)).to_owned(),
+    };
     let code = match (back.code, back.error.as_deref()) {
         (Some(code), None) => code,
-        (_, Some("access_denied")) => return Ok(turned_away(&app, next, "cancelled")),
-        _ => return Ok(turned_away(&app, next, "failed")),
+        (_, Some("access_denied")) => return Ok(turned_away(&app, &next, "cancelled")),
+        _ => return Ok(turned_away(&app, &next, "failed")),
     };
     let Ok(permit) = Arc::clone(&app.asking).try_acquire_owned() else {
-        return Ok(turned_away(&app, next, "busy"));
+        return Ok(turned_away(&app, &next, "busy"));
     };
     let Kept {
         nonce, verifier, ..
@@ -1266,7 +1349,7 @@ async fn google_callback(
                 Failed::Unreachable(_) => "unreachable",
                 Failed::Refused(_) => "failed",
             };
-            return Ok(turned_away(&app, next, why));
+            return Ok(turned_away(&app, &next, why));
         }
     };
     // Without an address Google answers for, nobody is found by it.
@@ -1279,10 +1362,10 @@ async fn google_callback(
     })
     .await?;
     let Some((person, bound)) = entered else {
-        return Ok(turned_away(&app, next, why));
+        return Ok(turned_away(&app, &next, why));
     };
     begin(&session, &person.id, (GOOGLE, &bound)).await?;
-    Ok(send_to(&app, next, None))
+    Ok(send_to(&app, &next, None))
 }
 
 async fn list_people(State(app): State<App>) -> ApiResult {

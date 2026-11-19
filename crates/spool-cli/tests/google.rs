@@ -797,6 +797,62 @@ fn a_sign_in_comes_back_to_the_browser_it_left_from() {
     assert_eq!(location(&come_back(server, &leaving, &code)), "/");
 }
 
+/// An authorization carries the assistant's request, and that can be longer
+/// than the sign-in cookie. It comes back whole. A long address that is not
+/// one still comes back to the first page.
+#[test]
+fn a_long_authorization_survives_signing_in_with_google() {
+    let served = served();
+    let Served {
+        server, stand_in, ..
+    } = &served;
+    add_grace(&served);
+    let state = "s".repeat(2_000);
+    let next = format!("/oauth/authorize?response_type=code&state={state}");
+    assert!(next.len() > 1_024, "{}", next.len());
+
+    let leaving = leave(server, stand_in, &format!("?next={}", encoded(&next)));
+    assert!(
+        leaving.cookie.len() < next.len(),
+        "the cookie held the request: {}",
+        leaving.cookie.len()
+    );
+    let code = stand_in.sign_in(&GRACE, &leaving.sent);
+    assert_eq!(location(&come_back(server, &leaving, &code)), next);
+
+    // Turning Google away lands back on the same request, to sign in another way.
+    let again = leave(server, stand_in, &format!("?next={}", encoded(&next)));
+    let denied = browse(
+        server,
+        "GET",
+        &format!(
+            "/auth/google/callback?error=access_denied&state={}",
+            again.sent["state"]
+        ),
+        &again.cookie,
+    )
+    .send();
+    assert_eq!(location(&denied), format!("{next}&google=cancelled"));
+
+    let other = format!("/tokens?x={}", "a".repeat(2_000));
+    let leaving = leave(server, stand_in, &format!("?next={}", encoded(&other)));
+    let code = stand_in.sign_in(&GRACE, &leaving.sent);
+    assert_eq!(location(&come_back(server, &leaving, &code)), "/");
+}
+
+fn encoded(text: &str) -> String {
+    let mut out = String::new();
+    for byte in text.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char);
+            }
+            byte => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
 #[test]
 fn the_server_asks_google_about_so_many_sign_ins_at_once() {
     const AT_ONCE: usize = 8;
