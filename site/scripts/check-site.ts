@@ -20,6 +20,7 @@
  *   - every page, the home page and the explainer have what a link preview reads: a
  *     canonical link and an `og:url` to itself, a title, a description, and
  *     a card at an absolute address that answers with a PNG
+ *   - `/use-cases` is a permanent redirect to its page
  */
 import { spawn } from "bun";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
@@ -335,6 +336,13 @@ async function checkBuilt(pages: Page[]) {
       const card = await get(pathOf(image));
       if (card.status !== 200 || card.type !== "image/png") {
         fail(from, `its card ${pathOf(image)} answered ${card.status} ${card.type}`);
+      }
+    }
+    for (const [from, to] of [["/use-cases", "/docs/use-cases"]] as const) {
+      const response = await fetch(`${origin}${from}`, { redirect: "manual" });
+      const location = pathOf(response.headers.get("location") ?? "");
+      if (response.status !== 308 || location !== to) {
+        fail(from, `answered ${response.status} to ${location || "nowhere"}, not a permanent redirect to ${to}`);
       }
     }
     for (const icon of ["/favicon.ico", "/icon.svg", "/apple-icon"]) {

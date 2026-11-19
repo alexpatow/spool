@@ -10,6 +10,7 @@ import { colors, spacing } from "@/styles/shelf/tokens.stylex";
 const links = [
   { href: "/docs", label: "Docs" },
   { href: "/docs/getting-started", label: "Getting started" },
+  { href: "/docs/use-cases", label: "Use cases" },
   { href: "/docs/limits", label: "Limits" },
 ];
 

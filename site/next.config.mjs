@@ -12,6 +12,11 @@ const config = {
       { source: "/docs/:path*", headers: [{ key: "Vary", value: "Accept" }] },
     ];
   },
+  // A short address to share. The page lives in the docs so that it has a
+  // Markdown twin and a place in `llms.txt` like every other page.
+  async redirects() {
+    return [{ source: "/use-cases", destination: "/docs/use-cases", permanent: true }];
+  },
   // Every page is also Markdown at its own address plus `.md`.
   async rewrites() {
     return [
