@@ -31,7 +31,7 @@ set -eu
 
 # The release this script belongs to. The release workflow refuses a tag
 # that this line and Cargo.toml do not both name.
-VERSION=0.1.0
+VERSION=0.2.0
 
 # The oldest GNU C library the Linux builds start with.
 GLIBC=2.34

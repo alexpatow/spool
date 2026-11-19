@@ -3,7 +3,7 @@
 # A project's own Dockerfile, which `spool build` writes, starts from this
 # image, compiles the project into a manifest and runs `spool serve`.
 #
-#   docker build -t ghcr.io/alexpatow/spool:0.1.0 .
+#   docker build -t ghcr.io/alexpatow/spool:0.2.0 .
 #
 # A release's archives for Linux hold the two files this builds, with the man
 # pages and completions they write, and `release/linux.sh` takes them from

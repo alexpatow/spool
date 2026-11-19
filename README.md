@@ -45,7 +45,7 @@ notes:notes-1.txt[179-200]  Brightwater Foods Ltd    01a1efc6-43a9-7403-b9f6-1f8
 
 Twelve records, six companies. Acorn Tools is five records: four spellings in the CRM and "Acorn Tools Ltd" in the note. Its ID was minted by the first match and survived both later batches. The two Halden Groups are in different countries, and a rule keeps them apart.
 
-Spool 0.1.0 runs on Linux and macOS and is MIT licensed. The [docs](https://spool.alexpatow.com/docs) cover everything below in more depth.
+Spool 0.2.0 runs on Linux and macOS and is MIT licensed. The [docs](https://spool.alexpatow.com/docs) cover everything below in more depth.
 
 ## Getting started
 
@@ -57,9 +57,9 @@ Spool 0.1.0 runs on Linux and macOS and is MIT licensed. The [docs](https://spoo
 
 ### Install
 
-The script downloads the build for your platform, verifies its checksum, unpacks it to `~/.local/share/spool/0.1.0` and symlinks `~/.local/bin/spool`. It doesn't need root or touch your shell config. If `~/.local/bin` isn't on your `PATH`, it prints the line to add.
+The script downloads the build for your platform, verifies its checksum, unpacks it to `~/.local/share/spool/0.2.0` and symlinks `~/.local/bin/spool`. It also links the man pages and the bash, zsh and fish completions under `~/.local/share`. It doesn't need root or touch your shell config. If `~/.local/bin` isn't on your `PATH`, it prints the line to add.
 
-To install by hand, unpack `spool-0.1.0-<target>.tar.gz` from the [release](https://github.com/alexpatow/spool/releases/tag/v0.1.0) and put its `bin/` on your `PATH`. Keep `bin/` and `lib/` side by side, because the binary loads DuckDB from `../lib`. `spool --version` prints `spool 0.1.0`.
+To install by hand, unpack `spool-0.2.0-<target>.tar.gz` from the [release](https://github.com/alexpatow/spool/releases/tag/v0.2.0) and put its `bin/` on your `PATH`. Keep `bin/` and `lib/` side by side, because the binary loads DuckDB from `../lib`. `spool --version` prints `spool 0.2.0`.
 
 ### Create a project
 
@@ -204,7 +204,7 @@ Ctrl-C stops the server. Data stays in `.spool/dev.duckdb`. Delete `.spool/` to 
 
 ### With a coding agent
 
-From the release after 0.1.0, `spool init` also sets a project up for Claude Code, Codex and Cursor. It writes an `AGENTS.md` and skills in `.agents/skills/`, symlinked from `.claude/skills/`, that teach the agent to declare sources, write rules and extractors, and run the commands for your version of `spool`. After an upgrade, `spool update-skills` refreshes them. See [Coding agents](https://spool.alexpatow.com/docs/agents).
+`spool init` also sets a project up for Claude Code, Codex and Cursor. It writes an `AGENTS.md` and skills in `.agents/skills/`, symlinked from `.claude/skills/`, that teach the agent to declare sources, write rules and extractors, and run the commands for your version of `spool`. After an upgrade, `spool update-skills` refreshes them. See [Coding agents](https://spool.alexpatow.com/docs/agents).
 
 ## When to use something else
 
@@ -212,7 +212,7 @@ From the release after 0.1.0, `spool init` also sets a project up for Claude Cod
 - **A decision inside every request:** [Senzing](https://senzing.com) resolves each record as it arrives.
 - **People and companies already in FollowTheMoney:** [nomenklatura](https://github.com/opensanctions/nomenklatura).
 
-[Compared with other tools](https://spool.alexpatow.com/docs/compared) goes through each. [Limits](https://spool.alexpatow.com/docs/limits) lists what 0.1.0 doesn't do.
+[Compared with other tools](https://spool.alexpatow.com/docs/compared) goes through each. [Limits](https://spool.alexpatow.com/docs/limits) lists what 0.2.0 doesn't do.
 
 ## Where next
 

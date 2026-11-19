@@ -152,7 +152,13 @@ fn show_lists_what_a_server_holds() {
     let run = shown(&server, &["show", "runs", "2"]);
     has(&run, "kind           match");
     has(&run, "started by     agent:api");
-    has(&run, "strategy       rules, version 0.1.0");
+    has(
+        &run,
+        &format!(
+            "strategy       rules, version {}",
+            env!("CARGO_PKG_VERSION")
+        ),
+    );
     has(
         &run,
         "examined       4 records, 0 of them left for review before",
