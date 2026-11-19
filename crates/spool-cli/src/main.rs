@@ -15,6 +15,7 @@ use clap::{ColorChoice, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use commands::{
     bench, extract, init, load, matching, project, recompute, reset, retract, serve, show, token,
+    update_skills,
 };
 
 /// Extract, resolve and track entities
@@ -57,6 +58,7 @@ enum Command {
     Explain(show::ExplainArgs),
     Retract(retract::RetractArgs),
     Reset(reset::ResetArgs),
+    UpdateSkills(update_skills::UpdateSkillsArgs),
     Build(project::BuildArgs),
     Apply(project::ApplyArgs),
     Serve(serve::ServeArgs),
@@ -267,6 +269,7 @@ fn run(command: Command) -> (Vec<&'static str>, Result<(), Failure>) {
         Command::Explain(args) => (vec!["explain"], show::explain(args)),
         Command::Retract(args) => (vec!["retract"], retract::retract(args)),
         Command::Reset(args) => (vec!["reset"], reset::reset(args)),
+        Command::UpdateSkills(args) => (vec!["update-skills"], update_skills::update_skills(args)),
         Command::Build(args) => (vec!["build"], project::build(args)),
         Command::Apply(args) => (vec!["apply"], project::apply(args)),
         Command::Serve(args) => (vec!["serve"], serve::serve(args)),
@@ -325,6 +328,169 @@ mod tests {
             super::reference::page(&mut Cli::command()),
             snapbox::Data::read_from(&page, None).raw(),
         );
+    }
+
+    /// Every `spool` command in the files for agents is one this binary
+    /// takes, with options it has and values they take: those in shell
+    /// blocks, in inline code, and the commands and options a skill's
+    /// description names.
+    #[test]
+    fn the_files_for_agents_name_only_commands_and_options_spool_has() {
+        use super::commands::update_skills::{AGENTS, SKILLS};
+        use clap::error::ErrorKind;
+
+        let mut files = vec![("AGENTS.md", AGENTS)];
+        files.extend(SKILLS);
+        let mut checked = 0;
+        for (file, text) in files {
+            for (command, inline) in commands_in(text) {
+                let words = shell_words(&command);
+                // `spool <command> --help` stands for any command.
+                if words.get(1).is_some_and(|word| word.starts_with('<')) {
+                    continue;
+                }
+                // A placeholder such as `<run>` or `<id>` stands for a value: a
+                // number or an ID.
+                let given = |value: &str| -> Vec<String> {
+                    words
+                        .iter()
+                        .map(|word| match word.starts_with('<') && word.ends_with('>') {
+                            true => value.to_owned(),
+                            false => word.clone(),
+                        })
+                        .collect()
+                };
+                let parsed = Cli::command()
+                    .try_get_matches_from(given("1"))
+                    .or_else(|_| {
+                        Cli::command()
+                            .try_get_matches_from(given("01a1efc6-41cd-775d-8758-e7300637659a"))
+                    });
+                match parsed {
+                    Ok(_) => {}
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
+                        ) => {}
+                    // Inline code may name a command without what it needs, as in
+                    // "`spool explain` says why".
+                    Err(error)
+                        if inline
+                            && matches!(
+                                error.kind(),
+                                ErrorKind::MissingRequiredArgument
+                                    | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+                            ) => {}
+                    Err(error) => {
+                        panic!("{file}: `{command}` is not a command spool takes:\n{error}")
+                    }
+                }
+                checked += 1;
+            }
+            let description = text
+                .lines()
+                .find_map(|line| line.strip_prefix("description: "))
+                .unwrap_or_default();
+            for named in description.split("spool ").skip(1) {
+                let mut words = named
+                    .split([' ', ',', '.'])
+                    .take_while(|word| !word.is_empty());
+                let name = words.next().unwrap_or_default();
+                let cli = Cli::command();
+                let command = cli
+                    .find_subcommand(name)
+                    .unwrap_or_else(|| panic!("{file}: the description names `spool {name}`"));
+                for option in words.take_while(|word| word.starts_with("--")) {
+                    assert!(
+                        command
+                            .get_arguments()
+                            .any(|arg| arg.get_long() == Some(&option[2..])),
+                        "{file}: the description names `spool {name} {option}`"
+                    );
+                }
+            }
+        }
+        assert!(checked > 50, "only {checked} commands were found to check");
+    }
+
+    /// The `spool` commands in shell blocks and in inline code, and whether
+    /// each is inline: each from `spool` to the end of its command, where a
+    /// pipe, `&&`, `;`, a redirection or the end of `$(...)` ends it.
+    fn commands_in(text: &str) -> Vec<(String, bool)> {
+        let mut found = Vec::new();
+        let mut shell = None;
+        for line in text.lines() {
+            let trimmed = line.trim_start();
+            if let Some(language) = trimmed.strip_prefix("```") {
+                shell = match shell {
+                    Some(_) => None,
+                    None => Some(matches!(language, "sh" | "bash" | "shell")),
+                };
+                continue;
+            }
+            let spans: Vec<&str> = match shell {
+                Some(true) => vec![line],
+                Some(false) => Vec::new(),
+                None => line.split('`').skip(1).step_by(2).collect(),
+            };
+            for span in spans {
+                let span = span.split(" #").next().unwrap_or_default();
+                let mut rest = span;
+                while let Some(at) = rest.find("spool ") {
+                    let before = rest[..at].trim_end();
+                    let starts = before.is_empty()
+                        || ["$(", "|", "&&", ";", "="]
+                            .iter()
+                            .any(|end| before.ends_with(end));
+                    rest = &rest[at..];
+                    if starts {
+                        let end = ["|", ";", ")", " >", "&&"]
+                            .iter()
+                            .filter_map(|end| rest.find(end))
+                            .min()
+                            .unwrap_or(rest.len());
+                        found.push((rest[..end].trim().to_owned(), shell.is_none()));
+                        rest = &rest[end..];
+                    } else {
+                        rest = &rest["spool ".len()..];
+                    }
+                }
+            }
+        }
+        found
+    }
+
+    /// A command as the shell splits it into words, for what the files have:
+    /// spaces, and single and double quotes.
+    fn shell_words(command: &str) -> Vec<String> {
+        let mut words = Vec::new();
+        let mut word = String::new();
+        let mut quote = None;
+        let mut started = false;
+        for c in command.chars() {
+            match (quote, c) {
+                (None, '\'' | '"') => {
+                    quote = Some(c);
+                    started = true;
+                }
+                (Some(open), _) if c == open => quote = None,
+                (None, ' ') => {
+                    if started {
+                        words.push(std::mem::take(&mut word));
+                        started = false;
+                    }
+                }
+                _ => {
+                    word.push(c);
+                    started = true;
+                }
+            }
+        }
+        if started {
+            words.push(word);
+        }
+        words
     }
 
     /// Every command's `-h`, against the snapshot in `tests/snapshots/help`.

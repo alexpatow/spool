@@ -11,6 +11,7 @@ pub mod retract;
 pub mod serve;
 pub mod show;
 pub mod token;
+pub mod update_skills;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;

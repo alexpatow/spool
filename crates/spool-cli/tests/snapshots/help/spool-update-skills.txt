@@ -1,0 +1,18 @@
+Update the skills and AGENTS.md that tell coding agents how to use Spool
+
+Usage: spool update-skills [OPTIONS] [DIR]
+
+Arguments:
+  [DIR]  The project directory [default: the current directory]
+
+Options:
+      --force  Replace the files somebody edited as well
+  -h, --help   Print help (see more with '--help')
+
+Output options:
+  -o, --output <OUTPUT>  Output format [default: table] [possible values: table, json, ndjson, csv]
+      --json             Shorthand for `--output json`
+
+Global options:
+      --color <WHEN>  When to use colour [default: auto] [possible values: auto, always, never]
+  -q, --quiet         Print only the result and errors: no hints or progress
