@@ -1155,6 +1155,7 @@ impl Tools {
                     identity: text(asked.identity),
                     q: asked.q,
                     unassigned: asked.unassigned,
+                    latest: None,
                     after: text(asked.after),
                     limit: limit(asked.limit),
                     sort: None,

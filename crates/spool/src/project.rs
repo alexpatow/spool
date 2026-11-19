@@ -143,6 +143,11 @@ pub struct EntityTypeManifest {
     /// other source are not records of this type.
     #[serde(default)]
     pub sources: Vec<String>,
+    /// Source, then feature, then the columns it is computed from: the
+    /// mapping of `entity.yaml`. The declaration's query is written from
+    /// it, so it is said here for people, not for the engine.
+    #[serde(default)]
+    pub mapping: BTreeMap<String, BTreeMap<String, Mapped>>,
     pub rules: RuleSet,
     /// User-code strategies. Left out of the JSON when there are none, so a
     /// project of SQL files has the manifest hash it always had.
@@ -280,6 +285,16 @@ pub struct Transform {
     pub name: String,
     pub parameters: Vec<String>,
     pub body: String,
+}
+
+/// Where a feature comes from in one source: its columns, and the
+/// transform or function they go through, if any.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct Mapped {
+    pub from: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transform: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -665,6 +680,7 @@ impl Project {
                 name,
                 declaration,
                 sources: entity.sources,
+                mapping: entity.mapping,
                 rules,
                 strategies,
                 extract: source
@@ -767,6 +783,7 @@ struct Entity {
     transforms: Vec<Transform>,
     /// The sources the mapping reads, in name order.
     sources: Vec<String>,
+    mapping: BTreeMap<String, BTreeMap<String, Mapped>>,
 }
 
 /// A name that can stand in SQL without quotes: lowercase letters, digits
@@ -984,6 +1001,7 @@ fn entity_of(
     // Feature, then the expression each source computes it with.
     let mut expressions: BTreeMap<&str, Vec<(&str, String)>> = BTreeMap::new();
     let mut used: BTreeMap<&str, &Transform> = BTreeMap::new();
+    let mut mapping: BTreeMap<String, BTreeMap<String, Mapped>> = BTreeMap::new();
     for (source_name, mapped) in &written.mapping {
         let source = sources
             .iter()
@@ -1054,6 +1072,13 @@ fn entity_of(
                     format!("{function}({})", arguments.join(", "))
                 }
             };
+            mapping.entry(source_name.clone()).or_default().insert(
+                feature.clone(),
+                Mapped {
+                    from: from.iter().map(|column| (*column).to_owned()).collect(),
+                    transform: transform.map(str::to_owned),
+                },
+            );
             expressions
                 .entry(feature.as_str())
                 .or_default()
@@ -1083,6 +1108,7 @@ fn entity_of(
         label: written.label,
         transforms: used.into_values().cloned().collect(),
         sources: written.mapping.into_keys().collect(),
+        mapping,
     })
 }
 

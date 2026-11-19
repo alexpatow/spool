@@ -130,7 +130,28 @@ spool info
 
 ```text title="Output"
 project   .
-manifest  1b5bcad3e1423fb5c73a2c77100fc5f66acd8b6741243207eb33ac0d9682fedd
+manifest  b029d760b47cc17cf9a8d0546f50d221b2919f5993438ece7dd4f159b695e056
+
+source `crm`
+  read by   company
+  column   becomes, in `company`
+  id       the key of each row
+  name     name, name_key = name_key(name)
+  country  country
+  website  domain = domain_of(website)
+
+source `notes`
+  read by   company
+  column  becomes, in `company`
+  name    name, name_key = name_key(name)
+
+source `registry`
+  read by   company
+  column      becomes, in `company`
+  number      the key of each row
+  legal_name  name, name_key = name_key(legal_name)
+  country     country = upper(country)
+  founded     founded = founded_date(founded)
 
 entity type `company`
   features  record_id UUID, name VARCHAR, name_key VARCHAR, country VARCHAR, domain VARCHAR, founded DATE

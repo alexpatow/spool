@@ -45,9 +45,10 @@ Everything Spool does is a call of this API. The command line, the studio and th
 | `POST /v1/runs/{run}/judgements` | Sends judgements for those pairs |
 | `POST /v1/runs/{run}/reconcile` | Turns a run's judgements into a changeset |
 | `POST /v1/runs/{run}/cancel` | Cancels a run that waits for judgements, or stops a running extraction and keeps nothing it found |
-| `GET /v1/records` | Records by `entity_type`, `source`, `key`, `document`, `identity`, words in `q`, or `unassigned` |
+| `GET /v1/records` | Records by `entity_type`, `source`, `key`, `document`, `identity`, words in `q`, or `unassigned`. `latest=true` leaves out the versions that later loads replaced, as it does for documents |
 | `GET /v1/records/{record}` | One record |
 | `POST /v1/records/identities` | The identity of each of many records |
+| `GET /v1/attributes` | For each entity type and source, by `entity_type` or `source`: the records that stand, and for each attribute how many have a value, how many values it takes, the three most common, and the features made from it |
 | `GET /v1/identities` | Identities by `entity_type`, words in `q`, or `ids`. Each says how many `members` and `names` it has, and how many of its pairs of members a link joins (`linked_pairs`) and how many only a chain (`unlinked_pairs`), as [`spool show identities`](/docs/cli#spool-show) explains. `sort=names` orders them by how many names |
 | `GET /v1/identities/{identity}` | One identity and its records. An ID that was merged away answers with the identity that took its place |
 | `GET /v1/identities/{identity}/history` | Every changeset that touched it |

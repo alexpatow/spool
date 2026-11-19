@@ -25,6 +25,7 @@
 //! Identity rules live in [`spool_core`], which is re-exported as
 //! [`core`].
 
+mod attributes;
 mod batch;
 mod bench;
 mod documents;
@@ -59,6 +60,9 @@ mod versions;
 pub use duckdb::arrow;
 pub use spool_core as core;
 
+pub use attributes::{
+    AttributeFilter, AttributeGroup, AttributeSummary, COMMON_VALUES, DerivedFeature, ValueCount,
+};
 pub use bench::{
     BenchReport, CorrectionSummary, DocumentsSummary, ExtractSummary, IngestSummary,
     PossibleSplits, RetractSummary, Scenario, StepReport,
@@ -90,8 +94,9 @@ pub use metrics::{
 };
 pub use order::{ActorNames, Direction, Sort};
 pub use project::{
-    Declaration, EntityTypeManifest, EntityTypeSource, Extractor, FeatureColumn, Manifest, Project,
-    Rule, RuleSet, Runtime, Source, SqlFile, Strategy, StrategySource, Transform, YamlFile,
+    Declaration, EntityTypeManifest, EntityTypeSource, Extractor, FeatureColumn, Manifest, Mapped,
+    Project, Rule, RuleSet, Runtime, Source, SqlFile, Strategy, StrategySource, Transform,
+    YamlFile,
 };
 pub use recompute::{
     After, AppliedType, ApprovedPlacement, Before, Change, ChangeDetail, ChangeKind,
@@ -106,4 +111,5 @@ pub use review::{
 };
 pub use rows::Rows;
 pub use runs::{RunEntry, RunFilter, RunKind, RunSort, RunStatus};
+pub use store::{StoreHold, hold_store};
 pub use usercode::{Code, Running, UserCode};

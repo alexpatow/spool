@@ -1008,6 +1008,7 @@ mod tests {
             .map(|name| DeclaredSource {
                 name: (*name).to_owned(),
                 key: None,
+                evidence: None,
                 columns: vec!["name".to_owned()],
                 entity_types: Vec::new(),
             })

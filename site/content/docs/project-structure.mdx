@@ -230,7 +230,19 @@ spool info
 
 ```text title="Output"
 project   .
-manifest  43818eb1654f89696c341d3bea519c22dd3bfb68f67e8f01edfdb38e59781926
+manifest  6a47f57b2cc07cfc595c5b065888ee31b119843a924bb21c6b2340de44cdeae5
+
+source `crm`
+  read by   company
+  column   becomes, in `company`
+  id       the key of each row
+  name     name, name_key = name_key(name)
+  country  country
+
+source `notes`
+  read by   company
+  column  becomes, in `company`
+  name    name, name_key = name_key(name)
 
 entity type `company`
   features  record_id UUID, name VARCHAR, name_key VARCHAR, country VARCHAR

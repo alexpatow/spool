@@ -10,10 +10,11 @@ description: Every spool command, what it takes and what it prints.
 | [`spool init`](#spool-init) | Makes a project, empty or with an example's sample rows | A directory |
 | [`spool info`](#spool-info) | Lists what a project declares and checks its SQL | A directory |
 | [`spool dev`](#spool-dev) | Runs the server on this machine and applies file changes as they are saved | A directory |
+| [`spool reset`](#spool-reset) | Starts the development store of `spool dev` over | A directory |
 | [`spool load`](#spool-load) | Loads a file of rows | A running server |
 | [`spool extract`](#spool-extract) | Stores text files as documents and runs an extractor | A running server |
 | [`spool match`](#spool-match) | Matches the records that are new, of every entity type | A running server |
-| [`spool show`](#spool-show) | Shows runs, records, identities, documents, review items, drafts and the log | A running server |
+| [`spool show`](#spool-show) | Shows runs, records and their attributes, identities, documents, review items, drafts and the log | A running server |
 | [`spool explain`](#spool-explain) | Says why two records share an identity, or why they do not, and what holds an identity together | A running server |
 | [`spool retract`](#spool-retract) | Takes back rows a source no longer holds | A running server |
 | [`spool build`](#spool-build) | Checks a project and compiles it into a manifest | A directory |
@@ -110,7 +111,7 @@ The project's `.env` sets environment variables for its extractors and strategie
 
 `spool info [<dir>] [--json]`
 
-Lists the project's sources, entity types, features, rules, strategies and extractors, and checks every SQL file on the way. It needs no server.
+Lists the project's sources, with each source's columns and the features each column becomes, its entity types, with their features, rules and strategies, and its extractors. It checks every SQL file on the way, and needs no server. What the records hold in those columns is on the server, and [`spool show attributes`](#spool-show) shows it.
 
 ```sh
 spool info
@@ -118,7 +119,19 @@ spool info
 
 ```text title="Output"
 project   .
-manifest  d7d4b712d86302152897a67a5924cd1c2e26594e049685c2f007177e20633946
+manifest  23bbe93da95b1a8eb2db113e84015a42ce7cce7d0a3fc431369c4114a59bbacb
+
+source `crm`
+  read by   company
+  column   becomes, in `company`
+  id       the key of each row
+  name     name, name_key = name_key(name)
+  country  country
+
+source `notes`
+  read by   company
+  column  becomes, in `company`
+  name    name, name_key = name_key(name)
 
 entity type `company`
   features  record_id UUID, name VARCHAR, name_key VARCHAR, country VARCHAR
@@ -148,7 +161,7 @@ spool dev
 ```text title="Output"
 project   .
 store     ./.spool/dev.duckdb
-applied   d7d4b712d86302152897a67a5924cd1c2e26594e049685c2f007177e20633946 (declared company)
+applied   23bbe93da95b1a8eb2db113e84015a42ce7cce7d0a3fc431369c4114a59bbacb (declared company)
 accounts  ./.spool/dev.auth.sqlite
 listening on http://127.0.0.1:7765
 studio    http://127.0.0.1:7765/
@@ -189,7 +202,7 @@ spool: cannot listen on 127.0.0.1:7765: something else is listening there, perha
 Give this one another port by adding `--listen 127.0.0.1:7766` to the command, and point the commands that call it there with SPOOL_URL=http://127.0.0.1:7766.
 ```
 
-Ctrl-C stops it. It finishes the runs it was given first.
+Ctrl-C stops it. It finishes the runs it was given first. [`spool reset`](#spool-reset) starts its store over.
 
 ## spool load
 
@@ -287,6 +300,7 @@ extractor `companies` (python, extractors/companies.py)
 | --- | --- | --- |
 | `runs [<run>]` | The latest runs | One run and what it reported |
 | `records [<record>]` | Records | One record with its payload and evidence |
+| `attributes` | For each entity type and source, the attributes of the records | |
 | `identities [<identity>]` | Identities | One identity with its records, constraints and history |
 | `documents [<document>]` | Documents | One document with its text |
 | `review [<item>]` | Review items | One item with its records |
@@ -297,19 +311,22 @@ A record is named by its ID or as `<source>:<key>`, which names the latest versi
 
 | Option | Meaning | Applies to |
 | --- | --- | --- |
-| `--type <name>` | Only this entity type | runs, identities, records, review, drafts |
+| `--type <name>` | Only this entity type | runs, identities, records, attributes, review, drafts |
 | `--status <status>` | Only this status | runs, review, drafts |
 | `--kind <kind>` | Only runs of this kind: `load`, `extract`, `match`, `reconcile`, `retract` | runs |
-| `--source <name>` | Only this source | records, documents |
+| `--source <name>` | Only this source | records, attributes, documents |
 | `--key <key>` | Only this key within its source | records, documents |
 | `--document <id>` | Only the records found in this document | records |
 | `--unassigned` | Only records that wait for an identity | records |
-| `--latest` | Only the version of each document that nothing replaced | documents |
+| `--all-versions` | Every version, the ones later loads replaced as well | records, documents |
+| `--attributes` | A column for each attribute of the records | records |
 | `--ids` | List each record's ID as well | records |
 | `--sort <column>` | List identities by `records`, `names`, `sources`, `label`, `entity_type`, `created` or `id` | identities |
 | `--order <order>` | `asc` or `desc`, with `--sort` (default `asc`) | identities |
 | `--after <id>` | Continue a list after this ID, or the log after this position, in the order of the list | lists |
 | `--limit <n>` | List at most this many | lists |
+
+A list of records or documents shows the version of each that nothing replaced: the row as its source last sent it, or a mention as the latest version of its document holds it. `--all-versions` lists the replaced versions too, with a column that says which is current.
 
 ```sh
 spool show runs
@@ -357,6 +374,42 @@ identity                              name        members  names  unlinked pairs
 01a1f132-2c64-71b6-b804-62474d9ea066  Surname2    579      9      72%             log position 1
 
 more: add `--after 01a1f132-2c64-71b6-b804-62474d9ea066`
+```
+
+Before writing rules, `spool show attributes` says what the records hold. For each entity type and source it counts the records that stand, the latest version of each that its source has not taken back, and for each attribute says how many of them have a value, how many values it takes, the most common, and the features the type makes from it. Where every value is held by one record, the values are examples:
+
+```sh
+spool show attributes
+```
+
+```text title="Output"
+entity type `company`, source `crm`: 6 records
+attribute  filled    distinct  most common                                            features
+id (key)   6 (100%)  6         e.g. c-1, c-2, c-3, …                                  -
+name       6 (100%)  5         Halden Group (2), ACORN TOOLS (1), Acorn Tools (1), …  name, name_key = name_key(name)
+country    6 (100%)  2         GB (5), US (1)                                         country
+
+entity type `company`, source `notes`: 3 records
+attribute  filled    distinct  most common                                                           features
+name       3 (100%)  3         e.g. Acorn Tools Ltd, Brightwater Foods Ltd, Larkfield Logistics Ltd  name, name_key = name_key(name)
+
+`spool show records --attributes` lists the values record by record.
+```
+
+`spool show records --attributes` lists the values themselves, a column for each attribute:
+
+```sh
+spool show records --source crm --attributes
+```
+
+```text title="Output"
+source and key  name                 country  identity
+crm:c-1         Acorn Tools          GB       01a1efc6-41cd-775d-8758-e7300637659a
+crm:c-2         ACORN TOOLS          GB       01a1efc6-41cd-775d-8758-e7300637659a
+crm:c-3         Acorn Tools Ltd      GB       01a1efc6-41cd-775d-8758-e7300637659a
+crm:c-4         Larkfield Logistics  GB       01a1efc6-41cd-775d-8758-e733aa086f7d
+crm:c-5         Halden Group         GB       01a1efc6-41cd-775d-8758-e7329447fd9a
+crm:c-6         Halden Group         US       01a1efc6-41cd-775d-8758-e731c61371cb
 ```
 
 ```sh
@@ -497,6 +550,52 @@ spool retract --source crm --type company c-6 --reason "deleted in the CRM"
 run 7: 1 key named, 1 record taken back
 1 record left an identity, by the changeset at log position 2
 ```
+
+## spool reset
+
+`spool reset [<dir>] [--store <path>] [--yes]`
+
+Starts the development store of `spool dev` over, so that the next `spool dev` begins with an empty one. It removes the store under `.spool/`, with every row, document, identity, run and changeset in it, after saying what it removes and what it keeps. It keeps the project's files, the accounts and tokens of `spool dev`, the manifest `spool build` wrote, and everything else under `.spool/`, such as what an extractor keeps there.
+
+It asks before it removes anything, and where nobody can answer, as in a script, it removes nothing unless given `--yes`. It removes nothing while a `spool dev` has the store open:
+
+{/* sample: fails */}
+
+```sh
+spool reset --yes
+```
+
+```text title="Output"
+spool: the store .spool/dev.duckdb is open in another process (PID 5033), most likely a `spool dev` on this project.
+Stop it with Ctrl-C, then run `spool reset` again. Nothing was removed.
+```
+
+Stopped, it goes ahead:
+
+{/* sample: stop servers */}
+
+```sh
+spool reset --yes
+```
+
+```text title="Output"
+This starts the development store of this project over.
+
+removes
+  .spool/dev.duckdb      12.0 KB
+  .spool/dev.duckdb.wal  32.2 KB
+
+keeps
+  .spool/dev.auth.sqlite  the accounts and tokens of `spool dev`
+  the project's files     everything outside .spool/
+
+removed  .spool/dev.duckdb
+removed  .spool/dev.duckdb.wal
+
+The next `spool dev` starts with an empty store. `spool load` and `spool extract` fill it again.
+```
+
+`--store` names the store if `spool dev` was given one; it has to be a `.duckdb` file directly under `.spool/`. A store anywhere else may be the one a `spool serve` runs on, and `spool reset` refuses it.
 
 ## spool build
 

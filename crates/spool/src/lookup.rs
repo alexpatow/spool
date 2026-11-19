@@ -140,6 +140,8 @@ pub struct RecordFilter {
     /// Only those that wait for an identity: they have none, and their
     /// source has not taken them back.
     pub unassigned: bool,
+    /// Only the version of each row or mention that nothing has replaced.
+    pub latest: bool,
     /// Only those that come after this record in the list: the last one of
     /// the page before. A record the store does not hold is refused.
     pub after: Option<RecordId>,
@@ -158,6 +160,7 @@ impl Default for RecordFilter {
             identity: None,
             q: None,
             unassigned: false,
+            latest: false,
             after: None,
             limit: 100,
             sort: None,
@@ -422,6 +425,10 @@ pub struct DeclaredSource {
     /// The column that holds each row's key within the source, if the
     /// source names one.
     pub key: Option<String>,
+    /// The column of JSON text that says where each row was found, if the
+    /// source names one. It is a record's evidence, not part of its payload.
+    #[serde(default)]
+    pub evidence: Option<String>,
     /// The columns a row of it may have. A row with any other is refused.
     pub columns: Vec<String>,
     /// The entity types whose mapping reads the source, by name. Its rows
@@ -657,6 +664,7 @@ pub(crate) fn records(conn: &Connection, filter: &RecordFilter) -> Result<Vec<Re
            AND ($7::VARCHAR IS NULL
                 OR json_extract_string(o.evidence, '$.document') = $7::VARCHAR)
            AND ($8::VARCHAR IS NULL OR m.identity_id = $8::UUID)
+           AND (NOT $10::BOOLEAN OR later.record_id IS NULL)
            AND {}",
         holds_words("$9")
     );
@@ -713,6 +721,7 @@ pub(crate) fn records(conn: &Connection, filter: &RecordFilter) -> Result<Vec<Re
         filter.document.map(|id| id.to_string()),
         filter.identity.map(|id| id.to_string()),
         words(filter.q.as_deref()),
+        filter.latest,
     ])?;
     let mut found = Vec::new();
     while let Some(row) = rows.next()? {
@@ -1252,6 +1261,7 @@ fn declared_sources(manifest: &Manifest) -> Vec<DeclaredSource> {
         .map(|source| DeclaredSource {
             name: source.name.clone(),
             key: source.key.clone(),
+            evidence: source.evidence.clone(),
             columns: source.columns.clone(),
             entity_types: manifest
                 .entity_types

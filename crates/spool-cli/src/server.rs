@@ -86,10 +86,10 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use spool::core::{Actor, Changeset, DocumentId, EntityType, Policy, RecordId, RunId, Seq};
 use spool::{
-    ActorNames, ConstraintFilter, Direction, Disposition, DocumentFilter, DocumentSort,
-    DraftFilter, DraftStatus, Engine, ExtractOptions, IdentityFilter, IdentitySort, LogSort,
-    RecordFilter, RecordSort, ResolveOptions, ReviewFilter, ReviewStatus, Rows, RunFilter, RunKind,
-    RunSort, RunStatus, Scope, Sort, StrategyRef, watch_runs,
+    ActorNames, AttributeFilter, ConstraintFilter, Direction, Disposition, DocumentFilter,
+    DocumentSort, DraftFilter, DraftStatus, Engine, ExtractOptions, IdentityFilter, IdentitySort,
+    LogSort, RecordFilter, RecordSort, ResolveOptions, ReviewFilter, ReviewStatus, Rows, RunFilter,
+    RunKind, RunSort, RunStatus, Scope, Sort, StrategyRef, watch_runs,
 };
 use tokio::net::TcpListener;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch};
@@ -101,14 +101,14 @@ use crate::accounts::{
     Accounts, Change, Entered, GOOGLE, MARK, MAX_USERNAME, New, PERSON, Refused,
 };
 use crate::api::{
-    self, ARROW_STREAM, AddPersonRequest, AddTokenRequest, AddedToken, CandidateList,
-    ChangePersonRequest, ChangesetList, CommitRequest, ConstraintList, DismissRequest,
-    DocumentList, DocumentsRequest, DraftList, ErrorBody, ErrorCode, ErrorResponse, ExtractRequest,
-    History, IdentitiesOfRequest, IdentitiesOfResponse, IdentityList, Info, JudgementsRequest,
-    JudgementsResponse, LoadParams, LoadRequest, MatchRequest, MintRequest, PasswordRequest,
-    Person, PersonList, ReconcileRequest, RecordList, RejectDraftRequest, RetractRequest,
-    ReviewList, RunList, RunResponse, SessionState, SetupRequest, SignInRequest, SplitRequest,
-    TokenList, UndoRequest,
+    self, ARROW_STREAM, AddPersonRequest, AddTokenRequest, AddedToken, AttributeList,
+    CandidateList, ChangePersonRequest, ChangesetList, CommitRequest, ConstraintList,
+    DismissRequest, DocumentList, DocumentsRequest, DraftList, ErrorBody, ErrorCode, ErrorResponse,
+    ExtractRequest, History, IdentitiesOfRequest, IdentitiesOfResponse, IdentityList, Info,
+    JudgementsRequest, JudgementsResponse, LoadParams, LoadRequest, MatchRequest, MintRequest,
+    PasswordRequest, Person, PersonList, ReconcileRequest, RecordList, RejectDraftRequest,
+    RetractRequest, ReviewList, RunList, RunResponse, SessionState, SetupRequest, SignInRequest,
+    SplitRequest, TokenList, UndoRequest,
 };
 use crate::delimited::{self, Malformed};
 use crate::google::{Failed, Google, Provider, Started};
@@ -404,6 +404,7 @@ fn router_until(engine: Arc<Engine>, options: &ServerOptions, stopping: Stopping
         .route("/records", get(list_records))
         .route("/records/identities", post(identities_of))
         .route("/records/{record}", get(read_record))
+        .route("/attributes", get(list_attributes))
         .route("/explain", get(explain))
         .route("/review", get(list_review))
         .route("/review/{item}", get(read_review))
@@ -2361,6 +2362,7 @@ struct RecordsQuery {
     identity: Option<String>,
     q: Option<String>,
     unassigned: Option<bool>,
+    latest: Option<bool>,
     after: Option<String>,
     limit: Option<u64>,
     sort: Option<RecordSort>,
@@ -2389,6 +2391,7 @@ async fn list_records(
             .transpose()?,
         q: params.q,
         unassigned: params.unassigned.unwrap_or(false),
+        latest: params.latest.unwrap_or(false),
         after: params
             .after
             .as_deref()
@@ -2402,6 +2405,28 @@ async fn list_records(
         .then(|| records.last().map(|record| record.id))
         .flatten();
     ok(RecordList { records, next })
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AttributesQuery {
+    entity_type: Option<EntityType>,
+    source: Option<String>,
+}
+
+/// What the attributes of the records that stand hold, for each entity
+/// type and source.
+async fn list_attributes(
+    State(app): State<App>,
+    params: Result<Query<AttributesQuery>, QueryRejection>,
+) -> ApiResult {
+    let params = query(params)?;
+    let filter = AttributeFilter {
+        entity_type: params.entity_type,
+        source: params.source,
+    };
+    let groups = engine(&app, move |engine| engine.attributes(&filter)).await?;
+    ok(AttributeList { groups })
 }
 
 async fn read_record(State(app): State<App>, Path(record): Path<String>) -> ApiResult {

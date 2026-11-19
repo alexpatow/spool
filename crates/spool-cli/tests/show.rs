@@ -1061,6 +1061,165 @@ fn a_source_and_key_name_the_latest_version_however_many_there_were() {
 }
 
 #[test]
+fn the_attributes_of_the_records_that_stand_are_shown_across_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("project");
+    write_things(&project);
+    let server = Server::serve(&project, dir.path(), 1);
+    load(
+        &server,
+        "shop",
+        "thing",
+        rows(&[
+            &["id", "code", "colour", "name", "weight"],
+            &["1", "anvil", "black", "Big anvil", "40"],
+            &["2", "anvil", "black", "", "40"],
+            &["3", "anvil", "red", "Red anvil", ""],
+            &["4", "hammer", "black", "", ""],
+        ]),
+    );
+    // A new version of a row replaces the old one, and a row its source
+    // took back stands no more: neither is counted.
+    load(
+        &server,
+        "shop",
+        "thing",
+        rows(&[
+            &["id", "code", "colour", "name", "weight"],
+            &["1", "anvil", "grey", "Big anvil", "40"],
+        ]),
+    );
+    server.call(
+        "/v1/retract",
+        json!({ "source": "shop", "entity_type": "thing", "keys": ["4"] }),
+    );
+
+    let shop = shown(&server, &["show", "attributes", "--source", "shop"]);
+    has(&shop, "entity type `thing`, source `shop`: 3 records");
+    has(&shop, "attribute filled distinct most common features");
+    has(&shop, "id (key)  3 (100%)  3  e.g. 1, 2, 3  -");
+    has(&shop, "code  3 (100%)  1  anvil (3)  code");
+    has(&shop, "colour  3 (100%)  3  e.g. black, grey, red  colour");
+    has(&shop, "name  2 (66%)  2  e.g. Big anvil, Red anvil  -");
+    has(&shop, "weight  2 (66%)  1  40 (2)  -");
+    has(
+        &shop,
+        "`spool show records --source shop --attributes` lists the values record by record.",
+    );
+
+    // Every source the type maps is there, with records or without, and a
+    // source's evidence column is not one of its attributes.
+    let all = answered(&server, &["show", "attributes"]);
+    assert_eq!(all, server.read("/v1/attributes"));
+    let groups = all["groups"].as_array().unwrap();
+    assert_eq!(groups.len(), THING_SOURCES.len(), "{all}");
+    let notes = groups
+        .iter()
+        .find(|group| group["source"] == "notes")
+        .unwrap();
+    assert_eq!(notes["records"], 0);
+    let names: Vec<&str> = notes["attributes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|attribute| attribute["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["id", "code", "colour", "name", "weight"]);
+    let printed = shown(&server, &["show", "attributes", "--source", "notes"]);
+    has(
+        &printed,
+        "entity type `thing`, source `notes`: no records yet",
+    );
+    assert_eq!(
+        shown(&server, &["show", "attributes", "--source", "nowhere"]),
+        "no records of that entity type and source\n"
+    );
+
+    // A list of records shows the version of each row that nothing
+    // replaced, and every version when asked.
+    let records = shown(&server, &["show", "records"]);
+    assert_eq!(
+        records
+            .lines()
+            .filter(|line| line.starts_with("shop:"))
+            .count(),
+        4,
+        "{records}"
+    );
+    let history = shown(
+        &server,
+        &[
+            "show",
+            "records",
+            "--source",
+            "shop",
+            "--key",
+            "1",
+            "--all-versions",
+        ],
+    );
+    has(&history, "source and key  name  identity  version");
+    has(&history, "shop:1  anvil  -  replaced");
+    has(&history, "shop:1  anvil  -  current");
+    let latest = answered(
+        &server,
+        &["show", "records", "--source", "shop", "--key", "1"],
+    );
+    assert_eq!(latest["records"].as_array().unwrap().len(), 1);
+    assert_eq!(latest["records"][0]["payload"]["colour"], "grey");
+
+    // Their attributes are one option away, a column each, the key apart.
+    let wide = shown(&server, &["show", "records", "--attributes"]);
+    has(
+        &wide,
+        "source and key  code  colour  name  weight  identity",
+    );
+    has(&wide, "shop:1  anvil  grey  Big anvil  40  -");
+    has(&wide, "shop:3  anvil  red  Red anvil  -  -");
+
+    // So does a list of documents.
+    for text in ["one", "two"] {
+        server.call(
+            "/v1/documents",
+            json!({ "source": "notes", "documents": [{ "key": "a.txt", "text": text }] }),
+        );
+    }
+    let documents = shown(&server, &["show", "documents"]);
+    assert_eq!(documents.lines().count(), 2, "{documents}");
+    let every = shown(&server, &["show", "documents", "--all-versions"]);
+    assert_eq!(every.lines().count(), 3, "{every}");
+    has(
+        &every,
+        "document  source and key  characters  read by  version",
+    );
+    assert_eq!(every.matches(" replaced\n").count(), 1, "{every}");
+    assert_eq!(every.matches(" current\n").count(), 1, "{every}");
+
+    for (arguments, complaint) in [
+        (
+            &["show", "attributes", "--key", "1"][..],
+            "`--key` does not go with `attributes`",
+        ),
+        (
+            &["show", "record", "shop:1", "--attributes"],
+            "`--attributes` goes with the list of records",
+        ),
+        (
+            &["show", "runs", "--all-versions"],
+            "`--all-versions` goes with the lists of records and documents",
+        ),
+        (
+            &["show", "documents", "--latest"],
+            "unknown option `--latest`",
+        ),
+    ] {
+        let (code, said) = refused(&server, arguments);
+        assert_eq!(code, Some(2), "{arguments:?}");
+        assert!(said.starts_with(&format!("spool: {complaint}\n")), "{said}");
+    }
+}
+
+#[test]
 fn a_merged_identity_is_shown_with_the_constraints_of_the_one_it_became() {
     let dir = tempfile::tempdir().unwrap();
     let server = workshop(dir.path());

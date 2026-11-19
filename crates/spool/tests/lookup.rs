@@ -6,8 +6,8 @@ use common::*;
 use serde_json::json;
 use spool::core::{Actor, EntityType, IdGenerator, Op, SeededIds, Seq};
 use spool::{
-    Engine, Error, IdentityFilter, Manifest, Options, RecordFilter, ResolveOptions, ReviewFilter,
-    ReviewKind, ReviewStatus, Rows, YamlFile,
+    AttributeFilter, DerivedFeature, Engine, Error, IdentityFilter, Manifest, Options,
+    RecordFilter, ResolveOptions, ReviewFilter, ReviewKind, ReviewStatus, Rows, YamlFile,
 };
 
 /// The tests' things, and two sources more whose rows hold numbers.
@@ -720,4 +720,124 @@ fn a_manifest_is_written_and_read_back_and_checked() {
         Manifest::read_file(dir.path().join("missing.json")),
         Err(Error::Io { .. })
     ));
+}
+
+#[test]
+fn the_attributes_of_the_records_that_stand_are_counted_per_type_and_source() {
+    let mut thing = thing();
+    thing.entity.yaml +=
+        "  till:\n    name: name\n    code: { from: [code, name], transform: concat }\n";
+    let mut project = project_of(vec![thing]);
+    project.sources.push(YamlFile::new(
+        "till",
+        "key: id\ncolumns: [id, name, price, stocked, code]\n",
+    ));
+    let engine = Engine::open_in_memory(Options::seeded(1)).unwrap();
+    engine.apply(&project.compile().unwrap()).unwrap();
+    let till = |rows: serde_json::Value| {
+        engine.load("till", "thing", json_rows(rows)).unwrap();
+    };
+    till(json!([
+        { "id": "1", "name": "anvil", "price": 12.5, "stocked": true, "code": "A" },
+        { "id": "2", "name": "anvil", "price": 12.5, "stocked": false },
+        { "id": "3", "name": "", "price": 3, "stocked": true },
+        { "id": "4", "name": "tongs", "price": 7, "stocked": true },
+    ]));
+    // A new version replaces row 3, and row 4 is taken back.
+    till(json!([{ "id": "3", "name": "hammer", "price": 3, "stocked": true }]));
+    engine
+        .retract("till", "thing", &["4".to_owned()], Actor::Engine, None)
+        .unwrap();
+
+    let only_till = AttributeFilter {
+        source: Some("till".to_owned()),
+        ..AttributeFilter::default()
+    };
+    let groups = engine.attributes(&only_till).unwrap();
+    assert_eq!(groups.len(), 1);
+    let group = &groups[0];
+    assert_eq!(
+        (group.entity_type.as_str(), group.source.as_str()),
+        ("thing", "till")
+    );
+    assert_eq!(group.records, 3);
+    let names: Vec<&str> = group.attributes.iter().map(|a| a.name.as_str()).collect();
+    assert_eq!(names, ["id", "name", "price", "stocked", "code"]);
+    let attribute = |name: &str| group.attributes.iter().find(|a| a.name == name).unwrap();
+
+    let id = attribute("id");
+    assert!(id.key);
+    assert_eq!((id.filled, id.distinct), (3, 3));
+    assert!(id.features.is_empty());
+    // Of values as common, the first in text order.
+    let values: Vec<(&str, u64)> = id
+        .common
+        .iter()
+        .map(|v| (v.value.as_str(), v.records))
+        .collect();
+    assert_eq!(values, [("1", 1), ("2", 1), ("3", 1)]);
+
+    let name = attribute("name");
+    assert_eq!((name.filled, name.distinct), (3, 2));
+    let values: Vec<(&str, u64)> = name
+        .common
+        .iter()
+        .map(|v| (v.value.as_str(), v.records))
+        .collect();
+    assert_eq!(values, [("anvil", 2), ("hammer", 1)]);
+    assert_eq!(
+        name.features,
+        [
+            DerivedFeature {
+                name: "name".to_owned(),
+                from: vec!["name".to_owned()],
+                transform: None
+            },
+            DerivedFeature {
+                name: "code".to_owned(),
+                from: vec!["code".to_owned(), "name".to_owned()],
+                transform: Some("concat".to_owned()),
+            },
+        ]
+    );
+
+    // Numbers and booleans are counted as their JSON.
+    let price = attribute("price");
+    assert_eq!((price.filled, price.distinct), (3, 2));
+    assert_eq!(price.common[0].value, "12.5");
+    assert_eq!(price.common[0].records, 2);
+    let stocked = attribute("stocked");
+    assert_eq!(stocked.common[0].value, "true");
+    assert!(stocked.features.is_empty());
+    let code = attribute("code");
+    assert_eq!((code.filled, code.distinct), (1, 1));
+
+    // Every source the type maps is there, with records or without.
+    let all = engine.attributes(&AttributeFilter::default()).unwrap();
+    let sources: Vec<&str> = all.iter().map(|group| group.source.as_str()).collect();
+    assert_eq!(sources, ["depot", "kiosk", "late", "shop", "till", "yard"]);
+    assert!(
+        all.iter()
+            .filter(|g| g.source != "till")
+            .all(|g| g.records == 0)
+    );
+
+    // A list of records gives the latest versions alone when asked.
+    let latest = engine
+        .records(&RecordFilter {
+            source: Some("till".to_owned()),
+            latest: true,
+            ..RecordFilter::default()
+        })
+        .unwrap();
+    let keys: Vec<Option<&str>> = latest.iter().map(|r| r.key.as_deref()).collect();
+    assert_eq!(keys, [Some("1"), Some("2"), Some("3"), Some("4")]);
+    assert!(latest.iter().all(|record| record.superseded_by.is_none()));
+    let every = engine
+        .records(&RecordFilter {
+            source: Some("till".to_owned()),
+            ..RecordFilter::default()
+        })
+        .unwrap();
+    assert_eq!(every.len(), 5);
 }
