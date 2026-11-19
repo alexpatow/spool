@@ -746,6 +746,7 @@ fn rows_are_loaded_matched_and_taken_back_through_tools() {
     let shop = json!({
         "name": "shop",
         "key": "id",
+        "evidence": null,
         "columns": ["id", "code", "colour", "name", "weight"],
         "entity_types": ["thing"],
     });

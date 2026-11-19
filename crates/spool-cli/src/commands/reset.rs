@@ -154,11 +154,9 @@ pub fn reset(arguments: &[String]) -> Result<(), Failure> {
         }
     );
     println!("\nremoves");
-    let rows: Vec<(String, String)> = removed
-        .iter()
-        .map(|path| (shown(path), size(path)))
-        .collect();
-    columns(&rows);
+    for path in &removed {
+        println!("  {}", shown(path));
+    }
     println!("\nkeeps");
     kept.push((
         "the project's files".to_owned(),
@@ -211,29 +209,5 @@ fn columns(rows: &[(String, String)]) {
         .unwrap_or(0);
     for (left, right) in rows {
         println!("  {left:<width$}  {right}");
-    }
-}
-
-/// How much a file or a directory holds, for a person to read.
-fn size(path: &Path) -> String {
-    fn bytes(path: &Path) -> u64 {
-        match std::fs::symlink_metadata(path) {
-            Ok(metadata) if metadata.is_dir() => std::fs::read_dir(path)
-                .map(|entries| {
-                    entries
-                        .filter_map(|entry| Some(bytes(&entry.ok()?.path())))
-                        .sum()
-                })
-                .unwrap_or(0),
-            Ok(metadata) => metadata.len(),
-            Err(_) => 0,
-        }
-    }
-    let bytes = bytes(path) as f64;
-    match bytes {
-        b if b < 1024.0 => format!("{b} bytes"),
-        b if b < 1024.0 * 1024.0 => format!("{:.1} KB", b / 1024.0),
-        b if b < 1024.0 * 1024.0 * 1024.0 => format!("{:.1} MB", b / 1024.0 / 1024.0),
-        b => format!("{:.1} GB", b / 1024.0 / 1024.0 / 1024.0),
     }
 }

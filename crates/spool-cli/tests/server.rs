@@ -2231,6 +2231,7 @@ fn records_are_listed_by_source_and_key_and_the_sources_are_named() {
         json!({
             "name": "shop",
             "key": "id",
+            "evidence": null,
             "columns": ["id", "code", "colour", "name", "weight"],
             "entity_types": ["thing"],
         })
