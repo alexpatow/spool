@@ -1,19 +1,19 @@
 ---
 title: Extraction
-description: Records out of text. A document is stored, an extractor finds where it names a thing, and each place becomes a record. With the sample extractor, which asks a small model, and with your own code in Python or TypeScript.
+description: Records from text. A document is stored, an extractor finds where it names something, and each place becomes a record. With the sample extractor's local model, and your own code in Python or TypeScript.
 ---
 
-Rows are one way records get into Spool. The other is text.
+Records come from rows or from text. This page is about text.
 
-- A **document** is a text, stored as it arrived: a call note, an article, an email.
-- An **extractor** reads documents and reports each place where one names a thing of an entity type. A place is a **mention**: the document, where it starts and ends, and the attributes the extractor read off it, such as a name.
-- Each mention becomes a **record**. From there it is matched, placed in an identity, explained and corrected like a record that came from a row.
+- A **document** is text, stored as it arrived: a call note, an article, an email.
+- An **extractor** reads documents and reports each place that names something of an entity type. Each place is a **mention**: the document, its start and end, and attributes the extractor read, such as a name.
+- Each mention becomes a **record**. From there it's matched, placed, explained and corrected like any row.
 
-An extractor is a Python file or a TypeScript file: code that the server runs as a child process. The one `spool init --example companies` writes asks a small model that runs on your machine and is fetched on the extractor's first run. [An extractor that asks a hosted model](#with-a-hosted-model) is your code, with your key.
+An extractor is a Python or TypeScript file the server runs as a child process. The one `spool init --example companies` writes uses a small local model, downloaded on first run. [Calling a hosted model](#with-a-hosted-model) is your code with your key.
 
 ## Before you start
 
-The examples use the sample project with its first file of rows loaded and matched:
+The examples use the sample project with its first CSV file loaded and matched:
 
 {/* sample: new session */}
 
@@ -28,7 +28,7 @@ cd companies
 spool dev
 ```
 
-Leave that running. In a second terminal, in the `companies` directory:
+Leave it running. In a second terminal, in `companies`:
 
 ```sh
 spool load samples/crm-1.csv
@@ -37,7 +37,7 @@ spool match
 
 ## What the project needs
 
-A source for the documents. Its columns are the attributes an extractor may give a mention:
+A source for the documents. Its columns are the attributes an extractor can give a mention:
 
 {/* sample: existing */}
 
@@ -47,7 +47,7 @@ A source for the documents. Its columns are the attributes an extractor may give
 columns: [name]
 ```
 
-A mapping from those attributes to the entity type's features, beside the mapping of the rows:
+A mapping from those attributes to the entity type's features, next to the rows' mapping:
 
 {/* sample: existing */}
 
@@ -69,7 +69,7 @@ mapping:
     name_key: { from: name, transform: name_key }
 ```
 
-A note says nothing about a country, so a record from one has none. The rule that keeps different countries apart does not hold against it.
+Notes don't mention a country, so their records have none, and the country rule doesn't apply to them.
 
 And an extractor, under `extractors/`. `spool init --example companies` writes all three.
 
@@ -136,12 +136,12 @@ def find(document):
             yield piece.mention(LOOK_FOR[found["label"]], start, end, name=found["text"])
 ```
 
-The server runs a `.py` file with [uv](https://docs.astral.sh/uv/), which has to be installed where the server runs. `uv` installs what the first lines of the file list. The first run fetches about 330 MB, most of it the model, and later runs fetch nothing.
+The server runs `.py` files with [uv](https://docs.astral.sh/uv/), which installs the dependencies listed at the top of the file. The first run downloads about 330 MB, mostly the model.
 
-- `@extractor` marks the function the server calls, once for each document.
-- `document.pieces(300)` gives the text in pieces of at most 300 words, because the model reads only so much at once.
-- `LOOK_FOR` holds the word the model is given, "company", and the entity type a find becomes a record of.
-- `piece.mention(entity_type, start, end, **attributes)` is one mention, with `start` and `end` counted within the piece. An attribute the source does not list is refused.
+- `@extractor` marks the function the server calls, once per document.
+- `document.pieces(300)` splits the text into chunks of up to 300 words, because the model has a limited window.
+- `LOOK_FOR` maps the word the model looks for, "company", to the entity type its finds become.
+- `piece.mention(entity_type, start, end, **attributes)` is one mention, with offsets within the piece. Attributes the source doesn't list are rejected.
 
 {/* sample: existing */}
 
@@ -151,7 +151,7 @@ purchasing there. They now ship through Larkfield Logistics Ltd, and she asked
 whether we work with Brightwater Foods Ltd, their new supplier.
 ```
 
-`spool extract` stores a file as a document and runs the extractor over the documents it has not read:
+`spool extract` stores a file as a document and runs the extractor over every document it hasn't read:
 
 ```sh
 spool extract samples/notes-1.txt
@@ -170,7 +170,7 @@ found      3 records in 1 document: 3 new, 0 already held
 next: `spool match` places them in identities
 ```
 
-The document's key is its file's name. A file of the same name with other text is the next version of the document, and the same text again adds nothing.
+The document's key is its file name. A file with the same name and different text is a new version, and identical text adds nothing.
 
 ```sh
 spool match
@@ -187,7 +187,7 @@ notes:notes-1.txt[119-142]  Larkfield Logistics Ltd  01a1efc6-41cd-775d-8758-e73
 notes:notes-1.txt[179-200]  Brightwater Foods Ltd    01a1efc6-43a9-7403-b9f6-1f8ee76184ed
 ```
 
-Two of the three joined identities the CRM rows had made, and Brightwater Foods is new.
+Two of the three joined identities from the CRM rows, and Brightwater Foods is new.
 
 ## What a record from text keeps
 
@@ -221,7 +221,7 @@ in document notes:notes-1.txt, characters 54 to 69
   Call with Dana Reyes on 12 November. She has moved to [Acorn Tools Ltd] and runs purchasing there. They now ship through Larkfield Logistics Ltd, and s…
 ```
 
-The evidence names the document, the characters, the extractor and the version of the extractor, which is a hash of its file. The last lines show the place in the text. The studio's Documents screen shows the whole document with every mention marked.
+The evidence records the document, the character range, the extractor and its version (a hash of the file). The last lines show the passage. The studio's Documents screen shows the whole document with every mention highlighted.
 
 ```sh
 spool show documents
@@ -234,14 +234,14 @@ fb9a1372-e552-f564-d2b5-c2a510bd408a  notes:notes-1.txt  222         companies i
 
 ## Your own code, in Python
 
-An extractor of your own is another file in `extractors/`. This one reads a second note:
+Your own extractor is another file in `extractors/`. This one reads a second note:
 
 ```text title="notes-2.txt"
 Dana called again. Acorn Tools are moving their account to Kestrel Analytics
 next quarter, and Larkfield will keep the deliveries.
 ```
 
-This file has the shape of an extractor that asks a hosted language model. `ask` stands where the model's answer goes: here it gives two names from a fixed list, so that the example runs with no key.
+This file has the shape of an extractor that calls a hosted LLM. `ask` stands in for the model call: here it returns names from a fixed list, so the example runs without a key.
 
 ```py title="extractors/names.py"
 """Finds the companies a note names, by asking for them and locating each answer in the text."""
@@ -264,10 +264,10 @@ def find(document):
 ```
 
 - `document.text` is the text, and `document.key` its key.
-- `document.find(quote)` gives each place the quote is in the text. Ask a model for quotes and not for positions: models count characters badly.
-- `document.mention(entity_type, start, end, **attributes)` is one mention, with `start` and `end` counted within the whole text.
+- `document.find(quote)` returns each place the quote appears. Ask models for quotes, not offsets: they count characters badly.
+- `document.mention(entity_type, start, end, **attributes)` is one mention, with offsets within the whole text.
 
-The project now has two extractors, so the command says which:
+The project now has two extractors, so name one:
 
 ```sh
 spool extract notes-2.txt --extractor names
@@ -286,7 +286,7 @@ and more: `spool show records --source notes` lists every record of the source
 next: `spool match` places them in identities
 ```
 
-It read both notes, because an extractor reads every document it has not read. In the first note it found "Acorn Tools" inside "Acorn Tools Ltd", which the sample extractor had found too. Those are two records for nearly the same place, from two extractors, and a match puts both in Acorn's identity:
+It read both notes, because each extractor reads every document it hasn't read yet. In the first note it found "Acorn Tools" inside "Acorn Tools Ltd", which the sample extractor had also found. That's two records for nearly the same span, from two extractors, and a match puts both in Acorn's identity:
 
 ```sh
 spool match
@@ -306,13 +306,13 @@ notes:notes-2.txt[19-30]    Acorn Tools              01a1efc6-41cd-775d-8758-e73
 notes:notes-2.txt[59-76]    Kestrel Analytics        01a1f09f-0c50-7164-ba08-984961afefc8
 ```
 
-Kestrel Analytics is new. "Larkfield" alone was not in the list, and a model might or might not have given it.
+Kestrel Analytics is new. "Larkfield" alone wasn't in the list. A real model might have caught it.
 
 ### With a hosted model
 
-This extractor asks OpenAI's chat-completions API, or any API that speaks it, for the companies a document names. It uses only Python's standard library, so `uv` installs nothing for it, and it asks for structured output, so the answer is JSON of a fixed shape.
+This extractor asks OpenAI's chat completions API, or any compatible API, for the companies a document names. It uses only Python's standard library, so `uv` installs nothing, and requests structured output, so the response is JSON of a fixed shape.
 
-It tells the model what a company is from a file of the project, `entities/company/extract.md`. Each entity type may have one:
+It tells the model what a company is from a project file, `entities/company/extract.md`. Each entity type can have one:
 
 ```md title="entities/company/extract.md"
 A company is a business the text names: a legal entity such as a corporation,
@@ -392,32 +392,32 @@ def find(document, task):
             yield document.mention("company", start, end, name=name)
 ```
 
-- The key and the model go in the project's `.env`, which Git ignores: copy `.env.example` to `.env` and set `OPENAI_API_KEY=...` and `OPENAI_MODEL=...` there. Spool reads it each time it starts the extractor, so a change needs no restart, and never prints a value. A variable set in the terminal that started the server wins over `.env`. [Project structure](/docs/project-structure#secrets) has the rules of the file.
-- `find` asks for `document` and `task`. `task.instructions("company")` is the text of `extract.md`.
-- The `try` gives the reason a document could not be read. `document.failed(...)` marks it failed: nothing found in it is kept, and the next extraction reads it again. Without the `try` the exception would do the same, with its own text as the reason. [When an extractor fails](#when-an-extractor-fails) says more.
-- The model gives quotes, and `document.find` places each one. A quote the text does not have, letter for letter, is found nowhere and dropped.
+- The key and model go in the project's `.env`, which Git ignores. Copy `.env.example` to `.env` and set `OPENAI_API_KEY=...` and `OPENAI_MODEL=...`. Spool rereads it each time the extractor starts, so changes need no restart, and it never prints a value. Variables set in the server's terminal win over `.env`. [Project structure](/docs/project-structure#secrets) covers the format.
+- `find` takes `document` and `task`. `task.instructions("company")` is the text of `extract.md`.
+- The `try` reports why a document failed. `document.failed(...)` discards its mentions, and the next extraction retries it. Without the `try`, the exception does the same with its own message. See [When an extractor fails](#when-an-extractor-fails).
+- The model returns quotes, and `document.find` locates each one. A quote that isn't in the text verbatim is dropped.
 
-The repository's [`llm.py`](https://github.com/alexpatow/spool/blob/main/benchmarks/extraction/company-news/extractors/llm.py) does the same for every entity type the project declares, with attributes, and gives a place to the longest of two overlapping quotes. No test in the repository calls a hosted model. An extractor that calls a model costs what the model costs, for every document. The server stops a run that takes longer than `--task-timeout`, which is 600 seconds unless set, and `spool extract` gives the extractor the documents in batches that each take a fifth of that at most, so a long extraction needs no longer limit.
+The repository's [`llm.py`](https://github.com/alexpatow/spool/blob/main/benchmarks/extraction/company-news/extractors/llm.py) does the same for every entity type in the project, with attributes, and keeps the longer of two overlapping quotes. The server stops a run after `--task-timeout` (600 seconds by default), and `spool extract` sizes batches to a fifth of that, so long extractions don't need a longer limit.
 
 ### Every document at once
 
-An extractor's function asks for what it needs by the names of its parameters:
+An extractor function declares what it needs by parameter name:
 
-- `document`: it is called once for each document. A run that takes long writes a line such as `read 400 of 3,053 documents` to standard error every ten seconds.
-- `documents`: it is called once, with every document of the run as a list.
-- `task`: with either of the two, for what the run knows besides the documents.
+- `document`: called once per document. Long runs log progress like `read 400 of 3,053 documents` to standard error every ten seconds.
+- `documents`: called once, with every document in the run as a list.
+- `task`: alongside either, for run context beyond the documents.
 
-Either form returns its mentions as a list or yields them, and a `None` among them is dropped. `task` offers:
+Either form returns or yields mentions, and `None` values are dropped. `task` offers:
 
 | | |
 | --- | --- |
-| `task.documents` | The documents of the run. Each has `text`, `key`, `source`, `id` (of this version) and `uri` |
-| `task.entity_types` | The names of the project's entity types |
+| `task.documents` | The run's documents. Each has `text`, `key`, `source`, `id` (of this version) and `uri` |
+| `task.entity_types` | The project's entity type names |
 | `task.instructions(type)` | The text of the type's `extract.md`, or `None` |
 | `task.features(type)` | The type's features, as `{"name": ..., "data_type": ...}` |
 | `task.run`, `task.extractor` | The run's number and the extractor's name |
 
-Take `documents` when the documents are better handled together: to send requests to a model side by side, to put several documents in one request, or to keep something from one document to the next. Take `@extractor` off `find` above and add this, which reads eight documents at a time:
+Use `documents` when it's better to handle documents together: to call a model in parallel, batch several documents per request, or carry state between documents. Remove `@extractor` from `find` above and add this, which reads eight documents at a time:
 
 ```py
 from concurrent.futures import ThreadPoolExecutor
@@ -449,7 +449,7 @@ await extractor(async (task) => {
 });
 ```
 
-`spool dev` picks up a new extractor file as it is saved, and `spool info` lists what the project has:
+`spool dev` picks up new extractor files on save, and `spool info` lists them:
 
 ```sh
 spool info
@@ -490,38 +490,38 @@ extractor `names_ts` (typescript, extractors/names_ts.ts)
 
 The server starts the file as a child process for each run, and waits for it.
 
-- **Working directory**: the project directory, so a relative path is relative to it.
-- **Environment**: the server's own, with what the project's `.env` sets for variables the server's does not, without `SPOOL_TOKEN` and `SPOOL_GOOGLE_CLIENT_SECRET` whatever `.env` says, and with `SPOOL_TASK_DIR`, the directory of the run's files. Without `SPOOL_TASK_DIR`, `@extractor` does nothing, so the file can be imported and its function called in a test.
-- **Input and output**: no standard input. Standard output is shown nowhere. Standard error reaches whoever runs `spool extract`, however short the run: while the first batch runs, once it has taken more than a few seconds, and after each batch, all of it but what was shown already and the helper's own `read 400 of 3,053 documents`. `spool dev` and `spool serve` print it too, under the extractor's name and the run. A run keeps its last 100 lines in its report, as `stderr`, and the error of a run that fails has its last 20.
-- **Its files**: the documents and what the extractor writes are Parquet files in `SPOOL_TASK_DIR`, under `spool-tasks` in the system's temporary directory unless the server was started with `--tasks`. A run that fails leaves them there, with `stderr.log`, and its error names the directory. `spool` and `spool-strategy` hide them.
+- **Working directory**: the project directory.
+- **Environment**: the server's, plus variables from the project's `.env` that the server doesn't set, minus `SPOOL_TOKEN` and `SPOOL_GOOGLE_CLIENT_SECRET`, plus `SPOOL_TASK_DIR` for the run's files. Without `SPOOL_TASK_DIR`, `@extractor` does nothing, so you can import the file and call its function in a test.
+- **Input and output**: no standard input, and standard output is discarded. Standard error goes to whoever runs `spool extract`: live during a slow first batch, then after each batch, minus anything already shown and the helper's own progress lines. `spool dev` and `spool serve` print it too, tagged with the extractor and run. A run's report keeps the last 100 lines as `stderr`, and a failed run's error includes the last 20.
+- **Files**: documents and the extractor's output are Parquet files in `SPOOL_TASK_DIR`, under `spool-tasks` in the system temp directory unless the server was started with `--tasks`. A failed run leaves them there with `stderr.log`, and its error names the directory. The `spool` and `spool-strategy` helpers hide them.
 
 A `.py` file runs as `uv run --with pyarrow --script <file>`:
 
-- `uv` reads the block of comments that begins `# /// script`, as in the sample extractor. It installs `dependencies` into an environment of the file's own, once, and fetches a Python that `requires-python` allows if none on the machine does.
-- With no `requires-python`, `uv` takes a Python already on the machine, one it installed itself before the system's, and fetches one only when it finds none. Name a version, or set `UV_PYTHON_PREFERENCE=only-managed` where the server starts, to keep the system's Python out.
-- A file with no such block runs in an environment of its own that holds only pyarrow, so the packages of the system's Python are not there.
-- pyarrow is always added, because the `spool` module reads and writes Parquet with it. `spool` itself comes from the server and is not a package to list.
-- The directory of the file is not on Python's import path, so `import helpers` does not find `extractors/helpers.py`. An extractor is one file.
+- `uv` reads the `# /// script` comment block, as in the sample extractor. It installs `dependencies` into the file's own environment once, and downloads a Python that satisfies `requires-python` if none on the machine does.
+- Without `requires-python`, `uv` prefers a Python it installed, then the system's, and downloads one only if it finds neither. Pin a version, or set `UV_PYTHON_PREFERENCE=only-managed` for the server, to keep the system Python out.
+- A file without the block runs in its own environment with only pyarrow, isolated from system packages.
+- pyarrow is always added, because the `spool` module uses it for Parquet. `spool` itself comes from the server, so don't list it.
+- The file's directory isn't on Python's import path, so `import helpers` won't find `extractors/helpers.py`. An extractor is one file.
 
-A `.ts` file runs as `bun run <file>`, and finds `spool-strategy` through `NODE_PATH`, which the server sets.
+A `.ts` file runs as `bun run <file>` and finds `spool-strategy` through `NODE_PATH`, which the server sets.
 
 ## When an extractor fails
 
-A document the extractor could not read is failed, and the rest of the batch goes on. The extractor says so with `document.failed(reason)`, returned or yielded in place of the document's mentions, in Python and in TypeScript alike. In Python, an exception that leaves a function called once for each document does the same for that document, with the exception's text as the reason. A failed document does not count as read, and nothing found in it is kept. `spool extract` lists the failed documents and their reasons, `spool show documents` and the studio say `llm failed in run 12: the model's API: ...`, and the same command reads them again, and only them, with what was never read. Within one command a document that failed is not tried again. When every document of a batch fails, which says more about the extractor than about them (a key that is wrong, a model that is not there), the command stops.
+**One document fails alone.** Return or yield `document.failed(reason)` in place of a document's mentions, in Python or TypeScript, and the rest of the batch carries on. In Python, an exception escaping a per-document function does the same, with its message as the reason. A failed document isn't marked read and keeps none of its mentions. `spool extract` lists failures with reasons, `spool show documents` and the studio show `llm failed in run 12: the model's API: ...`, and the next run retries them along with unread documents. Within one command, a failed document isn't retried. If every document in a batch fails, which usually means a bad key or a missing model, the command stops.
 
-What fails the whole run is what the extractor cannot say of one document: an exception that leaves a function called once with every document, an exit status other than 0, a run stopped for taking too long, or one mention the server refuses, such as one with an attribute its source does not list. No mention of the batch is stored, and no document of it counts as read, so the next run reads them again, and an extractor that calls a model pays for them again. `spool extract` gives the extractor the documents in batches, each in a run of its own, so the batches before it are kept, and the command stops and says how many documents they read. The same command again reads what is left.
+**Some failures fail the batch.** An exception escaping a function that takes every document, a non-zero exit, a timeout, or a mention the server rejects (such as one with an undeclared attribute) fails the whole batch. Nothing from it is stored or marked read, so the next run reads those documents again, and a model-backed extractor pays for them again. Each batch is its own run, so earlier batches are kept, and the command reports how many documents they read. Run it again to continue.
 
-Ctrl-C cancels the batch that is running: the server stops the extractor and every process it started, keeps nothing of that batch, and the command says what the batches before it kept, then exits. A second Ctrl-C quits without waiting. `POST /v1/runs/{run}/cancel` does the same for a client of its own.
+Ctrl-C cancels the running batch: the server stops the extractor and its child processes, discards that batch, and the command reports what earlier batches kept. A second Ctrl-C exits without waiting. `POST /v1/runs/{run}/cancel` does the same for API clients.
 
-While a run reads a document, `spool show documents` and the studio say it is being read, and by which run. A document of a run that failed or was cancelled is not read yet again.
+While a run reads a document, `spool show documents` and the studio show it as in progress, with the run. Documents from a failed or cancelled run count as unread.
 
 ## Reading again
 
-`--again` reads every document again, and so does a changed extractor that is run with it. What the reading finds is matched to what the store holds by place: a mention found again with the same attributes is the record it was, and one found with others is a new version of it.
+A changed extractor doesn't reread documents on its own. `--again` rereads every document. New findings are matched to stored mentions by position: a mention found again with the same attributes is the same record, and one with different attributes becomes a new version.
 
-A mention that was found before and that no extractor's latest reading of the document finds any more is taken back, as a source takes back a row. It stays in the store, with what it said, and leaves its identity by a changeset in the log, under whoever ran the extraction. The identity keeps its ID and its other records. An identity whose last record goes keeps its ID too, with no records, until a record joins it again. A mention another extractor still finds stays: each extractor's latest reading counts. Mentions of an entity type the project no longer declares, or no longer reads from the document's source, are left as they are. `spool extract` says how many records it took back, and `spool show records <record>` says of one that it was taken back, and in which run. A reading that finds the mention again brings it back, to the identity it left. A reading that finds nothing at all in documents that had mentions takes them all back, as a broken extractor would, so `spool extract` says so on standard error and says how to bring them back.
+A mention that no extractor's latest reading finds any more is retracted, like a row its source dropped. It stays in the store and leaves its identity in a changeset recorded under whoever ran the extraction. The identity keeps its ID and other records, and an identity that loses its last record keeps its ID until a record joins again. Mentions another extractor still finds stay, because each extractor's latest reading counts. Mentions of entity types the project no longer declares, or no longer reads from that source, are left alone. `spool extract` reports how many it retracted, and `spool show records <record>` shows when a record was retracted. Finding the mention again restores it to the identity it left. If a reading finds nothing at all in documents that had mentions, which looks like a broken extractor, `spool extract` warns on standard error and says how to restore them.
 
-Each record found in a document says which readings found it, with the version of the extractor that read: `spool show records <record>` lists them under `found by`, and HTTP gives them as `found_by`. A mention only an old version found is told from one the current version finds.
+Each record from a document lists the readings that found it, with the extractor version: `found by` in `spool show records <record>`, and `found_by` over HTTP. That's how you tell a mention only an old version found from one the current version finds.
 
 ## Over HTTP and MCP
 
@@ -531,15 +531,15 @@ Each record found in a document says which readings found it, with the version o
 | HTTP | `POST /v1/documents` | `POST /v1/extractions` |
 | MCP | `load_documents` | `run_extraction` |
 
-[Getting started](/docs/getting-started#extract-records-from-text) has a call of each. `POST /v1/extractions` takes `extractor`, `source` to keep to the documents of one source, `again` to read every document again, and `limit`. Its run reports in `left` how many documents the limit left out, which is how `spool extract` reads in batches: it asks again until none are left. Each batch after the first passes `since` with the first batch's run, so that no document is read twice and one that failed is not tried again at once. The run also reports `failed`, the documents that could not be read and why, `taken_back` and `retract_runs`, and `stderr`.
+[Getting started](/docs/getting-started#extract-records-from-text) shows each call. `POST /v1/extractions` takes `extractor`, `source` to limit it to one source, `again` to reread everything, and `limit`. The run reports in `left` how many documents remain, which is how `spool extract` batches: it calls again until none are left. Later batches pass `since` with the first batch's run, so no document is read twice and failures aren't retried immediately. The run also reports `failed` with reasons, `taken_back`, `retract_runs` and `stderr`.
 
-## How good is it
+## Measuring an extractor
 
-An extractor is scored apart from matching. `spool bench` runs a scenario with labelled mentions and reports what the extractor found, missed and made up. The repository's [`benchmarks/extraction/company-news`](https://github.com/alexpatow/spool/tree/main/benchmarks/extraction/company-news) has ten news items, a rule-based extractor in both languages, and its scores.
+Extraction is scored separately from matching. `spool bench` runs a scenario with labelled mentions and reports what the extractor found, missed and invented. [`benchmarks/extraction/company-news`](https://github.com/alexpatow/spool/tree/main/benchmarks/extraction/company-news) has ten news items, a rule-based extractor in both languages, and its scores.
 
-It also reports the two together, end to end: the identities against the true entities over every labelled mention, where a mention the extractor missed is with nothing. [`benchmarks/extraction/linked-docred`](https://github.com/alexpatow/spool/tree/main/benchmarks#from-text-to-identities) measures all three on Linked-DocRED: the openings of 5,051 Wikipedia articles, with every mention labelled and linked to its Wikidata entry.
+It also scores extraction and resolution end to end: identities against the true entities over every labelled mention, counting a missed mention as unresolved. [`benchmarks/extraction/linked-docred`](https://github.com/alexpatow/spool/tree/main/benchmarks#from-text-to-identities) measures all three on Linked-DocRED: the openings of 5,051 Wikipedia articles, with every mention labelled and linked to Wikidata.
 
-The benchmark is in the repository and not in the release. The dataset is in neither, because its licence is the GPL: the benchmark's script downloads it, 45 MB, from [alteca/Linked-DocRED](https://github.com/alteca/Linked-DocRED). It needs a clone, `uv` and a `spool`, and runs the installed one with `--spool`:
+The benchmark lives in the repository. Its script downloads the GPL-licensed dataset, 45 MB, from [alteca/Linked-DocRED](https://github.com/alteca/Linked-DocRED). You need a clone, `uv` and a `spool` binary, passed with `--spool`:
 
 {/* sample: skip needs a clone of the repository, and downloads the dataset */}
 
@@ -549,15 +549,12 @@ cd spool
 uv run benchmarks/extraction/linked-docred/run.py --spool "$(command -v spool)"
 ```
 
-It writes each article as a text file under `benchmarks/.cache/linked-docred/documents/`, which is also where to take them from to try an extractor of your own, scores two extractors that need no model, and prints the reports. `spool extract benchmarks/.cache/linked-docred/documents` stores all 5,051 in a project of your own and reads them in batches, and `spool match` then matches every entity type the project declares. `--documents 200` takes the first 200 articles of each of the dataset's three files.
+It writes each article as a text file under `benchmarks/.cache/linked-docred/documents/`, scores two model-free extractors, and prints the reports. To try your own extractor on the same data, `spool extract benchmarks/.cache/linked-docred/documents` loads all 5,051 into your project in batches, and `spool match` resolves every entity type. `--documents 200` takes the first 200 articles from each of the dataset's three files.
 
-## What extraction does not do
+## Good to know
 
-- **Documents are text.** Spool does not read PDF or HTML. Turn them into text first.
-- **The sample model finds what its word asks for.** Given "company", it misses most universities, parties and charities.
-- **No model is in the binary.** The sample extractor fetches its model on its first run. Every extractor is a Python or TypeScript file, and needs `uv` or `bun` where the server runs.
-- **A mention is a place.** Two mentions of one company in one document are two records, in one identity.
-- **A changed extractor does not read again by itself.** `--again` has it read every document again.
-- **A batch fails whole when the extractor does.** One document that cannot be read fails alone, and the batches before a failed batch are kept. [When an extractor fails](#when-an-extractor-fails) says which is which.
-- **A document that keeps failing is read again each time.** Nothing gives up on it: every `spool extract` tries it once more, and pays the model for it again.
-- **A document is one request.** A file larger than the API's limit of 256 MiB cannot be stored.
+- **Documents are plain text.** Convert PDF and HTML first.
+- **The model finds what you ask for.** Given "company", the sample model skips most universities, parties and charities. Try "organization" for those.
+- **A mention is a position.** Two mentions of one company in one document are two records in one identity.
+- **Failed documents are retried on every run.** Each retry calls the model again.
+- **Documents are capped at 256 MiB**, the API's request limit.

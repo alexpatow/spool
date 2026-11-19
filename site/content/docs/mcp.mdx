@@ -52,7 +52,7 @@ The MCP SDKs, the MCP connector of the Claude API and the `mcp` tool of the Open
 
 ## Before you start
 
-The examples use the sample project with both of its files of rows loaded and matched, which is where [Getting started](/docs/getting-started) ends. If you have that project and its server is running, use it. If not, this makes it:
+The examples pick up where [Getting started](/docs/getting-started) leaves off, with both CSV files loaded and matched. If that server's still running, use it. Otherwise:
 
 {/* sample: new session */}
 
@@ -67,7 +67,7 @@ cd companies
 spool dev
 ```
 
-Leave that running. In a second terminal, in the `companies` directory:
+Leave it running. In a second terminal, in `companies`:
 
 ```sh
 spool load samples/crm-1.csv

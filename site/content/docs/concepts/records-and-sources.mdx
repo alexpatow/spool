@@ -1,18 +1,18 @@
 ---
 title: Records and sources
-description: A record is a row as a source sent it, or a mention an extractor found in a text. It is never changed, a changed row becomes a new version, and a row its source no longer holds can be taken back.
+description: A record is a row as its source sent it, or a mention an extractor found in text. Records are immutable, a changed row becomes a new version, and a row its source drops can be retracted.
 ---
 
-A **record** is one thing a source said, kept as it arrived. Records come in two ways:
+A **record** is one thing a source said, kept exactly as it arrived. Records come from two places:
 
-- **From rows.** A **source** is a place rows come from: a CRM export, a company registry, a table in your warehouse. Each row becomes a record.
-- **From text.** A document is stored as it is, and an **extractor** finds the places where it names a thing. Each place becomes a record. An extractor is code of yours in Python or TypeScript that the server runs as a child process.
+- **Rows.** A **source** is where rows come from: a CRM export, a company registry, a warehouse table. Each row becomes a record.
+- **Text.** A document is stored as is, and an **extractor** finds where it names something. Each of those places becomes a record. Extractors are your own Python or TypeScript, run by the server as child processes.
 
-Either way the record is then matched by the same rules. This page says what Spool keeps of a row, what happens when a row is loaded twice, changes, is taken back or is refused, and how a record comes out of a text.
+Either way, the same rules match them. This page covers what Spool keeps of a row, what happens when a row is reloaded, changed, retracted or rejected, and how records come out of text.
 
 ## Before you start
 
-The examples use the sample project with both of its files of rows loaded and matched, which is where [Getting started](/docs/getting-started) ends. If you have that project and its server is running, use it. If not, this makes it:
+The examples pick up where [Getting started](/docs/getting-started) leaves off, with both CSV files loaded and matched. If that server's still running, use it. Otherwise:
 
 {/* sample: new session */}
 
@@ -27,7 +27,7 @@ cd companies
 spool dev
 ```
 
-Leave that running. In a second terminal, in the `companies` directory:
+Leave it running. In a second terminal, in `companies`:
 
 ```sh
 spool load samples/crm-1.csv
@@ -38,7 +38,7 @@ spool match
 
 ## A source is a file
 
-Each source is a YAML file under `sources/`, and the file's name is the source's name. It lists the columns a row may have and names the one that is the row's key. This is the one `spool init --example companies` wrote:
+Each source is a YAML file under `sources/`, named for the source. It lists the columns a row can have and which one is the key. Here's the one `spool init --example companies` wrote:
 
 {/* sample: existing */}
 
@@ -56,9 +56,9 @@ key: id
 columns: [id, name, country, website]
 ```
 
-`spool dev` applies the change when the file is saved. Rows that were loaded before stay as they are, with no value for the new column.
+`spool dev` applies it on save. Rows loaded earlier stay as they were, with no value for the new column.
 
-A source says nothing about what its rows mean. Which entity type they describe, and how they are compared, is in the entity type's [mapping](/docs/concepts/entity-types-and-features).
+A source doesn't say what its rows mean. Which entity type they describe, and how they're compared, is in the entity type's [mapping](/docs/concepts/entity-types-and-features).
 
 ## What a record holds
 
@@ -80,15 +80,15 @@ payload
   name     Acorn Tools
 ```
 
-- **`record`** is the record's ID. It is derived from the source, the key and the row's content, so the same row gets the same ID on any machine. The one exception is a version that holds content its row held before: its ID is derived from that content's ID and the ID of the version it follows.
-- **`payload`** is the row as it was sent. Spool never rewrites it. What rules compare is computed from it, and can be computed again when you change how.
-- **`identity`** is the identity the record belongs to, once a match has placed it.
+- **`record`** is the record's ID, derived from source, key and content, so the same row gets the same ID on any machine. The one exception is a version that repeats earlier content: its ID derives from that content's ID and the version it follows.
+- **`payload`** is the row as sent. Spool never rewrites it. Features are computed from it, and recomputed when you change how.
+- **`identity`** is the identity the record belongs to, once a match places it.
 
-A record is named by its ID, or as `source:key`, which names the latest version of that row.
+Refer to a record by its ID, or as `source:key` for the latest version of that row.
 
-## Loading the same row twice does nothing
+## Loads are idempotent
 
-A pipeline can send everything it has every time. A row whose content is what the server holds for its key is counted and ignored:
+A pipeline can send everything it has, every time. A row whose content matches what the server holds for its key is counted and skipped:
 
 ```sh
 spool load samples/crm-1.csv
@@ -100,7 +100,7 @@ loaded  6 rows into source `crm`, type `company`: 0 new, 6 already held
 
 ## A changed row is a new version
 
-When a row arrives with a key the server has seen and content it has not, it becomes a new record that replaces the earlier one. Save a file that has `c-4` again, now with a website:
+A row with a known key and new content becomes a new record that replaces the earlier one. Save a file with `c-4` again, now with a website:
 
 ```csv title="changed.csv"
 id,name,country,website
@@ -127,7 +127,7 @@ RECORD                                SOURCE AND KEY  NAME                 IDENT
 1 record has no identity: `spool match` places new records in identities, and `spool show review` lists the ones a match left out
 ```
 
-Both versions are kept, and `--all-versions` lists the one that was replaced beside the current one, which a list of records otherwise leaves out. The new one has no identity yet. The next match gives it the identity of the version it replaces, whatever the rules say about the pair:
+Both versions are kept. `--all-versions` shows the replaced one, which lists otherwise hide. The new version has no identity yet. The next match gives it the identity of the version it replaces, whatever the rules say about the pair:
 
 ```sh
 spool match
@@ -143,15 +143,15 @@ RECORD                                SOURCE AND KEY  NAME                 IDENT
 69c75f0d-bc65-b5f2-39aa-5c6d017a1531  crm:c-4         Larkfield Logistics  01a1efc6-41cd-775d-8758-e733aa086f7d  current
 ```
 
-The earlier version stays a member of the identity and can still be matched by later records. That keeps history intact, and it has a cost: an old version that lacks a value can match something the new version would not. [Review](/docs/concepts/review#a-conflict) shows what a missing value does.
+The earlier version stays in the identity and later records can still match it. That keeps history intact. It also means an old version missing a value can match something the new one wouldn't. [Review](/docs/concepts/review#a-conflict) shows what a missing value does.
 
-The versions of a row travel together. When the latest version is placed in an identity, by a match or by a changeset that a person or an agent sends, each earlier version that is in another identity, or in none, is moved there too. The moves are operations of the same changeset, so the log shows them and undoing it puts each version back. A match that moved some says so on its `placed` line, as `1 earlier version moved along`. A split, an undo and a draft that is approved move only the records they name.
+A row's versions travel together. When the latest version is placed, by a match or by a changeset from a person or agent, earlier versions in other identities (or none) move with it. The moves are part of the same changeset, so the log shows them and an undo puts each version back. A match that moved some says `1 earlier version moved along` on its `placed` line. Splits, undos and approved drafts move only the records they name.
 
-A row that changes from A to B and back to A ends at A. The second A is a new version with an ID of its own, which replaces B. So a file is only ignored when it says what the server holds now: loading an older file after a newer one moves the rows that changed between them back to what the older file says.
+A row that changes from A to B and back to A ends at A. The second A is a new version with its own ID that replaces B. So a file is only skipped if it matches what the server holds now. Loading an older file after a newer one rolls the changed rows back to the older values.
 
 ## A row the source no longer holds
 
-`spool retract` takes a row back. Name the source, the entity type and the row's key:
+`spool retract` retracts a row. Name the source, the entity type and the key:
 
 ```sh
 spool retract --source crm --type company c-9 --reason "deleted in the CRM"
@@ -180,15 +180,15 @@ payload
   name     Acorn Tool
 ```
 
-The record left its identity and no later match looks at it. The identity keeps its ID and its other records. The row itself stays in the store: taking back is not erasing. Loading a row under the same key again, changed or not, brings every version of it back.
+The record left its identity, and later matches ignore it. The identity keeps its ID and other records. The row stays in the store. Loading the same key again, changed or not, restores every version.
 
-The same over HTTP is `POST /v1/retract` with `{"source": "crm", "entity_type": "company", "keys": ["c-9"]}`.
+Over HTTP, it's `POST /v1/retract` with `{"source": "crm", "entity_type": "company", "keys": ["c-9"]}`.
 
-When the row that is taken back was what joined two other records of its identity, the identity is not split. A review item asks whether it still is one thing. [Review](/docs/concepts/review#a-possible-split) has an example.
+If the retracted row was what joined two other records of its identity, the identity isn't split. A review item asks whether it's still one thing. [Review](/docs/concepts/review#a-possible-split) has an example.
 
-## What is refused
+## What's rejected
 
-A row with a column its source does not list is refused, and so is the whole load. Here the rows are sent over HTTP as JSON, which is another form `POST /v1/load` takes:
+A row with a column its source doesn't list fails the whole load. Here the rows go over HTTP as JSON, which `POST /v1/load` also accepts:
 
 ```sh
 curl -s -X POST http://127.0.0.1:7765/v1/load -d '{"source": "crm", "entity_type": "company", "rows": [{"id": "c-10", "name": "Acorn Hardware", "city": "Leeds"}]}'
@@ -198,11 +198,11 @@ curl -s -X POST http://127.0.0.1:7765/v1/load -d '{"source": "crm", "entity_type
 {"error":{"code":"invalid","message":"load rejected: the rows have a column `city`, which sources/crm.yaml does not list. It lists `id`, `name`, `country`, `website`. Add the column to that file to keep it, or leave it out of the rows"}}
 ```
 
-Rows are also refused when their source has no file, or when the entity type's mapping has no block for that source. A column that a row leaves out is fine: it is empty for that record.
+Rows are also rejected when their source has no file, or the entity type has no mapping for it. A missing column is fine: it's empty for that record.
 
 ## Records from text
 
-A document is stored as it arrived, as a row is. An extractor reads it and reports each place where it names a thing, and each place becomes a record of the document's source, with the document and the characters it spans as its evidence. From there it is a record like any other: it is never changed, a match places it, and it can be explained.
+A document is stored as it arrived, like a row. An extractor reads it and reports each place it names something. Each place becomes a record of the document's source, with the document and character range as evidence. From there it's a record like any other: immutable, placed by a match, and explainable.
 
 ```sh
 spool extract samples/notes-1.txt
@@ -221,13 +221,11 @@ found      3 records in 1 document: 3 new, 0 already held
 next: `spool match` places them in identities
 ```
 
-[Extraction](/docs/concepts/extraction) goes through it, with an extractor in each language.
+[Extraction](/docs/concepts/extraction) covers it in depth, with extractors in Python and TypeScript.
 
 ## Where records come from
 
-- `spool load` reads CSV files. [The command line](/docs/cli#spool-load) has its options.
-- `POST /v1/load` takes CSV, JSON or an Apache Arrow stream. [The HTTP API](/docs/api#load-rows) has an example.
-- An agent loads rows with the MCP tool `load_rows`. [MCP](/docs/mcp)
-- `spool extract` stores a text file as a document and runs an extractor over it. `POST /v1/documents` and `POST /v1/extractions` are the same over HTTP, and `load_documents` and `run_extraction` over MCP.
-
-Nothing reads a database, a warehouse or a file store. [Limits](/docs/limits) has the rest of what loading does not do.
+- `spool load` reads CSV and TSV files. See [the command line](/docs/cli#spool-load).
+- `POST /v1/load` takes CSV, JSON or an Apache Arrow stream. See [the HTTP API](/docs/api#load-rows).
+- Agents load rows with the MCP tool `load_rows`. See [MCP](/docs/mcp).
+- `spool extract` stores text files as documents and runs an extractor. Over HTTP that's `POST /v1/documents` and `POST /v1/extractions`, and over MCP `load_documents` and `run_extraction`.

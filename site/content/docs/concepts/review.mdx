@@ -1,15 +1,15 @@
 ---
 title: Review
-description: What a match will not decide is kept as a review item for a person or an agent, and a match can leave its whole changeset as a draft to approve.
+description: What a match won't decide becomes a review item for a person or an agent, and a match can hold its whole changeset as a draft to approve.
 ---
 
-A match decides the cases its rules settle and leaves the rest. What it leaves is recorded, so the question outlives the run and someone can answer it later. There are two things to review: **review items**, which are questions about records, and **drafts**, which are changesets a run was told not to commit.
+A match settles what its rules can and records the rest, so the question outlives the run. There are two things to review: **review items**, which are questions about records, and **drafts**, which are changesets a run was told not to commit.
 
 This page raises one review item of each kind, answers each, and approves a draft.
 
 ## Before you start
 
-The examples use the sample project with both of its files of rows loaded and matched, which is where [Getting started](/docs/getting-started) ends. If you have that project and its server is running, use it. If not, this makes it:
+The examples pick up where [Getting started](/docs/getting-started) leaves off, with both CSV files loaded and matched. If that server's still running, use it. Otherwise:
 
 {/* sample: new session */}
 
@@ -24,7 +24,7 @@ cd companies
 spool dev
 ```
 
-Leave that running. In a second terminal, in the `companies` directory:
+Leave it running. In a second terminal, in `companies`:
 
 ```sh
 spool load samples/crm-1.csv
@@ -41,7 +41,7 @@ spool match
 | `conflict` | Does this record belong here or not? | A new record matches one member of an identity and a no_match rule holds against another, or new records match each other and a no_match rule holds between them. |
 | `possible_split` | Are these records still one thing? | A row is taken back, and nothing is left that joins the identity's other records. |
 
-A record in an open `possible_merge` or `conflict` has no identity. An identity in an open `possible_split` stays as it is. Nothing is merged or split without someone deciding.
+A record in an open `possible_merge` or `conflict` has no identity. An identity in an open `possible_split` stays as is. Nothing merges or splits until someone decides.
 
 ## A record that fits two identities
 
@@ -96,15 +96,15 @@ identities they matched
   01a1efc6-41cd-775d-8758-e7329447fd9a
 ```
 
-The record matched both Halden Groups by name, and with no country the rule that keeps them apart had nothing to compare. Joining either would be a guess, and joining both would merge two identities, which a match never does. So the record has no identity, and a `possible_merge` item says why.
+The record matched both Halden Groups by name, and with no country the rule that separates them had nothing to compare. Joining either would be a guess, and joining both would merge two identities, which a match never does. So the record waits, and a `possible_merge` item says why.
 
-The studio, at [http://127.0.0.1:7765/](http://127.0.0.1:7765/), shows the same item on its Review screen. It asks the question in words, shows the two identities side by side with some of their records and what links the record to each, and says what each answer does before it is given:
+The studio's Review screen, at [http://127.0.0.1:7765/](http://127.0.0.1:7765/), shows the same item. It states the question, shows both identities side by side with what links the record to each, and explains what each answer does before you pick one:
 
 ![The studio's Review screen with one open item: the record crm:c-13, Halden Group, matches both Halden Group identities, which are side by side, and below them each answer says what it does](/images/studio-review-item.png)
 
 ## Decide it
 
-A reviewer who knows that `c-13` is the British company places it there with a changeset of one `assign`:
+A reviewer who knows `c-13` is the British company places it with a one-`assign` changeset:
 
 ```sh
 RECORD=$(spool show records crm:c-13 | awk '/^record/ {print $2}')
@@ -125,19 +125,19 @@ ITEM  KIND            STATUS    TYPE     RAISED BY  ABOUT
 1     possible_merge  resolved  company  run 9      1 record without an identity, which matched 2 identities
 ```
 
-The item closed by itself. A `possible_merge` or a `conflict` is open while any of its records has no identity, and any changeset that places the last one resolves it.
+The item closed itself. A `possible_merge` or `conflict` stays open while any of its records is unplaced, and the changeset that places the last one resolves it.
 
-An item closes in one of three ways:
+Items close in one of three ways:
 
-- **Resolved.** A changeset answered it. A reviewer may have written it, or a later match.
-- **Superseded.** A later run looked again and raised an item that differs, or found that the question no longer stands.
-- **Dismissed.** A reviewer closed it and left things as they are.
+- **Resolved.** A changeset answered it, from a reviewer or a later match.
+- **Superseded.** A later run raised a different item, or found the question no longer applies.
+- **Dismissed.** A reviewer closed it without changes.
 
-Open items are looked at again by every later match of their entity type. If the reviewer had fixed a rule so that the record matched only one identity, the next match would have placed the record and resolved the item.
+Every later match of the entity type re-examines open items. Had the reviewer fixed a rule so the record matched only one identity, the next match would have placed it and resolved the item.
 
 ## What each answer does
 
-A `possible_merge` or a `conflict` is answered in one of these ways. The studio offers each, and says this before it is given.
+Answer a `possible_merge` or `conflict` in one of these ways. The studio offers each and explains it first.
 
 | Answer | The records | The identities and their IDs | What is recorded | Later matches |
 | --- | --- | --- | --- | --- |
@@ -147,13 +147,13 @@ A `possible_merge` or a `conflict` is answered in one of these ways. The studio 
 | Dismiss | They keep no identity | Unchanged | Who dismissed it, when and why | No match looks at them again, a rematch included. A dismissed item is not opened again, and a changeset can still place them |
 | Leave it open | They keep no identity | Unchanged | Nothing | Every match looks at them again |
 
-The studio's merge keeps the identity with the most records. A merge is refused while a `cannot_link` is between records of the identities, and a record cannot be placed in an identity that one of its members has a `cannot_link` with.
+The studio's merge keeps the identity with the most records. A merge is rejected while a `cannot_link` spans the identities, and a record can't be placed in an identity whose members it has a `cannot_link` with.
 
-`POST /v1/changesets/{seq}/undo` takes an answer back, with a changeset of its own:
+`POST /v1/changesets/{seq}/undo` reverses an answer with a changeset of its own:
 
-- **A placement** is undone by moving the records out again. They wait with no identity, but the item stays resolved, so no match asks about them: only a rematch does, with `spool match --rematch`.
-- **A merge** is undone by giving each merged identity its ID and its records back, and the records that were placed wait again, as above.
-- **A new identity** is not taken back: its ID stays, with no records.
+- **Undoing a placement** moves the records out again. They wait unplaced, but the item stays resolved, so only `spool match --rematch` revisits them.
+- **Undoing a merge** gives each merged identity its ID and records back, and the placed records wait again.
+- **A new identity** isn't removed: its ID stays, with no records.
 
 A `possible_split` has its own answers:
 
@@ -164,7 +164,7 @@ A `possible_split` has its own answers:
 | Dismiss | The identity stays as it is, and nothing is recorded about it. The question comes back if another of its records is taken back, or one comes back |
 | Leave it open | Nothing changes. No match looks at it, since its records have an identity. It closes by itself if the record that was taken back comes back, or a new record matches more than one group |
 
-A merge or a split written against identities whose records changed since they were read is refused, and nothing is changed. A placement is refused if one of its records has an identity by then, and is not checked for anything else that changed since.
+A merge or split written against identities whose records have changed since they were read is rejected, and nothing changes. A placement is rejected if one of its records has been placed in the meantime.
 
 ## A conflict
 
@@ -189,7 +189,7 @@ ITEM  KIND      STATUS  TYPE     RAISED BY  ABOUT
 2     conflict  open    company  run 12     1 record without an identity, which matched 1 identity
 ```
 
-`spool explain` shows where it comes from:
+`spool explain` shows the cause:
 
 ```sh
 spool explain crm:c-14 crm:c-13
@@ -256,9 +256,9 @@ review items that name them
   item 2 (conflict, open)
 ```
 
-One member of the identity says yes and another says no, so the match left it. This is what a record with a missing value costs: it matches what a complete record would not. An earlier version of a row that was later corrected does the same, because earlier versions stay members, and go where the latest version is placed.
+One member says yes and another says no, so the match left it. A record with a missing value matches what a complete record wouldn't. An earlier version of a corrected row has the same effect, because earlier versions stay members and follow the latest version.
 
-A reviewer who decides that the French company is not one to track dismisses the item:
+A reviewer who decides not to track the French company dismisses the item:
 
 ```sh
 ITEM=$(spool show review --status open | awk 'NR==2 {print $1}')
@@ -269,11 +269,11 @@ curl -s -X POST http://127.0.0.1:7765/v1/review/$ITEM/dismiss -d '{"reason": "a 
 {"id":2,"run":12,"entity_type":"company","kind":"conflict","records":["4adcad34-e94d-d0d7-bd50-5ed0599dab66"],"identities":["01a1efc6-41cd-775d-8758-e7329447fd9a"],"groups":[],"status":"dismissed","resolved_seq":null,"superseded_by":null,"dismissed":{"by":"user:01a1f0a0-a4da-74d5-bf74-28797e6632ab","at":"2026-11-18T21:47:02.755334Z","reason":"a French company we do not track"}}
 ```
 
-The record stays without an identity, and later matches stop asking about it, a rematch included. A dismissed item is not opened again. A changeset can still place the record.
+The record stays unplaced, and later matches, rematches included, skip it. A dismissed item never reopens, though a changeset can still place the record.
 
 ## A possible split
 
-Records can be in one identity only because a third record joined them. Load a name that is close to "Acorn Tools Ltd" and not close enough to "Acorn Tools":
+Two records can share an identity only because a third joined them. Load a name close to "Acorn Tools Ltd" but not to "Acorn Tools":
 
 ```csv title="acorn.csv"
 id,name,country
@@ -330,7 +330,7 @@ what would part them
   with right: 4 records (2 × ACORN TOOLS, 1 × Acorn Tool, 1 × Acorn Tools Ltd)
 ```
 
-It joined Acorn Tools through `crm:c-3`, Acorn Tools Ltd. Now the CRM deletes `c-3`, and the row is taken back:
+It joined Acorn Tools through `crm:c-3`, Acorn Tools Ltd. Now the CRM deletes `c-3`, and the row is retracted:
 
 ```sh
 spool retract --source crm --type company c-3 --reason "deleted in the CRM"
@@ -378,7 +378,7 @@ what answers it
 The review screen of the studio does each of these.
 ```
 
-The identity is as it was, with `crm:c-15` still in it. Nothing is split automatically: most identities that lose such a record are still one thing, and the item asks. The output lists the three answers. A reviewer who knows that Acorn Tools Limited is Acorn Tools says so with a `must_link`, which joins the groups whatever the rules say:
+The identity is unchanged, with `crm:c-15` still in it. Nothing splits automatically: most identities that lose such a record are still one thing, so the item asks. The output lists the three answers. A reviewer who knows Acorn Tools Limited is Acorn Tools adds a `must_link`, which holds the groups together whatever the rules say:
 
 ```sh
 A=$(spool show records crm:c-1 | awk '/^record/ {print $2}')
@@ -403,7 +403,7 @@ ITEM  KIND            STATUS     TYPE     RAISED BY  ABOUT
 
 ## Drafts
 
-A match commits its changeset by default. Started with `"commit": false`, it stores the changeset as a **draft** and changes nothing. That is how a new rule, or an agent, is tried against shared identities without touching them. `spool match` has no option for it, so this match is started over HTTP:
+A match commits its changeset by default. With `"commit": false`, it stores the changeset as a **draft** and changes nothing. That's how you trial a new rule, or an agent, against shared identities safely. This match starts over HTTP, since `spool match` has no flag for it:
 
 ```csv title="larkfield.csv"
 id,name,country
@@ -432,7 +432,7 @@ operations
   place record 5af84b72-c049-e1cc-0b28-2db7c0c0ef7d in 01a1efc6-41cd-775d-8758-e733aa086f7d
 ```
 
-The draft is stored on the server, so whoever approves it need not be whoever started the match:
+The draft lives on the server, so someone else can approve it:
 
 ```sh
 curl -s -X POST http://127.0.0.1:7765/v1/drafts/$DRAFT/approve
@@ -451,13 +451,13 @@ DRAFT                                 TYPE     STATUS     OPERATIONS  FROM
 01a1f0a0-a840-778b-871c-76e67030b94b  company  committed  1           match run 18
 ```
 
-Approving checks the draft like any changeset, against the identities as they are then. If they changed in a way that breaks it, the answer names the operations that no longer hold and the draft stays open. A draft can also be rejected, with `POST /v1/drafts/<draft>/reject`.
+Approval checks the draft like any changeset, against the current identities. If they've changed in a way that breaks it, the response names the failing operations and the draft stays open. Reject a draft with `POST /v1/drafts/<draft>/reject`.
 
-An entity type has at most one open draft. A later match of the type replaces it. The records of a draft that is rejected, replaced or never decided are examined again by the next match, so nothing is stranded.
+Each entity type has at most one open draft, and a later match replaces it. Records of a rejected, replaced or undecided draft are re-examined by the next match, so nothing gets stranded.
 
 ## Recompute and what people decided
 
-[`spool recompute`](/docs/concepts/matching#recompute) works out what the identities would be if every record were matched again by the rules as they are now. What people decided counts for more than the rules, and the output says which decisions shaped or stopped the result:
+[`spool recompute`](/docs/concepts/matching#recompute) previews the identities the current rules would produce from scratch. Human decisions outrank the rules, and the output says which decisions shaped the result:
 
 | Decision | What a recompute does with it |
 | --- | --- |
@@ -470,21 +470,19 @@ An entity type has at most one open draft. A later match of the type replaces it
 | An approved draft | It binds no more than the run that drafted it: approving accepted what the rules said then. The output marks every change that touches records an approved draft placed. |
 | A rejected draft | Nothing. Its records were examined again by the next match anyway. |
 
-Applying a recompute leaves its waiting groups as `conflict` items, closes the open items whose records it places, and replaces an open draft of the type.
+Applying a recompute raises `conflict` items for its waiting groups, closes open items whose records it places, and replaces the type's open draft.
 
 ## Who reviews
 
-A reviewer is anyone the server knows: a person signed in to the studio, or a program with a token. Each change is recorded under its author.
+A reviewer is anyone the server knows: a person signed in to the studio, or a program with a token. Every change is recorded under its author.
 
-An agent connects at `/mcp`. For Claude Code against `spool dev`: `claude mcp add --transport http spool http://127.0.0.1:7765/mcp`. It has tools to list review items, read what is needed to decide one, explain a pair, commit a changeset, split an identity, undo a change and dismiss an item. Every one of those that changes something requires a reason. [MCP](/docs/mcp) lists them.
+Agents connect at `/mcp`. For Claude Code against `spool dev`: `claude mcp add --transport http spool http://127.0.0.1:7765/mcp`. Agents get tools to list review items, fetch everything needed to decide one, explain a pair, commit a changeset, split an identity, undo a change and dismiss an item. Every tool that changes something requires a reason. [MCP](/docs/mcp) lists them.
 
 ## How many to expect
 
-It depends on the rules. In the repository's benchmark on 5,000,000 voter records from five sources, the rules left 13,755 records for review. In its benchmark of data that changes, taking back 50,000 rows left 70 `possible_split` items.
+It depends on the rules. In the benchmark on 5,000,000 voter records from five sources, the rules left 13,755 records (0.3%) for review. In the changing-data benchmark, retracting 50,000 rows raised 70 `possible_split` items.
 
-## What review does not have
+## Where decisions happen
 
-- Nothing notifies anyone that an item is waiting. Someone has to look.
-- Items are not assigned to people, and there is no queue or priority beyond the list.
-- The command line shows review items and drafts and cannot decide them.
-- An agent cannot approve or reject a draft. There is no MCP tool for it.
+- The CLI lists review items and drafts. Decisions go through the studio, the HTTP API or MCP.
+- Agents can decide review items. Approving or rejecting drafts is for people.
