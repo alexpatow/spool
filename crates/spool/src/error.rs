@@ -178,6 +178,15 @@ pub enum Error {
         message: String,
     },
 
+    #[error("recompute: {0}")]
+    Recompute(String),
+
+    /// What recomputing finds now is not what the plan named.
+    #[error(
+        "plan {plan} is not what recomputing finds now, which is plan {now}: the records, the rules or the identities changed since it was shown, and nothing was applied. `spool recompute` shows what would change now"
+    )]
+    StalePlan { plan: String, now: String },
+
     #[error("there is no review item {0}")]
     UnknownReviewItem(u64),
 

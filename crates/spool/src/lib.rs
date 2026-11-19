@@ -41,6 +41,7 @@ mod metrics;
 mod order;
 mod possible_split;
 mod project;
+mod recompute;
 mod retract;
 mod review;
 mod rows;
@@ -91,6 +92,12 @@ pub use order::{ActorNames, Direction, Sort};
 pub use project::{
     Declaration, EntityTypeManifest, EntityTypeSource, Extractor, FeatureColumn, Manifest, Project,
     Rule, RuleSet, Runtime, Source, SqlFile, Strategy, StrategySource, Transform, YamlFile,
+};
+pub use recompute::{
+    After, AppliedType, ApprovedPlacement, Before, Change, ChangeDetail, ChangeKind,
+    ConstraintNote, Contradiction, DEFAULT_CHANGES, DecisionSummary, Fate, PersonDecision,
+    RecomputeApplied, RecomputeReport, RecomputeRequest, RecomputeSummary, RecordMove,
+    TypeRecompute,
 };
 pub use retract::RetractReport;
 pub use review::{

@@ -554,6 +554,7 @@ impl From<spool::Error> for ApiError {
             | Error::Draft { .. }
             | Error::Review { .. }
             | Error::Split { .. }
+            | Error::StalePlan { .. }
             | Error::Retracted(_)
             | Error::NothingToUndo(_) => {
                 Self::new(StatusCode::CONFLICT, ErrorCode::Conflict, message)
@@ -568,6 +569,7 @@ impl From<spool::Error> for ApiError {
             | Error::InvalidEntityType(_)
             | Error::UndeclaredType(_)
             | Error::SameRecord(_)
+            | Error::Recompute(_)
             | Error::UnknownStrategy { .. } => Self::invalid(message),
             Error::Strategy { .. } => Self::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
