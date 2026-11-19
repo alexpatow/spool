@@ -34,6 +34,7 @@ mod error;
 mod explain;
 mod features;
 mod following;
+mod links;
 mod load;
 mod lookup;
 mod metrics;
@@ -73,8 +74,8 @@ pub use engine::{
 };
 pub use error::{Error, Result};
 pub use explain::{
-    Comparison, Explained, Explanation, Link, LinkKind, Outcome, Placement, RecordedJudgement,
-    RuleReading, RuleResult,
+    Comparison, Explained, Explanation, IdentityExplanation, Link, LinkKind, LinkValue, NameCount,
+    Named, Outcome, Placement, RecordedJudgement, RuleReading, RuleResult, Side, Split, how_linked,
 };
 pub use load::LoadReport;
 pub use lookup::{

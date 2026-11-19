@@ -389,10 +389,10 @@ fn explain_says_why_two_records_are_together_or_apart() {
         "{identity}"
     );
 
-    let (code, complaint) = refused(&server, &["explain", "shop:1"]);
+    let (code, complaint) = refused(&server, &["explain"]);
     assert_eq!(code, Some(2));
     assert!(
-        complaint.contains("`explain` needs two records"),
+        complaint.contains("`explain` needs two records, or an identity"),
         "{complaint}"
     );
     let (code, complaint) = refused(&server, &["explain", "shop:1", "anvil"]);
@@ -414,6 +414,167 @@ fn explain_says_why_two_records_are_together_or_apart() {
     let (code, complaint) = refused(&server, &["explain", "shop:1", unknown]);
     assert_eq!(code, Some(1));
     assert_eq!(complaint, format!("spool: there is no record {unknown}\n"));
+}
+
+/// Things matched by code and by name: an anvil and a tongs that share no
+/// rule are together through a second anvil with the tongs' name.
+fn chained(dir: &Path) -> Server {
+    let project = dir.join("project");
+    write_things(&project);
+    std::fs::write(
+        project.join("entities/thing/entity.yaml"),
+        "label: code\nfeatures: [code, colour, name]\nmapping:\n  shop:\n    code: code\n    colour: colour\n    name: name\n",
+    )
+    .unwrap();
+    for group in ["block", "match"] {
+        let file = project.join(format!("entities/thing/rules/{group}/same_name.sql"));
+        std::fs::write(file, "l.name = r.name\n").unwrap();
+    }
+    let server = Server::serve(&project, dir, 1);
+    load(
+        &server,
+        "shop",
+        "thing",
+        rows(&[
+            &["id", "code", "colour", "name"],
+            &["1", "anvil", "", "Acme"],
+            &["2", "anvil", "", "Smith"],
+            &["3", "tongs", "", "Smith"],
+            &["4", "tongs", "", "Jones"],
+        ]),
+    );
+    assert_eq!(resolve(&server, "thing")["status"], "succeeded");
+    server
+}
+
+#[test]
+fn explain_names_each_link_of_a_chain_by_its_records_and_its_rule() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = chained(dir.path());
+
+    let shown_chain = shown(&server, &["explain", "shop:1", "shop:4"]);
+    has(&shown_chain, "what joins them");
+    // From whichever of the two has the smaller ID.
+    let forward = shown_chain.contains("  1. anvil  shop:1");
+    let steps: [&str; 4] = [
+        "anvil  shop:1",
+        "anvil  shop:2",
+        "tongs  shop:3",
+        "tongs  shop:4",
+    ];
+    let hows = [
+        "`match` in run 2, rule `same_code`: code \"anvil\"",
+        "`match` in run 2, rule `same_name`: name \"Smith\"",
+        "`match` in run 2, rule `same_code`: code \"tongs\"",
+    ];
+    let (steps, hows): (Vec<&str>, Vec<&str>) = match forward {
+        true => (steps.to_vec(), hows.to_vec()),
+        false => (
+            steps.into_iter().rev().collect(),
+            hows.into_iter().rev().collect(),
+        ),
+    };
+    for (at, step) in steps.iter().enumerate() {
+        has(&shown_chain, &format!("{}. {step}", at + 1));
+    }
+    for how in &hows {
+        has(&shown_chain, how);
+    }
+    assert!(
+        shown_chain.contains("They are joined through 2 other members: `shop:"),
+        "{shown_chain}"
+    );
+    // The one link between the anvils and the tongs parts them.
+    has(&shown_chain, "what would part them");
+    has(
+        &shown_chain,
+        match forward {
+            true => "anvil  shop:2 – tongs  shop:3",
+            false => "tongs  shop:3 – anvil  shop:2",
+        },
+    );
+    has(
+        &shown_chain,
+        "`match` in run 2, rule `same_name`: name \"Smith\"",
+    );
+    let (near, far) = match forward {
+        true => (
+            "with left: 2 records (2 × anvil)",
+            "with right: 2 records (2 × tongs)",
+        ),
+        false => (
+            "with left: 2 records (2 × tongs)",
+            "with right: 2 records (2 × anvil)",
+        ),
+    };
+    has(&shown_chain, near);
+    has(&shown_chain, far);
+
+    let answer = answered(&server, &["explain", "shop:1", "shop:4"]);
+    let path = answer["path"].as_array().unwrap();
+    assert_eq!(path.len(), 3);
+    assert_eq!(path[1]["rules"], json!(["same_name"]));
+    assert_eq!(
+        path[1]["values"],
+        json!([{ "feature": "name", "from": "Smith", "to": "Smith" }])
+    );
+    assert_eq!(answer["cut"]["links"].as_array().unwrap().len(), 1);
+
+    // An identity is explained by its ID or by any of its records.
+    let identity = answer["left"]["record"]["identity"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let explained = shown(&server, &["explain", &identity]);
+    assert_eq!(shown(&server, &["explain", "shop:3"]), explained);
+    assert!(
+        explained.contains("is a `thing` identity of 4 records with 2 different names.\n"),
+        "{explained}"
+    );
+    has(
+        &explained,
+        "Without the 1 link only rule `same_name` made, it would fall into 2 pieces: 2 (2 × `tongs`), 2 (2 × `anvil`).",
+    );
+    has(&explained, "same_name  1  1  2  2 (tongs), 2 (anvil)");
+    has(
+        &explained,
+        "Of its 6 pairs of records, 3 are linked directly and 3 are together only through a chain of others, the longest of at least 3 links.",
+    );
+    // The link between the two names parts it evenly, so it comes first,
+    // with either name on the first side.
+    assert!(
+        explained.contains(
+            "Removing 1 link would part 2 records (2 × `anvil`) from the other 2 (2 × `tongs`)."
+        ) || explained.contains(
+            "Removing 1 link would part 2 records (2 × `tongs`) from the other 2 (2 × `anvil`)."
+        ),
+        "{explained}"
+    );
+    has(&explained, "only through chains  3");
+    has(&explained, "weakest 1: 1 link would part it");
+    assert!(
+        explained.contains("  anvil  shop:2 – tongs  shop:3\n")
+            || explained.contains("  tongs  shop:3 – anvil  shop:2\n"),
+        "{explained}"
+    );
+    let answer = answered(&server, &["explain", &identity]);
+    assert_eq!(
+        answer,
+        server.read(&format!("/v1/identities/{identity}/explain"))
+    );
+    assert_eq!(answer["chained_pairs"], 3);
+    assert_eq!(answer["weakest"][0]["sides"][1]["records"], 2);
+
+    let unknown = "00000000-0000-7000-8000-000000000000";
+    let (code, complaint) = refused(&server, &["explain", unknown]);
+    assert_eq!(code, Some(1));
+    assert_eq!(
+        complaint,
+        format!("spool: there is no identity or record {unknown}\n")
+    );
+    server
+        .get(&format!("/v1/identities/{unknown}/explain"))
+        .error(404, "not_found");
 }
 
 #[test]

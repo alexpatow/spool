@@ -396,6 +396,7 @@ fn router_until(engine: Arc<Engine>, options: &ServerOptions, stopping: Stopping
         .route("/identities", get(list_identities))
         .route("/identities/{identity}", get(read_identity))
         .route("/identities/{identity}/history", get(identity_history))
+        .route("/identities/{identity}/explain", get(explain_identity))
         .route("/identities/{identity}/split", post(split))
         .route("/constraints", get(list_constraints))
         .route("/records", get(list_records))
@@ -2283,6 +2284,14 @@ async fn list_identities(
 async fn read_identity(State(app): State<App>, Path(identity): Path<String>) -> ApiResult {
     let identity = id(&identity, "an identity ID")?;
     ok(engine(&app, move |engine| engine.identity(identity)).await?)
+}
+
+/// What holds an identity together, and the fewest links that would part
+/// it. An identity that was merged away is explained as the one it was
+/// merged into.
+async fn explain_identity(State(app): State<App>, Path(identity): Path<String>) -> ApiResult {
+    let identity = id(&identity, "an identity ID")?;
+    ok(engine(&app, move |engine| engine.explain_identity(identity)).await?)
 }
 
 async fn identity_history(State(app): State<App>, Path(identity): Path<String>) -> ApiResult {

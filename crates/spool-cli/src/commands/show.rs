@@ -11,9 +11,9 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use spool::core::{ChangesetId, ConstraintEntry, DocumentId, IdentityId, Op, RecordId, ReviewItem};
 use spool::{
-    DocumentEntry, DraftEntry, DraftSummary, Explanation, HistoryEntry, IdentitySummary,
-    IdentityView, LoggedChangeset, Member, RecordEntry, ReviewEntry, ReviewKind, ReviewStatus,
-    RuleResult, RunEntry,
+    DocumentEntry, DraftEntry, DraftSummary, Explanation, HistoryEntry, IdentityExplanation,
+    IdentitySummary, IdentityView, Link, LoggedChangeset, Member, Named, RecordEntry, ReviewEntry,
+    ReviewKind, ReviewStatus, RuleResult, RunEntry, Split, how_linked,
 };
 use spool_cli::api::{DocumentList, Info, RecordList};
 
@@ -66,11 +66,21 @@ Options:
 
 pub const EXPLAIN_USAGE: &str = "\
 Usage: spool explain <record> <record> [options]
+       spool explain <identity> [options]
 
-Says why two records share an identity, or why they do not: where each
-is and what placed it there, what each run that compared them concluded, the
-constraints and review items that name them, and what the project's rules
-say about the pair as it is now.
+With two records: says why they share an identity, or why they do not:
+where each is and what placed it there, what each run that compared them
+concluded, the constraints and review items that name them, and what the
+project's rules say about the pair as it is now. When they share an
+identity, it shows the chain of links between them, each record by its
+label and its name and each link by the rule that made it and the values
+that satisfied the rule, and the fewest links whose removal would part the
+records named as the one from those named as the other.
+
+With one identity: how much of it is held together only through chains,
+and its weakest links: the fewest links whose removal would part it, each
+with the two sides it would leave. Those are where a wrong merge entered.
+An identity is named by its ID, or by any of its records.
 
 A record is named by its ID or as <source>:<key>, which names the
 latest version of that row. A record found in a document is named as the
@@ -166,20 +176,60 @@ pub fn explain(arguments: &[String]) -> Result<(), Failure> {
             positional: 2,
         },
     )?;
-    let [a, b] = &arguments.positional[..] else {
-        return Err(Failure::Usage("`explain` needs two records".to_owned()));
-    };
     let remote = Remote::new(&arguments);
+    let json = arguments.flag("--json");
+    let (a, b) = match &arguments.positional[..] {
+        [one] => return explain_identity(&remote, one, json),
+        [a, b] => (a, b),
+        _ => {
+            return Err(Failure::Usage(
+                "`explain` needs two records, or an identity".to_owned(),
+            ));
+        }
+    };
     let a = find_record(&remote, a)?;
     let b = find_record(&remote, b)?;
     let answer = remote.list(
         "/explain",
         &[("a", a.id.to_string()), ("b", b.id.to_string())],
     )?;
-    if arguments.flag("--json") {
+    if json {
         print_json(&answer);
     } else {
         print_explanation(&typed(&answer)?);
+    }
+    Ok(())
+}
+
+/// `spool explain <identity>`: by its ID, or by a record of it.
+fn explain_identity(remote: &Remote, reference: &str, json: bool) -> Result<(), Failure> {
+    let identity = match reference.parse::<IdentityId>() {
+        Ok(identity)
+            if remote
+                .find(&format!("/identities/{identity}"), &[])?
+                .is_some() =>
+        {
+            identity
+        }
+        _ => {
+            let record = find_record(remote, reference).map_err(|failure| match failure {
+                Failure::Failed(_) if reference.parse::<IdentityId>().is_ok() => {
+                    Failure::Failed(format!("there is no identity or record {reference}"))
+                }
+                other => other,
+            })?;
+            record
+                .identity
+                .ok_or_else(|| Failure::Failed(format!("`{}` has no identity", record.name())))?
+        }
+    };
+    let answer = remote.get(&format!("/identities/{identity}/explain"), &[], || {
+        format!("there is no identity {identity}")
+    })?;
+    if json {
+        print_json(&answer);
+    } else {
+        print_identity_explanation(&typed(&answer)?);
     }
     Ok(())
 }
@@ -1549,13 +1599,162 @@ fn print_explanation(explanation: &Explanation) {
 
     if explanation.path.len() > 1 {
         println!("\nwhat joins them");
-        for link in &explanation.path {
-            let how = match (word(&link.kind).as_str(), link.run) {
-                ("match", Some(run)) => format!("match in run {run}"),
-                (kind, _) => kind.to_owned(),
-            };
-            println!("  {} and {}: {how}", link.from, link.to);
-        }
+        print_chain(&explanation.path);
+    }
+
+    if let Some(cut) = explanation
+        .cut
+        .as_ref()
+        .filter(|_| explanation.path.len() > 1)
+    {
+        println!("\nwhat would part them");
+        print_split(cut, ["with left", "with right"]);
+    }
+}
+
+/// A chain of links as numbered steps: each record by its label and name,
+/// and under it how it is linked to the next.
+fn print_chain(path: &[Link]) {
+    let Some(first) = path.first() else { return };
+    let mut rows = vec![step(1, &first.from_record)];
+    for (at, link) in path.iter().enumerate() {
+        rows.push(vec![String::new(), format!("  {}", how_linked(link))]);
+        rows.push(step(at + 2, &link.to_record));
+    }
+    for row in rows {
+        println!("  {}", row.join(" ").trim_end());
+    }
+}
+
+fn step(number: usize, record: &Named) -> Vec<String> {
+    vec![format!("{number}."), said_record(record)]
+}
+
+fn said_record(record: &Named) -> String {
+    match &record.label {
+        Some(label) => format!("{label}  {}", record.name),
+        None => record.name.clone(),
+    }
+}
+
+/// The links of a split, each from the first side to the second, and
+/// what each side would hold.
+fn print_split(split: &Split, titles: [&str; 2]) {
+    for link in &split.links {
+        println!(
+            "  {} – {}",
+            said_record(&link.from_record),
+            said_record(&link.to_record)
+        );
+        println!("      {}", how_linked(link));
+    }
+    for (title, side) in titles.iter().zip(&split.sides) {
+        let names: Vec<String> = side
+            .names
+            .iter()
+            .map(|name| format!("{} × {}", name.records, name.name))
+            .collect();
+        println!(
+            "  {title}: {}{}",
+            count(side.records, "record"),
+            match names.is_empty() {
+                true => String::new(),
+                false => format!(" ({})", names.join(", ")),
+            }
+        );
+    }
+}
+
+fn print_identity_explanation(explanation: &IdentityExplanation) {
+    for sentence in &explanation.summary {
+        println!("{sentence}");
+    }
+    println!();
+    let mut rows = vec![("identity", explanation.current.to_string())];
+    if explanation.current != explanation.id {
+        rows.push(("asked for", explanation.id.to_string()));
+    }
+    rows.extend([
+        ("type", explanation.entity_type.to_string()),
+        ("name", label(explanation.label.as_deref())),
+        ("records", explanation.records.to_string()),
+        ("names", explanation.names.to_string()),
+        ("pairs", explanation.pairs.to_string()),
+        ("linked directly", explanation.linked_pairs.to_string()),
+        ("only through chains", explanation.chained_pairs.to_string()),
+        (
+            "longest chain",
+            format!("at least {}", count(explanation.longest_chain, "link")),
+        ),
+    ]);
+    if explanation.parts > 1 {
+        rows.push(("parts", explanation.parts.to_string()));
+    }
+    fields(&rows);
+
+    if !explanation.top_names.is_empty() {
+        println!();
+        table(
+            "names",
+            &["name", "records"],
+            explanation
+                .top_names
+                .iter()
+                .map(|name| vec![name.name.clone(), name.records.to_string()])
+                .collect(),
+        );
+    }
+    if !explanation.rules.is_empty() {
+        println!();
+        table(
+            "rules",
+            &[
+                "rule",
+                "links",
+                "alone",
+                "pieces without it",
+                "largest pieces",
+            ],
+            explanation
+                .rules
+                .iter()
+                .map(|hold| {
+                    vec![
+                        hold.rule.clone(),
+                        hold.links.to_string(),
+                        hold.alone.to_string(),
+                        hold.pieces.to_string(),
+                        hold.largest
+                            .iter()
+                            .map(|piece| {
+                                let mut names: Vec<&str> = piece
+                                    .names
+                                    .iter()
+                                    .take(2)
+                                    .map(|name| name.name.as_str())
+                                    .collect();
+                                if piece.names.len() > 2 {
+                                    names.push("…");
+                                }
+                                match names.is_empty() {
+                                    true => piece.records.to_string(),
+                                    false => format!("{} ({})", piece.records, names.join(", ")),
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    ]
+                })
+                .collect(),
+        );
+    }
+    for (at, split) in explanation.weakest.iter().enumerate() {
+        println!(
+            "\nweakest {}: {} would part it",
+            at + 1,
+            count(split.links.len() as u64, "link")
+        );
+        print_split(split, ["one side", "the other"]);
     }
 }
 

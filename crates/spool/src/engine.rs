@@ -20,7 +20,7 @@ use spool_core::{
 
 use crate::drafts::{self, DraftEntry, DraftFilter, DraftStatus, DraftSummary};
 use crate::error::{Error, Result};
-use crate::explain::{self, Explanation};
+use crate::explain::{self, Explanation, IdentityExplanation};
 use crate::features;
 use crate::following::following;
 use crate::load::{self, LoadReport};
@@ -1053,30 +1053,44 @@ impl Engine {
     /// what every run that looked at the pair concluded, and what the
     /// project's rules say about it now.
     pub fn explain(&self, a: RecordId, b: RecordId) -> Result<Explanation> {
-        // The rules have to be those the feature tables were built for. The
-        // manifest is read before the store is, and `apply` can commit
-        // another declaration in between, so the read checks that the store
-        // was applied with the manifest it was given, and begins again with
-        // the engine's present manifest if not.
+        self.with_rules(|conn, manifest| explain::explain(conn, manifest, a, b))
+    }
+
+    /// What holds an identity together: how many of its pairs of records
+    /// are linked directly and how many only through chains, and the
+    /// fewest links whose removal would part it, where a wrong merge
+    /// entered.
+    pub fn explain_identity(&self, id: IdentityId) -> Result<IdentityExplanation> {
+        self.with_rules(|conn, manifest| explain::explain_identity(conn, manifest, id))
+    }
+
+    /// A read that needs the rules the feature tables were built for. The
+    /// manifest is read before the store is, and `apply` can commit
+    /// another declaration in between, so the read checks that the store
+    /// was applied with the manifest it was given, and begins again with
+    /// the engine's present manifest if not. When the declaration keeps
+    /// changing, the read is done without one.
+    fn with_rules<T>(
+        &self,
+        read: impl Fn(&Connection, Option<&Manifest>) -> Result<T>,
+    ) -> Result<T> {
         for _ in 0..EXPLAIN_ATTEMPTS {
             let manifest = self.manifest();
-            let explanation = self.read(|conn| {
+            let done = self.read(|conn| {
                 if let Some(manifest) = &manifest {
                     let applied = schema::meta(conn, "manifest_hash")?;
                     if applied.as_deref() != Some(manifest.hash.as_str()) {
                         return Ok(None);
                     }
                 }
-                explain::explain(conn, manifest.as_deref(), a, b).map(Some)
+                read(conn, manifest.as_deref()).map(Some)
             })?;
-            if let Some(explanation) = explanation {
-                return Ok(explanation);
+            if let Some(done) = done {
+                return Ok(done);
             }
             std::thread::sleep(EXPLAIN_PAUSE);
         }
-        // The declaration keeps changing. The rest of the explanation does
-        // not depend on it.
-        self.read(|conn| explain::explain(conn, None, a, b))
+        self.read(|conn| read(conn, None))
     }
 
     /// Mints IDs for a caller that writes its own changesets.
