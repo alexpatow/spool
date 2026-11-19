@@ -133,6 +133,18 @@ share_files() {
     done
 }
 
+# The updater gives the old link's target so a change during the download
+# can be detected before activating the release.
+check_link() {
+    if [ -d "$1" ] || { [ -e "$1" ] && [ ! -L "$1" ]; }; then
+        fail "$1 is occupied by something other than a link to a release." \
+            "Move it away and run this again, or set SPOOL_BIN_DIR to another directory."
+    fi
+    if [ -n "$2" ] && [ "$(readlink "$1" 2> /dev/null || true)" != "$2" ]; then
+        fail "$1 changed while updating. Run spool update again."
+    fi
+}
+
 main() {
     [ -n "${HOME:-}" ] || fail "HOME is not set, so there is nowhere to install to"
 
@@ -164,16 +176,15 @@ main() {
     esac
     name=spool-$version-$target
     link=$bin/spool
-    if [ -e "$link" ] && [ ! -L "$link" ]; then
-        fail "$link is a file and not a link to a release, so it is left alone." \
-            "Move it away and run this again, or set SPOOL_BIN_DIR to another directory."
-    fi
+    update_from=${SPOOL_UPDATE_FROM:-}
+    check_link "$link" "$update_from"
 
-    # Everything is made in a directory beside where it will stay, and moved
-    # there once it has been checked. A run that fails leaves no file behind.
+    # Stage the download beside the releases. A failed download or
+    # verification leaves the installed command in place.
     mkdir -p "$root"
     work=$(mktemp -d "$root/.install.XXXXXX")
-    trap 'rm -rf "$work"; rmdir "$root" 2> /dev/null || true' EXIT
+    link_work=
+    trap 'rm -rf "$work"; if [ -n "$link_work" ]; then rm -rf "$link_work"; fi; rmdir "$root" 2> /dev/null || true' EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
 
@@ -205,11 +216,20 @@ main() {
     [ "$said" = "spool $version" ] ||
         fail "the release says it is \`$said\`, not \`spool $version\`, so it is not installed"
 
+    check_link "$link" "$update_from"
+    mkdir -p "$bin"
+    link_work=$(mktemp -d "$bin/.install.XXXXXX")
+    ln -s "$root/$version/bin/spool" "$link_work/spool"
     rm -rf "${root:?}/$version"
     mv "$work/$name" "$root/$version"
-    mkdir -p "$bin"
-    ln -sf "$root/$version/bin/spool" "$link"
     share_files "$root/$version/share" "$(dirname "$bin")/share"
+    check_link "$link" "$update_from"
+    mv -f "$link_work/spool" "$link"
+
+    # `spool update` prints its own result and refreshes the project next.
+    if [ -n "$update_from" ]; then
+        return 0
+    fi
 
     echo
     echo "installed  spool $version"

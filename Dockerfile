@@ -30,7 +30,7 @@ RUN case "$TARGETARCH" in \
 # Debian names its own C compiler this way too, so these hold either way.
 ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc \
     CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml Cargo.lock install.sh ./
 COPY crates crates
 # The build downloads the DuckDB shared library that matches the `duckdb`
 # crate. The binary looks for it beside itself and in ../lib, and with
