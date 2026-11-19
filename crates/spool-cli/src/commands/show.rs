@@ -450,6 +450,25 @@ impl View<'_> {
         Ok(query)
     }
 
+    /// The documents that the mentions among `records` were found in and
+    /// that a later version replaced. Such a mention is not current, though
+    /// nothing replaced the mention itself: one found in the new version is
+    /// a record of its own.
+    fn replaced_documents(&self, records: &[RecordEntry]) -> Result<Vec<DocumentId>, Failure> {
+        let mut documents: Vec<DocumentId> = records.iter().filter_map(mention_document).collect();
+        documents.sort_unstable();
+        documents.dedup();
+        let mut replaced = Vec::new();
+        for document in documents {
+            if let Some(found) = self.remote.find(&format!("/documents/{document}"), &[])?
+                && !found["superseded_by"].is_null()
+            {
+                replaced.push(document);
+            }
+        }
+        Ok(replaced)
+    }
+
     /// Whether a list shows every version. Without `--all-versions` it asks
     /// for the ones nothing replaced.
     fn all_versions(&self, query: &mut Vec<(&'static str, String)>) -> bool {
@@ -1129,6 +1148,10 @@ impl View<'_> {
             headers.push("name");
         }
         headers.push("identity");
+        let replaced_documents = match all_versions {
+            true => self.replaced_documents(&records)?,
+            false => Vec::new(),
+        };
         if all_versions {
             headers.push("version");
         }
@@ -1162,7 +1185,9 @@ impl View<'_> {
                             .map_or_else(|| "-".to_owned(), |identity| identity.to_string()),
                     );
                     if all_versions {
-                        row.push(version(record.superseded_by.is_some()));
+                        let in_replaced = mention_document(record)
+                            .is_some_and(|document| replaced_documents.contains(&document));
+                        row.push(version(record.superseded_by.is_some() || in_replaced));
                     }
                     row
                 })
@@ -2237,6 +2262,12 @@ fn record_name(record: &RecordEntry) -> String {
         Some(_) => record.name(),
         None => named(&record.source, None),
     }
+}
+
+/// The document a mention was found in, or `None` for a record that is
+/// not a mention.
+fn mention_document(record: &RecordEntry) -> Option<DocumentId> {
+    record.evidence.as_ref()?["document"].as_str()?.parse().ok()
 }
 
 /// What a list that shows every version says of each.

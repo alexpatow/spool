@@ -1237,6 +1237,8 @@ fn the_attributes_of_the_records_that_stand_are_shown_across_them() {
         &["show", "records", "--source", "notes", "--all-versions"],
     );
     assert_eq!(every.matches("notes:a.txt[0-3]").count(), 2, "{every}");
+    has(&every, "notes:a.txt[0-3]  anvil  -  replaced");
+    has(&every, "notes:a.txt[0-3]  tongs  -  current");
     let notes = shown(&server, &["show", "attributes", "--source", "notes"]);
     has(&notes, "entity type `thing`, source `notes`: 1 record");
     has(&notes, "code  1 (100%)  1  tongs  code");
