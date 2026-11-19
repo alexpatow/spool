@@ -1195,6 +1195,52 @@ fn the_attributes_of_the_records_that_stand_are_shown_across_them() {
     assert_eq!(every.matches(" replaced\n").count(), 1, "{every}");
     assert_eq!(every.matches(" current\n").count(), 1, "{every}");
 
+    // A mention found in a version of a document that a later one replaced
+    // is not current, though nothing replaced the mention itself.
+    let versions = server.read("/v1/documents?source=notes&key=a.txt")["documents"].clone();
+    let version = |replaced: bool| {
+        versions
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|document| document["superseded_by"].is_null() != replaced)
+            .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    for (row, code, document) in [
+        ("m-old", "anvil", version(true)),
+        ("m-new", "tongs", version(false)),
+    ] {
+        let evidence = json!({ "document": document, "key": "a.txt", "start": 0, "end": 3 });
+        load(
+            &server,
+            "notes",
+            "thing",
+            rows(&[
+                &["id", "code", "where"],
+                &[row, code, &evidence.to_string()],
+            ]),
+        );
+    }
+    let mentions = answered(&server, &["show", "records", "--source", "notes"]);
+    let keys: Vec<&str> = mentions["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|record| record["key"].as_str().unwrap())
+        .collect();
+    assert_eq!(keys, ["m-new"], "{mentions}");
+    let every = shown(
+        &server,
+        &["show", "records", "--source", "notes", "--all-versions"],
+    );
+    assert_eq!(every.matches("notes:a.txt[0-3]").count(), 2, "{every}");
+    let notes = shown(&server, &["show", "attributes", "--source", "notes"]);
+    has(&notes, "entity type `thing`, source `notes`: 1 record");
+    has(&notes, "code  1 (100%)  1  tongs  code");
+
     for (arguments, complaint) in [
         (
             &["show", "attributes", "--key", "1"][..],
@@ -1217,6 +1263,38 @@ fn the_attributes_of_the_records_that_stand_are_shown_across_them() {
         assert_eq!(code, Some(2), "{arguments:?}");
         assert!(said.starts_with(&format!("spool: {complaint}\n")), "{said}");
     }
+}
+
+#[test]
+fn an_attribute_the_source_no_longer_declares_is_still_listed() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("project");
+    write_things(&project);
+    let server = Server::dev(&project);
+    load(
+        &server,
+        "shop",
+        "thing",
+        rows(&[&["id", "code", "weight"], &["1", "anvil", "40"]]),
+    );
+    std::fs::write(
+        project.join("sources/shop.yaml"),
+        "key: id\ncolumns: [id, code, colour, name]\n",
+    )
+    .unwrap();
+    server.printed("applied");
+
+    let wide = shown(
+        &server,
+        &["show", "records", "--source", "shop", "--attributes"],
+    );
+    has(
+        &wide,
+        "source and key  code  colour  name  weight  identity",
+    );
+    has(&wide, "shop:1  anvil  -  -  40  -");
+    let profile = shown(&server, &["show", "attributes", "--source", "shop"]);
+    has(&profile, "weight  1 (100%)  1  40  -");
 }
 
 #[test]

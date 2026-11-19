@@ -462,7 +462,8 @@ impl View<'_> {
 
     /// The attributes a list of records shows a column for: the columns
     /// each record's source declares, in its order, other than its key,
-    /// which the list shows already. Then any other a record has.
+    /// which the list shows already, and its evidence. Then any other a
+    /// record has, such as a column the source no longer declares.
     fn attribute_columns(&self, records: &[RecordEntry]) -> Result<Vec<String>, Failure> {
         let info: Info = typed(&self.remote.list("/info", &[])?)?;
         let mut columns: Vec<String> = Vec::new();
@@ -472,23 +473,22 @@ impl View<'_> {
             }
         };
         for record in records {
-            match info
+            let source = info
                 .store
                 .sources
                 .iter()
-                .find(|source| source.name == record.source)
-            {
-                Some(source) => source
-                    .columns
-                    .iter()
-                    .filter(|column| source.key.as_ref() != Some(*column))
-                    .filter(|column| source.evidence.as_ref() != Some(*column))
-                    .for_each(&mut add),
-                None => {
-                    if let Some(payload) = record.payload.as_object() {
-                        payload.keys().for_each(&mut add);
-                    }
-                }
+                .find(|source| source.name == record.source);
+            let shown = |column: &&String| {
+                source.is_none_or(|source| {
+                    source.key.as_ref() != Some(*column)
+                        && source.evidence.as_ref() != Some(*column)
+                })
+            };
+            if let Some(source) = source {
+                source.columns.iter().filter(shown).for_each(&mut add);
+            }
+            if let Some(payload) = record.payload.as_object() {
+                payload.keys().filter(shown).for_each(&mut add);
             }
         }
         Ok(columns)

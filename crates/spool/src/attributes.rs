@@ -4,7 +4,8 @@
 //! project computes from it.
 //!
 //! Only the records that stand count: the version of each row or mention
-//! that nothing replaced, and not one its source took back.
+//! that nothing replaced, not one its source took back, and not a mention
+//! found in a version of a document that a later version replaced.
 
 use std::collections::BTreeMap;
 
@@ -13,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use spool_core::{EntityType, StateError};
 
 use crate::error::Result;
+use crate::lookup::DOCUMENT_STANDS;
 use crate::project::Manifest;
 
 /// How many of an attribute's values are listed: those most records have.
@@ -82,9 +84,12 @@ pub struct DerivedFeature {
     pub transform: Option<String>,
 }
 
-/// The records that stand, and each of their attributes as text. A JSON
+/// The records that stand, and each of their attributes as text. A
+/// mention found in a version of a document that was replaced does not. A JSON
 /// `null` is no value, and a value that is not text is its JSON.
-const CELLS: &str = "
+fn cells() -> String {
+    format!(
+        "
     WITH standing AS (
       SELECT o.entity_type, o.source_id, o.payload
       FROM spool.record o
@@ -95,6 +100,7 @@ const CELLS: &str = "
         AND NOT EXISTS (
           SELECT 1 FROM spool.retraction taken
           WHERE taken.record_id = o.record_id AND taken.restored_run IS NULL)
+        AND {DOCUMENT_STANDS}
     ),
     cells AS (
       SELECT s.entity_type, s.source_id, e.key AS attribute,
@@ -104,7 +110,9 @@ const CELLS: &str = "
                ELSE e.value::VARCHAR
              END AS value
       FROM standing s, json_each(s.payload) e
-    )";
+    )"
+    )
+}
 
 type Group = (String, String);
 
@@ -129,8 +137,9 @@ pub(crate) fn attributes(
     }
     {
         let mut statement = conn.prepare(&format!(
-            "{CELLS}
-             SELECT entity_type, source_id, count(*) FROM standing GROUP BY ALL"
+            "{}
+             SELECT entity_type, source_id, count(*) FROM standing GROUP BY ALL",
+            cells()
         ))?;
         let mut rows = statement.query(params![entity_type, source])?;
         while let Some(row) = rows.next()? {
@@ -141,10 +150,11 @@ pub(crate) fn attributes(
     let mut found: BTreeMap<Group, BTreeMap<String, (u64, u64)>> = BTreeMap::new();
     {
         let mut statement = conn.prepare(&format!(
-            "{CELLS}
+            "{}
              SELECT entity_type, source_id, attribute,
                     count(nullif(value, '')), count(DISTINCT nullif(value, ''))
-             FROM cells GROUP BY ALL"
+             FROM cells GROUP BY ALL",
+            cells()
         ))?;
         let mut rows = statement.query(params![entity_type, source])?;
         while let Some(row) = rows.next()? {
@@ -158,7 +168,7 @@ pub(crate) fn attributes(
     let mut common: BTreeMap<(Group, String), Vec<ValueCount>> = BTreeMap::new();
     {
         let mut statement = conn.prepare(&format!(
-            "{CELLS}
+            "{}
              SELECT entity_type, source_id, attribute, left(value, {VALUE_CHARACTERS}), records
              FROM (
                SELECT entity_type, source_id, attribute, value, count(*) AS records,
@@ -169,7 +179,8 @@ pub(crate) fn attributes(
                WHERE value <> ''
                GROUP BY entity_type, source_id, attribute, value)
              WHERE nth <= {COMMON_VALUES}
-             ORDER BY entity_type, source_id, attribute, nth"
+             ORDER BY entity_type, source_id, attribute, nth",
+            cells()
         ))?;
         let mut rows = statement.query(params![entity_type, source])?;
         while let Some(row) = rows.next()? {

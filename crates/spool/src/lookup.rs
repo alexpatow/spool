@@ -140,7 +140,9 @@ pub struct RecordFilter {
     /// Only those that wait for an identity: they have none, and their
     /// source has not taken them back.
     pub unassigned: bool,
-    /// Only the version of each row or mention that nothing has replaced.
+    /// Only the version of each row or mention that nothing has replaced,
+    /// and no mention found in a version of a document that a later one
+    /// replaced.
     pub latest: bool,
     /// Only those that come after this record in the list: the last one of
     /// the page before. A record the store does not hold is refused.
@@ -642,6 +644,15 @@ impl RecordSort {
     }
 }
 
+/// SQL for whether the record `o` is not a mention found in a version of
+/// a document that a later version replaced. A mention's key names its
+/// document, so one found in the new version does not replace one found in
+/// the old: they are records of their own.
+pub(crate) const DOCUMENT_STANDS: &str = "NOT EXISTS (
+       SELECT 1 FROM spool.document replaced
+       WHERE replaced.supersedes
+             = TRY_CAST(json_extract_string(o.evidence, '$.document') AS UUID))";
+
 pub(crate) fn records(conn: &Connection, filter: &RecordFilter) -> Result<Vec<RecordEntry>> {
     // A page continues from where a record stands, so the record has to be
     // one the store holds. Records are never deleted, so the last one of a
@@ -664,8 +675,9 @@ pub(crate) fn records(conn: &Connection, filter: &RecordFilter) -> Result<Vec<Re
            AND ($7::VARCHAR IS NULL
                 OR json_extract_string(o.evidence, '$.document') = $7::VARCHAR)
            AND ($8::VARCHAR IS NULL OR m.identity_id = $8::UUID)
-           AND (NOT $10::BOOLEAN OR later.record_id IS NULL)
+           AND (NOT $10::BOOLEAN OR (later.record_id IS NULL AND {}))
            AND {}",
+        DOCUMENT_STANDS,
         holds_words("$9")
     );
     let sql = match filter.sort {
