@@ -307,9 +307,13 @@ pub struct IdentityExplanation {
     /// at the least: found from two of its records far apart, not from
     /// every pair.
     pub longest_chain: u64,
-    /// The places where fewest links hold it together: each the fewest
-    /// links whose removal would part it, with the two sides, the most even
-    /// split first. At most five, and none with more than twenty links.
+    /// The places where fewest links hold it together, where a wrong merge
+    /// entered: each a set of links whose removal would part it, with the
+    /// two sides, the smaller first. They are the links that alone hold a
+    /// part on, and the fewest that part the records of its most common
+    /// name from those of each of the next eight (or, without names, its
+    /// two records farthest apart). Fewest links for each record they part
+    /// off first; at most five, and none of more than twenty links.
     pub weakest: Vec<Split>,
     /// For each `match` rule its links were made by, what it holds
     /// together: the pieces the identity would be in without the links only
@@ -1094,12 +1098,13 @@ pub(crate) fn explain_identity(
     for parting in &mut partings {
         parting.edges.sort();
     }
+    // Fewest links for each record they part off first: two links that
+    // part five records are weaker than sixteen that part seven, and than
+    // one that parts one.
     partings.sort_by(|one, other| {
-        other
-            .one
-            .len()
-            .cmp(&one.one.len())
-            .then_with(|| one.edges.len().cmp(&other.edges.len()))
+        (one.edges.len() * other.one.len())
+            .cmp(&(other.edges.len() * one.one.len()))
+            .then_with(|| other.one.len().cmp(&one.one.len()))
             .then_with(|| one.edges.cmp(&other.edges))
     });
     partings.dedup_by(|one, other| one.edges == other.edges);

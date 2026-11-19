@@ -19,7 +19,7 @@ Commands:
   extract  find records in documents with one of the project's extractors
   match    match the new records on a running server and place them in identities
   show     show what a running server holds
-  explain  say why two records share an identity, or why they do not
+  explain  say why two records share an identity, or what holds one together
   retract  take back rows a source no longer holds
   token    make, list and revoke the tokens of callers that are not people
   bench    run a benchmark scenario

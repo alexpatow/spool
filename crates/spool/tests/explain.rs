@@ -392,6 +392,26 @@ fn an_identity_is_explained_by_how_much_of_it_hangs_on_chains_and_where_it_parts
         ]
     );
 
+    // The list of identities says as much of each, without walking it.
+    let listed = engine
+        .identities(&spool::IdentityFilter {
+            sort: Some(spool::Sort::descending(spool::IdentitySort::Names)),
+            ..spool::IdentityFilter::default()
+        })
+        .unwrap();
+    let [summary] = &listed[..] else {
+        panic!("one identity");
+    };
+    assert_eq!(
+        (
+            summary.members,
+            summary.names,
+            summary.linked_pairs,
+            summary.unlinked_pairs
+        ),
+        (6, 2, 7, 8)
+    );
+
     // The blocks match each other by name and by code, so that link stays
     // without either rule.
     assert_eq!(

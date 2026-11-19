@@ -203,19 +203,19 @@ ab8e9d59-0aaa-96b9-ddb7-db0bff7a9356  crm:c-1         Acorn Tools          {acor
     let identities = shown(&["show", "identities"]);
     assert!(
         identities.starts_with(
-            "identity                              name                 members  created at\n"
+            "identity                              name                 members  names  unlinked pairs  created at\n"
         ),
         "{identities}"
     );
     assert!(
         identities.contains(&format!(
-            "\n{larkfield}  Larkfield Logistics  2        log position 1\n"
+            "\n{larkfield}  Larkfield Logistics  2        2      0%              log position 1\n"
         )),
         "{identities}"
     );
     assert!(
         identities.contains(&format!(
-            "\n{kestrel}  Kestrel Analytics    1        log position 2\n"
+            "\n{kestrel}  Kestrel Analytics    1        1      -               log position 2\n"
         )),
         "{identities}"
     );

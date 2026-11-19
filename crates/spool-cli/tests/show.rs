@@ -174,7 +174,7 @@ fn show_lists_what_a_server_holds() {
     assert_eq!(identities.lines().count(), 4, "{identities}");
     assert!(
         identities
-            .starts_with("identity                              name    members  created at\n"),
+            .starts_with("identity                              name    members  names  unlinked pairs  created at\n"),
         "{identities}"
     );
     let page = shown(
@@ -519,6 +519,55 @@ fn explain_names_each_link_of_a_chain_by_its_records_and_its_rule() {
         json!([{ "feature": "name", "from": "Smith", "to": "Smith" }])
     );
     assert_eq!(answer["cut"]["links"].as_array().unwrap().len(), 1);
+
+    // The list says how many names the identity has and how much of it
+    // only chains hold, largest first.
+    load(
+        &server,
+        "shop",
+        "thing",
+        rows(&[
+            &["id", "code", "colour", "name"],
+            &["5", "hammer", "", "Pein"],
+        ]),
+    );
+    resolve(&server, "thing");
+    let largest = shown(
+        &server,
+        &["show", "identities", "--sort", "records", "--order", "desc"],
+    );
+    let lines: Vec<&str> = largest.lines().collect();
+    assert_eq!(
+        lines[0].split_whitespace().collect::<Vec<_>>(),
+        [
+            "identity", "name", "members", "names", "unlinked", "pairs", "created", "at"
+        ]
+    );
+    assert_eq!(
+        lines[1].split_whitespace().skip(2).collect::<Vec<_>>(),
+        ["4", "2", "50%", "log", "position", "1"],
+        "{largest}"
+    );
+    assert_eq!(
+        lines[2].split_whitespace().skip(1).collect::<Vec<_>>(),
+        ["hammer", "1", "1", "-", "log", "position", "2"],
+        "{largest}"
+    );
+    let listed = answered(
+        &server,
+        &["show", "identities", "--sort", "names", "--order", "desc"],
+    );
+    assert_eq!(listed["identities"][0]["unlinked_pairs"], 3);
+    assert_eq!(listed["identities"][0]["linked_pairs"], 3);
+    let (code, complaint) = refused(&server, &["show", "identities", "--sort", "size"]);
+    assert_eq!(code, Some(1));
+    assert!(complaint.contains("unknown variant `size`"), "{complaint}");
+    let (code, complaint) = refused(&server, &["show", "runs", "--sort", "records"]);
+    assert_eq!(code, Some(2));
+    assert!(
+        complaint.contains("`--sort` does not go with `runs`"),
+        "{complaint}"
+    );
 
     // An identity is explained by its ID or by any of its records.
     let identity = answer["left"]["record"]["identity"]

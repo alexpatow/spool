@@ -38,6 +38,14 @@ much there is of each.
   drafts [<draft>]               drafts, or one with the changeset it would commit
   log                            the changeset log
 
+The list of identities says, for each, how many records it has, how many
+different names (labels, whatever their case) they have, and what part of
+its pairs of records no link joins directly: those are together only
+through a chain of others. An identity with many names and mostly unlinked
+pairs is where different things were joined, and `spool explain <identity>`
+says which rule joined them. `--sort records --order desc` lists the largest
+first.
+
 A record is named by its ID or as <source>:<key>, which names the
 latest version of that row. A record found in a document is named as the
 lists name it, <source>:<document>[<start>-<end>].
@@ -55,8 +63,13 @@ Options:
                      none, and their source has not taken them back
   --latest           only the version of each document that nothing replaced
   --ids              list each record's ID as well (records)
+  --sort <column>    list identities by this, with --order: records (how
+                     many records), names (how many different labels),
+                     sources, label, entity_type, created, or id
+  --order <order>    asc or desc (default: asc). `--sort records --order desc`
+                     lists the largest identities first
   --after <id>       continue a list after this ID, or the log after this
-                     position
+                     position, in the order of the list
   --limit <n>        list at most this many
   --url <url>        the server (default: $SPOOL_URL, or http://127.0.0.1:7765)
   --token <token>    a token of that server (default: $SPOOL_TOKEN); `spool dev`
@@ -74,13 +87,15 @@ concluded, the constraints and review items that name them, and what the
 project's rules say about the pair as it is now. When they share an
 identity, it shows the chain of links between them, each record by its
 label and its name and each link by the rule that made it and the values
-that satisfied the rule, and the fewest links whose removal would part the
-records named as the one from those named as the other.
+that satisfied the rule; the rules every chain between them goes through;
+and the fewest links whose removal would part the records named as the one
+from those named as the other.
 
 With one identity: how much of it is held together only through chains,
-and its weakest links: the fewest links whose removal would part it, each
-with the two sides it would leave. Those are where a wrong merge entered.
-An identity is named by its ID, or by any of its records.
+the pieces it would fall into without the links each rule alone made, and
+its weakest links: the fewest links whose removal would part it, each with
+the two sides it would leave. Those are where a wrong merge entered. An
+identity is named by its ID, or by any of its records.
 
 A record is named by its ID or as <source>:<key>, which names the
 latest version of that row. A record found in a document is named as the
@@ -95,8 +110,10 @@ Options:
 
 /// The options that narrow a list, each with the query parameter it becomes
 /// and whether it takes a value.
-const FILTERS: [(&str, &str, bool); 10] = [
+const FILTERS: [(&str, &str, bool); 12] = [
     ("--type", "entity_type", true),
+    ("--sort", "sort", true),
+    ("--order", "order", true),
     ("--status", "status", true),
     ("--kind", "kind", true),
     ("--source", "source", true),
@@ -125,6 +142,8 @@ pub fn show(arguments: &[String]) -> Result<(), Failure> {
                 "--document",
                 "--after",
                 "--limit",
+                "--sort",
+                "--order",
                 remote::VALUES[0],
                 remote::VALUES[1],
             ],
@@ -705,7 +724,10 @@ impl View<'_> {
     }
 
     fn identities(&self) -> Result<(), Failure> {
-        let query = self.query("identities", &["--type", "--after", "--limit"])?;
+        let query = self.query(
+            "identities",
+            &["--type", "--after", "--limit", "--sort", "--order"],
+        )?;
         let answer = self.remote.list("/identities", &query)?;
         if self.json {
             print_json(&answer);
@@ -719,7 +741,7 @@ impl View<'_> {
         if typed_rows {
             headers.push("type");
         }
-        headers.extend(["name", "members", "created at"]);
+        headers.extend(["name", "members", "names", "unlinked pairs", "created at"]);
         table(
             "identities",
             &headers,
@@ -733,6 +755,8 @@ impl View<'_> {
                     row.extend([
                         label(identity.label.as_deref()),
                         identity.members.to_string(),
+                        identity.names.to_string(),
+                        share(identity.unlinked_pairs, identity.linked_pairs),
                         format!("log position {}", identity.created),
                     ]);
                     row
@@ -1637,16 +1661,25 @@ fn said_record(record: &Named) -> String {
     }
 }
 
+/// The most links of a split that are printed.
+const SPLIT_LINKS: usize = 5;
+
 /// The links of a split, each from the first side to the second, and
 /// what each side would hold.
 fn print_split(split: &Split, titles: [&str; 2]) {
-    for link in &split.links {
+    for link in split.links.iter().take(SPLIT_LINKS) {
         println!(
             "  {} – {}",
             said_record(&link.from_record),
             said_record(&link.to_record)
         );
         println!("      {}", how_linked(link));
+    }
+    if split.links.len() > SPLIT_LINKS {
+        println!(
+            "  and {} more (--json lists them)",
+            count((split.links.len() - SPLIT_LINKS) as u64, "link")
+        );
     }
     for (title, side) in titles.iter().zip(&split.sides) {
         let names: Vec<String> = side
@@ -2026,6 +2059,21 @@ pub(super) fn placed(report: &spool::TypeResolution) -> String {
         );
     }
     placed
+}
+
+/// The part of an identity's pairs of members that no link joins, as a
+/// percentage: none when it has no pairs, and never 0% or 100% unless it is.
+fn share(unlinked: u64, linked: u64) -> String {
+    let pairs = unlinked + linked;
+    if pairs == 0 {
+        return "-".to_owned();
+    }
+    let percent = (unlinked as f64 * 100.0 / pairs as f64).round() as u64;
+    match percent {
+        0 if unlinked > 0 => "<1%".to_owned(),
+        100 if linked > 0 => ">99%".to_owned(),
+        percent => format!("{percent}%"),
+    }
 }
 
 pub(super) fn count(number: u64, what: &str) -> String {

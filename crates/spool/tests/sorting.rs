@@ -367,6 +367,7 @@ fn identities_are_sorted_by_each_column_in_pages() {
         IdentitySort::EntityType,
         IdentitySort::Records,
         IdentitySort::Sources,
+        IdentitySort::Names,
         IdentitySort::Created,
     ] {
         for direction in DIRECTIONS {
@@ -396,6 +397,7 @@ fn identities_are_sorted_by_each_column_in_pages() {
                     IdentitySort::EntityType => Some((identity.entity_type.to_string(), 0)),
                     IdentitySort::Records => Some((String::new(), identity.members)),
                     IdentitySort::Sources => Some((String::new(), identity.sources.len() as u64)),
+                    IdentitySort::Names => Some((String::new(), identity.names)),
                     IdentitySort::Created => Some((String::new(), identity.created.0)),
                 })
                 .collect();

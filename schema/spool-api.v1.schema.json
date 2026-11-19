@@ -1029,6 +1029,26 @@
           },
           "type": "array"
         },
+        "cut": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Split"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "When they share an identity: the fewest links whose removal would\npart them, and the two sides that would leave. `null` when they do\nnot share one, when no chain joins them, and when more than twenty\nlinks would have to go."
+        },
+        "held_by": {
+          "default": [],
+          "description": "When they share an identity: the `match` rules without whose links\nthey would not be together, each of which alone made a link that\nevery chain between them goes through.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "left": {
           "$ref": "#/$defs/Explained",
           "description": "The record with the smaller ID. It is `l` in a rule."
@@ -1371,6 +1391,114 @@
       ],
       "type": "object"
     },
+    "IdentityExplanation": {
+      "description": "What holds an identity together, and where it holds least.",
+      "properties": {
+        "chained_pairs": {
+          "description": "Pairs that are together only through a chain of other records: no\nlink joins them, and a chain does.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "current": {
+          "$ref": "#/$defs/IdentityId",
+          "description": "The active identity it stands for: itself, or the one it was merged\ninto. Everything below is of this one."
+        },
+        "entity_type": {
+          "$ref": "#/$defs/EntityType"
+        },
+        "id": {
+          "$ref": "#/$defs/IdentityId",
+          "description": "The ID that was asked for."
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "linked_pairs": {
+          "description": "Pairs a link joins directly.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "longest_chain": {
+          "description": "The most links a chain has between two records of the largest part,\nat the least: found from two of its records far apart, not from\nevery pair.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "names": {
+          "description": "Different labels its records have, whatever their case. Records\nwithout a label are not counted.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pairs": {
+          "description": "Pairs of its records, `records × (records - 1) / 2`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "parts": {
+          "description": "Groups of records that links hold together. More than one when\nwhat joined them has been removed since, or a changeset placed a\nrecord directly.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "records": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rules": {
+          "description": "For each `match` rule its links were made by, what it holds\ntogether: the pieces the identity would be in without the links only\nthat rule made. A rule that holds many pieces together is the one\nthat chains different things. The rule that holds most pieces\ntogether first.",
+          "items": {
+            "$ref": "#/$defs/RuleHold"
+          },
+          "type": "array"
+        },
+        "summary": {
+          "description": "The explanation in sentences.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "top_names": {
+          "description": "Its most common labels, the most common first, at most five.",
+          "items": {
+            "$ref": "#/$defs/NameCount"
+          },
+          "type": "array"
+        },
+        "weakest": {
+          "description": "The places where fewest links hold it together, where a wrong merge\nentered: each a set of links whose removal would part it, with the\ntwo sides, the smaller first. They are the links that alone hold a\npart on, and the fewest that part the records of its most common\nname from those of each of the next eight (or, without names, its\ntwo records farthest apart). Fewest links for each record they part\noff first; at most five, and none of more than twenty links.",
+          "items": {
+            "$ref": "#/$defs/Split"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "current",
+        "entity_type",
+        "records",
+        "names",
+        "top_names",
+        "pairs",
+        "linked_pairs",
+        "chained_pairs",
+        "parts",
+        "longest_chain",
+        "weakest",
+        "rules",
+        "summary"
+      ],
+      "type": "object"
+    },
     "IdentityId": {
       "description": "Identifies an identity. Minted once, never derived from content and never reused.",
       "format": "uuid",
@@ -1421,7 +1549,21 @@
             "null"
           ]
         },
+        "linked_pairs": {
+          "default": 0,
+          "description": "Pairs of its members that a link joins directly: a `match` of a\nrun that finished, a `must_link` constraint, or one being a later\nversion of the other.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "members": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "names": {
+          "default": 0,
+          "description": "Different labels its members have, whatever their case. Members\nwithout a label are not counted. Many names in one identity is the\nfirst sign that different things were joined.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -1432,6 +1574,13 @@
             "$ref": "#/$defs/SourceCount"
           },
           "type": "array"
+        },
+        "unlinked_pairs": {
+          "default": 0,
+          "description": "Pairs of its members that no link joins directly, out of\n`members × (members - 1) / 2`: those together only through a chain\nof others, and those that nothing holds together any more, which\n`spool explain <identity>` tells apart. An identity mostly held by\nchains is where rules that each hold joined things that are not one.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "required": [
@@ -1601,13 +1750,25 @@
       "type": "object"
     },
     "Link": {
-      "description": "One step in the chain that joins two members of an identity.",
+      "description": "One link between two members of an identity: what joins them directly.",
       "properties": {
         "from": {
           "$ref": "#/$defs/RecordId"
         },
+        "from_record": {
+          "$ref": "#/$defs/Named",
+          "description": "`from` and `to` as a person knows them."
+        },
         "kind": {
           "$ref": "#/$defs/LinkKind"
+        },
+        "rules": {
+          "default": [],
+          "description": "With `match`: the `match` rules that held, as the run recorded them.\nEmpty for a strategy that keeps no rule names.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "run": {
           "anyOf": [
@@ -1620,13 +1781,43 @@
           ],
           "description": "With `match`: the latest run that judged so."
         },
+        "score": {
+          "default": null,
+          "description": "With `match`: the score the run gave, on its strategy's own scale.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "strategy": {
+          "default": null,
+          "description": "With `match`: the strategy of that run.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "to": {
           "$ref": "#/$defs/RecordId"
+        },
+        "to_record": {
+          "$ref": "#/$defs/Named"
+        },
+        "values": {
+          "default": [],
+          "description": "The features those rules read, with the values `from` and `to` have\nnow: what satisfied the rules, unless the features changed since.",
+          "items": {
+            "$ref": "#/$defs/LinkValue"
+          },
+          "type": "array"
         }
       },
       "required": [
         "from",
         "to",
+        "from_record",
+        "to_record",
         "kind"
       ],
       "type": "object"
@@ -1650,6 +1841,22 @@
           "type": "string"
         }
       ]
+    },
+    "LinkValue": {
+      "description": "One feature a rule of a link reads, at both ends of the link.",
+      "properties": {
+        "feature": {
+          "type": "string"
+        },
+        "from": true,
+        "to": true
+      },
+      "required": [
+        "feature",
+        "from",
+        "to"
+      ],
+      "type": "object"
     },
     "LoadReport": {
       "properties": {
@@ -1914,6 +2121,44 @@
       "required": [
         "identities",
         "changesets"
+      ],
+      "type": "object"
+    },
+    "NameCount": {
+      "description": "How many records have a label.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "records": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "records"
+      ],
+      "type": "object"
+    },
+    "Named": {
+      "description": "A record as a person knows it.",
+      "properties": {
+        "label": {
+          "description": "Its value of the feature its type names as the label.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "`source:key`, or for a mention `source:document[start-end]`, as\n[`RecordEntry::name`] says it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
       ],
       "type": "object"
     },
@@ -3353,6 +3598,48 @@
       ],
       "type": "string"
     },
+    "RuleHold": {
+      "description": "What one rule holds of an identity together.",
+      "properties": {
+        "alone": {
+          "description": "Of those, the links no other rule held for.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "largest": {
+          "description": "The largest of those pieces, the largest first, at most five.",
+          "items": {
+            "$ref": "#/$defs/Side"
+          },
+          "type": "array"
+        },
+        "links": {
+          "description": "The links it held for, alone or with other rules.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pieces": {
+          "description": "How many pieces the identity would be in without the links only\nthis rule made: 1 when the other links hold it together.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rule": {
+          "description": "A `match` rule, as the runs that judged the links recorded it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule",
+        "links",
+        "alone",
+        "pieces",
+        "largest"
+      ],
+      "type": "object"
+    },
     "RuleReading": {
       "description": "The project's rules applied to a pair as it is now.",
       "properties": {
@@ -3713,6 +4000,28 @@
       ],
       "type": "object"
     },
+    "Side": {
+      "description": "One side of a [`Split`].",
+      "properties": {
+        "names": {
+          "description": "Its most common labels, the most common first, at most five.",
+          "items": {
+            "$ref": "#/$defs/NameCount"
+          },
+          "type": "array"
+        },
+        "records": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "records",
+        "names"
+      ],
+      "type": "object"
+    },
     "SignInRequest": {
       "additionalProperties": false,
       "description": "`POST /auth/sign-in`.",
@@ -3783,6 +4092,29 @@
         "records",
         "unassigned",
         "last_loaded_at"
+      ],
+      "type": "object"
+    },
+    "Split": {
+      "description": "The fewest links whose removal would part an identity in two, and the\ntwo sides.",
+      "properties": {
+        "links": {
+          "items": {
+            "$ref": "#/$defs/Link"
+          },
+          "type": "array"
+        },
+        "sides": {
+          "description": "The two sides: for a pair, `left`'s first; for an identity, the\nsmaller first. Members no link holds to either are on neither.",
+          "items": {
+            "$ref": "#/$defs/Side"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "links",
+        "sides"
       ],
       "type": "object"
     },

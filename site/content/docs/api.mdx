@@ -46,9 +46,10 @@ Everything Spool does is a call of this API. The command line, the studio and th
 | `GET /v1/records` | Records by `entity_type`, `source`, `key`, `document`, `identity`, words in `q`, or `unassigned` |
 | `GET /v1/records/{record}` | One record |
 | `POST /v1/records/identities` | The identity of each of many records |
-| `GET /v1/identities` | Identities by `entity_type`, words in `q`, or `ids` |
+| `GET /v1/identities` | Identities by `entity_type`, words in `q`, or `ids`. Each says how many `members` and `names` it has, and how many of its pairs of members a link joins (`linked_pairs`) and how many only a chain (`unlinked_pairs`), as [`spool show identities`](/docs/cli#spool-show) explains. `sort=names` orders them by how many names |
 | `GET /v1/identities/{identity}` | One identity and its records. An ID that was merged away answers with the identity that took its place |
 | `GET /v1/identities/{identity}/history` | Every changeset that touched it |
+| `GET /v1/identities/{identity}/explain` | What holds it together: how many of its pairs of records are linked directly and how many only through chains, the pieces it would fall into without each rule, and its weakest links, each with the two sides it would leave |
 | `POST /v1/identities/{identity}/split` | Splits an identity |
 | `GET /v1/explain?a=&b=` | Why two records share an identity, or why they do not. Each is a record's ID, its `source:key`, or the name the lists give a record found in a document |
 | `GET /v1/changesets`, `POST /v1/changesets` | Reads the log, commits a [changeset](#changesets) |
