@@ -212,20 +212,37 @@ pub fn extract(arguments: &[String]) -> Result<(), Failure> {
                 .iter()
                 .map(|file| json!({ "key": file.name, "text": file.text }))
                 .collect();
-            let (answer, run) = ended(
-                &remote,
-                remote.post(
+            // A request the server refuses at once, and a run that fails
+            // later, both leave the documents sent before them stored.
+            let sending = remote
+                .post(
                     "/documents",
                     &json!({ "source": source, "documents": documents, "wait_ms": WAIT_MS }),
-                )?,
-            )?;
-            answered.documents.push(answer["run"].clone());
-            if run.status != RunStatus::Succeeded {
-                if as_json {
-                    answered.print();
+                )
+                .and_then(|started| ended(&remote, started))
+                .and_then(|(answer, run)| {
+                    answered.documents.push(answer["run"].clone());
+                    match run.status {
+                        RunStatus::Succeeded => Ok(run),
+                        _ => Err(remote::unsuccessful(&run)),
+                    }
+                });
+            let run = match sending {
+                Ok(run) => run,
+                Err(failure) => {
+                    if as_json {
+                        answered.print();
+                    }
+                    if stored > 0 {
+                        eprintln!(
+                            "stored     {stored} of {} before this: the same command again \
+                             stores the rest and reads them",
+                            plural(files.len() as u64, "document", "documents")
+                        );
+                    }
+                    return Err(failure);
                 }
-                return Err(remote::unsuccessful(&run));
-            }
+            };
             let report = run
                 .load
                 .as_ref()
@@ -278,8 +295,23 @@ pub fn extract(arguments: &[String]) -> Result<(), Failure> {
             request["again_since"] = json!(since);
         }
         let batch_began = Instant::now();
-        let started = remote.post("/extractions", &request)?;
-        let (answer, run) = ended(&remote, progress.follow(&remote, started)?)?;
+        // A batch the server refuses at once, as it does one that fails
+        // within the wait, keeps the batches before it as well as one that
+        // fails later.
+        let waited = remote
+            .post("/extractions", &request)
+            .and_then(|started| progress.follow(&remote, started))
+            .and_then(|answer| ended(&remote, answer));
+        let (answer, run) = match waited {
+            Ok(ended) => ended,
+            Err(failure) => {
+                if as_json {
+                    answered.print();
+                }
+                progress.stopped(found.documents, again, None);
+                return Err(failure);
+            }
+        };
         answered.extractions.push(answer["run"].clone());
         if run.status != RunStatus::Succeeded {
             if as_json {
@@ -288,7 +320,7 @@ pub fn extract(arguments: &[String]) -> Result<(), Failure> {
             if progress.cancelled {
                 return Err(Failure::Stopped(stopped(&found, again, Some(run.run))));
             }
-            progress.stopped(found.documents, again, run.run);
+            progress.stopped(found.documents, again, Some(run.run));
             return Err(remote::unsuccessful(&run));
         }
         let report = run
@@ -698,16 +730,21 @@ impl<'a> Progress<'a> {
         eprintln!("{line}");
     }
 
-    /// Says what the batches before a failed one kept.
-    fn stopped(&self, kept: u64, again: bool, failed: RunId) {
+    /// Says what the batches before a failed one kept: the run that failed,
+    /// when the server started one.
+    fn stopped(&self, kept: u64, again: bool, failed: Option<RunId>) {
         if kept == 0 {
             return;
         }
         let read = plural(kept, "document", "documents");
+        let before = match failed {
+            Some(run) => format!("run {run}"),
+            None => "the batch that failed".to_owned(),
+        };
         match again {
-            true => eprintln!("kept       {read} read again before run {failed}"),
+            true => eprintln!("kept       {read} read again before {before}"),
             false => eprintln!(
-                "kept       {read} read before run {failed}: the same command again reads the rest"
+                "kept       {read} read before {before}: the same command again reads the rest"
             ),
         }
     }

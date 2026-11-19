@@ -894,6 +894,79 @@ fn a_batch_that_is_stopped_keeps_the_ones_before_it() {
     );
 }
 
+/// A batch whose extractor fails at once is refused within the wait, and
+/// the command still says what the batches before it kept, and prints them
+/// with `--json`.
+#[test]
+#[ignore = "runs uv"]
+fn a_batch_that_fails_at_once_keeps_the_ones_before_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = init_companies(dir.path());
+    write(
+        &project.join("extractors/companies.py"),
+        &BY_LEGAL_FORM.replacen(
+            "    for found in",
+            "    if \"slow\" in document.text:\n        raise RuntimeError(\"cannot read this one\")\n    for found in",
+            1,
+        ),
+    );
+    notes(&project.join("documents"), 8, Some(7));
+    let server = Server::dev(&project);
+
+    let output = server
+        .spool_in(&project, &["extract", "documents", "--source", "notes"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output.stdout));
+    let said = text(&output.stderr);
+    assert!(
+        said.contains(
+            "kept       5 documents read before the batch that failed: the same command again \
+             reads the rest\n"
+        ),
+        "{said}"
+    );
+    assert!(said.contains("cannot read this one"), "{said}");
+    assert_eq!(found(&server).len(), 5);
+
+    // As JSON, from the start in a project of its own: the run that stored
+    // the documents, and the batch that was kept.
+    drop(server);
+    let dir = tempfile::tempdir().unwrap();
+    let other = init_companies(dir.path());
+    std::fs::copy(
+        project.join("extractors/companies.py"),
+        other.join("extractors/companies.py"),
+    )
+    .unwrap();
+    notes(&other.join("documents"), 8, Some(7));
+    let server = Server::dev(&other);
+    let output = server
+        .spool_in(
+            &other,
+            &["extract", "documents", "--source", "notes", "--json"],
+        )
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let answered: Value = serde_json::from_str(&text(&output.stdout))
+        .unwrap_or_else(|_| panic!("{}{}", text(&output.stdout), text(&output.stderr)));
+    assert_eq!(
+        answered["documents"].as_array().unwrap().len(),
+        1,
+        "{answered}"
+    );
+    assert_eq!(
+        answered["documents"][0]["load"]["inserted"], 8,
+        "{answered}"
+    );
+    let [kept] = &answered["extractions"].as_array().unwrap()[..] else {
+        panic!("one batch kept: {answered}");
+    };
+    assert_eq!(kept["status"], "succeeded", "{answered}");
+    assert_eq!(kept["extraction"]["documents"], 5, "{answered}");
+}
+
 /// Ctrl-C cancels the batch that is running: the server stops the
 /// extractor and keeps nothing of the batch, the batches before it are
 /// kept, and the command says so. While the batch runs, its documents say
