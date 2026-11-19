@@ -73,9 +73,9 @@ pub use documents::{
 };
 pub use drafts::{DraftEntry, DraftFilter, DraftStatus, DraftSummary};
 pub use engine::{
-    Acting, ApplyReport, Authored, ConstraintFilter, Disposition, Engine, JudgementCounts,
-    MintedIds, Options, ResolveOptions, ResolveReport, Scope, SplitReport, StrategyRef,
-    SuggestedMerge, SuggestedSplit, Suggestions, TypeResolution, watch_runs,
+    Acting, AddRecordReport, ApplyReport, Authored, ConstraintFilter, Disposition, Engine,
+    JudgementCounts, MintedIds, Options, ResolveOptions, ResolveReport, Scope, SplitReport,
+    StrategyRef, SuggestedMerge, SuggestedSplit, Suggestions, TypeResolution, watch_runs,
 };
 pub use error::{Error, Result};
 pub use explain::{

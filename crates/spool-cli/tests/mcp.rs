@@ -16,7 +16,7 @@ const ACCEPT: &str = "application/json, text/event-stream";
 /// and whether it asks for a reason. A tool that writes under its caller's
 /// name does. A load and a match run are recorded as runs, which have no
 /// author and no reason.
-const TOOLS: [(&str, bool, bool); 23] = [
+const TOOLS: [(&str, bool, bool); 24] = [
     ("describe_store", true, false),
     ("search_identities", true, false),
     ("get_identity", true, false),
@@ -31,6 +31,7 @@ const TOOLS: [(&str, bool, bool); 23] = [
     ("list_changeset_ops", true, false),
     ("get_run", true, false),
     ("mint_identity_ids", true, false),
+    ("add_record", false, false),
     ("load_rows", false, false),
     ("load_documents", false, false),
     ("run_extraction", false, false),
@@ -171,6 +172,7 @@ fn a_client_connects_and_is_told_the_tools() {
     assert!(hello["capabilities"]["tools"].is_object(), "{hello}");
     for named in [
         "describe_store",
+        "add_record",
         "load_rows",
         "load_documents",
         "run_extraction",
@@ -217,16 +219,20 @@ fn a_client_connects_and_is_told_the_tools() {
     assert_eq!(search["properties"]["after"]["$ref"], "#/$defs/IdentityId");
     assert!(search.get("required").is_none(), "{search}");
     // The extractor may be left out, as it may be of `spool extract`.
-    let extraction = &tools[16];
-    assert_eq!(extraction["name"], "run_extraction");
+    let extraction = tools
+        .iter()
+        .find(|tool| tool["name"] == "run_extraction")
+        .unwrap();
     assert!(
         extraction["inputSchema"].get("required").is_none(),
         "{extraction}"
     );
     // A row loaded by mistake can be taken back, so the description of a
     // load does not warn an assistant off a row it was asked to load.
-    let load = &tools[14];
-    assert_eq!(load["name"], "load_rows");
+    let load = tools
+        .iter()
+        .find(|tool| tool["name"] == "load_rows")
+        .unwrap();
     let said = text(&load["description"]);
     assert!(
         said.contains("Load every row you were asked to load"),
@@ -1027,6 +1033,66 @@ fn rows_are_loaded_matched_and_taken_back_through_tools() {
         .find(|version| version["superseded_by"].is_null())
         .unwrap();
     assert_eq!(current["payload"]["colour"], "red", "{found}");
+}
+
+#[test]
+fn adding_one_record_places_it_or_returns_review_without_using_up_pending_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let (server, _) = thing_server(dir.path());
+    tool(
+        &server,
+        "load_rows",
+        json!({
+            "source": "shop", "entity_type": "thing",
+            "rows": [{ "id": "pending", "code": "anvil", "colour": "black" }]
+        }),
+    );
+    let add = |row| {
+        tool(
+            &server,
+            "add_record",
+            json!({
+                "source": "shop", "entity_type": "thing", "row": row
+            }),
+        )
+    };
+    let black = add(json!({ "id": "black", "code": "anvil", "colour": "black" }));
+    let red = add(json!({ "id": "red", "code": "anvil", "colour": "red" }));
+    assert!(black["identity"].is_string(), "{black}");
+    assert!(red["identity"].is_string(), "{red}");
+    assert_ne!(black["identity"], red["identity"]);
+    assert!(black["review"].is_null());
+    let run = server.read(&format!("/v1/runs/{}", black["match_run"]));
+    assert_eq!(run["run"]["resolution"]["new_records"], 1);
+    assert!(server.read("/v1/records?source=shop&key=pending")["records"][0]["identity"].is_null());
+
+    let batch = tool(&server, "run_match", json!({ "entity_type": "thing" }));
+    assert_eq!(batch["run"]["resolution"]["new_records"], 1, "{batch}");
+    assert_eq!(
+        server.read("/v1/records?source=shop&key=pending")["records"][0]["identity"],
+        black["identity"]
+    );
+
+    let row = json!({ "id": "either", "code": "anvil", "colour": "" });
+    let either = add(row.clone());
+    assert!(either["identity"].is_null(), "{either}");
+    assert_eq!(either["review"]["kind"], "possible_merge");
+    assert_eq!(either["review"]["status"], "open");
+    let candidates = either["review"]["identities"].as_array().unwrap();
+    assert_eq!(candidates.len(), 2);
+    assert!(candidates.contains(&black["identity"]));
+    assert!(candidates.contains(&red["identity"]));
+    let again = add(row);
+    assert_eq!(again["record"], either["record"]);
+    assert_eq!(again["review"]["id"], either["review"]["id"]);
+    assert!(again["match_run"].is_null(), "{again}");
+    assert_eq!(
+        server.read("/v1/identities")["identities"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
 }
 
 #[test]

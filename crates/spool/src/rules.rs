@@ -11,7 +11,7 @@
 //! `detail`.
 
 use duckdb::Connection;
-use spool_core::{EntityType, RunId};
+use spool_core::{EntityType, RecordId, RunId};
 
 use crate::error::Result;
 use crate::features;
@@ -58,11 +58,70 @@ pub(crate) fn create_scope(
          SELECT record_id FROM (
            SELECT record_id FROM spool.record
            WHERE entity_type = '{entity_type}' AND load_run < {run}
-             AND (load_run > {after_run} OR record_id IN ({restored}))
+             AND ((load_run > {after_run} {unmatched}) OR record_id IN ({restored}))
            {under_review}
          ) WHERE {NOT_DISMISSED} AND {NOT_RETRACTED}",
         restored = retract::restored_between(after_run, run),
+        unmatched = if rematch {
+            String::new()
+        } else {
+            not_matched_individually(after_run, Some(run))
+        },
     ))?;
+    Ok(())
+}
+
+/// A successful single-record match counts only for the record it examined.
+pub(crate) fn not_matched_individually(after: RunId, before: Option<RunId>) -> String {
+    let before = before
+        .map(|run| format!("AND run_id < {run}"))
+        .unwrap_or_default();
+    format!(
+        "AND record_id NOT IN (
+           SELECT json_extract_string(config, '$.record')::UUID
+           FROM spool.run WHERE kind = 'match' AND status = 'succeeded'
+             AND run_id > {after} {before}
+             AND json_extract_string(config, '$.record') IS NOT NULL)"
+    )
+}
+
+pub(crate) fn create_record_scope(conn: &Connection, record: RecordId) -> Result<()> {
+    conn.execute_batch(&format!(
+        "CREATE OR REPLACE TEMP TABLE {SCOPE} AS
+         SELECT record_id FROM spool.record
+         WHERE record_id = '{record}'::UUID AND {NOT_DISMISSED} AND {NOT_RETRACTED}"
+    ))?;
+    Ok(())
+}
+
+/// A single new record against members of existing identities. Which side
+/// it is on depends on its ID, as it does for every other rule run.
+pub(crate) fn generate_record_candidates(
+    conn: &Connection,
+    entity_type: &EntityType,
+    run: RunId,
+    record: RecordId,
+    block: &[Rule],
+) -> Result<()> {
+    let table = features::table(entity_type);
+    for rule in block {
+        let pairs = |new: &str, existing: &str| {
+            format!(
+                "SELECT {run}, l.record_id, r.record_id, '{name}'
+             FROM {table} l
+             JOIN {table} r ON l.record_id < r.record_id AND (\n{predicate}\n)
+             JOIN spool.membership m ON m.record_id = {existing}.record_id AND m.to_seq IS NULL
+             WHERE {new}.record_id = '{record}'::UUID",
+                name = rule.name,
+                predicate = rule.predicate,
+            )
+        };
+        conn.execute_batch(&format!(
+            "INSERT INTO spool.candidate {} UNION ALL {}",
+            pairs("l", "r"),
+            pairs("r", "l"),
+        ))?;
+    }
     Ok(())
 }
 

@@ -314,22 +314,25 @@ POSITION  ACTOR                                      OPERATIONS  FROM  STARTED B
 
 | Tool | What it does | The same as |
 | --- | --- | --- |
+| `add_record` | Stores one row and returns its record and identity or review item | `POST /v1/records` |
 | `load_rows` | Loads rows, as objects, into a source | `POST /v1/load` |
 | `load_documents` | Stores text as documents of a source | `POST /v1/documents` |
 | `run_extraction` | Runs an extractor over documents it hasn't read | `POST /v1/extractions` |
 | `run_match` | Places records no match has examined, and commits the result | `POST /v1/match` |
 | `retract_rows` | Retracts rows by key: they leave their identities and stay in the store | `POST /v1/retract` |
 
-Each returns its run. A run still going after 30 seconds comes back as `running`, and `get_run` with `wait_ms` waits up to 60 seconds more.
+Call `add_record` with `source`, `entity_type` and a single `row` object. The server returns the `record` and `identity` IDs. If the record needs review, `identity` is null and `review` gives the item ID and candidate identities. Set `replace` to true to change a row under an existing key.
+
+The other tools in this table return a run. A run still going after 30 seconds comes back as `running`, and `get_run` with `wait_ms` waits up to 60 seconds more.
 
 Differences from the HTTP API:
 
 - **`load_rows` doesn't replace rows by default.** A row with a known key and different values fails the whole call unless you pass `"replace": true`. `POST /v1/load` replaces it.
-- **`load_rows` treats empty values as missing**, like `spool load`. `POST /v1/load` with JSON rows stores `""` as text.
+- **`add_record` and `load_rows` treat empty values as missing**, like `spool load`. JSON rows sent over HTTP store `""` as text.
 - **`load_documents` rejects undeclared sources.** `POST /v1/documents` stores the document anyway.
 - **`run_extraction` needs no `extractor`** when the project has only one.
 - **`run_match` always commits.** It takes `rematch` and `strategy` (`rules` or one of the project's strategies), but not `commit`.
-- **`retract_rows` requires a `reason`.** The other four don't.
+- **`retract_rows` requires a `reason`.**
 
 ## Reserved for people
 

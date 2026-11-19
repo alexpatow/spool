@@ -44,6 +44,86 @@
       ],
       "type": "object"
     },
+    "AddRecordReport": {
+      "description": "The result of storing one row and placing its record, or leaving it for review.",
+      "properties": {
+        "identity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IdentityId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "load_run": {
+          "$ref": "#/$defs/RunId"
+        },
+        "match_run": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A retry of a placed record or one already waiting for review starts no match."
+        },
+        "record": {
+          "$ref": "#/$defs/RecordId"
+        },
+        "review": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReviewEntry"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "record",
+        "load_run"
+      ],
+      "type": "object"
+    },
+    "AddRecordRequest": {
+      "additionalProperties": false,
+      "description": "`POST /v1/records`: store one row and match its record.",
+      "properties": {
+        "entity_type": {
+          "$ref": "#/$defs/EntityType",
+          "description": "The entity type the row describes."
+        },
+        "replace": {
+          "default": null,
+          "description": "Allow a new version under an existing key. The default is false.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "row": {
+          "additionalProperties": true,
+          "description": "One row, with the source's columns as keys. Values are text,\nnumbers, booleans or null for missing values.",
+          "type": "object"
+        },
+        "source": {
+          "description": "The source that supplies the row.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "entity_type",
+        "row"
+      ],
+      "type": "object"
+    },
     "AddTokenRequest": {
       "additionalProperties": false,
       "description": "`POST /v1/tokens`: make a token. Only an admin may.",

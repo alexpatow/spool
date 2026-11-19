@@ -46,6 +46,7 @@ The CLI, the studio and the MCP endpoint are all clients of this API. Every path
 | `POST /v1/runs/{run}/reconcile` | Turns a run's judgements into a changeset |
 | `POST /v1/runs/{run}/cancel` | Cancels a run waiting for judgements, or stops a running extraction and discards its results |
 | `GET /v1/records` | Filter by `entity_type`, `source`, `key`, `document`, `identity`, `q` (search) or `unassigned`. `latest=true` omits replaced versions, here and for documents |
+| `POST /v1/records` | [Stores one row and returns its identity](#add-one-record) |
 | `GET /v1/records/{record}` | One record |
 | `POST /v1/records/identities` | The identity of each of many records |
 | `GET /v1/attributes` | A profile per entity type and source: current records, and per attribute the fill count, distinct values, top three values and derived features. Filter by `entity_type` or `source` |
@@ -86,6 +87,18 @@ cd companies
 ```sh
 spool dev
 ```
+
+## Add one record
+
+Send the source, entity type and one row to `POST /v1/records`.
+
+```json
+{"source":"crm","entity_type":"company","row":{"id":"c-1","name":"Acorn Tools","country":"GB"}}
+```
+
+The response includes `record`, `identity`, `review`, `load_run` and `match_run`. The project’s SQL rules check the submitted record against the records of existing identities. A record that needs a decision has a null `identity` and a `review` with the item ID and candidate identities. If the record is already placed or has a review item, `match_run` is null. Pending rows from other loads can be processed with `POST /v1/match`.
+
+Repeating the same row returns the same record. To submit changed values under an existing key, set `"replace": true`. If matching fails after loading, the row remains stored and sending it again can retry placement.
 
 ## Load rows
 

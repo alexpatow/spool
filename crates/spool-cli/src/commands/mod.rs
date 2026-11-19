@@ -1,3 +1,4 @@
+pub mod add;
 pub mod bench;
 pub mod extract;
 pub mod init;

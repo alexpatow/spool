@@ -4,8 +4,8 @@ use duckdb::arrow::record_batch::RecordBatchReader;
 use spool_core::{Actor, Draft, Policy, RunId};
 
 use super::{
-    Disposition, Engine, ResolveOptions, ResolveReport, RunStatus, Scope, StrategyRef,
-    TypeResolution,
+    AddRecordReport, Disposition, Engine, ResolveOptions, ResolveReport, RunStatus, Scope,
+    StrategyRef, TypeResolution,
 };
 use crate::documents::{ExtractOptions, ExtractReport, NewDocument};
 use crate::error::Result;
@@ -64,6 +64,18 @@ impl Acting<'_> {
             .load(&self.actor, source, entity_type, rows, false)
     }
 
+    /// As [`Engine::add_record`].
+    pub fn add_record(
+        &self,
+        source: &str,
+        entity_type: &EntityType,
+        row: &serde_json::Map<String, serde_json::Value>,
+        replace: bool,
+    ) -> Result<AddRecordReport> {
+        self.engine
+            .add_record_by(&self.actor, source, entity_type, row, replace)
+    }
+
     /// As [`Engine::add_documents`].
     pub fn add_documents(&self, source: &str, documents: &[NewDocument]) -> Result<LoadReport> {
         self.engine
@@ -81,7 +93,7 @@ impl Acting<'_> {
     pub fn begin_run(&self, strategy: &StrategyRef, scope: &Scope) -> Result<RunId> {
         self.engine
             .lock()
-            .begin_match(&self.actor, strategy, scope, RunStatus::Open)
+            .begin_match(&self.actor, strategy, scope, RunStatus::Open, None)
     }
 
     /// As [`Engine::resolve`]. The reconcile run of each match run is
