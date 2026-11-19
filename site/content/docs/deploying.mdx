@@ -29,7 +29,7 @@ spool build
 
 ```text title="Output"
 manifest  ./.spool/manifest.json
-hash      d7d4b712d86302152897a67a5924cd1c2e26594e049685c2f007177e20633946
+hash      b6dff33d6c0977f4afb2497792bcaa9785e8b865994fa5c94eb9761f57a6e0a7
 types     company
 wrote     ./Dockerfile
 wrote     ./.dockerignore
@@ -45,7 +45,7 @@ spool apply --store spool.duckdb
 
 ```text title="Output"
 store     spool.duckdb
-manifest  d7d4b712d86302152897a67a5924cd1c2e26594e049685c2f007177e20633946
+manifest  b6dff33d6c0977f4afb2497792bcaa9785e8b865994fa5c94eb9761f57a6e0a7
 declared  company
 ```
 
@@ -60,7 +60,7 @@ spool serve --store spool.duckdb --listen 127.0.0.1:7765
 ```
 
 ```text title="Output"
-manifest  d7d4b712d86302152897a67a5924cd1c2e26594e049685c2f007177e20633946
+manifest  b6dff33d6c0977f4afb2497792bcaa9785e8b865994fa5c94eb9761f57a6e0a7
 accounts  spool.auth.sqlite
 listening on http://127.0.0.1:7765
 studio    http://127.0.0.1:7765/
@@ -128,7 +128,7 @@ SPOOL_TOKEN=$TOKEN spool show
 ```text title="Output"
 server     http://127.0.0.1:7765
 api        v1, engine 0.1.0, store format 12
-manifest   d7d4b712d86302152897a67a5924cd1c2e26594e049685c2f007177e20633946
+manifest   b6dff33d6c0977f4afb2497792bcaa9785e8b865994fa5c94eb9761f57a6e0a7
 head       log position 0
 documents  0
 
