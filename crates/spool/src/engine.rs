@@ -2745,7 +2745,7 @@ impl Inner {
                 &json!({ "match_run": run, "policy": Policy::default(), "recompute": now }),
             )?;
             let report = self.in_run(reconcile_run, |inner| {
-                let ops = {
+                let (ops, identities) = {
                     let mut ids = lock(&inner.ids);
                     outcome.operations(recompute::mint(ids.as_mut()))
                 };
@@ -2760,7 +2760,7 @@ impl Inner {
                     run: Some(reconcile_run),
                     ops,
                 };
-                let review = outcome.review();
+                let review = outcome.review(&identities);
                 let summary = outcome.summary();
                 let finished = inner.store.clock.now_micros();
                 let tx = inner.store.conn.transaction()?;

@@ -601,6 +601,16 @@ fn what_a_reviewer_merged_stays_an_identity_when_records_around_it_wait() {
         );
         assert_eq!(identity(&engine, "shop", "C"), None, "round {round}");
     }
+    // C's item names the identity it contradicts itself about, so the case
+    // a reviewer reads has what was judged between C and A and B.
+    let open = engine.review_items(&spool::ReviewFilter::open()).unwrap();
+    let [item] = &open[..] else {
+        panic!("one item is open: {open:?}");
+    };
+    assert_eq!(item.identities, [a]);
+    let case = engine.review_case(item.id).unwrap();
+    assert_eq!(case.candidates.len(), 1);
+    assert_eq!(case.judgements.len(), 2, "{:?}", case.judgements);
     engine.verify().unwrap();
 }
 

@@ -457,6 +457,9 @@ pub(crate) struct Outcome {
     groups: Vec<Vec<RecordId>>,
     /// The groups that would wait for review.
     waiting: Vec<Vec<RecordId>>,
+    /// For each waiting group, a record of the group people put together
+    /// that was kept out of it, if one was.
+    kept_out: Vec<Option<RecordId>>,
     place: HashMap<RecordId, Place>,
     /// For each group, the identity that keeps its ID with it.
     keeper: Vec<Option<IdentityId>>,
@@ -733,6 +736,9 @@ pub(crate) fn compute(
     // themselves around it, and only the other records of such a group wait.
     // Left waiting, its records would lose their identity when the result is
     // applied, and with it what says that a person put them together.
+    // The records of a group that is kept out are what the rest contradicts
+    // itself about, so the item they wait in names its identity.
+    let mut kept_out: Vec<Option<RecordId>> = vec![None; waiting.len()];
     for set in held.groups().into_values() {
         let Some(at) = waiting
             .iter()
@@ -746,12 +752,19 @@ pub(crate) fn compute(
         {
             let taken: BTreeSet<RecordId> = set.iter().copied().collect();
             waiting[at].retain(|record| !taken.contains(record));
+            kept_out[at].get_or_insert(set[0]);
             groups.push(set);
         }
     }
-    waiting.retain(|group| !group.is_empty());
+    let mut waiting_with: Vec<(Vec<RecordId>, Option<RecordId>)> = waiting
+        .into_iter()
+        .zip(kept_out)
+        .filter(|(group, _)| !group.is_empty())
+        .collect();
+    waiting_with.sort();
+    let (waiting, kept_out): (Vec<Vec<RecordId>>, Vec<Option<RecordId>>) =
+        waiting_with.into_iter().unzip();
     groups.sort();
-    waiting.sort();
 
     let mut place: HashMap<RecordId, Place> = HashMap::new();
     for (at, group) in groups.iter().enumerate() {
@@ -853,6 +866,7 @@ pub(crate) fn compute(
         now,
         groups,
         waiting,
+        kept_out,
         place,
         keeper,
         merged,
@@ -1068,7 +1082,11 @@ impl Outcome {
     /// `mint` for the IDs of new identities: the new identities, then
     /// each record that moves, then each merge. A record of an identity
     /// that is merged into the one it would be in moves with the merge.
-    pub(crate) fn operations(&self, mut mint: impl FnMut() -> IdentityId) -> Vec<Op> {
+    /// The identity of each group is returned with them.
+    pub(crate) fn operations(
+        &self,
+        mut mint: impl FnMut() -> IdentityId,
+    ) -> (Vec<Op>, Vec<IdentityId>) {
         let mut ops = Vec::new();
         let mut ids: Vec<Option<IdentityId>> = self.keeper.clone();
         for id in &mut ids {
@@ -1108,16 +1126,23 @@ impl Outcome {
                 into: *into,
             });
         }
-        ops
+        (ops, ids.into_iter().flatten().collect())
     }
 
     /// The groups that would wait, as the review items they are left in.
-    pub(crate) fn review(&self) -> Vec<ReviewItem> {
+    /// `ids` is the identity of each group, as [`operations`](Self::operations)
+    /// returns them: an item names the identity of what people put together
+    /// that was kept out of its group.
+    pub(crate) fn review(&self, ids: &[IdentityId]) -> Vec<ReviewItem> {
         self.waiting
             .iter()
-            .map(|records| ReviewItem::Conflict {
+            .zip(&self.kept_out)
+            .map(|(records, kept)| ReviewItem::Conflict {
                 records: records.clone(),
-                identity: None,
+                identity: kept.and_then(|record| match self.target(record) {
+                    Some(Place::Group(at)) => ids.get(at).copied(),
+                    _ => None,
+                }),
             })
             .collect()
     }
