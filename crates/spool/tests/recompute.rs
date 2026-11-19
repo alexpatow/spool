@@ -377,6 +377,29 @@ fn applying_makes_the_identities_what_the_preview_showed() {
 }
 
 #[test]
+fn an_applied_recompute_is_undone_like_any_changeset() {
+    let engine = store();
+    let before = engine.snapshot().unwrap();
+    let members_before: Vec<_> = ["1", "2", "P", "R", "X"]
+        .iter()
+        .map(|key| identity(&engine, "shop", key))
+        .collect();
+    let preview = engine.recompute(&everything()).unwrap();
+    let applied = engine.apply_recompute(None, &preview.plan, None).unwrap();
+    let seq = applied.types[0].committed.as_ref().unwrap().seq;
+    engine.undo(seq, reviewer(), None, true).unwrap();
+    let members_after: Vec<_> = ["1", "2", "P", "R", "X"]
+        .iter()
+        .map(|key| identity(&engine, "shop", key))
+        .collect();
+    assert_eq!(members_after, members_before);
+    // The merge is undone: the halden is an identity of its own again.
+    assert_ne!(identity(&engine, "depot", "Q"), identity(&engine, "shop", "P"));
+    assert_ne!(engine.snapshot().unwrap(), before, "the log only grows");
+    engine.verify().unwrap();
+}
+
+#[test]
 fn a_plan_that_no_longer_holds_applies_nothing() {
     let engine = store();
     let preview = engine.recompute(&everything()).unwrap();

@@ -251,6 +251,13 @@ judgements  7 match, 1 no_match
 placed      9 records, 5 identities created
 ```
 
+## spool recompute
+
+`spool recompute [--type <name>] [--identity <id>] [--detail] [--limit <n>] [--offset <n>]`
+`spool recompute --apply <plan> [--type <name>] [--reason <text>]`
+
+Shows what the identities would be if every record were matched again, all at once, by the rules as they are now, against the identities there are, and changes nothing. Every type is recomputed unless `--type` names one. The summary comes first, then the ten largest changes; `--detail` lists all of them, `--identity` shows the one that holds an identity record by record, and `--json` prints what the server answered. The last line is a plan, which `--apply` takes: applying works the result out again, refuses if it is not that plan, and commits one changeset by the engine for each type. [Matching](/docs/concepts/matching#recompute) shows the output.
+
 ## spool show
 
 `spool show [<what> [<id>]] [options]`

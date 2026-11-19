@@ -225,6 +225,82 @@ A better matcher run over old data produces a list of suggestions, not a change 
 
 The suggestions are part of the run's report and are not kept as review items. `spool show runs <run>` lists them for any run, and `GET /v1/runs/<run>` has them as JSON. Nothing sorts or pages them, so a rule change that suggests thousands of merges gives a report of thousands of lines.
 
+## Recompute
+
+A rematch says where the rules disagree. It does not say what the identities would be. `spool recompute` does: it matches every record again, all at once, by the rules as they are now, as a new store would, and sets the result against the identities there are. It changes nothing.
+
+```sh
+spool recompute
+```
+
+```text title="Output"
+type `company`: 12 records, in 7 identities now and 6 after
+unchanged  5 identities would keep exactly their records
+merged     1 identity would take records from more than one; 1 identity merged into another, its ID standing for it
+gain       1 identity would gain records
+moved      1 record would change identity
+pairs      11 pairs share an identity now, 12 would after, 11 of them both
+
+1 change, the largest first
+#  kind   records  identity                              now                                     after
+1  merge  2        01a1f145-fe9f-7341-9090-282ac5e8045e  Halden Group (1), The Halden Group (1)  Halden Group (2, keeps its ID, 1 identity merged in)
+`--identity <id>` shows a change record by record
+
+plan  43b0bfe383ba9c04: nothing was changed. `spool recompute --apply 43b0bfe383ba9c04` applies it
+```
+
+The summary comes first. **pairs** is one number for how far apart the two groupings are: pairs of records that share an identity now, after, and both. Then come the changes, the largest first. A change is the identities of now and after that share records. Its kind is `split`, `merge`, `regroup` (several into several), `gain`, `lose` (records that would wait for review), `new` or `review` (every record would wait). Ten are listed, `--detail` lists all of them, and `--limit` and `--offset` page them, so a project with a hundred thousand records starts with the identities that change most.
+
+`--identity` shows one change record by record:
+
+```sh
+HALDEN=$(spool show records crm:c-5 | awk '/^identity/ {print $2}')
+spool recompute --identity $HALDEN
+```
+
+```text title="Output"
+change   1 of 1 in type `company`, the largest first
+kind     merge
+records  2, 1 of them would move
+
+now
+  01a1f145-fe9f-7341-9090-282ac5e8045e  Halden Group      1 record
+  01a1f145-ff2f-7340-b100-9d437f81cfac  The Halden Group  1 record
+
+after
+  1  01a1f145-fe9f-7341-9090-282ac5e8045e, keeps its ID  Halden Group  2 records
+  01a1f145-ff2f-7340-b100-9d437f81cfac is merged into 1, and its ID stands for it
+
+record                                source and key  label             now                                   after
+2c53c39b-ba40-34f1-5a6c-f335adbe639c  crm:c-11        The Halden Group  01a1f145-ff2f-7340-b100-9d437f81cfac  1
+38f040c9-82b9-2f94-813b-697309e52dab  crm:c-5         Halden Group      01a1f145-fe9f-7341-9090-282ac5e8045e  1
+
+plan  43b0bfe383ba9c04: nothing was changed. `spool recompute --apply 43b0bfe383ba9c04` applies every change, not only this one
+```
+
+Which identity keeps its ID follows the rule a split follows. An identity keeps its ID with the group that gets most of its records. Where several identities have their most in one group, the one with the most records there keeps its ID, the older one on a tie, and the others are merged into it, so that a system that stored their IDs still finds the entity. A group in which no identity has its most is a new identity.
+
+Applying is a separate step, and it takes the plan:
+
+```sh
+spool recompute --apply 43b0bfe383ba9c04 --reason "names without a leading the"
+```
+
+```text title="Output"
+type        `company`, match run 12, reconcile run 13
+changeset   at log position 4, by the engine: `spool show log` has it
+identities  6 now, from 7: 0 made, 1 merged away
+records     1 moved, 0 placed, 0 left an identity
+
+applied plan 43b0bfe383ba9c04
+```
+
+It works the result out again and refuses if it is not that plan, so what is applied is what was shown: if rows were loaded, rules changed or identities moved in between, it says so and changes nothing. A match run judges every record and keeps its judgements, as any run does, and the changes are one changeset in the log. The engine is its author, because the rules decided it, and the run is recorded as started by whoever applied. `POST /v1/changesets/<seq>/undo` takes it back like any other changeset.
+
+What people decided counts for more than the rules, and [Review](/docs/concepts/review#recompute-and-what-people-decided) says how. In short: a `must_link` or a `cannot_link` holds, records a person or an agent put together stay together, records a reviewer dismissed stay without an identity, and records their source took back are left out. Where the rules join a group and something in it says two of its records differ, the group waits for review without an identity, as new records do after a match.
+
+Nothing recomputes by itself. A rule change alone still moves no identity.
+
 ## Other ways to judge
 
 SQL rules are the built-in strategy. A project can also hold strategies written in Python or TypeScript under `entities/<type>/strategies/`, which the server runs as child processes with `uv` or `bun`. They read candidate pairs and write judgements, which may be `unsure`, and the same four rules turn them into identities. The repository's [`benchmarks/resolution/people`](https://github.com/alexpatow/spool/tree/main/benchmarks/resolution/people) project has a strategy that runs Splink.
@@ -234,6 +310,7 @@ A caller can also open a run, fetch the candidates over the API and send judgeme
 ## What matching does not do
 
 - The four rules that turn judgements into identities cannot be changed.
+- A recompute runs the SQL rules. A strategy written in code cannot be recomputed.
 - No SQL rule says `unsure`. A pair is matched, kept apart, or not judged.
 - A rule sees the features of two records and not their sources. It cannot say that one source never holds the same thing twice.
 - Rules compare records of one entity type.

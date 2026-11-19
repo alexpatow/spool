@@ -288,6 +288,7 @@ curl -s -X POST http://127.0.0.1:7765/v1/changesets -d '{"reason": "one group", 
 - Loading rows. A new record has no identity until a match or a changeset places it.
 - Changing features, transforms or rules. Features are computed again, and IDs stay.
 - A rematch. It reports suggestions.
+- A recompute, until it is applied. Applying one is a changeset in the log, by the engine, like a match's.
 - Taking a row back. The record leaves its identity, and the identity keeps its ID. When that leaves nothing holding the identity's other records together, a [review item](/docs/concepts/review#a-possible-split) asks whether to split it. Nothing is split automatically.
 
 ## What identities do not have
