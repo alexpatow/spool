@@ -166,6 +166,9 @@ impl Engine {
         let mut inner = self.lock();
         let report = inner.in_run(run, |inner| {
             executed?;
+            if !user_code.running.begin_storing(run) {
+                return Err(task.cancelled());
+            }
             inner
                 .take_mentions(by, run, &task.path(usercode::MENTIONS), &extractor, left)
                 .map_err(|error| match error {

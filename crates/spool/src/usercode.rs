@@ -163,7 +163,16 @@ pub struct UserCode {
 #[derive(Clone, Debug, Default)]
 pub struct Running {
     said: Arc<Mutex<HashMap<RunId, PathBuf>>>,
-    cancelled: Arc<Mutex<HashSet<RunId>>>,
+    control: Arc<Mutex<Control>>,
+}
+
+/// Which runs were cancelled, and which are storing what their code found
+/// and can no longer be. One lock holds both, so that a cancellation and
+/// the start of storing cannot both succeed.
+#[derive(Debug, Default)]
+struct Control {
+    cancelled: HashSet<RunId>,
+    storing: HashSet<RunId>,
 }
 
 impl Running {
@@ -171,22 +180,45 @@ impl Running {
         self.said.lock().unwrap_or_else(|held| held.into_inner())
     }
 
-    fn cancelled(&self) -> std::sync::MutexGuard<'_, HashSet<RunId>> {
-        self.cancelled
-            .lock()
-            .unwrap_or_else(|held| held.into_inner())
+    fn control(&self) -> std::sync::MutexGuard<'_, Control> {
+        self.control.lock().unwrap_or_else(|held| held.into_inner())
+    }
+
+    fn is_cancelled(&self, run: RunId) -> bool {
+        self.control().cancelled.contains(&run)
     }
 
     /// Asks for the code of a run to be stopped, with every process it
     /// started, as one that runs out of time is. Code that has not started
-    /// yet is not started. The run then fails.
-    pub fn cancel(&self, run: RunId) {
-        self.cancelled().insert(run);
+    /// yet is not started, and what code that has finished found is not
+    /// stored. The run then fails. `false` when the run has begun to store
+    /// what its code found, which is then too late.
+    pub fn cancel(&self, run: RunId) -> bool {
+        let mut control = self.control();
+        if control.storing.contains(&run) {
+            return false;
+        }
+        control.cancelled.insert(run);
+        true
     }
 
-    /// Forgets that a run was to be stopped, once it has ended.
+    /// Marks a run as storing what its code found, after which it can no
+    /// longer be cancelled. `false` when it was cancelled first, and is to
+    /// store nothing.
+    pub fn begin_storing(&self, run: RunId) -> bool {
+        let mut control = self.control();
+        if control.cancelled.contains(&run) {
+            return false;
+        }
+        control.storing.insert(run);
+        true
+    }
+
+    /// Forgets a run's cancellation and storing, once it has ended.
     pub fn forget(&self, run: RunId) {
-        self.cancelled().remove(&run);
+        let mut control = self.control();
+        control.cancelled.remove(&run);
+        control.storing.remove(&run);
     }
 
     /// The last whole line the code of a run has written to its standard
@@ -732,9 +764,7 @@ impl Task {
         let running = self.user_code.running.clone();
         running.held().insert(self.run, self.dir.join("stderr.log"));
         let this = self.run;
-        let finished = run(&mut self.command, timeout, &|| {
-            running.cancelled().contains(&this)
-        });
+        let finished = run(&mut self.command, timeout, &|| running.is_cancelled(this));
         running.held().remove(&self.run);
         let finished = finished.map_err(|error| {
             self.fail(format!(
@@ -746,9 +776,7 @@ impl Task {
         match finished {
             Finished::Cancelled => {
                 let _ = std::fs::remove_dir_all(&self.dir);
-                Err(self
-                    .code
-                    .fail("it was cancelled, and nothing it found is kept".to_owned()))
+                Err(self.cancelled())
             }
             Finished::TimedOut => {
                 let said = end_of(&self.dir.join("stderr.log"))
@@ -776,6 +804,12 @@ impl Task {
             }
             Finished::Exited(_) => Ok(()),
         }
+    }
+
+    /// The error of a run that was cancelled.
+    pub(crate) fn cancelled(&self) -> Error {
+        self.code
+            .fail("it was cancelled, and nothing it found is kept".to_owned())
     }
 
     /// What went wrong with what the code wrote, as an error that says
@@ -931,6 +965,22 @@ mod tests {
 
         std::thread::sleep(Duration::from_millis(2500));
         assert!(!marker.exists(), "the process it started outlived it");
+    }
+
+    #[test]
+    fn a_run_is_cancelled_or_stores_what_it_found_and_never_both() {
+        let running = Running::default();
+        // Cancelled first: what the code found is not stored.
+        assert!(running.cancel(RunId(1)));
+        assert!(!running.begin_storing(RunId(1)));
+        // Storing first: it is too late to cancel.
+        assert!(running.begin_storing(RunId(2)));
+        assert!(!running.cancel(RunId(2)));
+        // A run that ended is forgotten.
+        running.forget(RunId(1));
+        running.forget(RunId(2));
+        assert!(running.begin_storing(RunId(1)));
+        assert!(running.cancel(RunId(2)));
     }
 
     #[test]

@@ -135,8 +135,26 @@ pub fn run(arguments: &[String]) -> Result<(), Failure> {
         if rematch {
             request["rematch"] = json!(true);
         }
-        let started = remote.post("/match", &request)?;
-        let ended = remote.ended(started)?;
+        // A run that fails within the wait is refused as the answer, and
+        // one type's failure does not keep the others from being matched.
+        let ended = match remote
+            .post("/match", &request)
+            .and_then(|started| remote.ended(started))
+        {
+            Ok(ended) => ended,
+            Err(failure) if named.is_none() => {
+                let message = failure.message();
+                if as_json {
+                    answered.push(json!({ "entity_type": name, "run": null, "error": message }));
+                } else {
+                    part(false);
+                    println!("failed      type `{name}`: the match did not run to the end");
+                }
+                failures.push(Failure::Failed(format!("type `{name}`: {message}")));
+                continue;
+            }
+            Err(failure) => return Err(failure),
+        };
         if as_json {
             let run = ended
                 .as_ref()
@@ -158,7 +176,10 @@ pub fn run(arguments: &[String]) -> Result<(), Failure> {
             continue;
         };
         if run.status != RunStatus::Succeeded {
-            let failure = unsuccessful(&run);
+            let failure = match named {
+                Some(_) => unsuccessful(&run),
+                None => Failure::Failed(format!("type `{name}`: {}", unsuccessful(&run).message())),
+            };
             if !as_json {
                 part(false);
                 println!("run         {}, type `{name}`: {}", run.run, run.status);

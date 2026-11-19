@@ -544,3 +544,72 @@ fn match_matches_every_type_and_reports_each() {
     assert_eq!(runs[1]["run"]["entity_type"], "person");
     assert_eq!(runs[1]["run"]["status"], "succeeded");
 }
+
+#[test]
+fn a_type_whose_match_fails_does_not_stop_the_others() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("project");
+    write_two_of_each(&project);
+    // A rule that cannot be worked out for these names: the run fails as
+    // soon as it compares two of them, well within the wait.
+    std::fs::write(
+        project.join("entities/company/rules/match/same_name.sql"),
+        "CAST(l.name AS INTEGER) = CAST(r.name AS INTEGER)\n",
+    )
+    .unwrap();
+    let server = Server::serve(&project, dir.path(), 1);
+    std::fs::write(
+        project.join("registry.csv"),
+        "id,name\nr-1,Acorn\nr-2,Acorn\n",
+    )
+    .unwrap();
+    std::fs::write(project.join("crm.csv"), "id,name\nc-1,Dana\nc-2,Dana\n").unwrap();
+    shown(&server, &project, &["load", "registry.csv"]);
+    shown(&server, &project, &["load", "crm.csv", "--type", "person"]);
+
+    let output = server.spool_in(&project, &["match"]).output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let printed = text(&output.stdout);
+    assert!(
+        printed.starts_with(
+            "failed      type `company`: the match did not run to the end\n\nrun         "
+        ),
+        "{printed}"
+    );
+    assert!(printed.contains(", type `person`\n"), "{printed}");
+    assert!(
+        printed.contains("placed      2 records, 1 identity created"),
+        "{printed}"
+    );
+    let complaint = text(&output.stderr);
+    assert!(
+        complaint.starts_with("spool: type `company`: "),
+        "{complaint}"
+    );
+    assert!(complaint.contains("INTEGER"), "{complaint}");
+
+    // As JSON, the failed type with its error, and the others with their
+    // runs.
+    std::fs::write(project.join("people.csv"), "id,name\nc-3,Ravi\n").unwrap();
+    shown(
+        &server,
+        &project,
+        &["load", "people.csv", "--source", "crm", "--type", "person"],
+    );
+    let output = server
+        .spool_in(&project, &["match", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let answer: Value = serde_json::from_str(&text(&output.stdout)).unwrap();
+    let runs = answer["runs"].as_array().unwrap();
+    assert_eq!(runs.len(), 2, "{answer}");
+    assert_eq!(runs[0]["entity_type"], "company");
+    assert_eq!(runs[0]["run"], Value::Null);
+    assert!(
+        runs[0]["error"].as_str().unwrap().contains("INTEGER"),
+        "{answer}"
+    );
+    assert_eq!(runs[1]["entity_type"], "person");
+    assert_eq!(runs[1]["run"]["status"], "succeeded");
+}

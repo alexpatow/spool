@@ -729,7 +729,8 @@ impl Engine {
     /// next run. An extract run's extractor is stopped with every process it
     /// started, nothing it found is stored, and its documents are still
     /// unread; the run ends when the extractor has stopped, which may be
-    /// after this returns.
+    /// after this returns. Once what the extractor found is being stored,
+    /// it is too late, and the cancellation is refused.
     pub fn cancel_run(&self, run: RunId) -> Result<()> {
         let row = self.read(|conn| run_row(conn, run))?;
         if row.kind == "extract" {
@@ -739,8 +740,15 @@ impl Engine {
                     message: format!("it is {} and cannot be cancelled", row.status),
                 });
             }
-            if let Some(user_code) = self.user_code() {
-                user_code.running.cancel(run);
+            if let Some(user_code) = self.user_code()
+                && !user_code.running.cancel(run)
+            {
+                return Err(Error::Run {
+                    run,
+                    message: "its extractor has finished and what it found is being stored, so \
+                              it is too late to cancel it"
+                        .to_owned(),
+                });
             }
             return Ok(());
         }
