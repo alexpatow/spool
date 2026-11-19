@@ -207,10 +207,7 @@ fn option(arg: &Arg) -> String {
         facts.push(format!("One of {}.", possible.join(", ")));
     }
     if let Some(variable) = arg.get_env() {
-        facts.push(format!(
-            "Falls back to `{}`.",
-            variable.to_string_lossy()
-        ));
+        facts.push(format!("Falls back to `{}`.", variable.to_string_lossy()));
     }
     if !facts.is_empty() {
         if !first.ends_with('.') {
