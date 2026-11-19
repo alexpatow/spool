@@ -14,6 +14,7 @@ Commands:
   explain      Say why two records share an identity, or what holds one together
   retract      Take back rows a source no longer holds
   reset        Start the development store of `spool dev` over
+  update       Update the skills and AGENTS.md that tell coding agents how to use Spool
   build        Check a project and compile it into a manifest
   apply        Apply a manifest to a store
   serve        Run the server from a manifest and a store

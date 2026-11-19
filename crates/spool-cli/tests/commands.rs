@@ -87,6 +87,19 @@ fn files_of(dir: &Path) -> Vec<String> {
     found
 }
 
+/// The files that are not for coding agents: what `spool update` writes is
+/// tested on its own.
+fn without_agent_files(files: Vec<String>) -> Vec<String> {
+    files
+        .into_iter()
+        .filter(|file| {
+            ![".agents/", ".claude/", "AGENTS.md", "CLAUDE.md"]
+                .iter()
+                .any(|agent| file.starts_with(agent))
+        })
+        .collect()
+}
+
 /// `spool init <arguments>`, run in `dir`, on a machine that has `uv`: the
 /// command it is told to run Python files with is one that is there.
 fn init_in(dir: &Path, arguments: &[&str]) -> std::process::Output {
@@ -113,22 +126,24 @@ fn init_makes_an_empty_project_and_says_what_goes_where() {
     // What it made is the result, and what to do next is said beside it.
     assert!(
         text(&created.stdout)
-            .ends_with("  .env.example      the form of .env, where your code's secrets go\n")
+            .ends_with("  .agents/skills/      skills that teach coding agents Spool, linked from .claude/skills/\n")
     );
     assert_eq!(
         format!("{}{}", text(&created.stdout), text(&created.stderr)),
         "\
 created   my-data
 
-  sources/          a YAML file for each source of rows or documents
-  entities/         a folder for each entity type, with its features and its rules
-  transforms/       SQL functions that features are made with
-  extractors/       Python or TypeScript files that find records in text
-  .gitignore        keeps the server's data, .spool/, and .env out of Git
-  .env.example      the form of .env, where your code's secrets go
+  sources/             a YAML file for each source of rows or documents
+  entities/            a folder for each entity type, with its features and its rules
+  transforms/          SQL functions that features are made with
+  extractors/          Python or TypeScript files that find records in text
+  .gitignore           keeps the server's data, .spool/, and .env out of Git
+  .env.example         the form of .env, where your code's secrets go
+  AGENTS.md            what a coding agent should know here; CLAUDE.md imports it
+  .agents/skills/      skills that teach coding agents Spool, linked from .claude/skills/
 
   cd my-data
-  spool dev         runs the server, and applies each file as you save it
+  spool dev            runs the server, and applies each file as you save it
 
 The project is empty. Declare a source under sources/ and an entity type
 under entities/, then load your rows with `spool load`. To see a project that
@@ -140,8 +155,20 @@ works first, with sample rows: spool init companies --example companies
     assert_eq!(
         files_of(&project),
         [
+            ".agents/skills/spool-api/SKILL.md",
+            ".agents/skills/spool-data/SKILL.md",
+            ".agents/skills/spool-extractor/SKILL.md",
+            ".agents/skills/spool-project/SKILL.md",
+            ".agents/skills/spool-rules/SKILL.md",
+            ".claude/skills/spool-api/SKILL.md",
+            ".claude/skills/spool-data/SKILL.md",
+            ".claude/skills/spool-extractor/SKILL.md",
+            ".claude/skills/spool-project/SKILL.md",
+            ".claude/skills/spool-rules/SKILL.md",
             ".env.example",
             ".gitignore",
+            "AGENTS.md",
+            "CLAUDE.md",
             "entities/.gitkeep",
             "extractors/.gitkeep",
             "sources/.gitkeep",
@@ -260,6 +287,109 @@ fn init_writes_nothing_into_a_folder_that_holds_files() {
 }
 
 #[test]
+fn update_brings_the_files_for_agents_to_this_version_and_keeps_edits() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("project");
+    succeed(&["init", path(&project)]);
+    let skill = project.join(".agents/skills/spool-rules/SKILL.md");
+    let written = read(&skill);
+    assert!(written.starts_with("---\nname: spool-rules\n"), "{written}");
+    assert!(
+        written.contains("\nmetadata:\n  spool-sha256: \""),
+        "{written}"
+    );
+    assert_eq!(
+        std::fs::read_link(project.join(".claude/skills/spool-rules")).unwrap(),
+        Path::new("../../.agents/skills/spool-rules")
+    );
+    assert_eq!(read(&project.join("CLAUDE.md")), "@AGENTS.md\n");
+    let agents = read(&project.join("AGENTS.md"));
+    assert!(agents.starts_with("<!-- spool:begin."), "{agents}");
+    assert!(agents.ends_with("<!-- spool:end -->\n"), "{agents}");
+
+    // Nothing to do just after `spool init`.
+    let output = spool().args(["update", path(&project)]).output().unwrap();
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    let said = text(&output.stdout);
+    assert!(
+        said.starts_with(&format!("project  {}\n\n", project.display())),
+        "{said}"
+    );
+    assert_eq!(said.matches("  unchanged  ").count(), 12, "{said}");
+    assert_eq!(
+        text(&output.stderr),
+        "\nThe files for agents are this version's already.\n"
+    );
+
+    // Notes of the user's own around Spool's part stay, and an edited
+    // skill is kept until --force.
+    std::fs::write(
+        project.join("AGENTS.md"),
+        format!("# Ours\n\nUse `make test`.\n\n{agents}"),
+    )
+    .unwrap();
+    std::fs::write(&skill, format!("{written}\nCompare `country_code`.\n")).unwrap();
+    let report: Value =
+        serde_json::from_str(&succeed(&["update", path(&project), "--json"])).unwrap();
+    let status = |file: &str| {
+        report["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["path"] == file)
+            .unwrap_or_else(|| panic!("{file}: {report}"))
+            .clone()
+    };
+    assert_eq!(status("AGENTS.md")["status"], "unchanged");
+    assert_eq!(
+        status(".agents/skills/spool-rules/SKILL.md"),
+        json!({
+            "path": ".agents/skills/spool-rules/SKILL.md",
+            "status": "kept",
+            "note": "edited since Spool wrote it: --force replaces it",
+        })
+    );
+    assert!(read(&skill).ends_with("\nCompare `country_code`.\n"));
+    let table = succeed(&["update", path(&project)]);
+    assert!(
+        table.contains(
+            "  kept       .agents/skills/spool-rules/SKILL.md      edited since Spool wrote it: \
+             --force replaces it\n"
+        ),
+        "{table}"
+    );
+    let forced = succeed(&["update", path(&project), "--force"]);
+    assert!(
+        forced.contains("  updated    .agents/skills/spool-rules/SKILL.md\n"),
+        "{forced}"
+    );
+    assert_eq!(read(&skill), written);
+    assert!(read(&project.join("AGENTS.md")).starts_with("# Ours\n\nUse `make test`.\n\n"));
+
+    // Removed by hand, they come back.
+    std::fs::remove_dir_all(project.join(".claude")).unwrap();
+    let restored = succeed(&["update", path(&project)]);
+    assert_eq!(
+        restored.matches("  added      .claude/skills/").count(),
+        5,
+        "{restored}"
+    );
+
+    // A folder that is not a project is refused, and nothing is written.
+    let output = spool().args(["update", path(dir.path())]).output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        text(&output.stderr),
+        format!(
+            "error: {} is not a Spool project: it has no entities/ folder\nhint: `spool init` \
+             makes a project, with these files in it\n",
+            dir.path().display()
+        )
+    );
+    assert!(!dir.path().join("AGENTS.md").exists());
+}
+
+#[test]
 fn init_with_an_example_says_what_it_wrote_and_what_to_run_next() {
     let dir = tempfile::tempdir().unwrap();
 
@@ -282,6 +412,8 @@ created   companies
   samples/notes-1.txt                a call note that names three companies
   .gitignore                         keeps the server's data, .spool/, and .env out of Git
   .env.example                       the form of .env, where your code's secrets go
+  AGENTS.md                          what a coding agent should know here; CLAUDE.md imports it
+  .agents/skills/                    skills that teach coding agents Spool, linked from .claude/skills/
 
   cd companies
   spool dev                          runs the server on this machine
@@ -294,7 +426,7 @@ about 330 MB, most of it the model, and later runs fetch nothing.
     );
     let project = dir.path().join("companies");
     assert_eq!(
-        files_of(&project),
+        without_agent_files(files_of(&project)),
         [
             ".env.example",
             ".gitignore",

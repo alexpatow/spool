@@ -38,6 +38,8 @@ Make a project, empty or from an example
 
 Makes a project: the folders it uses, a .gitignore and a .env.example, with nothing in them. With --example it is a whole project instead, with sample rows and documents to load.
 
+Either way it writes what coding agents read: AGENTS.md, which CLAUDE.md imports, and skills that teach them to use Spool, in .agents/skills/ with a link to each from .claude/skills/. `spool update` brings those to a later version's.
+
 The folder has to be empty: it may hold `.git` and `.DS_Store` and nothing else. A folder that holds anything more is refused, and nothing is written.
 
 Spool hands the variables that the project's .env sets to the extractors and strategies it runs, and never prints their values. A variable that is set already where Spool runs keeps its value. Git ignores .env, and .env.example shows the form.
@@ -580,6 +582,30 @@ Options:
 
   It must be directly under `<DIR>/.spool/`.
 - `--yes`: Remove it without asking, which is needed where nobody can answer, as in a script
+
+It takes the [output options](#output-options).
+
+## spool update
+
+Update the skills and AGENTS.md that tell coding agents how to use Spool
+
+Writes the files for coding agents that `spool init` writes, as this version of spool has them: a skill for each part of the work in .agents/skills/, which Codex and Cursor read, a link to each from .claude/skills/, which Claude Code reads, Spool's part of AGENTS.md, and a CLAUDE.md that imports AGENTS.md where there is none.
+
+A file somebody edited since Spool wrote it is kept, and the command says so; --force replaces it. Spool's part of AGENTS.md is between its two marker lines, and the rest of the file is never changed. A skill of Spool's that this version no longer has is removed, unless it was edited.
+
+It does not update spool itself: the install script does.
+
+```text
+spool update [OPTIONS] [DIR]
+```
+
+Arguments:
+
+- `[DIR]`: The project directory [default: the current directory]
+
+Options:
+
+- `--force`: Replace the files somebody edited as well
 
 It takes the [output options](#output-options).
 

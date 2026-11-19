@@ -15,6 +15,7 @@ use clap::{ColorChoice, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use commands::{
     bench, extract, init, load, matching, project, recompute, reset, retract, serve, show, token,
+    update,
 };
 
 /// Extract, resolve and track entities
@@ -57,6 +58,7 @@ enum Command {
     Explain(show::ExplainArgs),
     Retract(retract::RetractArgs),
     Reset(reset::ResetArgs),
+    Update(update::UpdateArgs),
     Build(project::BuildArgs),
     Apply(project::ApplyArgs),
     Serve(serve::ServeArgs),
@@ -267,6 +269,7 @@ fn run(command: Command) -> (Vec<&'static str>, Result<(), Failure>) {
         Command::Explain(args) => (vec!["explain"], show::explain(args)),
         Command::Retract(args) => (vec!["retract"], retract::retract(args)),
         Command::Reset(args) => (vec!["reset"], reset::reset(args)),
+        Command::Update(args) => (vec!["update"], update::update(args)),
         Command::Build(args) => (vec!["build"], project::build(args)),
         Command::Apply(args) => (vec!["apply"], project::apply(args)),
         Command::Serve(args) => (vec!["serve"], serve::serve(args)),
