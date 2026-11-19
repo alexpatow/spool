@@ -1181,6 +1181,8 @@ impl Tools {
                     status: Some(asked.status.unwrap_or(ReviewStatus::Open)),
                     entity_type: asked.entity_type,
                     record: text(asked.record),
+                    after: None,
+                    limit: None,
                 };
                 super::list_review(app, Ok(Query(query))).await
             }

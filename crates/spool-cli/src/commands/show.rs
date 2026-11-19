@@ -81,8 +81,10 @@ Options:
   --order <order>    asc or desc (default: asc). `--sort records --order desc`
                      lists the largest identities first
   --after <id>       continue a list after this ID, or the log after this
-                     position, in the order of the list
-  --limit <n>        list at most this many
+                     position, in the order of the list (identities,
+                     records, documents, review, log)
+  --limit <n>        list at most this many (runs, identities, records,
+                     documents, review, log)
   --url <url>        the server (default: $SPOOL_URL, or http://127.0.0.1:7765)
   --token <token>    a token of that server (default: $SPOOL_TOKEN); `spool dev`
                      asks for none
@@ -1439,7 +1441,7 @@ impl View<'_> {
     }
 
     fn review_items(&self) -> Result<(), Failure> {
-        let query = self.query("review", &["--type", "--status"])?;
+        let query = self.query("review", &["--type", "--status", "--after", "--limit"])?;
         let answer = self.remote.list("/review", &query)?;
         if self.json {
             print_json(&answer);
@@ -1463,6 +1465,7 @@ impl View<'_> {
                 })
                 .collect(),
         );
+        more(&answer);
         Ok(())
     }
 
@@ -2506,7 +2509,9 @@ pub(super) fn aligned(rows: &[Vec<String>], indent: &str) {
 
 /// Says how to go on when a list has more than was shown.
 fn more(answer: &Value) {
-    if let Some(next) = answer["next"].as_str() {
-        println!("\nmore: add `--after {next}`");
+    match &answer["next"] {
+        Value::String(next) => println!("\nmore: add `--after {next}`"),
+        Value::Number(next) => println!("\nmore: add `--after {next}`"),
+        _ => {}
     }
 }

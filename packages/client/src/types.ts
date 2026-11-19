@@ -2214,6 +2214,11 @@ export type ReviewKind = "possible_merge" | "conflict" | "possible_split";
 
 export interface ReviewList {
   items: ReviewEntry[];
+  /**
+   * With `limit`: pass as `after` for the next page. `null` on the last
+   * page, and without `limit`, which lists every item.
+   */
+  next?: number | null;
 }
 
 export type ReviewStatus = "open" | "resolved" | "superseded" | "dismissed";

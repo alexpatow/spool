@@ -437,6 +437,10 @@ pub struct IdentitiesOfResponse {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ReviewList {
     pub items: Vec<ReviewEntry>,
+    /// With `limit`: pass as `after` for the next page. `null` on the last
+    /// page, and without `limit`, which lists every item.
+    #[serde(default)]
+    pub next: Option<u64>,
 }
 
 /// `GET /v1/info`.

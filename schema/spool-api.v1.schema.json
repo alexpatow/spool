@@ -4436,6 +4436,16 @@
             "$ref": "#/$defs/ReviewEntry"
           },
           "type": "array"
+        },
+        "next": {
+          "default": null,
+          "description": "With `limit`: pass as `after` for the next page. `null` on the last\npage, and without `limit`, which lists every item.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         }
       },
       "required": [

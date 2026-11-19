@@ -2635,6 +2635,9 @@ struct ReviewQuery {
     status: Option<ReviewStatus>,
     entity_type: Option<EntityType>,
     record: Option<String>,
+    after: Option<u64>,
+    /// Without it, every item: the review screen lists them all.
+    limit: Option<u64>,
 }
 
 async fn list_review(
@@ -2651,9 +2654,15 @@ async fn list_review(
             .as_deref()
             .map(|record| id(record, "a record ID"))
             .transpose()?,
+        after: params.after,
+        limit: params.limit.map(|limit| page(Some(limit))),
     };
+    let limit = filter.limit;
     let items = engine(&app, move |engine| engine.review_items(&filter)).await?;
-    ok(ReviewList { items })
+    let next = limit
+        .filter(|limit| items.len() as u64 == *limit)
+        .and_then(|_| items.last().map(|item| item.id));
+    ok(ReviewList { items, next })
 }
 
 async fn read_review(State(app): State<App>, Path(item): Path<String>) -> ApiResult {

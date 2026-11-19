@@ -323,8 +323,8 @@ A record is named by its ID or as `<source>:<key>`, which names the latest versi
 | `--ids` | List each record's ID as well | records |
 | `--sort <column>` | List identities by `records`, `names`, `sources`, `label`, `entity_type`, `created` or `id` | identities |
 | `--order <order>` | `asc` or `desc`, with `--sort` (default `asc`) | identities |
-| `--after <id>` | Continue a list after this ID, or the log after this position, in the order of the list | lists |
-| `--limit <n>` | List at most this many | lists |
+| `--after <id>` | Continue a list after this ID, or the log after this position, in the order of the list | identities, records, documents, review, log |
+| `--limit <n>` | List at most this many | runs, identities, records, documents, review, log |
 
 A list of records or documents shows the version of each that nothing replaced: the row as its source last sent it, or a mention as the latest version of its document holds it. `--all-versions` lists the replaced versions too, with a column that says which is current.
 

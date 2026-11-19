@@ -794,6 +794,22 @@ and `spool show review` lists the ones a match left out.
     let item = shown(&server, &["show", "review", &raised]);
     has(&item, "status       resolved");
     has(&item, &format!("{stuck}  crm:c-117  in identity {matched}"));
+
+    // Review items are listed in pages, as the other lists are. Without a
+    // limit the API gives every item.
+    let every = server.read("/v1/review");
+    assert!(every["items"].as_array().unwrap().len() >= 2, "{every}");
+    assert_eq!(every["next"], Value::Null);
+    let page = shown(&server, &["show", "review", "--limit", "1"]);
+    assert_eq!(page.lines().count(), 4, "{page}");
+    assert!(page.contains("\n1     possible_merge  "), "{page}");
+    assert!(page.ends_with("\nmore: add `--after 1`\n"), "{page}");
+    let rest = shown(&server, &["show", "review", "--after", "1"]);
+    assert!(!rest.contains("\n1     "), "{rest}");
+    assert!(rest.contains(&format!("\n{raised} ")), "{rest}");
+    let answer = answered(&server, &["show", "review", "--limit", "1"]);
+    assert_eq!(answer, server.read("/v1/review?limit=1"));
+    assert_eq!(answer["next"], 1);
 }
 
 #[test]

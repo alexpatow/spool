@@ -59,7 +59,7 @@ Everything Spool does is a call of this API. The command line, the studio and th
 | `POST /v1/changesets/{seq}/undo` | Undoes one changeset with a new one |
 | `POST /v1/ids` | Mints identity IDs for `create_identity` |
 | `GET /v1/constraints` | The `must_link` and `cannot_link` constraints in force, by `record` or `identity` |
-| `GET /v1/review`, `GET /v1/review/{item}` | Review items by `status`, `entity_type` or `record` |
+| `GET /v1/review`, `GET /v1/review/{item}` | Review items by `status`, `entity_type` or `record`. Every item, or with `limit` a page, and `after` the `next` of the page before |
 | `GET /v1/review/{item}/case` | One item with everything needed to decide it |
 | `POST /v1/review/{item}/dismiss` | Closes an item and leaves things as they are |
 | `GET /v1/drafts`, `GET /v1/drafts/{draft}` | Drafts |
