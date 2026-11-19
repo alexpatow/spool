@@ -19,7 +19,9 @@
  *   - `/sitemap.xml` lists every page
  *   - every page, the home page and the explainer have what a link preview reads: a
  *     canonical link and an `og:url` to itself, a title, a description, and
- *     a card at an absolute address that answers with a PNG
+ *     a card at an absolute address that answers with a PNG; the home page and
+ *     the explainer also have a video, at an absolute address that answers a
+ *     request for part of it with that part, as players that stream it ask
  *   - `/use-cases` is a permanent redirect to its page
  */
 import { spawn } from "bun";
@@ -161,6 +163,27 @@ function linksOf(html: string): string[] {
 
 /** The pages that are not in the docs: the front page and the explainer. */
 const others = ["/", "/explained"];
+
+/** The `og:video` tags of a page, and the video they name, which a player asks for in parts. */
+async function checkVideo(origin: string, from: string, meta: Map<string, string>) {
+  const video = meta.get("og:video") ?? "";
+  if (!/^https?:\/\//.test(video)) {
+    fail(from, `og:video is not an absolute address: ${video || "missing"}`);
+    return;
+  }
+  if (meta.get("og:video:secure_url") !== video) fail(from, "og:video:secure_url is not its og:video");
+  if (meta.get("og:video:type") !== "video/mp4") fail(from, `og:video:type is ${meta.get("og:video:type") ?? "missing"}`);
+  for (const key of ["og:video:width", "og:video:height"]) {
+    if (!/^\d+$/.test(meta.get(key) ?? "")) fail(from, `${key} is ${meta.get(key) ?? "missing"}`);
+  }
+  const path = video.replace(/^https?:\/\/[^/]+/, "");
+  const response = await fetch(`${origin}${path}`, { headers: { range: "bytes=0-1023" } });
+  await response.arrayBuffer();
+  const type = response.headers.get("content-type") ?? "";
+  if (response.status !== 206 || !type.startsWith("video/mp4")) {
+    fail(from, `its video ${path} answered a range request with ${response.status} ${type}`);
+  }
+}
 
 async function checkBuilt(pages: Page[]) {
   if (!existsSync(join(siteDir, ".next/BUILD_ID"))) {
@@ -337,6 +360,7 @@ async function checkBuilt(pages: Page[]) {
       if (card.status !== 200 || card.type !== "image/png") {
         fail(from, `its card ${pathOf(image)} answered ${card.status} ${card.type}`);
       }
+      if (others.includes(from)) await checkVideo(origin, from, meta);
     }
     for (const [from, to] of [["/use-cases", "/docs/use-cases"]] as const) {
       const response = await fetch(`${origin}${from}`, { redirect: "manual" });

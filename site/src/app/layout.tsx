@@ -16,6 +16,7 @@ const { openGraph, twitter } = sharing({
   image: siteCardPath,
   imageAlt: `${site.name}: ${site.headline}`,
   type: "website",
+  video: true,
 });
 
 /** What a page has when it says nothing of its own. Its address is left out, so a page is never shared as another. */
