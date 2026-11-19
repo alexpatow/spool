@@ -130,7 +130,8 @@ export interface AttributeGroup {
   entity_type: EntityType;
   /**
    * The records that stand: the latest version of each row or mention,
-   * and not one its source took back.
+   * not one its source took back, and not a mention found in a version
+   * of a document that a later version replaced.
    */
   records: number;
   source: string;

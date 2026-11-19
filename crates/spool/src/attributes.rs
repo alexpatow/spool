@@ -38,7 +38,8 @@ pub struct AttributeGroup {
     pub entity_type: EntityType,
     pub source: String,
     /// The records that stand: the latest version of each row or mention,
-    /// and not one its source took back.
+    /// not one its source took back, and not a mention found in a version
+    /// of a document that a later version replaced.
     pub records: u64,
     /// The columns the source declares, in its order and without its
     /// evidence column, and then any other attribute a record has, by name.
