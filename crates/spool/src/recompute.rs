@@ -1402,10 +1402,8 @@ impl Outcome {
             match (from, self.target(*record)) {
                 (None, Some(Place::Group(_))) => summary.records_placed += 1,
                 (Some(_), Some(Place::Waiting(_))) => summary.records_unplaced += 1,
-                (Some(identity), Some(Place::Group(at))) => {
-                    if self.keeper[at] != Some(identity) {
-                        summary.records_moved += 1;
-                    }
+                (Some(identity), Some(Place::Group(at))) if self.keeper[at] != Some(identity) => {
+                    summary.records_moved += 1;
                 }
                 _ => {}
             }
