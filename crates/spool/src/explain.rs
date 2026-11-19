@@ -391,9 +391,7 @@ pub(crate) fn explain(
                             .collect()
                     };
                     let (ones, others) = (named_as(one), named_as(other));
-                    let parting = graph
-                        .cut(&ones, &others)
-                        .or_else(|| graph.cut(&[one], &[other]));
+                    let parting = graph.cut_between_names(one, other, &ones, &others);
                     let cut = match parting {
                         Some(parting) => Some(describe.split(&parting, &labels)?),
                         None => None,
@@ -1069,7 +1067,7 @@ pub(crate) fn explain_identity(
     // and the fewest that part the records of its most common name from
     // those of each of the next. Without names, the fewest that part the
     // two records of the largest part farthest apart.
-    let mut partings = graph.bridges();
+    let mut partings = graph.bridges(WEAKEST);
     let groups = name_groups(&labels);
     let mut cuts = Vec::new();
     match groups.split_first() {

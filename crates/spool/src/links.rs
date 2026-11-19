@@ -326,9 +326,11 @@ impl Graph {
     }
 
     /// The links that alone hold a part on to the rest: removing any one
-    /// of them parts the identity. Each comes with its two sides, the
-    /// smaller first.
-    pub(crate) fn bridges(&self) -> Vec<Parting> {
+    /// of them parts the identity. Of those, the `most` whose smaller side
+    /// is the largest, each with its two sides, the smaller first. The
+    /// sides are found only for those, as a chain of thousands of records
+    /// has as many bridges.
+    pub(crate) fn bridges(&self, most: usize) -> Vec<Parting> {
         let n = self.len();
         // Depth first, numbering each member in the order it is reached.
         // The members below one in that walk are numbered next after it.
@@ -338,10 +340,12 @@ impl Graph {
         let mut root_of = vec![0u32; n];
         let mut found: Vec<(u32, u32)> = Vec::new();
         let mut counter = 0;
+        let mut part_size = vec![0u32; n];
         for root in 0..n as u32 {
             if order[root as usize] != u32::MAX {
                 continue;
             }
+            let first = counter;
             // Without recursion: a member, the edge it was reached by, and
             // how far through its links it has gone.
             let mut stack: Vec<(u32, u32, usize)> = vec![(root, u32::MAX, 0)];
@@ -375,8 +379,19 @@ impl Graph {
                     }
                 }
             }
+            part_size[root as usize] = counter - first;
         }
 
+        let smaller = |child: u32| {
+            let under = below[child as usize];
+            under.min(part_size[root_of[child as usize] as usize] - under)
+        };
+        found.sort_by(|&(one, below_one), &(other, below_other)| {
+            smaller(below_other)
+                .cmp(&smaller(below_one))
+                .then_with(|| one.cmp(&other))
+        });
+        found.truncate(most);
         found
             .into_iter()
             .map(|(edge, child)| {
@@ -492,9 +507,23 @@ impl Graph {
             }
             seen
         };
-        let distance = self.distances(one[0]);
+        // Every part a member of either group is in, so that the links
+        // listed part the two groups in each.
+        let mut within = vec![false; self.len()];
+        let mut queue: VecDeque<u32> = one.iter().chain(other).copied().collect();
+        for &at in &queue {
+            within[at as usize] = true;
+        }
+        while let Some(at) = queue.pop_front() {
+            for &(to, _) in &self.adjacent[at as usize] {
+                if !within[to as usize] {
+                    within[to as usize] = true;
+                    queue.push_back(to);
+                }
+            }
+        }
         let part: Vec<u32> = (0..self.len() as u32)
-            .filter(|&at| distance[at as usize].is_some())
+            .filter(|&at| within[at as usize])
             .collect();
         let near = reach(one, true);
         let toward = reach(other, false);
@@ -521,6 +550,26 @@ impl Graph {
             one: with_one,
             other: with_other,
         })
+    }
+
+    /// The fewest links that part the records named as `one` is from those
+    /// named as `other` is, given as `ones` and `others`. Only when the two
+    /// groups share a record, which they do when the two have one name, is
+    /// it the cut between `one` and `other` themselves: a cut between two
+    /// records mostly parts one from its own name, which says nothing of
+    /// where two names were joined.
+    pub(crate) fn cut_between_names(
+        &self,
+        one: u32,
+        other: u32,
+        ones: &[u32],
+        others: &[u32],
+    ) -> Option<Parting> {
+        let shared = ones.iter().any(|at| others.contains(at));
+        match shared {
+            true => self.cut(&[one], &[other]),
+            false => self.cut(ones, others),
+        }
     }
 
     /// Pairs of members a link joins directly.
@@ -579,7 +628,7 @@ mod tests {
         links.extend(clique(&[3, 4, 5, 6]));
         links.push((2, 3));
         let graph = graph(7, &links);
-        let bridges = graph.bridges();
+        let bridges = graph.bridges(5);
         let [bridge] = &bridges[..] else {
             panic!("one bridge, found {}", bridges.len());
         };
@@ -629,11 +678,64 @@ mod tests {
     }
 
     #[test]
+    fn a_cut_between_groups_parts_them_in_every_part_they_are_in() {
+        let graph = graph(4, &[(0, 1), (2, 3)]);
+        let parting = graph.cut(&[0, 2], &[1, 3]).unwrap();
+        assert_eq!(parting.edges, [0, 1]);
+        assert_eq!(parting.one, [0, 2]);
+        assert_eq!(parting.other, [1, 3]);
+    }
+
+    #[test]
+    fn two_names_held_by_more_links_than_are_looked_for_are_not_cut_as_two_records() {
+        // Two groups of ten, every member of one linked to every member
+        // of the other but its own counterpart: far more than the cap.
+        let first: Vec<u32> = (0..10).collect();
+        let second: Vec<u32> = (10..20).collect();
+        let mut links = clique(&first);
+        links.extend(clique(&second));
+        for &a in &first {
+            for &b in &second {
+                if b != a + 10 {
+                    links.push((a, b));
+                }
+            }
+        }
+        let graph = graph(20, &links);
+        assert!(graph.cut_between_names(0, 10, &first, &second).is_none());
+        assert!(graph.cut(&[0], &[10]).is_some(), "a cut of one record is");
+        // With one name, the groups are the same, and the two records are
+        // cut from each other.
+        let small = super::tests::graph(3, &[(0, 1), (1, 2)]);
+        let parting = small
+            .cut_between_names(0, 2, &[0, 1, 2], &[0, 1, 2])
+            .unwrap();
+        assert_eq!(parting.edges.len(), 1);
+    }
+
+    #[test]
+    fn of_the_bridges_of_a_long_chain_only_the_most_even_are_kept() {
+        let n = 20_000;
+        let links: Vec<(u32, u32)> = (0..n - 1).map(|at| (at, at + 1)).collect();
+        let graph = graph(n, &links);
+        let bridges = graph.bridges(3);
+        assert_eq!(bridges.len(), 3);
+        for bridge in &bridges {
+            assert!(
+                bridge.one.len() >= (n as usize / 2) - 1,
+                "{}",
+                bridge.one.len()
+            );
+            assert_eq!(bridge.one.len() + bridge.other.len(), n as usize);
+        }
+    }
+
+    #[test]
     fn members_held_by_more_links_than_are_looked_for_have_no_cut() {
         let members: Vec<u32> = (0..(MOST_CUT as u32 + 3)).collect();
         let graph = graph(members.len() as u32, &clique(&members));
         assert!(graph.cut(&[0], &[1]).is_none());
-        assert!(graph.bridges().is_empty());
+        assert!(graph.bridges(5).is_empty());
     }
 
     #[test]
