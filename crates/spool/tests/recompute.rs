@@ -674,7 +674,7 @@ fn a_long_chain_with_one_cannot_link_waits_and_says_why() {
         .map(|i| {
             (
                 i.to_string(),
-                format!("n{}", (i + 1) / 2),
+                format!("n{}", i.div_ceil(2)),
                 format!("c{}", i / 2),
             )
         })
