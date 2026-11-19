@@ -458,7 +458,8 @@ struct RunRow {
 const INTERRUPTED: &str = "interrupted: the engine stopped while the run was in progress";
 
 impl Engine {
-    /// Opens the store at `path`, creating it if the file does not exist.
+    /// Opens the store at `path`, creating it if it does not exist and
+    /// upgrading it in place if its format has a migration.
     pub fn open(path: impl AsRef<Path>, options: Options) -> Result<Self> {
         Self::with_store(
             DuckStore::open(Some(path.as_ref()), options.clock)?,

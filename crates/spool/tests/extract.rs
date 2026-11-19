@@ -75,9 +75,15 @@ const SECOND: &str = "Société Ltd bought Acme Inc.";
 
 impl News {
     fn new() -> Self {
-        let dir = tempfile::tempdir().unwrap();
+        Self::with_engine(
+            tempfile::tempdir().unwrap(),
+            Engine::open_in_memory(Options::seeded(1)).unwrap(),
+        )
+    }
+
+    fn with_engine(dir: tempfile::TempDir, engine: Engine) -> Self {
         let news = Self {
-            engine: Arc::new(Engine::open_in_memory(Options::seeded(1)).unwrap()),
+            engine: Arc::new(engine),
             dir,
         };
         for source in ["news", "wire"] {
@@ -1653,6 +1659,87 @@ def find(document):
         })
         .unwrap();
     assert_eq!(news.identity(document, 29, 39), Some(globex));
+    news.engine.verify().unwrap();
+}
+
+#[test]
+#[ignore = "runs uv"]
+fn opening_a_format_11_store_preserves_mentions_and_reading_counts() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.duckdb");
+    let open = || Engine::open(&path, Options::seeded(1)).unwrap();
+    let mut news = News::with_engine(dir, open());
+    news.extractor("names.py", NAMES);
+    news.extractor("others.py", NAMES);
+    news.add(&[("a", FIRST)]);
+    let names = news.extract("names").unwrap();
+    let others = news.extract("others").unwrap();
+    assert_eq!((names.inserted, others.duplicates), (2, 2));
+    news.engine.resolve(&ResolveOptions::default()).unwrap();
+    let document = id("a", FIRST);
+    let mut expected = news.mentions(document);
+    for mention in &mut expected {
+        mention.found_by.clear();
+    }
+    let log = news.engine.log().unwrap();
+    drop(news.engine);
+
+    // Format 11 stored the same readings and records, with no report of
+    // per-document failures and no links from a reading to the mentions.
+    duckdb::Connection::open(&path)
+        .unwrap()
+        .execute_batch(
+            "ALTER TABLE spool.extraction DROP COLUMN failure;
+             DROP TABLE spool.extraction_found;
+             UPDATE spool.meta SET value = '11' WHERE key = 'format_version';",
+        )
+        .unwrap();
+
+    for _ in 0..2 {
+        news.engine = Arc::new(open());
+        assert_eq!(news.engine.info().unwrap().format_version, "12");
+        assert_eq!(news.engine.log().unwrap(), log);
+        let readings = news.engine.document(document).unwrap().extractions;
+        assert_eq!(readings.len(), 2);
+        assert_eq!(readings[0].run, names.run);
+        assert_eq!(readings[1].run, others.run);
+        assert!(
+            readings
+                .iter()
+                .all(|read| read.mentions == 2 && read.failure.is_none())
+        );
+
+        assert_eq!(news.mentions(document), expected);
+        drop(news.engine);
+    }
+
+    news.engine = Arc::new(open());
+    news.engine.set_user_code(UserCode::new(news.project()));
+    let reread = || {
+        news.engine
+            .extract(&ExtractOptions {
+                again: true,
+                ..ExtractOptions::with("names")
+            })
+            .unwrap()
+    };
+
+    // Count-only readings remain in the history. Per-mention tracking
+    // starts with readings made after the upgrade.
+    news.extractor(
+        "names.py",
+        "from spool import extractor\n\n@extractor\ndef find(document):\n    return []\n",
+    );
+    assert_eq!(reread().taken_back, 0);
+    assert_eq!(news.mentions(document), expected);
+
+    news.extractor("names.py", NAMES);
+    let reading = reread();
+    assert_eq!((reading.inserted, reading.duplicates), (0, 2));
+    for mention in news.mentions(document) {
+        assert_eq!(mention.found_by.len(), 1);
+        assert_eq!(mention.found_by[0].run, reading.run);
+    }
     news.engine.verify().unwrap();
 }
 

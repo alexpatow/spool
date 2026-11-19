@@ -26,8 +26,7 @@ pub enum Error {
     Project { file: PathBuf, message: String },
 
     #[error(
-        "the store has format version {found}, and this engine reads only version {expected}: \
-         it does not convert a store, so load into a new one"
+        "the store has format version {found}, which this engine cannot open (current format: {expected})"
     )]
     FormatVersion { found: String, expected: String },
 
