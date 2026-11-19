@@ -1,9 +1,11 @@
 ---
 title: Getting started
-description: Install Spool, load and match sample rows, watch each company keep its ID as more rows arrive, and extract records from a call note, from the CLI, over HTTP and over MCP.
+description: Give Acorn Tools a persistent ID with Spool and keep using it as new CRM rows and a call note arrive. Follow along from the CLI, over HTTP or over MCP.
 ---
 
-In five minutes you'll install Spool, load and match a CRM export, watch each company keep its ID as more rows arrive, and pull three more records out of a call note. Each step shows the CLI command, then the same step over HTTP and as an MCP tool call. Run the commands. The other two are for reference.
+In five minutes you'll give Acorn Tools a persistent ID. Start with a CRM export, then add more rows and extract companies from a call note. At each step, check which records joined Acorn Tools and see the same ID you could store in an application or an agent's memory.
+
+Follow along with the CLI commands. The HTTP and MCP examples show how those steps work from an application or agent.
 
 ## Requirements
 
@@ -174,7 +176,7 @@ crm:c-5         Halden Group         01a1efc6-41cd-775d-8758-e7329447fd9a
 crm:c-6         Halden Group         01a1efc6-41cd-775d-8758-e731c61371cb
 ```
 
-An **identity** is one company: an ID and the records that belong to it. The three spellings of Acorn Tools share one. That ID, in the last column, is what other systems store. It's minted when the identity is created, so yours will differ. Records have IDs too (`spool show records --ids`). Those are derived from source, key and content, so they match the ones on these pages.
+An **identity** is one company, with an ID and the records that belong to it. The first three CRM records have different source keys and share the Acorn Tools identity. Keep its ID from the last column to compare with the next two results. Yours will differ from the one shown here because Spool creates it when it first matches the rows. Record IDs (`spool show records --ids`) are derived from source, key and content, so they match the ones on these pages.
 
 Over HTTP:
 
@@ -297,7 +299,7 @@ crm:c-8         Kestrel Analytics    01a1efc6-42c0-7776-b736-83fde0cb4498
 crm:c-9         Acorn Tool           01a1efc6-41cd-775d-8758-e7300637659a
 ```
 
-"Acorn Tool" and "Larkfeild Logistics" joined their existing identities, which kept their IDs. Kestrel Analytics is new and got a new one. Nothing placed earlier moved.
+`crm:c-9`, "Acorn Tool", joined the same Acorn Tools identity as `crm:c-1` through `crm:c-3`. Larkfield Logistics kept its ID too, and Kestrel Analytics got a new one.
 
 ## Extract records from text
 
@@ -415,7 +417,7 @@ notes:notes-1.txt[119-142]  Larkfield Logistics Ltd  01a1efc6-41cd-775d-8758-e73
 notes:notes-1.txt[179-200]  Brightwater Foods Ltd    01a1efc6-43a9-7403-b9f6-1f8ee76184ed
 ```
 
-"Acorn Tools Ltd" in the note has the same ID as the Acorn Tools rows, and "Larkfield Logistics Ltd" joined Larkfield. Brightwater Foods is new, so it got a new ID. `spool show records <record>` prints the sentence a record was found in.
+`notes:notes-1.txt[54-69]` identifies the mention of "Acorn Tools Ltd" in the call note. Its identity ID is the one Acorn Tools had after the first CRM import. An application that stored that ID can use it to find both the CRM rows and this mention. Larkfield kept its ID too, and Brightwater Foods got its own. `spool show records <record>` prints the sentence a record was found in.
 
 Over HTTP, it's two calls: store the document, then run the extractor.
 

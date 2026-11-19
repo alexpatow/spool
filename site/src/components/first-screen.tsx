@@ -4,7 +4,7 @@ import * as stylex from "@stylexjs/stylex";
 import { Fragment, useState } from "react";
 
 import { Mark } from "@/components/brand";
-import { identities, log, note, records } from "@/lib/sample";
+import { identities, matchRuns, note, records } from "@/lib/sample";
 import { breakpoints } from "@/styles/layout.stylex";
 import { colors, display, linen, spacing, typography } from "@/styles/shelf/tokens.stylex";
 
@@ -15,11 +15,9 @@ const ROW = 28;
 const FOOT = 84;
 /** The identity that is lit when nothing else is chosen, and on a page without JavaScript. */
 const DEFAULT = 0;
+const LATEST_RUN = matchRuns.length - 1;
 
-const rows = records.filter((record) => record.source === "crm");
 const found = records.filter((record) => record.source === "notes");
-const BODY = records.length * ROW + FOOT;
-const card = BODY / identities.length;
 
 /** The note, cut at the places the extractor found, so each can be marked. */
 function marked() {
@@ -34,12 +32,6 @@ function marked() {
   return parts;
 }
 
-function members(identity: number) {
-  const held = records.filter((record) => record.identity === identity);
-  const sources = new Set(held.map((record) => record.source)).size;
-  return `${held.length} ${held.length === 1 ? "record" : "records"} · ${sources} ${sources === 1 ? "source" : "sources"}`;
-}
-
 /** The identity of the row, record, name or identity that an event came from, if it came from one. */
 function identityAt(target: EventTarget | null): number | undefined {
   if (!(target instanceof Element)) return undefined;
@@ -50,7 +42,7 @@ function identityAt(target: EventTarget | null): number | undefined {
 /**
  * The front page's first screen: what came in, the records it became, and the
  * identities they were placed in, with a thread from each record to its
- * identity. It is the sample project of Getting started after its last step.
+ * identity. Each match run shows the sample project at that point in Getting started.
  *
  * One identity is lit at a time, with its records, the rows and the name in
  * the note they came from, and the matches that placed them. Pointing at any
@@ -59,13 +51,30 @@ function identityAt(target: EventTarget | null): number | undefined {
  */
 export function FirstScreen() {
   const [active, setActive] = useState(DEFAULT);
-  const height = HEAD + BODY;
+  const [run, setRun] = useState(LATEST_RUN);
+  const visible = records.filter((record) => record.match <= run);
+  const rows = visible.filter((record) => record.source === "crm");
+  const hasNote = visible.length > rows.length;
+  const shownIdentities = identities
+    .map((identity, index) => ({
+      identity,
+      index,
+      held: visible.filter((record) => record.identity === index),
+    }))
+    .filter(({ held }) => held.length > 0);
+  const body = visible.length * ROW + FOOT;
+  const height = HEAD + body;
+  const card = body / shownIdentities.length;
   const choose = (target: EventTarget | null) => {
     const identity = identityAt(target);
     if (identity !== undefined) setActive(identity);
   };
+  const showRun = (index: number) => {
+    setRun(index);
+    setActive(DEFAULT);
+  };
   // The lit threads are drawn last, so they lie over the others.
-  const strands = records
+  const strands = visible
     .map((record, index) => ({ record, index }))
     .sort((a, b) => Number(a.record.identity === active) - Number(b.record.identity === active));
 
@@ -85,11 +94,35 @@ export function FirstScreen() {
       }}
       onClick={(event) => choose(event.target)}
     >
+      <div {...stylex.props(styles.log)}>
+        <span {...stylex.props(styles.label)}>Match runs</span>
+        <ol {...stylex.props(styles.ruler)}>
+          {matchRuns.map((entry, index) => {
+            const selected = run === index;
+            return (
+              <li key={entry.after} {...stylex.props(styles.run)}>
+                <button
+                  type="button"
+                  aria-pressed={selected}
+                  onClick={() => showRun(index)}
+                  {...stylex.props(styles.tick, selected && styles.tickSelected)}
+                >
+                  <span {...stylex.props(styles.position, selected && styles.thread)}>{entry.label}</span>
+                  <span {...stylex.props(styles.did)}>{entry.did}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ol>
+      </div>
+
       <div {...stylex.props(styles.panel)}>
         <div {...stylex.props(styles.column, styles.sources)}>
           <div {...stylex.props(styles.head)}>
             <span {...stylex.props(styles.label)}>Rows</span>
-            <span {...stylex.props(styles.aside)}>samples/crm-1.csv, crm-2.csv</span>
+            <span {...stylex.props(styles.aside)}>
+              {run === 0 ? "samples/crm-1.csv" : "samples/crm-1.csv, crm-2.csv"}
+            </span>
           </div>
           {rows.map((record) => (
             <div
@@ -100,32 +133,36 @@ export function FirstScreen() {
               {record.key},{record.name},{record.country}
             </div>
           ))}
-          <div {...stylex.props(styles.head, styles.noteHead)}>
-            <span {...stylex.props(styles.label)}>Text</span>
-            <span {...stylex.props(styles.aside)}>{note.file}</span>
-          </div>
-          <p {...stylex.props(styles.note)}>
-            {marked().map((part, index) =>
-              part.identity === undefined ? (
-                <Fragment key={index}>{part.text}</Fragment>
-              ) : (
-                <mark
-                  key={index}
-                  data-identity={part.identity}
-                  {...stylex.props(styles.mention, part.identity === active && styles.mentionLit)}
-                >
-                  {part.text}
-                </mark>
-              ),
-            )}
-          </p>
+          {hasNote && (
+            <>
+              <div {...stylex.props(styles.head, styles.noteHead)}>
+                <span {...stylex.props(styles.label)}>Text</span>
+                <span {...stylex.props(styles.aside)}>{note.file}</span>
+              </div>
+              <p {...stylex.props(styles.note)}>
+                {marked().map((part, index) =>
+                  part.identity === undefined ? (
+                    <Fragment key={index}>{part.text}</Fragment>
+                  ) : (
+                    <mark
+                      key={index}
+                      data-identity={part.identity}
+                      {...stylex.props(styles.mention, part.identity === active && styles.mentionLit)}
+                    >
+                      {part.text}
+                    </mark>
+                  ),
+                )}
+              </p>
+            </>
+          )}
         </div>
 
-        <div {...stylex.props(styles.column, styles.records)}>
+        <div {...stylex.props(styles.column)}>
           <div {...stylex.props(styles.head)}>
             <span {...stylex.props(styles.label)}>Records</span>
             <span {...stylex.props(styles.aside)}>kept as they arrived</span>
-            <span {...stylex.props(styles.count)}>{records.length}</span>
+            <span {...stylex.props(styles.count)}>{visible.length}</span>
           </div>
           <table {...stylex.props(styles.table)}>
             {/* The header row is read out and not seen. It also sets the widths of the columns. */}
@@ -140,7 +177,7 @@ export function FirstScreen() {
               </tr>
             </thead>
             <tbody>
-              {records.map((record) => {
+              {visible.map((record) => {
                 const lit = record.identity === active;
                 return (
                   <tr
@@ -158,9 +195,11 @@ export function FirstScreen() {
               })}
             </tbody>
           </table>
-          <p {...stylex.props(styles.foot)}>
-            {rows.length} from rows, {found.length} from the note. A record from text is keyed by where it was found.
-          </p>
+          {hasNote && (
+            <p {...stylex.props(styles.foot)}>
+              {rows.length} from rows, {found.length} from the note. A record from text is keyed by where it was found.
+            </p>
+          )}
         </div>
 
         <svg
@@ -172,7 +211,8 @@ export function FirstScreen() {
         >
           {strands.map(({ record, index }) => {
             const from = HEAD + index * ROW + ROW / 2;
-            const to = HEAD + record.identity * card + card / 2;
+            const position = shownIdentities.findIndex((identity) => identity.index === record.identity);
+            const to = HEAD + position * card + card / 2;
             return (
               <path
                 key={index}
@@ -188,11 +228,12 @@ export function FirstScreen() {
         <div {...stylex.props(styles.column, styles.identities)}>
           <div {...stylex.props(styles.head)}>
             <span {...stylex.props(styles.label)}>Identities</span>
-            <span {...stylex.props(styles.aside)}>one ID each</span>
-            <span {...stylex.props(styles.count)}>{identities.length}</span>
+            <span {...stylex.props(styles.aside)}>persistent IDs</span>
+            <span {...stylex.props(styles.count)}>{shownIdentities.length}</span>
           </div>
-          {identities.map((identity, index) => {
+          {shownIdentities.map(({ identity, index, held }) => {
             const lit = index === active;
+            const sources = new Set(held.map((record) => record.source)).size;
             return (
               <button
                 key={identity.id}
@@ -206,34 +247,16 @@ export function FirstScreen() {
                   <Mark width={16} height={16} {...stylex.props(styles.mark, lit && styles.thread)} />
                   <span {...stylex.props(styles.identityName, lit && styles.nameLit)}>{identity.name}</span>
                   {"detail" in identity ? <span {...stylex.props(styles.detail)}>{identity.detail}</span> : null}
-                  <span {...stylex.props(styles.members)}>{members(index)}</span>
+                  <span {...stylex.props(styles.members)}>
+                    {held.length} {held.length === 1 ? "record" : "records"} · {sources}{" "}
+                    {sources === 1 ? "source" : "sources"}
+                  </span>
                 </span>
                 <span {...stylex.props(styles.id, lit && styles.thread)}>{identity.id}</span>
               </button>
             );
           })}
         </div>
-      </div>
-
-      <div {...stylex.props(styles.log)}>
-        <div {...stylex.props(styles.logLabel)}>
-          <span {...stylex.props(styles.label)}>Changeset log</span>
-          <span {...stylex.props(styles.aside)}>append-only</span>
-        </div>
-        <ol {...stylex.props(styles.ruler)}>
-          {log.map((entry, index) => {
-            const lit = records.some((record) => record.identity === active && record.match === index);
-            return (
-              <li key={entry.after} {...stylex.props(styles.tick, lit && styles.tickLit)}>
-                <span {...stylex.props(styles.position, lit && styles.thread)}>match after {entry.after}</span>
-                <span {...stylex.props(styles.did, lit && styles.nameLit)}>{entry.did}</span>
-              </li>
-            );
-          })}
-          <li {...stylex.props(styles.tick, styles.next)}>
-            <span {...stylex.props(styles.did)}>next</span>
-          </li>
-        </ol>
       </div>
     </figure>
   );
@@ -261,6 +284,8 @@ const ring = {
 
 const styles = stylex.create({
   figure: {
+    display: { default: "block", [breakpoints.narrow]: "none" },
+    boxSizing: "border-box",
     ...hairline,
     margin: 0,
     borderWidth: 1,
@@ -270,27 +295,19 @@ const styles = stylex.create({
   },
   panel: {
     display: "grid",
-    gridTemplateColumns: {
-      default: "minmax(0, 1.05fr) minmax(0, 1.45fr) 5rem minmax(0, 1.2fr)",
-      [breakpoints.narrow]: "minmax(0, 1fr)",
-    },
+    gridTemplateColumns: "minmax(0, 1.05fr) minmax(0, 1.45fr) 5rem minmax(0, 1.2fr)",
   },
   column: {
     minWidth: 0,
   },
   sources: {
     ...hairline,
-    borderInlineEndWidth: { default: 1, [breakpoints.narrow]: 0 },
-    borderBottomWidth: { default: 0, [breakpoints.narrow]: 1 },
+    borderInlineEndWidth: 1,
     backgroundColor: colors.background,
-  },
-  records: {
-    ...hairline,
-    borderBottomWidth: { default: 0, [breakpoints.narrow]: 1 },
   },
   identities: {
     ...hairline,
-    borderInlineStartWidth: { default: 1, [breakpoints.narrow]: 0 },
+    borderInlineStartWidth: 1,
   },
   head: {
     ...hairline,
@@ -398,7 +415,8 @@ const styles = stylex.create({
   },
   cell: {
     ...quietly,
-    padding: 0,
+    paddingBlock: 0,
+    paddingInlineEnd: 0,
     paddingInlineStart: spacing["4"],
     fontFamily: typography.fontFamilyMono,
     fontSize: "0.71875rem",
@@ -412,6 +430,7 @@ const styles = stylex.create({
     width: "12.5rem",
   },
   name: {
+    lineHeight: `${ROW}px`,
     color: colors.mutedForeground,
     fontFamily: typography.fontFamily,
     fontSize: "0.8125rem",
@@ -423,7 +442,7 @@ const styles = stylex.create({
     color: linen.thread,
   },
   threads: {
-    display: { default: "block", [breakpoints.narrow]: "none" },
+    display: "block",
     pointerEvents: "none",
     width: "100%",
   },
@@ -467,6 +486,7 @@ const styles = stylex.create({
     alignItems: "baseline",
     display: "flex",
     minWidth: 0,
+    width: "100%",
   },
   mark: {
     ...quietly,
@@ -504,9 +524,7 @@ const styles = stylex.create({
     fontFamily: typography.fontFamilyMono,
     fontSize: "0.6875rem",
     lineHeight: "1rem",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
+    overflowWrap: "anywhere",
     paddingInlineStart: "1.5rem",
   },
   log: {
@@ -515,17 +533,12 @@ const styles = stylex.create({
     paddingBlock: spacing["3"],
     paddingInline: spacing["4"],
     alignItems: "center",
-    borderTopWidth: 1,
+    borderBottomWidth: 1,
     display: "flex",
     flexWrap: "wrap",
   },
-  logLabel: {
-    gap: spacing["2"],
-    alignItems: "center",
-    display: "flex",
-    flexShrink: 0,
-  },
   ruler: {
+    minWidth: 0,
     margin: 0,
     padding: 0,
     display: "flex",
@@ -533,25 +546,32 @@ const styles = stylex.create({
     flexWrap: "wrap",
     listStyle: "none",
   },
+  run: {
+    flex: "1 1 9rem",
+    minWidth: 0,
+  },
   tick: {
+    ...hairline,
     ...quietly,
+    ...ring,
     gap: 2,
-    paddingBlock: 2,
+    paddingBlock: spacing["1"],
     paddingInline: spacing["3"],
+    alignItems: "flex-start",
+    backgroundColor: { default: "transparent", ":hover": colors.background },
     borderInlineStartColor: linen.lineStrong,
-    borderInlineStartStyle: "solid",
     borderInlineStartWidth: 1,
+    cursor: "pointer",
     display: "flex",
     flexDirection: "column",
-    flexGrow: 1,
-  },
-  tickLit: {
-    borderInlineStartColor: linen.thread,
-  },
-  next: {
-    borderInlineStartStyle: "dashed",
-    flexGrow: 0,
+    fontFamily: typography.fontFamily,
     justifyContent: "center",
+    textAlign: "start",
+    width: "100%",
+  },
+  tickSelected: {
+    backgroundColor: linen.threadWash,
+    borderInlineStartColor: linen.thread,
   },
   position: {
     ...quietly,
@@ -562,6 +582,7 @@ const styles = stylex.create({
   did: {
     ...quietly,
     color: colors.mutedForeground,
+    display: "block",
     fontSize: "0.75rem",
   },
 });
