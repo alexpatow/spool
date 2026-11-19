@@ -10,7 +10,7 @@ import type { IdentitySummary, RecordEntry } from "./api.ts";
 import { Source, Sources, message } from "./components.tsx";
 import * as Command from "./components/ui/command";
 import { findScreen, isReference } from "./find.ts";
-import { count, recordName, short } from "./format.ts";
+import { count, identityMatch, recordName, short } from "./format.ts";
 import { useStudio } from "./hooks.ts";
 import { ArrowRightIcon, IdentityIcon, RecordIcon, SearchIcon } from "./icons.tsx";
 import { href, navigate } from "./router.ts";
@@ -152,7 +152,9 @@ export function Palette({
                   <IdentityIcon />
                   <span {...stylex.props(styles.name)}>{identity.label ?? short(identity.id)}</span>
                   <span {...stylex.props(styles.aside)}>
-                    {identity.entity_type} · {count(identity.members, "record")}
+                    {[identityMatch(identity.match), identity.entity_type, count(identity.members, "record")]
+                      .filter(Boolean)
+                      .join(" · ")}
                   </span>
                   <Sources sources={identity.sources} />
                 </>

@@ -68,6 +68,8 @@ The CLI, the studio and the MCP endpoint are all clients of this API. Every path
 | `GET /v1/tokens`, `POST /v1/tokens`, `POST /v1/tokens/{token}/revoke` | Tokens. Admins only |
 | `GET /healthz` | `{"status":"ok"}`, with no sign-in |
 
+With `q`, identities are ranked by matches in their label, then aliases (other labels from their members), then other record values. Exact text ranks before prefixes and other partial matches within each name tier. An explicit sort controls the order when supplied. Each result's `match.kind` is `label`, `alias` or `record`. Label and alias matches include the matched `value`. Alias and record matches include the matching `record` ID. Record matches include `field` when a single payload field holds every search word.
+
 Browser sign-in is under `/auth`, and the MCP endpoint is `/mcp` ([MCP](/docs/mcp)).
 
 The examples below start from the sample project with nothing loaded:

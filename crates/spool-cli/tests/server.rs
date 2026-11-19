@@ -1504,10 +1504,11 @@ fn what_is_read_says_what_things_are_called_where_they_came_from_and_what_waits(
         .collect();
     assert_eq!(named["identities"], json!(wanted));
     assert_eq!(named["next"], json!(null));
-    assert_eq!(
-        server.read(&format!("/v1/identities?ids={identity}&q=sheffield"))["identities"],
-        json!([listed])
-    );
+    let filtered = server.read(&format!("/v1/identities?ids={identity}&q=sheffield"));
+    assert_eq!(filtered["identities"].as_array().unwrap().len(), 1);
+    assert_eq!(filtered["identities"][0]["id"], identity);
+    assert_eq!(filtered["identities"][0]["match"]["kind"], "record");
+    assert_eq!(filtered["identities"][0]["match"]["field"], "city");
     assert_eq!(server.read("/v1/identities?ids=")["identities"], json!([]));
     server
         .get(&format!("/v1/identities?ids={identity},acorn"))

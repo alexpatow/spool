@@ -2254,6 +2254,71 @@
       ],
       "type": "object"
     },
+    "IdentityMatch": {
+      "description": "Why an identity appeared in a text search.",
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "label",
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A member's label that differs from the identity's label.",
+          "properties": {
+            "kind": {
+              "const": "alias",
+              "type": "string"
+            },
+            "record": {
+              "$ref": "#/$defs/RecordId"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "value",
+            "record"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "field": {
+              "description": "A payload field holding all the words, when there is one.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "const": "record",
+              "type": "string"
+            },
+            "record": {
+              "$ref": "#/$defs/RecordId"
+            }
+          },
+          "required": [
+            "kind",
+            "record"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "IdentitySummary": {
       "description": "An active identity in a list.",
       "properties": {
@@ -2280,6 +2345,17 @@
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "match": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IdentityMatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The strongest match for a text search."
         },
         "members": {
           "format": "uint64",

@@ -1160,6 +1160,28 @@ export interface IdentityList {
 }
 
 /**
+ * Why an identity appeared in a text search.
+ */
+export type IdentityMatch =
+  | {
+      kind: "label";
+      value: string;
+    }
+  | {
+      kind: "alias";
+      record: RecordId;
+      value: string;
+    }
+  | {
+      /**
+       * A payload field holding all the words, when there is one.
+       */
+      field?: string | null;
+      kind: "record";
+      record: RecordId;
+    };
+
+/**
  * An active identity in a list.
  */
 export interface IdentitySummary {
@@ -1179,6 +1201,10 @@ export interface IdentitySummary {
    * version of the other.
    */
   linked_pairs?: number;
+  /**
+   * The strongest match for a text search.
+   */
+  match?: IdentityMatch | null;
   members: number;
   /**
    * Different labels its members have, whatever their case. Members

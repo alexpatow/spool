@@ -11,8 +11,8 @@ use spool::core::{
     Actor, Changeset, Constraint, ConstraintKind, IdGenerator, IdentityId, Op, SeededIds, Verdict,
 };
 use spool::{
-    CaseConstraint, Engine, Error, IdentityFilter, Options, RecordFilter, ResolveOptions,
-    ReviewFilter, Rows, YamlFile,
+    CaseConstraint, Engine, Error, IdentityFilter, IdentityMatch, IdentitySort, Options,
+    RecordFilter, ResolveOptions, ReviewFilter, Rows, Sort, YamlFile,
 };
 
 /// The tests' things, and three sources more whose rows name a thing in
@@ -285,6 +285,110 @@ fn a_search_finds_the_records_that_hold_every_word() {
     assert_eq!(found("sheffield company"), []);
     assert_eq!(found("hammer"), []);
     assert_eq!(found("").len(), 4);
+}
+
+#[test]
+fn identity_search_ranks_names_and_explains_record_matches_across_pages() {
+    let engine = engine();
+    engine
+        .load(
+            "crm",
+            "thing",
+            json_rows(json!([
+                { "id": "country", "name": "Sweden", "city": "Stockholm", "code": "S" },
+                { "id": "alias", "name": "Nordic Lab", "code": "A" },
+                { "id": "partial", "name": "Visit Stockholm", "code": "C" },
+                { "id": "prefix", "name": "Stockholm Research", "code": "P" },
+                { "id": "exact", "name": "Stöckholm", "code": "E" },
+            ])),
+        )
+        .unwrap();
+    resolve(&engine);
+    engine
+        .load(
+            "registry",
+            "thing",
+            json_rows(json!([{ "id": "branch", "legal_name": "Stockholm Branch", "code": "A" }])),
+        )
+        .unwrap();
+    resolve(&engine);
+
+    let query = IdentityFilter {
+        q: Some(" STOCKHOLM ".to_owned()),
+        ..IdentityFilter::default()
+    };
+    let found = engine.identities(&query).unwrap();
+    assert_eq!(
+        found
+            .iter()
+            .map(|hit| hit.label.as_deref().unwrap())
+            .collect::<Vec<_>>(),
+        [
+            "Stöckholm",
+            "Stockholm Research",
+            "Visit Stockholm",
+            "Nordic Lab",
+            "Sweden"
+        ]
+    );
+    assert_eq!(
+        found[0].search_match,
+        Some(IdentityMatch::Label {
+            value: "Stöckholm".to_owned()
+        })
+    );
+    assert_eq!(
+        found[3].search_match,
+        Some(IdentityMatch::Alias {
+            value: "Stockholm Branch".to_owned(),
+            record: record_id(&engine, "registry", "branch"),
+        })
+    );
+    let country = record_id(&engine, "crm", "country");
+    assert_eq!(
+        found[4].search_match,
+        Some(IdentityMatch::Record {
+            record: country,
+            field: Some("city".to_owned())
+        })
+    );
+
+    let mut by_page = Vec::new();
+    let mut page = IdentityFilter {
+        limit: 1,
+        ..query.clone()
+    };
+    while let Some(hit) = engine.identities(&page).unwrap().pop() {
+        page.after = Some(hit.id);
+        by_page.push(hit);
+        assert!(by_page.len() <= found.len());
+    }
+    assert_eq!(by_page, found);
+
+    let by_id = engine
+        .identities(&IdentityFilter {
+            sort: Some(Sort::ascending(IdentitySort::Id)),
+            ..query
+        })
+        .unwrap();
+    let mut expected = found;
+    expected.sort_by_key(|hit| hit.id);
+    assert_eq!(by_id, expected);
+
+    let across_fields = engine
+        .identities(&IdentityFilter {
+            q: Some("Sweden Stockholm".to_owned()),
+            ..IdentityFilter::default()
+        })
+        .unwrap();
+    assert_eq!(across_fields.len(), 1);
+    assert_eq!(
+        across_fields[0].search_match,
+        Some(IdentityMatch::Record {
+            record: country,
+            field: None
+        })
+    );
 }
 
 #[test]

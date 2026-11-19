@@ -424,9 +424,8 @@ struct SearchIdentities {
     /// Only identities of this entity type.
     #[serde(default)]
     entity_type: Option<EntityType>,
-    /// Only identities with a record that holds every word of this text, in
-    /// one of its values, in its source's name or in its key. Case and
-    /// accents do not matter.
+    /// Only identities with a member whose label or record holds every
+    /// word of this text. Case and accents do not matter.
     #[serde(default)]
     q: Option<String>,
     /// Only these identities. One that was merged away is not found here:
@@ -838,11 +837,11 @@ static TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
             "search_identities",
             "Search identities",
             Effect::Reads,
-            "Find identities, the real-world things records refer to, by words in their \
-             records. Use this when asked about a company, person or other entity by name, \
-             domain or any other value. Each result has the identity's ID, its label, how \
-             many records it has and from which sources. Without `q` it lists identities in \
-             ID order. Follow with `get_identity` or `search_records` for the detail.",
+            "Find identities by name, domain or other record values. Results rank identity \
+             labels first, then aliases (other member labels), then record values. Each \
+             result's `match` says why it appeared, with the matching record and field when \
+             available. Without `q` it lists identities in ID order. Follow with \
+             `get_identity` or `search_records` for detail.",
         ),
         tool::<OneIdentity>(
             "get_identity",

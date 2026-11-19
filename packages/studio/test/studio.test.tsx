@@ -570,7 +570,7 @@ describe("company records a reviewer corrected", () => {
     }
   });
 
-  test("the identities are found by words their records hold", async () => {
+  test("identity search defaults to relevance and shows why each result matched", async () => {
     open(server, "/identities");
     await heading("Identities");
     await screen.findByRole("table");
@@ -578,6 +578,14 @@ describe("company records a reviewer corrected", () => {
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     expect(here()).toBe("/identities?q=halden+energy");
     await waitFor(() => expect(rowsOf(screen.getByRole("table")).map((line) => line[0])).toEqual(["Halden Energy"]));
+    expect(screen.getByRole("columnheader", { name: "Name" }).getAttribute("aria-sort")).toBe("none");
+    expect(screen.getByRole("cell", { name: "Name match" })).toBeTruthy();
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search" }), {
+      target: { value: "acorn tool company ltd" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByRole("cell", { name: "Alias “ACORN TOOL COMPANY LTD”" })).toBeTruthy();
 
     // A word of a value that is not the name finds it too, whatever its case.
     fireEvent.change(screen.getByRole("searchbox", { name: "Search" }), { target: { value: "X0000004" } });
@@ -585,6 +593,7 @@ describe("company records a reviewer corrected", () => {
     await waitFor(() =>
       expect(rowsOf(screen.getByRole("table")).map((line) => line[0])).toEqual(["Kestrel Analytics"]),
     );
+    expect(screen.getByRole("cell", { name: "Record field “number”" })).toBeTruthy();
 
     fireEvent.change(screen.getByRole("searchbox", { name: "Search" }), { target: { value: "nothing-holds-this" } });
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
@@ -1109,11 +1118,11 @@ describe("company records a reviewer corrected", () => {
     expect(listed()).toHaveLength(11);
 
     fireEvent.change(box, { target: { value: "Pioneer" } });
-    await screen.findByRole("option", { name: /^PIONEER SUPPLIES LTD company · 1 record/ });
+    await screen.findByRole("option", { name: /^PIONEER SUPPLIES LTD Name match · company · 1 record/ });
     await idle();
     expect(listed()).toEqual([
-      "Pioneer Suppliescompany · 2 recordscrm1registry1",
-      "PIONEER SUPPLIES LTDcompany · 1 recordregistry1",
+      "Pioneer SuppliesName match · company · 2 recordscrm1registry1",
+      "PIONEER SUPPLIES LTDName match · company · 1 recordregistry1",
       "Pioneer Suppliesc-110crm",
       "Pioneer Suppliesc-117crm",
       "PIONEER SUPPLIES LTDX0000009registry",

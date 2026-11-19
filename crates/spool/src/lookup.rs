@@ -245,6 +245,30 @@ pub struct IdentitySummary {
     pub unlinked_pairs: u64,
     /// The sources its members came from, the one with most members first.
     pub sources: Vec<SourceCount>,
+    /// The strongest match for a text search.
+    #[serde(default, rename = "match", skip_serializing_if = "Option::is_none")]
+    pub search_match: Option<IdentityMatch>,
+}
+
+/// Why an identity appeared in a text search.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum IdentityMatch {
+    Label {
+        value: String,
+    },
+    /// A member's label that differs from the identity's label.
+    Alias {
+        value: String,
+        record: RecordId,
+    },
+    Record {
+        record: RecordId,
+        /// A payload field holding all the words, when there is one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        field: Option<String>,
+    },
 }
 
 /// How many records a source gave.
@@ -255,13 +279,13 @@ pub struct SourceCount {
     pub records: u64,
 }
 
-/// Which active identities to list. Results are ordered by ID, or as
-/// `sort` says.
+/// Which active identities to list. Results are ordered by search relevance
+/// with `q` and by ID otherwise, unless `sort` is given.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IdentityFilter {
     pub entity_type: Option<EntityType>,
-    /// Only those with a member that holds every word of this text, as
-    /// [`RecordFilter::q`] finds records.
+    /// Only those with a member whose label or record holds every word
+    /// of this text, as [`RecordFilter::q`] finds records.
     pub q: Option<String>,
     /// Only those among these IDs. One that names no active identity finds
     /// nothing: an identity that was merged away is not in the list.
@@ -544,13 +568,20 @@ fn words(q: Option<&str>) -> Option<String> {
 /// in a value of the payload, in the source's name or in the key, whatever
 /// the case and the accents of its letters.
 fn holds_words(words: &str) -> String {
+    let matches = contains_words(
+        RECORD_SEARCH_TEXT,
+        &format!("from_json({words}::VARCHAR, '[\"VARCHAR\"]')"),
+    );
+    format!("({words}::VARCHAR IS NULL OR {matches})")
+}
+
+const RECORD_SEARCH_TEXT: &str = "concat_ws(' ', o.source_id, o.source_key,
+    array_to_string(json_extract_string(o.payload, '$.*'), ' '))";
+
+fn contains_words(value: &str, words: &str) -> String {
     format!(
-        "({words}::VARCHAR IS NULL OR len(list_filter(
-            from_json({words}::VARCHAR, '[\"VARCHAR\"]'),
-            lambda word: NOT contains(
-              lower(strip_accents(concat_ws(' ', o.source_id, o.source_key,
-                array_to_string(json_extract_string(o.payload, '$.*'), ' ')))),
-              lower(strip_accents(word))))) = 0)"
+        "len(list_filter({words}, lambda word:
+           NOT coalesce(contains(lower(strip_accents({value})), lower(strip_accents(word))), false))) = 0"
     )
 }
 
@@ -582,7 +613,9 @@ const MENTION_KEY: &str = "coalesce(CASE WHEN json_extract_string(o.evidence, '$
 /// What the label of each identity is, as [`labels`] finds it, as a common
 /// table expression `identity_label` of `identity_id` and `label`. Only
 /// an identity that has one is in it.
-const IDENTITY_LABEL: &str = "identity_label AS (
+fn identity_label(filter_members: &str) -> String {
+    format!(
+        "identity_label AS (
     SELECT identity_id, label FROM (
       SELECT identity_id, label,
              row_number() OVER (PARTITION BY identity_id ORDER BY count(*) DESC, min(nth)) AS rank
@@ -594,10 +627,12 @@ const IDENTITY_LABEL: &str = "identity_label AS (
         FROM spool.membership m
         JOIN spool.record o ON o.record_id = m.record_id
         LEFT JOIN spool.record_label named ON named.record_id = o.record_id
-        WHERE m.to_seq IS NULL)
-      WHERE nth <= 100 AND label IS NOT NULL
+        WHERE m.to_seq IS NULL {filter_members})
+      WHERE nth <= {LABEL_MEMBERS} AND label IS NOT NULL
       GROUP BY identity_id, label)
-    WHERE rank = 1)";
+    WHERE rank = 1)"
+    )
+}
 
 /// What a list of records can be sorted by. Each ends with the order of the
 /// list when nothing is chosen, and that ends with the ID.
@@ -709,7 +744,7 @@ pub(crate) fn records(conn: &Connection, filter: &RecordFilter) -> Result<Vec<Re
         }
         Some(sort) => {
             let keyed = Keyed {
-                before: (sort.by == RecordSort::Identity).then(|| IDENTITY_LABEL.to_owned()),
+                before: (sort.by == RecordSort::Identity).then(|| identity_label("")),
                 from: format!(
                     "spool.record o
                      LEFT JOIN spool.membership m ON m.record_id = o.record_id AND m.to_seq IS NULL
@@ -977,11 +1012,10 @@ fn describe(conn: &Connection, identities: &mut [IdentitySummary]) -> Result<()>
     Ok(())
 }
 
-const IDENTITY: &str = "
-    SELECT i.identity_id::VARCHAR, i.entity_type, i.created_seq,
+const IDENTITY_COLUMNS: &str = "
+    i.identity_id::VARCHAR, i.entity_type, i.created_seq,
            (SELECT count(*) FROM spool.membership m
-            WHERE m.identity_id = i.identity_id AND m.to_seq IS NULL)
-    FROM spool.identity i";
+            WHERE m.identity_id = i.identity_id AND m.to_seq IS NULL)";
 
 fn identity_summary(row: &duckdb::Row<'_>) -> Result<IdentitySummary> {
     Ok(IdentitySummary {
@@ -994,6 +1028,7 @@ fn identity_summary(row: &duckdb::Row<'_>) -> Result<IdentitySummary> {
         linked_pairs: 0,
         unlinked_pairs: 0,
         sources: Vec::new(),
+        search_match: None,
     })
 }
 
@@ -1007,7 +1042,7 @@ pub(crate) fn identities_by_id(
         return Ok(Vec::new());
     }
     let mut statement = conn.prepare(&format!(
-        "{IDENTITY}
+        "SELECT {IDENTITY_COLUMNS} FROM spool.identity i
          WHERE i.merged_into IS NULL AND list_contains({}, i.identity_id)
          ORDER BY i.identity_id",
         uuid_list(ids)
@@ -1025,45 +1060,60 @@ pub(crate) fn identities(
     conn: &Connection,
     filter: &IdentityFilter,
 ) -> Result<Vec<IdentitySummary>> {
+    let search = words(filter.q.as_deref());
     let filters = format!(
         "i.merged_into IS NULL
            AND ($1::VARCHAR IS NULL OR i.entity_type = $1::VARCHAR)
-           AND ($4::VARCHAR IS NULL OR i.identity_id IN (
-                 SELECT m.identity_id
-                 FROM spool.membership m
-                 JOIN spool.record o ON o.record_id = m.record_id
-                 WHERE m.to_seq IS NULL AND {}))
            AND {}",
-        holds_words("$4"),
         match &filter.ids {
             Some(ids) => format!("list_contains({}, i.identity_id)", uuid_list(ids)),
             None => "true".to_owned(),
         }
     );
-    let sql = match filter.sort {
-        None => format!(
-            "{IDENTITY}
+    let select = if search.is_some() {
+        format!(
+            "SELECT {IDENTITY_COLUMNS}, im.tier, im.label, im.record_id::VARCHAR
+             FROM spool.identity i JOIN identity_match im ON im.identity_id = i.identity_id"
+        )
+    } else {
+        format!("SELECT {IDENTITY_COLUMNS} FROM spool.identity i")
+    };
+    let sql = match (filter.sort, search.is_some()) {
+        (None, false) => format!(
+            "{select}
              WHERE {filters}
                AND ($2::VARCHAR IS NULL OR i.identity_id > $2::UUID)
              ORDER BY i.identity_id
              LIMIT $3"
         ),
-        Some(sort) => {
-            let labelled = sort.by == IdentitySort::Label;
-            let keyed = Keyed {
-                before: labelled.then(|| IDENTITY_LABEL.to_owned()),
-                from: if labelled {
+        (sort, searching) => {
+            let labelled = sort.is_some_and(|sort| sort.by == IdentitySort::Label);
+            let before = match (searching, labelled) {
+                (true, _) => Some(identity_matches(&filters)),
+                (false, true) => Some(identity_label("")),
+                _ => None,
+            };
+            let from = match (sort, labelled) {
+                (None, _) => "identity_match i",
+                (_, true) => {
                     "spool.identity i LEFT JOIN identity_label il ON il.identity_id = i.identity_id"
-                } else {
-                    "spool.identity i"
                 }
-                .to_owned(),
+                _ => "spool.identity i",
+            };
+            let keyed = Keyed {
+                before,
+                from: from.to_owned(),
                 id: "i.identity_id".to_owned(),
-                keys: sort.by.keys(),
-                direction: sort.direction,
+                keys: sort.map(|sort| sort.by.keys()).unwrap_or_else(|| {
+                    ["i.tier", "i.quality", "i.identity_id"]
+                        .into_iter()
+                        .map(Key::of)
+                        .collect()
+                }),
+                direction: sort.map(|sort| sort.direction).unwrap_or_default(),
             };
             format!(
-                "{} {IDENTITY} {}
+                "{} {select} {}
                  WHERE {filters} AND {}
                  ORDER BY {}
                  LIMIT $3",
@@ -1075,18 +1125,121 @@ pub(crate) fn identities(
         }
     };
     let mut statement = conn.prepare(&sql)?;
-    let mut rows = statement.query(params![
-        filter.entity_type.as_ref().map(EntityType::as_str),
-        filter.after.map(|id| id.to_string()),
-        limit(filter.limit),
-        words(filter.q.as_deref()),
-    ])?;
+    let entity_type = filter.entity_type.as_ref().map(EntityType::as_str);
+    let after = filter.after.map(|id| id.to_string());
+    let most = limit(filter.limit);
+    let mut rows = match &search {
+        Some(search) => statement.query(params![entity_type, after, most, search])?,
+        None => statement.query(params![entity_type, after, most])?,
+    };
     let mut found = Vec::new();
     while let Some(row) = rows.next()? {
-        found.push(identity_summary(row)?);
+        let mut identity = identity_summary(row)?;
+        if search.is_some() {
+            let evidence = match row.get::<_, i32>(4)? {
+                0 => IdentityMatch::Label { value: row.get(5)? },
+                1 => IdentityMatch::Alias {
+                    value: row.get(5)?,
+                    record: parse(&row.get::<_, String>(6)?)?,
+                },
+                _ => IdentityMatch::Record {
+                    record: parse(&row.get::<_, String>(6)?)?,
+                    field: None,
+                },
+            };
+            identity.search_match = Some(evidence);
+        }
+        found.push(identity);
+    }
+    if let Some(search) = search {
+        describe_record_matches(conn, &mut found, &search)?;
     }
     describe(conn, &mut found)?;
     Ok(found)
+}
+
+/// A label match outranks an alias, which outranks a match in a record's
+/// other values. For labels and aliases, prefer exact text, then a prefix,
+/// then the remaining matches. Each identity contributes its best match.
+fn identity_matches(filters: &str) -> String {
+    let record_holds = contains_words(RECORD_SEARCH_TEXT, "query.words");
+    let label_holds = contains_words("named.label", "query.words");
+    let labels = identity_label(
+        "AND (m.identity_id IN (SELECT identity_id FROM matching_members)
+              OR m.identity_id = $2::UUID)",
+    );
+    format!(
+        "search_query AS (
+           SELECT from_json($4::VARCHAR, '[\"VARCHAR\"]') AS words,
+                  lower(strip_accents(array_to_string(words, ' '))) AS phrase
+         ),
+         matching_members AS (
+           SELECT m.identity_id, m.record_id, named.label,
+                  {label_holds} AS label_matches,
+                  lower(strip_accents(regexp_replace(named.label, '[[:space:]]+', ' ', 'g'))) AS normalized_label,
+                  CASE WHEN normalized_label = query.phrase THEN 0
+                    WHEN starts_with(normalized_label, query.phrase) THEN 1
+                    ELSE 2 END AS label_quality
+           FROM spool.identity i
+           JOIN spool.membership m ON m.identity_id = i.identity_id AND m.to_seq IS NULL
+           JOIN spool.record o ON o.record_id = m.record_id
+           LEFT JOIN spool.record_label named ON named.record_id = m.record_id
+           CROSS JOIN search_query query
+           WHERE {filters} AND (label_matches OR {record_holds})
+         ),
+         {labels},
+         identity_match AS (
+           SELECT member.identity_id, member.record_id, member.label,
+                  CASE WHEN NOT member.label_matches THEN 2
+                    WHEN member.label = il.label THEN 0 ELSE 1 END AS tier,
+                  CASE WHEN member.label_matches THEN member.label_quality ELSE 0 END AS quality
+           FROM matching_members member
+           LEFT JOIN identity_label il ON il.identity_id = member.identity_id
+           QUALIFY row_number() OVER (
+             PARTITION BY member.identity_id ORDER BY tier, quality, member.record_id
+           ) = 1
+         )"
+    )
+}
+
+fn describe_record_matches(
+    conn: &Connection,
+    identities: &mut [IdentitySummary],
+    search: &str,
+) -> Result<()> {
+    let records: Vec<RecordId> = identities
+        .iter()
+        .filter_map(|identity| match identity.search_match {
+            Some(IdentityMatch::Record { record, .. }) => Some(record),
+            _ => None,
+        })
+        .collect();
+    if records.is_empty() {
+        return Ok(());
+    }
+    let field_holds = contains_words(
+        "json_extract_string(field.value, '$')",
+        "from_json($1::VARCHAR, '[\"VARCHAR\"]')",
+    );
+    let mut statement = conn.prepare(&format!(
+        "SELECT o.record_id::VARCHAR, min(field.key)
+         FROM spool.record o, json_each(o.payload) field
+         WHERE list_contains({}, o.record_id)
+           AND {field_holds}
+         GROUP BY o.record_id",
+        uuid_list(&records)
+    ))?;
+    let mut rows = statement.query([search])?;
+    let mut fields = BTreeMap::new();
+    while let Some(row) = rows.next()? {
+        fields.insert(parse::<RecordId>(&row.get::<_, String>(0)?)?, row.get(1)?);
+    }
+    for identity in identities {
+        if let Some(IdentityMatch::Record { record, field }) = &mut identity.search_match {
+            *field = fields.remove(record);
+        }
+    }
+    Ok(())
 }
 
 /// The changesets that name an identity, oldest first, each with only the

@@ -434,7 +434,31 @@ fn a_tool_that_looks_something_up_answers_what_the_api_answers() {
     let found = tool(&server, "search_identities", json!({ "q": "acorn" }));
     assert_eq!(found, server.read("/v1/identities?q=acorn&limit=20"));
     assert_eq!(found["identities"][0]["label"], "Acorn Tools");
+    assert_eq!(
+        found["identities"][0]["match"],
+        json!({ "kind": "label", "value": "Acorn Tools" })
+    );
     let acorn = text(&found["identities"][0]["id"]);
+
+    let alias = tool(
+        &server,
+        "search_identities",
+        json!({ "ids": [acorn], "q": "ACORN TOOL COMPANY LTD" }),
+    );
+    let alias = &alias["identities"][0]["match"];
+    assert_eq!(alias["kind"], "alias");
+    assert_eq!(alias["value"], "ACORN TOOL COMPANY LTD");
+    assert!(alias["record"].is_string());
+
+    let field = tool(
+        &server,
+        "search_identities",
+        json!({ "ids": [acorn], "q": "Sheffield" }),
+    );
+    let field = &field["identities"][0]["match"];
+    assert_eq!(field["kind"], "record");
+    assert_eq!(field["field"], "city");
+    assert!(field["record"].is_string());
 
     // A list is short unless the call asks for more.
     let page = tool(

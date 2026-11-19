@@ -428,9 +428,13 @@ describe("a reviewer", () => {
     ]);
     expect((await client.records({ q: "anvil 4" })).records).toEqual([fourth]);
     expect((await client.identities({ q: "hammer" })).identities).toEqual([]);
-    // And read by their IDs, as the list gives them.
+    // The search explains each match. An ID lookup returns the same summaries.
+    const summaries = found.identities.map(({ match, ...identity }) => {
+      expect(match).toEqual({ kind: "label", value: "anvil" });
+      return identity;
+    });
     expect((await client.identities({ ids: [split.identity, anvils] })).identities).toEqual(
-      [...found.identities].sort((a, b) => a.id.localeCompare(b.id)),
+      summaries.sort((a, b) => a.id.localeCompare(b.id)),
     );
     expect((await client.identities({ ids: [] })).identities).toEqual([]);
 
