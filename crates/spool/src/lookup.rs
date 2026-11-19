@@ -54,6 +54,21 @@ pub struct RecordEntry {
     /// stands. Such a record has no identity and is given none.
     #[serde(default)]
     pub retracted: Option<RunId>,
+    /// For a mention: each reading that found it in this version, oldest
+    /// first, with the version of the extractor that read.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub found_by: Vec<FoundBy>,
+}
+
+/// A reading of a document that found a mention.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct FoundBy {
+    pub extractor: String,
+    /// The hash of the extractor's files when it read.
+    pub version: String,
+    /// The extract run.
+    pub run: RunId,
 }
 
 impl RecordEntry {
@@ -418,7 +433,10 @@ const RECORD: &str = "
     SELECT o.record_id::VARCHAR, o.entity_type, o.source_id, o.source_key,
            o.payload::VARCHAR, o.evidence::VARCHAR, epoch_us(o.loaded_at), o.load_run,
            m.identity_id::VARCHAR, o.supersedes::VARCHAR, later.record_id::VARCHAR,
-           named.label, taken.retract_run
+           named.label, taken.retract_run,
+           (SELECT to_json(list({'extractor': f.extractor, 'version': f.extractor_version,
+                                 'run': f.run_id} ORDER BY f.run_id))
+            FROM spool.extraction_found f WHERE f.record_id = o.record_id)::VARCHAR
     FROM spool.record o
     LEFT JOIN spool.membership m ON m.record_id = o.record_id AND m.to_seq IS NULL
     LEFT JOIN spool.record later ON later.supersedes = o.record_id
@@ -451,6 +469,10 @@ fn record_from_row(row: &duckdb::Row<'_>) -> Result<RecordEntry> {
         supersedes: id(row, 9)?,
         superseded_by: id(row, 10)?,
         retracted: row.get::<_, Option<i64>>(12)?.map(|run| RunId(run as u64)),
+        found_by: match row.get::<_, Option<String>>(13)? {
+            Some(found) => serde_json::from_str(&found).map_err(StateError::new)?,
+            None => Vec::new(),
+        },
     })
 }
 

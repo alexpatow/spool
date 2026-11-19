@@ -209,5 +209,7 @@ describe("readBy", () => {
     expect(readBy({ extractions: [read], reading: { extractor: "names", run: 9 } })).toBe(
       "names in run 4 (2 mentions), being read by names in run 9",
     );
+    const failed = { extractor: "llm", version: "v2", run: 7, mentions: 0, failure: "the model answered 500" };
+    expect(readBy({ extractions: [failed] })).toBe("llm failed in run 7: the model answered 500");
   });
 });

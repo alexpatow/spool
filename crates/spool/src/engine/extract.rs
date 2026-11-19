@@ -14,12 +14,13 @@ use super::{Engine, Inner, Reading, lock};
 use crate::batch::{Column, batch};
 use crate::documents::{
     self, DocumentEntry, DocumentFilter, DocumentReading, ExtractOptions, ExtractReport,
-    ExtractorRef, Mention, NewDocument, RawMention, TaskDocument,
+    ExtractorRef, FailedDocument, Mention, NewDocument, RawMention, TaskDocument,
 };
 use crate::error::{Error, Result};
 use crate::features;
 use crate::load::{self, LoadReport};
 use crate::project::{Declaration, Extractor};
+use crate::retract::NOT_RETRACTED;
 use crate::runs::RunStatus;
 use crate::store::parse;
 use crate::usercode::{self, ExtractType, Task, UserCode};
@@ -27,6 +28,10 @@ use crate::usercode::{self, ExtractType, Task, UserCode};
 /// The documents of the extraction in progress. One extraction runs at a
 /// time, so one table is enough.
 const TASK: &str = "spool_extract_task";
+
+/// The most characters of why an extractor could not read a document that
+/// are kept.
+const MOST_OF_A_REASON: usize = 1_000;
 
 /// The column types a mention's `start` and `end` may have.
 const WHOLE_NUMBERS: [&str; 9] = [
@@ -137,7 +142,7 @@ impl Engine {
                 "extractor": ExtractorRef::from(&extractor),
                 "source": options.source,
                 "again": options.again,
-                "again_since": options.again_since,
+                "since": options.since,
                 "limit": options.limit,
             }),
         )?;
@@ -170,13 +175,25 @@ impl Engine {
                 return Err(task.cancelled());
             }
             inner
-                .take_mentions(by, run, &task.path(usercode::MENTIONS), &extractor, left)
+                .take_mentions(by, run, &task, &extractor, left)
                 .map_err(|error| match error {
                     Error::Mentions(_) => task.rejected(error),
                     other => other,
                 })
         })?;
         task.remove();
+        let mut report = report;
+        if report.documents > report.failed.len() as u64 {
+            let (taken_back, runs) = inner.take_back(by, run, &extractor)?;
+            if taken_back > 0 || !runs.is_empty() {
+                report.taken_back = taken_back;
+                report.retract_runs = runs;
+                inner.store.conn.execute(
+                    "UPDATE spool.run SET result = ?::JSON WHERE run_id = ?",
+                    params![json!(report).to_string(), run.0 as i64],
+                )?;
+            }
+        }
         Ok(report)
     }
 }
@@ -264,22 +281,26 @@ impl Inner {
             Some(source) => format!("AND d.source_id = {}", sql_text(source)),
             None => String::new(),
         };
-        let read_by = |since: Option<RunId>| {
-            format!(
+        let extractor_is = format!("e.extractor = {}", sql_text(&extractor.name));
+        // Read: a reading that did not fail, by whatever version.
+        let read = match options.again {
+            false => format!(
                 "AND NOT EXISTS (
                    SELECT 1 FROM spool.extraction e
-                   WHERE e.document_id = d.document_id AND e.extractor = {}{})",
-                sql_text(&extractor.name),
-                match since {
-                    Some(since) => format!(" AND e.run_id >= {}", since.0),
-                    None => String::new(),
-                }
-            )
+                   WHERE e.document_id = d.document_id AND {extractor_is} AND e.failure IS NULL)"
+            ),
+            true => String::new(),
         };
-        let unread = match (options.again, options.again_since) {
-            (false, _) => read_by(None),
-            (true, Some(since)) => read_by(Some(since)),
-            (true, None) => String::new(),
+        // Tried since: a reading, failed or not, in this run or a later one.
+        let tried = match options.since {
+            Some(since) => format!(
+                "AND NOT EXISTS (
+                   SELECT 1 FROM spool.extraction e
+                   WHERE e.document_id = d.document_id AND {extractor_is}
+                     AND e.run_id >= {})",
+                since.0
+            ),
+            None => String::new(),
         };
         let limit = match options.limit {
             Some(limit) => format!("LIMIT {limit}"),
@@ -294,7 +315,8 @@ impl Inner {
              WHERE NOT EXISTS (
                  SELECT 1 FROM spool.document later WHERE later.supersedes = d.document_id)
                {of_source}
-               {unread}
+               {read}
+               {tried}
              ORDER BY d.load_run, d.source_id, d.source_key
              {limit}"
         ))?;
@@ -336,13 +358,25 @@ impl Inner {
         &mut self,
         by: &Actor,
         run: RunId,
-        mentions: &Path,
+        task: &Task,
         extractor: &Extractor,
         left: u64,
     ) -> Result<ExtractReport> {
         let manifest = self.manifest.clone().ok_or(Error::NoManifest)?;
         let given = self.task_documents()?;
-        let raw = self.read_mentions(mentions)?;
+        let failures = self.read_failures(&task.path(usercode::FAILED), &given)?;
+        // Nothing found in a document the extractor could not read is kept.
+        let raw: Vec<RawMention> = self
+            .read_mentions(&task.path(usercode::MENTIONS))?
+            .into_iter()
+            .filter(|mention| {
+                mention
+                    .document
+                    .as_deref()
+                    .and_then(|document| document.parse::<DocumentId>().ok())
+                    .is_none_or(|document| !failures.contains_key(&document))
+            })
+            .collect();
         let staged = documents::stage_mentions(
             &raw,
             &given,
@@ -382,6 +416,16 @@ impl Inner {
             }
         }
         let mut found: HashMap<DocumentId, i64> = given.keys().map(|id| (*id, 0)).collect();
+        let mut failed: Vec<FailedDocument> = failures
+            .iter()
+            .map(|(id, reason)| FailedDocument {
+                document: *id,
+                source: given[id].source.clone(),
+                key: given[id].key.clone(),
+                reason: reason.clone(),
+            })
+            .collect();
+        failed.sort_by(|a, b| (&a.source, &a.key).cmp(&(&b.source, &b.key)));
         for mention in &staged {
             *found.entry(mention.document).or_default() += 1;
         }
@@ -425,13 +469,16 @@ impl Inner {
                 }
             }
 
-            let (ids, counts): (Vec<_>, Vec<_>) = found
-                .iter()
-                .map(|(id, count)| (Some(id.to_string()), *count))
-                .unzip();
+            let (mut ids, mut counts, mut why) = (Vec::new(), Vec::new(), Vec::new());
+            for (id, count) in &found {
+                ids.push(Some(id.to_string()));
+                counts.push(*count);
+                why.push(failures.get(id).cloned());
+            }
             tx.execute(
                 "INSERT INTO spool.extraction
-                 SELECT s.document_id::UUID, $1, $2, $3, s.mentions FROM arrow($4) s",
+                 SELECT s.document_id::UUID, $1, $2, $3, s.mentions, s.failure
+                 FROM arrow($4) s",
                 params![
                     extractor.name,
                     extractor.hash,
@@ -439,9 +486,34 @@ impl Inner {
                     &ArrowBatchRegistration::new(batch(vec![
                         ("document_id", Column::Text(ids)),
                         ("mentions", Column::Integer(counts)),
+                        ("failure", Column::Text(why)),
                     ])?)
                 ],
             )?;
+            // Which mentions this reading found, new or found again, and
+            // the version of the extractor that found them.
+            if !staged.is_empty() {
+                let column = |value: fn(&Mention) -> String| {
+                    Column::Text(staged.iter().map(|mention| Some(value(mention))).collect())
+                };
+                tx.execute(
+                    "INSERT INTO spool.extraction_found
+                     SELECT $1, f.document_id::UUID, $2, $3, f.entity_type, f.record_key,
+                            f.record_id::UUID
+                     FROM arrow($4) f",
+                    params![
+                        run.0 as i64,
+                        extractor.name,
+                        extractor.hash,
+                        &ArrowBatchRegistration::new(batch(vec![
+                            ("document_id", column(|mention| mention.document.to_string())),
+                            ("entity_type", column(|mention| mention.entity_type.clone())),
+                            ("record_key", column(|mention| mention.key.clone())),
+                            ("record_id", column(|mention| mention.record.to_string())),
+                        ])?)
+                    ],
+                )?;
+            }
 
             let superseded: i64 = match load_run {
                 Some(load_run) => tx.query_row(
@@ -462,6 +534,10 @@ impl Inner {
                 superseded: superseded as u64,
                 load_run,
                 left,
+                failed: failed.clone(),
+                taken_back: 0,
+                retract_runs: Vec::new(),
+                stderr: task.said(),
             };
             let finished = inner.store.clock.now_micros();
             let finish = "UPDATE spool.run
@@ -505,6 +581,131 @@ impl Inner {
             .conn
             .execute_batch(&format!("DROP TABLE IF EXISTS {TASK}"))?;
         Ok(report)
+    }
+
+    /// The documents the extractor said it could not read, with why: the
+    /// optional `failed.parquet`, of `document_id` and `reason`. A document
+    /// it was not given refuses the run, as a mention in one does.
+    fn read_failures(
+        &self,
+        path: &Path,
+        given: &HashMap<DocumentId, TaskDocument>,
+    ) -> Result<HashMap<DocumentId, String>> {
+        let mut failures = HashMap::new();
+        if !path.is_file() {
+            return Ok(failures);
+        }
+        let unreadable = |error: duckdb::Error| {
+            Error::Mentions(format!(
+                "{} could not be read as `document_id` and `reason`: {error}",
+                usercode::FAILED
+            ))
+        };
+        let mut statement = self
+            .store
+            .conn
+            .prepare(&format!(
+                "SELECT document_id::VARCHAR, reason::VARCHAR FROM read_parquet({})",
+                usercode::sql_path(path)
+            ))
+            .map_err(unreadable)?;
+        let mut rows = statement.query([]).map_err(unreadable)?;
+        let mut row_number = 0;
+        while let Some(row) = rows.next().map_err(unreadable)? {
+            row_number += 1;
+            let document: Option<String> = row.get(0).map_err(unreadable)?;
+            let reason: Option<String> = row.get(1).map_err(unreadable)?;
+            let document = document
+                .as_deref()
+                .and_then(|document| document.parse::<DocumentId>().ok())
+                .filter(|document| given.contains_key(document))
+                .ok_or_else(|| {
+                    Error::Mentions(format!(
+                        "{} row {row_number} names a document the extractor was not given",
+                        usercode::FAILED
+                    ))
+                })?;
+            let reason = reason
+                .map(|reason| reason.trim().chars().take(MOST_OF_A_REASON).collect::<String>())
+                .filter(|reason| !reason.is_empty())
+                .unwrap_or_else(|| "the extractor did not say why".to_owned());
+            failures.entry(document).or_insert(reason);
+        }
+        Ok(failures)
+    }
+
+    /// Takes back the mentions of the documents a run read that no
+    /// extractor finds in them any more: each was found by some reading,
+    /// and the latest reading by each extractor that read the document,
+    /// this run's among them, finds it no longer. A mention that another
+    /// extractor still finds stays. They are taken back as a source takes
+    /// back rows, by a retract run for each source and entity type, under
+    /// the name of whoever started the extraction.
+    fn take_back(
+        &mut self,
+        by: &Actor,
+        run: RunId,
+        extractor: &Extractor,
+    ) -> Result<(u64, Vec<RunId>)> {
+        let mut statement = self.store.conn.prepare(&format!(
+            "WITH read_now AS (
+               SELECT document_id FROM spool.extraction
+               WHERE run_id = $1 AND failure IS NULL),
+             latest AS (
+               SELECT e.document_id, e.extractor, max(e.run_id) AS run_id
+               FROM spool.extraction e JOIN read_now USING (document_id)
+               WHERE e.failure IS NULL
+               GROUP BY e.document_id, e.extractor),
+             still AS (
+               SELECT f.document_id, f.entity_type, f.record_key
+               FROM spool.extraction_found f
+               JOIN latest l
+                 ON l.document_id = f.document_id AND l.extractor = f.extractor
+                AND l.run_id = f.run_id),
+             ever AS (
+               SELECT DISTINCT f.document_id, f.entity_type, f.record_key
+               FROM spool.extraction_found f JOIN read_now USING (document_id))
+             SELECT d.source_id, ever.entity_type, ever.record_key
+             FROM ever
+             JOIN spool.document d ON d.document_id = ever.document_id
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM still
+                 WHERE still.document_id = ever.document_id
+                   AND still.entity_type = ever.entity_type
+                   AND still.record_key = ever.record_key)
+               AND EXISTS (
+                 SELECT 1 FROM spool.record r
+                 WHERE r.source_id = d.source_id AND r.entity_type = ever.entity_type
+                   AND r.source_key = ever.record_key
+                   AND r.{NOT_RETRACTED})
+             ORDER BY 1, 2, 3"
+        ))?;
+        let mut rows = statement.query([run.0 as i64])?;
+        let mut stale: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
+        while let Some(row) = rows.next()? {
+            stale
+                .entry((row.get(0)?, row.get(1)?))
+                .or_default()
+                .push(row.get(2)?);
+        }
+        drop(rows);
+        drop(statement);
+        let (mut taken_back, mut runs) = (0, Vec::new());
+        for ((source, entity_type), keys) in stale {
+            let report = self.retract(
+                &source,
+                &entity_type,
+                &keys,
+                by.clone(),
+                Some(format!(
+                    "extractor `{}` no longer finds it, in run {run}",
+                    extractor.name
+                )),
+            )?;
+            taken_back += report.retracted;
+            runs.push(report.run);
+        }
+        Ok((taken_back, runs))
     }
 
     /// The IDs of the documents the extraction in progress was given.

@@ -7228,6 +7228,9 @@ class Document {
       attributes
     };
   }
+  failed(reason) {
+    return { document_id: this.id, failed: String(reason) };
+  }
   find(quote) {
     const places = [];
     if (quote.length === 0)
@@ -7297,8 +7300,23 @@ class ExtractTask {
     return this.read;
   }
   async write(mentions) {
-    const rows = [...mentions];
+    const failed = new Map;
+    for (const row of mentions) {
+      if (isFailure(row) && !failed.has(String(row.document_id))) {
+        failed.set(String(row.document_id), String(row.failed));
+      }
+    }
+    const rows = [...mentions].filter((row) => !isFailure(row) && !failed.has(String(row?.document_id)));
     rows.forEach(checkMention);
+    if (failed.size > 0 && this.info.failed !== undefined) {
+      const reasons = parquetWriteBuffer({
+        columnData: [
+          { name: "document_id", data: [...failed.keys()], type: "STRING" },
+          { name: "reason", data: [...failed.values()], type: "STRING" }
+        ]
+      });
+      await writeWhole(join(this.dir, this.info.failed), reasons);
+    }
     const buffer = parquetWriteBuffer({
       columnData: [
         { name: "document_id", data: rows.map((row) => String(row.document_id)), type: "STRING" },
@@ -7312,6 +7330,9 @@ class ExtractTask {
   }
 }
 var MENTION = ["document_id", "entity_type", "start", "end", "attributes"];
+function isFailure(row) {
+  return row !== null && typeof row === "object" && "failed" in row;
+}
 function checkMention(row, index) {
   if (row === null || typeof row !== "object" || Array.isArray(row)) {
     throw new TypeError(`an extractor returns mentions, as \`document.mention(...)\` makes them, and mention ${index} is ${describe(row)}`);

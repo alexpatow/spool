@@ -93,6 +93,10 @@ pub struct DocumentExtraction {
     pub run: RunId,
     /// How many mentions it found in the document.
     pub mentions: u64,
+    /// Why the extractor could not read the document. A document whose
+    /// readings all failed is not read, and the next extraction reads it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<String>,
 }
 
 /// Which documents to list. Results are ordered by ID, or as `sort` says.
@@ -170,14 +174,15 @@ pub struct ExtractOptions {
     /// Read only the documents of this source.
     pub source: Option<String>,
     /// Read the documents this extractor has read before as well. Without
-    /// it an extraction reads only what the extractor has not seen, whatever
-    /// version of the extractor saw it.
+    /// it an extraction reads only what the extractor has not read, whatever
+    /// version of the extractor read it: a document it could not read is
+    /// read again.
     pub again: bool,
-    /// With `again`: leave out the documents this extractor read in this
-    /// run or a later one. Reading every document again in batches, each
-    /// batch after the first names the first one's run, so that no document
-    /// is read twice.
-    pub again_since: Option<RunId>,
+    /// Leave out the documents this extractor read, or could not read, in
+    /// this run or a later one. Reading in batches, each batch after the
+    /// first names the first one's run, so that no document is read twice
+    /// and one that could not be read is not tried again at once.
+    pub since: Option<RunId>,
     /// Read at most this many documents, oldest first.
     pub limit: Option<u64>,
 }
@@ -232,6 +237,33 @@ pub struct ExtractReport {
     /// the same extraction reads next.
     #[serde(default)]
     pub left: u64,
+    /// The documents the extractor could not read, with why. They count
+    /// among `documents`, nothing found in them is stored, and they are not
+    /// read.
+    #[serde(default)]
+    pub failed: Vec<FailedDocument>,
+    /// Mentions taken back: found in a document before, and found by no
+    /// extractor's latest reading of it now.
+    #[serde(default)]
+    pub taken_back: u64,
+    /// The retract runs that took them back: one for each source and
+    /// entity type.
+    #[serde(default)]
+    pub retract_runs: Vec<RunId>,
+    /// What the extractor wrote to standard error, a line each: the last
+    /// 100 lines.
+    #[serde(default)]
+    pub stderr: Vec<String>,
+}
+
+/// A document an extractor could not read.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct FailedDocument {
+    pub document: DocumentId,
+    pub source: String,
+    pub key: String,
+    pub reason: String,
 }
 
 impl ExtractReport {
@@ -245,6 +277,10 @@ impl ExtractReport {
             superseded: 0,
             load_run: None,
             left: 0,
+            failed: Vec::new(),
+            taken_back: 0,
+            retract_runs: Vec::new(),
+            stderr: Vec::new(),
         }
     }
 }
@@ -377,7 +413,7 @@ fn add_extractions(conn: &Connection, documents: &mut [DocumentEntry]) -> Result
     }
     let ids: Vec<DocumentId> = documents.iter().map(|document| document.id).collect();
     let mut statement = conn.prepare(
-        "SELECT l.ord, e.extractor, e.extractor_version, e.run_id, e.mentions
+        "SELECT l.ord, e.extractor, e.extractor_version, e.run_id, e.mentions, e.failure
          FROM arrow(?) l
          JOIN spool.extraction e ON e.document_id = l.id::UUID
          ORDER BY e.run_id",
@@ -390,6 +426,7 @@ fn add_extractions(conn: &Connection, documents: &mut [DocumentEntry]) -> Result
             version: row.get(2)?,
             run: RunId(row.get::<_, i64>(3)? as u64),
             mentions: row.get::<_, i64>(4)? as u64,
+            failure: row.get(5)?,
         });
     }
     Ok(())

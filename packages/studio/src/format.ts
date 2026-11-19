@@ -202,10 +202,12 @@ export function segments<T>(text: string | string[], spans: Array<Span<T>>): Arr
   return pieces;
 }
 
-/** Which extractors read a document, and which is reading it now. */
+/** Which extractors read a document, which could not and why, and which is reading it now. */
 export function readBy(document: Pick<DocumentEntry, "extractions" | "reading">): string {
-  const said = document.extractions.map(
-    (extraction) => `${extraction.extractor} in run ${extraction.run} (${count(extraction.mentions, "mention")})`,
+  const said = document.extractions.map((extraction) =>
+    extraction.failure
+      ? `${extraction.extractor} failed in run ${extraction.run}: ${extraction.failure}`
+      : `${extraction.extractor} in run ${extraction.run} (${count(extraction.mentions, "mention")})`,
   );
   if (document.reading) said.push(`being read by ${document.reading.extractor} in run ${document.reading.run}`);
   return said.length === 0 ? "not read yet" : said.join(", ");

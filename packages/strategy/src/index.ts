@@ -32,6 +32,11 @@
 //     );
 //   });
 //
+// An extractor that cannot read a document, because the model it asks
+// answered with an error, say, returns `document.failed(reason)` in place of
+// that document's mentions. The document is then not counted as read,
+// nothing found in it is kept, and the next extraction reads it again.
+//
 // Each mention becomes a record of its entity type, whose source is the
 // document's. An extractor says what a document mentions. It cannot say that
 // two mentions are the same thing: the type's rules and strategies decide
@@ -286,6 +291,12 @@ export interface Mention {
   attributes?: Record<string, Attribute> | null;
 }
 
+/** A document an extractor could not read: what `document.failed(...)` makes. */
+export interface Failure {
+  document_id: string;
+  failed: string;
+}
+
 /** `task.json` of an extract run, as Spool wrote it. */
 export interface ExtractTaskInfo {
   protocol: number;
@@ -299,6 +310,8 @@ export interface ExtractTaskInfo {
   }>;
   inputs: { documents: string };
   output: string;
+  /** Where the documents it could not read go. */
+  failed?: string;
 }
 
 /** Marks an index into a string that is the second half of a character. */
@@ -338,6 +351,15 @@ export class Document {
       end: this.point(end),
       attributes,
     };
+  }
+
+  /**
+   * Says that the document could not be read, and why. Returned with the
+   * mentions: nothing found in the document is kept, and the next
+   * extraction reads it again.
+   */
+  failed(reason: string): Failure {
+    return { document_id: this.id, failed: String(reason) };
   }
 
   /**
@@ -438,10 +460,30 @@ export class ExtractTask {
     return this.read;
   }
 
-  /** Writes the run's mentions. Whatever was written before is replaced. */
-  async write(mentions: Iterable<Mention>): Promise<void> {
-    const rows = [...mentions];
+  /**
+   * Writes the run's mentions, and the documents it could not read: what
+   * `document.failed(...)` made. Whatever was written before is replaced.
+   */
+  async write(mentions: Iterable<Mention | Failure>): Promise<void> {
+    const failed = new Map<string, string>();
+    for (const row of mentions) {
+      if (isFailure(row) && !failed.has(String(row.document_id))) {
+        failed.set(String(row.document_id), String(row.failed));
+      }
+    }
+    const rows = [...mentions].filter(
+      (row): row is Mention => !isFailure(row) && !failed.has(String((row as Mention | null)?.document_id)),
+    );
     rows.forEach(checkMention);
+    if (failed.size > 0 && this.info.failed !== undefined) {
+      const reasons = parquetWriteBuffer({
+        columnData: [
+          { name: "document_id", data: [...failed.keys()], type: "STRING" },
+          { name: "reason", data: [...failed.values()], type: "STRING" },
+        ],
+      });
+      await writeWhole(join(this.dir, this.info.failed), reasons);
+    }
     const buffer = parquetWriteBuffer({
       columnData: [
         { name: "document_id", data: rows.map((row) => String(row.document_id)), type: "STRING" },
@@ -456,6 +498,10 @@ export class ExtractTask {
 }
 
 const MENTION = ["document_id", "entity_type", "start", "end", "attributes"];
+
+function isFailure(row: unknown): row is Failure {
+  return row !== null && typeof row === "object" && "failed" in row;
+}
 
 function checkMention(row: Mention, index: number): void {
   if (row === null || typeof row !== "object" || Array.isArray(row)) {
@@ -494,7 +540,7 @@ function checkMention(row: Mention, index: number): void {
  * the error, the run fails with it, and nothing it found is stored.
  */
 export async function extractor(
-  find: (task: ExtractTask) => Iterable<Mention> | void | Promise<Iterable<Mention> | void>,
+  find: (task: ExtractTask) => Iterable<Mention | Failure> | void | Promise<Iterable<Mention | Failure> | void>,
 ): Promise<void> {
   const dir = process.env.SPOOL_TASK_DIR;
   if (!dir) return;

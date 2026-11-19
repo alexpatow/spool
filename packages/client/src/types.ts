@@ -320,6 +320,11 @@ export interface DocumentEntry {
 export interface DocumentExtraction {
   extractor: string;
   /**
+   * Why the extractor could not read the document. A document whose
+   * readings all failed is not read, and the next extraction reads it.
+   */
+  failure?: string | null;
+  /**
    * How many mentions it found in the document.
    */
   mentions: number;
@@ -537,6 +542,12 @@ export interface ExtractReport {
    */
   duplicates: number;
   /**
+   * The documents the extractor could not read, with why. They count
+   * among `documents`, nothing found in them is stored, and they are not
+   * read.
+   */
+  failed?: FailedDocument[];
+  /**
    * Records created.
    */
   inserted: number;
@@ -554,12 +565,27 @@ export interface ExtractReport {
    * Mentions it found.
    */
   mentions: number;
+  /**
+   * The retract runs that took them back: one for each source and
+   * entity type.
+   */
+  retract_runs?: RunId[];
   run: RunId;
+  /**
+   * What the extractor wrote to standard error, a line each: the last
+   * 100 lines.
+   */
+  stderr?: string[];
   /**
    * Records created as a new version of a mention that was known
    * with other attributes.
    */
   superseded: number;
+  /**
+   * Mentions taken back: found in a document before, and found by no
+   * extractor's latest reading of it now.
+   */
+  taken_back?: number;
 }
 
 /**
@@ -576,13 +602,6 @@ export interface ExtractRequest {
    */
   again?: boolean | null;
   /**
-   * With `again`: leave out the documents this extractor read in this
-   * run or a later one, so that reading everything again in batches reads
-   * each document once. Each batch after the first names the first
-   * batch's run.
-   */
-  again_since?: RunId | null;
-  /**
    * The name of one of the project's extractors; `GET /v1/info` lists
    * them. The server runs no code it was not built with. It may be left
    * out when the project has exactly one.
@@ -593,6 +612,13 @@ export interface ExtractRequest {
    * says in `left` how many the limit left out.
    */
   limit?: number | null;
+  /**
+   * Leave out the documents this extractor read, or could not read, in
+   * this run or a later one. Reading in batches, each batch after the
+   * first names the first batch's run, so that each document is read once
+   * and one that could not be read is not tried again at once.
+   */
+  since?: RunId | null;
   /**
    * Read only the documents of this source.
    */
@@ -636,9 +662,34 @@ export interface ExtractorRef {
   version: string;
 }
 
+/**
+ * A document an extractor could not read.
+ */
+export interface FailedDocument {
+  document: DocumentId;
+  key: string;
+  reason: string;
+  source: string;
+}
+
 export interface FeatureColumn {
   data_type: string;
   name: string;
+}
+
+/**
+ * A reading of a document that found a mention.
+ */
+export interface FoundBy {
+  extractor: string;
+  /**
+   * The extract run.
+   */
+  run: RunId;
+  /**
+   * The hash of the extractor's files when it read.
+   */
+  version: string;
 }
 
 export interface History {
@@ -1266,6 +1317,11 @@ export interface RecordEntry {
    * Where in the source the record was found, if the source said.
    */
   evidence?: unknown;
+  /**
+   * For a mention: each reading that found it in this version, oldest
+   * first, with the version of the extractor that read.
+   */
+  found_by?: FoundBy[];
   id: RecordId;
   /**
    * `None` while no changeset has placed it.
