@@ -1,0 +1,29 @@
+Add one document and get its records' identities
+
+Usage: spool add-document [OPTIONS] --source <NAME> <PATH>
+
+Arguments:
+  <PATH>  A text file, or `-` to read text from standard input
+
+Options:
+      --source <NAME>     The declared source that supplies the document
+      --key <KEY>         The key within the source. Defaults to the file name and is required with
+                          `-`
+      --extractor <NAME>  The extractor to run. Defaults to the project's only extractor
+      --uri <URI>         Where the source keeps the document
+  -h, --help              Print help (see more with '--help')
+
+Output options:
+  -o, --output <OUTPUT>  Output format [default: table] [possible values: table, json, ndjson, csv]
+      --json             Shorthand for `--output json`
+
+Server options:
+      --url <URL>      The server [env: SPOOL_URL] [default: http://127.0.0.1:7765]
+      --token <TOKEN>  A token for that server; `spool dev` needs none [env: SPOOL_TOKEN]
+
+Global options:
+      --color <WHEN>  When to use colour [default: auto] [possible values: auto, always, never]
+  -q, --quiet         Print only the result and errors: no hints or progress
+
+Example:
+  spool add-document --source notes notes-1.txt --json

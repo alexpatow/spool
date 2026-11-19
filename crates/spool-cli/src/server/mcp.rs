@@ -45,9 +45,9 @@ use super::{
     RecordsQuery, ReviewQuery, ServerOptions, WaitQuery,
 };
 use crate::api::{
-    AddRecordRequest, CommitRequest, DismissRequest, DocumentsRequest, ErrorBody, ErrorCode,
-    ErrorResponse, ExtractRequest, LoadParams, LoadRequest, MatchRequest, MintRequest,
-    RetractRequest, SplitRequest, UndoRequest,
+    AddDocumentRequest, AddRecordRequest, CommitRequest, DismissRequest, DocumentsRequest,
+    ErrorBody, ErrorCode, ErrorResponse, ExtractRequest, LoadParams, LoadRequest, MatchRequest,
+    MintRequest, RetractRequest, SplitRequest, UndoRequest,
 };
 
 /// The largest request the endpoint reads. A request is a tool call, and the
@@ -96,6 +96,8 @@ which lists the entity types this store has and the sources each takes \
 rows from.
 
 Loading and matching: `add_record` loads one row and returns its record and identity, or a review item. \
+`add_document` stores one text document, runs an extractor on it, and returns the identity or \
+review item of each record it finds. \
 `load_rows` stores rows from one source as records, \
 and `run_match` then places the records no run has examined: each joins the \
 identity it matches or gets a new one, and identities that exist keep their \
@@ -981,6 +983,15 @@ static TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
              asked to change a row under a key the source already holds. Use `load_rows` and \
              `run_match` to load and compare a batch of rows together.",
         ),
+        tool::<AddDocumentRequest>(
+            "add_document",
+            "Add a document and find its identities",
+            Effect::Changes,
+            "Store one text document and run a project extractor on it. Returns the document ID \
+             and each mention's span, record ID and identity or review item. The only extractor \
+             in a project can be left unnamed. New text under the same source and key creates \
+             a new document version.",
+        ),
         tool::<LoadRows>(
             "load_rows",
             "Load rows",
@@ -1329,6 +1340,10 @@ impl Tools {
                 let mut request: AddRecordRequest = arguments(tool, given)?;
                 empty_fields(&mut request.row);
                 super::add_record(app, caller, body(&request)?).await
+            }
+            "add_document" => {
+                let request: AddDocumentRequest = arguments(tool, given)?;
+                super::add_document(app, caller, body(&request)?).await
             }
             "load_rows" => {
                 let asked: LoadRows = arguments(tool, given)?;

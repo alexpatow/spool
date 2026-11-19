@@ -143,6 +143,29 @@ Options:
 
 It takes the [output options](#output-options) and the [server options](#server-options).
 
+## spool add-document
+
+Add one document and get its records' identities
+
+Stores the text on a running server, extracts its mentions, and matches their records. A record that needs review comes back with its review item.
+
+```text
+spool add-document [OPTIONS] --source <NAME> <PATH>
+```
+
+Arguments:
+
+- `<PATH>`: A text file, or `-` to read text from standard input
+
+Options:
+
+- `--source <NAME>`: The declared source that supplies the document
+- `--key <KEY>`: The key within the source. Defaults to the file name and is required with `-`
+- `--extractor <NAME>`: The extractor to run. Defaults to the project's only extractor
+- `--uri <URI>`: Where the source keeps the document
+
+It takes the [output options](#output-options) and the [server options](#server-options).
+
 ## spool load
 
 Send the rows of a file to a running server

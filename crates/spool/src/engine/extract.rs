@@ -3,18 +3,19 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 
 use duckdb::params;
 use duckdb::vtab::arrow::ArrowBatchRegistration;
 use serde_json::json;
-use spool_core::{Actor, DocumentId, EntityType, RunId};
+use spool_core::{Actor, DocumentId, EntityType, RecordId, RunId};
 
 use super::{Engine, Inner, Reading, lock};
 use crate::batch::{Column, batch};
 use crate::documents::{
-    self, DocumentEntry, DocumentFilter, DocumentReading, ExtractOptions, ExtractReport,
-    ExtractorRef, FailedDocument, Mention, NewDocument, RawMention, TaskDocument,
+    self, AddDocumentReport, DocumentEntry, DocumentFilter, DocumentReading, DocumentRecord,
+    ExtractOptions, ExtractReport, ExtractorRef, FailedDocument, Mention, NewDocument, RawMention,
+    TaskDocument,
 };
 use crate::error::{Error, Result};
 use crate::features;
@@ -54,6 +55,77 @@ impl Engine {
     /// Nothing is extracted yet: [`extract`](Self::extract) does that.
     pub fn add_documents(&self, source: &str, documents: &[NewDocument]) -> Result<LoadReport> {
         self.lock().add_documents(&Actor::Engine, source, documents)
+    }
+
+    /// Stores one document, reads it with a project extractor, and matches
+    /// each mention with the rules for its entity type. The project's only
+    /// extractor can be left unnamed.
+    pub fn add_document(
+        &self,
+        source: &str,
+        document: &NewDocument,
+        extractor: Option<&str>,
+    ) -> Result<AddDocumentReport> {
+        self.add_document_by(&Actor::Engine, source, document, extractor)
+    }
+
+    pub(super) fn add_document_by(
+        &self,
+        by: &Actor,
+        source: &str,
+        document: &NewDocument,
+        extractor: Option<&str>,
+    ) -> Result<AddDocumentReport> {
+        let _turn = lock(&self.resolving);
+        let mut inner = self.lock();
+        let manifest = inner.manifest.as_deref().ok_or(Error::NoManifest)?;
+        if manifest.source(source).is_none() {
+            return Err(Error::Documents(format!(
+                "source `{source}` is not declared: the project has no sources/{source}.yaml"
+            )));
+        }
+        let extractor = choose_extractor(manifest, extractor)?;
+        inner.add_documents(by, source, std::slice::from_ref(document))?;
+        let document = inner.store.conn.query_row(
+            "SELECT d.document_id::VARCHAR FROM spool.document d
+             WHERE d.source_id = ? AND d.source_key = ? AND NOT EXISTS (
+                 SELECT 1 FROM spool.document later WHERE later.supersedes = d.document_id)",
+            params![source, document.key],
+            |row| row.get::<_, String>(0),
+        )?;
+        let document = parse(&document)?;
+        let mentions = match inner.document_reading(document, &extractor)? {
+            Some(mentions) => mentions,
+            None => {
+                let options = ExtractOptions::with(&extractor.name);
+                let report;
+                (inner, report) =
+                    self.extract_locked(inner, by, &options, &extractor, Some(document))?;
+                if let Some(failed) = report.failed.first() {
+                    return Err(Error::Extractor {
+                        extractor: extractor.name,
+                        message: format!(
+                            "could not read document `{}`: {}",
+                            failed.key, failed.reason
+                        ),
+                    });
+                }
+                inner.document_mentions(document, report.run)?
+            }
+        };
+        let mut records = Vec::with_capacity(mentions.len());
+        for (record, entity_type, start, end) in mentions {
+            let placed = inner.place_record(by, &entity_type, record)?;
+            records.push(DocumentRecord {
+                record,
+                entity_type,
+                start,
+                end,
+                identity: placed.identity,
+                review: placed.review,
+            });
+        }
+        Ok(AddDocumentReport { document, records })
     }
 
     /// A document with its text, the extractors that have read it and the
@@ -112,19 +184,23 @@ impl Engine {
 
     pub(super) fn extract_by(&self, by: &Actor, options: &ExtractOptions) -> Result<ExtractReport> {
         let _turn = lock(&self.resolving);
-        let mut inner = self.lock();
-        let manifest = inner.manifest.clone().ok_or(Error::NoManifest)?;
-        let extractor = manifest
-            .extractor(&options.extractor)
-            .cloned()
-            .ok_or_else(|| Error::UnknownExtractor {
-                extractor: options.extractor.clone(),
-                known: manifest
-                    .extractors
-                    .iter()
-                    .map(|extractor| extractor.name.clone())
-                    .collect(),
-            })?;
+        let inner = self.lock();
+        let manifest = inner.manifest.as_deref().ok_or(Error::NoManifest)?;
+        let extractor = choose_extractor(manifest, Some(&options.extractor))?;
+        let (_inner, report) = self.extract_locked(inner, by, options, &extractor, None)?;
+        Ok(report)
+    }
+
+    /// Takes the writer back after user code runs. A combined call can
+    /// place the mentions before another writer can change them.
+    fn extract_locked<'a>(
+        &'a self,
+        mut inner: MutexGuard<'a, Inner>,
+        by: &Actor,
+        options: &ExtractOptions,
+        extractor: &Extractor,
+        document: Option<DocumentId>,
+    ) -> Result<(MutexGuard<'a, Inner>, ExtractReport)> {
         let user_code = self.user_code().ok_or_else(|| Error::Extractor {
             extractor: extractor.name.clone(),
             message: "it is user code, and this engine was not told where the project directory is"
@@ -132,28 +208,27 @@ impl Engine {
         })?;
         // A file that is not the one the manifest was compiled from is
         // never run, and neither is one that nothing here can run.
-        user_code.check(&(&extractor).into())?;
+        user_code.check(&extractor.into())?;
 
-        let run = inner.start_run(
-            "extract",
-            by,
-            None,
-            &json!({
-                "extractor": ExtractorRef::from(&extractor),
-                "source": options.source,
-                "again": options.again,
-                "since": options.since,
-                "limit": options.limit,
-            }),
-        )?;
+        let mut config = json!({
+            "extractor": ExtractorRef::from(extractor),
+            "source": options.source,
+            "again": options.again,
+            "since": options.since,
+            "limit": options.limit,
+        });
+        if let Some(document) = document {
+            config["document"] = json!(document);
+        }
+        let run = inner.start_run("extract", by, None, &config)?;
         let task = inner.in_run(run, |inner| {
-            inner.write_extract_task(run, &extractor, &user_code, options)
+            inner.write_extract_task(run, extractor, &user_code, options, document)
         })?;
         let Some((mut task, left)) = task else {
             // There is nothing to read, so nothing is started.
             let report = ExtractReport::empty(run);
             inner.finish_run(run, RunStatus::Succeeded, Some(&json!(report)))?;
-            return Ok(report);
+            return Ok((inner, report));
         };
 
         let given = inner.task_document_ids()?;
@@ -175,7 +250,7 @@ impl Engine {
                 return Err(task.cancelled());
             }
             inner
-                .take_mentions(by, run, &task, &extractor, left)
+                .take_mentions(by, run, &task, extractor, left)
                 .map_err(|error| match error {
                     Error::Mentions(_) => task.rejected(error),
                     other => other,
@@ -184,7 +259,7 @@ impl Engine {
         task.remove();
         let mut report = report;
         if report.documents > report.failed.len() as u64 {
-            let (taken_back, runs) = inner.take_back(by, run, &extractor)?;
+            let (taken_back, runs) = inner.take_back(by, run, extractor)?;
             if taken_back > 0 || !runs.is_empty() {
                 report.taken_back = taken_back;
                 report.retract_runs = runs;
@@ -194,7 +269,40 @@ impl Engine {
                 )?;
             }
         }
-        Ok(report)
+        Ok((inner, report))
+    }
+}
+
+fn choose_extractor(manifest: &crate::project::Manifest, name: Option<&str>) -> Result<Extractor> {
+    let extractors = &manifest.extractors;
+    let names = || {
+        extractors
+            .iter()
+            .map(|extractor| format!("`{}`", extractor.name))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    match name {
+        Some(name) => manifest
+            .extractor(name)
+            .cloned()
+            .ok_or_else(|| Error::UnknownExtractor {
+                extractor: name.to_owned(),
+                known: extractors
+                    .iter()
+                    .map(|extractor| extractor.name.clone())
+                    .collect(),
+            }),
+        None => match extractors.as_slice() {
+            [only] => Ok(only.clone()),
+            [] => Err(Error::Documents(
+                "the project has no extractors: add one under extractors/".to_owned(),
+            )),
+            _ => Err(Error::Documents(format!(
+                "the project has the extractors {}: say which in `extractor`",
+                names()
+            ))),
+        },
     }
 }
 
@@ -214,7 +322,61 @@ fn sql_text(text: &str) -> String {
     format!("'{}'", text.replace('\'', "''"))
 }
 
+type ExtractedRecord = (RecordId, EntityType, u64, u64);
+
 impl Inner {
+    /// Reuse a successful reading by the same extractor version if all of
+    /// its mentions are still present. Format 11 readings lack these links.
+    fn document_reading(
+        &self,
+        document: DocumentId,
+        extractor: &Extractor,
+    ) -> Result<Option<Vec<ExtractedRecord>>> {
+        let mut statement = self.store.conn.prepare(
+            "SELECT run_id, extractor_version, mentions FROM spool.extraction
+             WHERE document_id = ?::UUID AND extractor = ? AND failure IS NULL
+             ORDER BY run_id DESC LIMIT 1",
+        )?;
+        let mut rows = statement.query(params![document.to_string(), extractor.name])?;
+        let Some(row) = rows.next()? else {
+            return Ok(None);
+        };
+        let version: String = row.get(1)?;
+        if version != extractor.hash {
+            return Ok(None);
+        }
+        let run = RunId(row.get::<_, i64>(0)? as u64);
+        let count: i64 = row.get(2)?;
+        drop(rows);
+        drop(statement);
+        let mentions = self.document_mentions(document, run)?;
+        Ok((mentions.len() as i64 == count).then_some(mentions))
+    }
+
+    fn document_mentions(&self, document: DocumentId, run: RunId) -> Result<Vec<ExtractedRecord>> {
+        let mut statement = self.store.conn.prepare(&format!(
+            "SELECT r.record_id::VARCHAR, r.entity_type,
+                    (r.evidence->>'start')::UBIGINT AS start_at,
+                    (r.evidence->>'end')::UBIGINT AS end_at
+             FROM spool.extraction_found f
+             JOIN spool.record r ON r.record_id = f.record_id
+             WHERE f.document_id = ?::UUID AND f.run_id = ? AND r.{NOT_RETRACTED}
+               AND NOT EXISTS (SELECT 1 FROM spool.record later WHERE later.supersedes = r.record_id)
+             ORDER BY start_at, end_at, r.entity_type"
+        ))?;
+        let mut rows = statement.query(params![document.to_string(), run.0 as i64])?;
+        let mut mentions = Vec::new();
+        while let Some(row) = rows.next()? {
+            mentions.push((
+                parse(&row.get::<_, String>(0)?)?,
+                EntityType::new(row.get::<_, String>(1)?)?,
+                row.get(2)?,
+                row.get(3)?,
+            ));
+        }
+        Ok(mentions)
+    }
+
     pub(super) fn add_documents(
         &mut self,
         by: &Actor,
@@ -274,6 +436,7 @@ impl Inner {
         extractor: &Extractor,
         user_code: &UserCode,
         options: &ExtractOptions,
+        document: Option<DocumentId>,
     ) -> Result<Option<(Task, u64)>> {
         let manifest = self.manifest.clone().ok_or(Error::NoManifest)?;
         let conn = &self.store.conn;
@@ -283,7 +446,7 @@ impl Inner {
         };
         let extractor_is = format!("e.extractor = {}", sql_text(&extractor.name));
         // Read: a reading that did not fail, by whatever version.
-        let read = match options.again {
+        let read = match options.again || document.is_some() {
             false => format!(
                 "AND NOT EXISTS (
                    SELECT 1 FROM spool.extraction e
@@ -306,14 +469,19 @@ impl Inner {
             Some(limit) => format!("LIMIT {limit}"),
             None => String::new(),
         };
+        let scope = match document {
+            Some(document) => format!("d.document_id = '{document}'::UUID"),
+            None => "NOT EXISTS (
+                 SELECT 1 FROM spool.document later WHERE later.supersedes = d.document_id)"
+                .to_owned(),
+        };
         conn.execute_batch(&format!(
             "CREATE OR REPLACE TEMP TABLE {TASK} AS
              SELECT d.document_id,
                     row_number() OVER (ORDER BY d.load_run, d.source_id, d.source_key) AS ord,
                     count(*) OVER () AS matching
              FROM spool.document d
-             WHERE NOT EXISTS (
-                 SELECT 1 FROM spool.document later WHERE later.supersedes = d.document_id)
+             WHERE {scope}
                {of_source}
                {read}
                {tried}

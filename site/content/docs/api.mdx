@@ -34,6 +34,7 @@ The CLI, the studio and the MCP endpoint are all clients of this API. Every path
 | `POST /v1/load` | [Loads rows](#load-rows) into a source |
 | `POST /v1/retract` | [Retracts rows](#retract-rows) a source no longer holds |
 | `GET /v1/documents`, `POST /v1/documents` | Lists or stores [documents](#documents-and-extraction) |
+| `POST /v1/documents/add` | [Adds one document](#add-one-document) and returns its records' identities |
 | `GET /v1/documents/{document}` | One document with its text |
 | `POST /v1/extractions` | Runs an extractor over the documents it hasn't read |
 | `POST /v1/match` | Starts a [match](#runs) |
@@ -224,6 +225,18 @@ curl -s -X POST http://127.0.0.1:7765/v1/retract -d '{"source": "crm", "entity_t
 ```
 
 Retracted rows stay in the store. [Records and sources](/docs/concepts/records-and-sources#a-row-the-source-no-longer-holds) explains what retraction does.
+
+## Add one document
+
+Send a declared source and one text document to `POST /v1/documents/add`. Include `extractor` if the project has more than one.
+
+```json
+{"source":"notes","document":{"key":"notes-1.txt","text":"Acorn Tools Ltd renewed their account."}}
+```
+
+The response contains `document`, the stored document ID, and `records`, one entry per mention in text order. Each entry contains the `record` ID, `entity_type`, `start` and exclusive `end` in Unicode code points, and the `identity` ID or a `review` item. A record left for review has a null `identity`. Several records can share an identity, and a successful extraction with no mentions returns an empty `records` array.
+
+Only the submitted document is extracted and its records matched. An identical retry can reuse the extraction and placements. Different text under the same source and key creates a new document version. If extraction or matching fails, the document stays stored and sending it again can resume the work.
 
 ## Documents and extraction
 

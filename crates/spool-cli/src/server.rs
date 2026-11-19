@@ -104,8 +104,8 @@ use crate::accounts::{
     ACCESS_PREFIX, Accounts, Change, Entered, GOOGLE, MARK, MAX_USERNAME, New, PERSON, Refused,
 };
 use crate::api::{
-    self, ARROW_STREAM, AddPersonRequest, AddRecordRequest, AddTokenRequest, AddedToken,
-    AttributeList, CandidateList, ChangePersonRequest, ChangesetList, CommitRequest,
+    self, ARROW_STREAM, AddDocumentRequest, AddPersonRequest, AddRecordRequest, AddTokenRequest,
+    AddedToken, AttributeList, CandidateList, ChangePersonRequest, ChangesetList, CommitRequest,
     ConstraintList, DismissRequest, DocumentList, DocumentsRequest, DraftList, ErrorBody,
     ErrorCode, ErrorResponse, ExtractRequest, History, IdentitiesOfRequest, IdentitiesOfResponse,
     IdentityList, Info, JudgementsRequest, JudgementsResponse, LoadParams, LoadRequest,
@@ -404,6 +404,7 @@ fn router_until(engine: Arc<Engine>, options: &ServerOptions, stopping: Stopping
         .route("/load", post(load))
         .route("/retract", post(retract))
         .route("/documents", get(list_documents).post(post_documents))
+        .route("/documents/add", post(add_document))
         .route("/documents/{document}", get(read_document))
         .route("/extractions", post(extract))
         .route("/match", post(start_match))
@@ -1874,6 +1875,23 @@ async fn add_documents(
     body: Bytes,
 ) -> ApiResult {
     store_documents(&app, caller, json_body(&body)?).await
+}
+
+async fn add_document(
+    State(app): State<App>,
+    Extension(caller): Extension<Caller>,
+    body: Bytes,
+) -> ApiResult {
+    let request: AddDocumentRequest = json_body(&body)?;
+    let report = engine(&app, move |engine| {
+        engine.acting(caller.actor).add_document(
+            &request.source,
+            &request.document,
+            request.extractor.as_deref(),
+        )
+    })
+    .await?;
+    ok(report)
 }
 
 async fn store_documents(app: &App, caller: Caller, request: DocumentsRequest) -> ApiResult {

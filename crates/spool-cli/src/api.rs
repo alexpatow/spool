@@ -12,10 +12,10 @@ use spool::core::{
     RecordId, Rejection, RunId, Seq, Verdict,
 };
 use spool::{
-    AddRecordReport, AttributeGroup, Authored, DocumentEntry, DraftEntry, DraftSummary,
-    Explanation, HistoryEntry, IdentityExplanation, IdentitySummary, IdentityView, LoggedChangeset,
-    MintedIds, NewDocument, RecomputeApplied, RecomputeReport, RecordEntry, ReviewCase,
-    ReviewEntry, RunEntry, SplitReport, StoreInfo, StrategyRef, TypeResolution,
+    AddDocumentReport, AddRecordReport, AttributeGroup, Authored, DocumentEntry, DraftEntry,
+    DraftSummary, Explanation, HistoryEntry, IdentityExplanation, IdentitySummary, IdentityView,
+    LoggedChangeset, MintedIds, NewDocument, RecomputeApplied, RecomputeReport, RecordEntry,
+    ReviewCase, ReviewEntry, RunEntry, SplitReport, StoreInfo, StrategyRef, TypeResolution,
 };
 
 /// The version of the API, which is the first segment of every path.
@@ -68,6 +68,18 @@ pub struct AddRecordRequest {
     /// Allow a new version under an existing key. The default is false.
     #[serde(default)]
     pub replace: Option<bool>,
+}
+
+/// `POST /v1/documents/add`: store, extract and match one document.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AddDocumentRequest {
+    /// The declared source that supplies the document.
+    pub source: String,
+    pub document: NewDocument,
+    /// Which extractor to use. May be omitted if the project declares only one.
+    #[serde(default)]
+    pub extractor: Option<String>,
 }
 
 /// `POST /v1/retract`: take back rows a source no longer holds. The
@@ -731,6 +743,8 @@ struct Wire {
     load_request: LoadRequest,
     add_record_request: AddRecordRequest,
     add_record_report: AddRecordReport,
+    add_document_request: AddDocumentRequest,
+    add_document_report: AddDocumentReport,
     retract_request: RetractRequest,
     documents_request: DocumentsRequest,
     document_list: DocumentList,

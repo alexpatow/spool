@@ -16,7 +16,7 @@ const ACCEPT: &str = "application/json, text/event-stream";
 /// and whether it asks for a reason. A tool that writes under its caller's
 /// name does. A load and a match run are recorded as runs, which have no
 /// author and no reason.
-const TOOLS: [(&str, bool, bool); 24] = [
+const TOOLS: [(&str, bool, bool); 25] = [
     ("describe_store", true, false),
     ("search_identities", true, false),
     ("get_identity", true, false),
@@ -32,6 +32,7 @@ const TOOLS: [(&str, bool, bool); 24] = [
     ("get_run", true, false),
     ("mint_identity_ids", true, false),
     ("add_record", false, false),
+    ("add_document", false, false),
     ("load_rows", false, false),
     ("load_documents", false, false),
     ("run_extraction", false, false),
@@ -173,6 +174,7 @@ fn a_client_connects_and_is_told_the_tools() {
     for named in [
         "describe_store",
         "add_record",
+        "add_document",
         "load_rows",
         "load_documents",
         "run_extraction",
@@ -1177,6 +1179,9 @@ from spool import extractor
 
 @extractor
 def find(document):
+    if document.text == "unreadable":
+        yield document.failed("cannot read this text")
+        return
     for found in re.finditer(r"[A-Z][a-z]+", document.text):
         yield document.mention("thing", found.start(), found.end(), code=found.group().lower())
 "#;
@@ -1270,30 +1275,143 @@ fn documents_are_loaded_through_a_tool() {
     );
 }
 
-#[test]
-#[ignore = "runs uv"]
-fn an_extractor_is_run_through_a_tool_and_what_it_finds_is_matched() {
-    let dir = tempfile::tempdir().unwrap();
-    let project = dir.path().join("project");
+fn word_server(dir: &Path) -> Server {
+    let project = dir.join("project");
     write_things(&project);
     std::fs::create_dir_all(project.join("extractors")).unwrap();
     std::fs::write(project.join("extractors/words.py"), WORDS).unwrap();
     let manifest = build(&project);
-    let server = Server::start(&[
+    Server::start(&[
         "serve",
         "--manifest",
         path(&manifest),
         "--project",
         path(&project),
         "--tasks",
-        path(&dir.path().join("tasks")),
+        path(&dir.join("tasks")),
         "--store",
-        path(&dir.path().join("store.duckdb")),
+        path(&dir.join("store.duckdb")),
         "--listen",
         "127.0.0.1:0",
         "--seed",
         "1",
+    ])
+}
+
+#[test]
+#[ignore = "runs uv"]
+fn adding_one_document_returns_its_placements_and_leaves_other_inputs_pending() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = word_server(dir.path());
+    let add_row = |id, code, colour| {
+        server.call(
+            "/v1/records",
+            json!({
+                "source": "shop", "entity_type": "thing",
+                "row": { "id": id, "code": code, "colour": colour },
+            }),
+        )
+    };
+    let black = add_row("black", "anvil", "black");
+    let red = add_row("red", "anvil", "red");
+    let hammer = add_row("hammer", "hammer", "red");
+    tool(
+        &server,
+        "load_rows",
+        json!({
+            "source": "shop", "entity_type": "thing",
+            "rows": [{ "id": "pending", "code": "hammer", "colour": "red" }],
+        }),
+    );
+    tool(
+        &server,
+        "load_documents",
+        json!({
+            "source": "notes", "documents": [{ "key": "pending.txt", "text": "Other." }],
+        }),
+    );
+
+    let request = json!({
+        "source": "notes",
+        "document": { "key": "a.txt", "text": "🛠 Hammer Anvil Wrench Wrench." },
+    });
+    let added = tool(&server, "add_document", request.clone());
+    let mentions = added["records"].as_array().unwrap();
+    assert_eq!(mentions.len(), 4, "{added}");
+    assert_eq!(mentions[0]["start"], 2);
+    assert_eq!(mentions[0]["end"], 8);
+    assert_eq!(mentions[0]["identity"], hammer["identity"]);
+    assert!(mentions[0]["review"].is_null());
+    assert!(mentions[1]["identity"].is_null());
+    let review = &mentions[1]["review"];
+    assert_eq!(review["kind"], "possible_merge");
+    let candidates = review["identities"].as_array().unwrap();
+    assert_eq!(candidates.len(), 2);
+    assert!(candidates.contains(&black["identity"]));
+    assert!(candidates.contains(&red["identity"]));
+    assert_ne!(mentions[2]["record"], mentions[3]["record"]);
+    assert!(mentions[2]["identity"].is_string());
+    assert_eq!(mentions[2]["identity"], mentions[3]["identity"]);
+
+    // An identical retry through HTTP reuses the extraction and placements.
+    assert_eq!(server.call("/v1/documents/add", request.clone()), added);
+    let doc = server.read(&format!("/v1/documents/{}", text(&added["document"])));
+    assert_eq!(doc["id"], added["document"]);
+    assert_eq!(doc["extractions"].as_array().unwrap().len(), 1);
+    assert!(
+        server.read("/v1/documents?source=notes&key=pending.txt")["documents"][0]["extractions"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(server.read("/v1/records?source=shop&key=pending")["records"][0]["identity"].is_null());
+
+    // The CLI sends a new version under the file name, here with no mentions.
+    let file = dir.path().join("a.txt");
+    std::fs::write(&file, "no mentions here").unwrap();
+    let answer = support::succeed(&[
+        "add-document",
+        "--source",
+        "notes",
+        path(&file),
+        "--json",
+        "--url",
+        &format!("http://{}", server.address),
+        "--token",
+        server.token.as_deref().unwrap(),
     ]);
+    let empty: Value = serde_json::from_str(&answer).unwrap();
+    assert_ne!(empty["document"], added["document"]);
+    assert_eq!(empty["records"], json!([]));
+    let restored_text = server.call("/v1/documents/add", request);
+    assert_ne!(restored_text["document"], added["document"]);
+    assert_eq!(restored_text["records"].as_array().unwrap().len(), 4);
+
+    let failed = json!({
+        "source": "notes", "document": { "key": "failed.txt", "text": "unreadable" },
+    });
+    for _ in 0..2 {
+        let error = server
+            .post("/v1/documents/add", failed.clone())
+            .error(500, "extractor_failed");
+        assert!(error.contains("cannot read this text"), "{error}");
+    }
+    let failed = server.read("/v1/documents?source=notes&key=failed.txt");
+    assert_eq!(failed["documents"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        failed["documents"][0]["extractions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[test]
+#[ignore = "runs uv"]
+fn an_extractor_is_run_through_a_tool_and_what_it_finds_is_matched() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = word_server(dir.path());
 
     // The store names the extractor before a document is loaded.
     let described = tool(&server, "describe_store", json!({}));

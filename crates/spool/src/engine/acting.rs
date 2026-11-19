@@ -7,7 +7,7 @@ use super::{
     AddRecordReport, Disposition, Engine, ResolveOptions, ResolveReport, RunStatus, Scope,
     StrategyRef, TypeResolution,
 };
-use crate::documents::{ExtractOptions, ExtractReport, NewDocument};
+use crate::documents::{AddDocumentReport, ExtractOptions, ExtractReport, NewDocument};
 use crate::error::Result;
 use crate::load::LoadReport;
 use crate::recompute::RecomputeApplied;
@@ -81,6 +81,17 @@ impl Acting<'_> {
         self.engine
             .lock()
             .add_documents(&self.actor, source, documents)
+    }
+
+    /// As [`Engine::add_document`].
+    pub fn add_document(
+        &self,
+        source: &str,
+        document: &NewDocument,
+        extractor: Option<&str>,
+    ) -> Result<AddDocumentReport> {
+        self.engine
+            .add_document_by(&self.actor, source, document, extractor)
     }
 
     /// As [`Engine::extract`]. The load run that stores what the extractor

@@ -207,6 +207,12 @@ pub struct AddRecordReport {
     pub match_run: Option<RunId>,
 }
 
+struct RecordResolution {
+    identity: Option<IdentityId>,
+    review: Option<ReviewEntry>,
+    match_run: Option<RunId>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct TypeResolution {
@@ -1910,19 +1916,34 @@ impl Inner {
         let (load, record) =
             self.load_rows(by, source, entity_type.as_str(), rows, replace, true)?;
         let record = record.ok_or_else(|| Error::Load("the load returned no record".to_owned()))?;
-        let mut report = AddRecordReport {
+        let placed = self.place_record(by, entity_type, record)?;
+        Ok(AddRecordReport {
             record,
-            identity: store::read_assignments(&self.store.conn, &[record])?[0],
-            review: None,
+            identity: placed.identity,
+            review: placed.review,
             load_run: load.run,
-            match_run: None,
+            match_run: placed.match_run,
+        })
+    }
+
+    fn place_record(
+        &mut self,
+        by: &Actor,
+        entity_type: &EntityType,
+        record: RecordId,
+    ) -> Result<RecordResolution> {
+        let identity = store::read_assignments(&self.store.conn, &[record])?[0];
+        let review = if identity.is_none() {
+            self.record_review(record)?
+        } else {
+            None
         };
-        if report.identity.is_some() {
-            return Ok(report);
-        }
-        report.review = self.record_review(record)?;
-        if report.review.is_some() {
-            return Ok(report);
+        if identity.is_some() || review.is_some() {
+            return Ok(RecordResolution {
+                identity,
+                review,
+                match_run: None,
+            });
         }
         let run = self.begin_match(
             by,
@@ -1935,12 +1956,17 @@ impl Inner {
             inner.judge_with_rules(run)?;
             inner.conclude(by, run, &Policy::default(), Disposition::Commit)
         })?;
-        report.match_run = Some(run);
-        report.identity = store::read_assignments(&self.store.conn, &[record])?[0];
-        if report.identity.is_none() {
-            report.review = self.record_review(record)?;
-        }
-        Ok(report)
+        let identity = store::read_assignments(&self.store.conn, &[record])?[0];
+        let review = if identity.is_none() {
+            self.record_review(record)?
+        } else {
+            None
+        };
+        Ok(RecordResolution {
+            identity,
+            review,
+            match_run: Some(run),
+        })
     }
 
     fn record_review(&self, record: RecordId) -> Result<Option<ReviewEntry>> {

@@ -1,11 +1,12 @@
 use std::io::Read;
+use std::path::PathBuf;
 
 use serde_json::{Map, Value, json};
-use spool::AddRecordReport;
+use spool::{AddDocumentReport, AddRecordReport, NewDocument};
 
 use super::remote::{Remote, RemoteArgs, typed};
 use crate::Failure;
-use crate::output::{Output, OutputArgs, fields};
+use crate::output::{Output, OutputArgs, fields, table};
 
 /// Add one row and get its identity
 ///
@@ -73,5 +74,94 @@ pub fn add(arguments: AddArgs) -> Result<(), Failure> {
         (None, None) => ("identity", "unassigned".to_owned()),
     };
     fields(&[("record", report.record.to_string()), placement]);
+    Ok(())
+}
+
+/// Add one document and get its records' identities
+///
+/// Stores the text on a running server, extracts its mentions, and matches
+/// their records. A record that needs review comes back with its review item.
+#[derive(clap::Args)]
+#[command(after_help = "Example:\n  spool add-document --source notes notes-1.txt --json")]
+pub struct AddDocumentArgs {
+    /// A text file, or `-` to read text from standard input
+    path: PathBuf,
+    /// The declared source that supplies the document
+    #[arg(long, value_name = "NAME")]
+    source: String,
+    /// The key within the source. Defaults to the file name and is required with `-`
+    #[arg(long)]
+    key: Option<String>,
+    /// The extractor to run. Defaults to the project's only extractor
+    #[arg(long, value_name = "NAME")]
+    extractor: Option<String>,
+    /// Where the source keeps the document
+    #[arg(long)]
+    uri: Option<String>,
+    #[command(flatten)]
+    output: OutputArgs,
+    #[command(flatten)]
+    remote: RemoteArgs,
+}
+
+pub fn add_document(arguments: AddDocumentArgs) -> Result<(), Failure> {
+    let out = Output::report(&arguments.output, "`spool add-document`")?;
+    let stdin = arguments.path.as_os_str() == "-";
+    let key = arguments
+        .key
+        .or_else(|| {
+            if stdin {
+                return None;
+            }
+            arguments.path.file_name()?.to_str().map(str::to_owned)
+        })
+        .ok_or_else(|| Failure::usage("give the document a key with `--key`"))?;
+    let text = if stdin {
+        let mut text = String::new();
+        std::io::stdin()
+            .read_to_string(&mut text)
+            .map_err(|error| Failure::failed(format!("standard input: {error}")))?;
+        text
+    } else {
+        std::fs::read_to_string(&arguments.path)
+            .map_err(|error| Failure::failed(format!("{}: {error}", arguments.path.display())))?
+    };
+    // The server gives the extractor its own deadline.
+    let answer = Remote::with_timeout(&arguments.remote, None).post(
+        "/documents/add",
+        &json!({
+            "source": arguments.source,
+            "document": NewDocument { key, text, uri: arguments.uri },
+            "extractor": arguments.extractor,
+        }),
+    )?;
+    if !out.is_table() {
+        out.json(&answer);
+        return Ok(());
+    }
+    let report: AddDocumentReport = typed(&answer)?;
+    fields(&[("document", report.document.to_string())]);
+    let rows = report
+        .records
+        .into_iter()
+        .map(|mention| {
+            vec![
+                format!("{}-{}", mention.start, mention.end),
+                mention.entity_type.to_string(),
+                mention.record.to_string(),
+                mention
+                    .identity
+                    .map_or_else(|| "-".to_owned(), |id| id.to_string()),
+                mention
+                    .review
+                    .map_or_else(|| "-".to_owned(), |item| item.id.to_string()),
+            ]
+        })
+        .collect();
+    table(
+        "records",
+        &["SPAN", "TYPE", "RECORD", "IDENTITY", "REVIEW"],
+        rows,
+    );
     Ok(())
 }
