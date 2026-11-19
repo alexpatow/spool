@@ -99,7 +99,7 @@ impl Graph {
                WHERE o.supersedes IS NOT NULL
                UNION ALL
                SELECT j.left_id, j.right_id, 2, max(j.run_id),
-                      arg_max(json_extract(j.detail, '$.match')::VARCHAR, j.run_id)
+                      arg_max(coalesce(json_extract(j.detail, '$.match')::VARCHAR, '[]'), j.run_id)
                FROM spool.judgement j
                JOIN spool.run r ON r.run_id = j.run_id AND r.status = 'succeeded'
                WHERE j.verdict = 'match'
@@ -484,29 +484,6 @@ impl Graph {
             return None;
         }
 
-        // What `one` still reaches is the smallest side a cut of this many
-        // links can leave it; what does not reach `other` is the largest.
-        let reach = |from: &[u32], forward: bool| {
-            let mut seen = vec![false; self.len()];
-            let mut queue = VecDeque::new();
-            for &at in from {
-                seen[at as usize] = true;
-                queue.push_back(at);
-            }
-            while let Some(at) = queue.pop_front() {
-                for &(to, edge) in &self.adjacent[at as usize] {
-                    let open = match forward {
-                        true => residual(&flow, at, edge),
-                        false => residual(&flow, to, edge),
-                    };
-                    if !seen[to as usize] && open {
-                        seen[to as usize] = true;
-                        queue.push_back(to);
-                    }
-                }
-            }
-            seen
-        };
         // Every part a member of either group is in, so that the links
         // listed part the two groups in each.
         let mut within = vec![false; self.len()];
@@ -525,24 +502,64 @@ impl Graph {
         let part: Vec<u32> = (0..self.len() as u32)
             .filter(|&at| within[at as usize])
             .collect();
-        let near = reach(one, true);
-        let toward = reach(other, false);
-        let side = |inside: &dyn Fn(u32) -> bool| -> (Vec<u32>, Vec<u32>) {
-            part.iter().partition(|&&at| inside(at))
-        };
-        let small = side(&|at| near[at as usize]);
-        let large = side(&|at| !toward[at as usize]);
-        let balance = |(one, other): &(Vec<u32>, Vec<u32>)| one.len().min(other.len());
-        let (with_one, with_other) = if balance(&large) > balance(&small) {
-            large
-        } else {
-            small
-        };
-        let inside: HashSet<u32> = with_one.iter().copied().collect();
+
+        // Every cut of this many links is a side that holds what `one` still
+        // reaches, and with each member everything it still reaches, and
+        // nothing that reaches `other`. Groups of members that reach each
+        // other are added whole, each after every group it reaches, and of
+        // the sides that leaves, the most even is kept.
+        let mut inside = vec![false; self.len()];
+        let mut queue: VecDeque<u32> = one.iter().copied().collect();
+        for &at in one {
+            inside[at as usize] = true;
+        }
+        while let Some(at) = queue.pop_front() {
+            for &(to, edge) in &self.adjacent[at as usize] {
+                if !inside[to as usize] && residual(&flow, at, edge) {
+                    inside[to as usize] = true;
+                    queue.push_back(to);
+                }
+            }
+        }
+        let mut toward = vec![false; self.len()];
+        let mut queue: VecDeque<u32> = other.iter().copied().collect();
+        for &at in other {
+            toward[at as usize] = true;
+        }
+        while let Some(at) = queue.pop_front() {
+            for &(to, edge) in &self.adjacent[at as usize] {
+                if !toward[to as usize] && residual(&flow, to, edge) {
+                    toward[to as usize] = true;
+                    queue.push_back(to);
+                }
+            }
+        }
+        let free: Vec<u32> = part
+            .iter()
+            .copied()
+            .filter(|&at| !inside[at as usize] && !toward[at as usize])
+            .collect();
+        let groups = self.reaching_groups(&free, &|from, edge| residual(&flow, from, edge));
+        let total = part.len();
+        let mut size = part.iter().filter(|&&at| inside[at as usize]).count();
+        let (mut best, mut best_at) = (size.min(total - size), 0);
+        for (at, group) in groups.iter().enumerate() {
+            size += group.len();
+            if size.min(total - size) > best {
+                (best, best_at) = (size.min(total - size), at + 1);
+            }
+        }
+        for group in &groups[..best_at] {
+            for &member in group {
+                inside[member as usize] = true;
+            }
+        }
+        let (with_one, with_other): (Vec<u32>, Vec<u32>) =
+            part.iter().partition(|&&at| inside[at as usize]);
         let edges = (0..self.edges.len() as u32)
             .filter(|&edge| {
                 let Edge { a, b, .. } = self.edges[edge as usize];
-                inside.contains(&a) != inside.contains(&b)
+                inside[a as usize] != inside[b as usize]
             })
             .collect();
         Some(Parting {
@@ -550,6 +567,71 @@ impl Graph {
             one: with_one,
             other: with_other,
         })
+    }
+
+    /// The groups of `members` that reach each other along the arcs `open`
+    /// lets through, each group before any group that reaches it. Arcs to
+    /// members not given are not followed.
+    fn reaching_groups(&self, members: &[u32], open: &dyn Fn(u32, u32) -> bool) -> Vec<Vec<u32>> {
+        let n = self.len();
+        let mut given = vec![false; n];
+        for &at in members {
+            given[at as usize] = true;
+        }
+        // Tarjan's algorithm without recursion, which finishes a group only
+        // after every group it reaches.
+        let mut index = vec![u32::MAX; n];
+        let mut low = vec![0u32; n];
+        let mut on_stack = vec![false; n];
+        let mut stack: Vec<u32> = Vec::new();
+        let mut groups = Vec::new();
+        let mut counter = 0;
+        for &root in members {
+            if index[root as usize] != u32::MAX {
+                continue;
+            }
+            let mut walk: Vec<(u32, usize)> = vec![(root, 0)];
+            index[root as usize] = counter;
+            low[root as usize] = counter;
+            counter += 1;
+            stack.push(root);
+            on_stack[root as usize] = true;
+            while let Some(&mut (at, ref mut next)) = walk.last_mut() {
+                if let Some(&(to, edge)) = self.adjacent[at as usize].get(*next) {
+                    *next += 1;
+                    if !given[to as usize] || !open(at, edge) {
+                        continue;
+                    }
+                    if index[to as usize] == u32::MAX {
+                        index[to as usize] = counter;
+                        low[to as usize] = counter;
+                        counter += 1;
+                        stack.push(to);
+                        on_stack[to as usize] = true;
+                        walk.push((to, 0));
+                    } else if on_stack[to as usize] {
+                        low[at as usize] = low[at as usize].min(index[to as usize]);
+                    }
+                } else {
+                    walk.pop();
+                    if let Some(&(parent, _)) = walk.last() {
+                        low[parent as usize] = low[parent as usize].min(low[at as usize]);
+                    }
+                    if low[at as usize] == index[at as usize] {
+                        let mut group = Vec::new();
+                        while let Some(member) = stack.pop() {
+                            on_stack[member as usize] = false;
+                            group.push(member);
+                            if member == at {
+                                break;
+                            }
+                        }
+                        groups.push(group);
+                    }
+                }
+            }
+        }
+        groups
     }
 
     /// The fewest links that part the records named as `one` is from those
@@ -675,6 +757,48 @@ mod tests {
             graph.cut(&[0, 1], &[1, 2]).is_none(),
             "the groups share a member"
         );
+    }
+
+    #[test]
+    fn of_the_cuts_of_a_chain_the_most_even_is_kept() {
+        let graph = graph(6, &[(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]);
+        let parting = graph.cut(&[0], &[5]).unwrap();
+        assert_eq!(parting.one, [0, 1, 2]);
+        assert_eq!(parting.other, [3, 4, 5]);
+        assert_eq!(parting.edges, [2]);
+    }
+
+    #[test]
+    fn a_link_has_the_rules_of_the_latest_run_that_judged_it_even_when_it_kept_none() {
+        let conn = duckdb::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE SCHEMA spool;
+             CREATE TABLE spool.membership (record_id UUID, identity_id UUID, to_seq BIGINT);
+             CREATE TABLE spool.constraint_link (record_a UUID, record_b UUID, kind VARCHAR, to_seq BIGINT);
+             CREATE TABLE spool.record (record_id UUID, supersedes UUID);
+             CREATE TABLE spool.run (run_id BIGINT, status VARCHAR);
+             CREATE TABLE spool.judgement (run_id BIGINT, left_id UUID, right_id UUID, verdict VARCHAR, detail JSON);
+             INSERT INTO spool.membership VALUES
+               ('00000000-0000-7000-8000-000000000001', '00000000-0000-7000-8000-0000000000aa', NULL),
+               ('00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-0000000000aa', NULL);
+             INSERT INTO spool.run VALUES (1, 'succeeded'), (2, 'succeeded');
+             INSERT INTO spool.judgement VALUES
+               (1, '00000000-0000-7000-8000-000000000001', '00000000-0000-7000-8000-000000000002',
+                'match', '{\"match\": [\"same_name\"]}'),
+               (2, '00000000-0000-7000-8000-000000000001', '00000000-0000-7000-8000-000000000002',
+                'match', NULL);",
+        )
+        .unwrap();
+        let graph = Graph::read(
+            &conn,
+            "00000000-0000-7000-8000-0000000000aa".parse().unwrap(),
+        )
+        .unwrap();
+        let [edge] = &graph.edges[..] else {
+            panic!("one link");
+        };
+        assert_eq!(edge.run, Some(RunId(2)));
+        assert!(graph.rule_sets[edge.rules as usize].is_empty());
     }
 
     #[test]
