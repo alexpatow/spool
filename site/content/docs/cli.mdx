@@ -284,7 +284,7 @@ spool show
 ```text title="Output"
 server     http://127.0.0.1:7765
 api        v1, engine 0.1.0, store format 12
-manifest   d7d4b712d86302152897a67a5924cd1c2e26594e049685c2f007177e20633946
+manifest   23bbe93da95b1a8eb2db113e84015a42ce7cce7d0a3fc431369c4114a59bbacb
 head       log position 1
 documents  1
 
@@ -582,15 +582,15 @@ spool reset --yes
 This starts the development store of this project over.
 
 removes
-  .spool/dev.duckdb
   .spool/dev.duckdb.wal
+  .spool/dev.duckdb
 
 keeps
   .spool/dev.auth.sqlite  the accounts and tokens of `spool dev`
   the project's files     everything outside .spool/
 
-removed  .spool/dev.duckdb
 removed  .spool/dev.duckdb.wal
+removed  .spool/dev.duckdb
 
 The next `spool dev` starts with an empty store. `spool load` and `spool extract` fill it again.
 ```
