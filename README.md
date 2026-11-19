@@ -211,7 +211,7 @@ Ctrl-C stops the server. Data stays in `.spool/dev.duckdb`. Delete `.spool/` to 
 ## Where next
 
 - `spool` lists the commands and `spool <command> --help` explains each. Commands that print results take `-o json` or `-o ndjson`, and list commands also take `-o csv`. The [command reference](https://spool.alexpatow.com/docs/cli-reference) has every option, and `spool completions <shell>` prints a completion script.
-- [docs/mcp.md](docs/mcp.md): the agent tools, and how to connect each client.
+- [docs/mcp.md](docs/mcp.md): connecting Claude Code, Claude Desktop, Codex and other MCP clients.
 - [docs/sign-in.md](docs/sign-in.md): running a server other people sign in to.
 - [benchmarks/README.md](benchmarks/README.md): larger projects on public data, benchmarked up to 5,000,000 records. `benchmarks/extraction/company-news` has extractors in Python and TypeScript.
 - [docs/architecture-proposal.md](docs/architecture-proposal.md): the design, covering records, judgements, identities, constraints, changesets and strategies.
