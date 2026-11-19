@@ -87,7 +87,9 @@ pub struct ServeArgs {
     /// The address people reach the server by, such as https://spool.example.com
     ///
     /// The default is the address it listens on when that is on this machine
-    /// only. Sign-in with Google comes back to it.
+    /// only, and on Render the address Render gives the service, which it
+    /// sets in RENDER_EXTERNAL_URL. Sign-in with Google comes back to it, and
+    /// an assistant that signs in with OAuth is sent to it.
     #[arg(
         long,
         env = "SPOOL_PUBLIC_URL",
@@ -184,8 +186,9 @@ fn options(seed: Option<u64>) -> Options {
 
 pub fn serve(arguments: ServeArgs) -> Result<(), Failure> {
     let listen = arguments.listen;
+    let render = std::env::var("RENDER_EXTERNAL_URL").ok();
     let reached = Reached {
-        at: public_url(arguments.public_url.as_deref())?,
+        at: public_url(arguments.public_url.as_deref().or(render.as_deref()))?,
         google: GoogleClient::read()?,
     };
     if reached.google.is_some() && reached.at.is_none() && !listen.ip().is_loopback() {

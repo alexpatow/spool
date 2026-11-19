@@ -620,38 +620,44 @@ fn a_server_without_an_https_address_does_not_sign_assistants_in() {
     assert_eq!(refused.header("www-authenticate"), Some("Bearer"));
 }
 
-/// Behind a proxy that ends TLS, the metadata names the address people use.
+/// Behind a proxy that ends TLS, the metadata names the address people use:
+/// the one given, or on Render the one Render gives the service.
 #[test]
 fn the_issuer_is_the_public_address() {
     let dir = tempfile::tempdir().unwrap();
     let project = dir.path().join("project");
     write_things(&project);
     let manifest = support::build(&project);
-    let store = dir.path().join("store.duckdb");
-    let server = Server::start(&[
-        "serve",
-        "--manifest",
-        path(&manifest),
-        "--store",
-        path(&store),
-        "--listen",
-        "127.0.0.1:0",
-        "--public-url",
-        "https://spool.example.com/",
-    ]);
-    let resource = bare(&server, "GET", "/.well-known/oauth-protected-resource/mcp")
-        .send()
-        .ok();
-    assert_eq!(resource["resource"], "https://spool.example.com/mcp");
-    assert_eq!(
-        resource["authorization_servers"],
-        json!(["https://spool.example.com"])
-    );
-    let said = bare(&server, "GET", "/.well-known/oauth-authorization-server")
-        .send()
-        .ok();
-    assert_eq!(
-        said["token_endpoint"],
-        "https://spool.example.com/oauth/token"
-    );
+    let render = ("RENDER_EXTERNAL_URL", "https://spool-x1y2.onrender.com");
+    for (given, issuer) in [
+        (
+            Some("https://spool.example.com/"),
+            "https://spool.example.com",
+        ),
+        (None, "https://spool-x1y2.onrender.com"),
+    ] {
+        let store = dir.path().join(format!("{}.duckdb", given.is_some()));
+        let mut arguments = vec![
+            "serve",
+            "--manifest",
+            path(&manifest),
+            "--store",
+            path(&store),
+            "--listen",
+            "127.0.0.1:0",
+        ];
+        if let Some(given) = given {
+            arguments.extend(["--public-url", given]);
+        }
+        let server = Server::start_in(&arguments, &[render]).unwrap();
+        let resource = bare(&server, "GET", "/.well-known/oauth-protected-resource/mcp")
+            .send()
+            .ok();
+        assert_eq!(resource["resource"], format!("{issuer}/mcp"));
+        assert_eq!(resource["authorization_servers"], json!([issuer]));
+        let said = bare(&server, "GET", "/.well-known/oauth-authorization-server")
+            .send()
+            .ok();
+        assert_eq!(said["token_endpoint"], format!("{issuer}/oauth/token"));
+    }
 }

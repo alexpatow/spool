@@ -34,6 +34,7 @@ pub fn spool() -> Command {
         "SPOOL_STORE",
         "SPOOL_URL",
         "SPOOL_PUBLIC_URL",
+        "RENDER_EXTERNAL_URL",
         "SPOOL_GOOGLE_CLIENT_ID",
         "SPOOL_GOOGLE_CLIENT_SECRET",
         "SPOOL_GOOGLE_ISSUER",

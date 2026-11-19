@@ -662,7 +662,7 @@ Options:
 - `--listen <ADDR>`: The address to listen on. Default `0.0.0.0:7765`.
 - `--public-url <URL>`: The address people reach the server by, such as https://spool.example.com. Read from `SPOOL_PUBLIC_URL` when it is not given.
 
-  The default is the address it listens on when that is on this machine only. Sign-in with Google comes back to it.
+  The default is the address it listens on when that is on this machine only, and on Render the address Render gives the service, which it sets in RENDER_EXTERNAL_URL. Sign-in with Google comes back to it, and an assistant that signs in with OAuth is sent to it.
 - `--project <DIR>`: The project directory, where the files the manifest names are found [default: the current directory]
 - `--no-studio`: Do not serve the studio
 - `--plain-http`: Browsers reach the server over HTTP, not HTTPS

@@ -93,7 +93,7 @@ fn dockerfile(base_image: &str) -> String {
 # People sign in over HTTPS: put the server behind something that speaks it,
 # or add `--plain-http` to the command below to try it without. A caller that
 # is not a person presents a token: an admin makes one on the studio's Tokens
-# page, and so does `docker exec <container> spool token add <name>`.
+# page, and so does `docker exec -u spool <container> spool token add <name>`.
 #
 # Passwords are for getting started. To sign people in with Google, run the
 # container with SPOOL_GOOGLE_CLIENT_ID and SPOOL_GOOGLE_CLIENT_SECRET set to
@@ -114,12 +114,23 @@ FROM {base_image}
 COPY --from=build /project/.spool/manifest.json /spool/manifest.json
 ENV SPOOL_STORE=/data/spool.duckdb
 VOLUME /data
-USER spool
-EXPOSE 7765
+{START}EXPOSE 7765
 CMD [\"serve\", \"--manifest\", \"/spool/manifest.json\", \"--listen\", \"0.0.0.0:7765\"]
 "
     )
 }
+
+/// How a written Dockerfile starts the server. A disk some hosts mount at
+/// /data, such as Render's, belongs to root, and the server runs as `spool`:
+/// it is started as root, hands /data to `spool`, and runs `spool` as it.
+const START: &str = "\
+# A disk that a host mounts at /data, such as Render's, belongs to root. The
+# container starts as root, gives /data to the user `spool`, and runs the
+# command as that user. Render's SSH needs root's .ssh directory.
+USER root
+RUN mkdir -p -m 700 /root/.ssh
+ENTRYPOINT [\"/bin/sh\", \"-c\", \"if [ \\\"$(id -u)\\\" = 0 ]; then chown -R spool:spool /data && HOME=/data exec setpriv --reuid=spool --regid=spool --init-groups spool \\\"$@\\\"; fi; exec spool \\\"$@\\\"\", \"spool\"]
+";
 
 /// The `uv` and `bun` a written Dockerfile takes: the versions user code was
 /// tested with.
@@ -169,7 +180,7 @@ fn dockerfile_with_user_code(base_image: &str, python: bool, typescript: bool) -
 # People sign in over HTTPS: put the server behind something that speaks it,
 # or add `--plain-http` to the command below to try it without. A caller that
 # is not a person presents a token: an admin makes one on the studio's Tokens
-# page, and so does `docker exec <container> spool token add <name>`.
+# page, and so does `docker exec -u spool <container> spool token add <name>`.
 #
 # Passwords are for getting started. To sign people in with Google, run the
 # container with SPOOL_GOOGLE_CLIENT_ID and SPOOL_GOOGLE_CLIENT_SECRET set to
@@ -196,7 +207,7 @@ USER spool
 # Starts each strategy and extractor once with nothing to do, which fetches
 # what it depends on into the image, and a model it loads as it starts.
 RUN spool build --install
-{offline}EXPOSE 7765
+{offline}{START}EXPOSE 7765
 CMD [\"serve\", \"--listen\", \"0.0.0.0:7765\"]
 "
     )
