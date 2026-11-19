@@ -113,7 +113,7 @@ fn an_item_nobody_answers_is_asked_again_by_each_run_and_stays_as_it_is() {
     let (engine, asked) = asked();
     resolve(&engine);
     rematch(&engine);
-    assert_eq!(open(&engine), [asked.item.clone()]);
+    assert_eq!(open(&engine), std::slice::from_ref(&asked.item));
     assert_eq!(engine.identity_of(asked.waiting).unwrap(), None);
 }
 

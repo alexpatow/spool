@@ -6,6 +6,7 @@ import { Act, At, Done, Mistake } from "../act.tsx";
 import type {
   Candidate,
   CaseConstraint,
+  IdentitySummary,
   RecordEntry,
   Op,
   PairJudgement,
@@ -36,7 +37,7 @@ import {
 import { Button } from "../components/ui/button";
 import * as ShelfTable from "../components/ui/table";
 import { facts, fieldsOf, latest, same, sourcesOf, valueOf } from "../facts.ts";
-import { count, recordName, short } from "../format.ts";
+import { count, recordName, short, tail } from "../format.ts";
 import { useLoad, useNames, useStudio } from "../hooks.ts";
 import { CheckIcon, InboxIcon, MergeIcon, PlusIcon, SplitIcon } from "../icons.tsx";
 import { href, navigate } from "../router.ts";
@@ -283,6 +284,19 @@ function ruled({ candidates, constraints }: ReviewCase, waiting: RecordEntry[]):
   };
 }
 
+/**
+ * What to call each of the identities a case names, where they are named
+ * together: two that are called the same are told apart by the end of
+ * their IDs.
+ */
+function namer(candidates: Candidate[]): (identity: IdentitySummary) => string {
+  const names = candidates.map((candidate) => identityName(candidate.identity));
+  return (identity) => {
+    const name = identityName(identity);
+    return names.filter((other) => other === name).length > 1 ? `${name} (…${tail(identity.id)})` : name;
+  };
+}
+
 /** Names in a sentence: `a`, `a and b`, `a, b and c`. */
 export function listed(names: string[]): string {
   if (names.length <= 1) return names.join("");
@@ -296,7 +310,8 @@ function theRecords(records: RecordEntry[]): string {
 
 /** What the item asks, in a line. */
 function asked({ item, records, candidates }: ReviewCase): string {
-  const names = candidates.map((candidate) => identityName(candidate.identity));
+  const call = namer(candidates);
+  const names = candidates.map((candidate) => call(candidate.identity));
   if (item.kind === "possible_split") {
     return `Is ${names[0] ?? "this identity"} still one thing?`;
   }
@@ -351,11 +366,12 @@ function Lead({ found, waiting }: { found: ReviewCase; waiting: RecordEntry[] })
   const one = (waiting.length > 0 ? waiting : found.records).length === 1;
   const it = one ? "it" : "they";
   const against = judgements.some((judgement) => judgement.verdict === "no_match");
+  const call = namer(candidates);
   return (
     <p data-part="lead" {...stylex.props(styles.why)}>
       {item.kind === "possible_merge"
         ? `The latest match run judged ${what} a match with records of each of these identities. A match run never merges identities, so placing ${one ? "it" : "them"} in one would be a guess and in all of them would merge them: it left the question to a person. `
-        : `The latest match run judged ${what} a match${candidates.length === 1 ? ` with records of ${identityName(candidates[0]!.identity)}` : ""}, and ${against ? "a no_match rule held against " + (candidates.length === 1 ? "others of its records" : "some of the pairs") : "the evidence does not agree"}. It does not place records against a no_match: it left the question to a person. `}
+        : `The latest match run judged ${what} a match${candidates.length === 1 ? ` with records of ${call(candidates[0]!.identity)}` : ""}, and ${against ? "a no_match rule held against " + (candidates.length === 1 ? "others of its records" : "some of the pairs") : "the evidence does not agree"}. It does not place records against a no_match: it left the question to a person. `}
       {waiting.length === 0
         ? "None of its records waits any more."
         : `Until someone answers, ${it} ${one ? "has" : "have"} no identity, and every match run of ${item.entity_type} looks at ${one ? "it" : "them"} again.`}
@@ -366,10 +382,36 @@ function Lead({ found, waiting }: { found: ReviewCase; waiting: RecordEntry[] })
 /** The most members of an identity a card names as a sample. */
 const SAMPLE = 5;
 
+/** The most fields a side names where the identities differ. */
+const MOST_DIFFERENCES = 3;
+
+/**
+ * The fields in which what most of the shown records of each identity say
+ * is not the same for all of them, with what each says. A record's own key
+ * is left out: it tells every record from every other.
+ */
+function differences(candidates: Candidate[]): Array<{ field: string; values: Array<string | null> }> {
+  const said = candidates.map((candidate) =>
+    facts(latest(candidate.members)).filter((fact) =>
+      fact.values.every(({ value, records }) => records.every((record) => record.key !== value)),
+    ),
+  );
+  const fields = [...new Set(said.flatMap((facts) => facts.map((fact) => fact.field)))];
+  return fields
+    .map((field) => ({
+      field,
+      values: said.map((facts) => facts.find((fact) => fact.field === field)?.values[0]?.value ?? null),
+    }))
+    .filter(({ values }) => values.some((value) => !same(value, values[0] ?? null)))
+    .slice(0, MOST_DIFFERENCES);
+}
+
 /** The identities the records matched, side by side: what each is, a few of its records, and what links them. */
 function SideBySide({ found }: { found: ReviewCase }) {
   const { records, candidates, judgements } = found;
+  const differ = differences(candidates);
   const held = new Set(records.map((record) => record.id));
+  const call = namer(candidates);
   return (
     <section aria-label="The identities" data-part="identities" {...stylex.props(styles.sides)}>
       {candidates.map((candidate) => {
@@ -385,13 +427,13 @@ function SideBySide({ found }: { found: ReviewCase }) {
           <div key={identity.id} data-part="side" {...stylex.props(styles.side)}>
             <span {...stylex.props(styles.columnKind)}>Matched identity</span>
             <span {...stylex.props(styles.columnName)}>
-              <Ref kind="identity" id={identity.id} label={identityName(identity)} />
+              <Ref kind="identity" id={identity.id} label={call(identity)} />
             </span>
             <span data-part="size" {...stylex.props(styles.columnMeta)}>
               {count(identity.members, "record")}
               <Sources sources={identity.sources} />
             </span>
-            <ul data-part="members" aria-label={`Some records of ${identityName(identity)}`} {...stylex.props(styles.sample)}>
+            <ul data-part="members" aria-label={`Some records of ${call(identity)}`} {...stylex.props(styles.sample)}>
               {members.slice(0, SAMPLE).map((record) => (
                 <li key={record.id}>
                   <Ref kind="record" id={record.id} label={labelOf(record)} />{" "}
@@ -402,6 +444,17 @@ function SideBySide({ found }: { found: ReviewCase }) {
                 <li {...stylex.props(styles.none)}>and {count(identity.members - Math.min(SAMPLE, members.length), "more record")}</li>
               ) : null}
             </ul>
+            {differ.length > 0 ? (
+              <p data-part="differs" {...stylex.props(styles.links)}>
+                Unlike the other{candidates.length > 2 ? "s" : ""}:{" "}
+                {differ.map(({ field, values }, at) => (
+                  <span key={field}>
+                    {at > 0 ? ", " : ""}
+                    <Code>{field}</Code> {values[candidates.indexOf(candidate)] ?? "empty"}
+                  </span>
+                ))}
+              </p>
+            ) : null}
             <p data-part="links" {...stylex.props(styles.links)}>
               {matches.length === 0
                 ? "No judgement of this case links the records to it."
@@ -473,7 +526,8 @@ function Answers({
   const these = n === 1 ? labelOf(waiting[0]!) : `The ${count(n, "record")}`;
   const those = n === 1 ? labelOf(waiting[0]!) : `the ${count(n, "record")}`;
   const them = n === 1 ? "it" : "them";
-  const names = candidates.map((candidate) => identityName(candidate.identity));
+  const call = namer(candidates);
+  const names = candidates.map((candidate) => call(candidate.identity));
   const [into, ...others] = [...candidates].sort((a, b) => b.identity.members - a.identity.members);
   const dismiss = (
     <Act
@@ -518,10 +572,10 @@ function Answers({
                     "Not possible: a cannot_link constraint is between records of these identities, so a changeset that merges them is refused. The field by field comparison below names it.",
                   ]
                 : [
-                    `${listed(others.map(({ identity }) => identityName(identity)))} ${others.length === 1 ? "is" : "are"} merged into ${identityName(into.identity)}, which has the most records and keeps its ID. ${others.length === 1 ? "The other ID" : "The other IDs"} then ${others.length === 1 ? "answers" : "answer"} with ${identityName(into.identity)}'s, so links to ${others.length === 1 ? "it" : "them"} keep working.`,
-                    `${these} ${n === 1 ? "is" : "are"} placed in it too: ${identityName(into.identity)} then has ${count(candidates.reduce((sum, { identity }) => sum + identity.members, 0) + n, "record")}.`,
+                    `${listed(others.map(({ identity }) => call(identity)))} ${others.length === 1 ? "is" : "are"} merged into ${call(into.identity)}, which ${others.every(({ identity }) => identity.members < into.identity.members) ? "has the most records" : "has as many records as any and comes first"} and keeps its ID. ${others.length === 1 ? "The other ID" : "The other IDs"} then ${others.length === 1 ? "answers" : "answer"} with ${call(into.identity)}'s, so links to ${others.length === 1 ? "it" : "them"} keep working.`,
+                    `${these} ${n === 1 ? "is" : "are"} placed in it too: ${call(into.identity)} then has ${count(candidates.reduce((sum, { identity }) => sum + identity.members, 0) + n, "record")}.`,
                     "No constraint is recorded. A match run never splits an identity, so they stay together until a person splits them.",
-                    `Undo it from the log and ${listed(others.map(({ identity }) => identityName(identity)))} ${others.length === 1 ? "gets its ID and its records" : "get their IDs and their records"} back, and ${those} ${n === 1 ? "waits" : "wait"} again. No match run asks about ${them} then, only a rematch.`,
+                    `Undo it from the log and ${listed(others.map(({ identity }) => call(identity)))} ${others.length === 1 ? "gets its ID and its records" : "get their IDs and their records"} back, and ${those} ${n === 1 ? "waits" : "wait"} again. No match run asks about ${them} then, only a rematch.`,
                   ]
             }
             action={rules.apart ? undefined : <MergeAndPlace found={found} head={head} waiting={waiting} done={done} />}
@@ -538,7 +592,7 @@ function Answers({
             does={[
               candidates.length === 1
                 ? `${these} ${n === 1 ? "is" : "are"} placed in ${names[0]}, which then has ${count(candidates[0]!.identity.members + n, "record")}. Its ID stays as it is.`
-                : `${these} ${n === 1 ? "is" : "are"} placed in the one you choose, which then has ${listed(candidates.map(({ identity }) => `${count(identity.members + n, "record")} for ${identityName(identity)}`))}. The others stay as they are, and every ID stays.`,
+                : `${these} ${n === 1 ? "is" : "are"} placed in the one you choose, which then has ${listed(candidates.map(({ identity }) => `${count(identity.members + n, "record")} for ${call(identity)}`))}. The others stay as they are, and every ID stays.`,
               candidates.length > 1
                 ? "Nothing is recorded that keeps the identities apart: a later record that matches more than one of them is asked about again. A match run never moves a record that has an identity."
                 : "A match run never moves a record that has an identity.",
@@ -548,7 +602,7 @@ function Answers({
                 .filter((candidate) => waiting.every((record) => rules.barred(record.id, candidate.identity.id)))
                 .map(
                   (candidate) =>
-                    `Not ${identityName(candidate.identity)}: a cannot_link keeps ${them} apart from one of its records.`,
+                    `Not ${call(candidate.identity)}: a cannot_link keeps ${them} apart from one of its records.`,
                 ),
             ]}
             action={
@@ -562,7 +616,7 @@ function Answers({
                       waiting={waiting}
                       rules={rules}
                       to={candidate.identity.id}
-                      label={`Assign to ${identityName(candidate.identity)}`}
+                      label={`Assign to ${call(candidate.identity)}`}
                       icon={<CheckIcon />}
                       primary
                       done={done}
@@ -1079,12 +1133,13 @@ function MergeAndPlace({
     (a: Candidate, b: Candidate) => b.identity.members - a.identity.members,
   );
   if (!into) return null;
+  const call = namer(found.candidates);
   return (
     <Act
       label="Merge identities"
       icon={<MergeIcon />}
       title={`Merge ${count(found.candidates.length, "identity")}`}
-      about={`Merges ${others.map(({ identity }) => identityName(identity)).join(", ")} into ${identityName(into.identity)}, and assigns ${waiting.length === 1 ? recordName(waiting[0]!) : count(waiting.length, "record")} to it.`}
+      about={`Merges ${others.map(({ identity }) => call(identity)).join(", ")} into ${call(into.identity)}, and assigns ${waiting.length === 1 ? recordName(waiting[0]!) : count(waiting.length, "record")} to it.`}
       why="Reason"
       act={async (client, { reason }) => {
         const committed = await client.commit({

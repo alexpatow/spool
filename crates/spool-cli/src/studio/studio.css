@@ -1186,6 +1186,10 @@
     display: none;
   }
 
+  .xa6eqk6 {
+    flex-basis: 32rem;
+  }
+
   .xdt5ytf {
     flex-direction: column;
   }
@@ -1312,6 +1316,10 @@
 
   .x1e0fxcw {
     grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  }
+
+  .xywhcq {
+    grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
   }
 
   .xby7xi2 {
@@ -1480,6 +1488,10 @@
 
   .xragvej {
     padding-inline-start: var(--x1gkage9);
+  }
+
+  .xxy6pwb {
+    padding-inline-start: var(--x1ljrziv);
   }
 
   .x1fac5cx {
@@ -2010,6 +2022,10 @@
 
   .x1s1a3mr {
     margin-top: var(--x100iayn);
+  }
+
+  .x1ufl8gz {
+    margin-top: var(--x15vgn9v);
   }
 
   .x1e05n3h {

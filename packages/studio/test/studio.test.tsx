@@ -761,6 +761,11 @@ describe("company records a reviewer corrected", () => {
       expect.stringContaining("crm:c-110"),
       expect.stringContaining("registry:X0000010"),
     ]);
+    // What tells the two apart, from what their records say.
+    const differs = parts("differs", sides);
+    expect(differs).toHaveLength(2);
+    expect(differs[0]).toContain("city Leeds");
+    expect(differs[1]).toContain("city Bristol");
     expect(parts("links", sides)).toEqual([
       "Linked by 2 matches with 2 of its records, by same_name_and_country.",
       "Linked by 1 match with 1 of its records, by same_name_and_country.",
