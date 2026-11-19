@@ -64,7 +64,7 @@ pub use bench::{
 };
 pub use documents::{
     DocumentEntry, DocumentExtraction, DocumentFilter, DocumentReading, DocumentSort,
-    ExtractOptions, ExtractReport, ExtractorRef, NewDocument, locator,
+    ExtractOptions, ExtractReport, ExtractorRef, FailedDocument, NewDocument, locator,
 };
 pub use drafts::{DraftEntry, DraftFilter, DraftStatus, DraftSummary};
 pub use engine::{
@@ -79,9 +79,9 @@ pub use explain::{
 };
 pub use load::LoadReport;
 pub use lookup::{
-    DeclaredSource, HistoryEntry, IdentityFilter, IdentitySort, IdentitySummary, IdentityView,
-    LogSort, LoggedChangeset, Member, RecordEntry, RecordFilter, RecordSort, SourceCount,
-    SourceInfo, StoreInfo, TypeInfo,
+    DeclaredSource, FoundBy, HistoryEntry, IdentityFilter, IdentitySort, IdentitySummary,
+    IdentityView, LogSort, LoggedChangeset, Member, RecordEntry, RecordFilter, RecordSort,
+    SourceCount, SourceInfo, StoreInfo, TypeInfo,
 };
 pub use metrics::{
     BCubed, Churn, EndToEndMetrics, ExtractionMetrics, IdStability, Metrics, OrderSensitivity,

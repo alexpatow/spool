@@ -1015,10 +1015,30 @@ impl View<'_> {
             "loaded",
             format!("{} by run {}", when(&record.loaded_at), record.load_run),
         ));
+        if !record.found_by.is_empty() {
+            rows.push((
+                "found by",
+                record
+                    .found_by
+                    .iter()
+                    .map(|found| {
+                        format!(
+                            "{} version {} in run {}",
+                            found.extractor, found.version, found.run
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            ));
+        }
+        let found = !record.found_by.is_empty();
         rows.push((
             "identity",
             match (record.identity, record.retracted) {
                 (Some(identity), _) => identity.to_string(),
+                (None, Some(run)) if found => {
+                    format!("none: taken back in run {run}, as no extractor finds it any more")
+                }
                 (None, Some(run)) => format!("none: its source took it back in run {run}"),
                 (None, None) => "none".to_owned(),
             },
@@ -2019,18 +2039,23 @@ fn versioned(name: &str, version: Option<&str>) -> String {
     }
 }
 
-/// Which extractors read a document, and which is reading it now.
+/// Which extractors read a document, which could not and why, and which is
+/// reading it now.
 fn read_by(document: &DocumentEntry) -> String {
     let mut said: Vec<String> = document
         .extractions
         .iter()
-        .map(|extraction| {
-            format!(
+        .map(|extraction| match &extraction.failure {
+            Some(failure) => format!(
+                "{} failed in run {}: {failure}",
+                extraction.extractor, extraction.run
+            ),
+            None => format!(
                 "{} in run {} ({})",
                 extraction.extractor,
                 extraction.run,
                 count(extraction.mentions, "mention")
-            )
+            ),
         })
         .collect();
     if let Some(reading) = &document.reading {

@@ -68,6 +68,13 @@ pub(crate) const FEATURES: &str = "features.parquet";
 pub(crate) const JUDGEMENTS: &str = "judgements.parquet";
 pub(crate) const DOCUMENTS: &str = "documents.parquet";
 pub(crate) const MENTIONS: &str = "mentions.parquet";
+/// The documents an extractor could not read, with why. It need not write
+/// the file.
+pub(crate) const FAILED: &str = "failed.parquet";
+
+/// The most lines of what user code wrote to standard error that a run
+/// keeps, from the end.
+const KEPT_LINES: usize = 100;
 
 /// One file of user code as the manifest names it: a strategy or an
 /// extractor. Both are found, checked and started the same way.
@@ -688,6 +695,7 @@ impl Task {
             "entity_types": entity_types,
             "inputs": { "documents": DOCUMENTS },
             "output": MENTIONS,
+            "failed": FAILED,
         });
         Self::write(user_code, extractor.into(), run, description, MENTIONS)
     }
@@ -806,6 +814,39 @@ impl Task {
         }
     }
 
+    /// What the code wrote to standard error, as a terminal would show it:
+    /// one entry for each line that is not blank, what a progress bar left
+    /// last, and only the last lines. Read once the code has ended.
+    pub(crate) fn said(&self) -> Vec<String> {
+        const BYTES: u64 = 64 * 1024;
+        let path = self.dir.join("stderr.log");
+        let Ok(end) = last_bytes(&path, BYTES) else {
+            return Vec::new();
+        };
+        let text = String::from_utf8_lossy(&end);
+        // What follows the last line feed is a bar that never ended its
+        // line, and what precedes the first is part of a line, when only
+        // the end of the file was read.
+        let Some((whole, _)) = text.rsplit_once('\n') else {
+            return Vec::new();
+        };
+        let cut = std::fs::metadata(&path).is_ok_and(|file| file.len() > BYTES);
+        let whole = match cut {
+            true => whole.split_once('\n').map_or("", |(_, rest)| rest),
+            false => whole,
+        };
+        let lines: Vec<String> = whole
+            .lines()
+            .filter_map(|line| {
+                line.rsplit('\r')
+                    .map(str::trim_end)
+                    .find(|part| !part.trim().is_empty())
+                    .map(|part| part.chars().take(SAID).collect())
+            })
+            .collect();
+        lines[lines.len().saturating_sub(KEPT_LINES)..].to_vec()
+    }
+
     /// The error of a run that was cancelled.
     pub(crate) fn cancelled(&self) -> Error {
         self.code
@@ -842,12 +883,16 @@ fn seconds(duration: Duration) -> String {
 
 /// The end of a file: its last 4,096 bytes, or all of it if it is shorter.
 fn end_of(path: &Path) -> std::io::Result<Vec<u8>> {
-    const BYTES: u64 = 4096;
+    last_bytes(path, 4096)
+}
+
+/// The last `bytes` of a file, or all of it if it is shorter.
+fn last_bytes(path: &Path, bytes: u64) -> std::io::Result<Vec<u8>> {
     let mut file = std::fs::File::open(path)?;
     let length = file.metadata()?.len();
-    file.seek(SeekFrom::Start(length.saturating_sub(BYTES)))?;
+    file.seek(SeekFrom::Start(length.saturating_sub(bytes)))?;
     let mut end = Vec::new();
-    file.take(BYTES).read_to_end(&mut end)?;
+    file.take(bytes).read_to_end(&mut end)?;
     Ok(end)
 }
 

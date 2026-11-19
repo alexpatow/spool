@@ -214,6 +214,8 @@ Stores each file as a document, then runs an extractor over the documents it has
 
 The extractor reads the documents in batches, and each batch is kept when it ends. A batch is sized to take at most a fifth of the server's `--task-timeout`, and two minutes at most. When there is more than one, the command says on standard error how many documents are kept and how long the rest should take. A command that fails keeps the batches before the failure, and Ctrl-C cancels the batch that is running and keeps those before it. The same command again reads what is left; with `--again` it starts over.
 
+A document the extractor could not read is listed under `failed`, with why, and the same command reads it again. When a batch could not read any of its documents, the command stops. What the extractor writes to standard error is shown below `running`, and a mention that no extractor finds any more is taken back, which the command says under `taken back`. [Extraction](/docs/concepts/extraction#when-an-extractor-fails) says more.
+
 ```sh
 spool extract samples/notes-1.txt
 ```
@@ -261,7 +263,7 @@ spool show
 
 ```text title="Output"
 server     http://127.0.0.1:7765
-api        v1, engine 0.1.0, store format 11
+api        v1, engine 0.1.0, store format 12
 manifest   d7d4b712d86302152897a67a5924cd1c2e26594e049685c2f007177e20633946
 head       log position 1
 documents  1

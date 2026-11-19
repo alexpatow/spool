@@ -87,8 +87,31 @@ Each mention becomes a record of its entity type, whose source is the
 document's. An extractor says what a document mentions. It cannot say that
 two mentions are the same thing: the type's rules and strategies decide that.
 
-What an extractor writes to its standard error is shown to whoever waits for
-the run, a line at a time. A function that is called once for each document
+# A document that cannot be read
+
+An extractor that cannot read a document, because the model it asks
+answered with an error, say, says so with `document.failed(reason)`, which
+it returns or yields in place of the document's mentions:
+
+    @extractor
+    def find(document):
+        try:
+            names = ask_the_model(document.text)
+        except ModelError as error:
+            yield document.failed(f"the model answered {error}")
+            return
+        ...
+
+A function that is called once for each document need not catch anything:
+an exception it raises for one document fails that document, with the
+exception as the reason, and the run goes on with the next. Either way the
+document is not counted as read, nothing found in it is kept, and the next
+extraction reads it again. `spool show documents` says why it failed. An
+exception that leaves a function called once with every document fails the
+whole run.
+
+What an extractor writes to its standard error is shown to whoever runs
+`spool extract`, and in the terminal of `spool dev`. A function that is called once for each document
 has a line written for it every ten seconds, such as `read 400 of 3,053
 documents`. Spool stops a run that takes longer than it allows, which is 600
 seconds unless `--task-timeout` says otherwise where Spool is started.
@@ -322,6 +345,14 @@ class Document:
     def __repr__(self):
         return f"Document(source={self.source!r}, key={self.key!r}, {len(self.text)} characters)"
 
+    def failed(self, reason):
+        """Says that the document could not be read, and why.
+
+        Returned or yielded with the mentions: nothing found in the document
+        is kept, and the next extraction reads it again.
+        """
+        return {"document_id": self.id, "failed": str(reason)}
+
     def mention(self, entity_type, start, end, **attributes):
         """A mention of an `entity_type` at `text[start:end]`."""
         return {
@@ -469,9 +500,34 @@ class ExtractTask:
         return self._documents
 
     def write(self, mentions):
-        """Writes the run's mentions. Whatever was written before is replaced."""
+        """Writes the run's mentions, and the documents it could not read:
+        what `document.failed(...)` made. Whatever was written before is
+        replaced."""
         pyarrow = _pyarrow()
-        _write(pyarrow, _mentions(pyarrow, mentions), self.dir / self.info["output"])
+        # Read once: an iterator gives its rows only the first time.
+        mentions = list(mentions)
+        failed = {}
+        for row in mentions:
+            if isinstance(row, dict) and "failed" in row:
+                failed.setdefault(str(row["document_id"]), str(row["failed"]))
+        kept = [
+            row
+            for row in mentions
+            if not (isinstance(row, dict) and "failed" in row)
+            and not (isinstance(row, dict) and str(row.get("document_id")) in failed)
+        ]
+        _write(pyarrow, _mentions(pyarrow, kept), self.dir / self.info["output"])
+        if failed and "failed" in self.info:
+            table = pyarrow.table(
+                {
+                    "document_id": pyarrow.array(list(failed), pyarrow.string()),
+                    "reason": pyarrow.array(list(failed.values()), pyarrow.string()),
+                }
+            )
+            _write(pyarrow, table, self.dir / self.info["failed"])
+        elif "failed" in self.info:
+            # What an earlier call wrote is replaced, failures included.
+            (self.dir / self.info["failed"]).unlink(missing_ok=True)
 
 
 def extractor(function):
@@ -504,19 +560,38 @@ def extractor(function):
                 said = time.monotonic()
                 progress = f"read {read:,} of {len(documents):,} documents"
                 print(progress, file=sys.stderr, flush=True)
-            for mention in function(document=document, **given) or ():
-                if mention is None:
-                    continue
-                # A mention made by hand need not say which document it is in.
-                if isinstance(mention, dict) and mention.get("document_id") is None:
-                    mention = {**mention, "document_id": document.id}
-                found.append(mention)
+            # What one document gives is kept only once it has all been
+            # given: an exception half way fails the document, and only it.
+            mine = []
+            try:
+                for mention in _results(function(document=document, **given)):
+                    if mention is None:
+                        continue
+                    # A mention made by hand need not say which document it is in.
+                    if isinstance(mention, dict) and mention.get("document_id") is None:
+                        mention = {**mention, "document_id": document.id}
+                    mine.append(mention)
+            except Exception as error:
+                reason = f"{type(error).__name__}: {error}"
+                print(f"{document.source}:{document.key}: {reason}", file=sys.stderr, flush=True)
+                mine = [document.failed(reason)]
+            found.extend(mine)
     else:
         if "documents" in names:
             given["documents"] = task.documents
-        found = [mention for mention in function(**given) or () if mention is not None]
+        found = [mention for mention in _results(function(**given)) if mention is not None]
     task.write(found)
     return function
+
+
+def _results(returned):
+    """What an extractor's function gave, as rows: nothing, one mention or
+    failure returned on its own, or any number of them."""
+    if returned is None:
+        return ()
+    if isinstance(returned, dict):
+        return (returned,)
+    return returned
 
 
 _MENTION = ("document_id", "entity_type", "start", "end", "attributes")

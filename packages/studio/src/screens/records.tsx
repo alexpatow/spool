@@ -170,7 +170,14 @@ function RecordScreen({ record, review, document }: Loaded) {
           </span>
         </Notice>
       ) : null}
-      {record.retracted != null ? (
+      {record.retracted != null && (record.found_by ?? []).length > 0 ? (
+        <Notice tone="waits">
+          <span>
+            Taken back in <Ref kind="run" id={record.retracted} label={`run ${record.retracted}`} />, as no extractor
+            finds it any more. It has no identity, and no run examines it, until a reading finds it again.
+          </span>
+        </Notice>
+      ) : record.retracted != null ? (
         <Notice tone="waits">
           <span>
             Taken back by its source in{" "}
@@ -218,6 +225,18 @@ function RecordScreen({ record, review, document }: Loaded) {
               <When at={record.loaded_at} /> by{" "}
               <Ref kind="run" id={record.load_run} label={`run ${record.load_run}`} />
             </>,
+          ],
+          [
+            "Found by",
+            (record.found_by ?? []).length === 0
+              ? null
+              : (record.found_by ?? []).map((found, index) => (
+                  <span key={found.run}>
+                    {index > 0 ? ", " : ""}
+                    <Code>{found.extractor}</Code> version <Code>{found.version.slice(0, 8)}</Code> in{" "}
+                    <Ref kind="run" id={found.run} label={`run ${found.run}`} />
+                  </span>
+                )),
           ],
           [
             "Identity",

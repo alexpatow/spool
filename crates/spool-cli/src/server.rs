@@ -1771,23 +1771,40 @@ async fn extract(
         }
     };
     let again = request.again.unwrap_or(false);
-    if request.again_since.is_some() && !again {
-        return Err(ApiError::invalid(
-            "`again_since` goes with `again`: without it an extraction reads only what the \
-             extractor has never read",
-        ));
-    }
     let options = ExtractOptions {
         extractor,
         source: request.source,
         again,
-        again_since: request.again_since,
+        since: request.since,
         limit: request.limit,
     };
     job(&app, request.wait_ms, move |engine| {
-        Ok(Some(engine.acting(caller.actor).extract(&options)?.run))
+        let extracted = engine.acting(caller.actor).extract(&options);
+        print_extracted(&options.extractor, &extracted);
+        Ok(Some(extracted?.run))
     })
     .await
+}
+
+/// Prints, where the server was started, what an extractor wrote to
+/// standard error, or why its run failed, so that whoever runs `spool dev`
+/// sees it too. Output that nobody reads is no reason to stop.
+fn print_extracted(extractor: &str, extracted: &spool::Result<spool::ExtractReport>) {
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+    match extracted {
+        Ok(report) if !report.stderr.is_empty() => {
+            let _ = writeln!(out, "extractor `{extractor}`, run {}:", report.run);
+            for line in &report.stderr {
+                let _ = writeln!(out, "          {line}");
+            }
+        }
+        Ok(_) => {}
+        Err(error) => {
+            let _ = writeln!(out, "extractor `{extractor}`: {error}");
+        }
+    }
+    let _ = out.flush();
 }
 
 async fn start_match(

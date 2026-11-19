@@ -1173,7 +1173,7 @@ fn an_extraction_in_batches_reads_each_document_once_and_says_what_is_left() {
             .engine
             .extract(&ExtractOptions {
                 again,
-                again_since,
+                since: again_since,
                 limit: Some(limit),
                 ..ExtractOptions::with("names")
             })
@@ -1296,6 +1296,363 @@ def find(documents):
     // The next extraction reads both.
     news.extractor("names.py", NAMES);
     assert_eq!(news.extract("names").unwrap().documents, 2);
+    news.engine.verify().unwrap();
+}
+
+#[test]
+#[ignore = "runs uv"]
+fn a_document_the_extractor_could_not_read_is_failed_and_read_again_alone() {
+    let news = News::new();
+    // `b` raises, which fails it and only it; `c` is failed by hand, with
+    // what was found in it before.
+    news.extractor(
+        "names.py",
+        r#"
+import re
+from spool import extractor
+
+@extractor
+def find(document):
+    if document.key == "b":
+        raise RuntimeError("the model answered 500")
+    for found in re.finditer(r"[A-Z]\w+ (?:Inc|Ltd)", document.text):
+        yield document.mention("company", found.start(), found.end(), name=found.group())
+    if document.key == "c":
+        yield document.failed("the model's answer was cut off")
+"#,
+    );
+    news.add(&[("a", FIRST), ("b", SECOND), ("c", "Initech Inc.")]);
+    let report = news.extract("names").unwrap();
+    assert_eq!(report.documents, 3);
+    let failed: Vec<(&str, &str)> = report
+        .failed
+        .iter()
+        .map(|failed| (failed.key.as_str(), failed.reason.as_str()))
+        .collect();
+    assert_eq!(
+        failed,
+        [
+            ("b", "RuntimeError: the model answered 500"),
+            ("c", "the model's answer was cut off"),
+        ]
+    );
+    // Nothing found in a failed document is kept.
+    assert_eq!(report.mentions, 2);
+    assert!(news.mentions(id("c", "Initech Inc.")).is_empty());
+    let document = news.engine.document(id("b", SECOND)).unwrap();
+    assert_eq!(
+        document.extractions[0].failure.as_deref(),
+        Some("RuntimeError: the model answered 500")
+    );
+    assert_eq!(
+        report.stderr,
+        ["news:b: RuntimeError: the model answered 500"]
+    );
+
+    // The next extraction reads the two that failed, and not the one that
+    // was read.
+    news.extractor("names.py", NAMES);
+    let again = news.extract("names").unwrap();
+    assert_eq!((again.documents, again.failed.len()), (2, 0));
+    assert_eq!(again.mentions, 3);
+    assert_eq!(news.extract("names").unwrap().documents, 0);
+    let read = news.engine.document(id("c", "Initech Inc.")).unwrap();
+    assert_eq!(read.extractions.len(), 2);
+    assert_eq!(read.extractions[1].failure, None);
+    news.engine.verify().unwrap();
+}
+
+#[test]
+#[ignore = "runs uv"]
+fn a_failure_or_a_mention_returned_on_its_own_is_one_result() {
+    let news = News::new();
+    news.extractor(
+        "names.py",
+        r#"
+from spool import extractor
+
+@extractor
+def find(document):
+    if document.key == "b":
+        return document.failed("model unavailable")
+    start, end = document.find("Acme Inc")[0]
+    return document.mention("company", start, end, name="Acme Inc")
+"#,
+    );
+    news.add(&[("a", FIRST), ("b", SECOND)]);
+    let report = news.extract("names").unwrap();
+    assert_eq!(report.mentions, 1, "{report:?}");
+    let failed: Vec<(&str, &str)> = report
+        .failed
+        .iter()
+        .map(|failed| (failed.key.as_str(), failed.reason.as_str()))
+        .collect();
+    assert_eq!(failed, [("b", "model unavailable")]);
+}
+
+#[test]
+#[ignore = "runs uv"]
+fn a_document_that_cannot_be_read_is_not_tried_again_in_the_same_pass() {
+    let news = News::new();
+    news.extractor(
+        "names.py",
+        r#"
+from spool import extractor
+
+@extractor
+def find(document):
+    raise RuntimeError("no key")
+"#,
+    );
+    news.add(&[("a", FIRST), ("b", SECOND)]);
+    let first = news
+        .engine
+        .extract(&ExtractOptions {
+            limit: Some(1),
+            ..ExtractOptions::with("names")
+        })
+        .unwrap();
+    assert_eq!((first.documents, first.failed.len(), first.left), (1, 1, 1));
+    // A batch after it names its run, and does not get `a` again.
+    let second = news
+        .engine
+        .extract(&ExtractOptions {
+            limit: Some(1),
+            since: Some(first.run),
+            ..ExtractOptions::with("names")
+        })
+        .unwrap();
+    assert_eq!(second.failed[0].key, "b");
+    assert_eq!(second.left, 0);
+}
+
+#[test]
+#[ignore = "runs uv"]
+fn a_task_written_from_an_iterator_and_written_again_keeps_the_last() {
+    let news = News::new();
+    // Without the decorator: a failure written first, then replaced with
+    // mentions given by a generator, which gives them only once.
+    news.extractor(
+        "names.py",
+        r#"
+import os
+from spool import ExtractTask
+
+if os.environ.get("SPOOL_TASK_DIR"):
+    task = ExtractTask(os.environ["SPOOL_TASK_DIR"])
+    first, second = task.documents
+    task.write([second.failed("the first try")])
+    task.write(
+        document.mention("company", start, end, name=document.text[start:end])
+        for document in (first, second)
+        for start, end in document.find("Acme Inc")
+    )
+"#,
+    );
+    news.add(&[("a", FIRST), ("b", SECOND)]);
+    let report = news.extract("names").unwrap();
+    assert_eq!((report.mentions, report.failed.len()), (2, 0), "{report:?}");
+    let read = news.engine.document(id("b", SECOND)).unwrap();
+    assert_eq!(read.extractions[0].failure, None);
+}
+
+#[test]
+#[ignore = "runs uv"]
+fn a_type_the_project_no_longer_declares_is_left_alone_by_a_reading() {
+    let news = News::new();
+    news.write(
+        "entities/person/entity.yaml",
+        "features: [name]\nmapping:\n  news:\n    name: name\n",
+    );
+    news.extractor(
+        "names.py",
+        r#"
+from spool import extractor
+
+@extractor
+def find(document):
+    for start, end in document.find("Acme Inc"):
+        yield document.mention("company", start, end, name="Acme Inc")
+    for start, end in document.find("Globex Ltd"):
+        yield document.mention("person", start, end, name="Globex Ltd")
+"#,
+    );
+    news.add(&[("a", FIRST)]);
+    assert_eq!(news.extract("names").unwrap().mentions, 2);
+
+    // The project drops `person`, and its extractor finds companies alone.
+    fs::remove_dir_all(news.project().join("entities/person")).unwrap();
+    news.extractor("names.py", NAMES);
+    let again = news
+        .engine
+        .extract(&ExtractOptions {
+            again: true,
+            ..ExtractOptions::with("names")
+        })
+        .unwrap();
+    assert_eq!(
+        (again.taken_back, again.retract_runs.len()),
+        (0, 0),
+        "{again:?}"
+    );
+    let person = news
+        .engine
+        .records(&RecordFilter::keyed(
+            "news",
+            locator(id("a", FIRST), "person", 29, 39),
+        ))
+        .unwrap();
+    assert_eq!(person[0].retracted, None);
+}
+
+#[test]
+#[ignore = "runs uv"]
+fn a_reading_is_recorded_against_the_version_it_found() {
+    let news = News::new();
+    let saying = |form: &str| {
+        format!(
+            r#"
+from spool import extractor
+
+@extractor
+def find(document):
+    for start, end in document.find("Acme Inc"):
+        yield document.mention("company", start, end, name="Acme Inc", form="{form}")
+"#
+        )
+    };
+    news.add(&[("a", FIRST)]);
+    let document = id("a", FIRST);
+    let mut runs = Vec::new();
+    // The mention says Inc, then Ltd, then Inc again: three versions, the
+    // last of which holds what the first held.
+    for form in ["Inc", "Ltd", "Inc"] {
+        news.extractor("names.py", &saying(form));
+        let report = news
+            .engine
+            .extract(&ExtractOptions {
+                again: true,
+                ..ExtractOptions::with("names")
+            })
+            .unwrap();
+        runs.push(report.run);
+    }
+    let versions = news
+        .engine
+        .records(&RecordFilter::keyed(
+            "news",
+            locator(document, "company", 2, 10),
+        ))
+        .unwrap();
+    assert_eq!(versions.len(), 3);
+    let current = versions
+        .iter()
+        .find(|record| record.superseded_by.is_none())
+        .unwrap();
+    let found: Vec<_> = current.found_by.iter().map(|found| found.run).collect();
+    assert_eq!(found, [runs[2]], "{versions:?}");
+    // Each earlier version keeps the reading that found it.
+    let earlier: BTreeSet<_> = versions
+        .iter()
+        .filter(|record| record.superseded_by.is_some())
+        .flat_map(|record| record.found_by.iter().map(|found| found.run))
+        .collect();
+    assert_eq!(earlier, BTreeSet::from([runs[0], runs[1]]));
+}
+
+#[test]
+#[ignore = "runs uv"]
+fn mentions_no_extractor_finds_any_more_are_taken_back_and_come_back() {
+    let news = News::new();
+    let finding = |names: &[&str]| {
+        format!(
+            r#"
+from spool import extractor
+
+@extractor
+def find(document):
+    for name in {names:?}:
+        for start, end in document.find(name):
+            yield document.mention("company", start, end, name=name)
+"#
+        )
+    };
+    news.extractor("names.py", &finding(&["Acme Inc", "Globex Ltd"]));
+    news.extractor("others.py", &finding(&["Acme Inc"]));
+    news.add(&[("a", FIRST)]);
+    news.extract("names").unwrap();
+    news.extract("others").unwrap();
+    news.engine.resolve(&ResolveOptions::default()).unwrap();
+    let document = id("a", FIRST);
+    let acme = news.identity(document, 2, 10).unwrap();
+    let globex = news.identity(document, 29, 39).unwrap();
+    assert_ne!(acme, globex);
+
+    // The changed extractor finds Acme alone. Globex, which no extractor
+    // finds now, is taken back; its identity keeps its ID, with no records.
+    news.extractor("names.py", &finding(&["Acme Inc"]));
+    let again = news
+        .engine
+        .extract(&ExtractOptions {
+            again: true,
+            ..ExtractOptions::with("names")
+        })
+        .unwrap();
+    assert_eq!(again.taken_back, 1);
+    let [retract_run] = again.retract_runs[..] else {
+        panic!("one retract run: {again:?}");
+    };
+    let taken = news
+        .engine
+        .records(&RecordFilter::keyed(
+            "news",
+            locator(document, "company", 29, 39),
+        ))
+        .unwrap();
+    assert_eq!(taken[0].retracted, Some(retract_run));
+    assert_eq!(taken[0].identity, None);
+    assert!(members(&news.engine, globex).is_empty());
+    let view = news.engine.identity(globex).unwrap();
+    assert_eq!((view.current, view.members.len()), (globex, 0));
+    assert_eq!(
+        news.engine.run(retract_run).unwrap().started_by,
+        Actor::Engine
+    );
+    // Acme stays, found by both versions of `names` and by `others`.
+    let found = &news
+        .engine
+        .records(&RecordFilter::keyed(
+            "news",
+            locator(document, "company", 2, 10),
+        ))
+        .unwrap()[0];
+    let versions: BTreeSet<(&str, &str)> = found
+        .found_by
+        .iter()
+        .map(|found| (found.extractor.as_str(), found.version.as_str()))
+        .collect();
+    assert_eq!(versions.len(), 3, "{:?}", found.found_by);
+    assert_eq!(found.identity, Some(acme));
+
+    // `others`, read again, still finds Acme, and nothing is taken back.
+    let others = news
+        .engine
+        .extract(&ExtractOptions {
+            again: true,
+            ..ExtractOptions::with("others")
+        })
+        .unwrap();
+    assert_eq!((others.taken_back, others.retract_runs.len()), (0, 0));
+
+    // Found again, Globex comes back to the identity it left.
+    news.extractor("names.py", &finding(&["Acme Inc", "Globex Ltd"]));
+    news.engine
+        .extract(&ExtractOptions {
+            again: true,
+            ..ExtractOptions::with("names")
+        })
+        .unwrap();
+    assert_eq!(news.identity(document, 29, 39), Some(globex));
     news.engine.verify().unwrap();
 }
 

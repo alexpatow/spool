@@ -717,7 +717,7 @@ from spool import extractor
 
 
 @extractor
-def find(document):
+def find(documents):
     raise RuntimeError("no model")
 `;
   let server: Server;

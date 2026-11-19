@@ -138,12 +138,12 @@ pub struct ExtractRequest {
     /// Read the documents this extractor has read before as well.
     #[serde(default)]
     pub again: Option<bool>,
-    /// With `again`: leave out the documents this extractor read in this
-    /// run or a later one, so that reading everything again in batches reads
-    /// each document once. Each batch after the first names the first
-    /// batch's run.
+    /// Leave out the documents this extractor read, or could not read, in
+    /// this run or a later one. Reading in batches, each batch after the
+    /// first names the first batch's run, so that each document is read once
+    /// and one that could not be read is not tried again at once.
     #[serde(default)]
-    pub again_since: Option<RunId>,
+    pub since: Option<RunId>,
     /// Read at most this many documents, oldest first. The run's report
     /// says in `left` how many the limit left out.
     #[serde(default)]

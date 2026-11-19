@@ -32,7 +32,7 @@ from spool import extractor
 
 
 @extractor
-def find(document):
+def find(documents):
     raise RuntimeError("the model is missing")
 "#;
 
@@ -345,7 +345,8 @@ fn the_server_runs_the_projects_extractors_and_resolves_what_they_find() {
     assert_eq!(again["extraction"]["documents"], 1, "{again}");
     assert_eq!(again["extraction"]["inserted"], 0, "{again}");
 
-    // An extractor that fails is a failed run, and nothing was stored.
+    // An extractor that fails, and not for one document, is a failed run,
+    // and nothing was stored.
     let failed = server
         .post("/v1/extractions", json!({ "extractor": "broken" }))
         .error(500, "extractor_failed");

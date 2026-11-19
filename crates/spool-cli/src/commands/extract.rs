@@ -8,7 +8,9 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 use spool::core::{DocumentId, RunId};
-use spool::{DeclaredSource, ExtractReport, Extractor, RecordEntry, RunEntry, RunStatus};
+use spool::{
+    DeclaredSource, ExtractReport, Extractor, FailedDocument, RecordEntry, RunEntry, RunStatus,
+};
 
 use super::remote::{self, Remote, WAIT_MS, listed, print_json, typed};
 use crate::Failure;
@@ -135,16 +137,21 @@ struct File {
 /// What the batches of an extraction found, together.
 #[derive(Default)]
 struct Found {
+    /// The documents read: those that could not be are in `failed`.
     documents: u64,
     mentions: u64,
     inserted: u64,
     duplicates: u64,
     superseded: u64,
+    failed: Vec<FailedDocument>,
+    taken_back: u64,
 }
 
 impl Found {
     fn add(&mut self, report: &ExtractReport) {
-        self.documents += report.documents;
+        self.documents += report.documents - report.failed.len() as u64;
+        self.failed.extend(report.failed.iter().cloned());
+        self.taken_back += report.taken_back;
         self.mentions += report.mentions;
         self.inserted += report.inserted;
         self.duplicates += report.duplicates;
@@ -292,7 +299,7 @@ pub fn extract(arguments: &[String]) -> Result<(), Failure> {
             "wait_ms": QUIET_MS,
         });
         if let Some(since) = since {
-            request["again_since"] = json!(since);
+            request["since"] = json!(since);
         }
         let batch_began = Instant::now();
         // A batch the server refuses at once, as it does one that fails
@@ -328,6 +335,38 @@ pub fn extract(arguments: &[String]) -> Result<(), Failure> {
             .as_ref()
             .ok_or_else(|| unreported(&run, "what it found"))?;
         found.add(report);
+        progress.relay(&report.stderr);
+        // An extractor that finds nothing anywhere takes back all that was
+        // found before, which is what a broken one does too. It is taken
+        // back all the same, and comes back when it is found again.
+        if report.mentions == 0 && report.taken_back > 0 {
+            eprintln!(
+                "taken back {} that run {} found nowhere, though it found nothing at all: if the \
+                 extractor is wrong, mend it and run `spool extract --again`, and what it finds \
+                 again goes back to the identity it left",
+                plural(report.taken_back, "record", "records"),
+                run.run
+            );
+        }
+        // A batch none of whose documents could be read says more about the
+        // extractor than about them: a key that is wrong, a model that is
+        // not there. Going on would fail every batch after it.
+        if report.documents > 0 && report.failed.len() as u64 == report.documents {
+            if as_json {
+                answered.print();
+            }
+            progress.stopped(found.documents, again, Some(run.run));
+            let first = &report.failed[0];
+            return Err(Failure::Failed(format!(
+                "run {} could not read any of its {}, as {}:{} says: {}. They are not \
+                 read, and the same command reads them again.",
+                run.run,
+                plural(report.documents, "document", "documents"),
+                first.source,
+                first.key,
+                first.reason
+            )));
+        }
         if was_interrupted() && report.left > 0 {
             if as_json {
                 answered.print();
@@ -335,7 +374,7 @@ pub fn extract(arguments: &[String]) -> Result<(), Failure> {
             return Err(Failure::Stopped(stopped(&found, again, None)));
         }
         progress.batches += 1;
-        if again && since.is_none() {
+        if since.is_none() {
             since = Some(run.run);
         }
         if progress.batches > 1 || report.left > 0 {
@@ -352,7 +391,7 @@ pub fn extract(arguments: &[String]) -> Result<(), Failure> {
         return Ok(());
     }
     println!("extractor  {}", extractor.name);
-    if found.documents == 0 {
+    if found.documents == 0 && found.failed.is_empty() {
         let name = &extractor.name;
         println!(
             "found      0 records: {}",
@@ -380,6 +419,34 @@ pub fn extract(arguments: &[String]) -> Result<(), Failure> {
             changed => format!(", {changed} changed"),
         }
     );
+
+    if found.taken_back > 0 {
+        println!(
+            "taken back {}: no extractor finds {} any more",
+            plural(found.taken_back, "record", "records"),
+            if found.taken_back == 1 { "it" } else { "them" }
+        );
+    }
+    if !found.failed.is_empty() {
+        println!(
+            "failed     {}: they are not read, and the same command reads them again",
+            plural(found.failed.len() as u64, "document", "documents")
+        );
+        let width = found
+            .failed
+            .iter()
+            .take(LISTED)
+            .map(|failed| failed.source.chars().count() + 1 + failed.key.chars().count())
+            .max()
+            .unwrap_or(0);
+        for failed in found.failed.iter().take(LISTED) {
+            let name = format!("{}:{}", failed.source, failed.key);
+            println!("  {name:<width$}  {}", shown(&failed.reason));
+        }
+        if found.failed.len() > LISTED {
+            println!("  and more: `spool show documents` says why each failed");
+        }
+    }
 
     if let Some(source) = &source
         && !files.is_empty()
@@ -643,6 +710,8 @@ struct Progress<'a> {
     batches: u64,
     announced: bool,
     said: Option<String>,
+    /// What was printed of what the batch in progress said, as it said it.
+    live: Vec<String>,
     /// Whether the batch in progress was cancelled after Ctrl-C.
     cancelled: bool,
 }
@@ -654,6 +723,7 @@ impl<'a> Progress<'a> {
             batches: 0,
             announced: false,
             said: None,
+            live: Vec::new(),
             cancelled: false,
         }
     }
@@ -688,6 +758,7 @@ impl<'a> Progress<'a> {
                 && self.said.as_ref() != Some(&said)
             {
                 eprintln!("           {said}");
+                self.live.push(said.clone());
                 self.said = Some(said);
             }
             answer = remote.get(
@@ -695,6 +766,24 @@ impl<'a> Progress<'a> {
                 &[("wait_ms", ASK_MS.to_string())],
                 || format!("the server no longer has run {}", run.run),
             )?;
+        }
+    }
+
+    /// Prints what the extractor of a batch that ended wrote to standard
+    /// error, but for what was printed as it ran and the helpers' own count
+    /// of how far a run is, which what each batch kept says better.
+    fn relay(&mut self, stderr: &[String]) {
+        let mut live = std::mem::take(&mut self.live);
+        for line in stderr {
+            if let Some(at) = live.iter().position(|said| said == line) {
+                live.remove(at);
+                continue;
+            }
+            if counts_documents(line) {
+                continue;
+            }
+            self.announce();
+            eprintln!("           {line}");
         }
     }
 
@@ -717,14 +806,18 @@ impl<'a> Progress<'a> {
     /// long the rest takes at the pace so far.
     fn kept(&mut self, found: &Found, left: u64, took: Duration) {
         self.announce();
+        let failed = found.failed.len() as u64;
         let mut line = format!(
-            "kept       {} of {}, {}",
+            "kept       {} of {}, ",
             found.documents,
-            plural(found.documents + left, "document", "documents"),
-            plural(found.mentions, "record", "records"),
+            plural(found.documents + failed + left, "document", "documents"),
         );
-        if left > 0 && found.documents > 0 {
-            let rest = took.mul_f64(left as f64 / found.documents as f64);
+        if failed > 0 {
+            line.push_str(&format!("{failed} failed, "));
+        }
+        line.push_str(&plural(found.mentions, "record", "records"));
+        if left > 0 && found.documents + failed > 0 {
+            let rest = took.mul_f64(left as f64 / (found.documents + failed) as f64);
             line.push_str(&format!(", about {} left", about(rest)));
         }
         eprintln!("{line}");
@@ -748,6 +841,19 @@ impl<'a> Progress<'a> {
             ),
         }
     }
+}
+
+/// Whether a line is the helpers' count of how far a run is, such as
+/// `read 400 of 3,053 documents`.
+fn counts_documents(line: &str) -> bool {
+    line.strip_prefix("read ")
+        .and_then(|rest| rest.strip_suffix(" documents"))
+        .and_then(|rest| rest.split_once(" of "))
+        .is_some_and(|(read, of)| {
+            [read, of].iter().all(|number| {
+                !number.is_empty() && number.chars().all(|c| c.is_ascii_digit() || c == ',')
+            })
+        })
 }
 
 /// What a command stopped with Ctrl-C says it left: the documents read

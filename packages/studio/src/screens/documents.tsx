@@ -166,9 +166,10 @@ function DocumentScreen({ document, found, cut, at }: Loaded & { at: number | nu
                 {document.extractions.map((extraction, index) => (
                   <span key={extraction.run}>
                     {index > 0 ? ", " : ""}
-                    <Code>{extraction.extractor}</Code> in{" "}
-                    <Ref kind="run" id={extraction.run} label={`run ${extraction.run}`} /> (
-                    {count(extraction.mentions, "mention")})
+                    <Code>{extraction.extractor}</Code>
+                    {extraction.failure ? " failed in " : " in "}
+                    <Ref kind="run" id={extraction.run} label={`run ${extraction.run}`} />
+                    {extraction.failure ? `: ${extraction.failure}` : ` (${count(extraction.mentions, "mention")})`}
                   </span>
                 ))}
                 {document.reading ? (

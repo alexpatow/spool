@@ -7,7 +7,7 @@ use crate::error::{Error, Result};
 
 /// Written to `spool.meta` when a store is created and checked when one is
 /// opened.
-pub(crate) const FORMAT_VERSION: &str = "11";
+pub(crate) const FORMAT_VERSION: &str = "12";
 
 const TABLES: &str = "
 CREATE SCHEMA spool;
@@ -47,12 +47,23 @@ CREATE TABLE spool.document (          -- text a source holds, kept so that what
   load_run    BIGINT      NOT NULL
 );
 
-CREATE TABLE spool.extraction (        -- one row each time an extractor read a document
+CREATE TABLE spool.extraction (        -- one row each time an extractor read a document, or could not
   document_id       UUID    NOT NULL,
   extractor         VARCHAR NOT NULL,
   extractor_version VARCHAR NOT NULL,
   run_id            BIGINT  NOT NULL,  -- the extract run
-  mentions          BIGINT  NOT NULL   -- how many it found in the document
+  mentions          BIGINT  NOT NULL,  -- how many it found in the document
+  failure           VARCHAR            -- why it could not read the document; the document is then not read
+);
+
+CREATE TABLE spool.extraction_found (  -- one row for each mention a reading found, new or found again
+  run_id            BIGINT  NOT NULL,  -- the extract run
+  document_id       UUID    NOT NULL,
+  extractor         VARCHAR NOT NULL,
+  extractor_version VARCHAR NOT NULL,
+  entity_type       VARCHAR NOT NULL,
+  record_key        VARCHAR NOT NULL,  -- the mention's locator, which is its record's key
+  record_id         UUID    NOT NULL   -- the version of the record it found
 );
 
 CREATE TABLE spool.entity_type (       -- declared by the project; the engine ships none

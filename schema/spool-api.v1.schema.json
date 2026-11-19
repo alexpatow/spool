@@ -649,6 +649,13 @@
         "extractor": {
           "type": "string"
         },
+        "failure": {
+          "description": "Why the extractor could not read the document. A document whose\nreadings all failed is not read, and the next extraction reads it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "mentions": {
           "description": "How many mentions it found in the document.",
           "format": "uint64",
@@ -1119,6 +1126,14 @@
           "minimum": 0,
           "type": "integer"
         },
+        "failed": {
+          "default": [],
+          "description": "The documents the extractor could not read, with why. They count\namong `documents`, nothing found in them is stored, and they are not\nread.",
+          "items": {
+            "$ref": "#/$defs/FailedDocument"
+          },
+          "type": "array"
+        },
         "inserted": {
           "description": "Records created.",
           "format": "uint64",
@@ -1149,11 +1164,34 @@
           "minimum": 0,
           "type": "integer"
         },
+        "retract_runs": {
+          "default": [],
+          "description": "The retract runs that took them back: one for each source and\nentity type.",
+          "items": {
+            "$ref": "#/$defs/RunId"
+          },
+          "type": "array"
+        },
         "run": {
           "$ref": "#/$defs/RunId"
         },
+        "stderr": {
+          "default": [],
+          "description": "What the extractor wrote to standard error, a line each: the last\n100 lines.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "superseded": {
           "description": "Records created as a new version of a mention that was known\nwith other attributes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "taken_back": {
+          "default": 0,
+          "description": "Mentions taken back: found in a document before, and found by no\nextractor's latest reading of it now.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -1181,18 +1219,6 @@
             "null"
           ]
         },
-        "again_since": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/RunId"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "With `again`: leave out the documents this extractor read in this\nrun or a later one, so that reading everything again in batches reads\neach document once. Each batch after the first names the first\nbatch's run."
-        },
         "extractor": {
           "default": null,
           "description": "The name of one of the project's extractors; `GET /v1/info` lists\nthem. The server runs no code it was not built with. It may be left\nout when the project has exactly one.",
@@ -1210,6 +1236,18 @@
             "integer",
             "null"
           ]
+        },
+        "since": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Leave out the documents this extractor read, or could not read, in\nthis run or a later one. Reading in batches, each batch after the\nfirst names the first batch's run, so that each document is read once\nand one that could not be read is not tried again at once."
         },
         "source": {
           "default": null,
@@ -1275,6 +1313,30 @@
       ],
       "type": "object"
     },
+    "FailedDocument": {
+      "description": "A document an extractor could not read.",
+      "properties": {
+        "document": {
+          "$ref": "#/$defs/DocumentId"
+        },
+        "key": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "document",
+        "source",
+        "key",
+        "reason"
+      ],
+      "type": "object"
+    },
     "FeatureColumn": {
       "properties": {
         "data_type": {
@@ -1287,6 +1349,28 @@
       "required": [
         "name",
         "data_type"
+      ],
+      "type": "object"
+    },
+    "FoundBy": {
+      "description": "A reading of a document that found a mention.",
+      "properties": {
+        "extractor": {
+          "type": "string"
+        },
+        "run": {
+          "$ref": "#/$defs/RunId",
+          "description": "The extract run."
+        },
+        "version": {
+          "description": "The hash of the extractor's files when it read.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "extractor",
+        "version",
+        "run"
       ],
       "type": "object"
     },
@@ -3063,6 +3147,13 @@
         },
         "evidence": {
           "description": "Where in the source the record was found, if the source said."
+        },
+        "found_by": {
+          "description": "For a mention: each reading that found it in this version, oldest\nfirst, with the version of the extractor that read.",
+          "items": {
+            "$ref": "#/$defs/FoundBy"
+          },
+          "type": "array"
         },
         "id": {
           "$ref": "#/$defs/RecordId"
