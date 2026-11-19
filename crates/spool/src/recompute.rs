@@ -21,6 +21,9 @@
 //! 3. a version and the one it supersedes read as `match`;
 //! 4. the judgements of the rules.
 //!
+//! A group people put together stays an identity even where the rules join
+//! it with records that something says differ: only those records wait.
+//!
 //! Records whose source took them back have no part in it, and records a
 //! reviewer dismissed from review that still have no identity keep having
 //! none.
@@ -714,7 +717,6 @@ pub(crate) fn compute(
             group
         })
         .collect();
-    groups.sort();
     let mut waiting: Vec<Vec<RecordId>> = draft
         .review
         .iter()
@@ -727,6 +729,28 @@ pub(crate) fn compute(
             records
         })
         .collect();
+    // What people put together stays an identity where the rules contradict
+    // themselves around it, and only the other records of such a group wait.
+    // Left waiting, its records would lose their identity when the result is
+    // applied, and with it what says that a person put them together.
+    for set in held.groups().into_values() {
+        let Some(at) = waiting
+            .iter()
+            .position(|group| group.binary_search(&set[0]).is_ok())
+        else {
+            continue;
+        };
+        if set
+            .iter()
+            .all(|record| waiting[at].binary_search(record).is_ok())
+        {
+            let taken: BTreeSet<RecordId> = set.iter().copied().collect();
+            waiting[at].retain(|record| !taken.contains(record));
+            groups.push(set);
+        }
+    }
+    waiting.retain(|group| !group.is_empty());
+    groups.sort();
     waiting.sort();
 
     let mut place: HashMap<RecordId, Place> = HashMap::new();

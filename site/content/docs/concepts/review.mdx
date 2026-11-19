@@ -452,7 +452,7 @@ An entity type has at most one open draft. A later match of the type replaces it
 | --- | --- |
 | `must_link` | Its two records are in one identity, whatever the rules say. |
 | `cannot_link` | Its two records are not. Where the rules join a group through other records and a `cannot_link` is inside it, the group waits for review without an identity, under a `conflict` item, and the output names the constraint and who recorded it. |
-| Records a person or an agent placed, or identities they merged | They stay together, as the person put them, while what they joined is still whole. A rule's no_match between them is not read. |
+| Records a person or an agent placed, or identities they merged | They stay together, as the person put them, while what they joined is still whole. A rule's no_match between them is not read. Where the rules also join them with records that something says differ, they stay an identity and only those other records wait. |
 | A split or a move with no `cannot_link` | Nothing says the records differ, so the rules may put them back together. The output marks every change to an identity a person or an agent changed, with the log positions. |
 | A dismissed `possible_merge` or `conflict` | Its records stay without an identity. |
 | A dismissed `possible_split` | The identity's records stay together. |

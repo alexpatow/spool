@@ -300,7 +300,7 @@ applied plan 0f0ae22918643710b875675543062faa05f144d428242c6efd7be2f9cce68d69
 
 It works the result out again and refuses if it is not that plan, so what is applied is what was shown: if rows were loaded, rules changed or identities moved in between, it says so and changes nothing. A match run judges every record and keeps its judgements, as any run does, and the changes are one changeset in the log. The engine is its author, because the rules decided it, and the run is recorded as started by whoever applied. `POST /v1/changesets/<seq>/undo` takes it back like any other changeset.
 
-What people decided counts for more than the rules, and [Review](/docs/concepts/review#recompute-and-what-people-decided) says how. In short: a `must_link` or a `cannot_link` holds, records a person or an agent put together stay together, records a reviewer dismissed stay without an identity, and records their source took back are left out. Where the rules join a group and something in it says two of its records differ, the group waits for review without an identity, as new records do after a match.
+What people decided counts for more than the rules, and [Review](/docs/concepts/review#recompute-and-what-people-decided) says how. In short: a `must_link` or a `cannot_link` holds, records a person or an agent put together stay together, records a reviewer dismissed stay without an identity, and records their source took back are left out. Where the rules join a group and something in it says two of its records differ, the group waits for review without an identity, as new records do after a match. What people put together in such a group stays an identity, and only the other records wait.
 
 Nothing recomputes by itself. A rule change alone still moves no identity.
 

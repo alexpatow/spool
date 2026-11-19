@@ -556,6 +556,54 @@ fn what_a_reviewer_merged_stays_merged_after_a_recompute_is_applied() {
     assert_eq!(members(&engine, acorn).len(), 3);
 }
 
+/// A reviewer merged A and B, which the rules keep apart, and C matches B
+/// and not A. The rules contradict themselves about the three, so C waits;
+/// A and B stay one identity, and stay so when the result is applied and
+/// recomputed again.
+#[test]
+fn what_a_reviewer_merged_stays_an_identity_when_records_around_it_wait() {
+    let engine = Engine::open_in_memory(Options::seeded(1)).unwrap();
+    engine.apply(&manifest_of(vec![thing()])).unwrap();
+    load(
+        &engine,
+        "shop",
+        &[
+            ("A", Some("alpha"), Some("K1")),
+            ("B", Some("beta"), Some("K2")),
+        ],
+    );
+    engine.resolve(&ResolveOptions::default()).unwrap();
+    let a = identity(&engine, "shop", "A").unwrap();
+    let b = identity(&engine, "shop", "B").unwrap();
+    engine
+        .author(
+            reviewer(),
+            Some("one company".to_owned()),
+            vec![Op::Merge { from: b, into: a }],
+        )
+        .unwrap();
+    // C has B's code, so it matches B, and A's name with another code, so
+    // the rules keep it from A.
+    load(&engine, "shop", &[("C", Some("alpha"), Some("K2"))]);
+    engine.resolve(&ResolveOptions::default()).unwrap();
+    assert_eq!(identity(&engine, "shop", "C"), None, "C waits for review");
+
+    for round in 0..2 {
+        let preview = engine.recompute(&everything()).unwrap();
+        let thing = &preview.types[0];
+        assert_eq!(thing.summary.records_waiting, 1, "round {round}");
+        assert_eq!(thing.changes_total, 0, "round {round}");
+        engine.apply_recompute(None, &preview.plan, None).unwrap();
+        assert_eq!(
+            members(&engine, a),
+            ["shop:A".to_owned(), "shop:B".to_owned()].into(),
+            "round {round}"
+        );
+        assert_eq!(identity(&engine, "shop", "C"), None, "round {round}");
+    }
+    engine.verify().unwrap();
+}
+
 #[test]
 fn records_taken_back_have_no_part_in_it() {
     let engine = store();
