@@ -1,4 +1,4 @@
-Take back rows a source no longer holds
+Retract rows a source no longer holds
 
 Usage: spool retract [OPTIONS] --source <NAME> --type <NAME> [KEYS]...
 

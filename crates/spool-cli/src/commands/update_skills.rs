@@ -26,23 +26,23 @@ use crate::style::{self, paint};
 
 /// Update the skills and AGENTS.md that tell coding agents how to use Spool
 ///
-/// Writes the files for coding agents that `spool init` writes, as this
-/// version of spool has them: a skill for each part of the work in
-/// .agents/skills/, which Codex and Cursor read, a link to each from
-/// .claude/skills/, which Claude Code reads, Spool's part of AGENTS.md, and a
-/// CLAUDE.md that imports AGENTS.md where there is none.
+/// Rewrites the coding-agent files `spool init` creates, as this version of
+/// spool ships them: a skill per task in .agents/skills/ (read by Codex and
+/// Cursor), a symlink to each from .claude/skills/ (read by Claude Code),
+/// Spool's section of AGENTS.md, and a CLAUDE.md that imports AGENTS.md if
+/// there isn't one.
 ///
-/// A file somebody edited since Spool wrote it is kept, and the command says
-/// so; --force replaces it. Spool's part of AGENTS.md is between its two
-/// marker lines, and the rest of the file is never changed. A skill of
-/// Spool's that this version no longer has is removed, unless it was edited.
+/// Files you've edited since Spool wrote them are kept, and the command
+/// lists them. --force replaces them too. Spool's section of AGENTS.md sits
+/// between two marker lines, and the rest of the file is never touched.
+/// Skills this version no longer ships are removed, unless you edited them.
 ///
-/// It does not update spool itself: the install script does.
+/// To update spool itself, rerun the install script.
 #[derive(Args)]
 pub struct UpdateSkillsArgs {
     /// The project directory [default: the current directory]
     dir: Option<PathBuf>,
-    /// Replace the files somebody edited as well
+    /// Replace edited files too
     #[arg(long)]
     force: bool,
     #[command(flatten)]

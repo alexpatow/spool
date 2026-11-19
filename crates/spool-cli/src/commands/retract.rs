@@ -13,20 +13,18 @@ use crate::Failure;
 use crate::output::{Output, OutputArgs};
 use crate::progress;
 
-/// Take back rows a source no longer holds
+/// Retract rows a source no longer holds
 ///
-/// Takes back rows a source no longer holds, on a running server. The rows
-/// are named by their keys: the values of the column the source's file names
-/// as its key.
+/// Retracts rows from a source, on a running server. Rows are named by their
+/// key, the column the source's file declares as `key`.
 ///
-/// Every version of each row stays in the store as evidence, and leaves its
-/// identity by a changeset recorded under the caller. The identity keeps its
-/// ID and its other members. No run examines the records after that, and they
-/// cannot be given an identity, until the source sends the row again: loading
-/// a row under the same key, changed or not, brings every version back.
+/// Every version of each row stays in the store, and leaves its identity in
+/// a changeset recorded under the caller. The identity keeps its ID and its
+/// other members. No run looks at the records again, and they can't be
+/// placed, until the source sends the row again: loading the same key,
+/// changed or not, restores every version.
 ///
-/// A key the source has no row under changes nothing, so the same keys can be
-/// sent twice.
+/// Keys the source doesn't hold change nothing, so retracting is idempotent.
 #[derive(Args)]
 #[command(
     after_help = "Examples:\n  spool retract --source crm --type company c-6 --reason \"deleted in the CRM\"\n  spool retract --source crm --type company --keys gone.txt"

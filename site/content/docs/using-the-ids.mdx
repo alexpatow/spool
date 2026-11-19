@@ -1,19 +1,19 @@
 ---
 title: Using the IDs
-description: How another system looks up the identity of a row, keeps a copy that follows merges and splits, and what to store.
+description: How another system looks up the identity of a row, keeps a copy that follows merges and splits, and what to store. Shown with HR and payroll exports of the same staff.
 ---
 
-Spool's output is an ID for each real-world thing. This page is for the system that uses those IDs: a warehouse table, a CRM sync, a search index. It covers looking up one row, looking up many, keeping a copy that follows the log, and what an ID promises.
+Spool's output is an ID for each real-world thing. This page is for the system that consumes those IDs: a warehouse table, a CRM sync, a search index. It covers looking up one row, looking up many, keeping a copy in sync with the log, and what an ID guarantees.
+
+The example is a people project: an HR export and a payroll export of the same staff, which a warehouse wants to join on one person ID.
 
 ## Before you start
-
-The examples use the sample project with both of its files of rows loaded and matched, which is where [Getting started](/docs/getting-started) ends. If you have that project and its server is running, use it. If not, this makes it:
 
 {/* sample: new session */}
 
 ```sh
-spool init companies --example companies
-cd companies
+spool init people
+cd people
 ```
 
 {/* sample: background */}
@@ -22,103 +22,176 @@ cd companies
 spool dev
 ```
 
-Leave that running. In a second terminal, in the `companies` directory:
+Leave that running. In a second terminal, in `people`, add the two sources, a transform, the entity type and its rules:
+
+```yaml title="sources/hr.yaml"
+key: employee_id
+columns: [employee_id, name, email, born]
+```
+
+```yaml title="sources/payroll.yaml"
+key: payee_no
+columns: [payee_no, full_name, email, born]
+```
+
+```sql title="transforms/name_words.sql"
+-- "NATARAJAN, Priya" and "Priya Natarajan" both become "natarajan priya".
+lambda name: array_to_string(list_sort(string_split(trim(regexp_replace(lower(name), '[^a-z]+', ' ', 'g')), ' ')), ' ')
+```
+
+```yaml title="entities/person/entity.yaml"
+label: name
+features: [name, name_words, email, born]
+
+mapping:
+  hr:
+    name: name
+    name_words: { from: name, transform: name_words }
+    email: { from: email, transform: lower }
+    born: born
+  payroll:
+    name: full_name
+    name_words: { from: full_name, transform: name_words }
+    email: { from: email, transform: lower }
+    born: born
+```
+
+```sql title="entities/person/rules/block/same_email.sql"
+l.email = r.email
+```
+
+```sql title="entities/person/rules/block/same_born.sql"
+l.born = r.born
+```
+
+```sql title="entities/person/rules/match/same_email.sql"
+l.email = r.email
+```
+
+```sql title="entities/person/rules/match/same_name_and_birth.sql"
+l.name_words = r.name_words AND l.born = r.born
+```
+
+```sql title="entities/person/rules/no_match/different_birth.sql"
+l.born <> r.born
+```
+
+Then load both exports and match after each:
+
+```csv title="hr.csv"
+employee_id,name,email,born
+E-101,Priya Natarajan,priya.natarajan@larkfield.example,1988-04-12
+E-102,Tom Okafor,tom.okafor@larkfield.example,1979-09-30
+E-103,Maren Holt,maren.holt@larkfield.example,1991-01-05
+E-104,Sam Kowalski,sam.kowalski@larkfield.example,1985-06-21
+```
+
+```csv title="payroll.csv"
+payee_no,full_name,email,born
+P-9001,"NATARAJAN, Priya",Priya.Natarajan@larkfield.example,1988-04-12
+P-9002,Thomas Okafor,t.okafor@gmail.com,1979-09-30
+P-9003,Maren Holt,maren.holt@larkfield.example,1991-01-05
+P-9004,Jo Lindqvist,jo.lindqvist@larkfield.example,1993-11-02
+```
 
 ```sh
-spool load samples/crm-1.csv
+spool load hr.csv
 spool match
-spool load samples/crm-2.csv
+spool load payroll.csv
 spool match
 ```
 
+Priya and Maren matched across the two exports, Priya by email despite the different case. Thomas Okafor in payroll has a personal email and a longer first name, so the rules left him apart from Tom Okafor in HR. That's corrected below.
+
 ## What to store
 
-Store the identity ID beside your own row, and keep the row's source and key. The identity ID is the join key across systems. The source and key are how you ask again.
+Store the identity ID next to your own row, and keep the row's source and key. The identity ID is the join key across systems, and the source and key are how you ask again.
 
-- An identity ID is a UUID that is minted once, when the identity is created. It does not depend on which records the identity holds, and it does not change when records join or leave.
-- A record's ID is derived from its source, its key and its content, so the same row has the same record ID in every store. A changed row is a new record with a new ID under the same key.
+- An identity ID is a UUID minted once, when the identity is created. It doesn't depend on which records the identity holds, and it doesn't change when records join or leave.
+- A record ID is derived from source, key and content, so the same row has the same record ID in every store. A changed row is a new record with a new ID under the same key.
 
 ## The identity of one row
 
 ```sh
-curl -s 'http://127.0.0.1:7765/v1/records?source=crm&key=c-7'
+curl -s 'http://127.0.0.1:7765/v1/records?source=payroll&key=P-9001'
 ```
 
 ```text title="Output"
-{"records":[{"id":"bdbab4b2-e260-2b34-b08f-3fae6a2018a9","entity_type":"company","source":"crm","key":"c-7","payload":{"country":"GB","id":"c-7","name":"Larkfeild Logistics"},"label":"Larkfeild Logistics","evidence":null,"loaded_at":"2026-11-18T21:49:05.335185Z","load_run":4,"identity":"01a1efc6-41cd-775d-8758-e733aa086f7d","supersedes":null,"superseded_by":null,"retracted":null}],"next":null}
+{"records":[{"id":"21fc79f2-e674-b80e-b7b9-08bb3c89c09b","entity_type":"person","source":"payroll","key":"P-9001","payload":{"born":"1988-04-12","email":"Priya.Natarajan@larkfield.example","full_name":"NATARAJAN, Priya","payee_no":"P-9001"},"label":"NATARAJAN, Priya","evidence":null,"loaded_at":"2026-11-19T14:30:58.225188Z","load_run":4,"identity":"01a1f437-c573-70fd-9e85-c2ff7a3612db","supersedes":null,"superseded_by":null,"retracted":null}],"next":null}
 ```
 
-`identity` is the answer. It is `null` for a record that no match has placed yet, or that waits in a review item. A key whose row changed has one record for each version, and each has an identity.
+`identity` is the answer. It's `null` for a record no match has placed yet, or one waiting in review. A key whose row changed has one record per version, each with an identity.
 
-From the command line:
+From the CLI:
 
 ```sh
-spool show records crm:c-7
+spool show records payroll:P-9001
 ```
 
 ```text title="Output"
-record    bdbab4b2-e260-2b34-b08f-3fae6a2018a9
-type      company
-source    crm
-key       c-7
-loaded    2026-11-18T21:49:05Z by run 4
-identity  01a1efc6-41cd-775d-8758-e733aa086f7d
+record    21fc79f2-e674-b80e-b7b9-08bb3c89c09b
+type      person
+source    payroll
+key       P-9001
+loaded    2026-11-19T14:30:58Z by run 4
+identity  01a1f437-c573-70fd-9e85-c2ff7a3612db
 
 payload
-  country  GB
-  id       c-7
-  name     Larkfeild Logistics
+  born       1988-04-12
+  email      Priya.Natarajan@larkfield.example
+  full_name  NATARAJAN, Priya
+  payee_no   P-9001
 ```
 
 ## Many rows in one call
 
-`POST /v1/records/identities` takes record IDs and answers where each is now:
+`POST /v1/records/identities` takes record IDs and returns where each one is now:
 
 ```sh
-A=$(spool show records crm:c-1 | awk '/^record/ {print $2}')
-B=$(spool show records crm:c-8 | awk '/^record/ {print $2}')
+A=$(spool show records hr:E-101 | awk '/^record/ {print $2}')
+B=$(spool show records payroll:P-9004 | awk '/^record/ {print $2}')
 curl -s -X POST http://127.0.0.1:7765/v1/records/identities -d '{"records": ["'$A'", "'$B'"]}'
 ```
 
 ```text title="Output"
-{"identities":["01a1efc6-41cd-775d-8758-e7300637659a","01a1efc6-42c0-7776-b736-83fde0cb4498"]}
+{"identities":["01a1f437-c573-70fd-9e85-c2ff7a3612db","01a1f437-c603-7636-a083-2b9031d76d77"]}
 ```
 
-It takes record IDs and not `source:key`, so a caller that holds only keys lists the records of a source first: `GET /v1/records?source=crm&limit=1000`, then `after=<next>` for the following page.
+It takes record IDs, not `source:key`, so a caller holding only keys lists a source's records first: `GET /v1/records?source=hr&limit=1000`, then `after=<next>` for the next page.
 
 ## An ID that was merged away
 
-When two identities are merged, one ID survives and the other stops being current. It is never deleted or given to something else. Merge Kestrel Analytics into Larkfield Logistics, wrongly, to see it:
+When two identities merge, one ID survives and the other stops being current. It's never deleted or reused. Payroll confirms that Thomas Okafor is Tom, so merge them:
 
 ```sh
-KESTREL=$(spool show records crm:c-8 | awk '/^identity/ {print $2}')
-LARKFIELD=$(spool show records crm:c-4 | awk '/^identity/ {print $2}')
-curl -s -X POST http://127.0.0.1:7765/v1/changesets -d '{"reason": "an example of a merge", "ops": [{"op": "merge", "from": "'$KESTREL'", "into": "'$LARKFIELD'"}]}'
+THOMAS=$(spool show records payroll:P-9002 | awk '/^identity/ {print $2}')
+TOM=$(spool show records hr:E-102 | awk '/^identity/ {print $2}')
+curl -s -X POST http://127.0.0.1:7765/v1/changesets -d '{"reason": "payroll confirmed Thomas Okafor is Tom Okafor", "ops": [{"op": "merge", "from": "'$THOMAS'", "into": "'$TOM'"}]}'
 ```
 
 ```sh
-curl -s http://127.0.0.1:7765/v1/identities/$KESTREL
+curl -s http://127.0.0.1:7765/v1/identities/$THOMAS
 ```
 
 ```text title="Output"
-{"id":"01a1efc6-42c0-7776-b736-83fde0cb4498","current":"01a1efc6-41cd-775d-8758-e733aa086f7d","entity_type":"company","label":"Larkfield Logistics","created":2,"members":[{"record":"4b1bc703-9041-0989-d0eb-4df5e9eae0f2","source":"crm","key":"c-4","since":1},{"record":"7da2b0d2-3601-e533-efa5-e1068cce5344","source":"crm","key":"c-8","since":3},{"record":"bdbab4b2-e260-2b34-b08f-3fae6a2018a9","source":"crm","key":"c-7","since":2}]}
+{"id":"01a1f437-c603-7636-a083-2b91da6dfea2","current":"01a1f437-c573-70fd-9e85-c2fc585b7909","entity_type":"person","label":"Tom Okafor","created":2,"members":[{"record":"242970d8-a109-907c-531b-b381b32e7a81","source":"hr","key":"E-102","since":1},{"record":"92c93fc1-6768-1aa9-b5ba-d9ca1049e8cb","source":"payroll","key":"P-9002","since":3}]}
 ```
 
-The old ID still answers. `id` is the ID that was asked for, `current` is the identity that took its place, and the records are that identity's. A system that stored the old ID stores `current` in its place. Until it does, lookups by the old ID keep working.
+The old ID still resolves. `id` is the ID you asked for, `current` is the identity that absorbed it, and the records are that identity's. A system that stored the old ID should replace it with `current`. Until it does, lookups by the old ID keep working.
 
 ## Follow the log
 
-Every change to an identity is a changeset in an append-only log, and each has a position. A system that keeps its own copy reads the log from the position it last saw:
+Every identity change is a changeset in an append-only log, and each has a position. A system that keeps its own copy reads the log from the last position it saw:
 
 ```sh
 curl -s 'http://127.0.0.1:7765/v1/changesets?after=2'
 ```
 
 ```text title="Output"
-{"changesets":[{"seq":3,"changeset":{"id":"01a1f0a8-29d3-73c2-bdf9-ba39307ffdce","base":2,"actor":"user:01a1f0a8-28ad-7645-929c-9605cdf00bc4","reason":"an example of a merge","run":null,"ops":[{"op":"merge","from":"01a1efc6-42c0-7776-b736-83fde0cb4498","into":"01a1efc6-41cd-775d-8758-e733aa086f7d"}]},"content_hash":"bf700d416238efff21597374c5ec44eb018849908e67ce7a5404486fbd82bb93","started_by":null}],"head":3}
+{"changesets":[{"seq":3,"changeset":{"id":"01a1f437-c6e2-72bc-821f-98340fdac971","base":2,"actor":"user:01a1f437-c50c-7051-bfaa-eb8eba05a063","reason":"payroll confirmed Thomas Okafor is Tom Okafor","run":null,"ops":[{"op":"merge","from":"01a1f437-c603-7636-a083-2b91da6dfea2","into":"01a1f437-c573-70fd-9e85-c2fc585b7909"}]},"content_hash":"b2875533e0ca9801faae8e7b2c327150801584725a9ed50b02cc6ef1b2502a9a","started_by":null}],"head":3}
 ```
 
-`head` is the last position there is. Each operation says what changed:
+`head` is the latest position. Each operation says what changed:
 
 | Operation | What a copy does |
 | --- | --- |
@@ -128,12 +201,12 @@ curl -s 'http://127.0.0.1:7765/v1/changesets?after=2'
 | `reinstate` | An undo of a merge. The `assign` operations beside it say which records go back |
 | `constrain`, `unconstrain` | Nothing. These bind later changes, not the current state |
 
-The loop is: remember a position, ask for `after=<position>`, apply the operations in order, remember the last `seq` you applied, and ask again while it is below `head`. A page holds 100 changesets unless `limit` says otherwise, up to 1,000.
+The loop: remember a position, request `after=<position>`, apply the operations in order, remember the last `seq` you applied, and repeat while it's below `head`. A page holds 100 changesets by default, and up to 1,000 with `limit`.
 
-The undo of the merge above arrives the same way, as one more changeset:
+An undo arrives the same way, as one more changeset:
 
 ```sh
-curl -s -X POST http://127.0.0.1:7765/v1/changesets/3/undo -d '{"reason": "that was only an example"}'
+curl -s -X POST http://127.0.0.1:7765/v1/changesets/3/undo -d '{"reason": "HR has not confirmed it yet"}'
 ```
 
 ```sh
@@ -141,26 +214,23 @@ curl -s 'http://127.0.0.1:7765/v1/changesets?after=3'
 ```
 
 ```text title="Output"
-{"changesets":[{"seq":4,"changeset":{"id":"01a1f0a8-2a06-7027-9fd8-1ef410fb54ac","base":3,"actor":"user:01a1f0a8-28ad-7645-929c-9605cdf00bc4","reason":"that was only an example","run":null,"ops":[{"op":"reinstate","identity":"01a1efc6-42c0-7776-b736-83fde0cb4498"},{"op":"assign","record":"7da2b0d2-3601-e533-efa5-e1068cce5344","from":"01a1efc6-41cd-775d-8758-e733aa086f7d","to":"01a1efc6-42c0-7776-b736-83fde0cb4498"}]},"content_hash":"529193eda6b7eff9ecd1e8deb6525006efa07fd3bb6e221490e6cb9179b9f790","started_by":null}],"head":4}
+{"changesets":[{"seq":4,"changeset":{"id":"01a1f437-c734-77ca-a29e-e4012c727bd6","base":3,"actor":"user:01a1f437-c50c-7051-bfaa-eb8eba05a063","reason":"HR has not confirmed it yet","run":null,"ops":[{"op":"reinstate","identity":"01a1f437-c603-7636-a083-2b91da6dfea2"},{"op":"assign","record":"92c93fc1-6768-1aa9-b5ba-d9ca1049e8cb","from":"01a1f437-c573-70fd-9e85-c2fc585b7909","to":"01a1f437-c603-7636-a083-2b91da6dfea2"}]},"content_hash":"53526fb943ce448956e9e4834c3d12fdc05cf078112d997e68e1c87dd061a18d","started_by":null}],"head":4}
 ```
 
-## What changes an ID, and what does not
+## What changes an ID, and what doesn't
 
 | Event | What happens to IDs |
 | --- | --- |
 | More rows arrive and match | Existing identities keep their IDs. New things get new IDs |
-| A row changes | The new version joins or does not, by the rules. The identity keeps its ID |
-| A rule changes | Nothing moves. A rematch suggests merges and does not make them |
-| A merge | The `into` ID survives. The `from` ID answers with the other as `current` |
-| A split | The identity that is split keeps its ID. The records that leave get a new one |
-| An undo | A new changeset puts things back, with the IDs they had |
-| A row is taken back | The record leaves its identity. The identity keeps its ID, even with no records left |
+| A row changes | The new version joins or not, by the rules. The identity keeps its ID |
+| A rule changes | Nothing moves. A rematch suggests merges without making them |
+| A merge | The `into` ID survives. The `from` ID returns the other as `current` |
+| A split | The identity that's split keeps its ID. The records that leave get a new one |
+| An undo | A new changeset restores the previous state, with the IDs it had |
+| A row is retracted | The record leaves its identity. The identity keeps its ID, even with no records left |
 
-What this costs: IDs depend on the order records arrived in and on what the rules were at the time, so two stores loaded in different orders can disagree about which records share an identity. [Matching](/docs/concepts/matching#the-cost-of-ids-that-stay) has the detail.
+IDs reflect arrival order and the rules at the time, so two stores loaded in different orders can group records differently. [Matching](/docs/concepts/matching#the-cost-of-ids-that-stay) explains why.
 
-## What is not there
+## Building a copy
 
-- No webhook and no stream. A consumer polls `GET /v1/changesets`.
-- No export of all identities as a file. A copy is built by listing records and then following the log.
-- No lookup of many rows by `source:key` in one call.
-- No client library. The calls above are the interface. `spool schema` prints the JSON Schema of the API's answers.
+A consumer polls `GET /v1/changesets`. To build a full copy, list records and then follow the log. `POST /v1/records/identities` takes record IDs, and `spool schema` prints the JSON Schema of every response.

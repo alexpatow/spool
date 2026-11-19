@@ -20,59 +20,50 @@ use crate::Failure;
 
 /// Run the server from a manifest and a store
 ///
-/// Runs the server. It is the only process that opens the store.
+/// Runs the production server. It's the only process that opens the store.
 ///
-/// An empty store is set up from the manifest. A store that was applied with
-/// another manifest is refused: run `spool apply` on it first.
+/// An empty store is set up from the manifest. A store applied with a
+/// different manifest is refused: run `spool apply` on it first.
 ///
-/// The server answers a browser at its address with the studio, which shows
-/// what the store holds and takes the changes of whoever is signed in. People
-/// sign in with a username and a password. Their accounts are kept in a file
-/// beside the store, named after it: `spool.auth.sqlite` for `spool.duckdb`.
-/// While no admin can sign in, the server prints a link when it starts;
-/// whoever opens it makes the first account and is the admin, who adds
-/// everyone else.
+/// A browser at the server's address gets the studio, Spool's web UI. People
+/// sign in with a username and password, and their accounts live in a file
+/// beside the store: `spool.auth.sqlite` for `spool.duckdb`. Until an admin
+/// exists, the server prints a link on startup. Whoever opens it creates the
+/// first account and becomes the admin who adds everyone else.
 ///
-/// Passwords are for getting started. A server that people rely on should
-/// sign them in with Google: with SPOOL_GOOGLE_CLIENT_ID and
-/// SPOOL_GOOGLE_CLIENT_SECRET set to an OAuth client made in Google's console,
-/// the sign-in page offers it, and an admin adds a person by the email of
-/// their Google account, which is a Gmail address or one of an organisation's
-/// Google Workspace. The server prints the redirect URI to give that client
-/// when it starts.
+/// For a server people rely on, use Google sign-in. Set
+/// SPOOL_GOOGLE_CLIENT_ID and SPOOL_GOOGLE_CLIENT_SECRET to an OAuth client
+/// from Google's console, and the sign-in page offers it. An admin then adds
+/// people by the email of their Google account, Gmail or Google Workspace.
+/// The server prints the redirect URI for that client on startup.
 ///
-/// A caller that is not a person presents a token, which an admin makes on
-/// the studio's Tokens page and `spool token add` makes on this machine. What
-/// it changes is recorded under the token's name, as `agent:<name>`.
+/// Programs authenticate with a token, which an admin creates on the studio's
+/// Tokens page or with `spool token add` on this machine. Changes are
+/// recorded under the token's name, as `agent:<name>`.
 ///
-/// An assistant that speaks the Model Context Protocol, such as Claude or
-/// ChatGPT, is pointed at `/mcp`, where the server offers it tools to load
-/// rows and documents, to match them, to look things up and to change
-/// identities. It presents a token as any other caller does, and what it
-/// changes is recorded under that token's name. Claude and ChatGPT on the web
-/// cannot be given a token: they sign in with OAuth, a person who has an
-/// account approves them in the studio, and what they change is recorded
-/// under that person. That needs the HTTPS address people reach the server
-/// by, in `--public-url`, unless the server listens on this machine only.
+/// Agents that speak the Model Context Protocol, such as Claude or ChatGPT,
+/// connect at `/mcp`. They get tools to load rows and documents, match,
+/// look things up and change identities, and they authenticate with a token
+/// like any other program. Claude and ChatGPT on the web can't be given a
+/// token. They sign in with OAuth: someone with an account approves them in
+/// the studio, and what they change is recorded under that person. That needs
+/// the HTTPS address people reach the server by, in `--public-url`, unless
+/// the server listens on this machine only.
 ///
-/// Strategies and extractors that are `.py` files run with `uv`, and `.ts`
-/// files with `bun`. SPOOL_UV and SPOOL_BUN name the commands if they are not
-/// on the search path. The server runs such a file only while it is the one
-/// the manifest was compiled from. It is given the variables that the
-/// project's .env sets, except those that are set already where the server
-/// runs.
+/// Strategies and extractors run with `uv` for `.py` files and `bun` for
+/// `.ts` files. Set SPOOL_UV and SPOOL_BUN if they aren't on your PATH. The
+/// server only runs a file that matches the one the manifest was compiled
+/// from. It passes the variables the project's .env sets, except those
+/// already set in the server's environment.
 ///
-/// The server stops on Ctrl-C or SIGTERM, and prints `stopping`. It takes no
-/// new request. Whoever waits on a run with `wait_ms` is answered at once,
-/// with the run as far as it has got. Other requests are answered if that
-/// takes no more than 5 seconds; one that a client has not sent in full by
-/// then gets no answer. A client that was refused while still sending has 1
-/// second more to read why. So the server is done with its clients within 6
-/// seconds.
+/// On Ctrl-C or SIGTERM the server prints `stopping` and takes no new
+/// requests. Callers waiting on a run with `wait_ms` get the run as it
+/// stands. Other requests get up to 5 seconds to finish, plus 1 second for a
+/// refused client to read why, so clients are done within 6 seconds.
 ///
-/// It then finishes the runs the engine was given, however long they take,
-/// and prints `stopped`. A run is not cut off half way. If the process is
-/// killed first, the run is recorded as failed when the store is next opened.
+/// It then finishes every run it was given, however long they take, and
+/// prints `stopped`. Runs are never cut off halfway. If the process is
+/// killed first, the run is marked failed the next time the store opens.
 #[derive(Args)]
 pub struct ServeArgs {
     /// The manifest to run on
@@ -118,31 +109,26 @@ pub struct ServeArgs {
 
 /// Run a server on localhost that applies file changes as they are saved
 ///
-/// Runs the server on localhost from a project directory, against a
-/// development store under .spool/. A change to the project's files is
-/// applied as it is saved; a change that does not compile is reported and the
-/// last version that did keeps running.
+/// Runs a development server straight from a project directory, with its
+/// store under .spool/. Project files are applied as you save them. A change
+/// that doesn't compile is reported, and the last good version keeps running.
 ///
-/// Open the address it listens on in a browser for the studio, which shows
-/// what the store holds and takes changes. Nobody signs in, and a caller needs
-/// no token: every change is recorded under an account called `dev`, an
-/// admin. So it listens on this machine only, and answers only what is sent
-/// to `localhost` or to a loopback address; `spool serve` runs a server that
-/// others reach. A caller that does present a token writes as that token, as
-/// it would there.
+/// Open its address in a browser for the studio. There's no sign-in and no
+/// token: every change is recorded under an admin account called `dev`. That's
+/// why it only listens on, and answers, localhost. Use `spool serve` for a
+/// server other people reach. A caller that does send a token writes as that
+/// token.
 ///
-/// An assistant on this machine that speaks the Model Context Protocol, such
-/// as Claude Code, is pointed at `/mcp`, where the server offers it tools to
-/// load rows and documents, to match them, to look things up and to change
-/// identities.
+/// Agents on this machine that speak the Model Context Protocol, such as
+/// Claude Code, connect at `/mcp`, with tools to load rows and documents,
+/// match, look things up and change identities.
 ///
-/// Strategies and extractors that are `.py` files run with `uv`, and `.ts`
-/// files with `bun`. SPOOL_UV and SPOOL_BUN name the commands if they are not
-/// on the search path. They are given the variables that the project's .env
-/// sets, except those that are set already where the server runs, and the
-/// file is read again each time one starts.
+/// Strategies and extractors run with `uv` for `.py` files and `bun` for
+/// `.ts` files. Set SPOOL_UV and SPOOL_BUN if they aren't on your PATH. They
+/// get the variables the project's .env sets, except those already set in
+/// the server's environment, and .env is reread each time one starts.
 ///
-/// Ctrl-C stops it, the way `spool serve --help` says a server stops.
+/// Ctrl-C stops it, as described in `spool serve --help`.
 #[derive(Args)]
 pub struct DevArgs {
     /// The project directory [default: the current directory]

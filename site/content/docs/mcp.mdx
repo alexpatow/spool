@@ -1,20 +1,20 @@
 ---
 title: MCP
-description: The tools an agent has at /mcp, a call of each, how to connect Claude Code, Codex, and Claude and ChatGPT on the web, and what an agent cannot do.
+description: The tools agents get at /mcp, an example call for each, how to connect Claude Code, Codex, Claude Desktop, and Claude and ChatGPT on the web, and what's reserved for people.
 ---
 
-The server answers the [Model Context Protocol](https://modelcontextprotocol.io) at `/mcp`, in the same process as the HTTP API and the studio. An agent that is pointed at it can load rows and documents, run the project's extractors, match what was loaded, look things up and change identities.
+The server speaks the [Model Context Protocol](https://modelcontextprotocol.io) at `/mcp`, in the same process as the HTTP API and the studio. Agents connected to it can load rows and documents, run extractors, match, look things up and change identities.
 
-- **A tool is a call of the HTTP API.** It answers what the API answers and is refused what the API refuses.
-- **The caller is whoever the server says it is.** With `spool dev` that is the `dev` account. With `spool serve` it is the token the agent presents, and what it changes is recorded as `agent:<name>`, or the person who approved an assistant that signed in with OAuth. No tool has an argument that names the author of a change.
-- **A change made under the caller's name says why.** The tools that change identities or take rows back require a `reason`, which the log keeps beside the change. A load, an extraction and a match take none: the run records who started it.
-- **Nothing is kept between requests.** The transport is Streamable HTTP without sessions, and every answer is one JSON response.
+- **Each tool wraps an HTTP API call.** It returns what the API returns and fails where the API fails.
+- **The server decides who the caller is.** Under `spool dev`, that's the `dev` account. Under `spool serve`, it's the agent's token, recorded as `agent:<name>`, or the person who approved an agent that signed in with OAuth. No tool lets the caller name a different author.
+- **Changes carry a reason.** Tools that change identities or retract rows require a `reason`, which the log stores with the change. Loads, extractions and matches don't: the run records who started it.
+- **It's stateless.** The transport is Streamable HTTP without sessions, and every response is one JSON message.
 
-The tool calls on this page are what an agent sends. Each block is the `params` of a `tools/call` request, and each was run against the server as shown.
+Each block below is the `params` of a `tools/call` request, exactly as an agent sends it.
 
 ## Connect a client
 
-Against `spool dev`, which asks for no token:
+Against `spool dev`, which needs no token:
 
 {/* sample: skip the two clients are not installed where the samples run */}
 
@@ -23,7 +23,7 @@ claude mcp add --transport http spool http://127.0.0.1:7765/mcp
 codex mcp add spool --url http://127.0.0.1:7765/mcp
 ```
 
-Against `spool serve`, make a token for each agent, named after it, so that the log says which one made a change. On the server's machine, `spool token add claude --store spool.duckdb` prints the token once. Then, with the token in `SPOOL_TOKEN`:
+Against `spool serve`, create a token per agent, named after it, so the log shows which agent made each change. On the server's machine, `spool token add claude --store spool.duckdb` prints the token once. Then, with it in `SPOOL_TOKEN`:
 
 {/* sample: skip the two clients are not installed where the samples run */}
 
@@ -32,7 +32,7 @@ claude mcp add --transport http spool https://spool.example.com/mcp --header "Au
 codex mcp add spool --url https://spool.example.com/mcp --bearer-token-env-var SPOOL_TOKEN
 ```
 
-Claude Desktop reaches it through the `mcp-remote` package, a local server that passes each call on with a header. In `claude_desktop_config.json`:
+Claude Desktop connects through `mcp-remote`, a local proxy that adds the header. In `claude_desktop_config.json`:
 
 ```json title="claude_desktop_config.json"
 {
@@ -46,30 +46,30 @@ Claude Desktop reaches it through the `mcp-remote` package, a local server that 
 }
 ```
 
-The MCP SDKs, the MCP connector of the Claude API and the `mcp` tool of the OpenAI Responses API take the address and the token too.
+The MCP SDKs, the Claude API's MCP connector and the OpenAI Responses API's `mcp` tool also take the address and token.
 
 ### Claude and ChatGPT on the web
 
-These cannot be given a token. They sign in with OAuth: the server is the OAuth server of its own `/mcp`, a person with an account approves the assistant in the studio, and what the assistant changes is recorded under that person, as `user:<id>`.
+These can't be given a token. They sign in with OAuth: the server is the authorization server for its own `/mcp`, someone with an account approves the agent in the studio, and changes are recorded as `user:<id>`.
 
-They call the server from Anthropic's and OpenAI's networks, so it needs a public HTTPS address on port 443, given with `--public-url` (on [Render](/docs/deploying#on-render) the address Render gives it is taken). A server that listens on `0.0.0.0` without one, or whose address is plain HTTP, has no OAuth and says `oauth off` when it starts.
+They call from Anthropic's and OpenAI's networks, so the server needs public HTTPS on port 443, given with `--public-url`. On [Render](/docs/deploying#on-render), the address Render assigns is used. A server listening on `0.0.0.0` without one, or over plain HTTP, has no OAuth and prints `oauth off` at startup.
 
-- **Claude**: Customize, Connectors, Add, Add custom connector. Enter `https://spool.example.com/mcp`. Under OAuth client choose **Register automatically**: Spool registers clients itself (dynamic client registration) and does not yet take Claude's published identity, the default. On a Team or Enterprise plan an Owner adds it under Organization settings, Connectors, and each member connects.
-- **ChatGPT**: Plugins, the plus button, Add custom MCP server. Enter the same address, choose OAuth, and create it as a plugin. ChatGPT registers itself.
+- **Claude.** Customize, Connectors, Add custom connector. Enter `https://spool.example.com/mcp`. Under OAuth client, choose **Register automatically**. Spool registers clients itself and doesn't take Claude's published identity, which is the default. On a Team or Enterprise plan, an Owner adds it under Organization settings, Connectors.
+- **ChatGPT.** Plugins, the plus button, Add custom MCP server. Enter the same address, choose OAuth, and create it as a plugin.
 
-Either then opens the server's studio. Sign in if need be, check the host the approval goes back to (`claude.ai` or `chatgpt.com`), and approve. The approval holds as long as the sign-in it was given in would: turning the account off, replacing the password it was given with, or changing the account's Google email ends it, for good: an account turned on again approves its assistants anew. An admin sees every approval under Assistants on the Tokens page, and revokes one there.
+The studio opens. Sign in, check the host the approval returns to (`claude.ai` or `chatgpt.com`), and approve. The approval lasts as long as that sign-in, without the 12-hour cap. Turning the account off, replacing the password, or changing the account's Google email ends it, and turning the account back on doesn't bring it back. An admin sees every approval under Assistants on the Tokens page and can revoke one.
 
 | What | How long |
 | --- | --- |
-| The code the browser takes back | 2 minutes, used once |
-| An access token | 1 hour, at `/mcp` only, not `/v1` |
-| A refresh token | 30 days, used once: each refresh gives the next. One used twice ends the approval |
+| The code the browser brings back | 2 minutes, once |
+| An access token | 1 hour, at `/mcp` only |
+| A refresh token | 30 days, once. Each refresh gives the next, and using one twice ends the approval |
 
-There is one scope, `spool`, which is everything a token may do: read and change data, not manage people or tokens.
+One scope, `spool`: read and change data, not manage people or tokens. An organisation whose Owner sees **Request headers** in Claude can instead send `Authorization: Bearer <token>`.
 
 ## Before you start
 
-The examples use the sample project with both of its files of rows loaded and matched, which is where [Getting started](/docs/getting-started) ends. If you have that project and its server is running, use it. If not, this makes it:
+The examples pick up where [Getting started](/docs/getting-started) leaves off, with both CSV files loaded and matched. If that server's still running, use it. Otherwise:
 
 {/* sample: new session */}
 
@@ -84,7 +84,7 @@ cd companies
 spool dev
 ```
 
-Leave that running. In a second terminal, in the `companies` directory:
+Leave it running. In a second terminal, in `companies`:
 
 ```sh
 spool load samples/crm-1.csv
@@ -111,18 +111,18 @@ Each is marked read-only for the client.
 
 | Tool | What it answers | The same as |
 | --- | --- | --- |
-| `describe_store` | The entity types and their features, the sources the project declares with their columns, the extractors, counts, and the head of the log | `GET /v1/info` |
+| `describe_store` | Entity types and features, sources and columns, extractors, counts, and the log head | `GET /v1/info` |
 | `search_identities` | Identities by words in their records, by type or by ID | `GET /v1/identities` |
 | `get_identity` | One identity and its records | `GET /v1/identities/{id}` |
 | `get_identity_history` | Every change that touched an identity | `GET /v1/identities/{id}/history` |
 | `search_records` | Records by words, source, key or identity, with their values | `GET /v1/records` |
 | `get_record` | One record | `GET /v1/records/{id}` |
-| `explain_pair` | Why two records share an identity, or why they do not. A record is named by its ID, as `source:key`, or, for one an extractor found, as the lists name it | `GET /v1/explain` |
-| `list_review_items` | The cases left for someone to decide, the open ones by default | `GET /v1/review` |
-| `get_review_case` | One review item with what is needed to decide it | `GET /v1/review/{id}/case` |
-| `list_constraints` | The `must_link` and `cannot_link` decisions in force | `GET /v1/constraints` |
+| `explain_pair` | Why two records share an identity or don't. Name records by ID, `source:key`, or a mention's name as lists show it | `GET /v1/explain` |
+| `list_review_items` | Cases waiting for a decision, open ones by default | `GET /v1/review` |
+| `get_review_case` | One review item with everything needed to decide it | `GET /v1/review/{id}/case` |
+| `list_constraints` | The `must_link` and `cannot_link` constraints in force | `GET /v1/constraints` |
 | `list_changesets` | The log after a position | `GET /v1/changesets` |
-| `get_run` | One run: whether it is running, and what it reported | `GET /v1/runs/{run}` |
+| `get_run` | One run: its status and report | `GET /v1/runs/{run}` |
 | `mint_identity_ids` | New identity IDs for a `create_identity` operation | `POST /v1/ids` |
 
 An agent usually starts by asking what the store holds:
@@ -135,7 +135,7 @@ An agent usually starts by asking what the store holds:
 {"api":"v1","store":{"engine_version":"0.1.0","format_version":"12","manifest_hash":"b6dff33d6c0977f4afb2497792bcaa9785e8b865994fa5c94eb9761f57a6e0a7","head":2,"entity_types":[{"name":"company","declaration_version":1,"features":[{"name":"record_id","data_type":"UUID"},{"name":"name","data_type":"VARCHAR"},{"name":"name_key","data_type":"VARCHAR"},{"name":"country","data_type":"VARCHAR"}],"strategies":[],"records":10,"unassigned":1,"retracted":0,"sources":[{"source":"crm","records":10,"unassigned":1,"retracted":0,"last_loaded_at":"2026-11-19T01:23:03.831510Z"}],"identities":5,"open_review_items":1,"open_draft":null}],"sources":[{"name":"crm","key":"id","evidence":null,"columns":["id","name","country"],"entity_types":["company"]},{"name":"notes","key":null,"evidence":null,"columns":["name"],"entity_types":["company"]}],"extractors":[{"name":"companies","runtime":"python","file":"extractors/companies.py","hash":"eacb9397cacc366a1cd065d8f328039484a5e5d4fbf49b8ca1f2a3cbd34f8c92"}],"documents":0},"task_timeout_ms":600000}
 ```
 
-Identities are found by words in their records:
+Search identities by words in their records:
 
 ```json title="MCP tool call"
 { "name": "search_identities", "arguments": { "q": "kestrel" } }
@@ -145,7 +145,7 @@ Identities are found by words in their records:
 {"identities":[{"id":"01a1efc6-42c0-7776-b736-83fde0cb4498","entity_type":"company","label":"Kestrel Analytics","created":2,"members":1,"names":1,"linked_pairs":0,"unlinked_pairs":0,"sources":[{"source":"crm","records":1}]}],"next":null}
 ```
 
-Records are found by source and key, which is how an agent gets from the key a person names to the record ID the other tools take:
+Search records by source and key, which is how an agent turns a key someone mentions into the record ID other tools take:
 
 ```json title="MCP tool call"
 { "name": "search_records", "arguments": { "source": "crm", "key": "c-5" } }
@@ -155,7 +155,7 @@ Records are found by source and key, which is how an agent gets from the key a p
 {"records":[{"id":"38f040c9-82b9-2f94-813b-697309e52dab","entity_type":"company","source":"crm","key":"c-5","payload":{"country":"GB","id":"c-5","name":"Halden Group"},"label":"Halden Group","evidence":null,"loaded_at":"2026-11-18T21:48:44.236810Z","load_run":1,"identity":"01a1efc6-41cd-775d-8758-e7329447fd9a","supersedes":null,"superseded_by":null,"retracted":null}],"next":null}
 ```
 
-The calls below use IDs from this project. To run them yourself, these put the IDs in shell variables, and the tool calls show the variable where the ID goes:
+The calls below use IDs from this project. To run them yourself, put the IDs in shell variables. The tool calls show the variable in place of each ID:
 
 ```sh
 ACORN=$(spool show records crm:c-1 | awk '/^identity/ {print $2}')
@@ -176,13 +176,13 @@ US=$(spool show records crm:c-6 | awk '/^record/ {print $2}')
 { "name": "get_record", "arguments": { "record": "$GB" } }
 ```
 
-`explain_pair` answers what `spool explain` prints, as JSON:
+`explain_pair` returns what `spool explain` prints, as JSON:
 
 ```json title="MCP tool call"
 { "name": "explain_pair", "arguments": { "a": "$GB", "b": "$US" } }
 ```
 
-What is waiting for a decision, and one case with what is needed to decide it:
+What's waiting for a decision, and one case in full:
 
 ```json title="MCP tool call"
 { "name": "list_review_items", "arguments": {} }
@@ -196,7 +196,7 @@ What is waiting for a decision, and one case with what is needed to decide it:
 { "name": "get_review_case", "arguments": { "item": 1 } }
 ```
 
-The case holds the item, its records with their values, the identities they matched with their members, and the judgements between them. It is one call so that an agent need not gather them one at a time.
+The case bundles the item, its records and values, the identities they matched with their members, and the judgements between them, so the agent gets everything in one call.
 
 ```json title="MCP tool call"
 { "name": "list_changesets", "arguments": { "after": 1, "limit": 1 } }
@@ -212,18 +212,18 @@ The case holds the item, its records with their values, the identities they matc
 
 ## Tools that change something
 
-Each is marked as a change, so a client can ask the person first.
+Each is marked as a change, so the client can ask the user first.
 
 | Tool | What it does | The same as |
 | --- | --- | --- |
-| `commit_changeset` | Merges identities, moves or places records, makes identities, adds and removes constraints | `POST /v1/changesets` |
-| `split_identity` | Divides one identity in two and keeps the sides apart | `POST /v1/identities/{id}/split` |
-| `undo_changeset` | Takes back one committed changeset, or shows what would | `POST /v1/changesets/{seq}/undo` |
+| `commit_changeset` | Merges identities, moves or places records, creates identities, adds and removes constraints | `POST /v1/changesets` |
+| `split_identity` | Splits one identity in two and keeps the sides apart | `POST /v1/identities/{id}/split` |
+| `undo_changeset` | Reverses a committed changeset, or previews the reversal | `POST /v1/changesets/{seq}/undo` |
 | `dismiss_review_item` | Closes a review item without placing its records | `POST /v1/review/{id}/dismiss` |
 
-Five more load, extract, match and take rows back. They are [further down](#tools-that-load-extract-and-match).
+Five more load, extract, match and retract. They're [further down](#tools-that-load-extract-and-match).
 
-`commit_changeset` takes the operations of [the HTTP API](/docs/api#changesets). Here the agent records that the two Halden Groups are different companies, so that no later rule or reviewer merges them:
+`commit_changeset` takes [the HTTP API's operations](/docs/api#changesets). Here the agent records that the two Halden Groups are different companies, so no later rule or reviewer merges them:
 
 ```json title="MCP tool call"
 { "name": "commit_changeset", "arguments": {
@@ -239,14 +239,14 @@ Five more load, extract, match and take rows back. They are [further down](#tool
 { "name": "list_constraints", "arguments": { "record": "$GB" } }
 ```
 
-`split_identity` names the records that leave. They get a new identity, and the one that is split keeps its ID:
+`split_identity` names the records that leave. They get a new identity, and the original keeps its ID:
 
 ```json title="MCP tool call"
 { "name": "split_identity", "arguments": { "identity": "$ACORN", "records": ["$TOOL"],
   "reason": "Acorn Tool is a hardware shop in Leeds, not Acorn Tools" } }
 ```
 
-`undo_changeset` takes the position in the log. With `"commit": false` it answers the changeset that would undo it and commits nothing:
+`undo_changeset` takes a log position. With `"commit": false`, it returns the reversing changeset without committing:
 
 ```json title="MCP tool call"
 { "name": "undo_changeset", "arguments": { "seq": 4, "commit": false, "reason": "checking what an undo would do" } }
@@ -260,13 +260,13 @@ Five more load, extract, match and take rows back. They are [further down](#tool
 { "name": "undo_changeset", "arguments": { "seq": 4, "reason": "the shop is a branch of Acorn Tools after all" } }
 ```
 
-`dismiss_review_item` closes an item the agent cannot decide and says why:
+`dismiss_review_item` closes an item the agent can't decide, with a reason:
 
 ```json title="MCP tool call"
 { "name": "dismiss_review_item", "arguments": { "item": 1, "reason": "the row has no country, so it cannot be told which Halden Group it is" } }
 ```
 
-Every one of those is in the log under its author and reason:
+Each lands in the log with its author and reason:
 
 ```sh
 spool show log --after 2
@@ -305,37 +305,35 @@ POSITION  ACTOR                                      OPERATIONS  FROM  STARTED B
 
 | Tool | What it does | The same as |
 | --- | --- | --- |
-| `load_rows` | Loads rows as objects into a source | `POST /v1/load` |
-| `load_documents` | Stores texts as documents of a source | `POST /v1/documents` |
-| `run_extraction` | Runs an extractor over the documents it has not read | `POST /v1/extractions` |
-| `run_match` | Places the records no match has examined, and commits the result | `POST /v1/match` |
-| `retract_rows` | Takes rows back by their keys: they leave their identities and stay in the store | `POST /v1/retract` |
+| `load_rows` | Loads rows, as objects, into a source | `POST /v1/load` |
+| `load_documents` | Stores text as documents of a source | `POST /v1/documents` |
+| `run_extraction` | Runs an extractor over documents it hasn't read | `POST /v1/extractions` |
+| `run_match` | Places records no match has examined, and commits the result | `POST /v1/match` |
+| `retract_rows` | Retracts rows by key: they leave their identities and stay in the store | `POST /v1/retract` |
 
-Each answers with its run. A run that is still going after 30 seconds is answered as `running`, and `get_run` reads it later: with `wait_ms`, it waits up to 60 seconds for the run to finish.
+Each returns its run. A run still going after 30 seconds comes back as `running`, and `get_run` with `wait_ms` waits up to 60 seconds more.
 
-Where these differ from the HTTP API:
+Differences from the HTTP API:
 
-- **`load_rows` does not replace a row unless it is told to.** A row with a key the store holds and other values is refused, and the whole call with it, unless the call has `"replace": true`. `POST /v1/load` replaces the row.
-- **`load_rows` reads an empty value as a missing one**, as `spool load` reads an empty field. `POST /v1/load` with rows as JSON stores `""` as text.
-- **`load_documents` refuses a source the project does not declare.** `POST /v1/documents` stores the document.
+- **`load_rows` doesn't replace rows by default.** A row with a known key and different values fails the whole call unless you pass `"replace": true`. `POST /v1/load` replaces it.
+- **`load_rows` treats empty values as missing**, like `spool load`. `POST /v1/load` with JSON rows stores `""` as text.
+- **`load_documents` rejects undeclared sources.** `POST /v1/documents` stores the document anyway.
 - **`run_extraction` needs no `extractor`** when the project has only one.
-- **`run_match` always commits.** It takes `rematch` and `strategy`, which is `rules` or a strategy of the project, and no `commit`.
-- **`retract_rows` requires a `reason`.** The other four take none.
+- **`run_match` always commits.** It takes `rematch` and `strategy` (`rules` or one of the project's strategies), but not `commit`.
+- **`retract_rows` requires a `reason`.** The other four don't.
 
-## What an agent cannot do
+## Reserved for people
 
-- **Approve or reject a draft.** Drafts exist so that a person decides. That stays in the studio and on `/v1`.
-- **Add people or make tokens.**
-- **Change a project's files.** Rules, features and sources are files in Git, and the server reads them. An agent that edits them does so as any editor of the repository would.
-- **Write as someone else, or change an identity without a reason.** Both are refused.
-- **List or read documents.** An agent stores them and runs an extractor over them, and reads what was found as records.
-- **Leave a match as a draft.** A match an agent starts commits, as `spool match` does. To hold a match for approval, start it over HTTP with `"commit": false`. [Review](/docs/concepts/review#drafts) shows how.
+- **Approving or rejecting drafts.** Drafts exist so a person decides, in the studio or over `/v1`.
+- **Adding people and creating tokens.**
+- **Editing project files.** Rules, features and sources live in Git. An agent edits them like any contributor to the repository.
 
-## Limits
+Agents always write under their own name with a reason. They read documents through the records extracted from them. A match an agent starts commits, like `spool match`. To hold one for approval, start it over HTTP with `"commit": false`, as [Review](/docs/concepts/review#drafts) shows.
 
-- A request is at most 4 MiB.
-- A list returns 20 entries unless the call gives a `limit`.
-- A tool answers at most 256 KiB. A lookup over that is refused with an error that says to ask for less. A change over that was made all the same, and is answered without its large fields, which the answer names in `left_out`.
-- A failure is an answer the model can read: the result has `isError` set, and its text is the error the API gives.
-- The endpoint speaks the protocol revisions from `2024-11-05` to `2026-07-28`.
-- Nobody has measured how well an agent reviews with these tools. The repository has no evaluation of it yet.
+## Protocol details
+
+- Requests are capped at 4 MiB.
+- Lists return 20 entries unless you pass `limit`.
+- Responses are capped at 256 KiB. An oversized lookup returns an error asking for less. An oversized change still commits, and the response omits its large fields, listed in `left_out`.
+- Failures are readable by the model: the result has `isError` set and the API's error as text.
+- Supported protocol revisions: `2024-11-05` to `2026-07-28`.

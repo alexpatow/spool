@@ -1,23 +1,21 @@
 ---
 title: Entity types and features
-description: An entity type is a directory that says what its records are compared by, and how each source's columns become those features.
+description: An entity type is a directory that declares what its records are compared by, and how each source's columns become those features. Built here from an empty project, as a product catalog fed by two suppliers.
 ---
 
-An **entity type** is a kind of thing you want one ID for: a company, a person, a product. Spool ships none. A project declares its own, and two projects need not agree on what a company looks like.
+An **entity type** is a kind of thing you want one ID for: a company, a person, a product. Spool ships none. Each project declares its own, so two projects can disagree about what a product looks like.
 
-A **feature** is a value that records of that type are compared by. Sources name their columns differently and write values differently, so rules never read raw rows. They read features, which every source is mapped onto.
+A **feature** is a value records of that type are compared by. Sources name and format their columns differently, so rules never read raw rows. They read features, and every source maps onto them.
 
-This page adds a second source to the sample project, with features of its own, and shows what happens to identities when a declaration changes.
+This page builds a project from nothing: a product catalog fed by two suppliers, which write the same products differently.
 
-## Before you start
-
-The examples use the sample project with both of its files of rows loaded and matched, which is where [Getting started](/docs/getting-started) ends. If you have that project and its server is running, use it. If not, this makes it:
+## Start an empty project
 
 {/* sample: new session */}
 
 ```sh
-spool init companies --example companies
-cd companies
+spool init catalog
+cd catalog
 ```
 
 {/* sample: background */}
@@ -26,103 +24,96 @@ cd companies
 spool dev
 ```
 
-Leave that running. In a second terminal, in the `companies` directory:
+Leave that running, and open a second terminal in `catalog`. `spool dev` applies each file below as you save it.
 
-```sh
-spool load samples/crm-1.csv
-spool match
-spool load samples/crm-2.csv
-spool match
+## Declare the sources
+
+Each source is a YAML file under `sources/`, named for the source. It lists the columns a row can have and which one is the key. Northwind sends a product catalog:
+
+```yaml title="sources/northwind.yaml"
+key: sku
+columns: [sku, title, brand, model, gtin]
 ```
 
-## An entity type is a directory
+Harbor sends the same kinds of products under different column names, with EAN-13 barcodes where Northwind has 12-digit UPCs:
 
-`entities/company/` declares the entity type `company`. This is the `entity.yaml` that `spool init --example companies` wrote:
-
-{/* sample: existing */}
-
-```yaml title="entities/company/entity.yaml"
-# `features` is what records are compared by, and `label` is the feature a
-# record is called by. `mapping` says, for each source, which column each
-# feature comes from, and the transform it goes through if it needs one. A
-# record found in a note has no country.
-label: name
-features: [name, name_key, country]
-
-mapping:
-  crm:
-    name: name
-    name_key: { from: name, transform: name_key }
-    country: country
-  notes:
-    name: name
-    name_key: { from: name, transform: name_key }
+```yaml title="sources/harbor.yaml"
+key: item_id
+columns: [item_id, description, manufacturer, mpn, ean]
 ```
-
-- **`features`**: the columns of the type's feature table, which is what rules read.
-- **`label`**: the feature a record is called by when it is shown to a person.
-- **`mapping`**: for each source, where each feature comes from.
-
-The steps below add a company registry as a second source, and two features: `domain`, from a website, and `founded`, a date.
 
 ## Add transforms
 
-A transform is a file under `transforms/`, named for the transform. It holds `lambda`, the names of its arguments, and one DuckDB expression over them:
+A transform is a file under `transforms/`, named for the transform. It holds `lambda`, its argument names, and one DuckDB expression:
 
-```sql title="transforms/domain_of.sql"
--- "https://www.acorn.example/about" becomes "acorn.example".
-lambda website: nullif(regexp_extract(lower(website), '^(?:https?://)?(?:www\.)?([^/:?#]+)', 1), '')
+```sql title="transforms/gtin14.sql"
+-- UPC-A (12 digits) and EAN-13 (13 digits) as one 14-digit GTIN, or nothing.
+lambda code: nullif(lpad(regexp_replace(coalesce(code, ''), '[^0-9]', '', 'g'), 14, '0'), '00000000000000')
 ```
 
-```sql title="transforms/founded_date.sql"
--- A date, or nothing when the text is not one.
-lambda founded: try_cast(founded AS DATE)
+```sql title="transforms/model_key.sql"
+-- "K2-BLK", "k2 blk" and "K2BLK" all become "K2BLK".
+lambda model: nullif(upper(regexp_replace(model, '[^A-Za-z0-9]', '', 'g')), '')
 ```
 
-A transform sees only the values it is given from one record. It cannot read a table. Every value reaches it as text, whatever type the row had. What it returns is the feature's type: `domain_of` gives text and `founded_date` gives a date, which a rule can then compare as a date.
-
-## Add a source, and a column
-
-```yaml title="sources/registry.yaml"
-key: number
-columns: [number, legal_name, country, founded]
+```sql title="transforms/brand_key.sql"
+lambda brand: lower(trim(brand))
 ```
 
-```yaml title="sources/crm.yaml"
-key: id
-columns: [id, name, country, website]
-```
+A transform sees the values of one record only, and can't read a table. Values arrive as text. What it returns sets the feature's type, so a transform that returns a date gives you a feature rules can compare as dates.
 
-## Map both sources
+## Declare the entity type
 
-```yaml title="entities/company/entity.yaml"
-label: name
-features: [name, name_key, country, domain, founded]
+`entities/product/` declares the entity type `product`. Its `entity.yaml` lists the features and maps each source onto them:
+
+```yaml title="entities/product/entity.yaml"
+label: title
+features: [title, brand_key, model_key, gtin]
 
 mapping:
-  crm:
-    name: name
-    name_key: { from: name, transform: name_key }
-    country: country
-    domain: { from: website, transform: domain_of }
-  notes:
-    name: name
-    name_key: { from: name, transform: name_key }
-  registry:
-    name: legal_name
-    name_key: { from: legal_name, transform: name_key }
-    country: { from: country, transform: upper }
-    founded: { from: founded, transform: founded_date }
+  northwind:
+    title: title
+    brand_key: { from: brand, transform: brand_key }
+    model_key: { from: model, transform: model_key }
+    gtin: { from: gtin, transform: gtin14 }
+  harbor:
+    title: description
+    brand_key: { from: manufacturer, transform: brand_key }
+    model_key: { from: mpn, transform: model_key }
+    gtin: { from: ean, transform: gtin14 }
 ```
 
-How to read a mapping:
+- **`features`** are the columns of the type's feature table, which rules read.
+- **`label`** is the feature a record is shown by.
+- **`mapping`** says where each feature comes from, per source. `title: description` takes a column as is. `{ from: ean, transform: gtin14 }` passes it through a transform, and `from` can be a list for a transform with several arguments.
+- A transform with no file in `transforms/` is the DuckDB function of that name, such as `upper`.
+- A feature a source doesn't map is empty for that source's records. Every feature needs at least one source.
 
-- `name: name` takes the column as it is.
-- `{ from: website, transform: domain_of }` passes the column through a transform. `from` can be a list of columns for a transform with several arguments.
-- A transform with no file in `transforms/` is the DuckDB function of that name. `upper` is one.
-- A feature that a source does not map is empty for that source's records. The registry has no website, so its records have no `domain`. Every feature has to be mapped by at least one source.
+## Add rules
 
-`spool dev` applied each file as it was saved. `spool info` shows the result:
+Rules live under the entity type. These compare candidates within a brand or with the same barcode, match on a barcode or a model number, and keep two different barcodes apart, because colour variants often share a model number:
+
+```sql title="entities/product/rules/block/same_brand.sql"
+l.brand_key = r.brand_key
+```
+
+```sql title="entities/product/rules/block/same_gtin.sql"
+l.gtin = r.gtin
+```
+
+```sql title="entities/product/rules/match/same_gtin.sql"
+l.gtin = r.gtin
+```
+
+```sql title="entities/product/rules/match/same_model.sql"
+l.model_key = r.model_key
+```
+
+```sql title="entities/product/rules/no_match/different_gtin.sql"
+l.gtin <> r.gtin
+```
+
+[Matching](/docs/concepts/matching) covers the three kinds of rule. `spool info` shows the project as Spool reads it:
 
 ```sh
 spool info
@@ -130,162 +121,155 @@ spool info
 
 ```text title="Output"
 project   .
-manifest  fd10c3ae8b55ebd4580b23deea08ee700512337609c95dd8080c71466524c567
+manifest  14731e77a7a5c9a08027b4c0c0dfe8afd9ea4df826cf9d4220285415bad84b27
 
-source `crm`
-  read by   company
-  column   becomes, in `company`
-  id       the key of each row
-  name     name, name_key = name_key(name)
-  country  country
-  website  domain = domain_of(website)
+source `harbor`
+  read by   product
+  column        becomes, in `product`
+  item_id       the key of each row
+  description   title
+  manufacturer  brand_key = brand_key(manufacturer)
+  mpn           model_key = model_key(mpn)
+  ean           gtin = gtin14(ean)
 
-source `notes`
-  read by   company
-  column  becomes, in `company`
-  name    name, name_key = name_key(name)
+source `northwind`
+  read by   product
+  column  becomes, in `product`
+  sku     the key of each row
+  title   title
+  brand   brand_key = brand_key(brand)
+  model   model_key = model_key(model)
+  gtin    gtin = gtin14(gtin)
 
-source `registry`
-  read by   company
-  column      becomes, in `company`
-  number      the key of each row
-  legal_name  name, name_key = name_key(legal_name)
-  country     country = upper(country)
-  founded     founded = founded_date(founded)
-
-entity type `company`
-  features  record_id UUID, name VARCHAR, name_key VARCHAR, country VARCHAR, domain VARCHAR, founded DATE
-  label     name
-  sources   crm, notes, registry
-  block     name_prefix
-  no_match  different_country
-  match     similar_name
-
-extractor `companies` (python, extractors/companies.py)
+entity type `product`
+  features  record_id UUID, title VARCHAR, brand_key VARCHAR, model_key VARCHAR, gtin VARCHAR
+  label     title
+  sources   harbor, northwind
+  block     same_brand, same_gtin
+  no_match  different_gtin
+  match     same_gtin, same_model
 ```
 
-## Load the new source
+## Load both suppliers
 
-```csv title="registry.csv"
-number,legal_name,country,founded
-X001,ACORN TOOLS LIMITED,gb,1987-03-02
-X002,Larkfield Logistics,gb,1999-11-20
+```csv title="northwind.csv"
+sku,title,brand,model,gtin
+NW-1001,Kestrel K2 Wireless Headphones (Black),Kestrel Audio,K2-BLK,012345678905
+NW-1002,Kestrel K2 Wireless Headphones (Silver),Kestrel Audio,K2-SLV,012345678912
+NW-1003,Fenwick 65% Mechanical Keyboard,Fenwick,FW-65,
+NW-1004,Halden 20000mAh Power Bank,Halden,HPB-20,614141000036
 ```
 
-The project now has two sources, so `spool load` has to be told which one the file is from:
+```csv title="harbor.csv"
+item_id,description,manufacturer,mpn,ean
+H-77,KESTREL AUDIO K2 HEADPHONES BLACK,KESTREL AUDIO,K2BLK,0012345678905
+H-78,Fenwick FW65 keyboard,FENWICK,fw-65,
+H-79,Halden Power Bank 20000,Halden,HPB20,0614141000036
+H-80,Kestrel K2 Headphones Silver,Kestrel Audio,K2-BLK,0012345678912
+```
+
+Each file is named after its source, so `spool load` picks the source from the name:
 
 ```sh
-spool load registry.csv --source registry
+spool load northwind.csv
+spool load harbor.csv
 spool match
 ```
 
 ```text title="Output"
-loaded  2 rows into source `registry`, type `company`: 2 new
-run         8, type `company`
-examined    2 records, 6 candidate pairs
-judgements  3 match, 0 no_match
-placed      2 records, 0 identities created
+loaded  4 rows into source `northwind`, type `product`: 4 new
+loaded  4 rows into source `harbor`, type `product`: 4 new
+run         3, type `product`
+examined    8 records, 8 candidate pairs
+judgements  4 match, 4 no_match
+placed      8 records, 4 identities created
+next: `spool match` places them in identities
 next: `spool match` places them in identities
 ```
 
 ```sh
-spool show records --source registry
+spool show records
 ```
 
 ```text title="Output"
-SOURCE AND KEY  NAME                 IDENTITY
-registry:X001   ACORN TOOLS LIMITED  01a1efc6-41cd-775d-8758-e7300637659a
-registry:X002   Larkfield Logistics  01a1efc6-41cd-775d-8758-e733aa086f7d
+SOURCE AND KEY     NAME                                     IDENTITY
+harbor:H-77        KESTREL AUDIO K2 HEADPHONES BLACK        01a1f436-d974-728f-98bd-b25a2c26987d
+harbor:H-78        Fenwick FW65 keyboard                    01a1f436-d974-728f-98bd-b25cb62028a7
+harbor:H-79        Halden Power Bank 20000                  01a1f436-d974-728f-98bd-b25bd30713c1
+harbor:H-80        Kestrel K2 Headphones Silver             01a1f436-d974-728f-98bd-b25d816ab4a5
+northwind:NW-1001  Kestrel K2 Wireless Headphones (Black)   01a1f436-d974-728f-98bd-b25a2c26987d
+northwind:NW-1002  Kestrel K2 Wireless Headphones (Silver)  01a1f436-d974-728f-98bd-b25d816ab4a5
+northwind:NW-1003  Fenwick 65% Mechanical Keyboard          01a1f436-d974-728f-98bd-b25cb62028a7
+northwind:NW-1004  Halden 20000mAh Power Bank               01a1f436-d974-728f-98bd-b25bd30713c1
 ```
 
-Both registry rows joined an identity that CRM rows had started, and those identities have the IDs they had before.
+Eight rows, four products. The headphones matched on the barcode even though the two suppliers write it with 12 and 13 digits. The keyboard has no barcode in either feed, so it matched on the model number. H-80 is listed with the black model's number, but its barcode is the silver one's, so the `different_gtin` rule kept it out of the black identity.
 
-## What changing a declaration does
-
-When `entity.yaml` or a transform it uses changes, the feature table is computed again from the stored rows. `spool dev` printed `rebuilt company` when it did so. That is possible because records keep their rows as they arrived.
-
-It changes no identity. Identities refer to records, not to features, so every ID stays where it was. Records that were already placed are also not matched again. [Matching](/docs/concepts/matching#rules-that-get-better) says what to do when a better feature would have matched differently.
-
-`spool explain` shows the features of two records side by side, as they are now:
+`spool explain` puts the features of two records side by side:
 
 ```sh
-spool explain crm:c-1 registry:X001
+spool explain harbor:H-80 northwind:NW-1001
 ```
 
 ```text title="Output"
-`registry:X001` and `crm:c-1` belong to the same identity, 01a1efc6-41cd-775d-8758-e7300637659a.
-Run 8 (strategy `rules`) made them a candidate pair (block rule `name_prefix`) and gave no judgement.
-Nothing links the two directly. They are joined through 1 other member: `registry:X001` → `Acorn Tools Ltd` (crm:c-3) (`match` in run 8, rule `similar_name`: name_key "acorn tools limited" and "acorn tools ltd") → `crm:c-1` (`match` in run 2, rule `similar_name`: name_key "acorn tools ltd" and "acorn tools").
-Without the links only rule `similar_name` made, they would not be together.
-Removing 1 link would part them, leaving 1 record with `registry:X001` (1 × `ACORN TOOLS LIMITED`) and 4 records with `crm:c-1` (2 × `ACORN TOOLS`, 1 × `Acorn Tool`, 1 × `Acorn Tools Ltd`).
-`registry:X001` was placed at log position 3 by `engine` (reconcile run 9, "reconcile new records").
-`crm:c-1` was placed at log position 1 by `engine` (reconcile run 3, "reconcile new records").
-By the rules as they are now, block rule `name_prefix` makes them a candidate pair and no `no_match` or `match` rule holds, so they would get no judgement.
+`northwind:NW-1001` belongs to identity 01a1f436-d974-728f-98bd-b25a2c26987d and `harbor:H-80` to identity 01a1f436-d974-728f-98bd-b25d816ab4a5.
+Run 3 (strategy `rules`) judged them `no_match` (no_match rule `different_gtin` held).
+Both were placed at log position 1 by `engine` (reconcile run 4, "reconcile new records").
+By the rules as they are now, block rule `same_brand` makes them a candidate pair and no_match rule `different_gtin` holds, so they would be judged `no_match`.
 
-left   32edb5c4-9bd7-9633-f683-c99b029df37b  registry:X001  identity 01a1efc6-41cd-775d-8758-e7300637659a
-right  ab8e9d59-0aaa-96b9-ddb7-db0bff7a9356  crm:c-1        identity 01a1efc6-41cd-775d-8758-e7300637659a
+left   5381fabd-5727-1972-6056-8b34a1fa2ca5  northwind:NW-1001  identity 01a1f436-d974-728f-98bd-b25a2c26987d
+right  dee3adea-d9f3-25e6-0696-94a82661b1a7  harbor:H-80        identity 01a1f436-d974-728f-98bd-b25d816ab4a5
 
 features
-            left                 right
-  country   GB                   GB
-  domain    -                    -
-  founded   1987-03-02           -
-  name      ACORN TOOLS LIMITED  Acorn Tools
-  name_key  acorn tools limited  acorn tools
+             left                                    right
+  brand_key  kestrel audio                           kestrel audio
+  gtin       00012345678905                          00012345678912
+  model_key  K2BLK                                   K2BLK
+  title      Kestrel K2 Wireless Headphones (Black)  Kestrel K2 Headphones Silver
 
 rules as they are now
-  block     name_prefix        holds
-  no_match  different_country  does not hold
-  match     similar_name       does not hold
+  block     same_brand      holds
+  block     same_gtin       does not hold
+  no_match  different_gtin  holds
+  match     same_gtin       does not hold
+  match     same_model      holds
 
 runs that compared them
-  run 8  rules  succeeded  block: name_prefix  no judgement
-
-what joins them
-  1. ACORN TOOLS LIMITED  registry:X001
-     `match` in run 8, rule `similar_name`: name_key "acorn tools limited" and "acorn tools ltd"
-  2. Acorn Tools Ltd  crm:c-3
-     `match` in run 2, rule `similar_name`: name_key "acorn tools ltd" and "acorn tools"
-  3. Acorn Tools  crm:c-1
-
-what would part them
-  ACORN TOOLS LIMITED  registry:X001 – Acorn Tools Ltd  crm:c-3
-      `match` in run 8, rule `similar_name`: name_key "acorn tools limited" and "acorn tools ltd"
-  with left: 1 record (1 × ACORN TOOLS LIMITED)
-  with right: 4 records (2 × ACORN TOOLS, 1 × Acorn Tool, 1 × Acorn Tools Ltd)
+  run 3  rules  succeeded  block: same_brand  no_match
 ```
 
-The CRM rows have no website yet and no founding date, so the `domain` of both and the `founded` of `crm:c-1` are empty, shown as `-`. The first lines also say how the two came to share an identity: no rule matched them directly, and each matched `crm:c-3`, Acorn Tools Ltd.
+## Changing a declaration
 
-## What is checked
+When `entity.yaml` or a transform it uses changes, Spool rebuilds the feature table from the stored rows, and `spool dev` prints `rebuilt product`. That works because records keep their rows as they arrived.
 
-A mistake in these files is found when the project is read, not when rows arrive. `spool info`, `spool build` and `spool dev` all refuse:
+No identity changes. Identities hold records, not features, so every ID stays put, and records that are already placed aren't matched again. [Matching](/docs/concepts/matching#rules-that-get-better) covers what to do when a better feature would have matched differently.
+
+## What's checked
+
+Mistakes in these files are caught when the project is read, not when rows arrive. `spool info`, `spool build` and `spool dev` all reject:
 
 - a mapping that names a source with no file,
-- a column the source does not list,
+- a column the source doesn't list,
 - a transform given the wrong number of columns,
-- a transform or rule that DuckDB cannot prepare.
+- a transform or rule DuckDB can't prepare.
 
-For example, with `legal_name` misspelt as `legal_nmae` in the mapping of `name`:
+Misspell `description` in Harbor's mapping:
 
-```yaml title="entities/company/entity.yaml"
-label: name
-features: [name, name_key, country, domain, founded]
+```yaml title="entities/product/entity.yaml"
+label: title
+features: [title, brand_key, model_key, gtin]
 
 mapping:
-  crm:
-    name: name
-    name_key: { from: name, transform: name_key }
-    country: country
-    domain: { from: website, transform: domain_of }
-  notes:
-    name: name
-    name_key: { from: name, transform: name_key }
-  registry:
-    name: legal_nmae
-    name_key: { from: legal_name, transform: name_key }
-    country: { from: country, transform: upper }
-    founded: { from: founded, transform: founded_date }
+  northwind:
+    title: title
+    brand_key: { from: brand, transform: brand_key }
+    model_key: { from: model, transform: model_key }
+    gtin: { from: gtin, transform: gtin14 }
+  harbor:
+    title: descripton
+    brand_key: { from: manufacturer, transform: brand_key }
+    model_key: { from: mpn, transform: model_key }
+    gtin: { from: ean, transform: gtin14 }
 ```
 
 {/* sample: fails */}
@@ -295,37 +279,34 @@ spool info
 ```
 
 ```text title="Output"
-error: ./entities/company/entity.yaml: mapping of `name` from `registry`: `legal_nmae` is not a column of sources/registry.yaml
+error: ./entities/product/entity.yaml: mapping of `title` from `harbor`: `descripton` is not a column of sources/harbor.yaml
 ```
 
-`spool dev` says the same when the file is saved, and keeps running the last version that worked. Put the name right again:
+`spool dev` reports the same error on save and keeps running the last good version. Fix it:
 
-```yaml title="entities/company/entity.yaml"
-label: name
-features: [name, name_key, country, domain, founded]
+```yaml title="entities/product/entity.yaml"
+label: title
+features: [title, brand_key, model_key, gtin]
 
 mapping:
-  crm:
-    name: name
-    name_key: { from: name, transform: name_key }
-    country: country
-    domain: { from: website, transform: domain_of }
-  notes:
-    name: name
-    name_key: { from: name, transform: name_key }
-  registry:
-    name: legal_name
-    name_key: { from: legal_name, transform: name_key }
-    country: { from: country, transform: upper }
-    founded: { from: founded, transform: founded_date }
+  northwind:
+    title: title
+    brand_key: { from: brand, transform: brand_key }
+    model_key: { from: model, transform: model_key }
+    gtin: { from: gtin, transform: gtin14 }
+  harbor:
+    title: description
+    brand_key: { from: manufacturer, transform: brand_key }
+    model_key: { from: mpn, transform: model_key }
+    gtin: { from: ean, transform: gtin14 }
 ```
 
 ## Names
 
-The names of sources, entity types, transforms and rules come from file and directory names. Use lowercase letters, digits and underscores, starting with a letter: that is accepted for every kind of name. An entity type's name may have 48 characters at most.
+Source, entity type, transform and rule names come from file and directory names. Use lowercase letters, digits and underscores, starting with a letter. Entity type names can be up to 48 characters.
 
-## What a declaration cannot do
+## Scope of a declaration
 
-- A feature is computed by a SQL expression, not by your own code. A normaliser that needs a lookup table or a library has to run before the rows are sent.
-- An entity type cannot be declared through the API. It is a change to the project, which `spool dev` applies as you save and [`spool build` and `spool apply`](/docs/deploying) apply to a deployed server.
-- Rules compare records of one entity type. Nothing matches a company against a person.
+- Features are SQL expressions. A normaliser that needs a lookup table or a library runs before the rows are sent.
+- Entity types are declared in project files, which `spool dev` applies on save and [`spool build` and `spool apply`](/docs/deploying) apply to a deployed server.
+- Rules compare records of one entity type.

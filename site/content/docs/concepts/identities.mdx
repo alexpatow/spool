@@ -1,15 +1,15 @@
 ---
 title: Identities
-description: An identity is a minted ID and the records that belong to it. IDs are never reused, every change is a changeset in a log, and a merge, a split and an undo are changesets too.
+description: An identity is a minted ID and the records that belong to it. IDs are never reused, and every change, including merges, splits and undos, is a changeset in an append-only log.
 ---
 
-An **identity** is one real-world thing as Spool knows it: an ID, an entity type, and the records that belong to it. The ID is what other systems store.
+An **identity** is one real-world thing as Spool knows it: an ID, an entity type, and its records. The ID is what other systems store.
 
-This page says what holds for every identity, and shows a merge, the merged ID still answering, an undo, a split and a constraint. Each is a call you can paste.
+This page covers the guarantees every identity has, then walks through a merge, a merged ID that still resolves, an undo, a split and a constraint. Every step is a call you can paste.
 
 ## Before you start
 
-The examples use the sample project with both of its files of rows loaded and matched, which is where [Getting started](/docs/getting-started) ends. If you have that project and its server is running, use it. If not, this makes it:
+The examples pick up where [Getting started](/docs/getting-started) leaves off, with both CSV files loaded and matched. If that server's still running, use it. Otherwise:
 
 {/* sample: new session */}
 
@@ -24,7 +24,7 @@ cd companies
 spool dev
 ```
 
-Leave that running. In a second terminal, in the `companies` directory:
+Leave it running. In a second terminal, in `companies`:
 
 ```sh
 spool load samples/crm-1.csv
@@ -46,11 +46,11 @@ spool load crm-3.csv
 spool match
 ```
 
-Acorn Tooling joined Acorn Tools, because the names are close. The Halden Group got an identity of its own, because the rule that picks pairs to compare looks at the first four letters. [Matching](/docs/concepts/matching#what-a-match-does) explains both.
+Acorn Tooling joined Acorn Tools because the names are close. The Halden Group got its own identity because the block rule compares the first four letters. [Matching](/docs/concepts/matching#what-a-match-does) explains both.
 
 ## What an identity is
 
-Identity IDs are minted, so yours differ from the ones on this page. The commands here keep each ID in a shell variable, so that they can be pasted as they are:
+Identity IDs are minted, so yours differ from the ones here. The commands keep each ID in a shell variable, so you can paste them as is:
 
 ```sh
 ACORN=$(spool show records crm:c-1 | awk '/^identity/ {print $2}')
@@ -81,17 +81,17 @@ history
       place record 875986b9-a764-1450-33d1-2d4612fb4daa in 01a1efc6-41cd-775d-8758-e7300637659a
 ```
 
-An identity has no attributes of its own. It has no name, address or "golden record". It is the set of records, and each record keeps what its source said. The name an identity is shown by is the label most of its records have.
+An identity has no attributes of its own: no name, address or "golden record". It's a set of records, and each record keeps what its source said. An identity is displayed by its records' most common label.
 
-Three things hold for every identity:
+Every identity guarantees three things:
 
-- **The ID is minted, not derived.** It is a UUID made when the identity is created. It does not depend on the records or on the rules, so a better rule cannot change it.
-- **The ID is never deleted or reused.** An identity that is merged into another stays, as a pointer to the one that took its place.
-- **A record belongs to at most one identity.** Belonging to none is allowed, and means nothing has decided yet.
+- **The ID is minted, not derived.** It's a UUID created with the identity. It doesn't depend on the records or the rules, so a better rule can't change it.
+- **The ID is never deleted or reused.** An identity merged into another remains as a pointer to the survivor.
+- **A record belongs to at most one identity.** Belonging to none means nothing has placed it yet.
 
 ## The log
 
-Identities change in one way only: a **changeset** is committed. A changeset is an ordered list of operations with an author and a reason, applied all at once or not at all. The log of changesets is the source of truth.
+Identities change in exactly one way: a **changeset** is committed. A changeset is an ordered list of operations with an author and a reason, applied atomically. The changeset log is the source of truth.
 
 ```sh
 spool show log
@@ -104,11 +104,11 @@ POSITION  ACTOR   OPERATIONS  FROM             STARTED BY                       
 3         engine  3           reconcile run 9  user:01a1f0a0-9920-7253-869c-3c01d1dee766  reconcile new records
 ```
 
-Every changeset so far was written by a match. `actor` says who committed it: `engine` for a run, `user:<id>` for a person, `agent:<name>` for a caller with a token. `started by` says who started the run or made the call that led to it. Under `spool dev` that is always the one account `spool dev` makes.
+So far, matches wrote every changeset. `actor` says who committed it: `engine` for a run, `user:<id>` for a person, `agent:<name>` for a token. `started by` says who started the run or made the call behind it. Under `spool dev`, that's always its one built-in account.
 
-There are six operations: `create_identity`, `assign`, `merge`, `reinstate`, `constrain` and `unconstrain`. [The HTTP API](/docs/api#changesets) has the form of each. Each one says what it expects to find, and that is checked when the changeset is committed. An `assign`, for example, names the identity the record is in now, as `from`, and is refused if the record has moved since. A changeset that fails a check is refused whole, and the answer names the operation.
+There are six operations: `create_identity`, `assign`, `merge`, `reinstate`, `constrain` and `unconstrain`. [The HTTP API](/docs/api#changesets) documents each. Every operation states what it expects, and that's checked on commit. An `assign`, for example, names the record's current identity as `from`, and is rejected if the record has moved since. A changeset that fails a check is rejected whole, and the response names the operation.
 
-People and agents write changesets too: with `POST /v1/changesets`, from the studio, or through the [MCP](/docs/mcp) tool `commit_changeset`. They pass the same checks as a run's.
+People and agents write changesets too, with `POST /v1/changesets`, in the studio, or with the [MCP](/docs/mcp) tool `commit_changeset`. They pass the same checks as a run's.
 
 ## Merge
 
@@ -124,7 +124,7 @@ curl -s -X POST http://127.0.0.1:7765/v1/changesets -d '{"reason": "The Halden G
 {"seq":4,"changeset":"01a1f0a8-1fd6-7793-a34a-135f4d04c290","content_hash":"f61c94ca42fcef2f989c85ee67d3fb1af3b99c9e36dda9edc7246f3246fa01ef"}
 ```
 
-`seq` is the position in the log it was committed at. `crm:c-11` now has the identity of `crm:c-5`:
+`seq` is its log position. `crm:c-11` now has `crm:c-5`'s identity:
 
 ```sh
 spool show records crm:c-11
@@ -144,9 +144,9 @@ payload
   name     The Halden Group
 ```
 
-## The old ID still answers
+## The old ID still resolves
 
-Something may have stored the ID that was merged away. Asking for it leads to the identity that took its place:
+Something may have stored the merged-away ID. Looking it up returns the identity that absorbed it:
 
 ```sh
 spool show identities $THE_HALDEN
@@ -170,13 +170,13 @@ history
       merge 01a1f0a0-99e2-71d0-a422-eb2cb5f32303 into 01a1efc6-41cd-775d-8758-e7329447fd9a
 ```
 
-Nothing that stored the old ID is left pointing at nothing. [Using the IDs](/docs/using-the-ids) shows the same lookup over HTTP, and how a system that stores IDs learns of a merge.
+No stored ID is left dangling. [Using the IDs](/docs/using-the-ids) shows the same lookup over HTTP, and how a consumer learns of merges.
 
-In the studio the same merge is a button on an identity's screen.
+In the studio, merge is a button on an identity's page.
 
 ## Undo
 
-A change is taken back with a new changeset, which the server works out from the log. History is not rewritten. The merge is the last line of `spool show log`, and it is undone by its position:
+An undo is a new changeset the server derives from the log. History isn't rewritten. The merge is the last line of `spool show log`, so undo it by position:
 
 ```sh
 MERGE=$(spool show log | tail -n 1 | awk '{print $1}')
@@ -205,11 +205,11 @@ payload
   name     The Halden Group
 ```
 
-The identity that was merged away is active again, under the ID it always had, and its record is back in it. An undo is checked against the state as it is now. If later changes mean it no longer applies, it is refused and nothing is undone by halves. With `"commit": false` the call only returns the changeset the undo would be.
+The merged-away identity is active again under its original ID, with its record back. An undo is checked against the current state. If later changes mean it no longer applies, it's rejected, and nothing is half-undone. With `"commit": false`, the call just returns the changeset the undo would commit.
 
 ## Split
 
-Say Acorn Tooling is not Acorn Tools. There is no split operation: a split is a new identity and the `assign` operations that move records into it, in one changeset. The server writes that changeset when you name the records of one side, by their record IDs:
+Say Acorn Tooling isn't Acorn Tools. There's no split operation: a split is a new identity plus the `assign` operations that move records into it, in one changeset. Name one side's record IDs and the server writes the changeset:
 
 ```sh
 TOOLING=$(spool show records crm:c-10 | awk '/^record/ {print $2}')
@@ -252,15 +252,15 @@ history
       move record 875986b9-a764-1450-33d1-2d4612fb4daa from 01a1efc6-41cd-775d-8758-e7300637659a to 01a1f0a8-2062-70aa-a42f-c8855877ed84
 ```
 
-The larger side keeps the ID, and the side you did not name keeps it on a tie, so Acorn Tools kept its identity and `crm:c-10` moved to a new one. The split also recorded a `cannot_link` constraint between the two sides, so that a later match does not put them back together. Pass `"keep_apart": false` to leave that out.
+The larger side keeps the ID, and on a tie the side you didn't name keeps it, so Acorn Tools kept its identity and `crm:c-10` moved to a new one. The split also recorded a `cannot_link` between the sides, so a later match can't rejoin them. Pass `"keep_apart": false` to skip it.
 
-A system that stored Acorn's ID for `crm:c-10` now holds the wrong one, and nothing tells it. It finds out by reading the log. [Using the IDs](/docs/using-the-ids#follow-the-log) shows how.
+A system that stored Acorn's ID for `crm:c-10` now holds a stale one. It learns about the split from the log, as [Using the IDs](/docs/using-the-ids#follow-the-log) shows.
 
 ## Constraints
 
-A constraint is a decision that outranks the rules. `cannot_link` between two records means no changeset may leave them in one identity. `must_link` means they must share one. A match treats a constraint as a judgement that wins: a `must_link` reads as `match` and a `cannot_link` as `no_match`.
+A constraint is a decision that outranks the rules. `cannot_link` means no changeset may put two records in one identity, and `must_link` means they must share one. A match treats a constraint as a winning judgement: `must_link` reads as `match` and `cannot_link` as `no_match`.
 
-The two Halden Groups in different countries are kept apart by a rule today. A constraint keeps them apart whatever the rules become:
+A rule keeps the two Halden Groups apart today. A constraint keeps them apart whatever the rules become:
 
 ```sh
 GB=$(spool show records crm:c-5 | awk '/^record/ {print $2}')
@@ -272,7 +272,7 @@ curl -s -X POST http://127.0.0.1:7765/v1/changesets -d '{"reason": "separate leg
 {"seq":7,"changeset":"01a1efa5-8358-743c-9fc6-fac999fdaa4f","content_hash":"9b1ab005c425ddd81c5b1ee95101788266b244020147781da5cd9d0ce4c8f5e4"}
 ```
 
-A changeset that would break a constraint in force is refused, whoever wrote it. Try to merge the two:
+Any changeset that would break a constraint is rejected, whoever wrote it. Try to merge the two:
 
 ```sh
 HALDEN_US=$(spool show records crm:c-6 | awk '/^identity/ {print $2}')
@@ -283,17 +283,17 @@ curl -s -X POST http://127.0.0.1:7765/v1/changesets -d '{"reason": "one group", 
 {"error":{"code":"rejected","message":"changeset rejected: operation 0 (merge): records 34a5d12a-11a0-e461-c6e4-0576f546d165 and 38f040c9-82b9-2f94-813b-697309e52dab have a cannot_link constraint, and would both belong to identity 01a1efc6-41cd-775d-8758-e7329447fd9a","rejections":[{"op_index":0,"op":{"op":"merge","from":"01a1efc6-41cd-775d-8758-e731c61371cb","into":"01a1efc6-41cd-775d-8758-e7329447fd9a"},"reason":{"reason":"constraint_violated","kind":"cannot_link","a":"34a5d12a-11a0-e461-c6e4-0576f546d165","b":"38f040c9-82b9-2f94-813b-697309e52dab","identity_a":"01a1efc6-41cd-775d-8758-e7329447fd9a","identity_b":"01a1efc6-41cd-775d-8758-e7329447fd9a"}}]}}
 ```
 
-## What does not change an identity
+## What doesn't change an identity
 
-- Loading rows. A new record has no identity until a match or a changeset places it.
-- Changing features, transforms or rules. Features are computed again, and IDs stay.
+- Loading rows. New records have no identity until a match or changeset places them.
+- Changing features, transforms or rules. Features are recomputed, and IDs stay.
 - A rematch. It reports suggestions.
-- A recompute, until it is applied. Applying one is a changeset in the log, by the engine, like a match's.
-- Taking a row back. The record leaves its identity, and the identity keeps its ID. When that leaves nothing holding the identity's other records together, a [review item](/docs/concepts/review#a-possible-split) asks whether to split it. Nothing is split automatically.
+- A recompute, until applied. Applying it is an engine changeset in the log, like a match's.
+- Retracting a row. The record leaves, and the identity keeps its ID. If nothing then holds the remaining records together, a [review item](/docs/concepts/review#a-possible-split) asks whether to split. Nothing splits automatically.
 
-## What identities do not have
+## Working with identities
 
-- The command line cannot change identities. A merge, a split or a constraint is an HTTP call, a button in the studio, or an MCP tool.
-- A call that changes an identity takes its ID, not a record's `source:key`, and a changeset names records by their record IDs. You look them up first, as above.
-- An identity has no computed attributes. There is no merged "best" name or address, only the label.
-- An identity cannot be deleted.
+- Merges, splits and constraints are HTTP calls, studio actions or MCP tools.
+- Calls that change an identity take its ID, and changesets name records by record ID. Look them up first, as above.
+- Identities have no computed attributes, only a label.
+- Identities are never deleted.
