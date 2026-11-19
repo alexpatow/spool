@@ -115,6 +115,7 @@ Each is marked read-only for the client.
 | `search_identities` | Identities by name or record values, by type or by ID | `GET /v1/identities` |
 | `get_identity` | One identity and its records | `GET /v1/identities/{id}` |
 | `get_identity_history` | Every change that touched an identity | `GET /v1/identities/{id}/history` |
+| `get_identity_at` | An identity's label, members and merge redirect immediately after a changeset | `GET /v1/identities/{id}/at?seq=N` |
 | `search_records` | Records by words, source, key or identity, with their values | `GET /v1/records` |
 | `get_record` | One record | `GET /v1/records/{id}` |
 | `explain_pair` | Why two records share an identity or don't. Name records by ID, `source:key`, or a mention's name as lists show it | `GET /v1/explain` |
@@ -171,6 +172,12 @@ US=$(spool show records crm:c-6 | awk '/^record/ {print $2}')
 
 ```json title="MCP tool call"
 { "name": "get_identity_history", "arguments": { "identity": "$ACORN" } }
+```
+
+Use the `seq` from a changeset or history entry to read what an identity held at that point. `id` is the ID you requested and `current` is its active identity at that sequence. [Identity snapshots](/docs/api#identity-snapshots)
+
+```json title="MCP tool call"
+{ "name": "get_identity_at", "arguments": { "identity": "$ACORN", "seq": 1 } }
 ```
 
 ```json title="MCP tool call"

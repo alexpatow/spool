@@ -34,6 +34,7 @@ import type {
   HistoryEntry,
   IdentityId,
   IdentityList,
+  IdentitySnapshot,
   IdentityView,
   Info,
   LoadRequest,
@@ -580,6 +581,11 @@ export class SpoolClient {
   /** An identity and its members. */
   identity(identity: IdentityId): Promise<IdentityView> {
     return this.json("GET", `/v1/identities/${identity}`);
+  }
+
+  /** An identity and its members immediately after the given changeset. */
+  identityAt(identity: IdentityId, seq: Seq): Promise<IdentitySnapshot> {
+    return this.json("GET", `/v1/identities/${identity}/at`, { query: { seq } });
   }
 
   /** The changesets that touched an identity, oldest first. */

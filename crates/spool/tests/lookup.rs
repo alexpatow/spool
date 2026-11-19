@@ -7,7 +7,7 @@ use serde_json::json;
 use spool::core::{Actor, EntityType, IdGenerator, Op, SeededIds, Seq};
 use spool::{
     AttributeFilter, DerivedFeature, Engine, Error, IdentityFilter, Manifest, Options,
-    RecordFilter, ResolveOptions, ReviewFilter, ReviewKind, ReviewStatus, Rows, YamlFile,
+    RecordFilter, ResolveOptions, ReviewFilter, ReviewKind, ReviewStatus, Rows, SqlFile, YamlFile,
 };
 
 /// The tests' things, and two sources more whose rows hold numbers.
@@ -282,6 +282,49 @@ fn mentions_are_listed_by_their_document_and_their_place_in_it() {
         }
         assert_eq!(walked, all, "in pages of {limit}");
     }
+}
+
+#[test]
+fn a_snapshot_labels_its_members_using_the_declaration_at_the_changeset() {
+    let mut thing = thing();
+    thing.entity = entity(
+        Some("name"),
+        &[
+            ("name", "{ from: name, transform: display }"),
+            ("code", "code"),
+        ],
+        &SOURCES,
+    );
+    let mut project = project_of(vec![thing]);
+    project.transforms = vec![SqlFile::new("display", "lambda value: lower(value)")];
+    let engine = Engine::open_in_memory(Options::seeded(1)).unwrap();
+    engine.apply(&project.compile().unwrap()).unwrap();
+    load(&engine, "shop", &[("1", Some("Anvil"), None)]);
+    engine.resolve(&ResolveOptions::default()).unwrap();
+    let id = identity(&engine, "shop", "1").unwrap();
+    let before = engine.identity_at(id, Seq(1)).unwrap();
+    assert_eq!(before.identity.label.as_deref(), Some("anvil"));
+
+    project.transforms = vec![SqlFile::new("display", "lambda value: upper(value)")];
+    engine.apply(&project.compile().unwrap()).unwrap();
+    assert_eq!(engine.identity(id).unwrap().label.as_deref(), Some("ANVIL"));
+    assert_eq!(engine.identity_at(id, Seq(1)).unwrap(), before);
+
+    let other = engine.mint_ids(1, 0).identities[0];
+    engine
+        .author(
+            Actor::Engine,
+            None,
+            vec![Op::CreateIdentity {
+                identity: other,
+                entity_type: thing_type(),
+            }],
+        )
+        .unwrap();
+    let after = engine.identity_at(id, Seq(2)).unwrap();
+    assert_eq!(after.identity.label.as_deref(), Some("ANVIL"));
+    assert_eq!(after.identity.members, before.identity.members);
+    assert_eq!(engine.identity_at(id, Seq(1)).unwrap(), before);
 }
 
 #[test]

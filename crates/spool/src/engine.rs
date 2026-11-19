@@ -26,8 +26,8 @@ use crate::features;
 use crate::following::following;
 use crate::load::{self, LoadReport};
 use crate::lookup::{
-    self, ChangesetSummary, HistoryEntry, IdentityFilter, IdentitySummary, IdentityView, LogSort,
-    LoggedChangeset, RecordEntry, RecordFilter, StoreInfo,
+    self, ChangesetSummary, HistoryEntry, IdentityFilter, IdentitySnapshot, IdentitySummary,
+    IdentityView, LogSort, LoggedChangeset, RecordEntry, RecordFilter, StoreInfo,
 };
 use crate::metrics::{self, Churn, IdStability, Metrics};
 use crate::order::Sort;
@@ -1168,6 +1168,11 @@ impl Engine {
     pub fn identity(&self, id: IdentityId) -> Result<IdentityView> {
         self.read(|conn| lookup::identity(conn, id))?
             .ok_or(Error::UnknownIdentity(id))
+    }
+
+    /// The identity and its members immediately after changeset `seq`.
+    pub fn identity_at(&self, id: IdentityId, seq: Seq) -> Result<IdentitySnapshot> {
+        self.read(|conn| lookup::identity_at(conn, id, seq))
     }
 
     /// Active identities, ordered by ID.

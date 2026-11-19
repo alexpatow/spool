@@ -4,7 +4,7 @@
 //! Everything here reads committed state from a connection of its own, so a
 //! lookup does not wait for a run that is in progress.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use duckdb::{Connection, params};
 use serde::{Deserialize, Serialize};
@@ -13,11 +13,12 @@ use spool_core::{
     RunId, Seq, StateError,
 };
 
-use crate::error::Result;
+use crate::error::{Error, Result};
+use crate::features;
 use crate::order::{Key, Keyed, Sort, called, names_table};
-use crate::project::{Extractor, FeatureColumn, Manifest, Strategy};
+use crate::project::{Declaration, Extractor, FeatureColumn, Manifest, Strategy};
 use crate::schema;
-use crate::store::{OpRow, log_entry, op_from_row, parse};
+use crate::store::{OpRow, log_entry, op_from_row, parse, read_head};
 use crate::time::rfc3339;
 
 /// A record as it was loaded, and the identity it belongs to now.
@@ -200,6 +201,15 @@ pub struct IdentityView {
     pub created: Seq,
     /// The members of the current identity, ordered by record ID.
     pub members: Vec<Member>,
+}
+
+/// An identity as it stood immediately after the given changeset.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct IdentitySnapshot {
+    #[serde(flatten)]
+    pub identity: IdentityView,
+    pub as_of_seq: Seq,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -857,16 +867,109 @@ pub(crate) fn identity(conn: &Connection, id: IdentityId) -> Result<Option<Ident
         Some(survivor) => parse(&survivor)?,
         None => id,
     };
+    Ok(Some(IdentityView {
+        id,
+        current,
+        entity_type: entity_type(entity_type_name)?,
+        label: labels(conn, &[current])?.remove(&current),
+        created: Seq(created as u64),
+        members: identity_members(conn, current, None)?,
+    }))
+}
 
-    let mut members = Vec::new();
+pub(crate) fn identity_at(conn: &Connection, id: IdentityId, seq: Seq) -> Result<IdentitySnapshot> {
+    let head = read_head(conn)?;
+    if seq > head {
+        return Err(Error::FutureIdentitySnapshot { seq, head });
+    }
+    let (entity_type_name, created) = {
+        let mut statement = conn.prepare(
+            "SELECT entity_type, created_seq FROM spool.identity WHERE identity_id = ?::UUID",
+        )?;
+        let mut rows = statement.query([id.to_string()])?;
+        let row = rows.next()?.ok_or(Error::UnknownIdentity(id))?;
+        (row.get::<_, String>(0)?, Seq(row.get::<_, i64>(1)? as u64))
+    };
+    if created > seq {
+        return Err(Error::IdentityNotYetCreated { id, seq, created });
+    }
+
+    let current = identity_current_at(conn, id, seq)?;
+    let members = identity_members(conn, current, Some(seq))?;
+    let entity_type = entity_type(entity_type_name)?;
+    let label = if members.is_empty() {
+        None
+    } else {
+        label_at(conn, &entity_type, current, seq)?
+    };
+    Ok(IdentitySnapshot {
+        identity: IdentityView {
+            id,
+            current,
+            entity_type,
+            label,
+            created,
+            members,
+        },
+        as_of_seq: seq,
+    })
+}
+
+/// Follows the last direct merge of each identity as of `seq`. A reinstate
+/// ends a direct merge. The current projection only holds today's survivor.
+fn identity_current_at(conn: &Connection, id: IdentityId, seq: Seq) -> Result<IdentityId> {
     let mut statement = conn.prepare(
+        "SELECT CASE WHEN kind = 'merge' THEN identity_id::VARCHAR END
+         FROM spool.changeset_op
+         WHERE seq <= $2 AND (
+             (kind = 'merge' AND from_identity_id = $1::UUID)
+             OR (kind = 'reinstate' AND identity_id = $1::UUID))
+         ORDER BY seq DESC, op_index DESC LIMIT 1",
+    )?;
+    let mut current = id;
+    let mut seen = BTreeSet::new();
+    while seen.insert(current) {
+        let mut rows = statement.query(params![current.to_string(), seq.0 as i64])?;
+        let Some(row) = rows.next()? else {
+            return Ok(current);
+        };
+        let Some(survivor) = row.get::<_, Option<String>>(0)? else {
+            return Ok(current);
+        };
+        current = parse(&survivor)?;
+    }
+    Err(StateError::new(format!(
+        "identity {id} has a merge cycle at changeset {seq}"
+    ))
+    .into())
+}
+
+/// An opening sequence is inclusive and a closing sequence is exclusive.
+const MEMBER_AT: &str = "m.from_seq <= $2 AND (m.to_seq IS NULL OR m.to_seq > $2)";
+
+fn identity_members(
+    conn: &Connection,
+    current: IdentityId,
+    seq: Option<Seq>,
+) -> Result<Vec<Member>> {
+    let mut members = Vec::new();
+    let visibility = if seq.is_some() {
+        MEMBER_AT
+    } else {
+        "m.to_seq IS NULL"
+    };
+    let mut statement = conn.prepare(&format!(
         "SELECT m.record_id::VARCHAR, o.source_id, o.source_key, m.from_seq
          FROM spool.membership m
          JOIN spool.record o ON o.record_id = m.record_id
-         WHERE m.to_seq IS NULL AND m.identity_id = ?::UUID
+         WHERE m.identity_id = $1::UUID AND {visibility}
          ORDER BY m.record_id",
-    )?;
-    let mut rows = statement.query([current.to_string()])?;
+    ))?;
+    let current = current.to_string();
+    let mut rows = match seq {
+        Some(seq) => statement.query(params![current, seq.0 as i64])?,
+        None => statement.query([current])?,
+    };
     while let Some(row) = rows.next()? {
         members.push(Member {
             record: parse(&row.get::<_, String>(0)?)?,
@@ -875,14 +978,43 @@ pub(crate) fn identity(conn: &Connection, id: IdentityId) -> Result<Option<Ident
             since: Seq(row.get::<_, i64>(3)? as u64),
         });
     }
-    Ok(Some(IdentityView {
-        id,
-        current,
-        entity_type: entity_type(entity_type_name)?,
-        label: labels(conn, &[current])?.remove(&current),
-        created: Seq(created as u64),
-        members,
-    }))
+    Ok(members)
+}
+
+fn label_at(
+    conn: &Connection,
+    entity_type: &EntityType,
+    identity: IdentityId,
+    seq: Seq,
+) -> Result<Option<String>> {
+    let declaration: Declaration = {
+        let mut statement = conn.prepare(
+            "SELECT d.declaration::VARCHAR FROM spool.entity_type d
+             JOIN spool.changeset c ON c.seq = ? AND d.declared_at <= c.committed_at
+             WHERE d.entity_type = ? ORDER BY d.version DESC LIMIT 1",
+        )?;
+        let mut rows = statement.query(params![seq.0 as i64, entity_type.as_str()])?;
+        let Some(row) = rows.next()? else {
+            return Ok(None);
+        };
+        serde_json::from_str(&row.get::<_, String>(0)?).map_err(StateError::new)?
+    };
+    let Some(label) = declaration.label.as_deref() else {
+        return Ok(None);
+    };
+    let mut statement = conn.prepare(&format!(
+        "SELECT o.record_id::VARCHAR FROM spool.membership m
+         JOIN spool.record o ON o.record_id = m.record_id
+         WHERE m.identity_id = $1::UUID AND {MEMBER_AT}
+         ORDER BY o.loaded_at, o.load_run, o.record_id LIMIT {LABEL_MEMBERS}",
+    ))?;
+    let mut rows = statement.query(params![identity.to_string(), seq.0 as i64])?;
+    let mut oldest = Vec::new();
+    while let Some(row) = rows.next()? {
+        oldest.push(parse(&row.get::<_, String>(0)?)?);
+    }
+    let names = features::snapshot_labels(conn, &declaration, label, &oldest)?;
+    Ok(common_label(names.into_iter()))
 }
 
 /// The IDs as a SQL list of UUIDs. An ID is hexadecimal digits and hyphens,

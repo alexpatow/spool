@@ -425,6 +425,7 @@ fn router_until(engine: Arc<Engine>, options: &ServerOptions, stopping: Stopping
         .route("/ids", post(mint_ids))
         .route("/identities", get(list_identities))
         .route("/identities/{identity}", get(read_identity))
+        .route("/identities/{identity}/at", get(identity_at))
         .route("/identities/{identity}/history", get(identity_history))
         .route("/identities/{identity}/explain", get(explain_identity))
         .route("/identities/{identity}/split", post(split))
@@ -595,6 +596,7 @@ impl From<spool::Error> for ApiError {
             Error::UnknownRun(_)
             | Error::UnknownDraft(_)
             | Error::UnknownIdentity(_)
+            | Error::IdentityNotYetCreated { .. }
             | Error::UnknownDocument(_)
             | Error::UnknownRecord(_)
             | Error::UnknownChangeset(_)
@@ -616,6 +618,7 @@ impl From<spool::Error> for ApiError {
             | Error::Rows(_)
             | Error::Arrow(_)
             | Error::InvalidEntityType(_)
+            | Error::FutureIdentitySnapshot { .. }
             | Error::UndeclaredType(_)
             | Error::SameRecord(_)
             | Error::Recompute(_)
@@ -2545,6 +2548,22 @@ async fn list_identities(
 async fn read_identity(State(app): State<App>, Path(identity): Path<String>) -> ApiResult {
     let identity = id(&identity, "an identity ID")?;
     ok(engine(&app, move |engine| engine.identity(identity)).await?)
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IdentityAtQuery {
+    seq: Seq,
+}
+
+async fn identity_at(
+    State(app): State<App>,
+    Path(identity): Path<String>,
+    params: Result<Query<IdentityAtQuery>, QueryRejection>,
+) -> ApiResult {
+    let identity = id(&identity, "an identity ID")?;
+    let seq = query(params)?.seq;
+    ok(engine(&app, move |engine| engine.identity_at(identity, seq)).await?)
 }
 
 /// What holds an identity together, and the fewest links that would part

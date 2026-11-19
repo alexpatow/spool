@@ -16,11 +16,12 @@ const ACCEPT: &str = "application/json, text/event-stream";
 /// and whether it asks for a reason. A tool that writes under its caller's
 /// name does. A load and a match run are recorded as runs, which have no
 /// author and no reason.
-const TOOLS: [(&str, bool, bool); 25] = [
+const TOOLS: [(&str, bool, bool); 26] = [
     ("describe_store", true, false),
     ("search_identities", true, false),
     ("get_identity", true, false),
     ("get_identity_history", true, false),
+    ("get_identity_at", true, false),
     ("search_records", true, false),
     ("get_record", true, false),
     ("explain_pair", true, false),
@@ -628,6 +629,214 @@ fn a_tool_that_looks_something_up_answers_what_the_api_answers() {
     );
     // Looking things up changed nothing.
     assert_eq!(head(&server), 2);
+}
+
+#[test]
+fn identity_snapshots_keep_historical_members_and_merge_redirects() {
+    let dir = tempfile::tempdir().unwrap();
+    let (server, _) = thing_server(dir.path());
+    server.call(
+        "/v1/load",
+        json!({
+            "source": "shop", "entity_type": "thing", "wait_ms": 5000,
+            "rows": [
+                { "id": "a", "code": "anvil" }, { "id": "move", "code": "vise" },
+                { "id": "b", "code": "bolt" }, { "id": "c", "code": "chisel" },
+            ],
+        }),
+    );
+    let record = |key| {
+        server.read(&format!("/v1/records?source=shop&key={key}"))["records"][0]["id"].clone()
+    };
+    let [anvil, vise, bolt, chisel] = ["a", "move", "b", "c"].map(record);
+    let minted = server.call("/v1/ids", json!({ "identities": 3 }));
+    let [a, b, c] = [0, 1, 2].map(|i| text(&minted["identities"][i]));
+    let commit = |ops| {
+        tool(
+            &server,
+            "commit_changeset",
+            json!({ "ops": ops, "reason": "historical example" }),
+        )["seq"]
+            .as_u64()
+            .unwrap()
+    };
+    let at = |id, seq| {
+        let http = server.read(&format!("/v1/identities/{id}/at?seq={seq}"));
+        assert_eq!(
+            http,
+            tool(
+                &server,
+                "get_identity_at",
+                json!({ "identity": id, "seq": seq })
+            )
+        );
+        assert_eq!(http["as_of_seq"], seq);
+        assert_eq!(http["id"], id);
+        http
+    };
+
+    assert_eq!(
+        commit(
+            [a, b, c]
+                .map(
+                    |id| json!({ "op": "create_identity", "identity": id, "entity_type": "thing" })
+                )
+                .to_vec()
+        ),
+        1
+    );
+    let empty = at(a, 1);
+    assert_eq!(empty["created"], 1);
+    assert_eq!(empty["members"], json!([]));
+    assert!(empty["label"].is_null());
+    let before_creation = server
+        .get(&format!("/v1/identities/{a}/at?seq=0"))
+        .error(404, "not_found");
+    assert!(
+        before_creation.contains("created at 1"),
+        "{before_creation}"
+    );
+    assert_eq!(
+        refused(
+            &server,
+            "get_identity_at",
+            json!({ "identity": a, "seq": 0 }),
+            "not_found"
+        )["message"],
+        before_creation
+    );
+
+    let assignments = [(&anvil, a), (&vise, a), (&bolt, b), (&chisel, c)]
+        .map(|(record, to)| json!({ "op": "assign", "record": record, "from": null, "to": to }));
+    assert_eq!(commit(assignments.to_vec()), 2);
+    let assigned = at(a, 2);
+    let members = assigned["members"].as_array().unwrap();
+    assert_eq!(members.len(), 2);
+    assert!(members.iter().all(|member| member["since"] == 2));
+    assert_eq!(at(b, 2)["label"], "bolt");
+    assert_eq!(at(c, 2)["current"], c);
+
+    let split = tool(
+        &server,
+        "split_identity",
+        json!({ "identity": a, "records": [vise], "reason": "separate tools" }),
+    );
+    let split_id = text(&split["identity"]);
+    assert_eq!(split["kept"], a);
+    assert_eq!(split["committed"]["seq"], 3);
+    assert_eq!(
+        at(a, 3)["members"][0],
+        json!({ "record": anvil, "source": "shop", "key": "a", "since": 2 })
+    );
+    assert_eq!(at(split_id, 3)["members"][0]["since"], 3);
+    assert_eq!(at(split_id, 3)["label"], "vise");
+    let constraints = tool(&server, "list_constraints", json!({ "record": vise }));
+    assert_eq!(constraints["constraints"][0]["kind"], "cannot_link");
+    assert!(
+        server
+            .get(&format!("/v1/identities/{split_id}/at?seq=2"))
+            .error(404, "not_found")
+            .contains("created at 3")
+    );
+
+    assert_eq!(
+        commit(vec![json!({ "op": "merge", "from": a, "into": b })]),
+        4
+    );
+    let first_merge = at(a, 4);
+    assert_eq!(first_merge["created"], 1);
+    assert_eq!(first_merge["current"], b);
+    assert_eq!(first_merge["members"], at(b, 4)["members"]);
+    let moved = first_merge["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|member| member["record"] == anvil)
+        .unwrap();
+    assert_eq!(moved["since"], 4);
+    assert_eq!(
+        commit(vec![json!({ "op": "merge", "from": b, "into": c })]),
+        5
+    );
+    let second_merge = at(a, 5);
+    assert_eq!(second_merge["current"], c);
+    assert_eq!(second_merge["members"].as_array().unwrap().len(), 3);
+
+    let undo = |seq| {
+        tool(
+            &server,
+            "undo_changeset",
+            json!({ "seq": seq, "reason": "restore the separate tools" }),
+        )["committed"]["seq"]
+            .as_u64()
+            .unwrap()
+    };
+    assert_eq!(undo(5), 6);
+    assert_eq!(at(a, 6)["current"], b);
+    assert_eq!(at(a, 5), second_merge);
+    assert_eq!(undo(4), 7);
+    assert_eq!(at(a, 7)["current"], a);
+    assert_eq!(at(a, 4), first_merge);
+    assert_eq!(at(a, 2), assigned);
+
+    let newer = server.call(
+        "/v1/records",
+        json!({
+            "source": "shop", "entity_type": "thing",
+            "row": { "id": "a", "code": "new anvil" }, "replace": true,
+        }),
+    );
+    let versioned = at(a, 8);
+    assert_ne!(newer["record"], anvil);
+    assert_eq!(at(a, 7)["members"][0]["record"], anvil);
+    let versions = versioned["members"].as_array().unwrap();
+    assert_eq!(versions.len(), 2);
+    assert!(versions.iter().any(|member| member["record"] == anvil));
+    assert!(
+        versions
+            .iter()
+            .any(|member| member["record"] == newer["record"] && member["since"] == 8)
+    );
+    let retracted = server.call(
+        "/v1/retract",
+        json!({ "source": "shop", "entity_type": "thing", "keys": ["a"], "wait_ms": 5000 }),
+    );
+    assert_eq!(retracted["run"]["retraction"]["committed"]["seq"], 9);
+    assert_eq!(at(a, 9)["members"], json!([]));
+    assert_eq!(at(a, 8), versioned);
+    assert_eq!(at(a, 2), assigned);
+    assert_eq!(at(a, 1), empty);
+
+    let future = server
+        .get(&format!("/v1/identities/{a}/at?seq=10"))
+        .error(400, "invalid");
+    assert!(future.contains("store head at 9"), "{future}");
+    assert_eq!(
+        refused(
+            &server,
+            "get_identity_at",
+            json!({ "identity": a, "seq": 10 }),
+            "invalid"
+        )["message"],
+        future
+    );
+    let unknown = "01a1ee50-0000-7000-8000-000000000000";
+    for (id, seq, status, code) in [
+        (unknown, 9, 404, "not_found"),
+        ("invalid-uuid", 2, 400, "invalid"),
+        (a, -1, 400, "invalid"),
+    ] {
+        server
+            .get(&format!("/v1/identities/{id}/at?seq={seq}"))
+            .error(status, code);
+        refused(
+            &server,
+            "get_identity_at",
+            json!({ "identity": id, "seq": seq }),
+            code,
+        );
+    }
+    assert_eq!(head(&server), 9);
 }
 
 #[test]
