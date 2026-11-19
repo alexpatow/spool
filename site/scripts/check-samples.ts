@@ -6,7 +6,9 @@
  *   bun run check:samples --release       also fail when a page uses something that is not built
  *   bun run check:samples --spool <path>  the binary to run (default: ../target/release/spool,
  *                                         or SPOOL_BIN)
- *   bun run check:samples --port <n>      the port `spool dev` listens on, when 7765 is taken
+ *   bun run check:samples --port <n>      the port `spool dev` listens on, when 7765 is taken.
+ *                                         Every server a page starts is moved with it, and
+ *                                         nothing then listens on 7765
  *   bun run check:samples --page <name>   only the pages whose path has <name> in it
  *   bun run check:samples --trace         say which block is being run
  *   bun run check:samples --keep          leave the last session's directory behind, to look at
@@ -61,6 +63,7 @@
  * for any lines. `compare-output.ts` does the comparing.
  */
 import { type Subprocess, spawn, spawnSync } from "bun";
+import { spawn as spawnChild } from "node:child_process";
 import {
   existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync,
   writeFileSync,
@@ -70,11 +73,14 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { type Ids, asShown, noIds, sameOutput, tidy } from "./compare-output";
 import { notBuilt } from "./not-built";
-import { movePorts } from "./ports";
+import { listenOn, movePorts } from "./ports";
 import { shownIds } from "./shown-ids";
 import { type Block, blocksOf, directivesOf, shellVariables } from "./sample-blocks";
 
 const DEFAULT_PORT = 7765;
+/** How long a block may run, in milliseconds, and one that is to end with an error. */
+const LIMIT = 600_000;
+const LIMIT_TO_FAIL = 120_000;
 const siteDir = resolve(import.meta.dir, "..");
 const docsDir = join(siteDir, "content/docs");
 
@@ -177,7 +183,7 @@ async function main() {
     process.exit(2);
   }
   // The pages use 7765 for `spool dev` and 7766 for a second server.
-  const address = (text: string) => movePorts(text, DEFAULT_PORT, port);
+  const address = (text: string) => listenOn(movePorts(text, DEFAULT_PORT, port), DEFAULT_PORT, port);
   const unaddress = (text: string) => movePorts(text, port, DEFAULT_PORT);
 
   const tools = mkdtempSync(join(tmpdir(), "spool-samples-tools-"));
@@ -243,18 +249,65 @@ async function main() {
     }
   }
 
-  /** Runs commands as one script, and keeps the directory and the variables it ends with. */
-  function runScript(script: string) {
+  /** The process group of the block that is running. */
+  let running: number | undefined;
+  const stopGroup = (group: number) => {
+    try {
+      process.kill(-group, "SIGKILL");
+    } catch {
+      // Nothing of it is left.
+    }
+  };
+  // A check that is stopped leaves no server behind: neither the block that
+  // is running, which a signal from the terminal does not reach in its own
+  // process group, nor the servers of the session.
+  for (const [signal, code] of [["SIGINT", 130], ["SIGTERM", 143]] as const) {
+    process.on(signal, () => {
+      if (running !== undefined) stopGroup(running);
+      for (const entry of session.background) entry.process.kill();
+      process.exit(code);
+    });
+  }
+
+  /**
+   * Runs commands as one script, and keeps the directory and the variables it
+   * ends with. A block that has not ended after `limit` milliseconds, such as
+   * a server that was meant to be refused, is stopped with everything it
+   * started: it runs in a process group of its own, so that what it left
+   * running does not hold a port and a store after the check has ended.
+   */
+  async function runScript(script: string, limit: number) {
     const set = [...session.variables].map(([name, value]) => `${name}=${value}`).join("\n");
     // From a file: a shell that is given its commands as an argument lists them
     // among its variables, where their lines would be taken for variables.
     const file = join(tools, "block.sh");
     writeFileSync(file, `${set}\n${script}\nprintf '\\n__CWD__%s\\n__SET__\\n' "$PWD"\nset\n`);
-    // A block that never ends, such as a server that was meant to be refused, is stopped.
-    const result = spawnSync(["sh", "-e", file], { cwd: session.cwd, env, timeout: 600_000 });
-    const [stdout = "", rest] = result.stdout.toString().split("\n__CWD__");
+    const child = spawnChild("sh", ["-e", file], {
+      cwd: session.cwd,
+      env,
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    running = child.pid;
+    const printed = { stdout: "", stderr: "" };
+    for (const name of ["stdout", "stderr"] as const) {
+      child[name].setEncoding("utf8");
+      child[name].on("data", (text: string) => (printed[name] += text));
+    }
+    let stopped = false;
+    const timer = setTimeout(() => {
+      stopped = true;
+      if (child.pid !== undefined) stopGroup(child.pid);
+    }, limit);
+    const exitCode = await new Promise<number | null>((done) => {
+      child.once("error", () => done(null));
+      child.once("close", (code) => done(code));
+    });
+    clearTimeout(timer);
+    running = undefined;
+    const [stdout = "", rest] = printed.stdout.split("\n__CWD__");
     const [next, set2 = ""] = rest?.split("\n__SET__\n") ?? [];
-    const ok = result.exitCode === 0 && next !== undefined;
+    const ok = exitCode === 0 && next !== undefined;
     if (/\bspool init\b/.test(script)) standInForModel(session.work);
     if (ok) {
       session.cwd = next;
@@ -262,12 +315,7 @@ async function main() {
         if (!ownVariables.has(name)) session.variables.set(name, value);
       }
     }
-    return {
-      ok,
-      exitCode: result.exitCode,
-      stdout,
-      stderr: result.stderr.toString(),
-    };
+    return { ok, exitCode, stopped, stdout, stderr: printed.stderr };
   }
 
   /** Calls a tool of the server's MCP endpoint. */
@@ -389,10 +437,8 @@ async function main() {
         if (block.lang === "sh") {
           const script = address(block.body);
           if (directives.has("background")) {
-            const listens = script.includes("--listen");
-            const command = listens || port === DEFAULT_PORT ? script : `${script} --listen 127.0.0.1:${port}`;
             const set = [...session.variables].map(([key, value]) => `${key}=${value}`).join("\n");
-            const child = spawn(["sh", "-c", `${set}\nexec ${command} 2>&1`], {
+            const child = spawn(["sh", "-c", `${set}\nexec ${script} 2>&1`], {
               cwd: session.cwd,
               env,
               stdout: "pipe",
@@ -420,14 +466,19 @@ async function main() {
             continue;
           }
 
-          const run = () => {
+          const run = async () => {
             const status = devLog().trimEnd().split("\n").pop() ?? "";
             if (status.includes("still running the last version") && !directives.has("fails")) {
               fail(where, `the project did not compile before this command:\n${devLog().slice(-600)}`);
             }
-            const result = runScript(script);
+            const limit = directives.has("fails") ? LIMIT_TO_FAIL : LIMIT;
+            const result = await runScript(script, limit);
             ran++;
             const answer = result.stdout + result.stderr;
+            if (result.stopped) {
+              fail(where, `did not end in ${limit / 1000} seconds, and was stopped with what it had started:\n${block.body}\n${answer}`);
+              return { output: unaddress(answer), background: false };
+            }
             const worked = result.ok && !answer.trimStart().startsWith('{"error"');
             if (missing !== undefined) {
               note(worked ? builtNow : notYet, missing, where);
@@ -441,10 +492,10 @@ async function main() {
             return { output: unaddress(answer), background: false };
           };
           if (directives.has("after")) {
-            session.later.push(async () => void run());
+            session.later.push(async () => void (await run()));
             last = undefined;
           } else {
-            last = run();
+            last = await run();
           }
           continue;
         }
