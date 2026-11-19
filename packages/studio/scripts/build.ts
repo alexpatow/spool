@@ -1,5 +1,7 @@
 // Writes the files the `spool` binary serves as the studio: the page, its
-// script, its style sheet and its fonts, built from this package.
+// script, its style sheet and its fonts, built from this package. First it
+// writes what the studio takes from the site, so that the two look alike
+// from one set of values.
 //
 //   bun scripts/build.ts           writes the files
 //   bun scripts/build.ts --check   fails if a file is out of date
@@ -13,20 +15,50 @@ import { build } from "vite";
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
 const outputDir = join(root, "../../crates/spool-cli/src/studio");
+const site = join(root, "../../site/src");
+
+/**
+ * What the studio takes from the site, as `[site, studio]`: its colours,
+ * typefaces, spacing and themes, and its mark. They are copied rather than
+ * imported. StyleX names a variable after the file that defines it, and
+ * Shelf's components name the tokens by a path inside their own package, so
+ * the studio's tokens have to be defined in the studio. And the site's
+ * packages are not installed where the studio is built.
+ */
+const SHARED: Array<[string, string]> = [
+  ["styles/shelf/tokens.stylex.ts", "src/styles/shelf/tokens.stylex.ts"],
+  ["styles/shelf/themes.ts", "src/styles/shelf/themes.ts"],
+  ["styles/shelf/conditions.stylex.ts", "src/styles/shelf/conditions.stylex.ts"],
+  ["styles/shelf/fonts.css", "src/styles/shelf/fonts.css"],
+  ["components/brand.tsx", "src/brand.tsx"],
+];
+
+function copied(from: string): string {
+  const text = readFileSync(join(site, from), "utf8");
+  const said = [
+    `Copied from site/src/${from} by packages/studio/scripts/build.ts.`,
+    "Do not edit: change the site's file and run `bun run build` in packages/studio.",
+  ];
+  return from.endsWith(".css")
+    ? `/* ${said.join("\n * ")} */\n\n${text}`
+    : `${said.map((line) => `// ${line}`).join("\n")}\n\n${text}`;
+}
 
 /** The files the server has a route for. A build that makes another is a mistake. */
 const FILES = [
   "index.html",
   "studio.js",
   "studio.css",
-  "geist-latin-wght-normal.woff2",
-  "geist-latin-ext-wght-normal.woff2",
-  "geist-mono-latin-wght-normal.woff2",
-  "geist-mono-latin-ext-wght-normal.woff2",
+  "hanken-grotesk-latin-wght-normal.woff2",
+  "hanken-grotesk-latin-ext-wght-normal.woff2",
+  "newsreader-latin-opsz-normal.woff2",
+  "newsreader-latin-ext-opsz-normal.woff2",
+  "commit-mono-latin-400-normal.woff2",
+  "commit-mono-latin-700-normal.woff2",
 ];
 
 /** The packages the fonts are copied from. */
-const FONTS = ["@fontsource-variable/geist", "@fontsource-variable/geist-mono"];
+const FONTS = ["@fontsource-variable/hanken-grotesk", "@fontsource-variable/newsreader", "@fontsource/commit-mono"];
 
 const MIT = `Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -130,14 +162,31 @@ async function generate(): Promise<Map<string, Buffer>> {
   return files;
 }
 
+const checking = process.argv.includes("--check");
+const shared = SHARED.filter(([from, to]) => {
+  const path = join(root, to);
+  const text = copied(from);
+  if (existsSync(path) && readFileSync(path, "utf8") === text) return false;
+  if (!checking) {
+    writeFileSync(path, text);
+    console.log(`wrote ${path}`);
+  }
+  return true;
+});
+
 const generated = await generate();
-if (process.argv.includes("--check")) {
-  const stale = [...generated].filter(([name, contents]) => {
-    const path = join(outputDir, name);
-    return !existsSync(path) || !readFileSync(path).equals(contents);
-  });
+if (checking) {
+  const stale = [
+    ...shared.map(([, to]) => join(root, to)),
+    ...[...generated]
+      .filter(([name, contents]) => {
+        const path = join(outputDir, name);
+        return !existsSync(path) || !readFileSync(path).equals(contents);
+      })
+      .map(([name]) => join(outputDir, name)),
+  ];
   if (stale.length > 0) {
-    for (const [name] of stale) console.error(`${join(outputDir, name)} is out of date`);
+    for (const path of stale) console.error(`${path} is out of date`);
     console.error("run `bun run build` in packages/studio");
     process.exit(1);
   }
