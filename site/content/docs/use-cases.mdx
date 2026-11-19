@@ -1,15 +1,13 @@
 ---
 title: Use cases
-description: Where Spool fits, case by case, from venture capital data and sales accounts to due diligence, support, KYC name matching, agent memory and catalogs.
+description: Where Spool fits, case by case: venture capital data, sales accounts, due diligence, support, KYC name matching, agent memory and product catalogs.
 ---
 
-Spool fits when several sources name the same things, some of them in text, and other systems keep the ID. Each case below says what the data looks like, what Spool does with it, and a small example in Spool's own terms.
-
-The examples were run by hand on version 0.1.0. Unlike the commands on the other pages, they are not in the samples check.
+Spool fits when several sources name the same things, some of them only in text, and other systems store the ID. Each case shows the mess, how it maps onto Spool, and a worked example.
 
 ## Venture capital
 
-This one is from Alex Patow, who wrote Spool.
+This one is from Alex Patow, who built Spool.
 
 I have built software for venture capital funds since 2020, and I wrote [Building for VC](https://buildingfor.vc), a guide for engineers who join a fund. I built Spool because mapping a huge number of data sources into one representation of each company, person and deal was one of the hardest problems I had there. Most datasets held some piece of the truth, and the complete picture came from several that overlapped. It was just as hard to reason about why two records had been merged, and to separate them when they should not have been.
 
@@ -17,13 +15,13 @@ I have built software for venture capital funds since 2020, and I wrote [Buildin
 
 Much of what a fund knows is text: research, meeting notes and memos, spread across documents and chat threads. A memo from last year names Acme Systems. The company is called Acme Robotics now, and whoever looks it up should find it and still see which name the memo used.
 
-**In Spool's terms.**
+**With Spool.**
 
-- Each provider's export is a source, and each row is a record named by its source and key, so `crm:42` and `funding:42` are two records.
-- A memo is a document. An extractor finds the companies, people and funds it names, and each place it finds is a record that keeps the characters it was found at.
-- Rules on the domain and the name judge pairs. Each company is an identity, and its ID is what the CRM and the warehouse store.
-- `spool explain` says why two records share an identity: which rule matched them, or who merged them and why. A wrong merge is undone, or split, and the split keeps the two sides apart from then on.
-- A funding round can be an entity type too, so that two feeds' entries for one Series A are one round before anyone adds up the money.
+- Each provider's export is a source, and each row is a record named by source and key, so `crm:42` and `funding:42` are two records.
+- A memo is a document. An extractor finds the companies, people and funds it names, and each mention keeps its character range.
+- Rules on domain and name judge pairs. Each company is an identity, and its ID is what the CRM and the warehouse store.
+- `spool explain` shows why two records share an identity: the rule that matched them, or who merged them and why. Undo a wrong merge, or split it, and the split keeps the sides apart from then on.
+- A funding round can be an entity type too, so two feeds' entries for one Series A become one round before anyone adds up the money.
 
 **Example.** Three rows, one from each provider, and a memo:
 
@@ -38,7 +36,12 @@ people   319  Acme Systems        acmesystems.example
 Passed on Acme Systems in March. Come back to them when the second pilot is signed.
 ```
 
-The website becomes a `domain` feature through the `domain_of` transform from [Entity types and features](/docs/concepts/entity-types-and-features#add-transforms). One rule matches on it, and the sample project's rule matches close names:
+A transform turns the website into a `domain` feature. One rule matches on it, and the sample project's rule matches close names:
+
+```sql
+-- transforms/domain_of.sql: "https://www.acme-robotics.example/" becomes "acme-robotics.example"
+lambda website: nullif(regexp_extract(lower(website), '^(?:https?://)?(?:www\.)?([^/:?#]+)', 1), '')
+```
 
 ```sql
 -- entities/company/rules/match/same_domain.sql
@@ -55,7 +58,7 @@ memos:memo-2026-03.txt[10-22]  Acme Systems        01a1f134-c68f-7171-b3ec-d25a6
 people:319                     Acme Systems        01a1f134-c68f-7171-b3ec-d25a61125b0f
 ```
 
-The CRM row and the funding row share a domain. Acme Systems has another domain and a name too far from Acme, so it and the memo's mention are a second company. Someone who knows it is the former name merges the two, with that reason. The memo's mention now belongs to Acme Robotics, still at the characters that say Acme Systems, and the merge explains itself:
+The CRM row and the funding row share a domain. Acme Systems has a different domain and a name too far from Acme, so it and the memo's mention form a second company. Someone who knows it's the former name merges the two, with that reason. The memo's mention now belongs to Acme Robotics, still pointing at the characters that say Acme Systems, and the merge explains itself:
 
 ```text
 `people:319` and `funding:42` belong to the same identity, 01a1f134-c68e-7020-b3af-615f8b55ad1c.
@@ -66,16 +69,16 @@ Run 4 (strategy `rules`) made them a candidate pair (block rule `name_prefix`) a
 
 ## Sales accounts and contacts
 
-**The mess.** Two reps added the same account, as "Acorn Tools" and "Acorn Tools Ltd". Contacts arrive from email and the calendar with an address and no account. Call notes name accounts the CRM has under another spelling, or not at all. An enrichment tool adds a third spelling.
+**The mess.** Two reps added the same account as "Acorn Tools" and "Acorn Tools Ltd". Contacts arrive from email and the calendar with an address but no account. Call notes name accounts the CRM spells differently, or doesn't have. An enrichment tool adds a third spelling.
 
 **With Spool.**
 
-- The CRM's accounts and contacts are sources. An export of email or calendar contacts is another, with the domain of each address as a feature.
+- The CRM's accounts and contacts are sources. An email or calendar export is another, with each address's domain as a feature.
 - Call notes are documents, and an extractor finds the companies they name.
-- Rules match accounts by domain or by a close name, and keep apart those in different countries. Contacts match by email address.
-- The account's identity ID goes in a field of the CRM. When two identities are merged, the old ID still answers with the one that took its place, and the [log](/docs/using-the-ids#follow-the-log) tells anything that follows it.
+- Rules match accounts by domain or close name, and keep apart those in different countries. Contacts match by email.
+- The account's identity ID goes in a CRM field. When two identities merge, the old ID resolves to the survivor, and the [log](/docs/using-the-ids#follow-the-log) tells every consumer.
 
-**Example.** The sample project of [Getting started](/docs/getting-started) is this case: nine CRM rows, and a call note.
+**Example.** The sample project in [Getting started](/docs/getting-started) is this case: nine CRM rows and a call note.
 
 ```text
 Call with Dana Reyes on 12 November. She has moved to Acorn Tools Ltd and runs
@@ -83,9 +86,9 @@ purchasing there. They now ship through Larkfield Logistics Ltd, and she asked
 whether we work with Brightwater Foods Ltd, their new supplier.
 ```
 
-Acorn Tools Ltd and Larkfield Logistics Ltd join the accounts the CRM rows made, which keep their IDs. Brightwater Foods Ltd is an account the CRM does not have, so it gets an identity of its own: a lead, found in a note.
+Acorn Tools Ltd and Larkfield Logistics Ltd join the CRM's accounts, which keep their IDs. Brightwater Foods Ltd isn't in the CRM, so it gets its own identity: a lead, found in a note.
 
-An email domain is a good feature until it is `gmail.com`. A transform that gives no domain for an address anyone can get stops every Gmail contact from becoming one company:
+An email domain is a good feature until it's `gmail.com`. A transform that returns no domain for free email providers stops every Gmail contact from collapsing into one company:
 
 ```sql
 -- transforms/email_domain.sql
@@ -95,15 +98,15 @@ lambda email: CASE WHEN lower(split_part(email, '@', 2)) IN ('gmail.com', 'outlo
 
 ## Research and due diligence
 
-**The mess.** The company you are looking at, and the people around it, are named in news, filings, interview notes and your own lists, each with its own spelling. Another company has the same name in another country. You want every document that names your company, and none that names the other one.
+**The mess.** The company you're researching, and the people around it, appear in news, filings, interview notes and your own lists, each spelled its own way. Another company shares its name in another country. You want every document about your company, and none about the other one.
 
 **With Spool.**
 
-- Each text is a document. An extractor finds the companies and people it names, and each mention keeps its document and the characters it was found at.
-- Mentions are matched against the companies you already hold as rows.
-- A mention that fits two identities waits for review, with no identity, and joins neither by a guess.
+- Each text is a document. An extractor finds the companies and people it names, and each mention keeps its document and character range.
+- Mentions match against the companies you already hold as rows.
+- A mention that fits two identities waits for review instead of joining either on a guess.
 
-**Example.** The sample project has two Halden Groups, one in GB and one in the US, kept apart by a rule on the country. A news item that starts "Halden Group has hired a new finance director" has no country to compare. The match leaves its mention out, and `spool show review 1` says why:
+**Example.** The sample project has two Halden Groups, in GB and the US, kept apart by a country rule. A news item that starts "Halden Group has hired a new finance director" has no country to compare. The match holds its mention back, and `spool show review 1` says why:
 
 ```text
 review item  1
@@ -120,17 +123,17 @@ identities they matched
   01a1f135-1685-7241-975d-3bc909b3db16
 ```
 
-A reviewer who reads the item assigns the mention to one of them, with a reason. [Review](/docs/concepts/review#decide-it) shows how.
+A reviewer assigns the mention to one of them, with a reason. [Review](/docs/concepts/review#decide-it) shows how.
 
 ## Support and customer records
 
-**The mess.** The helpdesk knows a requester's email and an organization an agent typed. Billing knows accounts and invoice addresses. The product's database knows users and workspaces. "Which customers open the most tickets" needs one customer ID across the three.
+**The mess.** The helpdesk has a requester's email and an organization an agent typed. Billing has accounts and invoice addresses. The product database has users and workspaces. "Which customers open the most tickets?" needs one customer ID across all three.
 
 **With Spool.**
 
-- Each export is a source of one entity type, `customer`, with features such as the email domain, and a billing ID where a source has one.
-- Rules match on the domain, and keep apart two different billing IDs.
-- The warehouse joins tickets, invoices and usage on the identity ID. When someone merges two customers, the log says so, and nothing that stored the old ID is left pointing at nothing.
+- Each export is a source of one entity type, `customer`, with features such as email domain and, where available, billing ID.
+- Rules match on domain, and keep two different billing IDs apart.
+- The warehouse joins tickets, invoices and usage on the identity ID. When someone merges two customers, the log records it, and old IDs still resolve.
 
 **Example.** A billing account and two tickets, with the `email_domain` transform from the sales case:
 
@@ -148,19 +151,19 @@ helpdesk:t-1    Larkfield                01a1f135-5ae0-759f-a44c-2f17261ce140
 helpdesk:t-2    Larkfield                01a1f135-5b53-7714-bbf0-581b5bbd86d9
 ```
 
-`t-1` shares a domain with the account. `t-2` came from a Gmail address, so it has no domain, and an organization an agent typed is not enough to match on. It gets an identity of its own until someone who knows merges it.
+`t-1` shares the account's domain. `t-2` came from a Gmail address, so it has no domain, and a typed organization name isn't enough to match on. It keeps its own identity until someone who knows merges it.
 
 ## Compliance and KYC name matching
 
-**The mess.** Customers' names have to be checked against a list: sanctions, politically exposed people, your own blocklist. Lists write names surname first, in capitals, with or without a middle name. Every hit is checked by a person, and "we checked, this is not the listed person" has to be kept with who decided and why.
+**The mess.** Customer names have to be screened against a list: sanctions, politically exposed persons, your own blocklist. Lists write names surname first, in capitals, with or without a middle name. A person checks every hit, and "we checked, this isn't the listed person" has to be recorded with who decided and why.
 
 **With Spool.**
 
-- The customers and the list are two sources of one entity type, `person`.
-- A transform puts the words of a name in order, so that "HOLT, Maren" and "Maren Holt" compare equal.
-- A rule matches on the name, and a no_match rule keeps apart two different dates of birth.
-- A customer that joins an identity with a list entry is a hit. A customer that fits two entries waits for review.
-- The analyst's decision is a changeset with an author and a reason. A `cannot_link` constraint between a customer and an entry means no later changeset can put them in one identity.
+- Customers and the list are two sources of one entity type, `person`.
+- A transform sorts a name's words, so "HOLT, Maren" and "Maren Holt" compare equal.
+- A rule matches on name, and a no_match rule separates different dates of birth.
+- A customer who joins an identity with a list entry is a hit. One who fits two entries waits for review.
+- The analyst's decision is a changeset with an author and a reason. A `cannot_link` between a customer and an entry means no later changeset can put them together.
 
 **Example.** The transform and the rules:
 
@@ -179,7 +182,7 @@ l.name_words = r.name_words
 l.born <> r.born
 ```
 
-The list has two entries for HOLT, Maren, born in 1971 and in 1980. One customer arrives with a date of birth, and the next day another with none:
+The list has two entries for HOLT, Maren, born in 1971 and 1980. One customer arrives with a date of birth, and the next day another arrives without one:
 
 ```text
 source and key  name         identity
@@ -189,30 +192,32 @@ list:L-88       HOLT, Maren  01a1f136-777c-7294-a038-849ea835b87f
 list:L-90       HOLT, Maren  01a1f136-777c-7294-a038-849dbed83c87
 ```
 
-`k-1` has the date of birth of `L-88` and joined it: a hit. `k-2` matched both entries, so it waits in a `possible_merge` item. Without a date of birth, picking either would be a guess.
+`k-1` has `L-88`'s date of birth and joined it: a hit. `k-2` matched both entries, so it waits in a `possible_merge` item. Without a date of birth, picking either would be a guess.
 
 ## Agent memory and knowledge bases
 
-**The mess.** An agent remembers what it reads and hears: conversations, notes, wiki pages, tickets. "Dana", "Dana Reyes" and "the purchasing lead at Acorn" are one person, and "Acorn" and "ACORN TOOLS" are one company. A memory that stores each as written grows duplicates. One that merges them by guesswork mixes two people's facts, and nobody can say later why.
+**The mess.** An agent remembers what it reads and hears: conversations, notes, wiki pages, tickets. "Dana", "Dana Reyes" and "the purchasing lead at Acorn" are one person, and "Acorn" and "ACORN TOOLS" are one company. A memory that stores each as written fills with duplicates. One that merges by guesswork mixes up two people's facts, and nobody can say why later.
 
 **With Spool.**
 
-- What the agent reads is stored as documents, and an extractor finds what they name, with where.
-- Mentions resolve to the same identities as the rows of your lists. The identity ID is the key the memory files facts under, or the tag on a retrieved chunk.
-- An agent connected to [`/mcp`](/docs/mcp) looks identities up, asks why two records were matched with `explain_pair`, and corrects a wrong match with a merge, a split or an undo. Each correction is a changeset with its author and reason.
+- What the agent reads is stored as documents, and an extractor finds what they name, and where.
+- Mentions resolve to the same identities as your lists' rows. The identity ID is the key the memory files facts under, or the tag on a retrieved chunk.
+- An agent connected to [`/mcp`](/docs/mcp) looks up identities, asks why two records matched with `explain_pair`, and fixes a wrong match with a merge, split or undo. Each correction is a changeset with an author and a reason.
 
-**Example.** In the sample project, an agent asked which notes name Acorn Tools needs two tools. `search_identities` finds the identity by a word in its records, and `get_identity` lists its five records. One is `notes:notes-1.txt[54-69]`: the note, and the characters that say "Acorn Tools Ltd".
+**Example.** In the sample project, an agent asked which notes mention Acorn Tools needs two tools. `search_identities` finds the identity by a word in its records, and `get_identity` lists its five records. One is `notes:notes-1.txt[54-69]`: the note, and the characters that say "Acorn Tools Ltd".
 
 ## Catalogs
 
-**The mess.** Several suppliers list the same songs, or products, each in its own way. One writes the album into the title, another puts the artist first. A length is "02:52" in one and "2.87" minutes in another, and a year is "1972" or "'72".
+**The mess.** Several suppliers list the same songs, or products, each their own way. One writes the album into the title, another puts the artist first. A length is "02:52" in one and "2.87" minutes in another, and a year is "1972" or "'72".
 
 **With Spool.**
 
-- Each supplier is a source, with transforms of its own that turn its columns into the same features: title, artist, album, track number, seconds, year.
-- Rules compare the features, and a product's ID stays the same when next month's feed arrives.
+- Each supplier is a source, with its own transforms that turn its columns into shared features: title, artist, album, track number, seconds, year.
+- Rules compare the features, and a product's ID survives next month's feed.
 
-**Example.** The repository's [`benchmarks/resolution/music`](https://github.com/alexpatow/spool/tree/main/benchmarks/resolution/music) does this to songs from MusicBrainz in five sources. These three rows of its sample are one song:
+[Entity types and features](/docs/concepts/entity-types-and-features) builds a two-supplier product catalog from scratch.
+
+**Example.** [`benchmarks/resolution/music`](https://github.com/alexpatow/spool/tree/main/benchmarks/resolution/music) does this for MusicBrainz songs across five sources. These three rows from its sample are one song:
 
 ```text
 title                                                        length   artist                         album                                   year
@@ -221,8 +226,4 @@ Urbie Green And His Orchestra - Moonlight Serenade           unknown            
 Moonlight Serenade - The Persuasive Trombone of Urbie Green  2.87     Urbie Green And His Orchestra                                          '72
 ```
 
-On 193,750 records its rules ran in 8 seconds on four cores, at pair precision 0.997 and recall 0.862. Its first rules, "four of the six values agree", had precision 0.998 on 19,375 records and 0.157 on 1,937,500, where 2,532 different songs called "Intro" at track 1 became one identity. Measure rules at the size they will run at.
-
-## What it does not do yet
-
-[Limits](/docs/limits) lists what version 0.1.0 does not do, and [Compared with other tools](/docs/compared) says what to use instead.
+On 193,750 records, its rules run in 8 seconds on four cores, at pair precision 0.997 and recall 0.862. Its first rules, "four of the six values agree", scored 0.998 precision on 19,375 records but 0.157 on 1,937,500, where 2,532 different songs called "Intro" at track 1 collapsed into one identity. Measure rules at the size they'll run at.
