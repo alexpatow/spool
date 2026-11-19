@@ -137,7 +137,14 @@ pub struct ExtractRequest {
     /// Read the documents this extractor has read before as well.
     #[serde(default)]
     pub again: Option<bool>,
-    /// Read at most this many documents, oldest first.
+    /// With `again`: leave out the documents this extractor read in this
+    /// run or a later one, so that reading everything again in batches reads
+    /// each document once. Each batch after the first names the first
+    /// batch's run.
+    #[serde(default)]
+    pub again_since: Option<RunId>,
+    /// Read at most this many documents, oldest first. The run's report
+    /// says in `left` how many the limit left out.
     #[serde(default)]
     pub limit: Option<u64>,
     /// How long the call waits for the run, in milliseconds. If the run is
@@ -392,6 +399,10 @@ pub struct Info {
     /// The version of the API this server speaks.
     pub api: String,
     pub store: StoreInfo,
+    /// The longest a strategy or an extractor may run, in milliseconds:
+    /// what `--task-timeout` set. None when the server runs no user code.
+    #[serde(default)]
+    pub task_timeout_ms: Option<u64>,
 }
 
 /// The body of every response that is not a success.

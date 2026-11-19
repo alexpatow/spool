@@ -96,7 +96,7 @@ pub fn load(arguments: &[String]) -> Result<(), Failure> {
     // A text file that was not said to hold rows may be a document.
     let may_be_text = arguments.value("--delimiter").is_none() && named_as_text(file);
     let mut reader = Reader::new(input, delimiter).map_err(|why| {
-        let (Failure::Failed(said) | Failure::Usage(said)) = unreadable(&why);
+        let said = unreadable(&why).message();
         Failure::Failed(match may_be_text && why.0 != EMPTY {
             true => format!("{said}\n{}", extract_reads(&name)),
             false => said,
@@ -271,7 +271,7 @@ impl Total {
 
     /// A failure, with what was loaded before it if anything was.
     fn before(&self, failure: Failure, name: &str) -> Failure {
-        let (Failure::Failed(why) | Failure::Usage(why)) = failure;
+        let why = failure.message();
         if self.rows == 0 {
             return Failure::Failed(why);
         }

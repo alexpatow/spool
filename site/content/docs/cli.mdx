@@ -11,8 +11,8 @@ description: Every spool command, what it takes and what it prints.
 | [`spool info`](#spool-info) | Lists what a project declares and checks its SQL | A directory |
 | [`spool dev`](#spool-dev) | Runs the server on this machine and applies file changes as they are saved | A directory |
 | [`spool load`](#spool-load) | Loads a file of rows | A running server |
-| [`spool extract`](#spool-extract) | Stores a text file as a document and runs an extractor | A running server |
-| [`spool match`](#spool-match) | Matches the records that are new | A running server |
+| [`spool extract`](#spool-extract) | Stores text files as documents and runs an extractor | A running server |
+| [`spool match`](#spool-match) | Matches the records that are new, of every entity type | A running server |
 | [`spool show`](#spool-show) | Shows runs, records, identities, documents, review items, drafts and the log | A running server |
 | [`spool explain`](#spool-explain) | Says why two records share an identity, or why they do not | A running server |
 | [`spool retract`](#spool-retract) | Takes back rows a source no longer holds | A running server |
@@ -208,9 +208,11 @@ next    `spool match` places them in identities
 
 ## spool extract
 
-`spool extract [<file>...] [--source <name>] [--extractor <name>] [--again]`
+`spool extract [<path>...] [--source <name>] [--extractor <name>] [--again]`
 
-Stores each file as a document, then runs an extractor over the documents it has not read. A document's key is its file's name. With no file it runs the extractor over the documents that are stored. The source is chosen as `spool load` chooses it, and `--extractor` may be left out when the project has one. `--again` reads every document again. An extractor's first run may fetch what it depends on, as the sample extractor fetches its model. [Extraction](/docs/concepts/extraction) explains what an extractor is.
+Stores each file as a document, then runs an extractor over the documents it has not read. A folder stands for every file under it, in the folders under it too, and files and folders whose names start with a dot are left out. A named file's key is its name, and a key of a file found in a folder is its path from that folder: `spool extract documents` stores documents/dev/a.txt as `dev/a.txt`. With no path it runs the extractor over the documents that are stored. The source is chosen as `spool load` chooses it, and `--extractor` may be left out when the project has one. `--again` reads every document again. An extractor's first run may fetch what it depends on, as the sample extractor fetches its model. [Extraction](/docs/concepts/extraction) explains what an extractor is.
+
+The extractor reads the documents in batches, and each batch is kept when it ends. A batch is sized to take at most a fifth of the server's `--task-timeout`, and two minutes at most. When there is more than one, the command says on standard error how many documents are kept and how long the rest should take. A command that fails keeps the batches before the failure, and Ctrl-C cancels the batch that is running and keeps those before it. The same command again reads what is left; with `--again` it starts over.
 
 ```sh
 spool extract samples/notes-1.txt
@@ -234,7 +236,7 @@ next       `spool match` places them in identities
 
 `spool match [--type <name>] [--rematch] [--strategy <name>]`
 
-Starts a match of the records no match has examined yet, waits for it, and prints its report. `--rematch` examines every record again against the rules as they are now. A rematch suggests merges and makes none. `--strategy` says who judges: `rules`, which is the default, or one of the project's strategies for the type.
+Matches the records no match has examined yet, waits, and prints the report. Each entity type the project declares is matched in a run of its own and reported apart; `--type` matches one. A type whose run fails does not stop the others, and the command then fails. `--rematch` examines every record again against the rules as they are now. A rematch suggests merges and makes none. `--strategy` says who judges: `rules`, which is the default, or one of the project's strategies for a type, named with `--type` when the project has more than one.
 
 ```sh
 spool match

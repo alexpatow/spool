@@ -31,7 +31,7 @@ Everything Spool does is a call of this API. The command line, the studio and th
 | `GET /v1/runs/{run}/candidates` | The candidate pairs of a run that waits for judgements |
 | `POST /v1/runs/{run}/judgements` | Sends judgements for those pairs |
 | `POST /v1/runs/{run}/reconcile` | Turns a run's judgements into a changeset |
-| `POST /v1/runs/{run}/cancel` | Cancels a run that waits for judgements |
+| `POST /v1/runs/{run}/cancel` | Cancels a run that waits for judgements, or stops a running extraction and keeps nothing it found |
 | `GET /v1/records` | Records by `entity_type`, `source`, `key`, `document`, `identity`, words in `q`, or `unassigned` |
 | `GET /v1/records/{record}` | One record |
 | `POST /v1/records/identities` | The identity of each of many records |
@@ -204,7 +204,7 @@ curl -s -X POST http://127.0.0.1:7765/v1/extractions -d '{"extractor": "companie
 ```
 
 ```text title="Output"
-{"run":{"run":11,"kind":"extract","status":"succeeded","started_by":"user:01a1f0a3-7961-77eb-b436-a883824aafc0","entity_type":null,"strategy":null,"extractor":{"name":"companies","version":"eacb9397cacc366a1cd065d8f328039484a5e5d4fbf49b8ca1f2a3cbd34f8c92"},"started_at":"2026-11-18T21:55:21.478610Z","finished_at":"2026-11-18T21:55:22.855886Z","error":null,"load":null,"extraction":{"run":11,"documents":1,"mentions":1,"inserted":1,"duplicates":0,"superseded":0,"load_run":12},"resolution":null,"retraction":null}}
+{"run":{"run":11,"kind":"extract","status":"succeeded","started_by":"user:01a1f0a3-7961-77eb-b436-a883824aafc0","entity_type":null,"strategy":null,"extractor":{"name":"companies","version":"eacb9397cacc366a1cd065d8f328039484a5e5d4fbf49b8ca1f2a3cbd34f8c92"},"started_at":"2026-11-18T21:55:21.478610Z","finished_at":"2026-11-18T21:55:22.855886Z","error":null,"load":null,"extraction":{"run":11,"documents":1,"mentions":1,"inserted":1,"duplicates":0,"superseded":0,"load_run":12,"left":0},"resolution":null,"retraction":null}}
 ```
 
 | Field | Meaning |
@@ -212,7 +212,8 @@ curl -s -X POST http://127.0.0.1:7765/v1/extractions -d '{"extractor": "companie
 | `extractor` | The extractor to run. May be left out when the project has one |
 | `source` | Only the documents of this source |
 | `again` | `true` reads every document again |
-| `limit` | Read at most this many documents |
+| `limit` | Read at most this many documents. The run's `extraction.left` says how many it left out |
+| `again_since` | With `again`, leave out the documents read in this run or a later one: each batch after the first of a reading in batches passes the first batch's run |
 | `wait_ms` | How long to wait for it to finish |
 
 What the extractor found are records, which the next match places. [Extraction](/docs/concepts/extraction) writes an extractor in each language.

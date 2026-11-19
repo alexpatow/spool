@@ -891,6 +891,7 @@ impl Scenario {
                 extractor: extract.extractor.clone(),
                 source: extract.source.clone(),
                 again: extract.again,
+                again_since: None,
                 limit: None,
             })?;
             fed.extract.push(ExtractSummary {

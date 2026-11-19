@@ -24,18 +24,11 @@ import {
 import { FileTextIcon } from "../icons.tsx";
 import { colors, radius, spacing, typography } from "../styles/shelf/tokens.stylex";
 import { tones } from "../styles/tones.stylex";
-import { codePoints, count, mentionOf, named, segments } from "../format.ts";
+import { codePoints, count, mentionOf, named, readBy, segments } from "../format.ts";
 import type { Mention } from "../format.ts";
 import { useLabels, useLoad, usePages } from "../hooks.ts";
 import { href } from "../router.ts";
 import type { Route } from "../router.ts";
-
-function readBy(document: DocumentEntry): string {
-  if (document.extractions.length === 0) return "no extractor";
-  return document.extractions
-    .map((extraction) => `${extraction.extractor} in run ${extraction.run} (${count(extraction.mentions, "mention")})`)
-    .join(", ");
-}
 
 export function Documents({ route }: { route: Route }) {
   const { source, key, latest } = route.query;
@@ -159,16 +152,26 @@ function DocumentScreen({ document, found, cut, at }: Loaded & { at: number | nu
           ["Superseded by", document.superseded_by ? <Ref kind="document" id={document.superseded_by} /> : null],
           [
             "Extracted by",
-            document.extractions.length === 0
-              ? "none"
-              : document.extractions.map((extraction, index) => (
+            document.extractions.length === 0 && !document.reading ? (
+              "not read yet"
+            ) : (
+              <>
+                {document.extractions.map((extraction, index) => (
                   <span key={extraction.run}>
                     {index > 0 ? ", " : ""}
                     <Code>{extraction.extractor}</Code> in{" "}
                     <Ref kind="run" id={extraction.run} label={`run ${extraction.run}`} /> (
                     {count(extraction.mentions, "mention")})
                   </span>
-                )),
+                ))}
+                {document.reading ? (
+                  <span>
+                    {document.extractions.length > 0 ? ", " : ""}being read by <Code>{document.reading.extractor}</Code>{" "}
+                    in <Ref kind="run" id={document.reading.run} label={`run ${document.reading.run}`} />
+                  </span>
+                ) : null}
+              </>
+            ),
           ],
         ]}
       />

@@ -9,6 +9,7 @@ import {
   recordName,
   recordsOf,
   plain,
+  readBy,
   segments,
   short,
   when,
@@ -196,5 +197,17 @@ describe("a reference", () => {
     for (const text of ["", "halden energy", "crm:", ":c-104", "halden energy: a note", A.slice(0, 20)]) {
       expect([text, isReference(text)]).toEqual([text, false]);
     }
+  });
+});
+
+describe("readBy", () => {
+  const read = { extractor: "names", version: "v1", run: 4, mentions: 2 };
+  test("says a document is not read, read, or being read, and by which run", () => {
+    expect(readBy({ extractions: [] })).toBe("not read yet");
+    expect(readBy({ extractions: [read] })).toBe("names in run 4 (2 mentions)");
+    expect(readBy({ extractions: [], reading: { extractor: "llm", run: 9 } })).toBe("being read by llm in run 9");
+    expect(readBy({ extractions: [read], reading: { extractor: "names", run: 9 } })).toBe(
+      "names in run 4 (2 mentions), being read by names in run 9",
+    );
   });
 });

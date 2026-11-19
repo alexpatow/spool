@@ -59,8 +59,9 @@ An ID that never changes by itself has a price, and this is it.
 - The repository's tests run that model only when they are asked to, and no test calls a hosted model.
 - Documents are text: Spool does not read PDF or HTML.
 - An extractor that changed does not read the documents again until it is run with `--again`, and reading again takes back none of the mentions it no longer finds. A mention found again unchanged keeps the version of the extractor that first found it.
-- An extract run keeps everything or nothing: one exception in the extractor fails it, and nothing is stored or counted as read. A document that an extractor skips counts as read, with 0 mentions, like one that names nothing, and only `--again`, which reads every document, reads it again.
-- What an extractor writes to standard error is shown only while a run that takes more than a few seconds is waited for, and in the error of a run that fails.
+- An extract run keeps everything or nothing: one exception in the extractor fails it, and nothing of its batch is stored or counted as read. `spool extract` reads in batches, so the batches before it are kept. A document that an extractor skips counts as read, with 0 mentions, like one that names nothing, and only `--again`, which reads every document, reads it again.
+- `spool extract --again` that is stopped starts over when it is run again.
+- What an extractor writes to standard error is shown only while the first batch of `spool extract` runs, once it has taken more than a few seconds, and in the error of a run that fails.
 
 ### Review
 

@@ -292,6 +292,11 @@ export interface DocumentEntry {
   length: number;
   load_run: RunId;
   loaded_at: string;
+  /**
+   * The extract run that is reading this version now. What it finds is
+   * stored when the run ends, and nothing is if it fails or is cancelled.
+   */
+  reading?: DocumentReading | null;
   source: string;
   /**
    * The version that replaced this one.
@@ -342,6 +347,17 @@ export interface DocumentList {
    * Pass as `after` for the next page. `null` on the last page.
    */
   next?: DocumentId | null;
+}
+
+/**
+ * An extractor that is reading a document now.
+ */
+export interface DocumentReading {
+  extractor: string;
+  /**
+   * The extract run.
+   */
+  run: RunId;
 }
 
 /**
@@ -525,6 +541,11 @@ export interface ExtractReport {
    */
   inserted: number;
   /**
+   * Documents the extraction would have read but for its `limit`: what
+   * the same extraction reads next.
+   */
+  left?: number;
+  /**
    * The load run the records were stored under. There is none
    * when nothing was found.
    */
@@ -555,13 +576,21 @@ export interface ExtractRequest {
    */
   again?: boolean | null;
   /**
+   * With `again`: leave out the documents this extractor read in this
+   * run or a later one, so that reading everything again in batches reads
+   * each document once. Each batch after the first names the first
+   * batch's run.
+   */
+  again_since?: RunId | null;
+  /**
    * The name of one of the project's extractors; `GET /v1/info` lists
    * them. The server runs no code it was not built with. It may be left
    * out when the project has exactly one.
    */
   extractor?: string | null;
   /**
-   * Read at most this many documents, oldest first.
+   * Read at most this many documents, oldest first. The run's report
+   * says in `left` how many the limit left out.
    */
   limit?: number | null;
   /**
@@ -723,6 +752,11 @@ export interface Info {
    */
   api: string;
   store: StoreInfo;
+  /**
+   * The longest a strategy or an extractor may run, in milliseconds:
+   * what `--task-timeout` set. None when the server runs no user code.
+   */
+  task_timeout_ms?: number | null;
 }
 
 export interface Judgement {

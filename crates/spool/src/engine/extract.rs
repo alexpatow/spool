@@ -1,19 +1,20 @@
 //! Documents and extraction: storing text, running an extractor over it,
 //! and storing the mentions it finds as records.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
+use std::sync::Mutex;
 
 use duckdb::params;
 use duckdb::vtab::arrow::ArrowBatchRegistration;
 use serde_json::json;
 use spool_core::{Actor, DocumentId, EntityType, RunId};
 
-use super::{Engine, Inner, lock};
+use super::{Engine, Inner, Reading, lock};
 use crate::batch::{Column, batch};
 use crate::documents::{
-    self, DocumentEntry, DocumentFilter, ExtractOptions, ExtractReport, ExtractorRef, Mention,
-    NewDocument, RawMention, TaskDocument,
+    self, DocumentEntry, DocumentFilter, DocumentReading, ExtractOptions, ExtractReport,
+    ExtractorRef, Mention, NewDocument, RawMention, TaskDocument,
 };
 use crate::error::{Error, Result};
 use crate::features;
@@ -50,15 +51,38 @@ impl Engine {
         self.lock().add_documents(&Actor::Engine, source, documents)
     }
 
-    /// A document with its text and the extractors that have read it.
+    /// A document with its text, the extractors that have read it and the
+    /// one that is reading it.
     pub fn document(&self, id: DocumentId) -> Result<DocumentEntry> {
-        self.read(|conn| documents::get(conn, id))?
-            .ok_or(Error::UnknownDocument(id))
+        let mut document = self
+            .read(|conn| documents::get(conn, id))?
+            .ok_or(Error::UnknownDocument(id))?;
+        self.mark_reading(std::slice::from_mut(&mut document));
+        Ok(document)
     }
 
     /// Documents without their text, ordered by ID.
     pub fn documents(&self, filter: &DocumentFilter) -> Result<Vec<DocumentEntry>> {
-        self.read(|conn| documents::list(conn, filter))
+        let mut documents = self.read(|conn| documents::list(conn, filter))?;
+        self.mark_reading(&mut documents);
+        Ok(documents)
+    }
+
+    /// Says of each of the documents the extraction in progress reads that
+    /// it is reading them.
+    fn mark_reading(&self, documents: &mut [DocumentEntry]) {
+        let reading = lock(&self.reading);
+        let Some(reading) = reading.as_ref() else {
+            return;
+        };
+        for document in documents {
+            if reading.documents.contains(&document.id) {
+                document.reading = Some(DocumentReading {
+                    extractor: reading.extractor.clone(),
+                    run: reading.run,
+                });
+            }
+        }
     }
 
     /// Runs one of the project's extractors over the documents it has not
@@ -113,18 +137,27 @@ impl Engine {
                 "extractor": ExtractorRef::from(&extractor),
                 "source": options.source,
                 "again": options.again,
+                "again_since": options.again_since,
                 "limit": options.limit,
             }),
         )?;
         let task = inner.in_run(run, |inner| {
             inner.write_extract_task(run, &extractor, &user_code, options)
         })?;
-        let Some(mut task) = task else {
+        let Some((mut task, left)) = task else {
             // There is nothing to read, so nothing is started.
             let report = ExtractReport::empty(run);
             inner.finish_run(run, RunStatus::Succeeded, Some(&json!(report)))?;
             return Ok(report);
         };
+
+        let given = inner.task_document_ids()?;
+        *lock(&self.reading) = Some(Reading {
+            run,
+            extractor: extractor.name.clone(),
+            documents: given,
+        });
+        let _reading = ReadingEnds(&self.reading, &user_code.running, run);
 
         // The extractor runs with the writer let go. The run stays
         // `running`, and it reads the documents as they were written.
@@ -133,8 +166,11 @@ impl Engine {
         let mut inner = self.lock();
         let report = inner.in_run(run, |inner| {
             executed?;
+            if !user_code.running.begin_storing(run) {
+                return Err(task.cancelled());
+            }
             inner
-                .take_mentions(by, run, &task.path(usercode::MENTIONS), &extractor)
+                .take_mentions(by, run, &task.path(usercode::MENTIONS), &extractor, left)
                 .map_err(|error| match error {
                     Error::Mentions(_) => task.rejected(error),
                     other => other,
@@ -142,6 +178,17 @@ impl Engine {
         })?;
         task.remove();
         Ok(report)
+    }
+}
+
+/// Forgets what the extraction in progress reads, and whether it was
+/// cancelled, when it ends, however it ends.
+struct ReadingEnds<'a>(&'a Mutex<Option<Reading>>, &'a usercode::Running, RunId);
+
+impl Drop for ReadingEnds<'_> {
+    fn drop(&mut self) {
+        *lock(self.0) = None;
+        self.1.forget(self.2);
     }
 }
 
@@ -202,28 +249,37 @@ impl Inner {
     }
 
     /// Chooses the documents an extraction reads and writes them where the
-    /// extractor finds them. `None` when there is nothing to read.
+    /// extractor finds them, with how many its limit left out. `None` when
+    /// there is nothing to read.
     fn write_extract_task(
         &mut self,
         run: RunId,
         extractor: &Extractor,
         user_code: &UserCode,
         options: &ExtractOptions,
-    ) -> Result<Option<Task>> {
+    ) -> Result<Option<(Task, u64)>> {
         let manifest = self.manifest.clone().ok_or(Error::NoManifest)?;
         let conn = &self.store.conn;
         let of_source = match &options.source {
             Some(source) => format!("AND d.source_id = {}", sql_text(source)),
             None => String::new(),
         };
-        let unread = match options.again {
-            true => String::new(),
-            false => format!(
+        let read_by = |since: Option<RunId>| {
+            format!(
                 "AND NOT EXISTS (
                    SELECT 1 FROM spool.extraction e
-                   WHERE e.document_id = d.document_id AND e.extractor = {})",
-                sql_text(&extractor.name)
-            ),
+                   WHERE e.document_id = d.document_id AND e.extractor = {}{})",
+                sql_text(&extractor.name),
+                match since {
+                    Some(since) => format!(" AND e.run_id >= {}", since.0),
+                    None => String::new(),
+                }
+            )
+        };
+        let unread = match (options.again, options.again_since) {
+            (false, _) => read_by(None),
+            (true, Some(since)) => read_by(Some(since)),
+            (true, None) => String::new(),
         };
         let limit = match options.limit {
             Some(limit) => format!("LIMIT {limit}"),
@@ -232,7 +288,8 @@ impl Inner {
         conn.execute_batch(&format!(
             "CREATE OR REPLACE TEMP TABLE {TASK} AS
              SELECT d.document_id,
-                    row_number() OVER (ORDER BY d.load_run, d.source_id, d.source_key) AS ord
+                    row_number() OVER (ORDER BY d.load_run, d.source_id, d.source_key) AS ord,
+                    count(*) OVER () AS matching
              FROM spool.document d
              WHERE NOT EXISTS (
                  SELECT 1 FROM spool.document later WHERE later.supersedes = d.document_id)
@@ -241,12 +298,15 @@ impl Inner {
              ORDER BY d.load_run, d.source_id, d.source_key
              {limit}"
         ))?;
-        let chosen: i64 = conn.query_row(&format!("SELECT count(*) FROM {TASK}"), [], |row| {
-            row.get(0)
-        })?;
+        let (chosen, matching): (i64, i64) = conn.query_row(
+            &format!("SELECT count(*), coalesce(max(matching), 0) FROM {TASK}"),
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
         if chosen == 0 {
             return Ok(None);
         }
+        let left = (matching - chosen) as u64;
 
         let entity_types: Vec<ExtractType> = manifest
             .entity_types
@@ -267,7 +327,7 @@ impl Inner {
              ) TO {} (FORMAT parquet)",
             usercode::sql_path(&task.path(usercode::DOCUMENTS))
         ))?;
-        Ok(Some(task))
+        Ok(Some((task, left)))
     }
 
     /// Reads the mentions an extractor wrote, checks them against the
@@ -278,6 +338,7 @@ impl Inner {
         run: RunId,
         mentions: &Path,
         extractor: &Extractor,
+        left: u64,
     ) -> Result<ExtractReport> {
         let manifest = self.manifest.clone().ok_or(Error::NoManifest)?;
         let given = self.task_documents()?;
@@ -400,6 +461,7 @@ impl Inner {
                 duplicates: mentions - inserted,
                 superseded: superseded as u64,
                 load_run,
+                left,
             };
             let finished = inner.store.clock.now_micros();
             let finish = "UPDATE spool.run
@@ -443,6 +505,20 @@ impl Inner {
             .conn
             .execute_batch(&format!("DROP TABLE IF EXISTS {TASK}"))?;
         Ok(report)
+    }
+
+    /// The IDs of the documents the extraction in progress was given.
+    fn task_document_ids(&self) -> Result<HashSet<DocumentId>> {
+        let mut statement = self
+            .store
+            .conn
+            .prepare(&format!("SELECT document_id::VARCHAR FROM {TASK}"))?;
+        let mut rows = statement.query([])?;
+        let mut ids = HashSet::new();
+        while let Some(row) = rows.next()? {
+            ids.insert(parse(&row.get::<_, String>(0)?)?);
+        }
+        Ok(ids)
     }
 
     /// The documents the extraction in progress was given, as the store

@@ -1157,6 +1157,149 @@ def find(documents):
 }
 
 #[test]
+#[ignore = "runs uv"]
+fn an_extraction_in_batches_reads_each_document_once_and_says_what_is_left() {
+    let news = News::new();
+    news.extractor("names.py", NAMES);
+    news.add(&[
+        ("a", FIRST),
+        ("b", SECOND),
+        ("c", "Initech Inc."),
+        ("d", "Hooli Ltd."),
+        ("e", "Nothing here."),
+    ]);
+    let batch = |again: bool, again_since, limit| {
+        let report = news
+            .engine
+            .extract(&ExtractOptions {
+                again,
+                again_since,
+                limit: Some(limit),
+                ..ExtractOptions::with("names")
+            })
+            .unwrap();
+        (report.documents, report.left, report.run)
+    };
+
+    // Each batch reads what the ones before it did not, and says how many
+    // are left for the next.
+    assert_eq!(batch(false, None, 2).0, 2);
+    let (read, left, _) = batch(false, None, 2);
+    assert_eq!((read, left), (2, 1));
+    let (read, left, _) = batch(false, None, 2);
+    assert_eq!((read, left), (1, 0));
+    assert_eq!(batch(false, None, 2).0, 0);
+
+    // Reading them all again in batches: the first batch reads what any
+    // reading does, and each after it leaves out what was read since the
+    // first began.
+    let (read, left, first) = batch(true, None, 2);
+    assert_eq!((read, left), (2, 3));
+    let (read, left, _) = batch(true, Some(first), 2);
+    assert_eq!((read, left), (2, 1));
+    let (read, left, _) = batch(true, Some(first), 2);
+    assert_eq!((read, left), (1, 0));
+    assert_eq!(batch(true, Some(first), 2).0, 0);
+
+    let read: Vec<u64> = news
+        .engine
+        .documents(&DocumentFilter::default())
+        .unwrap()
+        .iter()
+        .map(|document| document.extractions.len() as u64)
+        .collect();
+    assert_eq!(read, vec![2; 5], "each document read once in each pass");
+    news.engine.verify().unwrap();
+}
+
+#[test]
+#[ignore = "runs uv"]
+fn a_running_extraction_says_what_it_reads_and_can_be_cancelled() {
+    let news = News::new();
+    let started = news.dir.path().join("started");
+    news.extractor(
+        "names.py",
+        &format!(
+            r#"
+import time
+from spool import extractor
+
+@extractor
+def find(documents):
+    open({started:?}, "w").close()
+    time.sleep(120)
+    return []
+"#
+        ),
+    );
+    news.add(&[("a", FIRST), ("b", SECOND)]);
+    let extracting = {
+        let engine = Arc::clone(&news.engine);
+        std::thread::spawn(move || {
+            engine.extract(&ExtractOptions {
+                limit: Some(1),
+                ..ExtractOptions::with("names")
+            })
+        })
+    };
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while !started.exists() {
+        assert!(Instant::now() < deadline, "the extractor never started");
+        assert!(!extracting.is_finished(), "{:?}", extracting.join());
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let [run] = &runs(&news.engine, RunKind::Extract)[..] else {
+        panic!("one extract run");
+    };
+
+    // The document the run was given says it is being read, and by which
+    // run; the other is not read.
+    let reading = |key: &str| {
+        let documents = news
+            .engine
+            .documents(&DocumentFilter {
+                key: Some(key.to_owned()),
+                ..DocumentFilter::default()
+            })
+            .unwrap();
+        documents[0]
+            .reading
+            .as_ref()
+            .map(|reading| (reading.extractor.clone(), reading.run))
+    };
+    assert_eq!(reading("a"), Some(("names".to_owned(), run.run)));
+    assert_eq!(reading("b"), None);
+    assert_eq!(
+        news.engine
+            .document(id("a", FIRST))
+            .unwrap()
+            .reading
+            .unwrap()
+            .run,
+        run.run
+    );
+
+    // Cancelled, the extractor is stopped at once, and the run fails and
+    // stores nothing: the document is unread again, and not being read.
+    let cancelled = Instant::now();
+    news.engine.cancel_run(run.run).unwrap();
+    let message = extractor_error(extracting.join().unwrap());
+    assert!(cancelled.elapsed() < Duration::from_secs(10));
+    assert!(message.contains("it was cancelled"), "{message}");
+    let entry = news.engine.run(run.run).unwrap();
+    assert_eq!(entry.status, RunStatus::Failed);
+    let document = news.engine.document(id("a", FIRST)).unwrap();
+    assert_eq!((document.reading, document.extractions.len()), (None, 0));
+    let refused = news.engine.cancel_run(run.run).unwrap_err().to_string();
+    assert!(refused.contains("cannot be cancelled"), "{refused}");
+
+    // The next extraction reads both.
+    news.extractor("names.py", NAMES);
+    assert_eq!(news.extract("names").unwrap().documents, 2);
+    news.engine.verify().unwrap();
+}
+
+#[test]
 #[ignore = "runs bun"]
 fn a_typescript_extractor_finds_what_a_python_one_finds() {
     let python = News::new();
