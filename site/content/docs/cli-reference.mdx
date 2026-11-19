@@ -669,7 +669,7 @@ For a server people rely on, use Google sign-in. Set SPOOL_GOOGLE_CLIENT_ID and 
 
 Programs authenticate with a token, which an admin creates on the studio's Tokens page or with `spool token add` on this machine. Changes are recorded under the token's name, as `agent:<name>`.
 
-Agents that speak the Model Context Protocol, such as Claude or ChatGPT, connect at `/mcp`. They get tools to load rows and documents, match, look things up and change identities, and they authenticate with a token like any other program.
+Agents that speak the Model Context Protocol, such as Claude or ChatGPT, connect at `/mcp`. They get tools to load rows and documents, match, look things up and change identities, and they authenticate with a token like any other program. Claude and ChatGPT on the web can't be given a token. They sign in with OAuth: someone with an account approves them in the studio, and what they change is recorded under that person. That needs the HTTPS address people reach the server by, in `--public-url`, unless the server listens on this machine only.
 
 Strategies and extractors run with `uv` for `.py` files and `bun` for `.ts` files. Set SPOOL_UV and SPOOL_BUN if they aren't on your PATH. The server only runs a file that matches the one the manifest was compiled from. It passes the variables the project's .env sets, except those already set in the server's environment.
 
@@ -688,7 +688,7 @@ Options:
 - `--listen <ADDR>`: The address to listen on. Default `0.0.0.0:7765`.
 - `--public-url <URL>`: The address people reach the server by, such as https://spool.example.com. Falls back to `SPOOL_PUBLIC_URL`.
 
-  The default is the address it listens on when that is on this machine only. Sign-in with Google comes back to it.
+  The default is the address it listens on when that is on this machine only. Sign-in with Google comes back to it, and an agent that signs in with OAuth is sent to it.
 - `--project <DIR>`: The project directory, where the files the manifest names are found [default: the current directory]
 - `--no-studio`: Do not serve the studio
 - `--plain-http`: Browsers reach the server over HTTP, not HTTPS

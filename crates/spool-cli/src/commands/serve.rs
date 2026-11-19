@@ -44,7 +44,11 @@ use crate::Failure;
 /// Agents that speak the Model Context Protocol, such as Claude or ChatGPT,
 /// connect at `/mcp`. They get tools to load rows and documents, match,
 /// look things up and change identities, and they authenticate with a token
-/// like any other program.
+/// like any other program. Claude and ChatGPT on the web can't be given a
+/// token. They sign in with OAuth: someone with an account approves them in
+/// the studio, and what they change is recorded under that person. That needs
+/// the HTTPS address people reach the server by, in `--public-url`, unless
+/// the server listens on this machine only.
 ///
 /// Strategies and extractors run with `uv` for `.py` files and `bun` for
 /// `.ts` files. Set SPOOL_UV and SPOOL_BUN if they aren't on your PATH. The
@@ -74,7 +78,8 @@ pub struct ServeArgs {
     /// The address people reach the server by, such as https://spool.example.com
     ///
     /// The default is the address it listens on when that is on this machine
-    /// only. Sign-in with Google comes back to it.
+    /// only. Sign-in with Google comes back to it, and an agent that signs in
+    /// with OAuth is sent to it.
     #[arg(
         long,
         env = "SPOOL_PUBLIC_URL",
@@ -445,6 +450,7 @@ fn run(
             .map_err(|error| failed(error.to_string()))?;
         // Tests listen on port 0 and read the port from this line.
         say!("listening on http://{address}");
+        let given = reached.at.is_some();
         let at = reached.at.unwrap_or_else(|| format!("http://{address}"));
         if options.studio {
             say!("studio    {at}/");
@@ -462,6 +468,18 @@ fn run(
             options.google = Some(google);
         }
         say!("mcp       http://{address}{}", server::MCP_PATH);
+        if !options.dev && options.studio {
+            let known = given || address.ip().is_loopback();
+            match known.then(|| server::issuer_of(&at)) {
+                Some(Ok(issuer)) => options.issuer = Some(issuer),
+                Some(Err(why)) => say!("oauth     off: {why}"),
+                None => say!(
+                    "oauth     off: an assistant that signs in with OAuth, such as Claude or \
+                     ChatGPT on the web, needs the address people reach this server by: pass it \
+                     with `--public-url`"
+                ),
+            }
+        }
         match &options.setup {
             Some(code) if options.studio => {
                 say!("setup     {at}/setup#{code}");

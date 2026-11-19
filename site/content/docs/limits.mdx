@@ -34,7 +34,7 @@ A match never merges or splits identities that exist. That's what makes an ID sa
 - **Document formats.** Documents are plain text. Convert PDF and HTML first.
 - **Hard deletes.** `spool retract` takes a row out of its identity and out of matching, but the record stays in the store.
 - **Scoped tokens.** A token has full API access and doesn't expire, though you can revoke it. People sign in with a password or with Google.
-- **Agents.** Over MCP, an agent can't approve drafts, add people or create tokens.
+- **Agents.** Over MCP, an agent can't approve drafts, add people or create tokens. Claude and ChatGPT on the web sign in with OAuth, which needs a public HTTPS address. Spool registers them itself: in Claude, choose "Register automatically", not Claude's published identity. That agent has the approving person's access, and nothing narrower.
 - **Corrections from the CLI.** Merge, split, undo and review decisions are HTTP calls, MCP tools or studio actions.
 - **Push notifications.** Consumers poll the [changeset log](/docs/using-the-ids#follow-the-log). There are no webhooks.
 - **Operations tooling.** There's no backup command: copy the store file while the server is stopped. There are no metrics or traces beyond `GET /healthz`. The store format can change before 1.0.

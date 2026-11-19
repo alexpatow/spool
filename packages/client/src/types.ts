@@ -998,6 +998,41 @@ export interface FoundBy {
   version: string;
 }
 
+/**
+ * An assistant that a person let in with OAuth, such as Claude or ChatGPT
+ * on the web. It works at `/mcp` as that person, and what it changes is
+ * recorded under them.
+ */
+export interface Grant {
+  /**
+   * What the assistant calls itself. Nobody checked it.
+   */
+  client_name?: string | null;
+  created_at: string;
+  id: string;
+  /**
+   * When it last called `/mcp`, to the minute. `null` if it never did.
+   */
+  last_used_at?: string | null;
+  /**
+   * The ID of the person who approved it.
+   */
+  person: string;
+  /**
+   * Where its approval was sent, which says whose it is: such as
+   * `https://claude.ai/api/mcp/auth_callback`.
+   */
+  redirect_uri: string;
+}
+
+/**
+ * `GET /v1/grants`: the assistants people let in, in the order they were
+ * approved. Only an admin may read it.
+ */
+export interface GrantList {
+  grants: Grant[];
+}
+
 export interface History {
   history: HistoryEntry[];
 }
@@ -1486,6 +1521,48 @@ export interface NewDocument {
    * someone who reads a mention.
    */
   uri?: string | null;
+}
+
+/**
+ * Where to send the browser with the decision.
+ */
+export interface OAuthDecided {
+  to: string;
+}
+
+/**
+ * `POST /auth/oauth`: approve an assistant, or turn it away.
+ */
+export interface OAuthDecision {
+  approve: boolean;
+  /**
+   * The query of the `/oauth/authorize` address the assistant sent.
+   */
+  request: string;
+}
+
+/**
+ * `GET /auth/oauth?<request>`: what an assistant that sent someone to
+ * `/oauth/authorize` asks for, to show them before they approve it.
+ */
+export interface OAuthRequest {
+  /**
+   * What the assistant calls itself. Nobody checked it.
+   */
+  client_name?: string | null;
+  /**
+   * The host of `redirect_uri`, which is who gets the approval.
+   */
+  host: string;
+  /**
+   * Whether the approval goes to a program on the approver's own
+   * machine, which any program there could be.
+   */
+  loopback: boolean;
+  /**
+   * Where the approval is sent.
+   */
+  redirect_uri: string;
 }
 
 /**

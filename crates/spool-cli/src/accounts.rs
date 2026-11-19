@@ -23,6 +23,13 @@ use uuid::Uuid;
 
 use crate::api::{Person, Token};
 
+mod oauth;
+
+pub use oauth::{
+    ACCESS_PREFIX, ACCESS_SECONDS, Approval, CODE_SECONDS, Client, Issued, REFRESH_PREFIX,
+    REFRESH_SECONDS, SCOPE,
+};
+
 /// The key of a session under which the person it belongs to is kept.
 pub const PERSON: &str = "person";
 
@@ -78,13 +85,16 @@ CREATE TABLE IF NOT EXISTS session (
 /// What each version of the file adds to the one before. `SCHEMA` is the
 /// file as it first was, and `PRAGMA user_version` says how many of these it
 /// has had.
-const STEPS: [&str; 1] = ["
+const STEPS: [&str; 2] = [
+    "
 ALTER TABLE person ADD COLUMN email TEXT;   -- who they are to Google, as an admin gave it
 ALTER TABLE person ADD COLUMN google TEXT;  -- the Google account that signed in with that email
 ALTER TABLE person ADD COLUMN bound TEXT;   -- what its sessions began with: new each time one is bound
 CREATE UNIQUE INDEX person_email ON person (email);
 CREATE UNIQUE INDEX person_google ON person (google);
-"];
+",
+    oauth::SCHEMA,
+];
 
 /// Why an account could not be made or changed. Each says what to do.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -101,19 +111,26 @@ pub enum Refused {
     TokenTaken(String),
     /// There is no such token.
     UnknownToken,
+    /// No approval of an assistant has the ID.
+    UnknownGrant,
     /// The change would leave nobody able to manage people.
     LastAdmin,
     /// An admin can already sign in: the first account has been made.
     SetUp,
     /// The password given as the current one is not.
     WrongPassword,
+    /// More of something anyone may ask for is waiting than is kept: the
+    /// message says what.
+    TooMany(String),
     Failed(String),
 }
 
 impl std::fmt::Display for Refused {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Refused::Invalid(message) | Refused::Failed(message) => f.write_str(message),
+            Refused::Invalid(message) | Refused::TooMany(message) | Refused::Failed(message) => {
+                f.write_str(message)
+            }
             Refused::Taken(username) => write!(f, "the username `{username}` is taken"),
             Refused::EmailTaken(email) => {
                 write!(f, "another account has the email `{email}`")
@@ -124,6 +141,7 @@ impl std::fmt::Display for Refused {
                 "there is a token called `{name}` already; revoke it first, or pick another name"
             ),
             Refused::UnknownToken => f.write_str("there is no such token"),
+            Refused::UnknownGrant => f.write_str("there is no such approval"),
             Refused::LastAdmin => {
                 f.write_str("this is the only admin who can sign in; make another one first")
             }
@@ -496,6 +514,7 @@ impl Accounts {
                 ),
                 [id],
             )?;
+            oauth::end_approvals(&transaction, id, Some(GOOGLE))?;
         }
         transaction.execute(
             "UPDATE person SET name = ?, admin = ?, active = ?, password = coalesce(?, password) WHERE id = ?",
@@ -707,12 +726,14 @@ fn insert(connection: &Connection, person: Person, hash: Option<&str>) -> Result
     }
 }
 
+/// Ends every session of a person, and every approval of an assistant they
+/// gave: those stay ended when the account is turned on again.
 fn end_sessions(connection: &Connection, person: &str) -> Result<(), Refused> {
     connection.execute(
         &format!("DELETE FROM session WHERE json_extract(data, '$.{PERSON}') = ?"),
         [person],
     )?;
-    Ok(())
+    oauth::end_approvals(connection, person, None)
 }
 
 /// A new account as it would be stored, with a new ID.

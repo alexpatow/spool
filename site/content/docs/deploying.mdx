@@ -1,6 +1,6 @@
 ---
 title: Deploying
-description: Run Spool for a team with spool build, spool apply and spool serve. Sign people in, give programs tokens, ship a container, and back up the store.
+description: Run Spool for a team with spool build, spool apply and spool serve. Sign people in, give programs tokens, ship the image, and back up the store.
 ---
 
 `spool dev` is for one person on one machine. `spool serve` is the server your team and your pipelines reach. Same binary, same store format. The differences: every caller is authenticated, and the server runs from a compiled manifest instead of the project's files.
@@ -152,6 +152,36 @@ docker run -p 7765:7765 -v spool-data:/data companies
 The generated Dockerfile starts from `ghcr.io/alexpatow/spool:0.1.0`, builds the manifest, and runs `spool serve` with the store at `/data/spool.duckdb` on a volume. For projects with Python files, like the sample, it also copies in `uv` and runs `spool build --install`, which installs every strategy's and extractor's dependencies, including the sample model, so the server downloads nothing at runtime. To apply a changed project, stop the server and run `docker run --rm -v spool-data:/data companies apply`.
 
 The generated `.dockerignore` keeps `.env` out of the image. Pass your code's variables at runtime, for example with `docker run --env-file .env`. Without Docker, set them in `spool serve`'s environment, or put a `.env` in the project directory named by `--project`.
+
+The image runs as the user `spool`, uid 10001. The store is a file on the volume at `/data`, so that volume has to be writable by `spool`. That user has no login shell. The Dockerfile is the project's once `spool build` has written it, so give `spool` a shell there if you need one in the container.
+
+## Running the image
+
+Any host that builds a Dockerfile can run the image `spool build` writes. It needs four things, and one instance: one process opens the store.
+
+Leave `.spool/`, `.env` and any data you load out of what the host builds. The store goes on the disk, not in the image.
+
+- **The image** is that Dockerfile. It starts from `ghcr.io/alexpatow/spool:<version>` and runs `spool serve`.
+- **The public URL.** Set `SPOOL_PUBLIC_URL` to the HTTPS address people open, such as `https://spool.example.com`. Sign-in with Google and an agent that signs in with OAuth both use the address you set. Google's redirect URI is that address followed by `/auth/google/callback`.
+- **The disk.** Mount a persistent disk at `/data`. It has to outlive a new container, and it has to be writable by uid 10001 before the server starts. The store is `/data/spool.duckdb` unless `SPOOL_STORE` names another file there.
+- **The start command.** The image listens on `0.0.0.0:7765`. The `CMD` at the bottom of the Dockerfile is the command. If the host chooses the port and puts it in `PORT`, set `--listen` to `0.0.0.0:$PORT`.
+
+The server prints the setup link in its logs. Open it before anyone else does: whoever opens it is the admin. Connect Claude and ChatGPT on the web to the public URL followed by `/mcp`, as [MCP](/docs/mcp#claude-and-chatgpt-on-the-web) says.
+
+What to know:
+
+- **Memory.** Half a gigabyte holds rows and rules on a small store. A project whose extractor loads a model in the server, as the sample project's does, needs about 2 GB.
+- **Secrets your code reads**, such as a model's API key, go in the service's environment. Without one, an extractor that needs it fails rather than calling anyone.
+- **A deploy** replaces the container and has to keep the disk. The server stops while that happens, because the next process cannot open the store until this one has let go of it.
+- **A changed project** builds a new manifest, and the server refuses a store applied with another until it is applied again. With the server stopped, set the start command to the `apply` command at the top of the Dockerfile, the part after the image's name. When the logs show the `manifest` line of `spool apply`, set the start command back to `serve`. That first run is reported as failed, because `apply` ends.
+
+### Moving a store
+
+A store made elsewhere, with `spool dev` or another server, moves as its file. The server has to run on a manifest with the same hash, which the same project files give.
+
+1. Stop the server that has the store open. Copy `<name>.duckdb`, and `<name>.duckdb.wal` if there is one: it holds the last changes.
+2. Put the files on the disk under a name the running server is not using, owned by uid 10001: `/data/moved.duckdb`, and `/data/moved.duckdb.wal` when you have one.
+3. Set `SPOOL_STORE` to `/data/moved.duckdb` and start the server. Accounts live beside a store and are named after it, so the server prints a setup link for `/data/moved.auth.sqlite`. To keep the people and approvals you had, copy the accounts file to `/data/moved.auth.sqlite` first, also owned by uid 10001.
 
 ## Backing up
 

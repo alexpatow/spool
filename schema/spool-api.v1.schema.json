@@ -1960,6 +1960,61 @@
       ],
       "type": "object"
     },
+    "Grant": {
+      "description": "An assistant that a person let in with OAuth, such as Claude or ChatGPT\non the web. It works at `/mcp` as that person, and what it changes is\nrecorded under them.",
+      "properties": {
+        "client_name": {
+          "description": "What the assistant calls itself. Nobody checked it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "last_used_at": {
+          "description": "When it last called `/mcp`, to the minute. `null` if it never did.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "person": {
+          "description": "The ID of the person who approved it.",
+          "type": "string"
+        },
+        "redirect_uri": {
+          "description": "Where its approval was sent, which says whose it is: such as\n`https://claude.ai/api/mcp/auth_callback`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "person",
+        "redirect_uri",
+        "created_at"
+      ],
+      "type": "object"
+    },
+    "GrantList": {
+      "description": "`GET /v1/grants`: the assistants people let in, in the order they were\napproved. Only an admin may read it.",
+      "properties": {
+        "grants": {
+          "items": {
+            "$ref": "#/$defs/Grant"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "grants"
+      ],
+      "type": "object"
+    },
     "History": {
       "properties": {
         "history": {
@@ -2854,6 +2909,66 @@
       "required": [
         "key",
         "text"
+      ],
+      "type": "object"
+    },
+    "OAuthDecided": {
+      "description": "Where to send the browser with the decision.",
+      "properties": {
+        "to": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "to"
+      ],
+      "type": "object"
+    },
+    "OAuthDecision": {
+      "additionalProperties": false,
+      "description": "`POST /auth/oauth`: approve an assistant, or turn it away.",
+      "properties": {
+        "approve": {
+          "type": "boolean"
+        },
+        "request": {
+          "description": "The query of the `/oauth/authorize` address the assistant sent.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "request",
+        "approve"
+      ],
+      "type": "object"
+    },
+    "OAuthRequest": {
+      "description": "`GET /auth/oauth?<request>`: what an assistant that sent someone to\n`/oauth/authorize` asks for, to show them before they approve it.",
+      "properties": {
+        "client_name": {
+          "description": "What the assistant calls itself. Nobody checked it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "host": {
+          "description": "The host of `redirect_uri`, which is who gets the approval.",
+          "type": "string"
+        },
+        "loopback": {
+          "description": "Whether the approval goes to a program on the approver's own\nmachine, which any program there could be.",
+          "type": "boolean"
+        },
+        "redirect_uri": {
+          "description": "Where the approval is sent.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "redirect_uri",
+        "host",
+        "loopback"
       ],
       "type": "object"
     },

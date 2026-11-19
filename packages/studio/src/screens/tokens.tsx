@@ -3,8 +3,8 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 
 import { Act, Done } from "../act.tsx";
-import type { Token } from "../api.ts";
-import { Code, Labelled, Load, Notice, Page, Table, When } from "../components.tsx";
+import type { Grant, Token } from "../api.ts";
+import { Code, Labelled, Load, Notice, Page, Section, Table, When } from "../components.tsx";
 import { CopyButton } from "../components/ui/copy-button";
 import { Input } from "../components/ui/input";
 import { useLoad, useStudio } from "../hooks.ts";
@@ -30,6 +30,7 @@ export function Tokens() {
 function Managed() {
   const [done, setDone] = useState<ReactNode>(null);
   const tokens = useLoad((client) => client.tokens());
+  const grants = useLoad((client) => client.grants());
   return (
     <Page title="Tokens" about={ABOUT} actions={<Add done={setDone} />}>
       <Done>{done}</Done>
@@ -65,7 +66,82 @@ function Managed() {
           />
         )}
       </Load>
+      <Section
+        title="Assistants"
+        about={
+          <>
+            Assistants that someone approved with OAuth, such as Claude or ChatGPT on the web. Each works at{" "}
+            <Code>/mcp</Code> as the person who approved it.
+          </>
+        }
+      >
+        <Load state={grants}>
+          {(rows) => (
+            <Table
+              columns={[
+                {
+                  title: "Assistant",
+                  value: (grant) => grant.client_name ?? "",
+                  cell: (grant) => grant.client_name ?? "Unnamed",
+                },
+                {
+                  title: "Returns to",
+                  value: (grant) => host(grant.redirect_uri),
+                  cell: (grant) => <Code>{host(grant.redirect_uri)}</Code>,
+                },
+                {
+                  title: "Approved",
+                  value: (grant) => grant.created_at,
+                  first: "desc",
+                  cell: (grant) => (
+                    <>
+                      <When at={grant.created_at} /> by <Who actor={`user:${grant.person}`} />
+                    </>
+                  ),
+                },
+                {
+                  title: "Last used",
+                  value: (grant) => grant.last_used_at,
+                  first: "desc",
+                  cell: (grant) => (grant.last_used_at ? <When at={grant.last_used_at} /> : "Never"),
+                },
+                { title: "", cell: (grant: Grant) => <EndGrant grant={grant} done={setDone} /> },
+              ]}
+              rows={rows}
+              rowKey={(grant) => grant.id}
+              empty="No assistant has been approved."
+              label="Assistants"
+            />
+          )}
+        </Load>
+      </Section>
     </Page>
+  );
+}
+
+function host(address: string): string {
+  try {
+    return new URL(address).host;
+  } catch {
+    return address;
+  }
+}
+
+function EndGrant({ grant, done }: { grant: Grant; done: (said: ReactNode) => void }) {
+  const name = grant.client_name ?? "the assistant";
+  return (
+    <Act
+      label="Revoke"
+      title={`Revoke ${name}`}
+      variant="destructive"
+      size="sm"
+      about="Its tokens stop working at once. To use this server again, it has to be approved again."
+      act={async (client) => {
+        await client.revokeGrant(grant.id);
+        return <span>Revoked {name}.</span>;
+      }}
+      done={done}
+    />
   );
 }
 

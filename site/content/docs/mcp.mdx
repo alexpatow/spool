@@ -1,12 +1,12 @@
 ---
 title: MCP
-description: The tools agents get at /mcp, an example call for each, how to connect Claude Code, Codex and Claude Desktop, and what's reserved for people.
+description: The tools agents get at /mcp, an example call for each, how to connect Claude Code, Codex, Claude Desktop, and Claude and ChatGPT on the web, and what's reserved for people.
 ---
 
 The server speaks the [Model Context Protocol](https://modelcontextprotocol.io) at `/mcp`, in the same process as the HTTP API and the studio. Agents connected to it can load rows and documents, run extractors, match, look things up and change identities.
 
 - **Each tool wraps an HTTP API call.** It returns what the API returns and fails where the API fails.
-- **The server decides who the caller is.** Under `spool dev`, that's the `dev` account. Under `spool serve`, it's the agent's token, and changes are recorded as `agent:<name>`. No tool lets the caller name a different author.
+- **The server decides who the caller is.** Under `spool dev`, that's the `dev` account. Under `spool serve`, it's the agent's token, recorded as `agent:<name>`, or the person who approved an agent that signed in with OAuth. No tool lets the caller name a different author.
 - **Changes carry a reason.** Tools that change identities or retract rows require a `reason`, which the log stores with the change. Loads, extractions and matches don't: the run records who started it.
 - **It's stateless.** The transport is Streamable HTTP without sessions, and every response is one JSON message.
 
@@ -48,7 +48,24 @@ Claude Desktop connects through `mcp-remote`, a local proxy that adds the header
 
 The MCP SDKs, the Claude API's MCP connector and the OpenAI Responses API's `mcp` tool also take the address and token.
 
-ChatGPT and Claude on the web connect to remote servers without auth or through OAuth. Spool uses bearer tokens, so use a client that sends headers. Organisations with Anthropic's request-headers beta can set the header in Claude.
+### Claude and ChatGPT on the web
+
+These can't be given a token. They sign in with OAuth: the server is the authorization server for its own `/mcp`, someone with an account approves the agent in the studio, and changes are recorded as `user:<id>`.
+
+They call from Anthropic's and OpenAI's networks, so the server needs public HTTPS on port 443, given with `--public-url` or `SPOOL_PUBLIC_URL`. [Running the image](/docs/deploying#running-the-image) is where that address is set. A server listening on `0.0.0.0` without one, or over plain HTTP, has no OAuth and prints `oauth off` at startup.
+
+- **Claude.** Customize, Connectors, Add custom connector. Enter `https://spool.example.com/mcp`. Under OAuth client, choose **Register automatically**. Spool registers clients itself and doesn't take Claude's published identity, which is the default. On a Team or Enterprise plan, an Owner adds it under Organization settings, Connectors.
+- **ChatGPT.** Plugins, the plus button, Add custom MCP server. Enter the same address, choose OAuth, and create it as a plugin.
+
+The studio opens. Sign in, check the host the approval returns to (`claude.ai` or `chatgpt.com`), and approve. The approval lasts as long as that sign-in, without the 12-hour cap. Turning the account off, replacing the password, or changing the account's Google email ends it, and turning the account back on doesn't bring it back. An admin sees every approval under Assistants on the Tokens page and can revoke one.
+
+| What | How long |
+| --- | --- |
+| The code the browser brings back | 2 minutes, once |
+| An access token | 1 hour, at `/mcp` only |
+| A refresh token | 30 days, once. Each refresh gives the next, and using one twice ends the approval |
+
+One scope, `spool`: read and change data, not manage people or tokens. An organisation whose Owner sees **Request headers** in Claude can instead send `Authorization: Bearer <token>`.
 
 ## Before you start
 

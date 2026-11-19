@@ -11,6 +11,9 @@
 //!
 //! `/mcp` is the same API as tools for an assistant, over the Model Context
 //! Protocol. It needs the same caller as `/v1` and runs the same handlers.
+//! It also takes an assistant that signed in with OAuth, as the person who
+//! approved it: the server is the OAuth server for `/mcp` alone
+//! (`server/oauth.rs`).
 //!
 //! A change is recorded under whoever made it. The server says who that is;
 //! a request cannot.
@@ -98,7 +101,7 @@ use tower_sessions::cookie::{Cookie, SameSite};
 use tower_sessions::{Expiry, Session, SessionManagerLayer};
 
 use crate::accounts::{
-    Accounts, Change, Entered, GOOGLE, MARK, MAX_USERNAME, New, PERSON, Refused,
+    ACCESS_PREFIX, Accounts, Change, Entered, GOOGLE, MARK, MAX_USERNAME, New, PERSON, Refused,
 };
 use crate::api::{
     self, ARROW_STREAM, AddPersonRequest, AddTokenRequest, AddedToken, AttributeList,
@@ -117,7 +120,10 @@ use crate::studio;
 mod local;
 mod mcp;
 mod newline;
+mod oauth;
 mod unread;
+
+pub use oauth::issuer_of;
 
 /// How long a call that starts work waits when it does not say.
 pub const DEFAULT_WAIT_MS: u64 = 30_000;
@@ -182,8 +188,14 @@ const GOOGLE_MINUTES: i64 = 10;
 const MAX_ASKING: usize = 8;
 
 /// The longest address to go back to after signing in with Google. It
-/// travels in a cookie, which has little room.
+/// travels in a cookie, which has little room. An authorization that does
+/// not fit is kept on the server instead, for as long as that cookie lasts.
 const MAX_NEXT_BYTES: usize = 1024;
+
+/// The longest authorization address kept while a browser is at Google, and
+/// how many are kept. Past these, the sign-in comes back to the first page.
+const MAX_HELD_BYTES: usize = 8 * 1024;
+const MAX_HELD: usize = 256;
 
 #[derive(Clone, Debug)]
 pub struct ServerOptions {
@@ -203,6 +215,10 @@ pub struct ServerOptions {
     pub max_body_bytes: usize,
     /// Whether the server answers a browser at `/` with the studio.
     pub studio: bool,
+    /// The address the server is reached by, if it is the OAuth server of
+    /// its own `/mcp`: see `server/oauth.rs`. Approving an assistant is done
+    /// in the studio, so a server without the studio has none.
+    pub issuer: Option<String>,
     /// How long the server goes on answering the requests it has once it
     /// is told to stop.
     pub stop_within: Duration,
@@ -218,6 +234,7 @@ impl ServerOptions {
             google: None,
             max_body_bytes: DEFAULT_MAX_BODY_BYTES,
             studio: true,
+            issuer: None,
             stop_within: STOP_WITHIN,
         }
     }
@@ -235,6 +252,9 @@ struct App {
     https: bool,
     google: Option<Arc<Provider>>,
     asking: Arc<Semaphore>,
+    /// Authorization addresses that do not fit in the Google sign-in cookie.
+    held: Held,
+    issuer: Option<Arc<str>>,
     stopping: Stopping,
 }
 
@@ -352,6 +372,12 @@ fn router_until(engine: Arc<Engine>, options: &ServerOptions, stopping: Stopping
         https: options.https,
         google: options.google.clone().map(Provider::new).map(Arc::new),
         asking: Arc::new(Semaphore::new(MAX_ASKING)),
+        held: Held::default(),
+        issuer: options
+            .issuer
+            .as_deref()
+            .filter(|_| options.studio && !options.dev)
+            .map(Arc::from),
         stopping,
     };
     let sessions = SessionManagerLayer::new(options.accounts.clone())
@@ -368,6 +394,7 @@ fn router_until(engine: Arc<Engine>, options: &ServerOptions, stopping: Stopping
         .route("/password", post(change_password))
         .route("/google", get(google_start))
         .route("/google/callback", get(google_callback))
+        .route("/oauth", get(oauth::describe).post(oauth::decide))
         .fallback(not_found)
         .layer(DefaultBodyLimit::max(
             options.max_body_bytes.min(MAX_AUTH_BODY_BYTES),
@@ -414,17 +441,35 @@ fn router_until(engine: Arc<Engine>, options: &ServerOptions, stopping: Stopping
         .route("/people/{person}", post(change_person))
         .route("/tokens", get(list_tokens).post(add_token))
         .route("/tokens/{token}/revoke", post(revoke_token))
+        .route("/grants", get(oauth::list_grants))
+        .route("/grants/{grant}/revoke", post(oauth::end_grant))
         .fallback(not_found)
         .layer(middleware::from_fn_with_state(app.clone(), authorize));
     let mcp = Router::new()
         .route_service(MCP_PATH, mcp::service(app.clone(), options))
         .layer(middleware::map_response(mcp::describe_refusal))
-        .layer(middleware::from_fn_with_state(app.clone(), authorize));
+        .layer(middleware::from_fn_with_state(app.clone(), authorize_mcp));
+    // Clients send these, and anyone may: what they read is a few fields.
+    let oauth = Router::new()
+        .route(oauth::RESOURCE_METADATA, get(oauth::resource_metadata))
+        .route(
+            &format!("{}{MCP_PATH}", oauth::RESOURCE_METADATA),
+            get(oauth::resource_metadata),
+        )
+        .route(oauth::SERVER_METADATA, get(oauth::server_metadata))
+        .route(oauth::REGISTER, post(oauth::register))
+        .route(oauth::AUTHORIZE, get(oauth::authorize))
+        .route(oauth::TOKEN, post(oauth::token))
+        .route(oauth::REVOKE, post(oauth::revoke))
+        .layer(DefaultBodyLimit::max(
+            options.max_body_bytes.min(MAX_AUTH_BODY_BYTES),
+        ));
     let mut router = Router::new()
         .route("/healthz", get(health))
         .nest("/auth", auth)
         .nest(&format!("/{}", api::VERSION), v1)
-        .merge(mcp);
+        .merge(mcp)
+        .merge(oauth);
     if options.studio {
         router = router.merge(studio::routes());
     }
@@ -632,7 +677,14 @@ impl From<Refused> for ApiError {
         let message = refused.to_string();
         match refused {
             Refused::Invalid(_) | Refused::WrongPassword => Self::invalid(message),
-            Refused::Unknown | Refused::UnknownToken => Self::not_found(message),
+            Refused::Unknown | Refused::UnknownToken | Refused::UnknownGrant => {
+                Self::not_found(message)
+            }
+            Refused::TooMany(_) => Self::new(
+                StatusCode::TOO_MANY_REQUESTS,
+                ErrorCode::TooManyAttempts,
+                message,
+            ),
             Refused::Taken(_)
             | Refused::EmailTaken(_)
             | Refused::TokenTaken(_)
@@ -687,7 +739,7 @@ async fn authorize(
     mut request: Request,
     next: Next,
 ) -> Response {
-    match caller(&app, &session, request.headers()).await {
+    match caller(&app, &session, request.headers(), false).await {
         Ok(caller) => {
             request.extensions_mut().insert(caller);
             next.run(request).await
@@ -696,13 +748,48 @@ async fn authorize(
     }
 }
 
+/// As [`authorize`], for `/mcp`, which also takes the access tokens of
+/// assistants that signed in with OAuth. A refusal says where to read how
+/// to sign in, which is how such an assistant finds out.
+async fn authorize_mcp(
+    State(app): State<App>,
+    session: Session,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    match caller(&app, &session, request.headers(), true).await {
+        Ok(caller) => {
+            request.extensions_mut().insert(caller);
+            next.run(request).await
+        }
+        Err(error) => {
+            let mut response = error.into_response();
+            if let Some(issuer) = &app.issuer
+                && response.status() == StatusCode::UNAUTHORIZED
+            {
+                let sent = request.headers().contains_key(AUTHORIZATION);
+                response
+                    .headers_mut()
+                    .insert(WWW_AUTHENTICATE, oauth::challenge(issuer, sent));
+            }
+            response
+        }
+    }
+}
+
 fn unauthorized(message: &str) -> ApiError {
     ApiError::new(StatusCode::UNAUTHORIZED, ErrorCode::Unauthorized, message)
 }
 
-/// The caller a request is from: the agent whose token it carries, or the
-/// person its session belongs to.
-async fn caller(app: &App, session: &Session, headers: &HeaderMap) -> ApiResult<Caller> {
+/// The caller a request is from: the agent whose token it carries, the
+/// person its session belongs to, or, at `/mcp`, the person who approved
+/// the assistant whose access token it carries.
+async fn caller(
+    app: &App,
+    session: &Session,
+    headers: &HeaderMap,
+    at_mcp: bool,
+) -> ApiResult<Caller> {
     let presented = headers
         .get(AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
@@ -710,6 +797,18 @@ async fn caller(app: &App, session: &Session, headers: &HeaderMap) -> ApiResult<
             let (scheme, token) = value.split_once(' ')?;
             scheme.eq_ignore_ascii_case("bearer").then(|| token.trim())
         });
+    if let Some(presented) = presented.filter(|token| token.starts_with(ACCESS_PREFIX)) {
+        return match (at_mcp, app.issuer.is_some()) {
+            (true, true) => oauth::bearer(app, presented).await,
+            (false, true) => Err(unauthorized(
+                "an assistant's access token works at /mcp and nowhere else",
+            )),
+            (_, false) => Err(unauthorized(
+                "this server does not sign assistants in with OAuth: it needs the address it \
+                 is reached by, with `--public-url`",
+            )),
+        };
+    }
     if let Some(presented) = presented {
         let presented = presented.to_owned();
         return match people(app, move |accounts| accounts.agent(&presented)).await? {
@@ -972,16 +1071,73 @@ fn send_to(app: &App, to: &str, kept: Option<&str>) -> Response {
     response
 }
 
+/// An address of this server's own pages: one path, with no way out of it.
+fn own(next: &str) -> bool {
+    next.starts_with('/')
+        && !next[1..].starts_with(['/', '\\'])
+        && !next.contains(|c: char| c.is_control() || c == '\\')
+}
+
 /// An address of this server's own pages to go back to: `next` if it is
 /// one, and the first page if it could lead anywhere else.
 fn own_page(next: Option<&str>) -> &str {
-    let own = |next: &&str| {
-        next.len() <= MAX_NEXT_BYTES
-            && next.starts_with('/')
-            && !next[1..].starts_with(['/', '\\'])
-            && !next.contains(|c: char| c.is_control() || c == '\\')
-    };
-    next.filter(own).unwrap_or("/")
+    next.filter(|next| next.len() <= MAX_NEXT_BYTES && own(next))
+        .unwrap_or("/")
+}
+
+/// Where a browser goes back to after Google. An authorization carries the
+/// assistant's whole request, which can be longer than the sign-in cookie,
+/// and that one is kept whole up to a limit. Anything else too long to keep
+/// in the cookie, or that could lead off this server, is the first page.
+fn return_page(next: Option<&str>) -> String {
+    match next {
+        Some(next) if authorization(next) && own(next) && next.len() <= MAX_HELD_BYTES => {
+            next.to_owned()
+        }
+        other => own_page(other).to_owned(),
+    }
+}
+
+/// Whether `next` is the studio page where an assistant is approved. The
+/// query is the request, and it is what has to survive the sign-in.
+fn authorization(next: &str) -> bool {
+    let path = next
+        .split_once(['?', '#'])
+        .map(|(path, _)| path)
+        .unwrap_or(next);
+    path == oauth::AUTHORIZE && next.contains('?')
+}
+
+/// Authorization addresses waiting out a sign-in at Google. The cookie
+/// carries `held:<id>` and the address stays here, so a long `state` or
+/// redirect URI is not cut down to the first page.
+#[derive(Clone, Default)]
+struct Held(Arc<Mutex<Vec<(String, String, Instant)>>>);
+
+impl Held {
+    fn keep(&self, next: &str) -> String {
+        let mut held = self.0.lock().unwrap_or_else(|held| held.into_inner());
+        let now = Instant::now();
+        let for_so_long = Duration::from_secs(GOOGLE_MINUTES as u64 * 60);
+        held.retain(|(_, _, at)| now.saturating_duration_since(*at) < for_so_long);
+        if held.len() >= MAX_HELD {
+            held.remove(0);
+        }
+        let id = crate::accounts::code();
+        held.push((id.clone(), next.to_owned(), now));
+        format!("held:{id}")
+    }
+
+    fn take(&self, next: &str) -> Option<String> {
+        let id = next.strip_prefix("held:")?;
+        let mut held = self.0.lock().unwrap_or_else(|held| held.into_inner());
+        let now = Instant::now();
+        let for_so_long = Duration::from_secs(GOOGLE_MINUTES as u64 * 60);
+        let index = held.iter().position(|(found, _, at)| {
+            found == id && now.saturating_duration_since(*at) < for_so_long
+        })?;
+        Some(held.remove(index).1)
+    }
 }
 
 /// Sends the browser back to the page it came from, which says why nobody
@@ -1095,7 +1251,7 @@ async fn google_start(
         return Err(not_found().await);
     };
     let start = query(start)?;
-    let next = own_page(start.next.as_deref());
+    let next = return_page(start.next.as_deref());
     // Sending a browser there asks Google nothing once the server knows
     // where its sign-in is. Until then, it is one of the questions the
     // server has only so many of at once.
@@ -1103,7 +1259,7 @@ async fn google_start(
         true => None,
         false => match Arc::clone(&app.asking).try_acquire_owned() {
             Ok(permit) => Some(permit),
-            Err(_) => return Ok(turned_away(&app, next, "busy")),
+            Err(_) => return Ok(turned_away(&app, &next, "busy")),
         },
     };
     let start = move |provider: &Provider| {
@@ -1111,10 +1267,19 @@ async fn google_start(
         provider.start()
     };
     Ok(match asked(provider, start).await {
-        Ok(started) => send_to(&app, &started.url, Some(&Kept::written(&started, next))),
+        Ok(started) => {
+            // The cookie has room for a short address. A long authorization
+            // stays on the server, and the cookie carries only its reference.
+            let kept = if next.len() <= MAX_NEXT_BYTES {
+                next.clone()
+            } else {
+                app.held.keep(&next)
+            };
+            send_to(&app, &started.url, Some(&Kept::written(&started, &kept)))
+        }
         Err(failed) => {
             complain(&failed);
-            turned_away(&app, next, "unreachable")
+            turned_away(&app, &next, "unreachable")
         }
     })
 }
@@ -1149,14 +1314,22 @@ async fn google_callback(
     let Some(kept) = kept else {
         return Ok(turned_away(&app, "/", "expired"));
     };
-    let next = own_page(Some(&kept.next));
+    let next = match app.held.take(&kept.next) {
+        Some(address)
+            if authorization(&address) && own(&address) && address.len() <= MAX_HELD_BYTES =>
+        {
+            address
+        }
+        Some(_) => "/".to_owned(),
+        None => own_page(Some(&kept.next)).to_owned(),
+    };
     let code = match (back.code, back.error.as_deref()) {
         (Some(code), None) => code,
-        (_, Some("access_denied")) => return Ok(turned_away(&app, next, "cancelled")),
-        _ => return Ok(turned_away(&app, next, "failed")),
+        (_, Some("access_denied")) => return Ok(turned_away(&app, &next, "cancelled")),
+        _ => return Ok(turned_away(&app, &next, "failed")),
     };
     let Ok(permit) = Arc::clone(&app.asking).try_acquire_owned() else {
-        return Ok(turned_away(&app, next, "busy"));
+        return Ok(turned_away(&app, &next, "busy"));
     };
     let Kept {
         nonce, verifier, ..
@@ -1176,7 +1349,7 @@ async fn google_callback(
                 Failed::Unreachable(_) => "unreachable",
                 Failed::Refused(_) => "failed",
             };
-            return Ok(turned_away(&app, next, why));
+            return Ok(turned_away(&app, &next, why));
         }
     };
     // Without an address Google answers for, nobody is found by it.
@@ -1189,10 +1362,10 @@ async fn google_callback(
     })
     .await?;
     let Some((person, bound)) = entered else {
-        return Ok(turned_away(&app, next, why));
+        return Ok(turned_away(&app, &next, why));
     };
     begin(&session, &person.id, (GOOGLE, &bound)).await?;
-    Ok(send_to(&app, next, None))
+    Ok(send_to(&app, &next, None))
 }
 
 async fn list_people(State(app): State<App>) -> ApiResult {

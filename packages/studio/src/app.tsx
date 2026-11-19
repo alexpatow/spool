@@ -10,8 +10,8 @@ import type { ReactNode } from "react";
 
 import { Act } from "./act.tsx";
 import { SpoolClient, SpoolError } from "./api.ts";
-import type { Fetch, Info, Person, SessionState } from "./api.ts";
-import { Code, Failure, Labelled, Notice, Page, Quiet, Text } from "./components.tsx";
+import type { Fetch, Info, OAuthRequest, Person, SessionState } from "./api.ts";
+import { Code, Failure, Labelled, Notice, Page, Quiet, Row, Text } from "./components.tsx";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Kbd } from "./components/ui/kbd";
@@ -82,6 +82,8 @@ export interface AppProps {
   fetch?: Fetch;
   /** Where the reader's choices are kept. Default: the browser's local storage. */
   storage?: Kept;
+  /** Leaves the studio for another site. Default: the browser goes there. */
+  leave?: (to: string) => void;
 }
 
 type Connection =
@@ -133,7 +135,12 @@ function withoutRefusal(address: string): string {
   return kept === "" ? path : `${path}?${kept}`;
 }
 
-export function App({ url = window.location.origin, fetch, storage = window.localStorage }: AppProps) {
+export function App({
+  url = window.location.origin,
+  fetch,
+  storage = window.localStorage,
+  leave = (to) => window.location.assign(to),
+}: AppProps) {
   const [version, setVersion] = useState(0);
   const [connection, setConnection] = useState<Connection>({ status: "checking" });
   const [google, setGoogle] = useState(false);
@@ -227,6 +234,13 @@ export function App({ url = window.location.origin, fetch, storage = window.loca
             Try again
           </Button>
         </div>
+      </Door>
+    );
+  }
+  if (parseAddress(here()).path[0] === "oauth") {
+    return (
+      <Door url={url}>
+        <Approve client={client} me={connection.me} leave={leave} />
       </Door>
     );
   }
@@ -376,6 +390,75 @@ function SignInForm({
           <Input name="password" type="password" autoComplete="current-password" required />
         </Labelled>
       </DoorForm>
+    </>
+  );
+}
+
+/**
+ * An assistant such as Claude or ChatGPT on the web asks to work as whoever
+ * is signed in. The address is the one it sent the browser to, and its query
+ * is what it asks for, which the server checks again when it is answered.
+ */
+function Approve({ client, me, leave }: { client: SpoolClient; me: Person; leave: (to: string) => void }) {
+  const request = window.location.search.slice(1);
+  const [asked, setAsked] = useState<OAuthRequest | null>(null);
+  const [problem, setProblem] = useState<unknown>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let current = true;
+    client.oauthRequest(request).then(
+      (read) => current && setAsked(read),
+      (error: unknown) => current && setProblem(error),
+    );
+    return () => {
+      current = false;
+    };
+  }, [client, request]);
+  const decide = (approve: boolean) => {
+    setBusy(true);
+    setProblem(null);
+    client.decideOAuth(request, approve).then(
+      ({ to }) => leave(to),
+      (error: unknown) => {
+        setBusy(false);
+        setProblem(error);
+      },
+    );
+  };
+  if (asked === null) {
+    return problem === null ? (
+      <Quiet>Reading what the assistant asks for…</Quiet>
+    ) : (
+      <>
+        <Failure error={problem} />
+        <Quiet>Go back to the assistant and connect it to this server again.</Quiet>
+      </>
+    );
+  }
+  return (
+    <>
+      <Text>
+        <strong>{asked.client_name ?? "An assistant"}</strong> asks to read and change what this server holds, as you,{" "}
+        {me.name}. What it changes is recorded under your name.
+      </Text>
+      <Text>
+        Approving sends you to <strong data-part="host">{asked.host}</strong>.
+      </Text>
+      {asked.loopback ? (
+        <Notice tone="waits">
+          That is a program on this computer, and any program here could be it. Approve only if you have just connected
+          an assistant on this computer, such as Claude Code.
+        </Notice>
+      ) : null}
+      {problem !== null ? <Failure error={problem} /> : null}
+      <Row>
+        <Button disabled={busy} onClick={() => decide(true)}>
+          Approve
+        </Button>
+        <Button variant="outline" disabled={busy} onClick={() => decide(false)}>
+          Turn away
+        </Button>
+      </Row>
     </>
   );
 }

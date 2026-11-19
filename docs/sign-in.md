@@ -58,6 +58,10 @@ An account can have an email, a password, or both, and its owner can sign in wit
 - **If Google is unreachable**, the server still starts and passwords still work. Google sign-in recovers when Google does.
 - **`spool dev` has no sign-in**, so it ignores these settings.
 
+## Agents that sign in as a person
+
+Claude and ChatGPT on the web connect to `/mcp` with OAuth. The agent sends someone to the studio, they sign in as above and approve it, and it acts as them until the approval ends. An approval lasts as long as the sign-in it was given in, without the twelve-hour cap. Turning the account off, replacing the password, or changing the account's Google email ends it, and turning the account back on doesn't bring it back. An admin revokes an approval under Assistants on the Tokens page. [Connecting an agent over MCP](mcp.md#claude-and-chatgpt-on-the-web) has the details.
+
 ## Trying it without Google
 
 `bun run demo --google` in `packages/studio` starts a server with a local Google stand-in. Its sign-in page just asks which email to use, so you can try the whole flow before creating a client. With `SPOOL_GOOGLE_CLIENT_ID` and `SPOOL_GOOGLE_CLIENT_SECRET` set, the same command uses real Google.

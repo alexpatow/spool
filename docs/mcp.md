@@ -13,7 +13,7 @@ mcp       http://0.0.0.0:7765/mcp
 ## How it works
 
 - **Each tool wraps an API call.** It runs the same handler as the matching path under `/v1`, so it returns what the API returns and fails where the API fails.
-- **The server decides who the caller is.** `/mcp` accepts the same callers as `/v1`: a token, which writes as `agent:<name>`, or a signed-in session, which writes as `user:<id>`. No tool lets the caller name a different author.
+- **The server decides who the caller is.** `/mcp` accepts the same callers as `/v1`: a token, which writes as `agent:<name>`, a signed-in session, which writes as `user:<id>`, or an agent that signed in with OAuth, which writes as the person who approved it. No tool lets the caller name a different author.
 - **Changes carry a reason.** Tools that change identities or retract rows require a `reason`, which the log stores with the change. Loads, extractions and matches record who started them instead.
 - **It's stateless.** The transport is Streamable HTTP without sessions, and every response is one JSON message. Supported protocol revisions run from `2024-11-05` to `2026-07-28`, so clients with and without the `initialize` handshake both work.
 - **It's built in.** The protocol comes from `rmcp`, the official Rust SDK, compiled into the binary. There's nothing else to install.
@@ -80,7 +80,29 @@ The MCP SDKs take the address and a header. So do model APIs that call MCP serve
 
 ## Claude and ChatGPT on the web
 
-Web clients add remote servers without auth or through OAuth 2.1. Spool authenticates with bearer tokens. In Claude, organisations with the **Request headers** beta can enter `Authorization` and `Bearer <token>` when adding a custom connector. For ChatGPT, OpenAI's Secure MCP Tunnel can run `mcp-remote` with the header, as in the Claude Desktop setup above.
+These can't be given a token. They sign in with OAuth 2.1, and the server is the authorization server for its own `/mcp`.
+
+1. A call to `/mcp` without a token gets `401`, with `WWW-Authenticate: Bearer resource_metadata="<address>/.well-known/oauth-protected-resource/mcp"`.
+2. That document names `<address>/mcp` as the resource and this server as its authorization server. The server's metadata is at `/.well-known/oauth-authorization-server`.
+3. The client registers at `/oauth/register` as a public client and proves the token exchange with PKCE (S256). Registration is open: a name and the addresses an approval may return to, HTTPS or loopback. A client nobody approves is forgotten after a day.
+4. It sends the person to `/oauth/authorize`. The studio signs them in if need be and shows who is asking, the host the approval returns to, and a warning when that host is their own machine.
+5. The browser returns to the client with a code, `state` and `iss`. The client exchanges the code at `/oauth/token`.
+6. It calls `/mcp` with the access token, as the person who approved it. Changes are recorded as `user:<id>`.
+
+| What | How long |
+| --- | --- |
+| A code | 2 minutes, and once. Using it twice ends what the first use granted |
+| An access token | 1 hour, and only at `/mcp`. `/v1` refuses it |
+| A refresh token | 30 days, and once. Each refresh gives the next. Using one twice ends the approval |
+| An approval | As long as the sign-in it was given in, without the 12-hour cap. Turning the account off, replacing the password, or changing the account's Google email ends it. Turning the account back on does not bring it back |
+
+An admin sees every approval under Assistants on the Tokens page and can revoke one. A client revokes its own tokens at `/oauth/revoke`. There is one scope, `spool`.
+
+The issuer is the address the server is reached at: `--public-url` or `SPOOL_PUBLIC_URL`, or the listen address when that's only on this machine. Without one, over plain HTTP off this machine, or without the studio, the server prints `oauth off` and answers those paths with `404`. `spool dev` has no OAuth either.
+
+Clients register dynamically only. Client ID Metadata Documents, which the spec now prefers and which Claude offers as "Claude's published identity", aren't supported yet: the server would have to fetch an address the client names. In Claude, choose **Register automatically**. Claude calls from Anthropic's network, so the server needs public HTTPS on port 443. An organisation whose Owner sees **Request headers** can instead send `Authorization: Bearer <token>`.
+
+In ChatGPT: Plugins, the plus button, Add custom MCP server, choose OAuth, and create it as a plugin.
 
 ## Where it listens
 
