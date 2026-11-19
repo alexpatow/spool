@@ -14,6 +14,7 @@ use super::remote::{Remote, RemoteArgs, typed};
 use super::show::count;
 use crate::Failure;
 use crate::output::{Output, OutputArgs, aligned, fields, hint, table};
+use crate::progress;
 
 /// Show what the current rules would change in the identities
 ///
@@ -105,7 +106,10 @@ pub fn run(arguments: RecomputeArgs) -> Result<(), Failure> {
         if let Some(reason) = &arguments.reason {
             request["reason"] = json!(reason);
         }
-        let answer = remote.post("/recompute/apply", &request)?;
+        let waiting = progress::spinner("Applying the plan");
+        let answer = remote.post("/recompute/apply", &request);
+        waiting.finish_and_clear();
+        let answer = answer?;
         match out.is_table() {
             true => print_applied(&typed(&answer)?),
             false => out.json(&answer),
@@ -130,7 +134,10 @@ pub fn run(arguments: RecomputeArgs) -> Result<(), Failure> {
     if let Some(identity) = identity {
         request["identity"] = json!(identity);
     }
-    let answer = remote.post("/recompute", &request)?;
+    let waiting = progress::spinner("Recomputing the identities");
+    let answer = remote.post("/recompute", &request);
+    waiting.finish_and_clear();
+    let answer = answer?;
     if !out.is_table() {
         out.json(&answer);
         return Ok(());

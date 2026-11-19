@@ -42,6 +42,9 @@ clap = { version = "4.6", features = ["derive", "env", "wrap_help"] }
 # terminal, or NO_COLOR or `--color never` says so.
 anstream = "1"
 anstyle = "1"
+# Progress on standard error, while a command waits: shown on a terminal
+# only.
+indicatif = "0.18"
 # The tables the commands print: it measures wide characters and colour,
 # and wraps a table to the terminal.
 comfy-table = { version = "8", default-features = false, features = ["custom_styling"] }

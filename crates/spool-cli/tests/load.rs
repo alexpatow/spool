@@ -354,10 +354,8 @@ fn a_file_is_sent_in_parts() {
 loaded  6 rows into source `crm`, type `company`: 6 new
 "
     );
-    assert_eq!(
-        beside,
-        "4 rows sent\nnext: `spool match` places them in identities\n"
-    );
+    // Piped, no bar is drawn: what it says is the same as for one part.
+    assert_eq!(beside, "next: `spool match` places them in identities\n");
     let runs = load_runs(&server);
     let received: Vec<&Value> = runs.iter().map(|run| &run["load"]["received"]).collect();
     assert_eq!(received, [&json!(2), &json!(4)], "the latest run first");

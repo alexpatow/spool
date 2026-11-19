@@ -142,16 +142,14 @@ fn extracted(server: &Server, dir: &Path, arguments: &[&str]) -> String {
         "spool extract {arguments:?} failed:\n{}{said}",
         text(&output.stdout),
     );
-    // All it says there is which file is running, what that file said, and
-    // what each batch kept.
+    // All it says there, with no bar drawn where the output is piped, is
+    // what the extractor said, how long a slow start took, what the
+    // batches came to, and what to run next.
     assert!(
-        said.is_empty() || said.starts_with("running    extractors/") || said.starts_with("next: "),
-        "{said}"
-    );
-    assert!(
-        said.lines().skip(1).all(|line| {
-            line.starts_with("           ")
-                || line.starts_with("kept       ")
+        said.lines().all(|line| {
+            line.starts_with("             ")
+                || line.starts_with("    Prepared ")
+                || line.starts_with("   Extracted ")
                 || line.starts_with("next: ")
         }),
         "{said}"
@@ -677,15 +675,22 @@ fn a_run_that_takes_a_while_says_what_its_extractor_says() {
     assert!(started.elapsed() >= Duration::from_secs(6));
     assert!(output.status.success(), "{}", text(&output.stderr));
     assert_eq!(text(&output.stdout), FIRST);
+    // Where the output is piped, what the file said is said once the run
+    // has ended, and then how long it took to start.
     let said = text(&output.stderr);
     let lines: Vec<&str> = said
         .lines()
         .filter(|line| !line.starts_with("next: "))
         .collect();
-    assert_eq!(lines[0], "running    extractors/companies.py", "{said}");
     assert_eq!(
-        lines.last(),
-        Some(&"           Fetching the model (245 MB), once."),
+        lines[0], "             Fetching the model (245 MB), once.",
+        "{said}"
+    );
+    assert!(
+        lines
+            .last()
+            .unwrap()
+            .starts_with("    Prepared extractors/companies.py in "),
         "{said}"
     );
     // A line is said once, however often it was the last one.
@@ -795,14 +800,10 @@ found      12 records in 12 documents: 12 new, 0 already held
         .lines()
         .filter(|line| !line.starts_with("next: "))
         .collect();
-    assert_eq!(lines[0], "running    extractors/companies.py", "{said}");
+    assert_eq!(lines.len(), 1, "{said}");
     assert!(
-        lines[1].starts_with("kept       5 of 12 documents, 5 records, about "),
-        "{said}"
-    );
-    assert_eq!(
-        lines.last(),
-        Some(&"kept       12 of 12 documents, 12 records"),
+        lines[0].starts_with("   Extracted 12 documents in ")
+            && lines[0].ends_with(": 12 records, 0 failed"),
         "{said}"
     );
     let batches = runs(&server, "extract");
@@ -876,7 +877,7 @@ fn a_batch_that_is_stopped_keeps_the_ones_before_it() {
     let said = text(&output.stderr);
     let lines: Vec<&str> = said.lines().collect();
     let kept: usize = lines[lines.len() - 2]
-        .strip_prefix("kept       ")
+        .strip_prefix("        Kept ")
         .and_then(|line| line.split_once(" documents read before run "))
         .and_then(|(kept, rest)| {
             rest.ends_with(": the same command again reads the rest")
@@ -953,7 +954,7 @@ def find(documents):
     let said = text(&output.stderr);
     assert!(
         said.contains(
-            "kept       5 documents read before the batch that failed: the same command again \
+            "        Kept 5 documents read before the batch that failed: the same command again \
              reads the rest\n"
         ),
         "{said}"
@@ -1073,11 +1074,11 @@ fn a_document_that_cannot_be_read_is_failed_and_read_again_alone() {
     // What the helper wrote of it reaches the terminal, after its batch.
     let said = text(&output.stderr);
     assert!(
-        said.contains("\n           notes:note-07.txt: RuntimeError: cannot read this one\n"),
+        said.contains("             notes:note-07.txt: RuntimeError: cannot read this one\n"),
         "{said}"
     );
     assert!(
-        said.contains("kept       7 of 8 documents, 1 failed, 7 records"),
+        said.contains("   Extracted 7 documents in ") && said.contains(": 7 records, 1 failed\n"),
         "{said}"
     );
     let listed = shown(
@@ -1132,8 +1133,8 @@ fn what_an_extractor_says_reaches_both_terminals_on_a_short_run() {
     assert_eq!(text(&output.stdout), FIRST);
     assert_eq!(
         text(&output.stderr),
-        "running    extractors/companies.py\n           notes-1.txt: dropped a quote the text \
-         does not have\nnext: `spool match` places them in identities\n"
+        "             notes-1.txt: dropped a quote the text does not have\nnext: `spool match` \
+         places them in identities\n"
     );
     let run = runs(&server, "extract")[0]["run"].as_u64().unwrap();
     assert_eq!(
@@ -1250,9 +1251,9 @@ fn a_reading_that_finds_nothing_at_all_says_what_it_took_back() {
     assert_eq!(
         text(&output.stderr),
         format!(
-            "taken back 3 records that run {run} found nowhere, though it found nothing at all: \
-             if the extractor is wrong, mend it and run `spool extract --again`, and what it \
-             finds again goes back to the identity it left\n"
+            "warning: took back 3 records that run {run} found nowhere, though it found nothing \
+             at all: if the extractor is wrong, mend it and run `spool extract --again`, and what \
+             it finds again goes back to the identity it left\n"
         )
     );
     assert!(
@@ -1340,9 +1341,7 @@ fn ctrl_c_cancels_the_batch_that_is_running_and_keeps_the_ones_before() {
     assert_eq!(output.status.code(), Some(130), "{}", text(&output.stderr));
     let said = text(&output.stderr);
     assert!(
-        said.contains(&format!(
-            "stopping   cancelling run {run}, the batch in progress"
-        )),
+        said.contains(&format!("    Stopping run {run}, the batch in progress")),
         "{said}"
     );
     assert!(

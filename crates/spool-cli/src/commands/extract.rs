@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anstream::println;
+use indicatif::ProgressBar;
 use serde_json::{Value, json};
 use spool::core::{DocumentId, RunId};
 use spool::{
@@ -16,6 +17,7 @@ use spool::{
 use super::remote::{self, Remote, RemoteArgs, WAIT_MS, listed, typed};
 use crate::Failure;
 use crate::output::{Output, OutputArgs, aligned, hint};
+use crate::progress;
 
 /// Find records in documents with one of the project's extractors
 ///
@@ -39,12 +41,14 @@ use crate::output::{Output, OutputArgs, aligned, hint};
 /// the command no longer waits for goes on on the server and is kept as well.
 /// Each batch is made to take a small part of the time the server lets user
 /// code run (`--task-timeout` on `spool dev` or `spool serve`), so a long
-/// extraction needs no longer limit. When there is more than one batch, the
-/// command says on standard error how far it is.
+/// extraction needs no longer limit.
 ///
-/// An extractor's first run may fetch what it depends on, a model for one.
-/// When a run takes more than a few seconds, the command says on standard
-/// error which file is running, and what the file says as it goes.
+/// An extractor's first run may fetch what it depends on, a model for one. On
+/// a terminal, a spinner shows what the extractor says while its first batch
+/// starts, and a bar then shows how many documents are read. On standard
+/// error the command says how long a slow start took, what the batches came
+/// to when there was more than one, and what the extractor wrote, once its
+/// batch ends.
 #[derive(clap::Args)]
 #[command(
     after_help = "Examples:\n  spool extract samples/notes-1.txt\n  spool extract documents/ --source notes\n  spool extract --again"
@@ -206,7 +210,18 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
     {
         let (mut inserted, mut duplicates, mut superseded) = (0, 0, 0);
         let mut stored = 0;
-        for sent in sending(&files) {
+        let parts = sending(&files);
+        let storing = match parts.len() {
+            1 => ProgressBar::hidden(),
+            _ => progress::bar(
+                "Storing",
+                files.len() as u64,
+                " documents",
+                0,
+                String::new(),
+            ),
+        };
+        for sent in parts {
             if was_interrupted() {
                 return Err(Failure::stopped(format!(
                     "stopped: {stored} of {} are stored and none is read yet. The same command \
@@ -257,7 +272,9 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
             duplicates += report.duplicates;
             superseded += report.superseded;
             stored += sent.len();
+            storing.set_position(stored as u64);
         }
+        storing.finish_and_clear();
         if !as_json {
             println!("source     {source}");
             println!(
@@ -285,7 +302,6 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
     let mut found = Found::default();
     let mut size = FIRST_BATCH;
     let mut since: Option<RunId> = None;
-    let began = Instant::now();
     loop {
         if was_interrupted() {
             return Err(Failure::stopped(stopped(&found, again, None)));
@@ -339,10 +355,10 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
         // found before, which is what a broken one does too. It is taken
         // back all the same, and comes back when it is found again.
         if report.mentions == 0 && report.taken_back > 0 {
-            hint(format!(
-                "taken back {} that run {} found nowhere, though it found nothing at all: if the \
-                 extractor is wrong, mend it and run `spool extract --again`, and what it finds \
-                 again goes back to the identity it left",
+            progress.say(&format!(
+                "warning: took back {} that run {} found nowhere, though it found nothing at all: \
+                 if the extractor is wrong, mend it and run `spool extract --again`, and what it \
+                 finds again goes back to the identity it left",
                 plural(report.taken_back, "record", "records"),
                 run.run
             ));
@@ -372,18 +388,16 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
             }
             return Err(Failure::stopped(stopped(&found, again, None)));
         }
-        progress.batches += 1;
         if since.is_none() {
             since = Some(run.run);
         }
-        if progress.batches > 1 || report.left > 0 {
-            progress.kept(&found, report.left, began.elapsed());
-        }
+        progress.kept(&found, report.left);
         if report.left == 0 || report.documents == 0 {
             break;
         }
         size = next_batch(report.documents, batch_began.elapsed(), target);
     }
+    progress.finish(&found);
 
     if as_json {
         answered.print(out);
@@ -701,17 +715,18 @@ fn readable(sources: &[DeclaredSource], source: &str) -> Result<(), Failure> {
     Ok(())
 }
 
-/// What the command says on standard error while an extraction runs, so
-/// that what is printed to standard output is the same for one that took
-/// long.
+/// What the command shows on standard error while an extraction runs: a
+/// spinner with what the extractor says while its first batch starts, then
+/// a bar of the documents, and what the extractor wrote above them. What it
+/// prints on standard output is the same however long it took.
 struct Progress<'a> {
     extractor: &'a Extractor,
     /// The batches that have ended.
     batches: u64,
-    announced: bool,
-    said: Option<String>,
-    /// What was printed of what the batch in progress said, as it said it.
-    live: Vec<String>,
+    /// The spinner, then the bar once the documents are counted.
+    bar: ProgressBar,
+    counted: bool,
+    began: Instant,
     /// Whether the batch in progress was cancelled after Ctrl-C.
     cancelled: bool,
 }
@@ -721,25 +736,17 @@ impl<'a> Progress<'a> {
         Progress {
             extractor,
             batches: 0,
-            announced: false,
-            said: None,
-            live: Vec::new(),
+            bar: progress::spinner(format!("{}: starting", extractor.file)),
+            counted: false,
+            began: Instant::now(),
             cancelled: false,
         }
     }
 
-    fn announce(&mut self) {
-        if !self.announced {
-            hint(format!("running    {}", self.extractor.file));
-            self.announced = true;
-        }
-    }
-
     /// Waits for a batch that did not end at once, and returns the
-    /// server's answer once it has. While the first batch runs, what its
-    /// extractor says is printed: the first run of a Python file takes as
-    /// long as its downloads, and this is all there is to see of them. After
-    /// it, what each batch kept says how far the extraction is.
+    /// server's answer once it has. While the first batch runs, the spinner
+    /// says what its extractor says: the first run of a Python file takes as
+    /// long as its downloads, and this is all there is to see of them.
     fn follow(&mut self, remote: &Remote, mut answer: Value) -> Result<Value, Failure> {
         loop {
             if answer["run"].is_null() {
@@ -752,14 +759,11 @@ impl<'a> Progress<'a> {
             if was_interrupted() && !self.cancelled {
                 self.cancel(remote, run.run)?;
             }
-            self.announce();
             if self.batches == 0
                 && let Some(said) = run.said
-                && self.said.as_ref() != Some(&said)
             {
-                hint(format!("           {said}"));
-                self.live.push(said.clone());
-                self.said = Some(said);
+                self.bar
+                    .set_message(format!("{}: {said}", self.extractor.file));
             }
             answer = remote.get(
                 &format!("/runs/{}", run.run),
@@ -769,32 +773,31 @@ impl<'a> Progress<'a> {
         }
     }
 
-    /// Prints what the extractor of a batch that ended wrote to standard
-    /// error, but for what was printed as it ran and the helpers' own count
-    /// of how far a run is, which what each batch kept says better.
-    fn relay(&mut self, stderr: &[String]) {
-        let mut live = std::mem::take(&mut self.live);
-        for line in stderr {
-            if let Some(at) = live.iter().position(|said| said == line) {
-                live.remove(at);
-                continue;
-            }
-            if counts_documents(line) {
-                continue;
-            }
-            self.announce();
-            hint(format!("           {line}"));
+    /// Says what the extractor of a batch that ended wrote to standard
+    /// error, but for the helpers' own count of how far a run is, which the
+    /// bar says better.
+    fn relay(&self, stderr: &[String]) {
+        for line in stderr.iter().filter(|line| !counts_documents(line)) {
+            self.say(&format!("{:>12} {line}", ""));
         }
+    }
+
+    fn say(&self, line: &str) {
+        progress::say(&self.bar, line);
     }
 
     /// Cancels the batch in progress after Ctrl-C. The server stops its
     /// extractor and keeps nothing it found; what the batches before it
     /// found is kept.
     fn cancel(&mut self, remote: &Remote, run: RunId) -> Result<(), Failure> {
-        hint(format!(
-            "stopping   cancelling run {run}, the batch in progress: what the batches before it \
-             read is kept. Ctrl-C again quits without waiting."
-        ));
+        progress::note(
+            &self.bar,
+            "Stopping",
+            &format!(
+                "run {run}, the batch in progress: what the batches before it read is kept. \
+                 Ctrl-C again quits without waiting"
+            ),
+        );
         self.cancelled = true;
         // A run that ended meanwhile cannot be cancelled, and what it read
         // is kept.
@@ -802,30 +805,59 @@ impl<'a> Progress<'a> {
         Ok(())
     }
 
-    /// Says how far the extraction is once a batch has been kept, and how
-    /// long the rest takes at the pace so far.
-    fn kept(&mut self, found: &Found, left: u64, took: Duration) {
-        self.announce();
-        let failed = found.failed.len() as u64;
-        let mut line = format!(
-            "kept       {} of {}, ",
-            found.documents,
-            plural(found.documents + failed + left, "document", "documents"),
-        );
-        if failed > 0 {
-            line.push_str(&format!("{failed} failed, "));
+    /// Moves on once a batch has been kept: says how long the first took,
+    /// when that was long enough to be worth saying, and moves the bar.
+    fn kept(&mut self, found: &Found, left: u64) {
+        self.batches += 1;
+        if self.batches == 1 && self.began.elapsed() >= Duration::from_millis(QUIET_MS) {
+            progress::done(
+                &self.bar,
+                "Prepared",
+                &format!(
+                    "{} in {}",
+                    self.extractor.file,
+                    progress::took(self.began.elapsed())
+                ),
+            );
         }
-        line.push_str(&plural(found.mentions, "record", "records"));
-        if left > 0 && found.documents + failed > 0 {
-            let rest = took.mul_f64(left as f64 / (found.documents + failed) as f64);
-            line.push_str(&format!(", about {} left", about(rest)));
+        if self.batches == 1 && left == 0 {
+            return;
         }
-        hint(line);
+        let read = found.documents + found.failed.len() as u64;
+        let records = format!(", {}", plural(found.mentions, "record", "records"));
+        if self.counted {
+            self.bar.set_position(read);
+            self.bar.set_message(records);
+            return;
+        }
+        self.bar.finish_and_clear();
+        self.bar = progress::bar("Extracting", read + left, " documents", read, records);
+        self.counted = true;
+    }
+
+    /// Takes the bar away, and says what the batches came to when there
+    /// was more than one.
+    fn finish(&self, found: &Found) {
+        self.bar.finish_and_clear();
+        if self.batches > 1 {
+            progress::done(
+                &self.bar,
+                "Extracted",
+                &format!(
+                    "{} in {}: {}, {} failed",
+                    plural(found.documents, "document", "documents"),
+                    progress::took(self.began.elapsed()),
+                    plural(found.mentions, "record", "records"),
+                    found.failed.len()
+                ),
+            );
+        }
     }
 
     /// Says what the batches before a failed one kept: the run that failed,
     /// when the server started one.
     fn stopped(&self, kept: u64, again: bool, failed: Option<RunId>) {
+        self.bar.finish_and_clear();
         if kept == 0 {
             return;
         }
@@ -835,10 +867,16 @@ impl<'a> Progress<'a> {
             None => "the batch that failed".to_owned(),
         };
         match again {
-            true => hint(format!("kept       {read} read again before {before}")),
-            false => hint(format!(
-                "kept       {read} read before {before}: the same command again reads the rest"
-            )),
+            true => progress::done(
+                &self.bar,
+                "Kept",
+                &format!("{read} read again before {before}"),
+            ),
+            false => progress::done(
+                &self.bar,
+                "Kept",
+                &format!("{read} read before {before}: the same command again reads the rest"),
+            ),
         }
     }
 }
@@ -878,20 +916,6 @@ fn stopped(found: &Found, again: bool, cancelled: Option<RunId>) -> String {
         )),
     }
     said
-}
-
-/// A time to wait, in whole minutes, rounded up.
-fn about(time: Duration) -> String {
-    let minutes = time.as_secs().div_ceil(60).max(1);
-    match (minutes / 60, minutes % 60) {
-        (0, minutes) => plural(minutes, "minute", "minutes"),
-        (hours, 0) => plural(hours, "hour", "hours"),
-        (hours, minutes) => format!(
-            "{} {}",
-            plural(hours, "hour", "hours"),
-            plural(minutes, "minute", "minutes")
-        ),
-    }
 }
 
 /// Waits for the run a call started.
@@ -987,7 +1011,7 @@ mod tests {
 
     use std::time::Duration;
 
-    use super::{File, about, next_batch, read, sending, source_of};
+    use super::{File, next_batch, read, sending, source_of};
 
     /// The files the paths name, which have to be read.
     fn read_all(paths: &[String]) -> Vec<File> {
@@ -1102,17 +1126,6 @@ mod tests {
         let sizes: Vec<usize> = sending(&large).iter().map(|group| group.len()).collect();
         assert_eq!(sizes, vec![1, 1, 1]);
         assert!(sending(&[]).is_empty());
-    }
-
-    #[test]
-    fn what_is_left_is_said_in_minutes_and_hours() {
-        assert_eq!(about(Duration::from_secs(5)), "1 minute");
-        assert_eq!(about(Duration::from_secs(61)), "2 minutes");
-        assert_eq!(about(Duration::from_secs(3600)), "1 hour");
-        assert_eq!(
-            about(Duration::from_secs(2 * 3600 + 5 * 60)),
-            "2 hours 5 minutes"
-        );
     }
 
     #[test]

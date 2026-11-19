@@ -22,6 +22,7 @@ async-trait.workspace = true
 axum.workspace = true
 clap.workspace = true
 comfy-table.workspace = true
+indicatif.workspace = true
 csv.workspace = true
 getrandom.workspace = true
 http-body.workspace = true

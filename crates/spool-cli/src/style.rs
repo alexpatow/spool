@@ -14,6 +14,7 @@ pub const WAITING: Style = AnsiColor::Yellow.on_default();
 pub const ERROR: Style = AnsiColor::BrightRed.on_default().effects(Effects::BOLD);
 pub const WARNING: Style = AnsiColor::Yellow.on_default().effects(Effects::BOLD);
 pub const HINT: Style = AnsiColor::BrightCyan.on_default().effects(Effects::BOLD);
+pub const DONE: Style = AnsiColor::BrightGreen.on_default().effects(Effects::BOLD);
 
 /// Text in a style.
 pub fn paint(style: Style, text: &str) -> String {

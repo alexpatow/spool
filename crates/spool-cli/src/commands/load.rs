@@ -10,6 +10,7 @@ use std::path::Path;
 use anstream::println;
 use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatch;
+use indicatif::ProgressBar;
 use serde_json::{Value, json};
 use spool::{DeclaredSource, LoadReport, RunStatus};
 use spool_cli::api::{ARROW_STREAM, Info};
@@ -19,6 +20,7 @@ use super::remote::{self, Remote, RemoteArgs, WAIT_MS, unsuccessful};
 use super::show::count;
 use crate::Failure;
 use crate::output::{Output, OutputArgs, fields, hint};
+use crate::progress;
 
 /// Send the rows of a file to a running server
 ///
@@ -80,6 +82,14 @@ pub fn load(arguments: LoadArgs) -> Result<(), Failure> {
 
     // The file first: what is wrong with it can be said without a server.
     let (input, name) = open(file)?;
+    let bar = match std::fs::metadata(file) {
+        Ok(found) if file != "-" && found.is_file() => progress::bytes("Loading", found.len()),
+        _ => progress::spinner(format!("Loading {name}")),
+    };
+    let input = Counted {
+        inner: input,
+        bar: bar.clone(),
+    };
     let unreadable = |why: &dyn std::fmt::Display| {
         Failure::failed(format!(
             "{name} cannot be read as {}: {why}",
@@ -156,17 +166,16 @@ pub fn load(arguments: LoadArgs) -> Result<(), Failure> {
             Ok(None) => break,
             Err(why) => return Err(total.before(unreadable(&why), &name)),
         };
-        if total.rows > 0 && !json {
-            hint(format!("{} sent", count(total.rows, "row")));
-        }
         let (answer, report) = send(&remote, &source.name, entity_type, &batch)
             .map_err(|failure| total.before(failure, &name))?;
         total.add(batch.num_rows() as u64, &report);
+        bar.set_message(format!(", {} sent", count(total.rows, "row")));
         if json {
             runs.push(answer);
         }
     }
 
+    bar.finish_and_clear();
     if json {
         out.json(&json!({
             "source": source.name,
@@ -203,6 +212,20 @@ pub fn load(arguments: LoadArgs) -> Result<(), Failure> {
         hint(format!("next: `{command}` {places}"));
     }
     Ok(())
+}
+
+/// The file's rows, read as they are sent, moving the bar as they are.
+struct Counted {
+    inner: Box<dyn Read>,
+    bar: ProgressBar,
+}
+
+impl Read for Counted {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.inner.read(buffer)?;
+        self.bar.inc(read as u64);
+        Ok(read)
+    }
 }
 
 /// What the parts of a file came to.

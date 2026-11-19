@@ -327,19 +327,22 @@ fn one_line(value: &str) -> String {
         .collect()
 }
 
+/// The narrowest terminal a table is wrapped to fit.
+const MIN_WIDTH: u16 = 60;
+
 /// Lines of cells in columns, two spaces apart, each line indented by
 /// `indent` spaces. On a terminal, a table wider than it is wrapped to fit.
 /// A row may have fewer cells than others.
 pub fn render(header: Option<Vec<String>>, rows: &[Vec<String>], indent: usize) -> Vec<String> {
     let mut layout = Layout::new();
     layout.load_style(NOTHING);
-    if std::io::stdout().is_terminal() {
+    layout.set_content_arrangement(ContentArrangement::Disabled);
+    // A terminal that says it has no width, or hardly any, would have
+    // every column wrapped to a few characters.
+    let width = layout.width().filter(|width| *width >= MIN_WIDTH);
+    if let (true, Some(width)) = (std::io::stdout().is_terminal(), width) {
         layout.set_content_arrangement(ContentArrangement::Dynamic);
-        if let Some(width) = layout.width() {
-            layout.set_width(width.saturating_sub(indent as u16));
-        }
-    } else {
-        layout.set_content_arrangement(ContentArrangement::Disabled);
+        layout.set_width(width.saturating_sub(indent as u16));
     }
     if let Some(header) = header {
         layout.set_header(header);

@@ -2,6 +2,7 @@
 
 mod commands;
 mod output;
+mod progress;
 mod style;
 
 use std::ffi::OsString;

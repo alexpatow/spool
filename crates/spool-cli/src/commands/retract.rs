@@ -11,6 +11,7 @@ use spool::{RunEntry, RunStatus};
 use super::remote::{Remote, RemoteArgs, typed};
 use crate::Failure;
 use crate::output::{Output, OutputArgs};
+use crate::progress;
 
 /// Take back rows a source no longer holds
 ///
@@ -86,6 +87,10 @@ pub fn retract(arguments: RetractArgs) -> Result<(), Failure> {
     }
 
     let remote = Remote::new(&arguments.remote);
+    let waiting = progress::spinner(format!(
+        "Taking back {}",
+        super::show::count(keys.len() as u64, "row")
+    ));
     let mut answer = remote.post(
         "/retract",
         &json!({
@@ -105,6 +110,7 @@ pub fn retract(arguments: RetractArgs) -> Result<(), Failure> {
         )?;
         run = typed(&answer["run"])?;
     }
+    waiting.finish_and_clear();
     if !out.is_table() {
         out.json(&answer);
     }

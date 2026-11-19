@@ -358,3 +358,46 @@ fn colour_is_only_on_a_terminal_or_when_asked_for_and_never_in_data() {
     let help = text(&spool().args(["show", "-h"]).output().unwrap().stdout);
     assert!(!coloured(&help), "{help}");
 }
+
+/// Whether something was drawn and redrawn in place, as a spinner or a bar
+/// is.
+fn drawn(printed: &str) -> bool {
+    printed.contains('\r')
+        || printed
+            .chars()
+            .any(|c| ('\u{2800}'..='\u{28ff}').contains(&c))
+        || printed.contains("] ")
+}
+
+#[test]
+fn piped_output_has_no_progress() {
+    let dir = tempfile::tempdir().unwrap();
+    let (server, project) = matched(dir.path());
+    std::fs::write(
+        project.join("more.csv"),
+        "id,name,country\nm-1,Acorn Tools,GB\nm-2,Halden Group,GB\nm-3,Kestrel,GB\n",
+    )
+    .unwrap();
+
+    // Loaded in three parts, matched and recomputed, piped: what is said
+    // beside the result is the same as for a quick command, and nothing
+    // is drawn, not even where colour is forced.
+    for environment in [&[][..], &[("CLICOLOR_FORCE", "1")]] {
+        for arguments in [
+            &["load", "more.csv", "--batch", "1", "--source", "crm"][..],
+            &["match"],
+            &["recompute"],
+            &["retract", "--source", "crm", "--type", "company", "m-3"],
+        ] {
+            let (_, beside) = streams(&server, &project, arguments, environment);
+            assert!(!drawn(&beside), "{arguments:?} {environment:?}: {beside:?}");
+        }
+    }
+    let (_, beside) = streams(
+        &server,
+        &project,
+        &["load", "more.csv", "--batch", "1", "--source", "crm"],
+        &[],
+    );
+    assert_eq!(beside, "");
+}

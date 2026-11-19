@@ -11,6 +11,7 @@ use super::remote::{Remote, RemoteArgs, WAIT_MS, unsuccessful};
 use super::show::{count, placed};
 use crate::Failure;
 use crate::output::{Output, OutputArgs, fields, hint};
+use crate::progress;
 
 /// Match new records and place them in identities
 ///
@@ -137,10 +138,12 @@ pub fn run(arguments: MatchArgs) -> Result<(), Failure> {
         }
         // A run that fails within the wait is refused as the answer, and
         // one type's failure does not keep the others from being matched.
-        let ended = match remote
+        let waiting = progress::spinner(format!("Matching `{name}`"));
+        let ended = remote
             .post("/match", &request)
-            .and_then(|started| remote.ended(started))
-        {
+            .and_then(|started| remote.ended(started));
+        waiting.finish_and_clear();
+        let ended = match ended {
             Ok(ended) => ended,
             Err(failure) if named.is_none() => {
                 let message = failure.message();
