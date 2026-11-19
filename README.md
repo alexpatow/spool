@@ -145,13 +145,13 @@ It also has a sample extractor, `extractors/companies.py`. It is a Python file, 
 `spool extract` stores the document and runs the extractor over it. Three records come out of the note, each with the document and the characters it was found at. They are records like the rows, so the same rules match them: "Acorn Tools Ltd" and "Larkfield Logistics Ltd" join the identities the rows made, and Brightwater Foods is new. `spool show identities` lists the six companies:
 
 ```text
-identity                              name                   members  created at
-01a1efc6-41cd-775d-8758-e7300637659a  Acorn Tools Ltd        5        log position 1
-01a1efc6-41cd-775d-8758-e731c61371cb  Halden Group           1        log position 1
-01a1efc6-41cd-775d-8758-e7329447fd9a  Halden Group           1        log position 1
-01a1efc6-41cd-775d-8758-e733aa086f7d  Larkfield Logistics    3        log position 1
-01a1efc6-42c0-7776-b736-83fde0cb4498  Kestrel Analytics      1        log position 2
-01a1efc6-43a9-7403-b9f6-1f8ee76184ed  Brightwater Foods Ltd  1        log position 3
+IDENTITY                              NAME                   MEMBERS  NAMES  UNLINKED PAIRS  CREATED AT
+01a1efc6-41cd-775d-8758-e7300637659a  Acorn Tools Ltd        5        3      0%              log position 1
+01a1efc6-41cd-775d-8758-e731c61371cb  Halden Group           1        1      -               log position 1
+01a1efc6-41cd-775d-8758-e7329447fd9a  Halden Group           1        1      -               log position 1
+01a1efc6-41cd-775d-8758-e733aa086f7d  Larkfield Logistics    3        3      0%              log position 1
+01a1efc6-42c0-7776-b736-83fde0cb4498  Kestrel Analytics      1        1      -               log position 2
+01a1efc6-43a9-7403-b9f6-1f8ee76184ed  Brightwater Foods Ltd  1        1      -               log position 3
 ```
 
 The word the model is given decides what it finds, and the file gives it "company". An extractor is a Python or TypeScript file in `extractors/`, which Spool runs with `uv` or `bun`, and one of your own can call a hosted language model.
@@ -225,7 +225,7 @@ These follow from the design. Where something else fits better, it is named. Wha
 
 ## Where next
 
-- `spool` with no arguments lists the commands, and `spool <command> --help` describes each.
+- `spool` with no arguments lists the commands, and `spool <command> --help` describes each. Every command that prints a result takes `-o json` and `-o ndjson`, and one that prints a list `-o csv` too.
 - [docs/mcp.md](docs/mcp.md): the tools an agent gets, and how to connect each client.
 - [docs/sign-in.md](docs/sign-in.md): running a server that other people sign in to.
 - [benchmarks/README.md](benchmarks/README.md): projects with more sources and rules than the one above, on public data, and what was measured on them. `benchmarks/extraction/company-news` has extractors in Python and TypeScript.

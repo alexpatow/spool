@@ -54,8 +54,6 @@ found      3 records in 1 document: 3 new, 0 already held
   company  Acorn Tools Ltd          notes:notes-1.txt[54-69]
   company  Larkfield Logistics Ltd  notes:notes-1.txt[119-142]
   company  Brightwater Foods Ltd    notes:notes-1.txt[179-200]
-
-next       `spool match` places them in identities
 ";
 
 /// Stands in for the sample extractor where a test is not about its model:
@@ -117,8 +115,8 @@ fn dev_with_nothing_installed(project: &Path, dir: &Path) -> Server {
     .unwrap_or_else(|stopped| panic!("the server did not start:\n{}", stopped.output))
 }
 
-/// What `spool <arguments>` printed in `dir`. It has to succeed and say
-/// nothing beside.
+/// What `spool <arguments>` printed in `dir`: its result, then what it said
+/// beside on standard error. It has to succeed.
 fn shown(server: &Server, dir: &Path, arguments: &[&str]) -> String {
     let output = server.spool_in(dir, arguments).output().unwrap();
     assert!(
@@ -127,8 +125,7 @@ fn shown(server: &Server, dir: &Path, arguments: &[&str]) -> String {
         text(&output.stdout),
         text(&output.stderr)
     );
-    assert_eq!(text(&output.stderr), "", "spool {arguments:?}");
-    text(&output.stdout)
+    format!("{}{}", text(&output.stdout), text(&output.stderr))
 }
 
 /// What `spool extract <arguments>` printed, which may have taken long
@@ -148,13 +145,15 @@ fn extracted(server: &Server, dir: &Path, arguments: &[&str]) -> String {
     // All it says there is which file is running, what that file said, and
     // what each batch kept.
     assert!(
-        said.is_empty() || said.starts_with("running    extractors/"),
+        said.is_empty() || said.starts_with("running    extractors/") || said.starts_with("next: "),
         "{said}"
     );
     assert!(
-        said.lines()
-            .skip(1)
-            .all(|line| line.starts_with("           ") || line.starts_with("kept       ")),
+        said.lines().skip(1).all(|line| {
+            line.starts_with("           ")
+                || line.starts_with("kept       ")
+                || line.starts_with("next: ")
+        }),
         "{said}"
     );
     text(&output.stdout)
@@ -606,8 +605,6 @@ found      3 records in 1 document: 3 new, 0 already held
         "\
 extractor  companies
 found      1 record in 1 document: 1 new, 0 already held
-
-next       `spool match` places it in identities
 "
     );
 
@@ -681,7 +678,10 @@ fn a_run_that_takes_a_while_says_what_its_extractor_says() {
     assert!(output.status.success(), "{}", text(&output.stderr));
     assert_eq!(text(&output.stdout), FIRST);
     let said = text(&output.stderr);
-    let lines: Vec<&str> = said.lines().collect();
+    let lines: Vec<&str> = said
+        .lines()
+        .filter(|line| !line.starts_with("next: "))
+        .collect();
     assert_eq!(lines[0], "running    extractors/companies.py", "{said}");
     assert_eq!(
         lines.last(),
@@ -791,7 +791,10 @@ found      12 records in 12 documents: 12 new, 0 already held
     );
     // The first batch is five documents, and the next is made larger.
     let said = text(&output.stderr);
-    let lines: Vec<&str> = said.lines().collect();
+    let lines: Vec<&str> = said
+        .lines()
+        .filter(|line| !line.starts_with("next: "))
+        .collect();
     assert_eq!(lines[0], "running    extractors/companies.py", "{said}");
     assert!(
         lines[1].starts_with("kept       5 of 12 documents, 5 records, about "),
@@ -1130,7 +1133,7 @@ fn what_an_extractor_says_reaches_both_terminals_on_a_short_run() {
     assert_eq!(
         text(&output.stderr),
         "running    extractors/companies.py\n           notes-1.txt: dropped a quote the text \
-         does not have\n"
+         does not have\nnext: `spool match` places them in identities\n"
     );
     let run = runs(&server, "extract")[0]["run"].as_u64().unwrap();
     assert_eq!(
@@ -2025,8 +2028,6 @@ found      2 records in 1 document: 2 new, 0 already held
 
   company  Halden Group     notes:notes-1.txt[24-36]
   company  Acorn Tools Ltd  notes:notes-1.txt[70-85]
-
-next       `spool match` places them in identities
 "
     );
 

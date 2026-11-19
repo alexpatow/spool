@@ -6,9 +6,10 @@ use serde_json::{Value, json};
 use spool::core::EntityType;
 use spool::{RunEntry, RunStatus, StrategyRef, TypeInfo};
 
-use super::remote::{Remote, RemoteArgs, WAIT_MS, print_json, unsuccessful};
-use super::show::{count, fields, placed};
+use super::remote::{Remote, RemoteArgs, WAIT_MS, unsuccessful};
+use super::show::{count, placed};
 use crate::Failure;
+use crate::output::{Output, OutputArgs, fields, hint};
 
 /// Match new records and place them in identities
 ///
@@ -23,6 +24,9 @@ use crate::Failure;
 ///
 /// `spool show runs <run>` shows the whole report of a run, and `spool show
 /// records` what each record belongs to now.
+///
+/// As JSON it is, with `--type`, the run the server answered with, and
+/// without, `runs`: each type's `entity_type` and `run`.
 #[derive(Args)]
 pub struct MatchArgs {
     /// Only this entity type [default: every one the project declares]
@@ -40,17 +44,14 @@ pub struct MatchArgs {
     /// project declares more than one.
     #[arg(long, value_name = "NAME", default_value = StrategyRef::RULES)]
     strategy: String,
-    /// Print the runs the server answered with, as JSON
-    ///
-    /// With `--type`, its answer, and without, `runs`, a list of each type's
-    /// `entity_type` and `run`.
-    #[arg(long)]
-    json: bool,
+    #[command(flatten)]
+    output: OutputArgs,
     #[command(flatten)]
     remote: RemoteArgs,
 }
 
 pub fn run(arguments: MatchArgs) -> Result<(), Failure> {
+    let out = Output::report(&arguments.output, "`spool match`")?;
     let remote = Remote::new(&arguments.remote);
     let info = remote.info()?;
     let types = &info.store.entity_types;
@@ -112,7 +113,7 @@ pub fn run(arguments: MatchArgs) -> Result<(), Failure> {
     }
 
     let rematch = arguments.rematch;
-    let as_json = arguments.json;
+    let as_json = !out.is_table();
     let mut answered = Vec::new();
     let mut hints: Vec<&str> = Vec::new();
     let mut failures = Vec::new();
@@ -158,7 +159,7 @@ pub fn run(arguments: MatchArgs) -> Result<(), Failure> {
                 .as_ref()
                 .map_or(Value::Null, |(answer, _)| answer["run"].clone());
             match named {
-                Some(_) => print_json(&json!({ "run": run })),
+                Some(_) => out.json(&json!({ "run": run })),
                 None => answered.push(json!({ "entity_type": name, "run": run })),
             }
         }
@@ -191,10 +192,10 @@ pub fn run(arguments: MatchArgs) -> Result<(), Failure> {
         }
     }
     if as_json && named.is_none() {
-        print_json(&json!({ "runs": answered }));
+        out.json(&json!({ "runs": answered }));
     }
-    for hint in hints.iter().filter(|hint| !hint.is_empty()) {
-        println!("{hint}");
+    for said in hints.iter().filter(|said| !said.is_empty()) {
+        hint(said);
     }
     match failures.len() {
         0 => Ok(()),

@@ -28,7 +28,8 @@ fn ask(server: &Server, arguments: &[&str]) -> Output {
     command.output().unwrap()
 }
 
-/// What a command that has to succeed printed.
+/// What a command that has to succeed printed: its result, then what it
+/// said beside on standard error.
 fn shown(server: &Server, arguments: &[&str]) -> String {
     let output = ask(server, arguments);
     assert!(
@@ -37,7 +38,7 @@ fn shown(server: &Server, arguments: &[&str]) -> String {
         text(&output.stdout),
         text(&output.stderr)
     );
-    text(&output.stdout)
+    format!("{}{}", text(&output.stdout), text(&output.stderr))
 }
 
 /// What a command printed with `--json`.
@@ -127,7 +128,7 @@ fn show_lists_what_a_server_holds() {
 
     let runs = shown(&server, &["show", "runs"]);
     assert!(
-        runs.starts_with("run  kind       status     about         started by  started\n"),
+        runs.starts_with("RUN  KIND       STATUS     ABOUT         STARTED BY  STARTED\n"),
         "{runs}"
     );
     assert!(
@@ -174,7 +175,7 @@ fn show_lists_what_a_server_holds() {
     assert_eq!(identities.lines().count(), 4, "{identities}");
     assert!(
         identities
-            .starts_with("identity                              name    members  names  unlinked pairs  created at\n"),
+            .starts_with("IDENTITY                              NAME    MEMBERS  NAMES  UNLINKED PAIRS  CREATED AT\n"),
         "{identities}"
     );
     let page = shown(
@@ -203,7 +204,7 @@ fn show_lists_what_a_server_holds() {
     has(&identity, "created at  log position 1");
     has(
         &identity,
-        "record                                source and key  since",
+        "RECORD                                SOURCE AND KEY  SINCE",
     );
     for (id, name) in [(&one, "shop:1"), (&two, "shop:2")] {
         has(&identity, &format!("{id}  {name}          log position 1"));
@@ -230,7 +231,7 @@ fn show_lists_what_a_server_holds() {
     let records = shown(&server, &["show", "records", "--source", "shop"]);
     let listed: Vec<&str> = records.lines().collect();
     assert_eq!(listed.len(), 5, "{records}");
-    assert_eq!(listed[0], "source and key  name    identity");
+    assert_eq!(listed[0], "SOURCE AND KEY  NAME    IDENTITY");
     assert_eq!(listed[1], format!("shop:1          anvil   {anvils}"));
     assert_eq!(listed[2], format!("shop:2          anvil   {anvils}"));
     assert!(
@@ -245,7 +246,7 @@ fn show_lists_what_a_server_holds() {
     assert_eq!(with_ids.lines().count(), 5, "{with_ids}");
     has(
         &with_ids,
-        "record                                source and key  name    identity",
+        "RECORD                                SOURCE AND KEY  NAME    IDENTITY",
     );
     has(&with_ids, &format!("{one}  shop:1  anvil  {anvils}"));
     let page = shown(&server, &["show", "records", "--limit", "2"]);
@@ -282,7 +283,7 @@ fn show_lists_what_a_server_holds() {
     let log = shown(&server, &["show", "log"]);
     has(
         &log,
-        "position  actor   operations  from             started by  reason",
+        "POSITION  ACTOR   OPERATIONS  FROM             STARTED BY  REASON",
     );
     has(
         &log,
@@ -377,7 +378,7 @@ fn explain_says_why_two_records_are_together_or_apart() {
     let identity = shown(&server, &["show", "identities", identity]);
     has(
         &identity,
-        "constraint   between                               and                                   since",
+        "CONSTRAINT   BETWEEN                               AND                                   SINCE",
     );
     assert!(identity.contains("\ncannot_link  "), "{identity}");
     assert!(
@@ -540,7 +541,7 @@ fn explain_names_each_link_of_a_chain_by_its_records_and_its_rule() {
     assert_eq!(
         lines[0].split_whitespace().collect::<Vec<_>>(),
         [
-            "identity", "name", "members", "names", "unlinked", "pairs", "created", "at"
+            "IDENTITY", "NAME", "MEMBERS", "NAMES", "UNLINKED", "PAIRS", "CREATED", "AT"
         ]
     );
     assert_eq!(
@@ -654,7 +655,7 @@ fn drafts_and_review_items_are_shown_with_what_they_hold() {
     let drafts = shown(&server, &["show", "drafts"]);
     has(
         &drafts,
-        "draft                                 type     status  operations  from",
+        "DRAFT                                 TYPE     STATUS  OPERATIONS  FROM",
     );
     assert!(
         drafts.contains(&format!("\n{draft}  company  open    ")),
@@ -698,7 +699,7 @@ fn drafts_and_review_items_are_shown_with_what_they_hold() {
     let stuck = id_of(&server, "crm", "c-117");
 
     let review = shown(&server, &["show", "review", "--status", "open"]);
-    has(&review, "item  kind  status  type  raised by  about");
+    has(&review, "ITEM  KIND  STATUS  TYPE  RAISED BY  ABOUT");
     assert!(
         review.contains("\n1     possible_merge  open    company  run "),
         "{review}"
@@ -729,11 +730,9 @@ fn drafts_and_review_items_are_shown_with_what_they_hold() {
     assert_eq!(
         unassigned,
         "\
-source and key  name              identity
+SOURCE AND KEY  NAME              IDENTITY
 crm:c-117       Pioneer Supplies  -
-
-1 record has no identity. `spool match` places new records in identities,
-and `spool show review` lists the ones a match left out.
+1 record has no identity: `spool match` places new records in identities, and `spool show review` lists the ones a match left out
 "
     );
     let matched = server.read("/v1/review/1")["identities"][0]
@@ -804,7 +803,7 @@ and `spool show review` lists the ones a match left out.
     assert!(every["items"].as_array().unwrap().len() >= 2, "{every}");
     assert_eq!(every["next"], Value::Null);
     let page = shown(&server, &["show", "review", "--limit", "1"]);
-    assert_eq!(page.lines().count(), 4, "{page}");
+    assert_eq!(page.lines().count(), 3, "{page}");
     assert!(page.contains("\n1     possible_merge  "), "{page}");
     assert!(page.ends_with("\nmore: add `--after 1`\n"), "{page}");
     let rest = shown(&server, &["show", "review", "--after", "1"]);
@@ -850,7 +849,7 @@ fn a_mention_is_shown_in_its_document() {
     let listed = shown(&server, &["show", "documents", "--source", "notes"]);
     has(
         &listed,
-        "document                              source and key  characters  read by",
+        "DOCUMENT                              SOURCE AND KEY  CHARACTERS  READ BY",
     );
     has(
         &listed,
@@ -1115,7 +1114,7 @@ fn the_attributes_of_the_records_that_stand_are_shown_across_them() {
 
     let shop = shown(&server, &["show", "attributes", "--source", "shop"]);
     has(&shop, "entity type `thing`, source `shop`: 3 records");
-    has(&shop, "attribute filled distinct most common features");
+    has(&shop, "ATTRIBUTE FILLED DISTINCT MOST COMMON FEATURES");
     has(&shop, "id (key)  3 (100%)  3  e.g. 1, 2, 3  -");
     has(&shop, "code  3 (100%)  1  anvil (3)  code");
     has(&shop, "colour  3 (100%)  3  e.g. black, grey, red  colour");
@@ -1123,7 +1122,7 @@ fn the_attributes_of_the_records_that_stand_are_shown_across_them() {
     has(&shop, "weight  2 (66%)  1  40 (2)  -");
     has(
         &shop,
-        "`spool show records --source shop --attributes` lists the values record by record.",
+        "`spool show records --source shop --attributes` lists the values record by record",
     );
 
     // Every source the type maps is there, with records or without, and a
@@ -1177,7 +1176,7 @@ fn the_attributes_of_the_records_that_stand_are_shown_across_them() {
             "--all-versions",
         ],
     );
-    has(&history, "source and key  name  identity  version");
+    has(&history, "SOURCE AND KEY  NAME  IDENTITY  VERSION");
     has(&history, "shop:1  anvil  -  replaced");
     has(&history, "shop:1  anvil  -  current");
     let latest = answered(
@@ -1191,7 +1190,7 @@ fn the_attributes_of_the_records_that_stand_are_shown_across_them() {
     let wide = shown(&server, &["show", "records", "--attributes"]);
     has(
         &wide,
-        "source and key  code  colour  name  weight  identity",
+        "SOURCE AND KEY  CODE  COLOUR  NAME  WEIGHT  IDENTITY",
     );
     has(&wide, "shop:1  anvil  grey  Big anvil  40  -");
     has(&wide, "shop:3  anvil  red  Red anvil  -  -");
@@ -1209,7 +1208,7 @@ fn the_attributes_of_the_records_that_stand_are_shown_across_them() {
     assert_eq!(every.lines().count(), 3, "{every}");
     has(
         &every,
-        "document  source and key  characters  read by  version",
+        "DOCUMENT  SOURCE AND KEY  CHARACTERS  READ BY  VERSION",
     );
     assert_eq!(every.matches(" replaced\n").count(), 1, "{every}");
     assert_eq!(every.matches(" current\n").count(), 1, "{every}");
@@ -1311,7 +1310,7 @@ fn an_attribute_the_source_no_longer_declares_is_still_listed() {
     );
     has(
         &wide,
-        "source and key  code  colour  name  weight  identity",
+        "SOURCE AND KEY  CODE  COLOUR  NAME  WEIGHT  IDENTITY",
     );
     has(&wide, "shop:1  anvil  -  -  40  -");
     let profile = shown(&server, &["show", "attributes", "--source", "shop"]);

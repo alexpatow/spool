@@ -19,8 +19,9 @@ use spool::{
 };
 use spool_cli::api::{DocumentList, Info, RecordList};
 
-use super::remote::{Remote, RemoteArgs, print_json, typed};
+use super::remote::{Remote, RemoteArgs, typed};
 use crate::Failure;
+use crate::output::{Cell, Output, OutputArgs, Table, aligned, fields, hint, indented, table};
 
 /// Show what a running server holds
 ///
@@ -37,9 +38,8 @@ use crate::Failure;
 pub struct ShowArgs {
     #[command(subcommand)]
     pub what: Option<What>,
-    /// Print what the server answered, as JSON
-    #[arg(long, global = true)]
-    json: bool,
+    #[command(flatten)]
+    output: OutputArgs,
     #[command(flatten)]
     remote: RemoteArgs,
 }
@@ -313,9 +313,8 @@ pub struct ExplainArgs {
     /// A second record, to say why the two share an identity or do not
     #[arg(value_name = "RECORD")]
     second: Option<String>,
-    /// Print what the server answered, as JSON
-    #[arg(long)]
-    json: bool,
+    #[command(flatten)]
+    output: OutputArgs,
     #[command(flatten)]
     remote: RemoteArgs,
 }
@@ -326,9 +325,27 @@ const CONTEXT: usize = 80;
 
 pub fn show(arguments: ShowArgs) -> Result<(), Failure> {
     let remote = Remote::new(&arguments.remote);
+    let out = Output::list(&arguments.output);
+    // One thing is a report, and only a list is CSV.
+    let one = match &arguments.what {
+        None => Some("`spool show`"),
+        Some(What::Runs(what)) => what.run.map(|_| "`spool show runs <RUN>`"),
+        Some(What::Identities(what)) => what.identity.map(|_| "`spool show identities <IDENTITY>`"),
+        Some(What::Records(what)) => what
+            .record
+            .as_ref()
+            .map(|_| "`spool show records <RECORD>`"),
+        Some(What::Documents(what)) => what.document.map(|_| "`spool show documents <DOCUMENT>`"),
+        Some(What::Review(what)) => what.item.map(|_| "`spool show review <ITEM>`"),
+        Some(What::Drafts(what)) => what.draft.map(|_| "`spool show drafts <DRAFT>`"),
+        Some(What::Attributes(_) | What::Log(_)) => None,
+    };
+    if let Some(one) = one {
+        out.refuse_csv(one)?;
+    }
     let view = View {
         remote: &remote,
-        json: arguments.json,
+        out,
     };
     match &arguments.what {
         None => view.overview(),
@@ -363,9 +380,9 @@ pub fn show(arguments: ShowArgs) -> Result<(), Failure> {
 
 pub fn explain(arguments: ExplainArgs) -> Result<(), Failure> {
     let remote = Remote::new(&arguments.remote);
-    let json = arguments.json;
+    let out = Output::report(&arguments.output, "`spool explain`")?;
     let (a, b) = match &arguments.second {
-        None => return explain_identity(&remote, &arguments.first, json),
+        None => return explain_identity(&remote, &arguments.first, out),
         Some(second) => (&arguments.first, second),
     };
     let a = find_record(&remote, a)?;
@@ -374,16 +391,15 @@ pub fn explain(arguments: ExplainArgs) -> Result<(), Failure> {
         "/explain",
         &[("a", a.id.to_string()), ("b", b.id.to_string())],
     )?;
-    if json {
-        print_json(&answer);
-    } else {
-        print_explanation(&typed(&answer)?);
+    match out.is_table() {
+        true => print_explanation(&typed(&answer)?),
+        false => out.json(&answer),
     }
     Ok(())
 }
 
 /// `spool explain <identity>`: by its ID, or by a record of it.
-fn explain_identity(remote: &Remote, reference: &str, json: bool) -> Result<(), Failure> {
+fn explain_identity(remote: &Remote, reference: &str, out: Output) -> Result<(), Failure> {
     let identity = match reference.parse::<IdentityId>() {
         Ok(identity)
             if remote
@@ -407,10 +423,9 @@ fn explain_identity(remote: &Remote, reference: &str, json: bool) -> Result<(), 
     let answer = remote.get(&format!("/identities/{identity}/explain"), &[], || {
         format!("there is no identity {identity}")
     })?;
-    if json {
-        print_json(&answer);
-    } else {
-        print_identity_explanation(&typed(&answer)?);
+    match out.is_table() {
+        true => print_identity_explanation(&typed(&answer)?),
+        false => out.json(&answer),
     }
     Ok(())
 }
@@ -553,7 +568,7 @@ fn newest_first(versions: Vec<DocumentEntry>) -> Vec<DocumentEntry> {
 
 struct View<'a> {
     remote: &'a Remote,
-    json: bool,
+    out: Output,
 }
 
 /// The query of a list: a parameter for each option that was given.
@@ -591,6 +606,21 @@ impl View<'_> {
             }
         }
         Ok(replaced)
+    }
+
+    /// Says how to go on when a list has more than was shown.
+    fn more(&self, answer: &Value) {
+        match &answer["next"] {
+            Value::String(next) => self.hint_more(next),
+            Value::Number(next) => self.hint_more(&next.to_string()),
+            _ => {}
+        }
+    }
+
+    fn hint_more(&self, after: &str) {
+        if self.out.is_table() {
+            hint(format!("more: add `--after {after}`"));
+        }
     }
 
     /// Asks a list for the versions nothing replaced, unless it is to show
@@ -641,20 +671,47 @@ impl View<'_> {
             .add("source", what.source.as_ref())
             .0;
         let answer = self.remote.list("/attributes", &query)?;
-        if self.json {
-            print_json(&answer);
+        let groups: Vec<AttributeGroup> = typed(&answer["groups"])?;
+        if !self.out.is_table() {
+            let mut table = Table::new("attributes").columns([
+                "entity type",
+                "source",
+                "records",
+                "attribute",
+                "key",
+                "filled",
+                "distinct",
+                "most common",
+                "features",
+            ]);
+            for group in &groups {
+                for attribute in &group.attributes {
+                    table.row(vec![
+                        group.entity_type.to_string().into(),
+                        group.source.clone().into(),
+                        group.records.to_string().into(),
+                        attribute.name.clone().into(),
+                        attribute.key.to_string().into(),
+                        attribute.filled.to_string().into(),
+                        attribute.distinct.to_string().into(),
+                        common_values(attribute).into(),
+                        becomes(&attribute.features).into(),
+                    ]);
+                }
+            }
+            self.out.items(&answer, "groups", &table);
             return Ok(());
         }
-        let groups: Vec<AttributeGroup> = typed(&answer["groups"])?;
         if groups.is_empty() {
-            println!(
-                "no records{}",
-                match query.is_empty() {
-                    true =>
-                        ": `spool load <file>` sends rows, and `spool extract` finds them in documents",
-                    false => " of that entity type and source",
+            match query.is_empty() {
+                true => {
+                    println!("no records");
+                    hint(
+                        "`spool load <file>` sends rows, and `spool extract` finds them in documents",
+                    );
                 }
-            );
+                false => println!("no records of that entity type and source"),
+            }
             return Ok(());
         }
         for (number, group) in groups.iter().enumerate() {
@@ -670,43 +727,42 @@ impl View<'_> {
                     records => count(records, "record"),
                 }
             );
-            let rows = group
-                .attributes
-                .iter()
-                .map(|attribute| {
-                    vec![
-                        match attribute.key {
-                            true => format!("{} (key)", attribute.name),
-                            false => attribute.name.clone(),
-                        },
-                        filled(attribute.filled, group.records),
-                        attribute.distinct.to_string(),
-                        common_values(attribute),
-                        becomes(&attribute.features),
-                    ]
-                })
-                .collect();
-            table(
-                "attributes",
-                &["attribute", "filled", "distinct", "most common", "features"],
-                rows,
-            );
+            let mut table = Table::new("attributes").columns([
+                "attribute",
+                "filled",
+                "distinct",
+                "most common",
+                "features",
+            ]);
+            for attribute in &group.attributes {
+                table.row(vec![
+                    match attribute.key {
+                        true => format!("{} (key)", attribute.name),
+                        false => attribute.name.clone(),
+                    }
+                    .into(),
+                    filled(attribute.filled, group.records).into(),
+                    attribute.distinct.to_string().into(),
+                    common_values(attribute).into(),
+                    becomes(&attribute.features).into(),
+                ]);
+            }
+            table.print();
         }
         let source = match &groups[..] {
             [only] => format!(" --source {}", only.source),
             _ => String::new(),
         };
-        println!(
-            "
-`spool show records{source} --attributes` lists the values record by record."
-        );
+        hint(format!(
+            "`spool show records{source} --attributes` lists the values record by record"
+        ));
         Ok(())
     }
 
     fn overview(&self) -> Result<(), Failure> {
         let answer = self.remote.list("/info", &[])?;
-        if self.json {
-            print_json(&answer);
+        if !self.out.is_table() {
+            self.out.json(&answer);
             return Ok(());
         }
         let info: Info = typed(&answer)?;
@@ -788,34 +844,32 @@ impl View<'_> {
             .add("limit", what.limit)
             .0;
         let answer = self.remote.list("/runs", &query)?;
-        if self.json {
-            print_json(&answer);
-            return Ok(());
-        }
         let runs: Vec<RunEntry> = typed(&answer["runs"])?;
-        table(
-            "runs",
-            &["run", "kind", "status", "about", "started by", "started"],
-            runs.iter()
-                .map(|run| {
-                    let about = [
-                        run.entity_type.as_ref().map(ToString::to_string),
-                        run.strategy.as_ref().map(|strategy| strategy.name.clone()),
-                        run.extractor
-                            .as_ref()
-                            .map(|extractor| extractor.name.clone()),
-                    ];
-                    vec![
-                        run.run.to_string(),
-                        word(&run.kind),
-                        run.status.to_string(),
-                        about.into_iter().flatten().collect::<Vec<_>>().join(", "),
-                        run.started_by.to_string(),
-                        when(&run.started_at),
-                    ]
-                })
-                .collect(),
-        );
+        let mut table =
+            Table::new("runs").columns(["run", "kind", "status", "about", "started by", "started"]);
+        for run in &runs {
+            let about = [
+                run.entity_type.as_ref().map(ToString::to_string),
+                run.strategy.as_ref().map(|strategy| strategy.name.clone()),
+                run.extractor
+                    .as_ref()
+                    .map(|extractor| extractor.name.clone()),
+            ];
+            table.row(vec![
+                run.run.to_string().into(),
+                word(&run.kind).into(),
+                run.status.to_string().into(),
+                about
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+                    .into(),
+                run.started_by.to_string().into(),
+                Cell::shortened(when(&run.started_at), &run.started_at),
+            ]);
+        }
+        self.out.items(&answer, "runs", &table);
         Ok(())
     }
 
@@ -823,8 +877,8 @@ impl View<'_> {
         let answer = self.remote.get(&format!("/runs/{run}"), &[], || {
             format!("there is no run {run}")
         })?;
-        if self.json {
-            print_json(&answer);
+        if !self.out.is_table() {
+            self.out.json(&answer);
             return Ok(());
         }
         let run: RunEntry = typed(&answer["run"])?;
@@ -1045,41 +1099,30 @@ impl View<'_> {
             .add("limit", what.limit)
             .0;
         let answer = self.remote.list("/identities", &query)?;
-        if self.json {
-            print_json(&answer);
-            return Ok(());
-        }
         let identities: Vec<IdentitySummary> = typed(&answer["identities"])?;
         // The type is said once, by the option that chose it or by there
         // being one, and per row only when the rows differ.
         let typed_rows = mixed(identities.iter().map(|identity| &identity.entity_type));
-        let mut headers = vec!["identity"];
-        if typed_rows {
-            headers.push("type");
+        let mut table = Table::new("identities")
+            .column("identity")
+            .column_if("type", typed_rows)
+            .columns(["name", "members", "names", "unlinked pairs", "created at"]);
+        for identity in &identities {
+            table.row(vec![
+                identity.id.to_string().into(),
+                identity.entity_type.to_string().into(),
+                label_cell(identity.label.as_deref()),
+                identity.members.to_string().into(),
+                identity.names.to_string().into(),
+                Cell::shortened(
+                    share(identity.unlinked_pairs, identity.linked_pairs),
+                    identity.unlinked_pairs.to_string(),
+                ),
+                position(identity.created),
+            ]);
         }
-        headers.extend(["name", "members", "names", "unlinked pairs", "created at"]);
-        table(
-            "identities",
-            &headers,
-            identities
-                .iter()
-                .map(|identity| {
-                    let mut row = vec![identity.id.to_string()];
-                    if typed_rows {
-                        row.push(identity.entity_type.to_string());
-                    }
-                    row.extend([
-                        label(identity.label.as_deref()),
-                        identity.members.to_string(),
-                        identity.names.to_string(),
-                        share(identity.unlinked_pairs, identity.linked_pairs),
-                        format!("log position {}", identity.created),
-                    ]);
-                    row
-                })
-                .collect(),
-        );
-        more(&answer);
+        self.out.items(&answer, "identities", &table);
+        self.more(&answer);
         Ok(())
     }
 
@@ -1099,8 +1142,8 @@ impl View<'_> {
         let constraints = self
             .remote
             .list("/constraints", &[("identity", current.clone())])?;
-        if self.json {
-            print_json(&json!({
+        if !self.out.is_table() {
+            self.out.json(&json!({
                 "identity": view,
                 "constraints": constraints["constraints"],
                 "history": history["history"],
@@ -1235,95 +1278,83 @@ impl View<'_> {
         let all_versions = what.all_versions;
         Self::latest(&mut query, all_versions);
         let answer = self.remote.list("/records", &query.0)?;
-        if self.json {
-            print_json(&answer);
+        // JSON is the answer as it is, which needs nothing more.
+        if self.out.is_json() {
+            self.out.items(&answer, "records", &Table::new("records"));
             return Ok(());
         }
         let records: Vec<RecordEntry> = typed(&answer["records"])?;
-        if records.is_empty() && !narrowed {
-            println!("no records: `spool load <file>` sends rows");
+        if records.is_empty() && !narrowed && self.out.is_table() {
+            println!("no records");
+            hint("`spool load <file>` sends rows");
             return Ok(());
         }
-        let ids = what.ids;
         let attributes = match what.attributes {
             true => self.attribute_columns(&records)?,
             false => Vec::new(),
         };
         let typed_rows = mixed(records.iter().map(|record| &record.entity_type));
-        let mut headers = Vec::new();
-        if ids {
-            headers.push("record");
+        let mut table = Table::new("records")
+            .column_if("record", what.ids)
+            .column_if("type", typed_rows)
+            .column("source and key");
+        match what.attributes {
+            true => table = table.columns(attributes.iter().map(String::as_str)),
+            false => table = table.column("name"),
         }
-        if typed_rows {
-            headers.push("type");
-        }
-        headers.push("source and key");
-        if what.attributes {
-            headers.extend(attributes.iter().map(String::as_str));
-        } else {
-            headers.push("name");
-        }
-        headers.push("identity");
+        table = table.column("identity");
         let replaced_documents = match all_versions {
             true => self.replaced_documents(&records)?,
             false => Vec::new(),
         };
         if all_versions {
-            headers.push("version");
+            table = table.column("version");
         }
-        table(
-            "records",
-            &headers,
-            records
-                .iter()
-                .map(|record| {
-                    let mut row = Vec::new();
-                    if ids {
-                        row.push(record.id.to_string());
-                    }
-                    if typed_rows {
-                        row.push(record.entity_type.to_string());
-                    }
-                    row.push(record_name(record));
-                    if what.attributes {
-                        row.extend(attributes.iter().map(|attribute| {
-                            match record.payload.get(attribute) {
-                                Some(value) if !value.is_null() => label(Some(&plain(value))),
-                                _ => "-".to_owned(),
-                            }
-                        }));
-                    } else {
-                        row.push(label(record.label.as_deref()));
-                    }
-                    row.push(
-                        record
-                            .identity
-                            .map_or_else(|| "-".to_owned(), |identity| identity.to_string()),
-                    );
-                    if all_versions {
-                        let in_replaced = mention_document(record)
-                            .is_some_and(|document| replaced_documents.contains(&document));
-                        row.push(version(record.superseded_by.is_some() || in_replaced));
-                    }
-                    row
-                })
-                .collect(),
-        );
-        more(&answer);
+        for record in &records {
+            let mut row: Vec<Cell> = vec![
+                record.id.to_string().into(),
+                record.entity_type.to_string().into(),
+                record_name(record).into(),
+            ];
+            if what.attributes {
+                row.extend(attributes.iter().map(
+                    |attribute| match record.payload.get(attribute) {
+                        Some(value) if !value.is_null() => label_cell(Some(&plain(value))),
+                        _ => "-".into(),
+                    },
+                ));
+            } else {
+                row.push(label_cell(record.label.as_deref()));
+            }
+            row.push(
+                record
+                    .identity
+                    .map_or_else(|| "-".to_owned(), |identity| identity.to_string())
+                    .into(),
+            );
+            if all_versions {
+                let in_replaced = mention_document(record)
+                    .is_some_and(|document| replaced_documents.contains(&document));
+                row.push(version(record.superseded_by.is_some() || in_replaced).into());
+            }
+            table.row(row);
+        }
+        self.out.items(&answer, "records", &table);
+        self.more(&answer);
         // A `-` in the last column says nothing about why, or what to do.
         let waiting = records
             .iter()
             .filter(|record| record.identity.is_none() && record.retracted.is_none())
             .count() as u64;
         if waiting > 0 {
-            println!(
-                "\n{} no identity. `spool match` places new records in identities,\n\
-                 and `spool show review` lists the ones a match left out.",
+            hint(format!(
+                "{} no identity: `spool match` places new records in identities, and `spool show \
+                 review` lists the ones a match left out",
                 match waiting {
                     1 => "1 record has".to_owned(),
                     several => format!("{several} records have"),
                 }
-            );
+            ));
         }
         Ok(())
     }
@@ -1334,8 +1365,8 @@ impl View<'_> {
             .remote
             .list("/review", &[("record", record.id.to_string())])?;
         let mention = self.mention(&record)?;
-        if self.json {
-            print_json(&json!({
+        if !self.out.is_table() {
+            self.out.json(&json!({
                 "record": record,
                 "mention": mention,
                 "review_items": review["items"],
@@ -1486,35 +1517,30 @@ impl View<'_> {
         let all_versions = what.all_versions;
         Self::latest(&mut query, all_versions);
         let answer = self.remote.list("/documents", &query.0)?;
-        if self.json {
-            print_json(&answer);
-            return Ok(());
-        }
         let documents: Vec<DocumentEntry> = typed(&answer["documents"])?;
-        let mut headers = vec!["document", "source and key", "characters", "read by"];
+        let mut table = Table::new("documents").columns([
+            "document",
+            "source and key",
+            "characters",
+            "read by",
+        ]);
         if all_versions {
-            headers.push("version");
+            table = table.column("version");
         }
-        table(
-            "documents",
-            &headers,
-            documents
-                .iter()
-                .map(|document| {
-                    let mut row = vec![
-                        document.id.to_string(),
-                        named(&document.source, Some(&document.key)),
-                        document.length.to_string(),
-                        read_by(document),
-                    ];
-                    if all_versions {
-                        row.push(version(document.superseded_by.is_some()));
-                    }
-                    row
-                })
-                .collect(),
-        );
-        more(&answer);
+        for document in &documents {
+            let mut row: Vec<Cell> = vec![
+                document.id.to_string().into(),
+                named(&document.source, Some(&document.key)).into(),
+                document.length.to_string().into(),
+                read_by(document).into(),
+            ];
+            if all_versions {
+                row.push(version(document.superseded_by.is_some()).into());
+            }
+            table.row(row);
+        }
+        self.out.items(&answer, "documents", &table);
+        self.more(&answer);
         Ok(())
     }
 
@@ -1524,8 +1550,8 @@ impl View<'_> {
             .get(&format!("/documents/{document}"), &[], || {
                 format!("there is no document {document}")
             })?;
-        if self.json {
-            print_json(&answer);
+        if !self.out.is_table() {
+            self.out.json(&answer);
             return Ok(());
         }
         let document: DocumentEntry = typed(&answer)?;
@@ -1562,29 +1588,27 @@ impl View<'_> {
             .add("limit", what.limit)
             .0;
         let answer = self.remote.list("/review", &query)?;
-        if self.json {
-            print_json(&answer);
-            return Ok(());
-        }
         let items: Vec<ReviewEntry> = typed(&answer["items"])?;
-        table(
-            "review items",
-            &["item", "kind", "status", "type", "raised by", "about"],
-            items
-                .iter()
-                .map(|item| {
-                    vec![
-                        item.id.to_string(),
-                        word(&item.kind),
-                        word(&item.status),
-                        item.entity_type.to_string(),
-                        format!("run {}", item.run),
-                        about(item),
-                    ]
-                })
-                .collect(),
-        );
-        more(&answer);
+        let mut table = Table::new("review items").columns([
+            "item",
+            "kind",
+            "status",
+            "type",
+            "raised by",
+            "about",
+        ]);
+        for item in &items {
+            table.row(vec![
+                item.id.to_string().into(),
+                word(&item.kind).into(),
+                word(&item.status).into(),
+                item.entity_type.to_string().into(),
+                Cell::shortened(format!("run {}", item.run), item.run.to_string()),
+                about(item).into(),
+            ]);
+        }
+        self.out.items(&answer, "items", &table);
+        self.more(&answer);
         Ok(())
     }
 
@@ -1611,12 +1635,12 @@ impl View<'_> {
                 .clone(),
             false => Value::Null,
         };
-        if self.json {
+        if !self.out.is_table() {
             let mut bundle = json!({ "item": answer, "records": records });
             if split {
                 bundle["taken_back"] = taken_back;
             }
-            print_json(&bundle);
+            self.out.json(&bundle);
             return Ok(());
         }
         let records: Vec<RecordEntry> = typed(&Value::Array(records))?;
@@ -1698,27 +1722,22 @@ impl View<'_> {
             .add("status", what.status.as_ref())
             .0;
         let answer = self.remote.list("/drafts", &query)?;
-        if self.json {
-            print_json(&answer);
-            return Ok(());
-        }
         let drafts: Vec<DraftSummary> = typed(&answer["drafts"])?;
-        table(
-            "drafts",
-            &["draft", "type", "status", "operations", "from"],
-            drafts
-                .iter()
-                .map(|draft| {
-                    vec![
-                        draft.id.to_string(),
-                        draft.entity_type.to_string(),
-                        draft.status.to_string(),
-                        draft.operations.to_string(),
-                        format!("match run {}", draft.match_run),
-                    ]
-                })
-                .collect(),
-        );
+        let mut table =
+            Table::new("drafts").columns(["draft", "type", "status", "operations", "from"]);
+        for draft in &drafts {
+            table.row(vec![
+                draft.id.to_string().into(),
+                draft.entity_type.to_string().into(),
+                draft.status.to_string().into(),
+                draft.operations.to_string().into(),
+                Cell::shortened(
+                    format!("match run {}", draft.match_run),
+                    draft.match_run.to_string(),
+                ),
+            ]);
+        }
+        self.out.items(&answer, "drafts", &table);
         Ok(())
     }
 
@@ -1726,8 +1745,8 @@ impl View<'_> {
         let answer = self.remote.get(&format!("/drafts/{draft}"), &[], || {
             format!("there is no draft {draft}")
         })?;
-        if self.json {
-            print_json(&answer);
+        if !self.out.is_table() {
+            self.out.json(&answer);
             return Ok(());
         }
         let entry: DraftEntry = typed(&answer)?;
@@ -1780,47 +1799,44 @@ impl View<'_> {
             .add("limit", what.limit)
             .0;
         let answer = self.remote.list("/changesets", &query)?;
-        if self.json {
-            print_json(&answer);
-            return Ok(());
-        }
         let entries: Vec<LoggedChangeset> = typed(&answer["changesets"])?;
         // The actor decided the operations. Who asked for the run that
         // committed them is beside it, where a run did.
-        table(
-            "changesets",
-            &[
-                "position",
-                "actor",
-                "operations",
-                "from",
-                "started by",
-                "reason",
-            ],
-            entries
-                .iter()
-                .map(|logged| {
-                    let changeset = &logged.entry.changeset;
-                    vec![
-                        logged.entry.seq.to_string(),
-                        changeset.actor.to_string(),
-                        changeset.ops.len().to_string(),
-                        changeset
-                            .run
-                            .map_or_else(|| "-".to_owned(), |run| format!("reconcile run {run}")),
-                        logged
-                            .started_by
-                            .as_ref()
-                            .map_or_else(|| "-".to_owned(), ToString::to_string),
-                        changeset.reason.clone().unwrap_or_else(|| "-".to_owned()),
-                    ]
-                })
-                .collect(),
-        );
+        let mut table = Table::new("changesets").columns([
+            "position",
+            "actor",
+            "operations",
+            "from",
+            "started by",
+            "reason",
+        ]);
+        for logged in &entries {
+            let changeset = &logged.entry.changeset;
+            table.row(vec![
+                logged.entry.seq.to_string().into(),
+                changeset.actor.to_string().into(),
+                changeset.ops.len().to_string().into(),
+                changeset
+                    .run
+                    .map_or_else(|| "-".to_owned(), |run| format!("reconcile run {run}"))
+                    .into(),
+                logged
+                    .started_by
+                    .as_ref()
+                    .map_or_else(|| "-".to_owned(), ToString::to_string)
+                    .into(),
+                changeset
+                    .reason
+                    .clone()
+                    .unwrap_or_else(|| "-".to_owned())
+                    .into(),
+            ]);
+        }
+        self.out.items(&answer, "changesets", &table);
         if let (Some(last), Some(head)) = (entries.last(), answer["head"].as_u64())
             && last.entry.seq.0 < head
         {
-            println!("\nmore: add `--after {}`", last.entry.seq);
+            self.hint_more(&last.entry.seq.to_string());
         }
         Ok(())
     }
@@ -1864,7 +1880,7 @@ fn print_explanation(explanation: &Explanation) {
             ]
         })
         .collect();
-    aligned(&rows, "");
+    aligned(&rows, 0);
 
     let mut names: Vec<&String> = Vec::new();
     for (_, explained) in &sides {
@@ -1892,7 +1908,7 @@ fn print_explanation(explanation: &Explanation) {
             };
             rows.push(vec![name.clone(), value(0), value(1)]);
         }
-        aligned(&rows, "  ");
+        aligned(&rows, 2);
     }
 
     if let Some(rules) = &explanation.rules {
@@ -1922,7 +1938,7 @@ fn print_explanation(explanation: &Explanation) {
         if rows.is_empty() {
             println!("  the entity type has none");
         }
-        aligned(&rows, "  ");
+        aligned(&rows, 2);
         if let Some(failed) = &rules.failed {
             println!("  applying the `no_match` and `match` rules failed: {failed}");
         }
@@ -1963,7 +1979,7 @@ fn print_explanation(explanation: &Explanation) {
                 ]
             })
             .collect();
-        aligned(&rows, "  ");
+        aligned(&rows, 2);
     }
 
     if !explanation.constraints.is_empty() {
@@ -2262,7 +2278,7 @@ fn possible_split(item: &ReviewEntry, records: &[RecordEntry], taken_back: &[Rec
                 ]
             })
             .collect();
-        aligned(&rows, "  ");
+        aligned(&rows, 2);
     }
     if !taken_back.is_empty() {
         println!("\ntaken back by their source, and no longer in the identity");
@@ -2278,7 +2294,7 @@ fn possible_split(item: &ReviewEntry, records: &[RecordEntry], taken_back: &[Rec
                 ]
             })
             .collect();
-        aligned(&rows, "  ");
+        aligned(&rows, 2);
     }
     if item.status != ReviewStatus::Open {
         return;
@@ -2357,6 +2373,17 @@ fn label(label: Option<&str>) -> String {
         }
         false => line,
     }
+}
+
+/// A label as a cell: cut short in a table, and whole in CSV.
+fn label_cell(whole: Option<&str>) -> Cell {
+    Cell::shortened(label(whole), whole.unwrap_or_default())
+}
+
+/// A position in the log as a cell: said as one in a table, and the
+/// number in CSV.
+fn position(seq: impl std::fmt::Display) -> Cell {
+    Cell::shortened(format!("log position {seq}"), seq.to_string())
 }
 
 /// Whether the rows of a list are of more than one entity type.
@@ -2556,23 +2583,6 @@ pub(super) fn count(number: u64, what: &str) -> String {
     format!("{number} {plural}")
 }
 
-/// Label and value, one pair per line, the values in one column.
-pub(super) fn fields(rows: &[(&str, String)]) {
-    let rows: Vec<Vec<String>> = rows
-        .iter()
-        .map(|(label, value)| vec![(*label).to_owned(), value.clone()])
-        .collect();
-    aligned(&rows, "");
-}
-
-fn indented(rows: &[(&str, String)]) {
-    let rows: Vec<Vec<String>> = rows
-        .iter()
-        .map(|(label, value)| vec![(*label).to_owned(), value.clone()])
-        .collect();
-    aligned(&rows, "  ");
-}
-
 /// The members of a JSON object, one per line. Anything else on one line.
 fn object(value: &Value) {
     match value.as_object() {
@@ -2581,54 +2591,8 @@ fn object(value: &Value) {
                 .iter()
                 .map(|(name, value)| vec![name.clone(), plain(value)])
                 .collect();
-            aligned(&rows, "  ");
+            aligned(&rows, 2);
         }
         None => println!("  {}", plain(value)),
-    }
-}
-
-/// A list under its column names, or a line that says there is nothing.
-pub(super) fn table(what: &str, headers: &[&str], rows: Vec<Vec<String>>) {
-    if rows.is_empty() {
-        println!("no {what}");
-        return;
-    }
-    let mut lines = vec![headers.iter().map(|header| (*header).to_owned()).collect()];
-    lines.extend(rows);
-    aligned(&lines, "");
-}
-
-/// Prints rows with their cells in columns. The last cell is as long as it
-/// is.
-pub(super) fn aligned(rows: &[Vec<String>], indent: &str) {
-    let columns = rows.iter().map(Vec::len).max().unwrap_or(0);
-    let widths: Vec<usize> = (0..columns)
-        .map(|column| {
-            rows.iter()
-                .filter_map(|row| row.get(column))
-                .map(|cell| cell.chars().count())
-                .max()
-                .unwrap_or(0)
-        })
-        .collect();
-    for row in rows {
-        let mut line = String::from(indent);
-        for (column, cell) in row.iter().enumerate() {
-            line.push_str(cell);
-            if column + 1 < row.len() {
-                let padding = widths[column] - cell.chars().count() + 2;
-                line.push_str(&" ".repeat(padding));
-            }
-        }
-        println!("{}", line.trim_end());
-    }
-}
-
-/// Says how to go on when a list has more than was shown.
-fn more(answer: &Value) {
-    match &answer["next"] {
-        Value::String(next) => println!("\nmore: add `--after {next}`"),
-        Value::Number(next) => println!("\nmore: add `--after {next}`"),
-        _ => {}
     }
 }

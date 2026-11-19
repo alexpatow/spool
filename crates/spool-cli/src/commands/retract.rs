@@ -7,8 +7,9 @@ use clap::Args;
 use serde_json::json;
 use spool::{RunEntry, RunStatus};
 
-use super::remote::{Remote, RemoteArgs, print_json, typed};
+use super::remote::{Remote, RemoteArgs, typed};
 use crate::Failure;
+use crate::output::{Output, OutputArgs};
 
 /// Take back rows a source no longer holds
 ///
@@ -44,9 +45,8 @@ pub struct RetractArgs {
     /// Why, for the changeset that detaches the records
     #[arg(long, value_name = "TEXT")]
     reason: Option<String>,
-    /// Print the run the server answered with, as JSON
-    #[arg(long)]
-    json: bool,
+    #[command(flatten)]
+    output: OutputArgs,
     #[command(flatten)]
     remote: RemoteArgs,
 }
@@ -55,6 +55,7 @@ pub struct RetractArgs {
 const WAIT_MS: u64 = 30_000;
 
 pub fn retract(arguments: RetractArgs) -> Result<(), Failure> {
+    let out = Output::report(&arguments.output, "`spool retract`")?;
     let source = arguments.source.clone();
     let entity_type = arguments.entity_type.clone();
 
@@ -103,8 +104,8 @@ pub fn retract(arguments: RetractArgs) -> Result<(), Failure> {
         )?;
         run = typed(&answer["run"])?;
     }
-    if arguments.json {
-        print_json(&answer);
+    if !out.is_table() {
+        out.json(&answer);
     }
     if run.status != RunStatus::Succeeded {
         return Err(Failure::Failed(format!(
@@ -114,7 +115,7 @@ pub fn retract(arguments: RetractArgs) -> Result<(), Failure> {
             run.error.as_deref().unwrap_or("the server did not say why")
         )));
     }
-    if arguments.json {
+    if !out.is_table() {
         return Ok(());
     }
     let report = run.retraction.ok_or_else(|| {

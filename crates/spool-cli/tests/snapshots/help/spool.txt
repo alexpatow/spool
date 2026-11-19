@@ -1,6 +1,6 @@
 Extract, resolve and track entities
 
-Usage: spool [COMMAND]
+Usage: spool [OPTIONS] [COMMAND]
 
 Commands:
   init       Make a project, empty or from an example
@@ -25,5 +25,8 @@ Commands:
 Options:
   -h, --help     Print help
   -V, --version  Print version
+
+Global options:
+  -q, --quiet  Print only the result and errors: no hints or progress
 
 Run `spool <command> --help` for a command's options, or see https://spool.alexpatow.com/docs/cli

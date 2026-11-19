@@ -13,3 +13,6 @@ Options:
 User code options:
       --task-timeout <SECONDS>  How long a user-code strategy or an extractor may run [default: 600]
       --tasks <DIR>             Where the task directories of user code are made
+
+Global options:
+  -q, --quiet  Print only the result and errors: no hints or progress

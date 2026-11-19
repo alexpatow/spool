@@ -38,6 +38,9 @@ rmcp = { version = "3.11", default-features = false, features = ["server", "tran
 # The `spool` command's arguments, help and usage errors. Only spool-cli
 # depends on it.
 clap = { version = "4.6", features = ["derive", "env", "wrap_help"] }
+# The tables the commands print: it measures wide characters and colour,
+# and wraps a table to the terminal.
+comfy-table = { version = "8", default-features = false, features = ["custom_styling"] }
 
 # duckdb re-exports the arrow version it was built against. Upgrade the two together.
 # spool-cli names arrow itself for the IPC and JSON forms the server speaks.

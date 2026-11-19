@@ -14,9 +14,10 @@ use spool::{DeclaredSource, LoadReport, RunStatus};
 use spool_cli::api::{ARROW_STREAM, Info};
 use spool_cli::delimited::{EMPTY, Reader};
 
-use super::remote::{self, Remote, RemoteArgs, WAIT_MS, print_json, unsuccessful};
-use super::show::{count, fields};
+use super::remote::{self, Remote, RemoteArgs, WAIT_MS, unsuccessful};
+use super::show::count;
 use crate::Failure;
+use crate::output::{Output, OutputArgs, fields, hint};
 
 /// Send the rows of a file to a running server
 ///
@@ -53,9 +54,8 @@ pub struct LoadArgs {
     /// Send at most this many rows in one request [default: as many as make about 32 MiB]
     #[arg(long, value_name = "ROWS", value_parser = clap::value_parser!(u64).range(1..))]
     batch: Option<u64>,
-    /// Print the load runs the server answered with, as JSON
-    #[arg(long)]
-    json: bool,
+    #[command(flatten)]
+    output: OutputArgs,
     #[command(flatten)]
     remote: RemoteArgs,
 }
@@ -69,6 +69,7 @@ const PART_BYTES: usize = 32 * 1024 * 1024;
 const OTHER_DELIMITERS: [char; 4] = [';', '\t', '|', ','];
 
 pub fn load(arguments: LoadArgs) -> Result<(), Failure> {
+    let out = Output::report(&arguments.output, "`spool load`")?;
     let file = &arguments.file;
     let most_rows = match arguments.batch {
         Some(rows) => usize::try_from(rows).unwrap_or(usize::MAX),
@@ -132,17 +133,16 @@ pub fn load(arguments: LoadArgs) -> Result<(), Failure> {
     )?;
     check_columns(&name, &columns, delimiter, source)?;
 
-    let json = arguments.json;
+    let json = !out.is_table();
     if let Some(key) = &source.key
         && !columns.contains(key)
-        && !json
     {
-        eprintln!(
+        hint(format!(
             "note: {name} has no column `{key}`, which is the key of source `{}`. Its rows are \
              kept without a key: none can be named as {}:<key>, and a changed row does not \
              replace the one loaded before.",
             source.name, source.name
-        );
+        ));
     }
 
     // What is kept of a part is its counts, so that a file of any size is
@@ -156,7 +156,7 @@ pub fn load(arguments: LoadArgs) -> Result<(), Failure> {
             Err(why) => return Err(total.before(unreadable(&why), &name)),
         };
         if total.rows > 0 && !json {
-            eprintln!("{} sent", count(total.rows, "row"));
+            hint(format!("{} sent", count(total.rows, "row")));
         }
         let (answer, report) = send(&remote, &source.name, entity_type, &batch)
             .map_err(|failure| total.before(failure, &name))?;
@@ -167,7 +167,7 @@ pub fn load(arguments: LoadArgs) -> Result<(), Failure> {
     }
 
     if json {
-        print_json(&json!({
+        out.json(&json!({
             "source": source.name,
             "entity_type": entity_type,
             "rows": total.rows,
@@ -179,7 +179,7 @@ pub fn load(arguments: LoadArgs) -> Result<(), Failure> {
         println!("loaded  0 rows: {name} has no rows after its first line");
         return Ok(());
     }
-    let mut rows = vec![(
+    fields(&[(
         "loaded",
         format!(
             "{} into source `{}`, type `{entity_type}`: {}",
@@ -187,7 +187,7 @@ pub fn load(arguments: LoadArgs) -> Result<(), Failure> {
             source.name,
             total.outcome()
         ),
-    )];
+    )]);
     let waiting = total.waiting();
     if waiting > 0 {
         let command = match info.store.entity_types.len() {
@@ -199,9 +199,8 @@ pub fn load(arguments: LoadArgs) -> Result<(), Failure> {
         } else {
             "places them in identities"
         };
-        rows.push(("next", format!("`{command}` {places}")));
+        hint(format!("next: `{command}` {places}"));
     }
-    fields(&rows);
     Ok(())
 }
 

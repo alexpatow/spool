@@ -9,6 +9,13 @@ Options:
       --example <NAME>  Fill the project with an example [possible values: companies]
   -h, --help            Print help (see more with '--help')
 
+Output options:
+  -o, --output <OUTPUT>  Output format [default: table] [possible values: table, json, ndjson, csv]
+      --json             Shorthand for `--output json`
+
+Global options:
+  -q, --quiet  Print only the result and errors: no hints or progress
+
 Examples:
   spool init companies --example companies
   spool init my-data

@@ -8,6 +8,7 @@ use spool::{Manifest, Runtime};
 
 use super::project::{failed, write};
 use crate::Failure;
+use crate::output::{Output, OutputArgs, hint};
 
 /// Make a project, empty or from an example
 ///
@@ -33,6 +34,8 @@ pub struct InitArgs {
     /// Fill the project with an example
     #[arg(long, value_name = "NAME", value_parser = examples())]
     example: Option<String>,
+    #[command(flatten)]
+    output: OutputArgs,
 }
 
 /// The names of the examples, each with what it holds.
@@ -180,6 +183,7 @@ const ALWAYS: [(&str, &str); 2] = [
 ];
 
 pub fn init(arguments: InitArgs) -> Result<(), Failure> {
+    let out = Output::report(&arguments.output, "`spool init`")?;
     let example = arguments.example.as_deref().map(|name| {
         EXAMPLES
             .iter()
@@ -234,8 +238,31 @@ pub fn init(arguments: InitArgs) -> Result<(), Failure> {
             "runs the server, and applies each file as you save it",
         )],
     };
+    let user_code = super::user_code(None, &dir);
+    let missing: Vec<Runtime> = example
+        .map(|example| example.runtimes)
+        .unwrap_or_default()
+        .iter()
+        .copied()
+        .filter(|runtime| !user_code.installed(*runtime))
+        .collect();
+    if !out.is_table() {
+        let line =
+            |(said, about): &(&str, &str)| serde_json::json!({ "path": said, "holds": about });
+        out.json(&serde_json::json!({
+            "created": dir,
+            "files": written.iter().map(|(file, holds)| line(&(file.as_str(), *holds))).collect::<Vec<_>>(),
+            "next": commands
+                .iter()
+                .map(|(command, does)| serde_json::json!({ "command": command, "does": does }))
+                .collect::<Vec<_>>(),
+            "not_installed": missing.iter().map(|runtime| program(*runtime)).collect::<Vec<_>>(),
+        }));
+        return Ok(());
+    }
     // What each line is for begins in one column: six characters after the
-    // longest file, and at least two after the longest command.
+    // longest file, and at least two after the longest command. What to do
+    // next goes to standard error.
     let longest = |lines: &mut dyn Iterator<Item = &str>| {
         lines.map(|line| line.chars().count()).max().unwrap_or(0)
     };
@@ -245,37 +272,39 @@ pub fn init(arguments: InitArgs) -> Result<(), Failure> {
     for (file, holds) in &written {
         println!("  {file:<width$}{holds}");
     }
-    println!();
+    hint("");
     if !is_current_dir(&dir) {
-        println!("  cd {}", shell_word(&dir));
+        hint(format!("  cd {}", shell_word(&dir)));
     }
     for (command, does) in commands {
-        println!("  {command:<width$}{does}");
+        hint(format!("  {command:<width$}{does}"));
     }
     match example {
         Some(example) => {
-            println!("\n{}", example.note);
-            let user_code = super::user_code(None, &dir);
-            for runtime in example.runtimes {
-                let program = match runtime {
-                    Runtime::Python => "uv",
-                    Runtime::Typescript => "bun",
-                };
-                if !user_code.installed(*runtime) {
-                    println!(
-                        "`{program}` is not installed here. Before `spool extract`, install it:\n\n  {}",
-                        runtime.install_command()
-                    );
-                }
+            hint(format!("\n{}", example.note));
+            for runtime in missing {
+                hint(format!(
+                    "`{}` is not installed here. Before `spool extract`, install it:\n\n  {}",
+                    program(runtime),
+                    runtime.install_command()
+                ));
             }
         }
-        None => println!(
+        None => hint(
             "\nThe project is empty. Declare a source under sources/ and an entity type\n\
              under entities/, then load your rows with `spool load`. To see a project that\n\
-             works first, with sample rows: spool init companies --example companies"
+             works first, with sample rows: spool init companies --example companies",
         ),
     }
     Ok(())
+}
+
+/// What runs code of a runtime.
+fn program(runtime: Runtime) -> &'static str {
+    match runtime {
+        Runtime::Python => "uv",
+        Runtime::Typescript => "bun",
+    }
 }
 
 /// Fails unless `dir` is not there or holds nothing but what [`MAY_HOLD`]

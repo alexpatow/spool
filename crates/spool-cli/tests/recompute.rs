@@ -16,8 +16,7 @@ fn shown(server: &Server, dir: &Path, arguments: &[&str]) -> String {
         text(&output.stdout),
         text(&output.stderr)
     );
-    assert_eq!(text(&output.stderr), "", "spool {arguments:?}");
-    text(&output.stdout)
+    format!("{}{}", text(&output.stdout), text(&output.stderr))
 }
 
 fn failed(server: &Server, dir: &Path, arguments: &[&str], code: i32) -> String {
@@ -118,10 +117,9 @@ decisions
   constraints  0 must_links and 1 cannot_link in force, each holding whatever the rules say
 
 1 change, the largest first
-#  kind   records  identity                              now                  after
+#  KIND   RECORDS  IDENTITY                              NOW                  AFTER
 1  split  4        {acorn}  Acorn Tools Ltd (4)  ACORN TOOLS (3, keeps its ID), Acorn Tools Ltd (1, new)
 `--identity <id>` shows a change record by record
-
 nothing was changed. This applies it:
 spool recompute --apply {plan}
 "

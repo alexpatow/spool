@@ -1,6 +1,9 @@
 Print the JSON Schema of the server's API
 
-Usage: spool schema
+Usage: spool schema [OPTIONS]
 
 Options:
   -h, --help  Print help (see more with '--help')
+
+Global options:
+  -q, --quiet  Print only the result and errors: no hints or progress

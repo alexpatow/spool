@@ -10,12 +10,18 @@ Options:
       --offset <N>     Pass over this many of the largest changes first
       --apply <PLAN>   Make the identities what the preview with this plan showed
       --reason <TEXT>  Why, kept with the changeset
-      --json           Print what the server answered, as JSON
   -h, --help           Print help (see more with '--help')
+
+Output options:
+  -o, --output <OUTPUT>  Output format [default: table] [possible values: table, json, ndjson, csv]
+      --json             Shorthand for `--output json`
 
 Server options:
       --url <URL>      The server [env: SPOOL_URL] [default: http://127.0.0.1:7765]
       --token <TOKEN>  A token for that server; `spool dev` needs none [env: SPOOL_TOKEN]
+
+Global options:
+  -q, --quiet  Print only the result and errors: no hints or progress
 
 Examples:
   spool recompute --detail

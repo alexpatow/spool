@@ -7,6 +7,7 @@ use clap::Args;
 
 use super::accounts_path;
 use crate::Failure;
+use crate::output::{Output, OutputArgs, hint, render};
 
 /// Start the development store of `spool dev` over
 ///
@@ -41,9 +42,23 @@ pub struct ResetArgs {
     /// Remove it without asking, which is needed where nobody can answer, as in a script
     #[arg(long)]
     yes: bool,
+    #[command(flatten)]
+    output: OutputArgs,
 }
 
 pub fn reset(arguments: ResetArgs) -> Result<(), Failure> {
+    let out = Output::report(&arguments.output, "`spool reset`")?;
+    // What it removes and keeps is the report, or with JSON what the
+    // question is about, which goes to standard error.
+    let say = |line: &str| match out.is_table() {
+        true => println!("{line}"),
+        false => eprintln!("{line}"),
+    };
+    let nothing = || {
+        if !out.is_table() {
+            out.json(&serde_json::json!({ "removed": [], "kept": [] }));
+        }
+    };
     let dir = super::project_dir(&arguments.dir);
     let spool_dir = dir.join(".spool");
     let store = arguments
@@ -66,10 +81,11 @@ pub fn reset(arguments: ResetArgs) -> Result<(), Failure> {
         )));
     }
     if !spool_kind.is_ok_and(|kind| kind.is_dir()) {
-        println!(
+        say(&format!(
             "{} does not exist, so there is no development store to remove",
             spool_dir.display()
-        );
+        ));
+        nothing();
         return Ok(());
     }
     let inside = store
@@ -119,10 +135,11 @@ pub fn reset(arguments: ResetArgs) -> Result<(), Failure> {
         }
     }
     if removed.is_empty() {
-        println!(
+        say(&format!(
             "there is no development store at {}: nothing to remove",
             shown(&store)
-        );
+        ));
+        nothing();
         return Ok(());
     }
 
@@ -176,24 +193,32 @@ pub fn reset(arguments: ResetArgs) -> Result<(), Failure> {
         kept.push((shown, what.to_owned()));
     }
 
-    println!(
-        "This starts the development store of {} over.",
-        match &arguments.dir {
-            Some(given) => given.display().to_string(),
-            None => "this project".to_owned(),
-        }
-    );
-    println!("\nremoves");
-    for (path, _) in &removed {
-        println!("  {}", shown(path));
-    }
-    println!("\nkeeps");
     kept.push((
         "the project's files".to_owned(),
         "everything outside .spool/".to_owned(),
     ));
-    columns(&kept);
-    println!();
+    if out.is_table() || !arguments.yes {
+        say(&format!(
+            "This starts the development store of {} over.",
+            match &arguments.dir {
+                Some(given) => given.display().to_string(),
+                None => "this project".to_owned(),
+            }
+        ));
+        say("\nremoves");
+        for (path, _) in &removed {
+            say(&format!("  {}", shown(path)));
+        }
+        say("\nkeeps");
+        let rows: Vec<Vec<String>> = kept
+            .iter()
+            .map(|(path, what)| vec![path.clone(), what.clone()])
+            .collect();
+        for line in render(None, &rows, 2) {
+            say(&line);
+        }
+        say("");
+    }
 
     if !arguments.yes {
         if !std::io::stdin().is_terminal() {
@@ -202,15 +227,16 @@ pub fn reset(arguments: ResetArgs) -> Result<(), Failure> {
                     .to_owned(),
             ));
         }
-        print!("Remove the store? [y/N] ");
-        let _ = std::io::stdout().flush();
+        eprint!("Remove the store? [y/N] ");
+        let _ = std::io::stderr().flush();
         let mut answer = String::new();
         std::io::stdin()
             .lock()
             .read_line(&mut answer)
             .map_err(|error| Failure::Failed(format!("reading the answer: {error}")))?;
         if !matches!(answer.trim().to_lowercase().as_str(), "y" | "yes") {
-            println!("nothing was removed");
+            say("nothing was removed");
+            nothing();
             return Ok(());
         }
     }
@@ -231,25 +257,25 @@ pub fn reset(arguments: ResetArgs) -> Result<(), Failure> {
             Kind::File => std::fs::remove_file(path),
         };
         gone.map_err(|error| Failure::Failed(format!("{}: {error}", path.display())))?;
-        println!("removed  {}", shown(path));
+        if out.is_table() {
+            println!("removed  {}", shown(path));
+        }
     }
-    println!(
+    if !out.is_table() {
+        out.json(&serde_json::json!({
+            "store": store,
+            "removed": removed.iter().map(|(path, _)| path).collect::<Vec<_>>(),
+            "kept": kept
+                .iter()
+                .map(|(path, what)| serde_json::json!({ "path": path, "what": what }))
+                .collect::<Vec<_>>(),
+        }));
+    }
+    hint(
         "\nThe next `spool dev` starts with an empty store. `spool load` and `spool extract` \
-         fill it again."
+         fill it again.",
     );
     Ok(())
-}
-
-/// Two columns, indented.
-fn columns(rows: &[(String, String)]) {
-    let width = rows
-        .iter()
-        .map(|(left, _)| left.chars().count())
-        .max()
-        .unwrap_or(0);
-    for (left, right) in rows {
-        println!("  {left:<width$}  {right}");
-    }
 }
 
 /// What a path `spool reset` removes must be.

@@ -9,3 +9,10 @@ Options:
       --store <PATH>     The store's database file; created if it does not exist [env: SPOOL_STORE]
       --manifest <PATH>  The manifest to apply [default: <DIR>/.spool/manifest.json]
   -h, --help             Print help (see more with '--help')
+
+Output options:
+  -o, --output <OUTPUT>  Output format [default: table] [possible values: table, json, ndjson, csv]
+      --json             Shorthand for `--output json`
+
+Global options:
+  -q, --quiet  Print only the result and errors: no hints or progress

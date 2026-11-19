@@ -12,8 +12,9 @@ use spool::{
     DeclaredSource, ExtractReport, Extractor, FailedDocument, RecordEntry, RunEntry, RunStatus,
 };
 
-use super::remote::{self, Remote, RemoteArgs, WAIT_MS, listed, print_json, typed};
+use super::remote::{self, Remote, RemoteArgs, WAIT_MS, listed, typed};
 use crate::Failure;
+use crate::output::{Output, OutputArgs, aligned, hint};
 
 /// Find records in documents with one of the project's extractors
 ///
@@ -65,9 +66,8 @@ pub struct ExtractArgs {
     /// Stopped, the command starts over when it is run again.
     #[arg(long)]
     again: bool,
-    /// Print the runs the server answered with, as JSON
-    #[arg(long)]
-    json: bool,
+    #[command(flatten)]
+    output: OutputArgs,
     #[command(flatten)]
     remote: RemoteArgs,
 }
@@ -177,12 +177,13 @@ struct Answered {
 }
 
 impl Answered {
-    fn print(&self) {
-        print_json(&json!({ "documents": self.documents, "extractions": self.extractions }));
+    fn print(&self, out: Output) {
+        out.json(&json!({ "documents": self.documents, "extractions": self.extractions }));
     }
 }
 
 pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
+    let out = Output::report(&arguments.output, "`spool extract`")?;
     let files = read(&arguments.paths)?;
     catch_ctrl_c();
 
@@ -195,7 +196,7 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
     if let Some(source) = &source {
         readable(&info.sources, source)?;
     }
-    let as_json = arguments.json;
+    let as_json = !out.is_table();
     let again = arguments.again;
     let mut answered = Answered::default();
 
@@ -235,14 +236,14 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
                 Ok(run) => run,
                 Err(failure) => {
                     if as_json {
-                        answered.print();
+                        answered.print(out);
                     }
                     if stored > 0 {
-                        eprintln!(
+                        hint(format!(
                             "stored     {stored} of {} before this: the same command again \
                              stores the rest and reads them",
                             plural(files.len() as u64, "document", "documents")
-                        );
+                        ));
                     }
                     return Err(failure);
                 }
@@ -310,7 +311,7 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
             Ok(ended) => ended,
             Err(failure) => {
                 if as_json {
-                    answered.print();
+                    answered.print(out);
                 }
                 progress.stopped(found.documents, again, None);
                 return Err(failure);
@@ -319,7 +320,7 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
         answered.extractions.push(answer["run"].clone());
         if run.status != RunStatus::Succeeded {
             if as_json {
-                answered.print();
+                answered.print(out);
             }
             if progress.cancelled {
                 return Err(Failure::Stopped(stopped(&found, again, Some(run.run))));
@@ -337,20 +338,20 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
         // found before, which is what a broken one does too. It is taken
         // back all the same, and comes back when it is found again.
         if report.mentions == 0 && report.taken_back > 0 {
-            eprintln!(
+            hint(format!(
                 "taken back {} that run {} found nowhere, though it found nothing at all: if the \
                  extractor is wrong, mend it and run `spool extract --again`, and what it finds \
                  again goes back to the identity it left",
                 plural(report.taken_back, "record", "records"),
                 run.run
-            );
+            ));
         }
         // A batch none of whose documents could be read says more about the
         // extractor than about them: a key that is wrong, a model that is
         // not there. Going on would fail every batch after it.
         if report.documents > 0 && report.failed.len() as u64 == report.documents {
             if as_json {
-                answered.print();
+                answered.print(out);
             }
             progress.stopped(found.documents, again, Some(run.run));
             let first = &report.failed[0];
@@ -366,7 +367,7 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
         }
         if was_interrupted() && report.left > 0 {
             if as_json {
-                answered.print();
+                answered.print(out);
             }
             return Err(Failure::Stopped(stopped(&found, again, None)));
         }
@@ -384,7 +385,7 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
     }
 
     if as_json {
-        answered.print();
+        answered.print(out);
         return Ok(());
     }
     println!("extractor  {}", extractor.name);
@@ -429,19 +430,20 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
             "failed     {}: they are not read, and the same command reads them again",
             plural(found.failed.len() as u64, "document", "documents")
         );
-        let width = found
+        let rows: Vec<Vec<String>> = found
             .failed
             .iter()
             .take(LISTED)
-            .map(|failed| failed.source.chars().count() + 1 + failed.key.chars().count())
-            .max()
-            .unwrap_or(0);
-        for failed in found.failed.iter().take(LISTED) {
-            let name = format!("{}:{}", failed.source, failed.key);
-            println!("  {name:<width$}  {}", shown(&failed.reason));
-        }
+            .map(|failed| {
+                vec![
+                    format!("{}:{}", failed.source, failed.key),
+                    shown(&failed.reason),
+                ]
+            })
+            .collect();
+        aligned(&rows, 2);
         if found.failed.len() > LISTED {
-            println!("  and more: `spool show documents` says why each failed");
+            hint("and more: `spool show documents` says why each failed");
         }
     }
 
@@ -456,10 +458,10 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
         )?;
     }
     if found.inserted > 0 {
-        println!(
-            "\nnext       `spool match` places {} in identities",
+        hint(format!(
+            "next: `spool match` places {} in identities",
             if found.inserted == 1 { "it" } else { "them" }
-        );
+        ));
     }
     Ok(())
 }
@@ -727,7 +729,7 @@ impl<'a> Progress<'a> {
 
     fn announce(&mut self) {
         if !self.announced {
-            eprintln!("running    {}", self.extractor.file);
+            hint(format!("running    {}", self.extractor.file));
             self.announced = true;
         }
     }
@@ -754,7 +756,7 @@ impl<'a> Progress<'a> {
                 && let Some(said) = run.said
                 && self.said.as_ref() != Some(&said)
             {
-                eprintln!("           {said}");
+                hint(format!("           {said}"));
                 self.live.push(said.clone());
                 self.said = Some(said);
             }
@@ -780,7 +782,7 @@ impl<'a> Progress<'a> {
                 continue;
             }
             self.announce();
-            eprintln!("           {line}");
+            hint(format!("           {line}"));
         }
     }
 
@@ -788,10 +790,10 @@ impl<'a> Progress<'a> {
     /// extractor and keeps nothing it found; what the batches before it
     /// found is kept.
     fn cancel(&mut self, remote: &Remote, run: RunId) -> Result<(), Failure> {
-        eprintln!(
+        hint(format!(
             "stopping   cancelling run {run}, the batch in progress: what the batches before it \
              read is kept. Ctrl-C again quits without waiting."
-        );
+        ));
         self.cancelled = true;
         // A run that ended meanwhile cannot be cancelled, and what it read
         // is kept.
@@ -817,7 +819,7 @@ impl<'a> Progress<'a> {
             let rest = took.mul_f64(left as f64 / (found.documents + failed) as f64);
             line.push_str(&format!(", about {} left", about(rest)));
         }
-        eprintln!("{line}");
+        hint(line);
     }
 
     /// Says what the batches before a failed one kept: the run that failed,
@@ -832,10 +834,10 @@ impl<'a> Progress<'a> {
             None => "the batch that failed".to_owned(),
         };
         match again {
-            true => eprintln!("kept       {read} read again before {before}"),
-            false => eprintln!(
+            true => hint(format!("kept       {read} read again before {before}")),
+            false => hint(format!(
                 "kept       {read} read before {before}: the same command again reads the rest"
-            ),
+            )),
         }
     }
 }
@@ -938,26 +940,20 @@ fn list(remote: &Remote, source: &str, files: &[File], mentions: u64) -> Result<
     if lines.is_empty() {
         return Ok(());
     }
-    let width = |column: fn(&(String, String, String)) -> &String| {
-        lines
-            .iter()
-            .take(LISTED)
-            .map(|line| column(line).chars().count())
-            .max()
-            .unwrap_or(0)
-    };
-    let (types, texts) = (width(|line| &line.0), width(|line| &line.1));
+    let rows: Vec<Vec<String>> = lines
+        .iter()
+        .take(LISTED)
+        .map(|(entity_type, text, place)| vec![entity_type.clone(), text.clone(), place.clone()])
+        .collect();
     println!();
-    for (entity_type, text, place) in lines.iter().take(LISTED) {
-        println!("  {entity_type:<types$}  {text:<texts$}  {place}");
-    }
+    aligned(&rows, 2);
     let listed = lines.len().min(LISTED) as u64;
     // The extractor read whatever the source held that it had not read, and
     // that may be more than the files.
     if mentions > listed || lines.len() > LISTED {
-        println!(
-            "  and more: `spool show records --source {source}` lists every record of the source"
-        );
+        hint(format!(
+            "and more: `spool show records --source {source}` lists every record of the source"
+        ));
     }
     Ok(())
 }

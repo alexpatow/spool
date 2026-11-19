@@ -275,13 +275,6 @@ pub fn unsuccessful(run: &RunEntry) -> Failure {
     ))
 }
 
-pub fn print_json(value: &Value) {
-    println!(
-        "{}",
-        serde_json::to_string_pretty(value).expect("JSON that was read can be written")
-    );
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

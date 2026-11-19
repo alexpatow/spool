@@ -8,10 +8,10 @@ use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
 use spool_cli::accounts::Accounts;
-use spool_cli::api::TokenList;
+use spool_cli::api::{AddedToken, TokenList};
 
-use super::show::table;
 use crate::Failure;
+use crate::output::{Output, OutputArgs, Table, hint};
 
 /// Make, list and revoke the tokens of callers that are not people
 ///
@@ -29,14 +29,14 @@ pub struct TokenArgs {
     #[arg(
         long,
         env = "SPOOL_STORE",
+        value_parser = super::any_path(),
         hide_env_values = true,
         value_name = "PATH",
         global = true
     )]
     store: Option<PathBuf>,
-    /// Print the tokens as JSON
-    #[arg(long, global = true)]
-    json: bool,
+    #[command(flatten)]
+    output: OutputArgs,
 }
 
 #[derive(Subcommand)]
@@ -95,29 +95,28 @@ fn refused(refused: spool_cli::accounts::Refused) -> Failure {
 }
 
 fn add(arguments: &TokenArgs, name: &str) -> Result<(), Failure> {
+    let out = Output::report(&arguments.output, "`spool token add`")?;
     let (accounts, path) = accounts(arguments)?;
     let (token, secret) = accounts.add_token(name, None).map_err(refused)?;
+    if !out.is_table() {
+        out.json(&AddedToken { token, secret });
+        return Ok(());
+    }
     println!("{secret}");
-    eprintln!(
+    hint(format!(
         "That is the token `{name}`, kept in {path}. It is shown this once.\n\
          A caller sends it as `Authorization: Bearer <token>`, and what it changes is recorded \
          under `agent:{name}`.",
         name = token.name,
         path = path.display(),
-    );
+    ));
     Ok(())
 }
 
 fn list(arguments: &TokenArgs) -> Result<(), Failure> {
+    let out = Output::list(&arguments.output);
     let (accounts, _) = accounts(arguments)?;
     let tokens = accounts.tokens().map_err(refused)?;
-    if arguments.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&TokenList { tokens }).expect("tokens serialise to JSON")
-        );
-        return Ok(());
-    }
     let people = accounts.list().map_err(refused)?;
     let made_by = |id: &Option<String>| match id {
         None => "spool token add".to_owned(),
@@ -126,30 +125,31 @@ fn list(arguments: &TokenArgs) -> Result<(), Failure> {
             .find(|person| &person.id == id)
             .map_or_else(|| id.clone(), |person| person.username.clone()),
     };
-    table(
-        "tokens",
-        &["token", "made at", "made by", "last used"],
-        tokens
-            .iter()
-            .map(|token| {
-                vec![
-                    token.name.clone(),
-                    token.created_at.clone(),
-                    made_by(&token.created_by),
-                    token
-                        .last_used_at
-                        .clone()
-                        .unwrap_or_else(|| "never".to_owned()),
-                ]
-            })
-            .collect(),
-    );
+    let mut table = Table::new("tokens").columns(["token", "made at", "made by", "last used"]);
+    for token in &tokens {
+        table.row(vec![
+            token.name.clone().into(),
+            token.created_at.clone().into(),
+            made_by(&token.created_by).into(),
+            token
+                .last_used_at
+                .clone()
+                .unwrap_or_else(|| "never".to_owned())
+                .into(),
+        ]);
+    }
+    let answer = serde_json::to_value(TokenList { tokens }).expect("tokens serialise to JSON");
+    out.items(&answer, "tokens", &table);
     Ok(())
 }
 
 fn revoke(arguments: &TokenArgs, name: &str) -> Result<(), Failure> {
+    let out = Output::report(&arguments.output, "`spool token revoke`")?;
     let (accounts, _) = accounts(arguments)?;
     let token = accounts.revoke_token_named(name).map_err(refused)?;
-    println!("revoked `{}`: the server no longer accepts it", token.name);
+    match out.is_table() {
+        true => println!("revoked `{}`: the server no longer accepts it", token.name),
+        false => out.json(&token),
+    }
     Ok(())
 }

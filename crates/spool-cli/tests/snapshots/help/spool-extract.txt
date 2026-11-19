@@ -9,12 +9,18 @@ Options:
       --source <NAME>     The source the documents belong to
       --extractor <NAME>  The extractor [default: the project's only one]
       --again             Read every document of the source again, not only the new ones
-      --json              Print the runs the server answered with, as JSON
   -h, --help              Print help (see more with '--help')
+
+Output options:
+  -o, --output <OUTPUT>  Output format [default: table] [possible values: table, json, ndjson, csv]
+      --json             Shorthand for `--output json`
 
 Server options:
       --url <URL>      The server [env: SPOOL_URL] [default: http://127.0.0.1:7765]
       --token <TOKEN>  A token for that server; `spool dev` needs none [env: SPOOL_TOKEN]
+
+Global options:
+  -q, --quiet  Print only the result and errors: no hints or progress
 
 Examples:
   spool extract samples/notes-1.txt

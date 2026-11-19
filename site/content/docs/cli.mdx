@@ -3,7 +3,7 @@ title: Command line
 description: Every spool command, what it takes and what it prints.
 ---
 
-`spool` is one binary. Three of its commands run a server, and the rest either work on a project directory or call a running server over HTTP. `spool <command> --help` prints what this page says about a command.
+`spool` is one binary. Three of its commands run a server, and the rest either work on a project directory or call a running server over HTTP. `spool <command> -h` lists a command's options, one line each, and `spool <command> --help` says what this page says about it.
 
 | Command | What it does | Works on |
 | --- | --- | --- |
@@ -24,9 +24,24 @@ description: Every spool command, what it takes and what it prints.
 | [`spool schema`](#spool-schema) | Prints the JSON Schema of the API | Nothing |
 | [`spool bench`](#spool-bench) | Runs a benchmark scenario | A directory |
 
-The commands that call a server take `--url` (default `$SPOOL_URL`, or `http://127.0.0.1:7765`), `--token` (default `$SPOOL_TOKEN`; `spool dev` asks for none) and `--json`, which prints what the server answered.
+The commands that call a server take `--url` (default `$SPOOL_URL`, or `http://127.0.0.1:7765`) and `--token` (default `$SPOOL_TOKEN`; `spool dev` asks for none).
 
 The command line cannot merge, split, undo, decide a review item or approve a draft. Those are calls of [the HTTP API](/docs/api), buttons in the studio, and [MCP](/docs/mcp) tools.
+
+## Output
+
+Every command that prints a result takes `-o, --output <format>`, and `--json` for `-o json`. The format is the same whether the output goes to a terminal or a pipe.
+
+| Format | What it prints |
+| --- | --- |
+| `table` | Columns and labelled lines for people. The default. Columns may change between releases, so scripts should not parse it |
+| `json` | One JSON document: what the server answered, which [`spool schema`](#spool-schema) describes, or the report of a local command |
+| `ndjson` | A list one item per line, for `jq` and other streaming readers. Anything else is its JSON on one line |
+| `csv` | A list's columns, with the IDs a table may leave out and values that a table cuts short in full. A command that prints a report, such as `spool match` or `spool show runs <run>`, refuses `csv` before it does anything |
+
+Standard output carries the result and nothing else. Hints, notes and what to run next go to standard error, and `-q` leaves them out. So `spool show identities -o csv > identities.csv` writes only the rows, and `spool load rows.csv -q` prints only the line that says what was loaded. `spool serve`, `spool dev` and `spool schema` take no `-o`: the first two run a server, and `spool schema` prints JSON.
+
+A mistake in a command's arguments is said on one line with its usage, and ends with status 2. A command that fails ends with status 1, and one stopped with Ctrl-C with 130.
 
 ## spool init
 
@@ -109,7 +124,7 @@ The project's `.env` sets environment variables for its extractors and strategie
 
 ## spool info
 
-`spool info [<dir>] [--json]`
+`spool info [<dir>]`
 
 Lists the project's sources, with each source's columns and the features each column becomes, its entity types, with their features, rules and strategies, and its extractors. It checks every SQL file on the way, and needs no server. What the records hold in those columns is on the server, and [`spool show attributes`](#spool-show) shows it.
 
@@ -216,7 +231,7 @@ spool load samples/crm-1.csv
 
 ```text title="Output"
 loaded  6 rows into source `crm`, type `company`: 6 new
-next    `spool match` places them in identities
+next: `spool match` places them in identities
 ```
 
 ## spool extract
@@ -243,8 +258,7 @@ found      3 records in 1 document: 3 new, 0 already held
   company  Acorn Tools Ltd          notes:notes-1.txt[54-69]
   company  Larkfield Logistics Ltd  notes:notes-1.txt[119-142]
   company  Brightwater Foods Ltd    notes:notes-1.txt[179-200]
-
-next       `spool match` places them in identities
+next: `spool match` places them in identities
 ```
 
 ## spool match
@@ -269,13 +283,13 @@ placed      9 records, 5 identities created
 `spool recompute [--type <name>] [--identity <id>] [--detail] [--limit <n>] [--offset <n>]`
 `spool recompute --apply <plan> [--type <name>] [--reason <text>]`
 
-Shows what the identities would be if every record were matched again, all at once, by the rules as they are now, against the identities there are, and changes nothing. Every type is recomputed unless `--type` names one. The summary comes first, then the ten largest changes; `--detail` lists all of them, `--identity` shows the one that holds an identity record by record, and `--json` prints what the server answered. The last line is a plan, which `--apply` takes: applying works the result out again, refuses if it is not that plan, and commits one changeset by the engine for each type. [Matching](/docs/concepts/matching#recompute) shows the output.
+Shows what the identities would be if every record were matched again, all at once, by the rules as they are now, against the identities there are, and changes nothing. Every type is recomputed unless `--type` names one. The summary comes first, then the ten largest changes; `--detail` lists all of them, and `--identity` shows the one that holds an identity record by record. The last line is a plan, which `--apply` takes: applying works the result out again, refuses if it is not that plan, and commits one changeset by the engine for each type. [Matching](/docs/concepts/matching#recompute) shows the output.
 
 ## spool show
 
-`spool show [<what> [<id>]] [options]`
+`spool show [<list> [<id>]] [options]`
 
-Without `<what>` it prints the entity types and how much there is of each:
+Without a list it prints the entity types and how much there is of each:
 
 ```sh
 spool show
@@ -296,7 +310,7 @@ entity type `company`
 extractor `companies` (python, extractors/companies.py)
 ```
 
-| `<what>` | Lists | With an ID |
+| `<list>` | Lists | With an ID |
 | --- | --- | --- |
 | `runs [<run>]` | The latest runs | One run and what it reported |
 | `records [<record>]` | Records | One record with its payload and evidence |
@@ -326,6 +340,8 @@ A record is named by its ID or as `<source>:<key>`, which names the latest versi
 | `--after <id>` | Continue a list after this ID, or the log after this position, in the order of the list | identities, records, documents, review, log |
 | `--limit <n>` | List at most this many | runs, identities, records, documents, review, log |
 
+Each list takes only the options that apply to it, and none of them goes with an ID. `spool show <list> -h` lists them.
+
 A list of records or documents shows the version of each that nothing replaced: the row as its source last sent it, or a mention as the latest version of its document holds it. `--all-versions` lists the replaced versions too, with a column that says which is current.
 
 ```sh
@@ -333,7 +349,7 @@ spool show runs
 ```
 
 ```text title="Output"
-run  kind       status     about           started by                                 started
+RUN  KIND       STATUS     ABOUT           STARTED BY                                 STARTED
 6    reconcile  succeeded                  user:01a1f0a3-6d74-7231-b6c6-61d78b04fd97  2026-11-18T21:50:05Z
 5    match      succeeded  company, rules  user:01a1f0a3-6d74-7231-b6c6-61d78b04fd97  2026-11-18T21:50:05Z
 4    load       succeeded  companies       user:01a1f0a3-6d74-7231-b6c6-61d78b04fd97  2026-11-18T21:50:05Z
@@ -347,7 +363,7 @@ spool show identities
 ```
 
 ```text title="Output"
-identity                              name                   members  names  unlinked pairs  created at
+IDENTITY                              NAME                   MEMBERS  NAMES  UNLINKED PAIRS  CREATED AT
 01a1efc6-41cd-775d-8758-e7300637659a  Acorn Tools Ltd        4        2      0%              log position 1
 01a1efc6-41cd-775d-8758-e731c61371cb  Halden Group           1        1      -               log position 1
 01a1efc6-41cd-775d-8758-e7329447fd9a  Halden Group           1        1      -               log position 1
@@ -361,7 +377,7 @@ Each identity comes with three numbers that point at a wrong merge without any l
 - **names**: how many different labels its records have, whatever their case. One thing goes by a few names; dozens are many things.
 - **unlinked pairs**: the part of its pairs of records that no link joins directly. A link is a `match` from a run that finished, a `must_link` constraint, or one record being a later version of the other. A pair no link joins is together only through a chain: A matches B and B matches C, so A and C share an identity though no rule holds between them. An identity mostly held by chains is where rules that each hold joined things that are not one.
 
-`--sort records --order desc` lists the largest identities first, and `--sort names --order desc` those with the most names. The counts are in `--json` as `members`, `names`, `linked_pairs` and `unlinked_pairs`. [`spool explain <identity>`](#spool-explain) says which rule joined the parts of one.
+`--sort records --order desc` lists the largest identities first, and `--sort names --order desc` those with the most names. The counts are in the JSON as `members`, `names`, `linked_pairs` and `unlinked_pairs`. [`spool explain <identity>`](#spool-explain) says which rule joined the parts of one.
 
 {/* sample: skip shows a project of a few thousand people that this page does not build */}
 
@@ -372,11 +388,10 @@ spool show identities --type person --sort records --order desc --limit 3
 {/* sample: skip shows a project of a few thousand people that this page does not build */}
 
 ```text title="Output"
-identity                              name        members  names  unlinked pairs  created at
-01a1f132-2c64-71b6-b804-624dbcee8a86  Surname0    2408     7      52%             log position 1
-01a1f132-2c64-71b6-b804-623e75c403b1  Surname1    956      10     71%             log position 1
-01a1f132-2c64-71b6-b804-62474d9ea066  Surname2    579      9      72%             log position 1
-
+IDENTITY                              NAME      MEMBERS  NAMES  UNLINKED PAIRS  CREATED AT
+01a1f132-2c64-71b6-b804-624dbcee8a86  Surname0  2408     7      52%             log position 1
+01a1f132-2c64-71b6-b804-623e75c403b1  Surname1  956      10     71%             log position 1
+01a1f132-2c64-71b6-b804-62474d9ea066  Surname2  579      9      72%             log position 1
 more: add `--after 01a1f132-2c64-71b6-b804-62474d9ea066`
 ```
 
@@ -388,16 +403,15 @@ spool show attributes
 
 ```text title="Output"
 entity type `company`, source `crm`: 6 records
-attribute  filled    distinct  most common                                            features
+ATTRIBUTE  FILLED    DISTINCT  MOST COMMON                                            FEATURES
 id (key)   6 (100%)  6         e.g. c-1, c-2, c-3, …                                  -
 name       6 (100%)  5         Halden Group (2), ACORN TOOLS (1), Acorn Tools (1), …  name, name_key = name_key(name)
 country    6 (100%)  2         GB (5), US (1)                                         country
 
 entity type `company`, source `notes`: 3 records
-attribute  filled    distinct  most common                                                           features
+ATTRIBUTE  FILLED    DISTINCT  MOST COMMON                                                           FEATURES
 name       3 (100%)  3         e.g. Acorn Tools Ltd, Brightwater Foods Ltd, Larkfield Logistics Ltd  name, name_key = name_key(name)
-
-`spool show records --attributes` lists the values record by record.
+`spool show records --attributes` lists the values record by record
 ```
 
 `spool show records --attributes` lists the values themselves, a column for each attribute:
@@ -407,7 +421,7 @@ spool show records --source crm --attributes
 ```
 
 ```text title="Output"
-source and key  name                 country  identity
+SOURCE AND KEY  NAME                 COUNTRY  IDENTITY
 crm:c-1         Acorn Tools          GB       01a1efc6-41cd-775d-8758-e7300637659a
 crm:c-2         ACORN TOOLS          GB       01a1efc6-41cd-775d-8758-e7300637659a
 crm:c-3         Acorn Tools Ltd      GB       01a1efc6-41cd-775d-8758-e7300637659a
@@ -421,7 +435,7 @@ spool show log
 ```
 
 ```text title="Output"
-position  actor   operations  from             started by                                 reason
+POSITION  ACTOR   OPERATIONS  FROM             STARTED BY                                 REASON
 1         engine  14          reconcile run 6  user:01a1f0a3-6d74-7231-b6c6-61d78b04fd97  reconcile new records
 ```
 
@@ -529,12 +543,12 @@ linked directly      57
 only through chains  48
 longest chain        at least 3 links
 
-name                 records
+NAME                 RECORDS
 J. R. R. Tolkien     8
 Christopher Tolkien  4
 Tolkien              3
 
-rule            links  alone  pieces without it  largest pieces
+RULE            LINKS  ALONE  PIECES WITHOUT IT  LARGEST PIECES
 same_full_name  55     20     3                  8 (J. R. R. Tolkien), 4 (Christopher Tolkien), 3 (Tolkien)
 same_name       37     2      2                  10 (J. R. R. Tolkien, Tolkien), 5 (Christopher Tolkien, Tolkien)
 
@@ -631,7 +645,7 @@ Runs the server that others reach. It listens on `0.0.0.0:7765`, and every calle
 
 ## spool token
 
-`spool token add <name> --store <path>`, `spool token list --store <path> [--json]`, `spool token revoke <name> --store <path>`
+`spool token add <name> --store <path>`, `spool token list --store <path>`, `spool token revoke <name> --store <path>`
 
 Makes, lists and revokes the tokens of a server, on the server's machine, whether or not the server is running. `add` prints the token once and nothing else. A caller sends it as `Authorization: Bearer <token>`, and what it changes is recorded as `agent:<name>`.
 

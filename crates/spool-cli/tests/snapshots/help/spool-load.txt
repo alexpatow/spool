@@ -13,12 +13,18 @@ Options:
                           .tsv and .tab]
       --batch <ROWS>      Send at most this many rows in one request [default: as many as make about
                           32 MiB]
-      --json              Print the load runs the server answered with, as JSON
   -h, --help              Print help (see more with '--help')
+
+Output options:
+  -o, --output <OUTPUT>  Output format [default: table] [possible values: table, json, ndjson, csv]
+      --json             Shorthand for `--output json`
 
 Server options:
       --url <URL>      The server [env: SPOOL_URL] [default: http://127.0.0.1:7765]
       --token <TOKEN>  A token for that server; `spool dev` needs none [env: SPOOL_TOKEN]
+
+Global options:
+  -q, --quiet  Print only the result and errors: no hints or progress
 
 Examples:
   spool load samples/crm-1.csv

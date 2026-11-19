@@ -19,6 +19,7 @@ arrow.workspace = true
 async-trait.workspace = true
 axum.workspace = true
 clap.workspace = true
+comfy-table.workspace = true
 csv.workspace = true
 getrandom.workspace = true
 http-body.workspace = true

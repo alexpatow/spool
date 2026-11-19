@@ -638,7 +638,7 @@ fn tokens_are_made_and_revoked_on_the_servers_machine_while_it_runs() {
     let listed = succeed(&["token", "list", "--store", store]);
     let lines: Vec<&str> = listed.lines().collect();
     assert_eq!(lines.len(), 3, "{listed}");
-    assert!(lines[0].starts_with("token"), "{listed}");
+    assert!(lines[0].starts_with("TOKEN"), "{listed}");
     assert!(
         lines[1].starts_with("api ") && lines[2].starts_with("ci "),
         "{listed}"

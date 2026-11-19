@@ -104,7 +104,7 @@ spool load samples/crm-1.csv
 
 ```text title="Output"
 loaded  6 rows into source `crm`, type `company`: 6 new
-next    `spool match` places them in identities
+next: `spool match` places them in identities
 ```
 
 Each row is now a record. Loading does not match, and loading the same file again adds nothing.
@@ -160,7 +160,7 @@ spool show records
 ```
 
 ```text title="Output"
-source and key  name                 identity
+SOURCE AND KEY  NAME                 IDENTITY
 crm:c-1         Acorn Tools          01a1efc6-41cd-775d-8758-e7300637659a
 crm:c-2         ACORN TOOLS          01a1efc6-41cd-775d-8758-e7300637659a
 crm:c-3         Acorn Tools Ltd      01a1efc6-41cd-775d-8758-e7300637659a
@@ -268,11 +268,11 @@ spool match
 
 ```text title="Output"
 loaded  3 rows into source `crm`, type `company`: 3 new
-next    `spool match` places them in identities
 run         5, type `company`
 examined    3 records, 4 candidate pairs
 judgements  4 match, 0 no_match
 placed      3 records, 1 identity created
+next: `spool match` places them in identities
 ```
 
 ```sh
@@ -280,7 +280,7 @@ spool show records
 ```
 
 ```text title="Output"
-source and key  name                 identity
+SOURCE AND KEY  NAME                 IDENTITY
 crm:c-1         Acorn Tools          01a1efc6-41cd-775d-8758-e7300637659a
 crm:c-2         ACORN TOOLS          01a1efc6-41cd-775d-8758-e7300637659a
 crm:c-3         Acorn Tools Ltd      01a1efc6-41cd-775d-8758-e7300637659a
@@ -383,8 +383,7 @@ found      3 records in 1 document: 3 new, 0 already held
   company  Acorn Tools Ltd          notes:notes-1.txt[54-69]
   company  Larkfield Logistics Ltd  notes:notes-1.txt[119-142]
   company  Brightwater Foods Ltd    notes:notes-1.txt[179-200]
-
-next       `spool match` places them in identities
+next: `spool match` places them in identities
 ```
 
 Three records came out of the note. Each keeps where it was found: the document and the characters. They are records like the rows, so the same rules match them.
@@ -405,7 +404,7 @@ spool show records --source notes
 ```
 
 ```text title="Output"
-source and key              name                     identity
+SOURCE AND KEY              NAME                     IDENTITY
 notes:notes-1.txt[54-69]    Acorn Tools Ltd          01a1efc6-41cd-775d-8758-e7300637659a
 notes:notes-1.txt[119-142]  Larkfield Logistics Ltd  01a1efc6-41cd-775d-8758-e733aa086f7d
 notes:notes-1.txt[179-200]  Brightwater Foods Ltd    01a1efc6-43a9-7403-b9f6-1f8ee76184ed

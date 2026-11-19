@@ -87,10 +87,9 @@ fn load_sends_the_rows_of_a_file_and_says_what_became_of_them() {
         printed,
         "\
 loaded  6 rows into source `crm`, type `company`: 6 new
-next    `spool match` places them in identities
 "
     );
-    assert_eq!(beside, "");
+    assert_eq!(beside, "next: `spool match` places them in identities\n");
 
     // Each row is a record, with every value as the text the file has, and
     // the ID the same row has when it comes as JSON.
@@ -123,7 +122,6 @@ next    `spool match` places them in identities
         printed,
         "\
 loaded  3 rows into source `crm`, type `company`: 1 new, 1 new version of a row held before, 1 already held
-next    `spool match` places them in identities
 "
     );
     let versions = server.read("/v1/records?source=crm&key=c-1")["records"].clone();
@@ -140,7 +138,6 @@ next    `spool match` places them in identities
         printed,
         "\
 loaded  3 rows into source `crm`, type `company`: 3 new
-next    `spool match` places them in identities
 "
     );
 
@@ -196,7 +193,6 @@ fn a_row_that_is_loaded_as_it_was_before_it_changed_is_that_again() {
         printed,
         "\
 loaded  6 rows into source `crm`, type `company`: 0 new, 1 new version of a row held before, 5 already held
-next    `spool match` places it in an identity
 "
     );
     server.call("/v1/match", json!({ "entity_type": "company" }));
@@ -280,7 +276,6 @@ fn load_reads_standard_input_and_other_characters_between_the_fields() {
         text(&output.stdout),
         "\
 loaded  1 row into source `crm`, type `company`: 1 new
-next    `spool match` places it in an identity
 "
     );
 
@@ -357,10 +352,12 @@ fn a_file_is_sent_in_parts() {
         printed,
         "\
 loaded  6 rows into source `crm`, type `company`: 6 new
-next    `spool match` places them in identities
 "
     );
-    assert_eq!(beside, "4 rows sent\n");
+    assert_eq!(
+        beside,
+        "4 rows sent\nnext: `spool match` places them in identities\n"
+    );
     let runs = load_runs(&server);
     let received: Vec<&Value> = runs.iter().map(|run| &run["load"]["received"]).collect();
     assert_eq!(received, [&json!(2), &json!(4)], "the latest run first");
@@ -532,7 +529,7 @@ fn load_says_what_is_wrong_with_the_file() {
         beside,
         "note: keyless.csv has no column `id`, which is the key of source `crm`. Its rows are \
          kept without a key: none can be named as crm:<key>, and a changed row does not replace \
-         the one loaded before.\n"
+         the one loaded before.\nnext: `spool match` places it in an identity\n"
     );
     assert_eq!(records(&server, "crm")[0].0, Value::Null);
 
@@ -619,7 +616,6 @@ fn load_says_when_no_server_answers_or_it_asks_for_a_token() {
         printed,
         "\
 loaded  1 row into source `shop`, type `thing`: 1 new
-next    `spool match` places it in an identity
 "
     );
     let named = spool()
@@ -713,7 +709,6 @@ fn load_asks_which_source_and_type_when_the_project_has_several() {
         printed,
         "\
 loaded  1 row into source `crm`, type `person`: 1 new
-next    `spool match --type person` places it in an identity
 "
     );
     let (printed, _) = load(&server, &project, &["rows.csv", "--source", "registry"]);
@@ -721,7 +716,6 @@ next    `spool match --type person` places it in an identity
         printed,
         "\
 loaded  1 row into source `registry`, type `company`: 1 new
-next    `spool match --type company` places it in an identity
 "
     );
     // A file named after a source holds that source's rows: the name up to
@@ -791,7 +785,6 @@ fn a_project_with_a_source_of_documents_loads_its_rows_by_the_name_of_the_file()
             format!(
                 "\
 loaded  {rows} rows into source `crm`, type `company`: {rows} new
-next    `spool match` places them in identities
 "
             )
         );

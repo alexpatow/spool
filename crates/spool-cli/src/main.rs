@@ -1,6 +1,7 @@
 //! The `spool` command.
 
 mod commands;
+mod output;
 
 use std::process::ExitCode;
 
@@ -20,6 +21,9 @@ use commands::{
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
+    /// Print only the result and errors: no hints or progress
+    #[arg(short, long, global = true, help_heading = "Global options")]
+    quiet: bool,
 }
 
 #[derive(Subcommand)]
@@ -77,6 +81,7 @@ fn main() -> ExitCode {
         let _ = Cli::command().print_help();
         return ExitCode::SUCCESS;
     };
+    output::set_quiet(cli.quiet);
     if !matches!(command, Command::Serve(_) | Command::Dev(_)) {
         end_quietly_when_the_output_closes();
     }

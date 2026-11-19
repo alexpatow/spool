@@ -72,7 +72,7 @@ fn a_mistake_is_said_with_the_usage_and_exits_with_two() {
     for (arguments, expected) in [
         (
             &["recompte"][..],
-            "error: unrecognized subcommand 'recompte'\n\n  tip: a similar subcommand exists: 'recompute'\n\nUsage: spool [COMMAND]\n\nFor more information, try '--help'.\n",
+            "error: unrecognized subcommand 'recompte'\n\n  tip: a similar subcommand exists: 'recompute'\n\nUsage: spool [OPTIONS] [COMMAND]\n\nFor more information, try '--help'.\n",
         ),
         (
             &["show", "identitis"],
@@ -218,7 +218,15 @@ fn an_empty_variable_says_nothing() {
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(2));
-    assert!(text(&output.stderr).contains("'--store <PATH>'"));
+    assert!(text(&output.stderr).contains("`--store` or `SPOOL_STORE`"));
+    // And one named on the command line is the one.
+    let output = support::spool()
+        .args(["token", "list", "--store", "nowhere.duckdb"])
+        .env("SPOOL_STORE", "")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(text(&output.stderr).contains("there is no store at nowhere.duckdb"));
 }
 
 #[test]

@@ -42,6 +42,13 @@ fn store_path(store: &Option<PathBuf>) -> Result<PathBuf, Failure> {
         })
 }
 
+/// A path that may be empty, as a variable that is set and empty is: the
+/// command then says what it needs, as it does when nothing is set.
+fn any_path() -> impl clap::builder::TypedValueParser<Value = PathBuf> {
+    use clap::builder::TypedValueParser;
+    clap::builder::OsStringValueParser::new().map(PathBuf::from)
+}
+
 /// Where the accounts of the server over `store` are: a file beside it,
 /// named after it.
 fn accounts_path(store: &Path) -> PathBuf {

@@ -110,9 +110,13 @@ fn init_makes_an_empty_project_and_says_what_goes_where() {
     // The first thing a reader sees of a project, every line of it.
     let created = init_in(dir.path(), &["my-data"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
-    assert_eq!(text(&created.stderr), "");
+    // What it made is the result, and what to do next is said beside it.
+    assert!(
+        text(&created.stdout)
+            .ends_with("  .env.example      the form of .env, where your code's secrets go\n")
+    );
     assert_eq!(
-        text(&created.stdout),
+        format!("{}{}", text(&created.stdout), text(&created.stderr)),
         "\
 created   my-data
 
@@ -183,12 +187,12 @@ works first, with sample rows: spool init companies --example companies
     std::fs::create_dir(&empty).unwrap();
     let created = init_in(dir.path(), &["empty"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
-    assert!(text(&created.stdout).contains("\n  cd empty\n"));
+    assert!(text(&created.stderr).contains("\n  cd empty\n"));
 
     // A directory that is not a plain word is quoted for the shell.
     let created = init_in(dir.path(), &["it's here"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
-    let created = text(&created.stdout);
+    let created = text(&created.stderr);
     assert!(created.contains("\n  cd 'it'\\''s here'\n"), "{created}");
 }
 
@@ -261,8 +265,9 @@ fn init_with_an_example_says_what_it_wrote_and_what_to_run_next() {
 
     let created = init_in(dir.path(), &["companies", "--example", "companies"]);
     assert!(created.status.success(), "{}", text(&created.stderr));
+    assert!(text(&created.stderr).starts_with("\n  cd companies\n"));
     assert_eq!(
-        text(&created.stdout),
+        format!("{}{}", text(&created.stdout), text(&created.stderr)),
         "\
 created   companies
 
@@ -381,8 +386,7 @@ c-9,Acorn Tool,GB
         .output()
         .unwrap();
     assert!(created.status.success(), "{}", text(&created.stderr));
-    assert_eq!(text(&created.stderr), "");
-    let created = text(&created.stdout);
+    let created = text(&created.stderr);
     assert!(
         created.ends_with(
             "
@@ -413,9 +417,9 @@ about 330 MB, most of it the model, and later runs fetch nothing.
         .unwrap();
     assert!(created.status.success(), "{}", text(&created.stderr));
     assert!(
-        text(&created.stdout).ends_with("and later runs fetch nothing.\n"),
+        text(&created.stderr).ends_with("and later runs fetch nothing.\n"),
         "{}",
-        text(&created.stdout)
+        text(&created.stderr)
     );
     // An empty project has no code to run, and says nothing of `uv`.
     let created = spool()
@@ -427,11 +431,8 @@ about 330 MB, most of it the model, and later runs fetch nothing.
         .output()
         .unwrap();
     assert!(created.status.success(), "{}", text(&created.stderr));
-    assert!(
-        !text(&created.stdout).contains("uv"),
-        "{}",
-        text(&created.stdout)
-    );
+    let said = format!("{}{}", text(&created.stdout), text(&created.stderr));
+    assert!(!said.contains("uv"), "{said}");
 }
 
 #[test]
@@ -590,7 +591,7 @@ fn apply_declares_types_and_rebuilds_the_features_of_a_changed_declaration() {
         "--store",
         path(&store),
     ]);
-    assert!(again.contains("unchanged thing"), "{again}");
+    assert!(again.contains("unchanged  thing"), "{again}");
     assert!(again.contains("already at this manifest"), "{again}");
 
     // The store path can come from the environment, as it does in an image.

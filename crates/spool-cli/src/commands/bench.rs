@@ -8,6 +8,7 @@ use spool::{BenchReport, Engine, Options, Scenario, StepReport, StrategyRef, Use
 
 use super::UserCodeArgs;
 use crate::Failure;
+use crate::output::{Output, OutputArgs};
 
 /// Run a benchmark scenario
 ///
@@ -44,18 +45,26 @@ pub struct BenchArgs {
     strategy: Option<String>,
     #[command(flatten)]
     user_code: UserCodeArgs,
+    #[command(flatten)]
+    output: OutputArgs,
 }
 
 pub fn bench(arguments: BenchArgs) -> Result<(), Failure> {
+    let out = Output::report(&arguments.output, "`spool bench`")?;
     let mut scenario = Scenario::load(&arguments.scenario)?;
     if let Some(strategy) = &arguments.strategy {
         scenario = scenario.with_strategy(strategy);
     }
     let user_code = super::user_code(Some(&arguments.user_code), &scenario.project_dir());
-    Ok(run(&arguments, scenario, user_code)?)
+    Ok(run(&arguments, scenario, user_code, out)?)
 }
 
-fn run(arguments: &BenchArgs, scenario: Scenario, user_code: UserCode) -> spool::Result<()> {
+fn run(
+    arguments: &BenchArgs,
+    scenario: Scenario,
+    user_code: UserCode,
+    out: Output,
+) -> spool::Result<()> {
     let db = match &arguments.db {
         Some(db) => db.clone(),
         None => scenario.project_dir().join(".spool").join("bench.duckdb"),
@@ -64,6 +73,14 @@ fn run(arguments: &BenchArgs, scenario: Scenario, user_code: UserCode) -> spool:
 
     let engine = Engine::open(&db, Options::seeded(arguments.seed))?;
     engine.set_user_code(user_code);
+    if !out.is_table() {
+        let report = scenario.run(&engine, |_| Ok(()))?;
+        if let Some(path) = &arguments.out {
+            write_results(path, &report)?;
+        }
+        out.json(&report);
+        return Ok(());
+    }
     println!("scenario  {}", scenario.name);
     println!("database  {}", db.display());
     let report = scenario.run(&engine, |step| print_step(&engine, step, arguments.list))?;

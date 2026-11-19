@@ -9,9 +9,10 @@ use spool::{
     TypeRecompute,
 };
 
-use super::remote::{Remote, RemoteArgs, print_json, typed};
-use super::show::{aligned, count, fields, table};
+use super::remote::{Remote, RemoteArgs, typed};
+use super::show::count;
 use crate::Failure;
+use crate::output::{Output, OutputArgs, aligned, fields, hint, table};
 
 /// Show what the current rules would change in the identities
 ///
@@ -64,9 +65,8 @@ pub struct RecomputeArgs {
     /// Why, kept with the changeset
     #[arg(long, value_name = "TEXT", requires = "apply")]
     reason: Option<String>,
-    /// Print what the server answered, as JSON
-    #[arg(long)]
-    json: bool,
+    #[command(flatten)]
+    output: OutputArgs,
     #[command(flatten)]
     remote: RemoteArgs,
 }
@@ -75,6 +75,7 @@ pub struct RecomputeArgs {
 const DETAIL_LIMIT: u64 = 1_000;
 
 pub fn run(arguments: RecomputeArgs) -> Result<(), Failure> {
+    let out = Output::report(&arguments.output, "`spool recompute`")?;
     let remote = Remote::new(&arguments.remote);
     let entity_type = arguments.entity_type.as_deref();
     if let Some(name) = entity_type {
@@ -104,10 +105,9 @@ pub fn run(arguments: RecomputeArgs) -> Result<(), Failure> {
             request["reason"] = json!(reason);
         }
         let answer = remote.post("/recompute/apply", &request)?;
-        if arguments.json {
-            print_json(&answer);
-        } else {
-            print_applied(&typed(&answer)?);
+        match out.is_table() {
+            true => print_applied(&typed(&answer)?),
+            false => out.json(&answer),
         }
         return Ok(());
     }
@@ -130,8 +130,8 @@ pub fn run(arguments: RecomputeArgs) -> Result<(), Failure> {
         request["identity"] = json!(identity);
     }
     let answer = remote.post("/recompute", &request)?;
-    if arguments.json {
-        print_json(&answer);
+    if !out.is_table() {
+        out.json(&answer);
         return Ok(());
     }
     let report: RecomputeReport = typed(&answer)?;
@@ -159,10 +159,10 @@ fn print_report(report: &RecomputeReport, entity_type: Option<&str>) -> Result<(
         print_type(recomputed);
     }
     let changes: u64 = report.types.iter().map(|t| t.changes_total).sum();
-    if !first {
-        println!();
-    }
     if changes == 0 {
+        if !first {
+            println!();
+        }
         println!("nothing would change: the identities are what the rules say they are");
         return Ok(());
     }
@@ -170,7 +170,7 @@ fn print_report(report: &RecomputeReport, entity_type: Option<&str>) -> Result<(
     if let Some(name) = entity_type {
         apply = format!("spool recompute --type {name} --apply {}", report.plan);
     }
-    println!("nothing was changed. This applies it:\n{apply}");
+    hint(format!("nothing was changed. This applies it:\n{apply}"));
     Ok(())
 }
 
@@ -385,12 +385,12 @@ fn print_type(recomputed: &TypeRecompute) {
         rows,
     );
     if shown < recomputed.changes_total {
-        println!(
+        hint(format!(
             "`--detail` lists every change, and `--offset {}` goes on from here",
             first + shown - 1
-        );
+        ));
     }
-    println!("`--identity <id>` shows a change record by record");
+    hint("`--identity <id>` shows a change record by record");
 }
 
 fn indent(rows: &[(&str, String)]) {
@@ -520,12 +520,13 @@ fn print_detail(
         return Ok(());
     };
     print_change(recomputed, detail);
-    println!();
     let mut apply = format!("spool recompute --apply {}", report.plan);
     if let Some(name) = entity_type {
         apply = format!("spool recompute --type {name} --apply {}", report.plan);
     }
-    println!("nothing was changed. This applies every change, not only this one:\n{apply}");
+    hint(format!(
+        "nothing was changed. This applies every change, not only this one:\n{apply}"
+    ));
     Ok(())
 }
 
@@ -562,7 +563,7 @@ fn print_change(recomputed: &TypeRecompute, detail: &ChangeDetail) {
             )],
         })
         .collect();
-    aligned(&rows, "  ");
+    aligned(&rows, 2);
     println!();
     println!("after");
     let mut rows: Vec<Vec<String>> = Vec::new();
@@ -579,7 +580,7 @@ fn print_change(recomputed: &TypeRecompute, detail: &ChangeDetail) {
             count(after.records, "record"),
         ]);
     }
-    aligned(&rows, "  ");
+    aligned(&rows, 2);
     for (at, after) in change.after.iter().enumerate() {
         for merged in &after.merged {
             println!(

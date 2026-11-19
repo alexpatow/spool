@@ -75,7 +75,7 @@ pub struct ServeArgs {
     #[arg(long, value_name = "PATH", default_value = ".spool/manifest.json")]
     manifest: PathBuf,
     /// The store's database file
-    #[arg(long, env = "SPOOL_STORE", hide_env_values = true, value_name = "PATH")]
+    #[arg(long, env = "SPOOL_STORE", hide_env_values = true, value_name = "PATH", value_parser = super::any_path())]
     store: Option<PathBuf>,
     /// The address to listen on
     #[arg(long, value_name = "ADDR", default_value = "0.0.0.0:7765")]

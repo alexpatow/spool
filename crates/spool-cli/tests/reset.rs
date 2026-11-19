@@ -78,7 +78,8 @@ fn reset_removes_the_development_store_and_keeps_everything_else() {
 
     let done = reset(&[at, "--yes"]);
     assert!(done.status.success(), "{}", text(&done.stderr));
-    let done = text(&done.stdout);
+    assert!(text(&done.stdout).ends_with("\nremoved  .spool/dev.duckdb\n"));
+    let done = format!("{}{}", text(&done.stdout), text(&done.stderr));
     assert!(done.contains("\nremoved  .spool/dev.duckdb\n"), "{done}");
     assert!(
         done.ends_with(
