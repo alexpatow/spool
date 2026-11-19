@@ -186,9 +186,21 @@ jobs:
       - name: Check the version
         run: release/version.sh "$TAG"
 
+      # The dry run and the tag can use the same build of this commit.
+      # The archive and its smoke test still run on each runner.
+      - name: Restore the release build
+        id: release-build
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            target/release/spool
+            target/release/libduckdb.dylib
+          key: macos-release-${{ runner.arch }}-${{ github.sha }}
+
       # `rust-version` in Cargo.toml, which is what the Dockerfile builds
       # the Linux archives with.
       - name: Install Rust
+        if: steps.release-build.outputs.cache-hit != 'true'
         run: |
           version=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)
           rustup toolchain install "$version" --profile minimal
@@ -200,19 +212,30 @@ jobs:
           enable-cache: false
 
       - name: Build
+        if: steps.release-build.outputs.cache-hit != 'true'
         env:
           SPOOL_RELEASE_BUILD: "1"
-        run: cargo build --release --locked -p spool-cli
+        run: |
+          cargo build --release --locked -p spool-cli
+          library=$(find target -path '*/duckdb-download/*' -name libduckdb.dylib | head -n 1)
+          cp "$library" target/release/libduckdb.dylib
 
       - name: Make the archive
-        run: |
-          library=$(find target -path '*/duckdb-download/*' -name libduckdb.dylib | head -n 1)
-          release/archive.sh aarch64-apple-darwin target/release/spool "$library" dist
+        run: release/archive.sh aarch64-apple-darwin target/release/spool target/release/libduckdb.dylib dist
 
       - name: Install from the archive
         env:
           SPOOL_SMOKE_NOTE: required
         run: release/test-install.sh dist
+
+      - name: Save the tested release build
+        if: github.ref_type == 'branch' && steps.release-build.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            target/release/spool
+            target/release/libduckdb.dylib
+          key: ${{ steps.release-build.outputs.cache-primary-key }}
 
       - uses: actions/upload-artifact@v7
         with:
