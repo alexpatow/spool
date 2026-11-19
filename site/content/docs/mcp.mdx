@@ -5,7 +5,7 @@ description: The tools agents get at /mcp, an example call for each, how to conn
 
 The server speaks the [Model Context Protocol](https://modelcontextprotocol.io) at `/mcp`, in the same process as the HTTP API and the studio. Agents connected to it can load rows and documents, run extractors, match, look things up and change identities.
 
-- **Each tool wraps an HTTP API call.** It returns what the API returns and fails where the API fails.
+- **Tools use the same store as the HTTP API.** Most return the corresponding HTTP response.
 - **The server decides who the caller is.** Under `spool dev`, that's the `dev` account. Under `spool serve`, it's the agent's token, recorded as `agent:<name>`, or the person who approved an agent that signed in with OAuth. No tool lets the caller name a different author.
 - **Changes carry a reason.** Tools that change identities or retract rows require a `reason`, which the log stores with the change. Loads, extractions and matches don't: the run records who started it.
 - **It's stateless.** The transport is Streamable HTTP without sessions, and every response is one JSON message.
@@ -121,7 +121,8 @@ Each is marked read-only for the client.
 | `list_review_items` | Cases waiting for a decision, open ones by default | `GET /v1/review` |
 | `get_review_case` | One review item with everything needed to decide it | `GET /v1/review/{id}/case` |
 | `list_constraints` | The `must_link` and `cannot_link` constraints in force | `GET /v1/constraints` |
-| `list_changesets` | The log after a position | `GET /v1/changesets` |
+| `list_changesets` | Changeset summaries and operation counts after a log position | Summarizes `GET /v1/changesets` |
+| `list_changeset_ops` | A page of operations from one committed changeset | |
 | `get_run` | One run: its status and report | `GET /v1/runs/{run}` |
 | `mint_identity_ids` | New identity IDs for a `create_identity` operation | `POST /v1/ids` |
 
@@ -198,8 +199,16 @@ What's waiting for a decision, and one case in full:
 
 The case bundles the item, its records and values, the identities they matched with their members, and the judgements between them, so the agent gets everything in one call.
 
+The changeset log lists summaries in ascending `seq` order. Each summary includes the changeset's ID, base, author, reason, run, content hash and `operation_count`. For run-generated changesets, `started_by` identifies who requested the run. A summary's optional `left_out` names metadata fields omitted because of their size. `head` is the latest committed position. To continue, pass `next` as `after` until `next` is null.
+
 ```json title="MCP tool call"
 { "name": "list_changesets", "arguments": { "after": 1, "limit": 1 } }
+```
+
+Use the summary's `seq` to read the operations in commit order. Omit `offset` for the first page, then pass each response's `next` as `offset` until it is null.
+
+```json title="MCP tool call"
+{ "name": "list_changeset_ops", "arguments": { "seq": 2, "limit": 20 } }
 ```
 
 ```json title="MCP tool call"

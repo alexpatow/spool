@@ -16,7 +16,7 @@ const ACCEPT: &str = "application/json, text/event-stream";
 /// and whether it asks for a reason. A tool that writes under its caller's
 /// name does. A load and a match run are recorded as runs, which have no
 /// author and no reason.
-const TOOLS: [(&str, bool, bool); 22] = [
+const TOOLS: [(&str, bool, bool); 23] = [
     ("describe_store", true, false),
     ("search_identities", true, false),
     ("get_identity", true, false),
@@ -28,6 +28,7 @@ const TOOLS: [(&str, bool, bool); 22] = [
     ("get_review_case", true, false),
     ("list_constraints", true, false),
     ("list_changesets", true, false),
+    ("list_changeset_ops", true, false),
     ("get_run", true, false),
     ("mint_identity_ids", true, false),
     ("load_rows", false, false),
@@ -216,7 +217,7 @@ fn a_client_connects_and_is_told_the_tools() {
     assert_eq!(search["properties"]["after"]["$ref"], "#/$defs/IdentityId");
     assert!(search.get("required").is_none(), "{search}");
     // The extractor may be left out, as it may be of `spool extract`.
-    let extraction = &tools[15];
+    let extraction = &tools[16];
     assert_eq!(extraction["name"], "run_extraction");
     assert!(
         extraction["inputSchema"].get("required").is_none(),
@@ -224,7 +225,7 @@ fn a_client_connects_and_is_told_the_tools() {
     );
     // A row loaded by mistake can be taken back, so the description of a
     // load does not warn an assistant off a row it was asked to load.
-    let load = &tools[13];
+    let load = &tools[14];
     assert_eq!(load["name"], "load_rows");
     let said = text(&load["description"]);
     assert!(
@@ -528,10 +529,17 @@ fn a_tool_that_looks_something_up_answers_what_the_api_answers() {
         tool(&server, "list_constraints", json!({})),
         server.read("/v1/constraints")
     );
-    assert_eq!(
-        tool(&server, "list_changesets", json!({ "after": 1 })),
-        server.read("/v1/changesets?after=1&limit=20")
-    );
+    let mut log = server.read("/v1/changesets?after=1&limit=20");
+    log["next"] = Value::Null;
+    for entry in log["changesets"].as_array_mut().unwrap() {
+        let ops = entry["changeset"]
+            .as_object_mut()
+            .unwrap()
+            .remove("ops")
+            .unwrap();
+        entry["operation_count"] = json!(ops.as_array().unwrap().len());
+    }
+    assert_eq!(tool(&server, "list_changesets", json!({ "after": 1 })), log);
 
     // What the API does not find, or cannot read, the tool says as the API
     // does, in an answer the model can read.
@@ -1361,6 +1369,93 @@ fn an_answer_too_large_for_a_model_is_refused_and_says_what_to_do() {
         "too_large",
     );
     assert!(text(&all["message"]).contains("`limit`"), "{all}");
+}
+
+#[test]
+fn large_match_changesets_can_be_audited_one_page_at_a_time() {
+    const MAX_RESULT_BYTES: usize = 256 * 1024;
+    let dir = tempfile::tempdir().unwrap();
+    let (server, _) = thing_server(dir.path());
+    assert_eq!(
+        tool(&server, "list_changesets", json!({})),
+        json!({ "changesets": [], "head": 0, "next": null })
+    );
+    for batch in 0..2 {
+        let rows: Vec<Value> = (0..1500)
+            .map(|row| json!({ "id": format!("{batch}-{row}"), "code": format!("{batch}-{row}") }))
+            .collect();
+        server.call(
+            "/v1/load",
+            json!({ "source": "bulk", "entity_type": "thing", "rows": rows }),
+        );
+        let matched = tool(&server, "run_match", json!({ "entity_type": "thing" }));
+        assert_eq!(matched["run"]["status"], "succeeded", "{matched}");
+    }
+
+    let summaries = tool(&server, "list_changesets", json!({ "limit": 2 }));
+    assert_eq!(summaries["head"], 2);
+    assert_eq!(summaries["next"], Value::Null);
+    assert_eq!(summaries["changesets"].as_array().unwrap().len(), 2);
+    assert!(summaries.to_string().len() < MAX_RESULT_BYTES);
+
+    let mut after = Value::Null;
+    for seq in 1..=2 {
+        let log = tool(
+            &server,
+            "list_changesets",
+            json!({ "after": after, "limit": 1 }),
+        );
+        let summary = &log["changesets"][0];
+        assert_eq!(summary, &summaries["changesets"][seq as usize - 1]);
+        let full = entry(&server, seq);
+        let expected = full["changeset"]["ops"].as_array().unwrap();
+        assert!(full["changeset"]["ops"].to_string().len() > MAX_RESULT_BYTES);
+        assert_eq!(summary["seq"], seq);
+        assert_eq!(summary["content_hash"], full["content_hash"]);
+        assert_eq!(summary["changeset"]["run"], full["changeset"]["run"]);
+        assert_eq!(summary["operation_count"], expected.len());
+        assert!(summary["changeset"].get("ops").is_none());
+        assert_eq!(summary["changeset"]["actor"], "engine");
+        assert_eq!(summary["started_by"], "agent:api");
+
+        let mut offset = 0;
+        let mut audited = Vec::new();
+        loop {
+            let page = tool(
+                &server,
+                "list_changeset_ops",
+                json!({ "seq": seq, "offset": offset, "limit": u64::MAX }),
+            );
+            assert!(page.to_string().len() < MAX_RESULT_BYTES);
+            assert_eq!(page["seq"], seq);
+            assert_eq!(page["offset"], offset);
+            let ops = page["ops"].as_array().unwrap();
+            assert!(!ops.is_empty() && ops.len() <= 1000);
+            audited.extend(ops.iter().cloned());
+            let Some(next) = page["next"].as_u64() else {
+                break;
+            };
+            assert_eq!(next, audited.len() as u64);
+            offset = next;
+        }
+        assert_eq!(&audited, expected, "operations at {seq}");
+        after = log["next"].clone();
+        assert_eq!(after, if seq == 1 { json!(seq) } else { Value::Null });
+    }
+    assert_eq!(
+        tool(
+            &server,
+            "list_changeset_ops",
+            json!({ "seq": 2, "offset": u64::MAX })
+        ),
+        json!({ "seq": 2, "offset": u64::MAX, "ops": [], "next": null })
+    );
+    refused(
+        &server,
+        "list_changeset_ops",
+        json!({ "seq": 3 }),
+        "not_found",
+    );
 }
 
 #[test]

@@ -12,13 +12,15 @@ mcp       http://0.0.0.0:7765/mcp
 
 ## How it works
 
-- **Each tool wraps an API call.** It runs the same handler as the matching path under `/v1`, so it returns what the API returns and fails where the API fails.
+- **Tools use the same store as the HTTP API.** Most run the same handler as the matching path under `/v1`.
 - **The server decides who the caller is.** `/mcp` accepts the same callers as `/v1`: a token, which writes as `agent:<name>`, a signed-in session, which writes as `user:<id>`, or an agent that signed in with OAuth, which writes as the person who approved it. No tool lets the caller name a different author.
 - **Changes carry a reason.** Tools that change identities or retract rows require a `reason`, which the log stores with the change. Loads, extractions and matches record who started them instead.
 - **It's stateless.** The transport is Streamable HTTP without sessions, and every response is one JSON message. Supported protocol revisions run from `2024-11-05` to `2026-07-28`, so clients with and without the `initialize` handshake both work.
 - **It's built in.** The protocol comes from `rmcp`, the official Rust SDK, compiled into the binary. There's nothing else to install.
 
 Failures come back as results the model can read, with `isError` set and the API's error as text.
+
+To audit changes, call `list_changesets` for summaries and operation counts. Pass `next` as `after` to continue. Use a summary's `seq` with `list_changeset_ops` to read the operations in order, passing `next` as `offset` to continue. Each tool returns a null `next` on its last page.
 
 ## Tokens
 

@@ -438,18 +438,7 @@ pub(crate) fn read_log_after(conn: &Connection, after: Seq, limit: u64) -> Resul
     )?;
     let mut rows = statement.query(params![after.0 as i64, limit.min(i64::MAX as u64) as i64])?;
     while let Some(row) = rows.next()? {
-        entries.push(LogEntry {
-            seq: Seq(row.get::<_, i64>(0)? as u64),
-            changeset: Changeset {
-                id: parse(&row.get::<_, String>(1)?)?,
-                base: Seq(row.get::<_, i64>(2)? as u64),
-                actor: parse(&row.get::<_, String>(3)?)?,
-                reason: row.get(4)?,
-                run: row.get::<_, Option<i64>>(5)?.map(|run| RunId(run as u64)),
-                ops: Vec::new(),
-            },
-            content_hash: ContentHash::from_stored(row.get(6)?),
-        });
+        entries.push(log_entry(row)?);
     }
     let Some(last) = entries.last().map(|entry| entry.seq) else {
         return Ok(entries);
@@ -464,15 +453,7 @@ pub(crate) fn read_log_after(conn: &Connection, after: Seq, limit: u64) -> Resul
     let mut rows = statement.query([after.0 as i64, last.0 as i64])?;
     while let Some(row) = rows.next()? {
         let seq = Seq(row.get::<_, i64>(0)? as u64);
-        let op = op_from_row(OpRow {
-            kind: row.get(1)?,
-            identity: row.get(2)?,
-            from_identity: row.get(3)?,
-            record: row.get(4)?,
-            other_record: row.get(5)?,
-            entity_type: row.get(6)?,
-            constraint_kind: row.get(7)?,
-        })?;
+        let op = log_op(row, 1)?;
         // Positions are dense, so an entry's index is its distance from the
         // first position read.
         let entry = (seq.0 as usize)
@@ -487,6 +468,65 @@ pub(crate) fn read_log_after(conn: &Connection, after: Seq, limit: u64) -> Resul
         entry.changeset.ops.push(op);
     }
     Ok(entries)
+}
+
+/// Reads the fields in the log row. Operations are held in their own rows.
+pub(crate) fn log_entry(row: &duckdb::Row<'_>) -> Result<LogEntry> {
+    Ok(LogEntry {
+        seq: Seq(row.get::<_, i64>(0)? as u64),
+        changeset: Changeset {
+            id: parse(&row.get::<_, String>(1)?)?,
+            base: Seq(row.get::<_, i64>(2)? as u64),
+            actor: parse(&row.get::<_, String>(3)?)?,
+            reason: row.get(4)?,
+            run: row.get::<_, Option<i64>>(5)?.map(|run| RunId(run as u64)),
+            ops: Vec::new(),
+        },
+        content_hash: ContentHash::from_stored(row.get(6)?),
+    })
+}
+
+/// Operations of a committed changeset in their original order.
+pub(crate) fn read_log_ops(
+    conn: &Connection,
+    seq: Seq,
+    offset: u64,
+    limit: u64,
+) -> Result<Vec<Op>> {
+    let position = i64::try_from(seq.0).map_err(|_| Error::UnknownChangeset(seq))?;
+    // The log is dense and append-only, and a commit writes its operations
+    // in the same transaction as its log position.
+    if seq == Seq::ZERO || seq > read_head(conn)? {
+        return Err(Error::UnknownChangeset(seq));
+    }
+    let Ok(offset) = i32::try_from(offset) else {
+        return Ok(Vec::new());
+    };
+    let mut statement = conn.prepare(
+        "SELECT kind, identity_id::VARCHAR, from_identity_id::VARCHAR,
+                record_id::VARCHAR, other_record_id::VARCHAR,
+                entity_type, constraint_kind
+         FROM spool.changeset_op WHERE seq = ? AND op_index >= ?
+         ORDER BY op_index LIMIT ?",
+    )?;
+    let mut rows = statement.query(params![position, offset, limit.min(i64::MAX as u64) as i64])?;
+    let mut ops = Vec::new();
+    while let Some(row) = rows.next()? {
+        ops.push(log_op(row, 0)?);
+    }
+    Ok(ops)
+}
+
+fn log_op(row: &duckdb::Row<'_>, at: usize) -> Result<Op> {
+    op_from_row(OpRow {
+        kind: row.get(at)?,
+        identity: row.get(at + 1)?,
+        from_identity: row.get(at + 2)?,
+        record: row.get(at + 3)?,
+        other_record: row.get(at + 4)?,
+        entity_type: row.get(at + 5)?,
+        constraint_kind: row.get(at + 6)?,
+    })
 }
 
 pub(crate) fn read_snapshot(conn: &Connection) -> Result<Snapshot> {

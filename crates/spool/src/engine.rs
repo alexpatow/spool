@@ -26,8 +26,8 @@ use crate::features;
 use crate::following::following;
 use crate::load::{self, LoadReport};
 use crate::lookup::{
-    self, HistoryEntry, IdentityFilter, IdentitySummary, IdentityView, LogSort, LoggedChangeset,
-    RecordEntry, RecordFilter, StoreInfo,
+    self, ChangesetSummary, HistoryEntry, IdentityFilter, IdentitySummary, IdentityView, LogSort,
+    LoggedChangeset, RecordEntry, RecordFilter, StoreInfo,
 };
 use crate::metrics::{self, Churn, IdStability, Metrics};
 use crate::order::Sort;
@@ -1229,6 +1229,25 @@ impl Engine {
     /// decided it; this adds who asked.
     pub fn logged_after(&self, after: Seq, limit: u64) -> Result<Vec<LoggedChangeset>> {
         self.read(|conn| lookup::logged(conn, store::read_log_after(conn, after, limit)?))
+    }
+
+    /// The log head and up to `limit` summaries of changesets after
+    /// `after`, ordered by position through that head.
+    pub fn changeset_summaries(
+        &self,
+        after: Seq,
+        limit: u64,
+    ) -> Result<(Seq, Vec<ChangesetSummary>)> {
+        self.read(|conn| {
+            let head = store::read_head(conn)?;
+            Ok((head, lookup::changeset_summaries(conn, after, head, limit)?))
+        })
+    }
+
+    /// At most `limit` operations starting at the zero-based `offset` in
+    /// the committed changeset at `seq`.
+    pub fn changeset_ops(&self, seq: Seq, offset: u64, limit: u64) -> Result<Vec<Op>> {
+        self.read(|conn| store::read_log_ops(conn, seq, offset, limit))
     }
 
     /// At most `limit` committed changesets in another order than the
