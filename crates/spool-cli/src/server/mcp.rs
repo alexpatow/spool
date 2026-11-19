@@ -6,11 +6,10 @@
 //! protocol and its transport are the `rmcp` crate's. What is here is the
 //! list of tools and what each one does.
 //!
-//! A tool is a call of the API. It runs the handler the path under `/v1`
-//! runs, as the caller the request came from, so a tool can do nothing the
-//! API refuses and what it changes is recorded under the same name: the
-//! agent whose token the client sends, or the person signed in. Nothing in a
-//! tool's arguments says who is calling.
+//! Tools run as the caller the request came from, and use the same handlers
+//! as the paths under `/v1` where they have one. What a tool changes is
+//! recorded under the agent whose token the client sends or the person
+//! signed in. Nothing in a tool's arguments says who is calling.
 //!
 //! The endpoint keeps nothing between requests. Each one is authorized on
 //! its own, a tool call is answered in the response to it, and there is no
@@ -37,12 +36,12 @@ use rmcp::{ErrorData, ServerHandler};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
-use serde_json::Value;
+use serde_json::{Value, json};
 use spool::core::{EntityType, IdentityId, Op, RecordId, Seq};
 use spool::{NewDocument, ReviewStatus, StrategyRef};
 
 use super::{
-    ApiError, ApiResult, App, Caller, ConstraintsQuery, ExplainQuery, IdentitiesQuery, LogQuery,
+    ApiError, ApiResult, App, Caller, ConstraintsQuery, ExplainQuery, IdentitiesQuery,
     RecordsQuery, ReviewQuery, ServerOptions, WaitQuery,
 };
 use crate::api::{
@@ -73,6 +72,10 @@ const MAX_REFUSAL_BYTES: usize = 4 * 1024;
 
 /// How many entries a list returns when the call does not say.
 const DEFAULT_LIMIT: u64 = 20;
+
+/// An operation has at most three UUIDs and no free text, so a thousand
+/// fit in a tool result even when every operation uses all three.
+const MAX_LOG_OPS: u64 = 1_000;
 
 /// The most IDs `mint_identity_ids` mints in one call.
 const MAX_MINTED: u32 = 100;
@@ -650,8 +653,20 @@ struct Log {
     /// Only changesets after this log position. Left out, from the start.
     #[serde(default)]
     after: Option<Seq>,
-    /// How many to return, 20 unless given. A changeset a match run
-    /// committed can hold very many operations.
+    /// Maximum summaries to return, 20 unless given and 1000 at most.
+    #[serde(default)]
+    limit: Option<u64>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct LogOps {
+    /// The committed changeset's log position, `seq` from `list_changesets`.
+    seq: Seq,
+    /// Zero-based operation offset. Omit for the first page, then pass back `next`.
+    #[serde(default)]
+    offset: Option<u64>,
+    /// Maximum operations to return, 20 unless given and 1000 at most.
     #[serde(default)]
     limit: Option<u64>,
 }
@@ -914,10 +929,17 @@ static TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
             "list_changesets",
             "List changes",
             Effect::Reads,
-            "The log of committed changesets, oldest first, after a position: who made each, \
-             why, and its operations. A changeset a run made is the engine's (`actor` is \
-             `engine`), and `started_by` says who asked for the run. `head` is the position \
-             of the last one. Use this to see what changed since a position you read before.",
+            "Summaries of committed changesets, oldest first. Each gives its log position `seq`, \
+             author, reason, run, and `operation_count`. `started_by` says who asked for a run. \
+             `head` is the position of the latest commit. Pass `next` as `after` until `next` is \
+             null. Use `list_changeset_ops` with a summary's `seq` to read its operations.",
+        ),
+        tool::<LogOps>(
+            "list_changeset_ops",
+            "List changeset operations",
+            Effect::Reads,
+            "Operations of one committed changeset in their original order. Give its `seq` from \
+             `list_changesets`. Pass `next` as `offset` until `next` is null.",
         ),
         tool::<OneRun>(
             "get_run",
@@ -1063,6 +1085,66 @@ static TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
 });
 
 impl Tools {
+    async fn list_changesets(&self, asked: Log) -> ApiResult {
+        let after = asked.after.unwrap_or(Seq::ZERO);
+        let limit = super::page(Some(asked.limit.unwrap_or(DEFAULT_LIMIT)));
+        let (head, summaries) = super::engine(&self.app, move |engine| {
+            engine.changeset_summaries(after, limit)
+        })
+        .await?;
+        // Reserve space for the envelope and the longest possible cursor.
+        let mut room =
+            MAX_RESULT_BYTES - size(&json!({ "changesets": [], "head": head, "next": u64::MAX }));
+        let mut changesets = Vec::new();
+        let mut next = None;
+        for summary in summaries {
+            let mut entry = json!({
+                "seq": summary.seq,
+                "changeset": {
+                    "id": summary.id,
+                    "base": summary.base,
+                    "actor": summary.actor,
+                    "reason": summary.reason,
+                    "run": summary.run,
+                },
+                "content_hash": summary.content_hash,
+                "started_by": summary.started_by,
+                "operation_count": summary.operation_count,
+            });
+            let mut left_out = Vec::new();
+            prune(entry.as_object_mut().unwrap(), "", true, &mut left_out);
+            if !left_out.is_empty() {
+                entry["left_out"] = json!(left_out);
+            }
+            // Also allow a byte for the comma that separates entries.
+            let takes = size(&entry) + 1;
+            if takes > room {
+                break;
+            }
+            room -= takes;
+            next = (summary.seq < head).then_some(summary.seq);
+            changesets.push(entry);
+        }
+        super::ok(json!({ "changesets": changesets, "head": head, "next": next }))
+    }
+
+    async fn list_changeset_ops(&self, asked: LogOps) -> ApiResult {
+        let seq = asked.seq;
+        let offset = asked.offset.unwrap_or(0);
+        let limit = asked.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LOG_OPS);
+        let mut ops = super::engine(&self.app, move |engine| {
+            engine.changeset_ops(seq, offset, limit + 1)
+        })
+        .await?;
+        let next = if ops.len() as u64 > limit {
+            ops.pop();
+            Some(offset + limit)
+        } else {
+            None
+        };
+        super::ok(json!({ "seq": seq, "offset": offset, "ops": ops, "next": next }))
+    }
+
     /// The strategy a match run is asked for by name, which has to be one
     /// the server runs. The API takes any other name as that of a strategy
     /// the caller runs, and starts a run that waits for its judgements;
@@ -1199,16 +1281,8 @@ impl Tools {
                 };
                 super::list_constraints(app, Ok(Query(query))).await
             }
-            "list_changesets" => {
-                let asked: Log = arguments(tool, given)?;
-                let query = LogQuery {
-                    after: asked.after.map(|seq| seq.0),
-                    limit: limit(asked.limit),
-                    sort: None,
-                    order: None,
-                };
-                super::list_changesets(app, Ok(Query(query))).await
-            }
+            "list_changesets" => self.list_changesets(arguments(tool, given)?).await,
+            "list_changeset_ops" => self.list_changeset_ops(arguments(tool, given)?).await,
             "get_run" => {
                 let asked: OneRun = arguments(tool, given)?;
                 let query = WaitQuery {

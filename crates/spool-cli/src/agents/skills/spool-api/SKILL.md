@@ -61,7 +61,9 @@ claude mcp add --transport http spool http://127.0.0.1:7765/mcp
 codex mcp add spool --url http://127.0.0.1:7765/mcp
 ```
 
-Tools: `describe_store`, `search_identities`, `get_identity`, `get_identity_history`, `search_records`, `get_record`, `explain_pair`, `list_review_items`, `get_review_case`, `list_constraints`, `list_changesets`, `get_run`, `mint_identity_ids`; and the changes `load_rows`, `load_documents`, `run_extraction`, `run_match`, `retract_rows`, `commit_changeset`, `split_identity`, `undo_changeset`, `dismiss_review_item`. Changes need a `reason`. `load_rows` refuses a changed row unless `"replace": true`. An agent cannot approve drafts, make tokens or change project files over MCP.
+Tools: `describe_store`, `search_identities`, `get_identity`, `get_identity_history`, `search_records`, `get_record`, `explain_pair`, `list_review_items`, `get_review_case`, `list_constraints`, `list_changesets`, `list_changeset_ops`, `get_run`, `mint_identity_ids`; and the changes `load_rows`, `load_documents`, `run_extraction`, `run_match`, `retract_rows`, `commit_changeset`, `split_identity`, `undo_changeset`, `dismiss_review_item`. Changes need a `reason`. `load_rows` refuses a changed row unless `"replace": true`. An agent cannot approve drafts, make tokens or change project files over MCP.
+
+`list_changesets` gives summaries with operation counts. Pass `next` as `after` to read the next page. To inspect a changeset, pass its `seq` to `list_changeset_ops`, then pass `next` as `offset` until it is null.
 
 ## Deploy
 

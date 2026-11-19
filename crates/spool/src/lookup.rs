@@ -9,15 +9,15 @@ use std::collections::BTreeMap;
 use duckdb::{Connection, params};
 use serde::{Deserialize, Serialize};
 use spool_core::{
-    Actor, ChangesetId, DocumentId, EntityType, IdentityId, LogEntry, Op, RecordId, RunId, Seq,
-    StateError,
+    Actor, ChangesetId, ContentHash, DocumentId, EntityType, IdentityId, LogEntry, Op, RecordId,
+    RunId, Seq, StateError,
 };
 
 use crate::error::Result;
 use crate::order::{Key, Keyed, Sort, called, names_table};
 use crate::project::{Extractor, FeatureColumn, Manifest, Strategy};
 use crate::schema;
-use crate::store::{OpRow, op_from_row, parse};
+use crate::store::{OpRow, log_entry, op_from_row, parse};
 use crate::time::rfc3339;
 
 /// A record as it was loaded, and the identity it belongs to now.
@@ -363,6 +363,20 @@ pub struct LoggedChangeset {
     /// match run and for rows that come back is the engine.
     #[serde(default)]
     pub started_by: Option<Actor>,
+}
+
+/// A committed changeset's metadata and operation count.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChangesetSummary {
+    pub seq: Seq,
+    pub id: ChangesetId,
+    pub base: Seq,
+    pub actor: Actor,
+    pub reason: Option<String>,
+    pub run: Option<RunId>,
+    pub content_hash: ContentHash,
+    pub started_by: Option<Actor>,
+    pub operation_count: u64,
 }
 
 /// What a store holds.
@@ -1227,6 +1241,59 @@ pub(crate) fn logged(conn: &Connection, entries: Vec<LogEntry>) -> Result<Vec<Lo
     ) else {
         return Ok(Vec::new());
     };
+    let mut started = started_by(conn, first, last)?;
+    Ok(entries
+        .into_iter()
+        .map(|entry| LoggedChangeset {
+            started_by: started.remove(&entry.seq),
+            entry,
+        })
+        .collect())
+}
+
+pub(crate) fn changeset_summaries(
+    conn: &Connection,
+    after: Seq,
+    head: Seq,
+    most: u64,
+) -> Result<Vec<ChangesetSummary>> {
+    if after >= head {
+        return Ok(Vec::new());
+    }
+    let mut statement = conn.prepare(
+        "WITH page AS (
+           SELECT * FROM spool.changeset WHERE seq > $1 AND seq <= $2 ORDER BY seq LIMIT $3
+         )
+         SELECT c.seq, c.changeset_id::VARCHAR, c.base_seq, c.actor, c.reason, c.run_id,
+                c.content_hash, (SELECT count(*) FROM spool.changeset_op o WHERE o.seq = c.seq)
+         FROM page c ORDER BY c.seq",
+    )?;
+    let mut rows = statement.query(params![after.0 as i64, head.0 as i64, limit(most)])?;
+    let mut summaries = Vec::new();
+    while let Some(row) = rows.next()? {
+        let entry = log_entry(row)?;
+        summaries.push(ChangesetSummary {
+            seq: entry.seq,
+            id: entry.changeset.id,
+            base: entry.changeset.base,
+            actor: entry.changeset.actor,
+            reason: entry.changeset.reason,
+            run: entry.changeset.run,
+            content_hash: entry.content_hash,
+            started_by: None,
+            operation_count: row.get::<_, i64>(7)? as u64,
+        });
+    }
+    if let (Some(first), Some(last)) = (summaries.first(), summaries.last()) {
+        let mut started = started_by(conn, first.seq, last.seq)?;
+        for summary in &mut summaries {
+            summary.started_by = started.remove(&summary.seq);
+        }
+    }
+    Ok(summaries)
+}
+
+fn started_by(conn: &Connection, first: Seq, last: Seq) -> Result<BTreeMap<Seq, Actor>> {
     // A changeset names the reconcile run that drafted it. A retraction and
     // a load of rows that came back commit one that names no run, and the
     // run's report names the changeset instead. Those runs are the ones
@@ -1256,13 +1323,7 @@ pub(crate) fn logged(conn: &Connection, entries: Vec<LogEntry>) -> Result<Vec<Lo
             parse(&row.get::<_, String>(1)?)?,
         );
     }
-    Ok(entries
-        .into_iter()
-        .map(|entry| LoggedChangeset {
-            started_by: started.remove(&entry.seq),
-            entry,
-        })
-        .collect())
+    Ok(started)
 }
 
 /// The sources of a manifest, each with the entity types that read it.
