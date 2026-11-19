@@ -3,7 +3,7 @@ title: Command line
 description: Every spool command, what it takes and what it prints, with output formats and exit codes.
 ---
 
-`spool` is one binary. Three commands run a server. The rest work on a project directory or call a running server over HTTP. `spool <command> -h` lists a command's options, and `spool <command> --help` gives the full description. The [command reference](/docs/cli-reference) lists every option, generated from the binary's help.
+`spool` is one binary. Three commands run a server. The rest work on a project directory or call a running server over HTTP. `spool <command> -h` lists a command's options, and `spool <command> --help` gives the full description. The [command reference](/docs/cli-reference) lists every option, generated from the binary's help. After install, `man spool` says the same.
 
 | Command | What it does | Works on |
 | --- | --- | --- |
@@ -305,7 +305,7 @@ spool show
 
 ```text title="Output"
 server     http://127.0.0.1:7765
-api        v1, engine 0.1.0, store format 12
+api        v1, engine 0.2.0, store format 12
 manifest   b6dff33d6c0977f4afb2497792bcaa9785e8b865994fa5c94eb9761f57a6e0a7
 head       log position 1
 documents  1
@@ -637,7 +637,7 @@ It deletes at most three things, and only if DuckDB created them: the write-ahea
 
 `spool update-skills [<dir>] [--force]`
 
-Updates the coding-agent files `spool init` wrote to match the installed `spool`: the skills in `.agents/skills/`, their symlinks in `.claude/skills/`, Spool's section of `AGENTS.md`, and a `CLAUDE.md` if there isn't one. It ships in the release after 0.1.0. Run it after installing a new release. To update `spool` itself, rerun the install script.
+Updates the coding-agent files `spool init` wrote to match the installed `spool`: the skills in `.agents/skills/`, their symlinks in `.claude/skills/`, Spool's section of `AGENTS.md`, and a `CLAUDE.md` if there isn't one. Run it after installing a new release. To update `spool` itself, rerun the install script.
 
 Files you've edited since Spool wrote them are kept and listed, and `--force` replaces them too. Spool's section of `AGENTS.md` sits between two marker lines, and the rest of the file is never touched. [Coding agents](/docs/agents) explains how edits are detected.
 
@@ -704,7 +704,7 @@ Runs a benchmark scenario: loads each step's files, matches, and scores the iden
 
 `spool completions <shell>`
 
-Prints a completion script for `bash`, `zsh`, `fish`, `powershell` or `elvish`. To install one:
+Prints a completion script for `bash`, `zsh`, `fish`, `powershell` or `elvish`. The install script links the bash, zsh and fish scripts where those shells look, and for zsh says what to add to `~/.zshrc`. To put one somewhere else:
 
 {/* sample: skip writes into the reader's home directory */}
 

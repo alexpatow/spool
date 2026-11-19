@@ -18,7 +18,7 @@ export function llmsIndex(): string {
     `- All pages in one file: ${absoluteUrl("/llms-full.txt")}`,
     `- Source code: ${site.repository}`,
     "",
-    "These pages document version 0.1.0, which Getting started installs from the release.",
+    `These pages document version ${site.version}, which Getting started installs from the release.`,
   ];
 
   for (const group of navGroups()) {

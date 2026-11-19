@@ -3,15 +3,15 @@ resolver = "3"
 members = ["crates/spool-core", "crates/spool", "crates/spool-cli"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT"
 repository = "https://github.com/alexpatow/spool"
 
 [workspace.dependencies]
-spool-core = { path = "crates/spool-core", version = "0.1.0" }
-spool = { path = "crates/spool", version = "0.1.0" }
+spool-core = { path = "crates/spool-core", version = "0.2.0" }
+spool = { path = "crates/spool", version = "0.2.0" }
 
 # The server's HTTP stack. Only spool-cli depends on it. http-body is the
 # trait of a request's body, which the server wraps to read what was left of one.

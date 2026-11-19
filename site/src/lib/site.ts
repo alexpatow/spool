@@ -11,7 +11,7 @@ export const site = {
     "Spool pulls records out of text and rows, decides which are the same real-world thing, and gives each thing an ID that stays the same as more arrive.",
   // What `spool --version` prints. The samples check compares the two on the
   // Getting started page.
-  version: "0.1.0",
+  version: "0.2.0",
   licence: "MIT",
   repository: "https://github.com/alexpatow/spool",
   /** The X account a shared page names as its site and its author. Spool has none of its own. */

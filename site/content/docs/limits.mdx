@@ -1,6 +1,6 @@
 ---
 title: Limits
-description: What Spool is built for and what it isn't, the trade-off behind stable IDs, what 0.1.0 doesn't include, and the sizes it's benchmarked at.
+description: What Spool is built for and what it isn't, the trade-off behind stable IDs, what 0.2.0 doesn't include, and the sizes it's benchmarked at.
 ---
 
 Spool keeps entity IDs stable while data keeps arriving, on one machine. That focus rules some things out.
@@ -27,7 +27,7 @@ A match never merges or splits identities that exist. That's what makes an ID sa
 
 [Matching](/docs/concepts/matching#the-cost-of-ids-that-stay) shows the first two with rows.
 
-## Not in 0.1.0
+## Not in 0.2.0
 
 - **Platforms.** Linux on x86-64 or arm64 with glibc 2.34+, macOS on Apple silicon, and a container image. There are no Windows, Intel Mac or Alpine builds, and no Homebrew, apt or Cargo packages.
 - **Connectors.** `spool load` reads CSV. The API takes CSV, JSON and Arrow. Nothing reads a database or a warehouse directly.
