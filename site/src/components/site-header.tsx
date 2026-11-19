@@ -28,7 +28,9 @@ export function SiteHeader() {
               variant="ghost"
               size="sm"
               nativeButton={false}
+              role="link"
               render={<Link href={link.href} />}
+              style={link.href === "/docs" ? styles.docsLink : styles.secondaryLink}
             >
               {link.label}
             </Button>
@@ -65,10 +67,13 @@ const styles = stylex.create({
     display: "flex",
   },
   nav: {
-    display: {
-      default: "flex",
-      [breakpoints.mobile]: "none",
-    },
+    display: "flex",
     flexGrow: 1,
+  },
+  docsLink: {
+    minHeight: { default: 0, [breakpoints.mobile]: 44 },
+  },
+  secondaryLink: {
+    display: { default: "inline-flex", [breakpoints.mobile]: "none" },
   },
 });
