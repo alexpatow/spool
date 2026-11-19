@@ -1364,6 +1364,34 @@ def find(document):
 
 #[test]
 #[ignore = "runs uv"]
+fn a_failure_or_a_mention_returned_on_its_own_is_one_result() {
+    let news = News::new();
+    news.extractor(
+        "names.py",
+        r#"
+from spool import extractor
+
+@extractor
+def find(document):
+    if document.key == "b":
+        return document.failed("model unavailable")
+    start, end = document.find("Acme Inc")[0]
+    return document.mention("company", start, end, name="Acme Inc")
+"#,
+    );
+    news.add(&[("a", FIRST), ("b", SECOND)]);
+    let report = news.extract("names").unwrap();
+    assert_eq!(report.mentions, 1, "{report:?}");
+    let failed: Vec<(&str, &str)> = report
+        .failed
+        .iter()
+        .map(|failed| (failed.key.as_str(), failed.reason.as_str()))
+        .collect();
+    assert_eq!(failed, [("b", "model unavailable")]);
+}
+
+#[test]
+#[ignore = "runs uv"]
 fn a_document_that_cannot_be_read_is_not_tried_again_in_the_same_pass() {
     let news = News::new();
     news.extractor(

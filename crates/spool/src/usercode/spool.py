@@ -564,7 +564,7 @@ def extractor(function):
             # given: an exception half way fails the document, and only it.
             mine = []
             try:
-                for mention in function(document=document, **given) or ():
+                for mention in _results(function(document=document, **given)):
                     if mention is None:
                         continue
                     # A mention made by hand need not say which document it is in.
@@ -579,9 +579,19 @@ def extractor(function):
     else:
         if "documents" in names:
             given["documents"] = task.documents
-        found = [mention for mention in function(**given) or () if mention is not None]
+        found = [mention for mention in _results(function(**given)) if mention is not None]
     task.write(found)
     return function
+
+
+def _results(returned):
+    """What an extractor's function gave, as rows: nothing, one mention or
+    failure returned on its own, or any number of them."""
+    if returned is None:
+        return ()
+    if isinstance(returned, dict):
+        return (returned,)
+    return returned
 
 
 _MENTION = ("document_id", "entity_type", "start", "end", "attributes")
