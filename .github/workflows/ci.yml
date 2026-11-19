@@ -6,22 +6,39 @@ name: CI
 # anything else as well starts them all. A test that comes to read one of
 # them must take it off both lists, which are the same. `README.md` here is
 # the one at the root: a crate's or a package's is not on the lists.
+#
+# The studio is built from the site's tokens, themes and mark, and its test
+# checks that its copies of them are the site's: those files start the jobs.
+# A later pattern wins over an earlier one, and files whose names begin
+# with a dot, such as this one, are named on their own.
 on:
   pull_request:
-    paths-ignore:
-      - "docs/**"
-      - "site/**"
-      - ".github/workflows/site.yml"
-      - "README.md"
-      - "LICENSE"
+    paths:
+      - "**"
+      - ".*"
+      - ".*/**"
+      - "!docs/**"
+      - "!site/**"
+      - "site/src/styles/shelf/**"
+      - "site/src/components/brand.tsx"
+      - "site/src/app/icon.svg"
+      - "!.github/workflows/site.yml"
+      - "!README.md"
+      - "!LICENSE"
   push:
     branches: [main]
-    paths-ignore:
-      - "docs/**"
-      - "site/**"
-      - ".github/workflows/site.yml"
-      - "README.md"
-      - "LICENSE"
+    paths:
+      - "**"
+      - ".*"
+      - ".*/**"
+      - "!docs/**"
+      - "!site/**"
+      - "site/src/styles/shelf/**"
+      - "site/src/components/brand.tsx"
+      - "site/src/app/icon.svg"
+      - "!.github/workflows/site.yml"
+      - "!README.md"
+      - "!LICENSE"
 
 permissions:
   contents: read

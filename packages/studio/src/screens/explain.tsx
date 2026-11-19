@@ -617,7 +617,7 @@ const styles = stylex.create({
     flexWrap: "wrap",
   },
   joins: {
-    borderRadius: radius.full,
+    borderRadius: radius.sm,
     paddingBlock: "0.0625rem",
     paddingInline: spacing["2"],
     backgroundColor: colors.muted,

@@ -16,8 +16,6 @@ export const tones = stylex.defineVars({
   badSurface: "oklch(0.965 0.025 27)",
   badMark: "oklch(0.63 0.22 27)",
   plainMark: "#a3a3a3",
-  /** Links: the one colour that is not a state. */
-  link: "oklch(0.45 0.16 262)",
   /** Where a source's records are told apart from another's. */
   source1: "oklch(0.62 0.17 255)",
   source2: "oklch(0.68 0.16 50)",

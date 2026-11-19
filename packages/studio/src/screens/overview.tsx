@@ -21,7 +21,7 @@ import {
 import { count } from "../format.ts";
 import { useLoad } from "../hooks.ts";
 import { href } from "../router.ts";
-import { colors, radius, spacing, typography } from "../styles/shelf/tokens.stylex";
+import { colors, display, linen, radius, spacing, typography } from "../styles/shelf/tokens.stylex";
 import { tones } from "../styles/tones.stylex";
 import { useCalled, Who } from "../who.tsx";
 
@@ -287,11 +287,13 @@ const styles = stylex.create({
     textDecorationLine: "none",
   },
   number: {
-    fontSize: "1.5rem",
-    fontVariantNumeric: "tabular-nums",
-    fontWeight: typography.fontWeightSemibold,
-    letterSpacing: "-0.02em",
-    lineHeight: "2rem",
+    fontFamily: display.fontFamily,
+    fontSize: "1.875rem",
+    fontVariantNumeric: "tabular-nums lining-nums",
+    fontVariationSettings: '"opsz" 36',
+    fontWeight: linen.displayWeight,
+    letterSpacing: display.tracking,
+    lineHeight: "2.25rem",
   },
   waits: {
     color: tones.waits,

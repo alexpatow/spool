@@ -286,9 +286,12 @@ const styles = stylex.create({
     fontWeight: typography.fontWeightMedium,
   },
   link: {
-    color: tones.link,
+    color: colors.foreground,
     fontWeight: typography.fontWeightMedium,
-    textDecorationLine: { default: "none", ":hover": "underline" },
+    textDecorationColor: { default: colors.ring, ":hover": colors.foreground },
+    textDecorationLine: "underline",
+    textDecorationThickness: "1px",
+    textUnderlineOffset: "0.2em",
   },
   document: {
     margin: 0,

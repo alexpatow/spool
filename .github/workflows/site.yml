@@ -1,8 +1,9 @@
 name: Site
 
-# The website and documentation in `site/`. Nothing else in the repository
-# reads that directory, and the jobs in ci.yml leave it out, so a change to
-# the site alone starts this workflow and no other.
+# The website and documentation in `site/`. The jobs in ci.yml leave it out,
+# so a change to the site alone starts this workflow and no other, except a
+# change to the tokens, themes, mark or icon the studio is built from, which
+# starts ci.yml as well.
 on:
   pull_request:
     paths:

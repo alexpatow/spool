@@ -1,8 +1,8 @@
-// The dark page: Shelf's colours for it, and the studio's own tones.
+// The dark page: the site's colours for it, and the studio's own tones.
 
 import * as stylex from "@stylexjs/stylex";
 
-import { darkTheme } from "./shelf/themes";
+import { darkLinen, darkTheme } from "./shelf/themes";
 import { tones } from "./tones.stylex";
 
 const darkTones = stylex.createTheme(tones, {
@@ -16,7 +16,6 @@ const darkTones = stylex.createTheme(tones, {
   badSurface: "oklch(0.27 0.06 25)",
   badMark: "oklch(0.68 0.19 25)",
   plainMark: "#737373",
-  link: "oklch(0.78 0.11 255)",
   source1: "oklch(0.7 0.15 255)",
   source2: "oklch(0.74 0.14 55)",
   source3: "oklch(0.72 0.14 160)",
@@ -27,7 +26,7 @@ const darkTones = stylex.createTheme(tones, {
 
 export type Theme = "light" | "dark";
 
-const dark = [darkTheme, darkTones]
+const dark = [darkTheme, darkLinen, darkTones]
   .flatMap((theme) => (stylex.props(theme).className ?? "").split(" "))
   .filter(Boolean);
 

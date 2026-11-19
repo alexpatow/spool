@@ -1,3 +1,6 @@
+// Copied from site/src/styles/shelf/conditions.stylex.ts by packages/studio/scripts/build.ts.
+// Do not edit: change the site's file and run `bun run build` in packages/studio.
+
 import * as stylex from "@stylexjs/stylex";
 
 /**

@@ -33,29 +33,39 @@ const FONT: &str = "font/woff2";
 
 /// Each file of the studio, with the path it is served at. The page names
 /// the others from the root.
-const SOURCES: [(&str, &str, &[u8]); 7] = [
+const SOURCES: [(&str, &str, &[u8]); 9] = [
     ("/", HTML, include_bytes!("studio/index.html")),
     ("/studio.js", SCRIPT, include_bytes!("studio/studio.js")),
     ("/studio.css", STYLE, include_bytes!("studio/studio.css")),
     (
-        "/geist-latin-wght-normal.woff2",
+        "/hanken-grotesk-latin-wght-normal.woff2",
         FONT,
-        include_bytes!("studio/geist-latin-wght-normal.woff2"),
+        include_bytes!("studio/hanken-grotesk-latin-wght-normal.woff2"),
     ),
     (
-        "/geist-latin-ext-wght-normal.woff2",
+        "/hanken-grotesk-latin-ext-wght-normal.woff2",
         FONT,
-        include_bytes!("studio/geist-latin-ext-wght-normal.woff2"),
+        include_bytes!("studio/hanken-grotesk-latin-ext-wght-normal.woff2"),
     ),
     (
-        "/geist-mono-latin-wght-normal.woff2",
+        "/newsreader-latin-opsz-normal.woff2",
         FONT,
-        include_bytes!("studio/geist-mono-latin-wght-normal.woff2"),
+        include_bytes!("studio/newsreader-latin-opsz-normal.woff2"),
     ),
     (
-        "/geist-mono-latin-ext-wght-normal.woff2",
+        "/newsreader-latin-ext-opsz-normal.woff2",
         FONT,
-        include_bytes!("studio/geist-mono-latin-ext-wght-normal.woff2"),
+        include_bytes!("studio/newsreader-latin-ext-opsz-normal.woff2"),
+    ),
+    (
+        "/commit-mono-latin-400-normal.woff2",
+        FONT,
+        include_bytes!("studio/commit-mono-latin-400-normal.woff2"),
+    ),
+    (
+        "/commit-mono-latin-700-normal.woff2",
+        FONT,
+        include_bytes!("studio/commit-mono-latin-700-normal.woff2"),
     ),
 ];
 
