@@ -1405,7 +1405,9 @@ fn lists_are_sorted_as_the_query_says_and_read_in_pages_in_that_order() {
     // Who did something is sorted by what they are called, which the
     // server knows and the store does not.
     server.get("/v1/runs?sort=started_by").expect(200);
-    server.get("/v1/changesets?sort=actor&order=desc").expect(200);
+    server
+        .get("/v1/changesets?sort=actor&order=desc")
+        .expect(200);
 
     // The log, newest first, a page at a time after a position.
     let head = server.read("/v1/info")["store"]["head"].as_u64().unwrap();
