@@ -184,7 +184,12 @@ fn a_preview_shows_every_kind_of_change_and_changes_nothing() {
         ]
     );
     assert_eq!(thing.changes_total, 4);
-    assert!(thing.changes.windows(2).all(|pair| pair[0].records >= pair[1].records));
+    assert!(
+        thing
+            .changes
+            .windows(2)
+            .all(|pair| pair[0].records >= pair[1].records)
+    );
 
     // The split keeps the ID with the larger side.
     let split = change_of(wilson);
@@ -255,9 +260,18 @@ fn the_detail_of_a_change_names_each_record_and_where_it_goes() {
         .collect();
     assert_eq!(
         moves,
-        [("1".to_owned(), 0), ("3".to_owned(), 0), ("2".to_owned(), 1)]
+        [
+            ("1".to_owned(), 0),
+            ("3".to_owned(), 0),
+            ("2".to_owned(), 1)
+        ]
     );
-    assert!(detail.records.iter().all(|record| record.from == Some(wilson)));
+    assert!(
+        detail
+            .records
+            .iter()
+            .all(|record| record.from == Some(wilson))
+    );
     assert_eq!(detail.records[0].label.as_deref(), Some("wilson"));
 
     // An identity that does not change has no detail.
@@ -314,7 +328,10 @@ fn applying_makes_the_identities_what_the_preview_showed() {
     for key in ["R", "S", "T", "X", "Y", "Z"] {
         assert_eq!(identity(&engine, "shop", key), None, "shop:{key}");
     }
-    assert_ne!(identity(&engine, "shop", "O1"), identity(&engine, "shop", "O2"));
+    assert_ne!(
+        identity(&engine, "shop", "O1"),
+        identity(&engine, "shop", "O2")
+    );
     assert!(identity(&engine, "shop", "O1").is_some());
     let constraints = engine.constraints(&Default::default()).unwrap();
     assert_eq!(constraints.len(), 2);
@@ -325,9 +342,7 @@ fn applying_makes_the_identities_what_the_preview_showed() {
             .iter()
             .any(|entry| [entry.constraint.a, entry.constraint.b] == pair)
     );
-    let open = engine
-        .review_items(&spool::ReviewFilter::open())
-        .unwrap();
+    let open = engine.review_items(&spool::ReviewFilter::open()).unwrap();
     assert_eq!(open.len(), 2);
     assert_eq!(thing.review.len(), 2);
 
@@ -504,7 +519,11 @@ fn records_taken_back_have_no_part_in_it() {
 fn every_type_is_recomputed_unless_one_is_named() {
     let other = EntityTypeSource {
         name: "gadget".to_owned(),
-        entity: entity(Some("name"), &[("name", "name"), ("code", "code")], &SOURCES),
+        entity: entity(
+            Some("name"),
+            &[("name", "name"), ("code", "code")],
+            &SOURCES,
+        ),
         ..thing()
     };
     let engine = Engine::open_in_memory(Options::seeded(1)).unwrap();

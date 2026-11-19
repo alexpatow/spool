@@ -645,6 +645,38 @@ impl View<'_> {
                 rows.push(("stored by", format!("load run {load_run}")));
             }
         }
+        if let Some(report) = &run.recompute {
+            let summary = &report.summary;
+            rows.push((
+                "recompute",
+                format!(
+                    "every record judged again and applied: {} in {} identities, from {}",
+                    count(summary.records, "record"),
+                    summary.identities_after,
+                    summary.identities_now
+                ),
+            ));
+            rows.push((
+                "moved",
+                format!(
+                    "{}, {} placed, {} left an identity to wait for review",
+                    count(summary.records_moved, "record"),
+                    summary.records_placed,
+                    summary.records_unplaced
+                ),
+            ));
+            rows.push(("reconciled by", format!("run {}", report.reconcile_run)));
+            rows.push((
+                "committed",
+                match &report.committed {
+                    Some(committed) => format!(
+                        "log position {}, changeset {}",
+                        committed.seq, committed.changeset
+                    ),
+                    None => "nothing to commit".to_owned(),
+                },
+            ));
+        }
         let mut suggestions = Vec::new();
         if let Some(report) = &run.resolution {
             rows.push((

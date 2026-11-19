@@ -4,8 +4,8 @@
 use serde_json::json;
 use spool::core::IdentityId;
 use spool::{
-    After, Change, ChangeDetail, Contradiction, Fate, RecomputeApplied,
-    RecomputeReport, TypeRecompute,
+    After, Change, ChangeDetail, Contradiction, Fate, RecomputeApplied, RecomputeReport,
+    TypeRecompute,
 };
 
 use super::remote::{self, Remote, print_json, typed};
@@ -77,6 +77,23 @@ pub fn run(arguments: &[String]) -> Result<(), Failure> {
     )?;
     let remote = Remote::new(&arguments);
     let entity_type = arguments.value("--type");
+    if let Some(name) = entity_type {
+        let info = remote.info()?;
+        let types = &info.store.entity_types;
+        if !types.iter().any(|declared| declared.name.as_str() == name) {
+            let declared: Vec<String> = types
+                .iter()
+                .map(|declared| format!("`{}`", declared.name))
+                .collect();
+            return Err(Failure::Failed(match declared.is_empty() {
+                true => format!("the project has no entity type `{name}`, and declares none"),
+                false => format!(
+                    "the project has no entity type `{name}`. It has {}.",
+                    declared.join(", ")
+                ),
+            }));
+        }
+    }
 
     if let Some(plan) = arguments.value("--apply") {
         for refused in ["--identity", "--limit", "--offset"] {
@@ -169,10 +186,7 @@ fn print_report(report: &RecomputeReport, entity_type: Option<&str>) -> Result<(
     }
     fields(&[(
         "plan",
-        format!(
-            "{}: nothing was changed. `{apply}` applies it",
-            report.plan
-        ),
+        format!("{}: nothing was changed. `{apply}` applies it", report.plan),
     )]);
     Ok(())
 }

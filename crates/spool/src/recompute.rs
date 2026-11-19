@@ -456,7 +456,7 @@ pub(crate) struct Outcome {
     merged: BTreeMap<IdentityId, IdentityId>,
     /// The `no_match` pairs inside each waiting group, with what says so.
     blocked: Vec<Vec<Contradiction>>,
-    /// Each record's label, with its load run.
+    /// Each record's label, with when it was loaded.
     labels: HashMap<RecordId, (String, i64)>,
     shaped: BTreeMap<IdentityId, Vec<PersonDecision>>,
     approved: BTreeMap<RecordId, (ChangesetId, Seq)>,
@@ -608,7 +608,8 @@ pub(crate) fn compute(
         }
         dismissed_splits += u64::from(counted);
     }
-    verdicts.retain(|(a, b), verdict| *verdict != Verdict::NoMatch || held.root(*a) != held.root(*b));
+    verdicts
+        .retain(|(a, b), verdict| *verdict != Verdict::NoMatch || held.root(*a) != held.root(*b));
     for (root, members) in held.groups() {
         for record in members.into_iter().filter(|record| *record != root) {
             verdicts.insert(ordered(root, record), Verdict::Match);
@@ -714,9 +715,8 @@ pub(crate) fn compute(
         .iter()
         .map(|item| {
             let mut records = match item {
-                ReviewItem::PossibleMerge { records, .. } | ReviewItem::Conflict { records, .. } => {
-                    records.clone()
-                }
+                ReviewItem::PossibleMerge { records, .. }
+                | ReviewItem::Conflict { records, .. } => records.clone(),
             };
             records.sort();
             records
@@ -854,7 +854,7 @@ fn strings(conn: &Connection, sql: &str) -> Result<Vec<String>> {
 
 fn labels(conn: &Connection) -> Result<HashMap<RecordId, (String, i64)>> {
     let mut statement = conn.prepare(&format!(
-        "SELECT l.record_id::VARCHAR, l.label, o.load_run FROM spool.record_label l
+        "SELECT l.record_id::VARCHAR, l.label, epoch_us(o.loaded_at) FROM spool.record_label l
          JOIN spool.record o ON o.record_id = l.record_id
          WHERE l.label IS NOT NULL AND l.record_id IN (SELECT record_id FROM {SCOPE})"
     ))?;
@@ -1366,8 +1366,10 @@ impl Outcome {
             }
         }
         for (at, group) in self.groups.iter().enumerate() {
-            let from: BTreeSet<Option<IdentityId>> =
-                group.iter().map(|record| self.now.get(record).copied()).collect();
+            let from: BTreeSet<Option<IdentityId>> = group
+                .iter()
+                .map(|record| self.now.get(record).copied())
+                .collect();
             if from.iter().flatten().count() > 1 {
                 summary.merging += 1;
             }
@@ -1506,7 +1508,10 @@ impl Outcome {
             ))?;
             let mut rows = statement.query([])?;
             while let Some(row) = rows.next()? {
-                sources.insert(parse(&row.get::<_, String>(0)?)?, (row.get(1)?, row.get(2)?));
+                sources.insert(
+                    parse(&row.get::<_, String>(0)?)?,
+                    (row.get(1)?, row.get(2)?),
+                );
             }
         }
         for record in records {
@@ -1540,11 +1545,13 @@ impl Outcome {
         let approved_drafts = records
             .iter()
             .filter_map(|record| {
-                self.approved.get(record).map(|(draft, seq)| ApprovedPlacement {
-                    record: *record,
-                    draft: *draft,
-                    seq: *seq,
-                })
+                self.approved
+                    .get(record)
+                    .map(|(draft, seq)| ApprovedPlacement {
+                        record: *record,
+                        draft: *draft,
+                        seq: *seq,
+                    })
             })
             .collect();
         let mut change = change.clone();

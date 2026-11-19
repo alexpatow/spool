@@ -32,9 +32,7 @@ use crate::metrics::{self, Churn, IdStability, Metrics};
 use crate::order::Sort;
 use crate::possible_split;
 use crate::project::{EntityTypeManifest, Manifest, Strategy, hash_json};
-use crate::recompute::{
-    self, AppliedType, RecomputeApplied, RecomputeReport, RecomputeRequest,
-};
+use crate::recompute::{self, AppliedType, RecomputeApplied, RecomputeReport, RecomputeRequest};
 use crate::retract::{self, RetractReport};
 use crate::review::{self, ReviewCase, ReviewEntry, ReviewFilter};
 use crate::rows::Rows;
@@ -2723,7 +2721,10 @@ impl Inner {
         let now = recompute::combined_plan(&plans);
         if now != plan {
             for (run, _) in &worked {
-                self.fail_run(*run, &format!("plan {plan} is not what it found, plan {now}"))?;
+                self.fail_run(
+                    *run,
+                    &format!("plan {plan} is not what it found, plan {now}"),
+                )?;
             }
             return Err(Error::StalePlan {
                 plan: plan.to_owned(),

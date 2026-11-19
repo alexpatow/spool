@@ -57,6 +57,10 @@ import type {
   Token,
   TokenList,
   TypeResolution,
+  RecomputeRequest,
+  RecomputeReport,
+  ApplyRecomputeRequest,
+  RecomputeApplied,
   UndoRequest,
 } from "./types.ts";
 
@@ -364,6 +368,23 @@ export class SpoolClient {
   async match(request: MatchRequest): Promise<RunEntry | null> {
     const { run } = await this.json<{ run: RunEntry | null }>("POST", "/v1/match", { json: request });
     return run;
+  }
+
+  /**
+   * What the identities would be if every record were matched again, all
+   * at once, by the rules as they are now, against the identities there
+   * are. Nothing is changed. Pass its `plan` to `applyRecompute`.
+   */
+  async recompute(request: RecomputeRequest = {}): Promise<RecomputeReport> {
+    return this.json<RecomputeReport>("POST", "/v1/recompute", { json: request });
+  }
+
+  /**
+   * Makes the identities what `recompute` showed. Refused with `conflict`
+   * if what the server finds now is not the plan.
+   */
+  async applyRecompute(request: ApplyRecomputeRequest): Promise<RecomputeApplied> {
+    return this.json<RecomputeApplied>("POST", "/v1/recompute/apply", { json: request });
   }
 
   async run(run: RunId): Promise<RunEntry> {
