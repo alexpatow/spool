@@ -494,6 +494,19 @@ export interface Explanation {
    */
   constraints: ConstraintEntry[];
   /**
+   * When they share an identity: the fewest links whose removal would
+   * part them, and the two sides that would leave. `null` when they do
+   * not share one, when no chain joins them, and when more than twenty
+   * links would have to go.
+   */
+  cut?: Split | null;
+  /**
+   * When they share an identity: the `match` rules without whose links
+   * they would not be together, each of which alone made a link that
+   * every chain between them goes through.
+   */
+  held_by?: string[];
+  /**
    * The record with the smaller ID. It is `l` in a rule.
    */
   left: Explained;
@@ -681,6 +694,80 @@ export interface IdentitiesOfResponse {
 }
 
 /**
+ * What holds an identity together, and where it holds least.
+ */
+export interface IdentityExplanation {
+  /**
+   * Pairs that are together only through a chain of other records: no
+   * link joins them, and a chain does.
+   */
+  chained_pairs: number;
+  /**
+   * The active identity it stands for: itself, or the one it was merged
+   * into. Everything below is of this one.
+   */
+  current: IdentityId;
+  entity_type: EntityType;
+  /**
+   * The ID that was asked for.
+   */
+  id: IdentityId;
+  label?: string | null;
+  /**
+   * Pairs a link joins directly.
+   */
+  linked_pairs: number;
+  /**
+   * The most links a chain has between two records of the largest part,
+   * at the least: found from two of its records far apart, not from
+   * every pair.
+   */
+  longest_chain: number;
+  /**
+   * Different labels its records have, whatever their case. Records
+   * without a label are not counted.
+   */
+  names: number;
+  /**
+   * Pairs of its records, `records × (records - 1) / 2`.
+   */
+  pairs: number;
+  /**
+   * Groups of records that links hold together. More than one when
+   * what joined them has been removed since, or a changeset placed a
+   * record directly.
+   */
+  parts: number;
+  records: number;
+  /**
+   * For each `match` rule its links were made by, what it holds
+   * together: the pieces the identity would be in without the links only
+   * that rule made. A rule that holds many pieces together is the one
+   * that chains different things. The rule that holds most pieces
+   * together first.
+   */
+  rules: RuleHold[];
+  /**
+   * The explanation in sentences.
+   */
+  summary: string[];
+  /**
+   * Its most common labels, the most common first, at most five.
+   */
+  top_names: NameCount[];
+  /**
+   * The places where fewest links hold it together, where a wrong merge
+   * entered: each a set of links whose removal would part it, with the
+   * two sides, the smaller first. They are the links that alone hold a
+   * part on, and the fewest that part the records of its most common
+   * name from those of each of the next eight (or, without names, its
+   * two records farthest apart). Fewest links for each record they part
+   * off first; at most five, and none of more than twenty links.
+   */
+  weakest: Split[];
+}
+
+/**
  * Identifies an identity. Minted once, never derived from content and never reused.
  */
 export type IdentityId = string;
@@ -707,11 +794,31 @@ export interface IdentitySummary {
    * members is judged by the hundred that were loaded first.
    */
   label?: string | null;
+  /**
+   * Pairs of its members that a link joins directly: a `match` of a
+   * run that finished, a `must_link` constraint, or one being a later
+   * version of the other.
+   */
+  linked_pairs?: number;
   members: number;
+  /**
+   * Different labels its members have, whatever their case. Members
+   * without a label are not counted. Many names in one identity is the
+   * first sign that different things were joined.
+   */
+  names?: number;
   /**
    * The sources its members came from, the one with most members first.
    */
   sources: SourceCount[];
+  /**
+   * Pairs of its members that no link joins directly, out of
+   * `members × (members - 1) / 2`: those together only through a chain
+   * of others, and those that nothing holds together any more, which
+   * `spool explain <identity>` tells apart. An identity mostly held by
+   * chains is where rules that each hold joined things that are not one.
+   */
+  unlinked_pairs?: number;
 }
 
 /**
@@ -792,22 +899,54 @@ export interface JudgementsResponse {
 }
 
 /**
- * One step in the chain that joins two members of an identity.
+ * One link between two members of an identity: what joins them directly.
  */
 export interface Link {
   from: RecordId;
+  /**
+   * `from` and `to` as a person knows them.
+   */
+  from_record: Named;
   kind: LinkKind;
+  /**
+   * With `match`: the `match` rules that held, as the run recorded them.
+   * Empty for a strategy that keeps no rule names.
+   */
+  rules?: string[];
   /**
    * With `match`: the latest run that judged so.
    */
   run?: RunId | null;
+  /**
+   * With `match`: the score the run gave, on its strategy's own scale.
+   */
+  score?: number | null;
+  /**
+   * With `match`: the strategy of that run.
+   */
+  strategy?: string | null;
   to: RecordId;
+  to_record: Named;
+  /**
+   * The features those rules read, with the values `from` and `to` have
+   * now: what satisfied the rules, unless the features changed since.
+   */
+  values?: LinkValue[];
 }
 
 /**
  * What joins two records of one identity directly.
  */
 export type LinkKind = "must_link" | "version" | "match";
+
+/**
+ * One feature a rule of a link reads, at both ends of the link.
+ */
+export interface LinkValue {
+  feature: string;
+  from: unknown;
+  to: unknown;
+}
 
 export interface LoadReport {
   /**
@@ -960,6 +1099,29 @@ export interface MintRequest {
 export interface MintedIds {
   changesets: ChangesetId[];
   identities: IdentityId[];
+}
+
+/**
+ * How many records have a label.
+ */
+export interface NameCount {
+  name: string;
+  records: number;
+}
+
+/**
+ * A record as a person knows it.
+ */
+export interface Named {
+  /**
+   * Its value of the feature its type names as the label.
+   */
+  label?: string | null;
+  /**
+   * `source:key`, or for a mention `source:document[start-end]`, as
+   * [`RecordEntry::name`] says it.
+   */
+  name: string;
 }
 
 /**
@@ -1543,6 +1705,33 @@ export interface ReviewList {
 export type ReviewStatus = "open" | "resolved" | "superseded" | "dismissed";
 
 /**
+ * What one rule holds of an identity together.
+ */
+export interface RuleHold {
+  /**
+   * Of those, the links no other rule held for.
+   */
+  alone: number;
+  /**
+   * The largest of those pieces, the largest first, at most five.
+   */
+  largest: Side[];
+  /**
+   * The links it held for, alone or with other rules.
+   */
+  links: number;
+  /**
+   * How many pieces the identity would be in without the links only
+   * this rule made: 1 when the other links hold it together.
+   */
+  pieces: number;
+  /**
+   * A `match` rule, as the runs that judged the links recorded it.
+   */
+  rule: string;
+}
+
+/**
  * The project's rules applied to a pair as it is now.
  */
 export interface RuleReading {
@@ -1721,6 +1910,17 @@ export interface SetupRequest {
 }
 
 /**
+ * One side of a [`Split`].
+ */
+export interface Side {
+  /**
+   * Its most common labels, the most common first, at most five.
+   */
+  names: NameCount[];
+  records: number;
+}
+
+/**
  * `POST /auth/sign-in`.
  */
 export interface SignInRequest {
@@ -1757,6 +1957,19 @@ export interface SourceInfo {
    * Those of them that wait for an identity.
    */
   unassigned: number;
+}
+
+/**
+ * The fewest links whose removal would part an identity in two, and the
+ * two sides.
+ */
+export interface Split {
+  links: Link[];
+  /**
+   * The two sides: for a pair, `left`'s first; for an identity, the
+   * smaller first. Members no link holds to either are on neither.
+   */
+  sides: Side[];
 }
 
 /**

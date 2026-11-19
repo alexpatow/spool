@@ -206,6 +206,23 @@ pub struct IdentitySummary {
     pub label: Option<String>,
     pub created: Seq,
     pub members: u64,
+    /// Different labels its members have, whatever their case. Members
+    /// without a label are not counted. Many names in one identity is the
+    /// first sign that different things were joined.
+    #[serde(default)]
+    pub names: u64,
+    /// Pairs of its members that a link joins directly: a `match` of a
+    /// run that finished, a `must_link` constraint, or one being a later
+    /// version of the other.
+    #[serde(default)]
+    pub linked_pairs: u64,
+    /// Pairs of its members that no link joins directly, out of
+    /// `members × (members - 1) / 2`: those together only through a chain
+    /// of others, and those that nothing holds together any more, which
+    /// `spool explain <identity>` tells apart. An identity mostly held by
+    /// chains is where rules that each hold joined things that are not one.
+    #[serde(default)]
+    pub unlinked_pairs: u64,
     /// The sources its members came from, the one with most members first.
     pub sources: Vec<SourceCount>,
 }
@@ -248,6 +265,8 @@ pub enum IdentitySort {
     Records,
     /// How many sources its records came from.
     Sources,
+    /// How many different labels its records have, whatever their case.
+    Names,
     /// The log position that created it.
     Created,
 }
@@ -265,6 +284,11 @@ impl IdentitySort {
             Self::Sources => vec![Key::of(
                 "(SELECT count(DISTINCT o.source_id) FROM spool.membership m
                   JOIN spool.record o ON o.record_id = m.record_id
+                  WHERE m.identity_id = i.identity_id AND m.to_seq IS NULL)",
+            )],
+            Self::Names => vec![Key::of(
+                "(SELECT count(DISTINCT lower(named.label)) FROM spool.membership m
+                  JOIN spool.record_label named ON named.record_id = m.record_id
                   WHERE m.identity_id = i.identity_id AND m.to_seq IS NULL)",
             )],
             Self::Created => vec![Key::of("i.created_seq")],
@@ -839,9 +863,59 @@ fn describe(conn: &Connection, identities: &mut [IdentitySummary]) -> Result<()>
                 records: row.get::<_, i64>(2)? as u64,
             });
     }
+    let list = uuid_list(&ids);
+    let mut names: BTreeMap<IdentityId, u64> = BTreeMap::new();
+    let mut statement = conn.prepare(&format!(
+        "SELECT m.identity_id::VARCHAR, count(DISTINCT lower(named.label))
+         FROM spool.membership m
+         JOIN spool.record_label named ON named.record_id = m.record_id
+         WHERE m.to_seq IS NULL AND list_contains({list}, m.identity_id)
+         GROUP BY m.identity_id"
+    ))?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        names.insert(
+            parse(&row.get::<_, String>(0)?)?,
+            row.get::<_, i64>(1)? as u64,
+        );
+    }
+    // The links of `spool explain <identity>`, counted once a pair.
+    let mut linked: BTreeMap<IdentityId, u64> = BTreeMap::new();
+    let mut statement = conn.prepare(&format!(
+        "WITH member AS (
+           SELECT record_id, identity_id FROM spool.membership
+           WHERE to_seq IS NULL AND list_contains({list}, identity_id)),
+         link AS (
+           SELECT record_a AS one, record_b AS other FROM spool.constraint_link
+           WHERE to_seq IS NULL AND kind = 'must_link'
+           UNION ALL
+           SELECT supersedes, record_id FROM spool.record WHERE supersedes IS NOT NULL
+           UNION ALL
+           SELECT j.left_id, j.right_id FROM spool.judgement j
+           JOIN spool.run r ON r.run_id = j.run_id AND r.status = 'succeeded'
+           WHERE j.verdict = 'match' AND j.left_id IN (SELECT record_id FROM member)),
+         pair AS (SELECT DISTINCT least(one, other) AS one, greatest(one, other) AS other
+                  FROM link WHERE one <> other)
+         SELECT a.identity_id::VARCHAR, count(*)
+         FROM pair
+         JOIN member a ON a.record_id = pair.one
+         JOIN member b ON b.record_id = pair.other AND b.identity_id = a.identity_id
+         GROUP BY a.identity_id"
+    ))?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        linked.insert(
+            parse(&row.get::<_, String>(0)?)?,
+            row.get::<_, i64>(1)? as u64,
+        );
+    }
     for identity in identities {
         identity.label = labels.remove(&identity.id);
         identity.sources = sources.remove(&identity.id).unwrap_or_default();
+        identity.names = names.remove(&identity.id).unwrap_or_default();
+        identity.linked_pairs = linked.remove(&identity.id).unwrap_or_default();
+        let pairs = identity.members * identity.members.saturating_sub(1) / 2;
+        identity.unlinked_pairs = pairs.saturating_sub(identity.linked_pairs);
     }
     Ok(())
 }
@@ -859,6 +933,9 @@ fn identity_summary(row: &duckdb::Row<'_>) -> Result<IdentitySummary> {
         label: None,
         created: Seq(row.get::<_, i64>(2)? as u64),
         members: row.get::<_, i64>(3)? as u64,
+        names: 0,
+        linked_pairs: 0,
+        unlinked_pairs: 0,
         sources: Vec::new(),
     })
 }

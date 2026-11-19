@@ -14,7 +14,7 @@ description: Every spool command, what it takes and what it prints.
 | [`spool extract`](#spool-extract) | Stores text files as documents and runs an extractor | A running server |
 | [`spool match`](#spool-match) | Matches the records that are new, of every entity type | A running server |
 | [`spool show`](#spool-show) | Shows runs, records, identities, documents, review items, drafts and the log | A running server |
-| [`spool explain`](#spool-explain) | Says why two records share an identity, or why they do not | A running server |
+| [`spool explain`](#spool-explain) | Says why two records share an identity, or why they do not, and what holds an identity together | A running server |
 | [`spool retract`](#spool-retract) | Takes back rows a source no longer holds | A running server |
 | [`spool build`](#spool-build) | Checks a project and compiles it into a manifest | A directory |
 | [`spool apply`](#spool-apply) | Applies a manifest to a store | A store file |
@@ -297,7 +297,9 @@ A record is named by its ID or as `<source>:<key>`, which names the latest versi
 | `--unassigned` | Only records that wait for an identity | records |
 | `--latest` | Only the version of each document that nothing replaced | documents |
 | `--ids` | List each record's ID as well | records |
-| `--after <id>` | Continue a list after this ID, or the log after this position | lists |
+| `--sort <column>` | List identities by `records`, `names`, `sources`, `label`, `entity_type`, `created` or `id` | identities |
+| `--order <order>` | `asc` or `desc`, with `--sort` (default `asc`) | identities |
+| `--after <id>` | Continue a list after this ID, or the log after this position, in the order of the list | lists |
 | `--limit <n>` | List at most this many | lists |
 
 ```sh
@@ -319,12 +321,33 @@ spool show identities
 ```
 
 ```text title="Output"
-identity                              name                   members  created at
-01a1efc6-41cd-775d-8758-e7300637659a  Acorn Tools Ltd        4        log position 1
-01a1efc6-41cd-775d-8758-e731c61371cb  Halden Group           1        log position 1
-01a1efc6-41cd-775d-8758-e7329447fd9a  Halden Group           1        log position 1
-01a1efc6-43a9-7403-b9f6-1f8ee76184ed  Brightwater Foods Ltd  1        log position 1
-01a1efc6-41cd-775d-8758-e733aa086f7d  Larkfield Logistics    2        log position 1
+identity                              name                   members  names  unlinked pairs  created at
+01a1efc6-41cd-775d-8758-e7300637659a  Acorn Tools Ltd        4        3      0%              log position 1
+01a1efc6-41cd-775d-8758-e731c61371cb  Halden Group           1        1      -               log position 1
+01a1efc6-41cd-775d-8758-e7329447fd9a  Halden Group           1        1      -               log position 1
+01a1efc6-43a9-7403-b9f6-1f8ee76184ed  Brightwater Foods Ltd  1        1      -               log position 1
+01a1efc6-41cd-775d-8758-e733aa086f7d  Larkfield Logistics    2        2      0%              log position 1
+```
+
+Each identity comes with three numbers that point at a wrong merge without any labelled truth:
+
+- **members**: how many records it has. Wrong merges grow, so the largest identities are the first to look at.
+- **names**: how many different labels its records have, whatever their case. One thing goes by a few names; dozens are many things.
+- **unlinked pairs**: the part of its pairs of records that no link joins directly. A link is a `match` from a run that finished, a `must_link` constraint, or one record being a later version of the other. A pair no link joins is together only through a chain: A matches B and B matches C, so A and C share an identity though no rule holds between them. An identity mostly held by chains is where rules that each hold joined things that are not one.
+
+`--sort records --order desc` lists the largest identities first, and `--sort names --order desc` those with the most names. The counts are in `--json` as `members`, `names`, `linked_pairs` and `unlinked_pairs`. [`spool explain <identity>`](#spool-explain) says which rule joined the parts of one.
+
+```sh
+spool show identities --type person --sort records --order desc --limit 3
+```
+
+```text title="Output"
+identity                              name        members  names  unlinked pairs  created at
+01a1f132-2c64-71b6-b804-624dbcee8a86  Surname0    2408     7      52%             log position 1
+01a1f132-2c64-71b6-b804-623e75c403b1  Surname1    956      10     71%             log position 1
+01a1f132-2c64-71b6-b804-62474d9ea066  Surname2    579      9      72%             log position 1
+
+more: add `--after 01a1f132-2c64-71b6-b804-62474d9ea066`
 ```
 
 ```sh
@@ -338,7 +361,7 @@ position  actor   operations  from             started by                       
 
 ## spool explain
 
-`spool explain <record> <record>`
+`spool explain <record> <record>`, `spool explain <identity>`
 
 Says where each record is and what placed it there, what each run that compared them concluded, the constraints and review items that name them, and what the rules say about the pair as it is now.
 
@@ -368,6 +391,87 @@ rules as they are now
 
 runs that compared them
   run 5  rules  succeeded  block: name_prefix  match
+```
+
+When two records share an identity but no link joins them, it shows the chain between them: each record by its label and its name, and each link by the run and the rule that made it, with the values the rule read. It says which rules every chain between them goes through, and the fewest links whose removal would part the records named as the one from those named as the other, with what each side would hold.
+
+```sh
+spool explain mentions:t1 mentions:t12
+```
+
+```text title="Output"
+`mentions:t1` and `mentions:t12` belong to the same identity, 01a1f132-93bf-7586-89d0-459a8d1a39fe.
+No run has compared them.
+Nothing links the two directly. They are joined through 2 other members: `mentions:t1` → `Tolkien` (mentions:t9) (`match` in run 5, rule `same_full_name`: full_name_key "john ronald reuel tolkien") → `Tolkien` (mentions:t11) (`match` in run 5, rule `same_name`: name_key "tolkien") → `mentions:t12` (`match` in run 5, rule `same_full_name`: full_name_key "christopher tolkien").
+Without the links only rule `same_full_name` made, they would not be together.
+Without the links only rule `same_name` made, they would not be together.
+Removing 2 links would part them, leaving 10 records with `mentions:t1` (8 × `J. R. R. Tolkien`, 2 × `Tolkien`) and 5 records with `mentions:t12` (4 × `Christopher Tolkien`, 1 × `Tolkien`).
+...
+
+what joins them
+  1. J. R. R. Tolkien  mentions:t1
+     `match` in run 5, rule `same_full_name`: full_name_key "john ronald reuel tolkien"
+  2. Tolkien  mentions:t9
+     `match` in run 5, rule `same_name`: name_key "tolkien"
+  3. Tolkien  mentions:t11
+     `match` in run 5, rule `same_full_name`: full_name_key "christopher tolkien"
+  4. Christopher Tolkien  mentions:t12
+
+what would part them
+  Tolkien  mentions:t9 – Tolkien  mentions:t11
+      `match` in run 5, rule `same_name`: name_key "tolkien"
+  Tolkien  mentions:t10 – Tolkien  mentions:t11
+      `match` in run 5, rule `same_name`: name_key "tolkien"
+  with left: 10 records (8 × J. R. R. Tolkien, 2 × Tolkien)
+  with right: 5 records (4 × Christopher Tolkien, 1 × Tolkien)
+```
+
+The values are the records' features as they are now, which are those the rule read unless the features changed since the run.
+
+With one identity, named by its ID or by any of its records, it says how much of it only chains hold together and where it would come apart:
+
+- **Without each rule**: the pieces the identity would fall into without the links only that rule made. A rule that holds many pieces together is the one that chains different things; a stricter version of it, or a `no_match` rule, keeps them apart.
+- **Weakest links**: the links that alone hold a part on, and the fewest links that part the records of its most common name from those of each of the next eight, each with the two sides it would leave. Those are where a wrong merge entered. A set of more than twenty links is not listed: an identity that rules join through many records at once has none, and the pieces without each rule say what joined it.
+
+```sh
+spool explain mentions:t1
+```
+
+```text title="Output"
+`J. R. R. Tolkien` is a `person` identity of 15 records with 3 different names.
+Of its 105 pairs of records, 57 are linked directly and 48 are together only through a chain of others, the longest of at least 3 links.
+Without the 20 links only rule `same_full_name` made, it would fall into 3 pieces: 8 (8 × `J. R. R. Tolkien`), 4 (4 × `Christopher Tolkien`), 3 (3 × `Tolkien`).
+Without the 2 links only rule `same_name` made, it would fall into 2 pieces: 10 (8 × `J. R. R. Tolkien`, 2 × `Tolkien`), 5 (4 × `Christopher Tolkien`, 1 × `Tolkien`).
+Removing 2 links would part 5 records (4 × `Christopher Tolkien`, 1 × `Tolkien`) from the other 10 (8 × `J. R. R. Tolkien`, 2 × `Tolkien`).
+Removing 16 links would part 7 records (4 × `Christopher Tolkien`, 3 × `Tolkien`) from the other 8 (8 × `J. R. R. Tolkien`).
+
+identity             01a1f132-93bf-7586-89d0-459a8d1a39fe
+type                 person
+name                 J. R. R. Tolkien
+records              15
+names                3
+pairs                105
+linked directly      57
+only through chains  48
+longest chain        at least 3 links
+
+name                 records
+J. R. R. Tolkien     8
+Christopher Tolkien  4
+Tolkien              3
+
+rule            links  alone  pieces without it  largest pieces
+same_full_name  55     20     3                  8 (J. R. R. Tolkien), 4 (Christopher Tolkien), 3 (Tolkien)
+same_name       37     2      2                  10 (J. R. R. Tolkien, Tolkien), 5 (Christopher Tolkien, Tolkien)
+
+weakest 1: 2 links would part it
+  Tolkien  mentions:t11 – Tolkien  mentions:t9
+      `match` in run 5, rule `same_name`: name_key "tolkien"
+  Tolkien  mentions:t11 – Tolkien  mentions:t10
+      `match` in run 5, rule `same_name`: name_key "tolkien"
+  one side: 5 records (4 × Christopher Tolkien, 1 × Tolkien)
+  the other: 10 records (8 × J. R. R. Tolkien, 2 × Tolkien)
+...
 ```
 
 ## spool retract
