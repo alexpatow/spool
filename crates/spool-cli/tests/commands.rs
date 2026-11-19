@@ -63,11 +63,16 @@ fn the_binary_starts_with_no_library_path_set() {
     assert!(dir.path().join("entities/.gitkeep").is_file());
 }
 
-/// Every file under `dir`, as paths below it with `/` between their parts.
+/// Every file under `dir` outside Git metadata, as paths below it with `/`
+/// between their parts.
 fn files_of(dir: &Path) -> Vec<String> {
     fn visit(root: &Path, dir: &Path, found: &mut Vec<String>) {
         for entry in std::fs::read_dir(dir).unwrap() {
-            let entry = entry.unwrap().path();
+            let entry = entry.unwrap();
+            if dir == root && entry.file_name() == ".git" {
+                continue;
+            }
+            let entry = entry.path();
             if entry.is_dir() {
                 visit(root, &entry, found);
             } else {
@@ -85,6 +90,15 @@ fn files_of(dir: &Path) -> Vec<String> {
     visit(dir, dir, &mut found);
     found.sort();
     found
+}
+
+fn git_init(dir: &Path) {
+    let output = Command::new("git")
+        .args(["init", "--quiet", "--"])
+        .arg(dir)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", text(&output.stderr));
 }
 
 /// The files that are not for coding agents: what `spool update-skills` writes is
@@ -152,6 +166,21 @@ works first, with sample rows: spool init companies --example companies
     );
     // The folders hold a file each, so that Git keeps them.
     let project = dir.path().join("my-data");
+    assert!(project.join(".git/HEAD").is_file());
+    let git = |arguments: &[&str]| {
+        Command::new("git")
+            .current_dir(&project)
+            .args(arguments)
+            .output()
+            .unwrap()
+    };
+    let index = git(&["ls-files"]);
+    assert!(index.status.success(), "{}", text(&index.stderr));
+    assert!(index.stdout.is_empty());
+    assert!(!git(&["rev-parse", "--verify", "HEAD"]).status.success());
+    let ignored = git(&["check-ignore", ".env", ".spool/state.duckdb"]);
+    assert!(ignored.status.success(), "{}", text(&ignored.stderr));
+    assert_eq!(text(&ignored.stdout), ".env\n.spool/state.duckdb\n");
     assert_eq!(
         files_of(&project),
         [
@@ -200,8 +229,9 @@ works first, with sample rows: spool init companies --example companies
     // folder when it is empty but for a repository and what the Finder
     // leaves. There is nowhere to change to.
     let here = dir.path().join("here");
-    std::fs::create_dir_all(here.join(".git")).unwrap();
-    std::fs::write(here.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+    git_init(&here);
+    let head = read(&here.join(".git/HEAD"));
+    let config = read(&here.join(".git/config"));
     std::fs::write(here.join(".DS_Store"), "").unwrap();
     let created = init_in(&here, &[]);
     assert!(created.status.success(), "{}", text(&created.stderr));
@@ -209,7 +239,8 @@ works first, with sample rows: spool init companies --example companies
     assert!(created.starts_with("created   .\n"), "{created}");
     assert!(!created.contains("  cd "), "{created}");
     assert!(here.join("entities/.gitkeep").is_file());
-    assert_eq!(read(&here.join(".git/HEAD")), "ref: refs/heads/main\n");
+    assert_eq!(read(&here.join(".git/HEAD")), head);
+    assert_eq!(read(&here.join(".git/config")), config);
     let empty = dir.path().join("empty");
     std::fs::create_dir(&empty).unwrap();
     let created = init_in(dir.path(), &["empty"]);
@@ -221,6 +252,64 @@ works first, with sample rows: spool init companies --example companies
     assert!(created.status.success(), "{}", text(&created.stderr));
     let created = text(&created.stderr);
     assert!(created.contains("\n  cd 'it'\\''s here'\n"), "{created}");
+}
+
+#[test]
+fn init_uses_the_project_directory_even_with_git_dir_set() {
+    let dir = tempfile::tempdir().unwrap();
+    let elsewhere = dir.path().join("elsewhere");
+    let created = spool()
+        .current_dir(dir.path())
+        .args(["init", "parent/project", "--json"])
+        .env("GIT_DIR", &elsewhere)
+        .output()
+        .unwrap();
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    let result: Value = serde_json::from_slice(&created.stdout).unwrap();
+    assert_eq!(result["created"], "parent/project");
+    assert!(dir.path().join("parent/project/.git/HEAD").is_file());
+    assert!(!elsewhere.exists());
+}
+
+#[test]
+fn init_requires_git_before_writing_project_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let created = spool()
+        .current_dir(dir.path())
+        .args(["init", "project"])
+        .env("PATH", dir.path())
+        .output()
+        .unwrap();
+    assert_eq!(created.status.code(), Some(1));
+    assert!(created.stdout.is_empty());
+    let stderr = text(&created.stderr);
+    assert!(
+        stderr.contains("install Git and make sure git is on PATH"),
+        "{stderr}"
+    );
+    assert!(!dir.path().join("project").exists());
+}
+
+#[test]
+fn init_can_retry_after_git_leaves_a_partial_repository() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("project");
+    let failed = spool()
+        .args(["init", path(&project)])
+        .env("GIT_CONFIG_COUNT", "1")
+        .env("GIT_CONFIG_KEY_0", "init.defaultBranch")
+        .env("GIT_CONFIG_VALUE_0", "invalid branch")
+        .output()
+        .unwrap();
+    assert_eq!(failed.status.code(), Some(1));
+    let stderr = text(&failed.stderr);
+    assert!(stderr.contains("invalid branch"), "{stderr}");
+    assert!(project.join(".git").is_dir());
+    assert!(!project.join("entities").exists());
+
+    succeed(&["init", path(&project)]);
+    assert!(project.join(".git/HEAD").is_file());
+    assert!(project.join("entities/.gitkeep").is_file());
 }
 
 #[test]
@@ -246,6 +335,7 @@ fn init_writes_nothing_into_a_folder_that_holds_files() {
     );
     assert_eq!(files_of(&home), before);
     assert!(!home.join("entities").exists());
+    assert!(!home.join(".git").exists());
 
     // A folder that is named, with one file in it.
     let taken = dir.path().join("taken");
@@ -259,6 +349,7 @@ fn init_writes_nothing_into_a_folder_that_holds_files() {
          new or empty folder: give it another name\n"
     );
     assert_eq!(files_of(&taken), ["rows.csv"]);
+    assert!(!taken.join(".git").exists());
 
     // A project, named or not.
     assert!(init_in(dir.path(), &["project"]).status.success());
@@ -431,6 +522,7 @@ about 330 MB, most of it the model, and later runs fetch nothing.
 "
     );
     let project = dir.path().join("companies");
+    assert!(project.join(".git/HEAD").is_file());
     assert_eq!(
         without_agent_files(files_of(&project)),
         [
@@ -515,6 +607,10 @@ c-9,Acorn Tool,GB
     // the project is written all the same.
     let empty = dir.path().join("empty");
     std::fs::create_dir(&empty).unwrap();
+    // The isolated PATH also has no Git. Give each project a repository first.
+    for name in ["bare", "ready", "plain"] {
+        git_init(&dir.path().join(name));
+    }
     let created = spool()
         .current_dir(dir.path())
         .args(["init", "bare", "--example", "companies"])

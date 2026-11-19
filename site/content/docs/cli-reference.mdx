@@ -38,6 +38,8 @@ Create a project, empty or from an example
 
 Creates a project: the standard folders, a .gitignore and a .env.example. With --example, it's a complete project with sample rows and documents to load.
 
+Runs git init if the folder has no repository. This requires Git on PATH and creates an empty repository with no commits.
+
 Either way, it writes what coding agents read: AGENTS.md (imported by CLAUDE.md) and skills for using Spool, in .agents/skills/ with a symlink to each from .claude/skills/. `spool update-skills` updates them to a later version's.
 
 The folder has to be empty apart from `.git` and `.DS_Store`. Otherwise it's refused and nothing is written.

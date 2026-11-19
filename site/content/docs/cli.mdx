@@ -53,7 +53,7 @@ Failures print `error:`, followed by a `hint:` line when there's a fix. Bad argu
 
 Creates a project in `<dir>`, or in the current directory. An empty project has `sources/`, `entities/`, `transforms/` and `extractors/` (each with a `.gitkeep`), a `.gitignore` covering `.spool/` and `.env`, and a `.env.example`. `spool dev` runs on it as is. It also writes the files coding agents read, covered in [Coding agents](/docs/agents): `AGENTS.md`, a `CLAUDE.md` that imports it, and skills in `.agents/skills/`, each symlinked from `.claude/skills/`.
 
-The folder must be empty apart from `.git` (so `git init` first is fine) and `.DS_Store`. Otherwise `spool init` lists a few of the files and writes nothing.
+`spool init` uses Git from `PATH` to initialize a repository with no commits. It keeps an existing repository. The folder must be empty apart from `.git` and `.DS_Store`. Otherwise `spool init` lists a few of the files and writes nothing.
 
 `--example companies` writes a complete project instead: a row source, `crm`, a document source, `notes`, a `company` entity type with features, a transform, three rules and an extractor, plus two CSV files and a call note under `samples/`. An unknown example name is refused with the list of examples.
 

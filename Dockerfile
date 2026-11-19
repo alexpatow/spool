@@ -78,7 +78,7 @@ LABEL org.opencontainers.image.title="Spool" \
 # not: it asks the system for them when it calls a model's API or fetches a
 # model's weights over HTTPS.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates git \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=release-files /${TARGETARCH}/bin/spool /usr/local/bin/spool
 COPY --from=release-files /${TARGETARCH}/lib/libduckdb.so /usr/local/lib/libduckdb.so

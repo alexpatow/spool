@@ -53,6 +53,7 @@ Spool 0.2.0 runs on Linux and macOS and is MIT licensed. The [docs](https://spoo
 
 - Linux (x86-64 or arm64, glibc 2.34+) or macOS on Apple silicon.
 - `curl` and `tar`.
+- Git for `spool init`.
 - [`uv`](https://docs.astral.sh/uv/), for the step that runs the sample extractor.
 
 ### Install
@@ -63,7 +64,7 @@ To install by hand, unpack `spool-0.2.0-<target>.tar.gz` from the [release](http
 
 ### Create a project
 
-A project is a directory you keep in Git. `spool init companies --example companies` creates `companies/` with the sample project and lists what it wrote:
+`spool init companies --example companies` creates `companies/` with the sample project, initializes its Git repository, and lists what it wrote:
 
 ```text
 created   companies
@@ -200,7 +201,7 @@ The studio is at <http://127.0.0.1:7765/>. It shows the same records, identities
 
 Ctrl-C stops the server. Data stays in `.spool/dev.duckdb`. Delete `.spool/` to start over.
 
-`spool init <name>` creates an empty project with the standard folders, a `.gitignore` and a `.env.example`. With no name it uses the current folder, which has to be empty. Copy what you need from the sample, then `spool load your-file.csv`. Put keys for your extractors and strategies in `.env`, which Git ignores. Spool passes them to your code and never prints them.
+`spool init <name>` creates an empty project with a Git repository, the standard folders, a `.gitignore` and a `.env.example`. With no name it uses the current folder, which can contain `.git` and `.DS_Store`. Copy what you need from the sample, then `spool load your-file.csv`. Put keys for your extractors and strategies in `.env`, which Git ignores. Spool passes them to your code and never prints them.
 
 ### With a coding agent
 
