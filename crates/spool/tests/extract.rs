@@ -1458,6 +1458,55 @@ if os.environ.get("SPOOL_TASK_DIR"):
 
 #[test]
 #[ignore = "runs uv"]
+fn a_type_the_project_no_longer_declares_is_left_alone_by_a_reading() {
+    let news = News::new();
+    news.write(
+        "entities/person/entity.yaml",
+        "features: [name]\nmapping:\n  news:\n    name: name\n",
+    );
+    news.extractor(
+        "names.py",
+        r#"
+from spool import extractor
+
+@extractor
+def find(document):
+    for start, end in document.find("Acme Inc"):
+        yield document.mention("company", start, end, name="Acme Inc")
+    for start, end in document.find("Globex Ltd"):
+        yield document.mention("person", start, end, name="Globex Ltd")
+"#,
+    );
+    news.add(&[("a", FIRST)]);
+    assert_eq!(news.extract("names").unwrap().mentions, 2);
+
+    // The project drops `person`, and its extractor finds companies alone.
+    fs::remove_dir_all(news.project().join("entities/person")).unwrap();
+    news.extractor("names.py", NAMES);
+    let again = news
+        .engine
+        .extract(&ExtractOptions {
+            again: true,
+            ..ExtractOptions::with("names")
+        })
+        .unwrap();
+    assert_eq!(
+        (again.taken_back, again.retract_runs.len()),
+        (0, 0),
+        "{again:?}"
+    );
+    let person = news
+        .engine
+        .records(&RecordFilter::keyed(
+            "news",
+            locator(id("a", FIRST), "person", 29, 39),
+        ))
+        .unwrap();
+    assert_eq!(person[0].retracted, None);
+}
+
+#[test]
+#[ignore = "runs uv"]
 fn a_reading_is_recorded_against_the_version_it_found() {
     let news = News::new();
     let saying = |form: &str| {

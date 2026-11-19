@@ -658,7 +658,8 @@ impl Inner {
     /// this run's among them, finds it no longer. A mention that another
     /// extractor still finds stays. They are taken back as a source takes
     /// back rows, by a retract run for each source and entity type, under
-    /// the name of whoever started the extraction.
+    /// the name of whoever started the extraction. A type the project no
+    /// longer declares, or no longer reads from the source, is left alone.
     fn take_back(
         &mut self,
         by: &Actor,
@@ -708,8 +709,18 @@ impl Inner {
         }
         drop(rows);
         drop(statement);
+        // What the project no longer declares, or no longer maps from the
+        // source, is left as it is: records of a type the project removed
+        // are taken back by nothing, mentions or rows.
+        let manifest = self.manifest.clone().ok_or(Error::NoManifest)?;
         let (mut taken_back, mut runs) = (0, Vec::new());
         for ((source, entity_type), keys) in stale {
+            let declared = manifest
+                .entity_type(&entity_type)
+                .is_some_and(|entry| manifest.source_of(&source, entry).is_ok());
+            if !declared {
+                continue;
+            }
             let report = self.retract(
                 &source,
                 &entity_type,
