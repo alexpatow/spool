@@ -1,6 +1,6 @@
 Update the skills and AGENTS.md that tell coding agents how to use Spool
 
-Usage: spool update [OPTIONS] [DIR]
+Usage: spool update-skills [OPTIONS] [DIR]
 
 Arguments:
   [DIR]  The project directory [default: the current directory]

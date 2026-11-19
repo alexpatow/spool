@@ -11,7 +11,7 @@ description: Every spool command, what it takes and what it prints.
 | [`spool info`](#spool-info) | Lists what a project declares and checks its SQL | A directory |
 | [`spool dev`](#spool-dev) | Runs the server on this machine and applies file changes as they are saved | A directory |
 | [`spool reset`](#spool-reset) | Starts the development store of `spool dev` over | A directory |
-| [`spool update`](#spool-update) | Brings a project's skills for coding agents to this version's | A directory |
+| [`spool update-skills`](#spool-update-skills) | Brings a project's skills for coding agents to this version's | A directory |
 | [`spool load`](#spool-load) | Loads a file of rows | A running server |
 | [`spool extract`](#spool-extract) | Stores text files as documents and runs an extractor | A running server |
 | [`spool match`](#spool-match) | Matches the records that are new, of every entity type | A running server |
@@ -633,16 +633,16 @@ The next `spool dev` starts with an empty store. `spool load` and `spool extract
 
 It removes three things at most, and each only if it is what DuckDB makes: the store's log, `<store>.wal`, which has to be a file; the directory DuckDB spills into, `<store>.tmp`, with what is in it, where a link is removed and not what it points to; and the store itself, a file, last. If any of them, or `.spool` itself, is a link or of another kind, it removes nothing.
 
-## spool update
+## spool update-skills
 
-`spool update [<dir>] [--force]`
+`spool update-skills [<dir>] [--force]`
 
 Brings the files for coding agents that `spool init` wrote to the version of the `spool` that runs it: the skills in `.agents/skills/`, their links in `.claude/skills/`, Spool's part of `AGENTS.md`, and a `CLAUDE.md` if there is none. It comes with the release after 0.1.0: run it after installing a new release. It does not update `spool` itself: the install script does.
 
 A file that somebody edited since Spool wrote it is kept, and the command says so; `--force` replaces it. Spool's part of `AGENTS.md` is between two marker lines, and the rest of that file is never changed. [Coding agents](/docs/agents) says how it tells an edit.
 
 ```sh
-spool update
+spool update-skills
 ```
 
 ```text title="Output"

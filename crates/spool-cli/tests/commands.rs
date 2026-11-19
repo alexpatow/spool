@@ -87,7 +87,7 @@ fn files_of(dir: &Path) -> Vec<String> {
     found
 }
 
-/// The files that are not for coding agents: what `spool update` writes is
+/// The files that are not for coding agents: what `spool update-skills` writes is
 /// tested on its own.
 fn without_agent_files(files: Vec<String>) -> Vec<String> {
     files
@@ -287,7 +287,7 @@ fn init_writes_nothing_into_a_folder_that_holds_files() {
 }
 
 #[test]
-fn update_brings_the_files_for_agents_to_this_version_and_keeps_edits() {
+fn update_skills_brings_the_files_for_agents_to_this_version_and_keeps_edits() {
     let dir = tempfile::tempdir().unwrap();
     let project = dir.path().join("project");
     succeed(&["init", path(&project)]);
@@ -308,7 +308,10 @@ fn update_brings_the_files_for_agents_to_this_version_and_keeps_edits() {
     assert!(agents.ends_with("<!-- spool:end -->\n"), "{agents}");
 
     // Nothing to do just after `spool init`.
-    let output = spool().args(["update", path(&project)]).output().unwrap();
+    let output = spool()
+        .args(["update-skills", path(&project)])
+        .output()
+        .unwrap();
     assert!(output.status.success(), "{}", text(&output.stderr));
     let said = text(&output.stdout);
     assert!(
@@ -330,7 +333,7 @@ fn update_brings_the_files_for_agents_to_this_version_and_keeps_edits() {
     .unwrap();
     std::fs::write(&skill, format!("{written}\nCompare `country_code`.\n")).unwrap();
     let report: Value =
-        serde_json::from_str(&succeed(&["update", path(&project), "--json"])).unwrap();
+        serde_json::from_str(&succeed(&["update-skills", path(&project), "--json"])).unwrap();
     let status = |file: &str| {
         report["files"]
             .as_array()
@@ -350,7 +353,7 @@ fn update_brings_the_files_for_agents_to_this_version_and_keeps_edits() {
         })
     );
     assert!(read(&skill).ends_with("\nCompare `country_code`.\n"));
-    let table = succeed(&["update", path(&project)]);
+    let table = succeed(&["update-skills", path(&project)]);
     assert!(
         table.contains(
             "  kept       .agents/skills/spool-rules/SKILL.md      edited since Spool wrote it: \
@@ -358,7 +361,7 @@ fn update_brings_the_files_for_agents_to_this_version_and_keeps_edits() {
         ),
         "{table}"
     );
-    let forced = succeed(&["update", path(&project), "--force"]);
+    let forced = succeed(&["update-skills", path(&project), "--force"]);
     assert!(
         forced.contains("  updated    .agents/skills/spool-rules/SKILL.md\n"),
         "{forced}"
@@ -368,7 +371,7 @@ fn update_brings_the_files_for_agents_to_this_version_and_keeps_edits() {
 
     // Removed by hand, they come back.
     std::fs::remove_dir_all(project.join(".claude")).unwrap();
-    let restored = succeed(&["update", path(&project)]);
+    let restored = succeed(&["update-skills", path(&project)]);
     assert_eq!(
         restored.matches("  added      .claude/skills/").count(),
         5,
@@ -376,7 +379,10 @@ fn update_brings_the_files_for_agents_to_this_version_and_keeps_edits() {
     );
 
     // A folder that is not a project is refused, and nothing is written.
-    let output = spool().args(["update", path(dir.path())]).output().unwrap();
+    let output = spool()
+        .args(["update-skills", path(dir.path())])
+        .output()
+        .unwrap();
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         text(&output.stderr),

@@ -1,4 +1,4 @@
-//! The files a coding agent reads in a project, and `spool update`, which
+//! The files a coding agent reads in a project, and `spool update-skills`, which
 //! brings them to this binary's.
 //!
 //! Each skill is `.agents/skills/<skill>/SKILL.md`, the folder Codex and
@@ -8,7 +8,7 @@
 //! of any Spool project and lists the skills, and `CLAUDE.md` imports it for
 //! a Claude Code that does not read `AGENTS.md` by itself.
 //!
-//! What Spool writes carries a hash of itself, so that `spool update` can
+//! What Spool writes carries a hash of itself, so that `spool update-skills` can
 //! tell a file nobody edited, which it may replace, from one somebody did,
 //! which it keeps.
 
@@ -39,7 +39,7 @@ use crate::style::{self, paint};
 ///
 /// It does not update spool itself: the install script does.
 #[derive(Args)]
-pub struct UpdateArgs {
+pub struct UpdateSkillsArgs {
     /// The project directory [default: the current directory]
     dir: Option<PathBuf>,
     /// Replace the files somebody edited as well
@@ -87,7 +87,7 @@ const PREFIX: &str = "spool-";
 
 /// Where the hash goes, in a skill's frontmatter and on the first marker line.
 const STAMP: &str = "spool-sha256: \"";
-const BEGIN: &str = "<!-- spool:begin. `spool update` rewrites what is between this line and \
+const BEGIN: &str = "<!-- spool:begin. `spool update-skills` rewrites what is between this line and \
                      spool:end while nobody has edited it. ";
 const END: &str = "<!-- spool:end -->";
 
@@ -147,8 +147,8 @@ fn is_link(path: &Path) -> bool {
     std::fs::symlink_metadata(path).is_ok_and(|found| found.file_type().is_symlink())
 }
 
-pub fn update(arguments: UpdateArgs) -> Result<(), Failure> {
-    let out = Output::report(&arguments.output, "`spool update`")?;
+pub fn update_skills(arguments: UpdateSkillsArgs) -> Result<(), Failure> {
+    let out = Output::report(&arguments.output, "`spool update-skills`")?;
     let dir = super::project_dir(&arguments.dir);
     if !dir.join("entities").is_dir() {
         let which = match arguments.dir.is_some() {

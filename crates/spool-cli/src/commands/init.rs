@@ -19,7 +19,7 @@ use crate::output::{Output, OutputArgs, hint};
 ///
 /// Either way it writes what coding agents read: AGENTS.md, which CLAUDE.md
 /// imports, and skills that teach them to use Spool, in .agents/skills/ with
-/// a link to each from .claude/skills/. `spool update` brings those to a
+/// a link to each from .claude/skills/. `spool update-skills` brings those to a
 /// later version's.
 ///
 /// The folder has to be empty: it may hold `.git` and `.DS_Store` and nothing
@@ -228,7 +228,7 @@ pub fn init(arguments: InitArgs) -> Result<(), Failure> {
     for (file, contents) in &files {
         write(&dir.join(file), contents)?;
     }
-    super::update::write_agent_files(&dir, false)?;
+    super::update_skills::write_agent_files(&dir, false)?;
 
     // What was written has to be a project that builds.
     Manifest::load(&dir)?;

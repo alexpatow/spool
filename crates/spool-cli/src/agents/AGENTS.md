@@ -21,5 +21,5 @@ Each is a file in `.agents/skills/`, linked from `.claude/skills/`. Read the one
 - Other systems store the IDs of identities. Do not run `spool reset` or delete `.spool/` to get a better match: change the rules, show what that would change with `spool recompute`, and ask before `--apply`.
 - Merging, splitting, undoing and deciding review items are calls of the HTTP API or MCP tools, each with a `reason`. The command line has none of them.
 - `.env` holds the secrets of extractors and strategies. Never print it, and never commit it. Never edit `.spool/`: Spool writes it.
-- The skills are those of the `spool` that wrote them. After spool is upgraded, `spool update` brings them to its version.
+- The skills are those of the `spool` that wrote them. After spool is upgraded, `spool update-skills` brings them to its version.
 - `spool <command> --help` has every option. The documentation is at https://spool.alexpatow.com/docs, and https://spool.alexpatow.com/llms.txt lists its pages.

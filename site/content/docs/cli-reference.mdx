@@ -38,7 +38,7 @@ Make a project, empty or from an example
 
 Makes a project: the folders it uses, a .gitignore and a .env.example, with nothing in them. With --example it is a whole project instead, with sample rows and documents to load.
 
-Either way it writes what coding agents read: AGENTS.md, which CLAUDE.md imports, and skills that teach them to use Spool, in .agents/skills/ with a link to each from .claude/skills/. `spool update` brings those to a later version's.
+Either way it writes what coding agents read: AGENTS.md, which CLAUDE.md imports, and skills that teach them to use Spool, in .agents/skills/ with a link to each from .claude/skills/. `spool update-skills` brings those to a later version's.
 
 The folder has to be empty: it may hold `.git` and `.DS_Store` and nothing else. A folder that holds anything more is refused, and nothing is written.
 
@@ -585,7 +585,7 @@ Options:
 
 It takes the [output options](#output-options).
 
-## spool update
+## spool update-skills
 
 Update the skills and AGENTS.md that tell coding agents how to use Spool
 
@@ -596,7 +596,7 @@ A file somebody edited since Spool wrote it is kept, and the command says so; --
 It does not update spool itself: the install script does.
 
 ```text
-spool update [OPTIONS] [DIR]
+spool update-skills [OPTIONS] [DIR]
 ```
 
 Arguments:

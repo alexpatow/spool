@@ -194,7 +194,7 @@ Ctrl-C in the first terminal stops the server. The data stays in `.spool/dev.duc
 
 For your own rows, make a project of your own: `spool init <name>` makes an empty one, with the folders a project uses, a `.gitignore` and a `.env.example`, and nothing of the sample. With no name, `spool init` uses the current folder, but only if it is empty, and otherwise writes nothing. Copy what you need from the sample, then `spool load your-file.csv`. Keys that your extractors and strategies read go in the project's `.env`, which Git ignores: Spool hands them to that code and never prints them.
 
-From the release after 0.1.0, a coding agent such as Claude Code, Codex or Cursor that is opened in a project finds what it needs there: `spool init` writes an `AGENTS.md` and skills, in `.agents/skills/` and linked from `.claude/skills/`, that teach it to declare sources, write rules and extractors, and run the commands, as this version of `spool` has them. After an upgrade, `spool update` brings them to the new version's. [Coding agents](https://spool.alexpatow.com/docs/agents) says more.
+From the release after 0.1.0, a coding agent such as Claude Code, Codex or Cursor that is opened in a project finds what it needs there: `spool init` writes an `AGENTS.md` and skills, in `.agents/skills/` and linked from `.claude/skills/`, that teach it to declare sources, write rules and extractors, and run the commands, as this version of `spool` has them. After an upgrade, `spool update-skills` brings them to the new version's. [Coding agents](https://spool.alexpatow.com/docs/agents) says more.
 
 ## What it is not for
 

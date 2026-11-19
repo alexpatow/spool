@@ -15,7 +15,7 @@ use clap::{ColorChoice, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use commands::{
     bench, extract, init, load, matching, project, recompute, reset, retract, serve, show, token,
-    update,
+    update_skills,
 };
 
 /// Extract, resolve and track entities
@@ -58,7 +58,7 @@ enum Command {
     Explain(show::ExplainArgs),
     Retract(retract::RetractArgs),
     Reset(reset::ResetArgs),
-    Update(update::UpdateArgs),
+    UpdateSkills(update_skills::UpdateSkillsArgs),
     Build(project::BuildArgs),
     Apply(project::ApplyArgs),
     Serve(serve::ServeArgs),
@@ -269,7 +269,7 @@ fn run(command: Command) -> (Vec<&'static str>, Result<(), Failure>) {
         Command::Explain(args) => (vec!["explain"], show::explain(args)),
         Command::Retract(args) => (vec!["retract"], retract::retract(args)),
         Command::Reset(args) => (vec!["reset"], reset::reset(args)),
-        Command::Update(args) => (vec!["update"], update::update(args)),
+        Command::UpdateSkills(args) => (vec!["update-skills"], update_skills::update_skills(args)),
         Command::Build(args) => (vec!["build"], project::build(args)),
         Command::Apply(args) => (vec!["apply"], project::apply(args)),
         Command::Serve(args) => (vec!["serve"], serve::serve(args)),
@@ -336,7 +336,7 @@ mod tests {
     /// description names.
     #[test]
     fn the_files_for_agents_name_only_commands_and_options_spool_has() {
-        use super::commands::update::{AGENTS, SKILLS};
+        use super::commands::update_skills::{AGENTS, SKILLS};
         use clap::error::ErrorKind;
 
         let mut files = vec![("AGENTS.md", AGENTS)];
