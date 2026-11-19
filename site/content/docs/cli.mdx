@@ -11,6 +11,7 @@ description: Every spool command, what it takes and what it prints.
 | [`spool info`](#spool-info) | Lists what a project declares and checks its SQL | A directory |
 | [`spool dev`](#spool-dev) | Runs the server on this machine and applies file changes as they are saved | A directory |
 | [`spool reset`](#spool-reset) | Starts the development store of `spool dev` over | A directory |
+| [`spool update-skills`](#spool-update-skills) | Brings a project's skills for coding agents to this version's | A directory |
 | [`spool load`](#spool-load) | Loads a file of rows | A running server |
 | [`spool extract`](#spool-extract) | Stores text files as documents and runs an extractor | A running server |
 | [`spool match`](#spool-match) | Matches the records that are new, of every entity type | A running server |
@@ -50,7 +51,7 @@ A failure is said as `error:`, and what to do about it, where there is something
 
 `spool init [<dir>] [--example <name>]`
 
-Makes a project in `<dir>`, which it creates, or in the current directory. The project is empty: the folders a project uses, `sources/`, `entities/`, `transforms/` and `extractors/`, each with a `.gitkeep` so that Git keeps it, a `.gitignore` that leaves out `.spool/` and `.env`, and a `.env.example`. Spool accepts it as it is, and `spool dev` runs on it.
+Makes a project in `<dir>`, which it creates, or in the current directory. The project is empty: the folders a project uses, `sources/`, `entities/`, `transforms/` and `extractors/`, each with a `.gitkeep` so that Git keeps it, a `.gitignore` that leaves out `.spool/` and `.env`, and a `.env.example`. Spool accepts it as it is, and `spool dev` runs on it. It also writes the files coding agents read, which [Coding agents](/docs/agents) describes: `AGENTS.md`, a `CLAUDE.md` that imports it, and skills under `.agents/skills/`, each linked from `.claude/skills/`.
 
 The folder has to be empty. It may hold `.git`, so that a repository made with `git init` can be used, and `.DS_Store`, which macOS leaves, and nothing else. In a folder that holds anything more, `spool init` refuses, names a few of the files, and writes nothing.
 
@@ -77,6 +78,8 @@ created   companies
   samples/notes-1.txt                a call note that names three companies
   .gitignore                         keeps the server's data, .spool/, and .env out of Git
   .env.example                       the form of .env, where your code's secrets go
+  AGENTS.md                          what a coding agent should know here; CLAUDE.md imports it
+  .agents/skills/                    skills that teach coding agents Spool, linked from .claude/skills/
 
   cd companies
   spool dev                          runs the server on this machine
@@ -96,15 +99,17 @@ spool init ../my-data
 ```text title="Output"
 created   ../my-data
 
-  sources/          a YAML file for each source of rows or documents
-  entities/         a folder for each entity type, with its features and its rules
-  transforms/       SQL functions that features are made with
-  extractors/       Python or TypeScript files that find records in text
-  .gitignore        keeps the server's data, .spool/, and .env out of Git
-  .env.example      the form of .env, where your code's secrets go
+  sources/             a YAML file for each source of rows or documents
+  entities/            a folder for each entity type, with its features and its rules
+  transforms/          SQL functions that features are made with
+  extractors/          Python or TypeScript files that find records in text
+  .gitignore           keeps the server's data, .spool/, and .env out of Git
+  .env.example         the form of .env, where your code's secrets go
+  AGENTS.md            what a coding agent should know here; CLAUDE.md imports it
+  .agents/skills/      skills that teach coding agents Spool, linked from .claude/skills/
 
   cd ../my-data
-  spool dev         runs the server, and applies each file as you save it
+  spool dev            runs the server, and applies each file as you save it
 
 The project is empty. Declare a source under sources/ and an entity type
 under entities/, then load your rows with `spool load`. To see a project that
@@ -627,6 +632,37 @@ The next `spool dev` starts with an empty store. `spool load` and `spool extract
 `--store` names the store if `spool dev` was given one; it has to be a `.duckdb` file directly under `.spool/`. A store anywhere else may be the one a `spool serve` runs on, and `spool reset` refuses it.
 
 It removes three things at most, and each only if it is what DuckDB makes: the store's log, `<store>.wal`, which has to be a file; the directory DuckDB spills into, `<store>.tmp`, with what is in it, where a link is removed and not what it points to; and the store itself, a file, last. If any of them, or `.spool` itself, is a link or of another kind, it removes nothing.
+
+## spool update-skills
+
+`spool update-skills [<dir>] [--force]`
+
+Brings the files for coding agents that `spool init` wrote to the version of the `spool` that runs it: the skills in `.agents/skills/`, their links in `.claude/skills/`, Spool's part of `AGENTS.md`, and a `CLAUDE.md` if there is none. It comes with the release after 0.1.0: run it after installing a new release. It does not update `spool` itself: the install script does.
+
+A file that somebody edited since Spool wrote it is kept, and the command says so; `--force` replaces it. Spool's part of `AGENTS.md` is between two marker lines, and the rest of that file is never changed. [Coding agents](/docs/agents) says how it tells an edit.
+
+```sh
+spool update-skills
+```
+
+```text title="Output"
+project  .
+
+  unchanged  AGENTS.md
+  unchanged  CLAUDE.md
+  unchanged  .agents/skills/spool-project/SKILL.md
+  unchanged  .claude/skills/spool-project
+  unchanged  .agents/skills/spool-rules/SKILL.md
+  unchanged  .claude/skills/spool-rules
+  unchanged  .agents/skills/spool-extractor/SKILL.md
+  unchanged  .claude/skills/spool-extractor
+  unchanged  .agents/skills/spool-data/SKILL.md
+  unchanged  .claude/skills/spool-data
+  unchanged  .agents/skills/spool-api/SKILL.md
+  unchanged  .claude/skills/spool-api
+
+The files for agents are this version's already.
+```
 
 ## spool build
 
