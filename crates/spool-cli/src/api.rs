@@ -14,9 +14,8 @@ use spool::core::{
 use spool::{
     Authored, DocumentEntry, DraftEntry, DraftSummary, Explanation, HistoryEntry,
     IdentityExplanation, IdentitySummary, IdentityView, LoggedChangeset, MintedIds, NewDocument,
-    RecomputeApplied, RecomputeReport, RecordEntry, ReviewCase, ReviewEntry, RunEntry,
-    SplitReport, StoreInfo, StrategyRef,
-    TypeResolution,
+    RecomputeApplied, RecomputeReport, RecordEntry, ReviewCase, ReviewEntry, RunEntry, SplitReport,
+    StoreInfo, StrategyRef, TypeResolution,
 };
 
 /// The version of the API, which is the first segment of every path.

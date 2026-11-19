@@ -49,6 +49,75 @@ export interface AddedToken {
   token: Token;
 }
 
+export interface After {
+  fate: Fate;
+  /**
+   * The identity that keeps its ID. `None` for a new identity, whose ID
+   * is minted when the result is applied, and for records that wait.
+   */
+  identity?: IdentityId | null;
+  label?: string | null;
+  /**
+   * Identities of now that would be merged into this one.
+   */
+  merged?: IdentityId[];
+  records: number;
+}
+
+export interface AppliedType {
+  /**
+   * The changeset, or `None` when nothing changed.
+   */
+  committed?: Committed | null;
+  entity_type: EntityType;
+  /**
+   * The match run that judged every record by the rules. Its judgements
+   * are kept as any run's are.
+   */
+  match_run: RunId;
+  /**
+   * The reconcile run that wrote the changeset.
+   */
+  reconcile_run: RunId;
+  /**
+   * The review items the records that wait were left in.
+   */
+  review: ReviewItem[];
+  summary: RecomputeSummary;
+}
+
+/**
+ * `POST /v1/recompute/apply`: make the identities what a recomputation
+ * showed. Refused with `409` if what it finds now is not the plan.
+ */
+export interface ApplyRecomputeRequest {
+  /**
+   * The type the preview was of. Left out, every type, as the preview
+   * was.
+   */
+  entity_type?: EntityType | null;
+  /**
+   * The `plan` of the preview.
+   */
+  plan: string;
+  /**
+   * Why, kept with the changeset in the log.
+   */
+  reason?: string | null;
+}
+
+export interface ApprovedPlacement {
+  /**
+   * The draft, by its changeset ID.
+   */
+  draft: ChangesetId;
+  record: RecordId;
+  /**
+   * Where it was committed in the log.
+   */
+  seq: Seq;
+}
+
 /**
  * A changeset the engine wrote for a caller, and its receipt.
  */
@@ -59,6 +128,18 @@ export interface Authored {
    * validated all the same.
    */
   committed?: Committed | null;
+}
+
+export interface Before {
+  /**
+   * `None` for the records in the change that have no identity.
+   */
+  identity?: IdentityId | null;
+  /**
+   * The label most of its records have.
+   */
+  label?: string | null;
+  records: number;
 }
 
 /**
@@ -100,6 +181,69 @@ export interface CaseConstraint {
   identities: [IdentityId | null, IdentityId | null];
   kind: ConstraintKind;
 }
+
+/**
+ * One connected part of what would change: the identities of now and
+ * after that share records, with no record shared with any other.
+ */
+export interface Change {
+  /**
+   * What there would be after, the largest first.
+   */
+  after: After[];
+  /**
+   * How many of its records a draft placed that a reviewer approved.
+   */
+  approved_drafts?: number;
+  /**
+   * The identities of now, the largest first. One without an ID stands
+   * for records that have no identity.
+   */
+  before: Before[];
+  /**
+   * What stops a group in it from being an identity: two of its records
+   * that something says differ.
+   */
+  blocked_by?: Contradiction[];
+  kind: ChangeKind;
+  /**
+   * Those whose identity would be another than now, or none.
+   */
+  moved: number;
+  /**
+   * Its place among the type's changes, the largest first, from 1.
+   */
+  rank: number;
+  /**
+   * The records in it.
+   */
+  records: number;
+  /**
+   * Changesets by people or agents that shaped an identity in it.
+   */
+  shaped_by?: PersonDecision[];
+}
+
+/**
+ * A change with each of its records.
+ */
+export interface ChangeDetail {
+  /**
+   * Its records that drafts placed which reviewers approved.
+   */
+  approved_drafts?: ApprovedPlacement[];
+  change: Change;
+  /**
+   * The constraints in force between its records.
+   */
+  constraints?: ConstraintNote[];
+  /**
+   * Ordered by where they would go, then by source and key.
+   */
+  records: RecordMove[];
+}
+
+export type ChangeKind = "new" | "gain" | "lose" | "split" | "merge" | "regroup" | "review";
 
 /**
  * `POST /v1/people/{id}`: change a person. Only an admin may. A field left
@@ -232,10 +376,77 @@ export interface ConstraintList {
   constraints: ConstraintEntry[];
 }
 
+export interface ConstraintNote {
+  decision: PersonDecision;
+  kind: ConstraintKind;
+  records: [RecordId, RecordId];
+}
+
 /**
  * SHA-256 of the canonical encoding of a list of operations, as lowercase hex.
  */
 export type ContentHash = string;
+
+/**
+ * Two records of a group that something says are not the same thing.
+ */
+export interface Contradiction {
+  /**
+   * A `cannot_link` that someone recorded, if that is what says so.
+   */
+  constraint?: PersonDecision | null;
+  records: [RecordId, RecordId];
+  /**
+   * The `no_match` rules that hold for the pair, if those say so.
+   */
+  rules?: string[];
+}
+
+/**
+ * What people decided, as far as it reaches this result.
+ */
+export interface DecisionSummary {
+  /**
+   * Groups left waiting for review because a `cannot_link` contradicts
+   * what the rules join.
+   */
+  blocked_by_constraints: number;
+  /**
+   * Groups left waiting for review because a `no_match` rule
+   * contradicts what the rules join.
+   */
+  blocked_by_rules: number;
+  /**
+   * `cannot_link` constraints in force between records of the type. Each
+   * keeps its two records apart.
+   */
+  cannot_link: number;
+  /**
+   * Changes that touch an identity a changeset by a person or an agent
+   * shaped. Such a change may undo what they did.
+   */
+  changes_shaped_by_people: number;
+  /**
+   * Changes that touch records a draft placed that a reviewer approved.
+   * An approved draft binds no more than the run that drafted it.
+   */
+  changes_with_approved_drafts: number;
+  /**
+   * `possible_split` items a reviewer dismissed, whose records stay
+   * together.
+   */
+  dismissed_splits: number;
+  /**
+   * Groups of records that people's decisions hold together, of more
+   * than one record. Each stays together whatever the rules say.
+   */
+  held_together: number;
+  /**
+   * `must_link` constraints in force between records of the type. Each
+   * keeps its two records in one identity.
+   */
+  must_link: number;
+}
 
 /**
  * A source as the project declares it, whether or not it has sent rows.
@@ -684,6 +895,8 @@ export interface FailedDocument {
   reason: string;
   source: string;
 }
+
+export type Fate = "kept" | "new" | "waiting";
 
 export interface FeatureColumn {
   data_type: string;
@@ -1317,6 +1530,15 @@ export interface Person {
 }
 
 /**
+ * A changeset by a person or an agent.
+ */
+export interface PersonDecision {
+  actor: Actor;
+  reason?: string | null;
+  seq: Seq;
+}
+
+/**
  * `GET /v1/people`: everyone with an account, in the order they were added.
  */
 export interface PersonList {
@@ -1461,6 +1683,148 @@ export type Reason =
     };
 
 /**
+ * What applying a recomputation did.
+ */
+export interface RecomputeApplied {
+  plan: string;
+  types: AppliedType[];
+}
+
+/**
+ * What the identities would be under the rules as they are now, against
+ * the identities there are. Nothing was changed to find out.
+ */
+export interface RecomputeReport {
+  /**
+   * Names this result: applying it takes this, and refuses if what it
+   * finds then is not the same.
+   */
+  plan: string;
+  /**
+   * One entry per entity type, in the order the manifest declares them.
+   */
+  types: TypeRecompute[];
+}
+
+/**
+ * `POST /v1/recompute`: what the identities would be under the rules as
+ * they are now, against the identities there are. Nothing is changed.
+ */
+export interface RecomputeRequest {
+  /**
+   * One entity type. Left out, every type the project declares.
+   */
+  entity_type?: EntityType | null;
+  /**
+   * Show whole the change that holds this identity, with each of its
+   * records and where it would go.
+   */
+  identity?: IdentityId | null;
+  /**
+   * How many changes to list for each type, largest first: 10 when left
+   * out, at most 1,000.
+   */
+  limit?: number | null;
+  /**
+   * How many of the largest changes to pass over first.
+   */
+  offset?: number | null;
+}
+
+/**
+ * The counts of what would change for one entity type.
+ */
+export interface RecomputeSummary {
+  /**
+   * Identities that would be left with no records, because every one
+   * would wait for review.
+   */
+  emptied: number;
+  /**
+   * Identities that would keep their ID and gain records.
+   */
+  gaining: number;
+  /**
+   * Identities with records after.
+   */
+  identities_after: number;
+  /**
+   * Identities with records now.
+   */
+  identities_now: number;
+  /**
+   * Identities that would keep their ID and lose records.
+   */
+  losing: number;
+  /**
+   * Identities that would be merged into another: their ID would stand
+   * for it.
+   */
+  merged_away: number;
+  /**
+   * Identities after that would take records from more than one
+   * identity of now.
+   */
+  merging: number;
+  /**
+   * Identities that would be made.
+   */
+  new_identities: number;
+  /**
+   * Pairs that would share one after.
+   */
+  pairs_after: number;
+  /**
+   * Pairs that share one now and would after.
+   */
+  pairs_kept: number;
+  /**
+   * Pairs of records that share an identity now.
+   */
+  pairs_now: number;
+  /**
+   * Records the recomputation placed: every record of the type that is
+   * not taken back, other than those a reviewer dismissed from review
+   * that have no identity.
+   */
+  records: number;
+  /**
+   * Records that would be in another identity than now, by a move or a
+   * merge. Records that would gain or lose an identity are not counted.
+   */
+  records_moved: number;
+  /**
+   * Records without an identity that would get one.
+   */
+  records_placed: number;
+  /**
+   * Records with an identity that would wait for review without one.
+   */
+  records_unplaced: number;
+  /**
+   * Records that would wait for review without an identity, in all.
+   */
+  records_waiting: number;
+  /**
+   * The `conflict` review items those records would be left in.
+   */
+  review_items: number;
+  /**
+   * Open review items whose records would all have an identity, and
+   * which would close.
+   */
+  review_items_closed: number;
+  /**
+   * Identities whose records would go to more than one identity.
+   */
+  splitting: number;
+  /**
+   * Identities that would keep exactly the records they have.
+   */
+  unchanged: number;
+}
+
+/**
  * `POST /v1/runs/{run}/reconcile`. The body may be left out.
  */
 export interface ReconcileRequest {
@@ -1534,6 +1898,21 @@ export interface RecordList {
    */
   next?: RecordId | null;
   records: RecordEntry[];
+}
+
+export interface RecordMove {
+  /**
+   * Its identity now.
+   */
+  from?: IdentityId | null;
+  key?: string | null;
+  label?: string | null;
+  record: RecordId;
+  source: string;
+  /**
+   * Where it would go: its place in the change's `after`, from 0.
+   */
+  to: number;
 }
 
 /**
@@ -1861,6 +2240,11 @@ export interface RunEntry {
    * documents, or the mentions an extract run found.
    */
   load?: LoadReport | null;
+  /**
+   * What a match run that judged every record for a recomputation
+   * reported, once the recomputation was applied.
+   */
+  recompute?: AppliedType | null;
   /**
    * What a match run reported when it was reconciled. `committed` is
    * filled in once its draft is committed.
@@ -2245,6 +2629,27 @@ export interface TypeInfo {
    * and their source has not taken them back.
    */
   unassigned: number;
+}
+
+export interface TypeRecompute {
+  /**
+   * The changes that were asked for, largest first.
+   */
+  changes: Change[];
+  /**
+   * How many changes there are in all.
+   */
+  changes_total: number;
+  /**
+   * The decisions of people that shaped the result or stopped it.
+   */
+  decisions: DecisionSummary;
+  /**
+   * The change that holds the identity that was asked about, whole.
+   */
+  detail?: ChangeDetail | null;
+  entity_type: EntityType;
+  summary: RecomputeSummary;
 }
 
 export interface TypeResolution {
