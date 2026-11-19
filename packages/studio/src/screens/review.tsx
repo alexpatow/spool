@@ -29,6 +29,7 @@ import {
   Select,
   Source,
   Sources,
+  sortRows,
   When,
   Word,
 } from "../components.tsx";
@@ -38,7 +39,7 @@ import { facts, fieldsOf, latest, same, sourcesOf, valueOf } from "../facts.ts";
 import { count, recordName, short } from "../format.ts";
 import { useLoad, useNames, useStudio } from "../hooks.ts";
 import { CheckIcon, InboxIcon, MergeIcon, PlusIcon, SplitIcon } from "../icons.tsx";
-import { href } from "../router.ts";
+import { href, navigate } from "../router.ts";
 import type { Route } from "../router.ts";
 import { colors, radius, spacing, typography } from "../styles/shelf/tokens.stylex";
 import { tones } from "../styles/tones.stylex";
@@ -51,9 +52,31 @@ const STATUSES: ReviewStatus[] = ["open", "resolved", "dismissed", "superseded"]
 /** How many items are shown with all a reviewer decides them from, before the reader asks for more. */
 const AT_ONCE = 10;
 
+/** The orders the items can be read in. The server gives them oldest first. */
+const ORDERS = [
+  { value: "oldest", label: "oldest first" },
+  { value: "newest", label: "newest first" },
+  { value: "records", label: "most records first" },
+  { value: "kind", label: "kind" },
+];
+
+function ordered(items: ReviewEntry[], order: string): ReviewEntry[] {
+  switch (order) {
+    case "newest":
+      return sortRows(items, (item) => item.id, "desc");
+    case "records":
+      return sortRows(items, (item) => item.records.length, "desc");
+    case "kind":
+      return sortRows(items, (item) => item.kind, "asc");
+    default:
+      return items;
+  }
+}
+
 export function ReviewItems({ route, types }: { route: Route; types: string[] }) {
   const { type } = route.query;
   const status = route.query.status ?? "open";
+  const order = route.query.sort ?? "oldest";
   const { info } = useStudio();
   const [shown, setShown] = useState(AT_ONCE);
   // An item that was decided leaves the list of those that are open, so
@@ -77,13 +100,24 @@ export function ReviewItems({ route, types }: { route: Route; types: string[] })
             count: value === "open" ? waiting : undefined,
           }))}
         />
-        {types.length > 1 ? (
-          <Filters
-            path={["review"]}
-            query={route.query}
-            selects={[{ name: "type", label: "Entity type", choices: types.map((value) => ({ value })) }]}
-          />
-        ) : null}
+        <div {...stylex.props(styles.listing)}>
+          {types.length > 1 ? (
+            <Filters
+              path={["review"]}
+              query={route.query}
+              selects={[{ name: "type", label: "Entity type", choices: types.map((value) => ({ value })) }]}
+            />
+          ) : null}
+          <Labelled label="Order">
+            <Select
+              value={order}
+              onChange={(value) =>
+                navigate(href(["review"], { ...route.query, sort: value === "oldest" ? undefined : value }))
+              }
+              choices={ORDERS}
+            />
+          </Labelled>
+        </div>
       </div>
       <Done>{done}</Done>
       <Load state={items}>
@@ -95,7 +129,9 @@ export function ReviewItems({ route, types }: { route: Route; types: string[] })
             </div>
           ) : (
             <>
-              {items.slice(0, shown).map((item) => (
+              {ordered(items, order)
+                .slice(0, shown)
+                .map((item) => (
                 <Case key={item.id} id={item.id} linked done={setDone} />
               ))}
               {items.length > shown ? (
@@ -1138,6 +1174,12 @@ const styles = stylex.create({
     display: "flex",
     flexWrap: "wrap",
     justifyContent: "space-between",
+  },
+  listing: {
+    gap: spacing["3"],
+    alignItems: "flex-end",
+    display: "flex",
+    flexWrap: "wrap",
   },
   nothing: {
     borderColor: colors.border,

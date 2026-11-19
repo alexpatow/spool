@@ -86,9 +86,10 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use spool::core::{Actor, Changeset, DocumentId, EntityType, Policy, RecordId, RunId, Seq};
 use spool::{
-    ConstraintFilter, Disposition, DocumentFilter, DraftFilter, DraftStatus, Engine,
-    ExtractOptions, IdentityFilter, RecordFilter, ResolveOptions, ReviewFilter, ReviewStatus, Rows,
-    RunFilter, RunKind, RunStatus, Scope, StrategyRef, watch_runs,
+    ActorNames, ConstraintFilter, Direction, Disposition, DocumentFilter, DocumentSort,
+    DraftFilter, DraftStatus, Engine, ExtractOptions, IdentityFilter, IdentitySort, LogSort,
+    RecordFilter, RecordSort, ResolveOptions, ReviewFilter, ReviewStatus, Rows, RunFilter, RunKind,
+    RunSort, RunStatus, Scope, Sort, StrategyRef, watch_runs,
 };
 use tokio::net::TcpListener;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch};
@@ -767,6 +768,16 @@ async fn people<T: Send + 'static>(
     }
 }
 
+/// What each person is called, by the actor the log names them as: a list
+/// sorted by who did something sorts them as the studio shows them.
+async fn names(app: &App) -> ApiResult<ActorNames> {
+    let people = people(app, Accounts::list).await?;
+    Ok(people
+        .into_iter()
+        .map(|person| (Actor::User(person.id), person.name))
+        .collect())
+}
+
 /// Runs work that hashes a password, which `permit` allows: it is held until
 /// the work is done, even if whoever asked has gone.
 async fn hashing<T: Send + 'static>(
@@ -1398,6 +1409,19 @@ fn page(limit: Option<u64>) -> u64 {
     limit.unwrap_or(DEFAULT_PAGE).clamp(1, MAX_PAGE)
 }
 
+/// The order a list was asked for: `sort` names what it is sorted by, and
+/// `order` is `asc` or `desc`. `order` alone turns the list's own order,
+/// which is by `own`. Neither leaves the list in its own order.
+fn sorted<By>(sort: Option<By>, order: Option<Direction>, own: By) -> Option<Sort<By>> {
+    match (sort, order) {
+        (None, None) => None,
+        (by, direction) => Some(Sort {
+            by: by.unwrap_or(own),
+            direction: direction.unwrap_or_default(),
+        }),
+    }
+}
+
 // Calling the engine
 
 /// Runs engine work on a blocking thread.
@@ -1673,6 +1697,8 @@ struct DocumentsQuery {
     latest: Option<bool>,
     after: Option<String>,
     limit: Option<u64>,
+    sort: Option<DocumentSort>,
+    order: Option<Direction>,
 }
 
 async fn list_documents(
@@ -1691,6 +1717,7 @@ async fn list_documents(
             .map(|after| id(after, "a document ID"))
             .transpose()?,
         limit,
+        sort: sorted(params.sort, params.order, DocumentSort::Id),
     };
     let documents = engine(&app, move |engine| engine.documents(&filter)).await?;
     let next = (documents.len() as u64 == limit)
@@ -1835,6 +1862,8 @@ struct RunsQuery {
     status: Option<RunStatus>,
     entity_type: Option<EntityType>,
     limit: Option<u64>,
+    sort: Option<RunSort>,
+    order: Option<Direction>,
 }
 
 async fn list_runs(
@@ -1842,11 +1871,18 @@ async fn list_runs(
     params: Result<Query<RunsQuery>, QueryRejection>,
 ) -> ApiResult {
     let params = query(params)?;
+    let sort = sorted(params.sort, params.order, RunSort::Run);
+    let names = match sort {
+        Some(sort) if sort.by == RunSort::StartedBy => names(&app).await?,
+        _ => Vec::new(),
+    };
     let filter = RunFilter {
         kind: params.kind,
         status: params.status,
         entity_type: params.entity_type,
         limit: page(params.limit),
+        sort,
+        names,
     };
     let runs = engine(&app, move |engine| engine.runs(&filter)).await?;
     ok(RunList { runs })
@@ -2148,6 +2184,8 @@ async fn list_constraints(
 struct LogQuery {
     after: Option<u64>,
     limit: Option<u64>,
+    sort: Option<LogSort>,
+    order: Option<Direction>,
 }
 
 async fn list_changesets(
@@ -2155,11 +2193,21 @@ async fn list_changesets(
     params: Result<Query<LogQuery>, QueryRejection>,
 ) -> ApiResult {
     let params = query(params)?;
-    let after = Seq(params.after.unwrap_or(0));
     let limit = page(params.limit);
+    let sort = sorted(params.sort, params.order, LogSort::Seq);
+    let names = match sort {
+        Some(sort) if sort.by == LogSort::Actor => names(&app).await?,
+        _ => Vec::new(),
+    };
     ok(engine(&app, move |engine| {
+        // Sorted, a page continues after the changeset at `after`,
+        // wherever that stands in the order.
+        let changesets = match sort {
+            None => engine.logged_after(Seq(params.after.unwrap_or(0)), limit)?,
+            Some(sort) => engine.logged_sorted(sort, params.after.map(Seq), limit, &names)?,
+        };
         Ok(ChangesetList {
-            changesets: engine.logged_after(after, limit)?,
+            changesets,
             head: engine.head()?,
         })
     })
@@ -2188,6 +2236,8 @@ struct IdentitiesQuery {
     ids: Option<String>,
     after: Option<String>,
     limit: Option<u64>,
+    sort: Option<IdentitySort>,
+    order: Option<Direction>,
 }
 
 async fn list_identities(
@@ -2221,6 +2271,7 @@ async fn list_identities(
             .map(|after| id(after, "an identity ID"))
             .transpose()?,
         limit,
+        sort: sorted(params.sort, params.order, IdentitySort::Id),
     };
     let identities = engine(&app, move |engine| engine.identities(&filter)).await?;
     let next = (identities.len() as u64 == limit)
@@ -2252,6 +2303,8 @@ struct RecordsQuery {
     unassigned: Option<bool>,
     after: Option<String>,
     limit: Option<u64>,
+    sort: Option<RecordSort>,
+    order: Option<Direction>,
 }
 
 async fn list_records(
@@ -2282,6 +2335,7 @@ async fn list_records(
             .map(|after| id(after, "a record ID"))
             .transpose()?,
         limit,
+        sort: sorted(params.sort, params.order, RecordSort::Source),
     };
     let records = engine(&app, move |engine| engine.records(&filter)).await?;
     let next = (records.len() as u64 == limit)

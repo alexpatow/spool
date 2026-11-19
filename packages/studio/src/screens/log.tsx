@@ -2,28 +2,56 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 
 import { Act, At, Done, Would } from "../act.tsx";
-import type { LogEntry } from "../api.ts";
-import { Code, Fields, Id, Load, Notice, Ops, Page, PagedTable, Reason, Ref, Section, Text } from "../components.tsx";
+import type { LogEntry, LogSort } from "../api.ts";
+import {
+  Code,
+  Fields,
+  Id,
+  Load,
+  Notice,
+  Ops,
+  Page,
+  PagedTable,
+  Reason,
+  Ref,
+  Section,
+  Text,
+  useSorting,
+} from "../components.tsx";
 import { LogIcon, UndoIcon } from "../icons.tsx";
 import { useLoad, useOpNames, usePages } from "../hooks.ts";
+import type { Route } from "../router.ts";
 import { Who } from "../who.tsx";
 
-export function Log() {
+/** The changesets of one page of the log. */
+const PAGE = 100;
+
+export function Log({ route }: { route: Route }) {
+  const sorting = useSorting(route, { by: "seq", order: "desc" });
   const pages = usePages(async (client, after) => {
-    const page = await client.changesets({ after: after as number | undefined });
+    const page = await client.changesets({
+      after: after as number | undefined,
+      limit: PAGE,
+      sort: sorting.by as LogSort,
+      order: sorting.order,
+    });
+    // A sorted log says nothing of what is after a page, and a full page may have more.
     const last = page.changesets.at(-1);
-    return { items: page.changesets, next: last !== undefined && last.seq < page.head ? last.seq : null };
+    return { items: page.changesets, next: last !== undefined && page.changesets.length === PAGE ? last.seq : null };
   });
   return (
     <Page title="Log">
       <PagedTable
         pages={pages}
+        sorting={sorting}
         columns={[
-          { title: "Position", cell: (entry) => <Ref kind="log" id={entry.seq} /> },
-          { title: "Actor", cell: (entry) => <Who actor={entry.changeset.actor} /> },
-          { title: "Operations", cell: (entry) => entry.changeset.ops.length, number: true },
+          { title: "Position", cell: (entry) => <Ref kind="log" id={entry.seq} />, sort: "seq", first: "desc" },
+          { title: "Actor", cell: (entry) => <Who actor={entry.changeset.actor} />, sort: "actor" },
+          { title: "Operations", cell: (entry) => entry.changeset.ops.length, number: true, sort: "operations" },
           {
             title: "Run",
+            sort: "run",
+            first: "desc",
             cell: (entry) =>
               entry.changeset.run ? (
                 <Ref kind="run" id={entry.changeset.run} label={`reconcile run ${entry.changeset.run}`} />
@@ -32,7 +60,7 @@ export function Log() {
               ),
           },
           { title: "Started by", cell: (entry) => (entry.started_by ? <Who actor={entry.started_by} /> : "-") },
-          { title: "Reason", cell: (entry) => entry.changeset.reason ?? "-", wrap: true },
+          { title: "Reason", cell: (entry) => entry.changeset.reason ?? "-", wrap: true, sort: "reason" },
         ]}
         rowKey={(entry) => entry.seq}
         empty="No changesets."

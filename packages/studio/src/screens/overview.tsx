@@ -23,10 +23,15 @@ import { useLoad } from "../hooks.ts";
 import { href } from "../router.ts";
 import { colors, radius, spacing, typography } from "../styles/shelf/tokens.stylex";
 import { tones } from "../styles/tones.stylex";
-import { Who } from "../who.tsx";
+import { useCalled, Who } from "../who.tsx";
 
 /** How many of the latest runs the overview lists. */
 const RUNS = 5;
+
+/** What a run was about, as a list of runs says it. */
+function details(run: RunEntry): string {
+  return [run.entity_type, run.strategy?.name, run.extractor?.name].filter((part) => part).join(", ");
+}
 
 export function Overview() {
   const loaded = useLoad(async (client) => {
@@ -42,6 +47,7 @@ export function Overview() {
 
 function Store({ info, runs }: { info: Info; runs: RunEntry[] }) {
   const { store } = info;
+  const called = useCalled();
   return (
     <>
       <Waiting types={store.entity_types} />
@@ -77,6 +83,7 @@ function Store({ info, runs }: { info: Info; runs: RunEntry[] }) {
             columns={[
               {
                 title: "Source",
+                value: (source) => source.source,
                 cell: (source) => (
                   <a
                     href={href(["records"], { type: type.name, source: source.source })}
@@ -86,9 +93,10 @@ function Store({ info, runs }: { info: Info; runs: RunEntry[] }) {
                   </a>
                 ),
               },
-              { title: "Records", cell: (source) => source.records, number: true },
+              { title: "Records", value: (source) => source.records, cell: (source) => source.records, number: true },
               {
                 title: "Unassigned",
+                value: (source) => source.unassigned,
                 cell: (source) =>
                   source.unassigned > 0 ? (
                     <LinkTo path={["records"]} query={{ type: type.name, source: source.source, unassigned: true }}>
@@ -99,7 +107,12 @@ function Store({ info, runs }: { info: Info; runs: RunEntry[] }) {
                   ),
                 number: true,
               },
-              { title: "Last loaded", cell: (source) => <When at={source.last_loaded_at} /> },
+              {
+                title: "Last loaded",
+                value: (source) => source.last_loaded_at,
+                first: "desc",
+                cell: (source) => <When at={source.last_loaded_at} />,
+              },
             ]}
             rows={type.sources}
             rowKey={(source) => source.source}
@@ -140,16 +153,30 @@ function Store({ info, runs }: { info: Info; runs: RunEntry[] }) {
         <Table
           label="Latest runs"
           columns={[
-            { title: "Run", cell: (run) => <Ref kind="run" id={run.run} label={`Run ${run.run}`} /> },
-            { title: "Kind", cell: (run) => run.kind },
-            { title: "Status", cell: (run) => <Word value={run.status} /> },
+            {
+              title: "Run",
+              value: (run) => run.run,
+              first: "desc",
+              cell: (run) => <Ref kind="run" id={run.run} label={`Run ${run.run}`} />,
+            },
+            { title: "Kind", value: (run) => run.kind, cell: (run) => run.kind },
+            { title: "Status", value: (run) => run.status, cell: (run) => <Word value={run.status} /> },
             {
               title: "Details",
-              cell: (run) =>
-                [run.entity_type, run.strategy?.name, run.extractor?.name].filter((part) => part).join(", "),
+              value: details,
+              cell: details,
             },
-            { title: "Started by", cell: (run) => <Who actor={run.started_by} /> },
-            { title: "Started", cell: (run) => <When at={run.started_at} /> },
+            {
+              title: "Started by",
+              value: (run) => called(run.started_by),
+              cell: (run) => <Who actor={run.started_by} />,
+            },
+            {
+              title: "Started",
+              value: (run) => run.started_at,
+              first: "desc",
+              cell: (run) => <When at={run.started_at} />,
+            },
           ]}
           rows={runs}
           rowKey={(run) => run.run}
@@ -160,9 +187,17 @@ function Store({ info, runs }: { info: Info; runs: RunEntry[] }) {
         <Section title="Extractors">
           <Table
             columns={[
-              { title: "Extractor", cell: (extractor) => <Code>{extractor.name}</Code> },
-              { title: "Runtime", cell: (extractor) => extractor.runtime },
-              { title: "File", cell: (extractor) => <Code>{extractor.file}</Code> },
+              {
+                title: "Extractor",
+                value: (extractor) => extractor.name,
+                cell: (extractor) => <Code>{extractor.name}</Code>,
+              },
+              { title: "Runtime", value: (extractor) => extractor.runtime, cell: (extractor) => extractor.runtime },
+              {
+                title: "File",
+                value: (extractor) => extractor.file,
+                cell: (extractor) => <Code>{extractor.file}</Code>,
+              },
             ]}
             rows={store.extractors ?? []}
             rowKey={(extractor) => extractor.name}

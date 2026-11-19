@@ -3,7 +3,7 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 
 import { Act, At, Done, Mistake } from "../act.tsx";
-import type { DocumentEntry, RecordEntry, Op, ReviewEntry } from "../api.ts";
+import type { DocumentEntry, RecordEntry, RecordSort, Op, ReviewEntry } from "../api.ts";
 import {
   Code,
   Fields,
@@ -24,6 +24,7 @@ import {
   Source,
   Text,
   usePair,
+  useSorting,
   When,
   Word,
 } from "../components.tsx";
@@ -48,8 +49,11 @@ function keyOf(record: RecordEntry): string {
 export function RecordsPage({ route, types }: { route: Route; types: string[] }) {
   const { type, source, key, document, unassigned, q } = route.query;
   const pair = usePair();
+  const sorting = useSorting(route, { by: "source", order: "asc" });
   const pages = usePages(async (client, after) => {
     const page = await client.records({
+      sort: sorting.by as RecordSort,
+      order: sorting.order,
       entity_type: type,
       source,
       key,
@@ -86,10 +90,12 @@ export function RecordsPage({ route, types }: { route: Route; types: string[] })
       <PagedTable
         pages={pages}
         label="Records"
+        sorting={sorting}
         columns={[
           { title: "", cell: (record) => pair.tick(record.id) },
           {
             title: "Record",
+            sort: "label",
             cell: (record) => (
               <span {...stylex.props(styles.name)}>
                 <Ref kind="record" id={record.id} label={record.label ?? recordName(record)} />
@@ -98,15 +104,16 @@ export function RecordsPage({ route, types }: { route: Route; types: string[] })
             ),
             wrap: true,
           },
-          { title: "Source", cell: (record) => <Source name={record.source} /> },
-          { title: "Key", cell: (record) => <Code>{keyOf(record)}</Code> },
-          { title: "Entity type", cell: (record) => record.entity_type },
+          { title: "Source", cell: (record) => <Source name={record.source} />, sort: "source" },
+          { title: "Key", cell: (record) => <Code>{keyOf(record)}</Code>, sort: "key" },
+          { title: "Entity type", cell: (record) => record.entity_type, sort: "entity_type" },
           {
             title: "Identity",
+            sort: "identity",
             cell: (record) =>
               <Placed record={record} labels={labels} />,
           },
-          { title: "ID", cell: (record) => <Ref kind="record" id={record.id} /> },
+          { title: "ID", cell: (record) => <Ref kind="record" id={record.id} />, sort: "id" },
         ]}
         rowKey={(record) => record.id}
         empty={q ? `No records match “${q}”.` : "No records."}

@@ -12,6 +12,17 @@ Everything Spool does is a call of this API. The command line, the studio and th
 - **Bodies.** JSON in, JSON out, on one line. No `content-type` header is needed for JSON. A field the server does not know is refused.
 - **Waiting.** A call that starts work answers at once with a run whose `status` is `running`. With `wait_ms`, in the body or the query, it waits that long for the run to finish first. `GET /v1/runs/<run>?wait_ms=5000` waits for a run that was started before.
 - **Lists.** A list answers up to 100 entries, or `limit` up to 1,000, and `next` when there are more. Pass it back as `after`.
+- **Sorting.** `GET /v1/documents`, `/v1/records`, `/v1/identities`, `/v1/runs` and `/v1/changesets` take `sort`, what to sort by, and `order`, `asc` or `desc`. The whole list is sorted, and a page continues after its `after` in that order. `order` alone turns a list's own order around. What each sorts by:
+
+  | Path | `sort` |
+  | --- | --- |
+  | `/v1/documents` | `id`, `key`, `source`, `length`, `loaded` |
+  | `/v1/records` | `id`, `source`, `key`, `label`, `entity_type`, `identity` |
+  | `/v1/identities` | `id`, `label`, `entity_type`, `records`, `sources`, `created` |
+  | `/v1/runs` | `run`, `kind`, `status`, `details`, `started_by`, `started` |
+  | `/v1/changesets` | `seq`, `actor`, `operations`, `run`, `reason` |
+
+  Text sorts whatever its case, and what has no value comes last either way. Sorted, the log has no `next`: a full page may have more after it.
 - **Errors.** A refusal is `{"error": {"code": "...", "message": "..."}}` with a 4xx status. The message says what was wrong and names the thing.
 - **Schema.** `spool schema` prints the JSON Schema of every value on this page.
 

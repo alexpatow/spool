@@ -25,10 +25,11 @@ use crate::features;
 use crate::following::following;
 use crate::load::{self, LoadReport};
 use crate::lookup::{
-    self, HistoryEntry, IdentityFilter, IdentitySummary, IdentityView, LoggedChangeset,
+    self, HistoryEntry, IdentityFilter, IdentitySummary, IdentityView, LogSort, LoggedChangeset,
     RecordEntry, RecordFilter, StoreInfo,
 };
 use crate::metrics::{self, Churn, IdStability, Metrics};
+use crate::order::Sort;
 use crate::possible_split;
 use crate::project::{EntityTypeManifest, Manifest, Strategy, hash_json};
 use crate::retract::{self, RetractReport};
@@ -1128,6 +1129,20 @@ impl Engine {
     /// decided it; this adds who asked.
     pub fn logged_after(&self, after: Seq, limit: u64) -> Result<Vec<LoggedChangeset>> {
         self.read(|conn| lookup::logged(conn, store::read_log_after(conn, after, limit)?))
+    }
+
+    /// At most `limit` committed changesets in another order than the
+    /// log's, each with who started the run it came from. A page continues
+    /// after the changeset at `after`, wherever that stands in the order.
+    /// `names` says what people are called, for sorting by who decided.
+    pub fn logged_sorted(
+        &self,
+        sort: Sort<LogSort>,
+        after: Option<Seq>,
+        limit: u64,
+        names: &[(Actor, String)],
+    ) -> Result<Vec<LoggedChangeset>> {
+        self.read(|conn| lookup::logged(conn, lookup::changesets(conn, sort, after, limit, names)?))
     }
 
     /// All of identity state, read from the projection tables.

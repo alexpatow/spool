@@ -37,10 +37,12 @@ function Managed() {
         {(rows) => (
           <Table
             columns={[
-              { title: "Token", cell: (token) => <Code>{token.name}</Code> },
-              { title: "In the log", cell: (token) => <Code>agent:{token.name}</Code> },
+              { title: "Token", value: (token) => token.name, cell: (token) => <Code>{token.name}</Code> },
+              { title: "In the log", value: (token) => token.name, cell: (token) => <Code>agent:{token.name}</Code> },
               {
                 title: "Made",
+                value: (token) => token.created_at,
+                first: "desc",
                 cell: (token) => (
                   <>
                     <When at={token.created_at} /> by{" "}
@@ -50,6 +52,8 @@ function Managed() {
               },
               {
                 title: "Last used",
+                value: (token) => token.last_used_at,
+                first: "desc",
                 cell: (token) => (token.last_used_at ? <When at={token.last_used_at} /> : "Never"),
               },
               { title: "", cell: (token: Token) => <Revoke token={token} done={setDone} /> },

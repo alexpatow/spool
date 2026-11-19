@@ -1132,6 +1132,8 @@ impl Tools {
                     ids,
                     after: text(asked.after),
                     limit: limit(asked.limit),
+                    sort: None,
+                    order: None,
                 };
                 super::list_identities(app, Ok(Query(query))).await
             }
@@ -1155,6 +1157,8 @@ impl Tools {
                     unassigned: asked.unassigned,
                     after: text(asked.after),
                     limit: limit(asked.limit),
+                    sort: None,
+                    order: None,
                 };
                 super::list_records(app, Ok(Query(query))).await
             }
@@ -1197,6 +1201,8 @@ impl Tools {
                 let query = LogQuery {
                     after: asked.after.map(|seq| seq.0),
                     limit: limit(asked.limit),
+                    sort: None,
+                    order: None,
                 };
                 super::list_changesets(app, Ok(Query(query))).await
             }

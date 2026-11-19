@@ -417,6 +417,72 @@ describe("company records a reviewer corrected", () => {
     expect((screen.getByLabelText("Kind") as HTMLSelectElement).value).toBe("load");
   });
 
+  test("a list read in pages is sorted by the server by the column whose header is clicked", async () => {
+    const header = (name: string) => screen.getByRole("columnheader", { name: new RegExp(`^${name}`) });
+    const sortedBy = () =>
+      [...document.querySelectorAll("th[aria-sort]")]
+        .filter((head) => head.getAttribute("aria-sort") !== "none")
+        .map((head) => `${head.textContent} ${head.getAttribute("aria-sort")}`);
+
+    open(server, "/identities");
+    await heading("Identities");
+    await screen.findByRole("table");
+    // By name until another order is chosen.
+    expect(sortedBy()).toEqual(["Name ascending"]);
+    const names = rowsOf(screen.getByRole("table")).map((line) => line[0]!);
+    expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })));
+
+    // A number is sorted the largest first, and the order is in the address.
+    calls.length = 0;
+    fireEvent.click(within(header("Records")).getByRole("button"));
+    expect(here()).toBe("/identities?sort=records&order=desc");
+    await waitFor(() => expect(sortedBy()).toEqual(["Records descending"]));
+    await idle();
+    expect(calls).toContain("GET /v1/identities");
+    const { identities } = await server.client.identities({ sort: "records", order: "desc", limit: 100 });
+    const records = rowsOf(screen.getByRole("table")).map((line) => Number(line[2]));
+    expect(records).toEqual(identities.map((identity) => identity.members));
+    expect(records[0]).toBeGreaterThan(records.at(-1)!);
+
+    // Another click turns it around.
+    fireEvent.click(within(header("Records")).getByRole("button"));
+    expect(here()).toBe("/identities?sort=records&order=asc");
+    await waitFor(() => expect(rowsOf(screen.getByRole("table")).map((line) => Number(line[2]))).toEqual(
+      [...records].reverse().sort((a, b) => a - b),
+    ));
+
+    // The runs are the newest first, and a list cut at a limit is sorted before it is cut.
+    cleanup();
+    open(server, "/runs?limit=3");
+    await heading("Runs");
+    await screen.findByRole("table");
+    expect(sortedBy()).toEqual(["Run descending"]);
+    fireEvent.click(within(header("Kind")).getByRole("button"));
+    expect(here()).toBe("/runs?limit=3&sort=kind&order=asc");
+    const kinds = (await server.client.runs({ sort: "kind", limit: 3 })).map((run) => run.kind);
+    expect(kinds[0]).toBe("load");
+    await waitFor(() => expect(rowsOf(screen.getByRole("table")).map((line) => line[1])).toEqual(kinds));
+  });
+
+  test("a list read whole is sorted in the page by the column whose header is clicked", async () => {
+    open(server, "");
+    await heading("Overview");
+    const table = await screen.findByRole("table", { name: "company sources" });
+    const records = () => rowsOf(table).map((line) => Number(line[1]));
+    const as = records();
+    expect(within(table).getAllByRole("columnheader").every((head) => head.getAttribute("aria-sort") === "none")).toBe(
+      true,
+    );
+    const button = within(within(table).getByRole("columnheader", { name: /^Records/ })).getByRole("button");
+    fireEvent.click(button);
+    expect(records()).toEqual([...as].sort((a, b) => b - a));
+    expect(within(table).getByRole("columnheader", { name: /^Records/ }).getAttribute("aria-sort")).toBe("descending");
+    fireEvent.click(button);
+    expect(records()).toEqual([...as].sort((a, b) => a - b));
+    // The page stays where it is: the order of a list read whole is not in the address.
+    expect(here()).toBe("/");
+  });
+
   test("the identities are listed by what their records call them, with where the records came from", async () => {
     open(server, "/identities");
     await heading("Identities");
@@ -853,14 +919,14 @@ describe("company records a reviewer corrected", () => {
     );
   });
 
-  test("the log lists every changeset, and one shows what it did", async () => {
+  test("the log lists every changeset, the newest first, and one shows what it did", async () => {
     const { changesets } = await server.client.changesets({ after: 3, limit: 1 });
     open(server, "/log");
     await heading("Log");
     const table = await screen.findByRole("table");
     const lines = rowsOf(table);
-    expect(lines.map((line) => line[0])).toEqual(["1", "2", "3", "4", "5", "6", "7"]);
-    expect(lines[0]).toEqual(["1", "engine", "40", "reconcile run 4", "agent:api", "reconcile new records"]);
+    expect(lines.map((line) => line[0])).toEqual(["7", "6", "5", "4", "3", "2", "1"]);
+    expect(lines[6]).toEqual(["1", "engine", "40", "reconcile run 4", "agent:api", "reconcile new records"]);
     expect(lines[3]).toEqual(["4", "agent:api", "3", "-", "-", "they are two companies after all"]);
 
     follow(within(table).getByRole("link", { name: "4" }));

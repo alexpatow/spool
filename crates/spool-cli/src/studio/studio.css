@@ -449,6 +449,10 @@
 }
 
 @layer priority2 {
+  .xln7xf2 {
+    font: inherit;
+  }
+
   .x10a8y8t {
     inset: 0;
   }
@@ -545,6 +549,10 @@
 
   .xbsl7fq {
     border-style: dashed;
+  }
+
+  .xng3xce {
+    border-style: none;
   }
 
   .x1y0btm7 {
@@ -955,6 +963,10 @@
 
   .x4klmsv {
     color: color-mix(in oklab,var(--xbr7yly) 75%,var(--x1typ4ju));
+  }
+
+  .x1heor9g {
+    color: inherit;
   }
 
   .xs2f4ig {
@@ -1629,6 +1641,10 @@
 
   .x1w2lvms:hover {
     background-color: var(--x1rhre1c);
+  }
+
+  .x6j3kir:hover {
+    background-color: var(--x1unqhr7);
   }
 
   .x1h78rzg:hover {
