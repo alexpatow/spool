@@ -657,6 +657,9 @@ describe("a review item that asks whether an identity is still one thing", () =>
     expect(does("split")).toContain("The new identity is not taken back: its ID stays, with no records.");
     expect(does("keep")).toContain(`A must_link is recorded between crm:${first!.key} and crm:${second!.key}`);
     expect(does("dismiss")).toContain("asked again if another of its records is taken back by its source");
+    expect(does("keep")).toContain(
+      "while the two records it names stay: the question is not asked again when other records come and go, and it can be if a source takes back one of those two.",
+    );
 
     // Of two groups, splitting off either is the same split, so it is offered once.
     expect(within(card).queryByRole("button", { name: "Split off group 1" })).toBeNull();

@@ -350,3 +350,41 @@ fn keeping_the_groups_as_one_records_a_must_link_and_undoing_it_asks_nothing_aga
     assert_eq!(constraints_on(&engine, mallet), 0);
     assert_eq!(open(&engine), []);
 }
+
+#[test]
+fn keeping_the_groups_as_one_holds_while_the_records_the_must_link_names_stay() {
+    let engine = engine();
+    load(
+        &engine,
+        "shop",
+        &[("1", Some("anvil"), None), ("2", Some("anvil"), None)],
+    );
+    load(&engine, "depot", &[("1", Some("mallet"), Some("K2"))]);
+    load(&engine, "kiosk", &[("1", Some("anvil"), Some("K2"))]);
+    resolve(&engine);
+    engine
+        .retract("kiosk", "thing", &["1".to_owned()], reviewer(), None)
+        .unwrap();
+    let [item] = &open(&engine)[..] else {
+        panic!("one open review item");
+    };
+    // The studio links the first record of one group with one of each other group.
+    commit(
+        &engine,
+        vec![Op::Constrain {
+            kind: spool::core::ConstraintKind::MustLink,
+            a: record_id(&engine, "shop", "1"),
+            b: record_id(&engine, "depot", "1"),
+        }],
+    );
+    assert_eq!(self::item(&engine, item.id).status, ReviewStatus::Resolved);
+    assert_eq!(open(&engine), []);
+
+    // When a record the must_link names is taken back, what is left of its
+    // group is held to the other by nothing, and the question is asked again.
+    let report = engine
+        .retract("shop", "thing", &["1".to_owned()], reviewer(), None)
+        .unwrap();
+    assert_eq!(report.possible_splits, 1);
+    assert_eq!(open(&engine).len(), 1);
+}

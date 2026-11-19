@@ -1423,7 +1423,9 @@ function SplitCard({
                 title="They are one thing: keep them as one"
                 does={[
                   `A must_link is recorded between ${recordName(left[0]![0]!)} and ${listed(left.slice(1).map((group) => recordName(group[0]!)))}, one record of each group. ${identityName(identity)} stays as it is, with all ${count(left.reduce((sum, group) => sum + group.length, 0), "record")} and its ID.`,
-                  "The question is not asked again when another of its records comes and goes: the must_link holds the groups together.",
+                  left.length > 2
+                    ? "The must_links hold the groups together while the records they name stay: the question is not asked again when other records come and go, and it can be if a source takes back one of those."
+                    : "The must_link holds the groups together while the two records it names stay: the question is not asked again when other records come and go, and it can be if a source takes back one of those two.",
                   "Undo it from the log and the must_link goes. The question is not asked again then.",
                 ]}
                 action={

@@ -160,7 +160,7 @@ A `possible_split` has its own answers:
 | Answer | What it does |
 | --- | --- |
 | Split the identity | The larger side keeps the identity's ID, and the side that was not named keeps it on a tie. The other side becomes a new identity. With `keep_apart`, the default, one `cannot_link` between a record of each side is recorded, so no merge puts them back while it stands. Undone, the records go back and the `cannot_link` is removed; the new identity's ID stays, with no records |
-| Say they are one thing | A `must_link` between a record of each group. The identity stays as it is, and the question is not raised again when another of its records comes and goes. Undone, the `must_link` is removed and the question is not raised again |
+| Say they are one thing | A `must_link` between a record of each group. The identity stays as it is. The `must_link` holds the groups together while the records it names stay in the identity: the question is not raised again when other records come and go, and it can be if a source takes back one of the records it names. Undone, the `must_link` is removed and the question is not raised again |
 | Dismiss | The identity stays as it is, and nothing is recorded about it. The question comes back if another of its records is taken back, or one comes back |
 | Leave it open | Nothing changes. No match looks at it, since its records have an identity. It closes by itself if the record that was taken back comes back, or a new record matches more than one group |
 
