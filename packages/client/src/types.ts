@@ -10,6 +10,32 @@
 export type Actor = string;
 
 /**
+ * The stored document and the placements of the records found in it.
+ */
+export interface AddDocumentReport {
+  document: DocumentId;
+  /**
+   * One entry per mention, in text order.
+   */
+  records: DocumentRecord[];
+}
+
+/**
+ * `POST /v1/documents/add`: store, extract and match one document.
+ */
+export interface AddDocumentRequest {
+  document: NewDocument;
+  /**
+   * Which extractor to use. May be omitted if the project declares only one.
+   */
+  extractor?: string | null;
+  /**
+   * The declared source that supplies the document.
+   */
+  source: string;
+}
+
+/**
  * `POST /v1/people`: add a person. Only an admin may. They sign in with
  * the password, with Google by the email, or with either: one of the two is
  * needed, and the email alone only where the server signs people in with
@@ -691,6 +717,21 @@ export interface DocumentReading {
    * The extract run.
    */
   run: RunId;
+}
+
+/**
+ * The placement of one mention in an added document.
+ */
+export interface DocumentRecord {
+  end: number;
+  entity_type: EntityType;
+  identity?: IdentityId | null;
+  record: RecordId;
+  review?: ReviewEntry | null;
+  /**
+   * The start and exclusive end, in Unicode code points.
+   */
+  start: number;
 }
 
 /**

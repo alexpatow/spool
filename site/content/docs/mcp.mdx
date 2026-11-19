@@ -315,6 +315,7 @@ POSITION  ACTOR                                      OPERATIONS  FROM  STARTED B
 | Tool | What it does | The same as |
 | --- | --- | --- |
 | `add_record` | Stores one row and returns its record and identity or review item | `POST /v1/records` |
+| `add_document` | Stores and extracts one text document and returns the identity or review item for each record | `POST /v1/documents/add` |
 | `load_rows` | Loads rows, as objects, into a source | `POST /v1/load` |
 | `load_documents` | Stores text as documents of a source | `POST /v1/documents` |
 | `run_extraction` | Runs an extractor over documents it hasn't read | `POST /v1/extractions` |
@@ -323,7 +324,9 @@ POSITION  ACTOR                                      OPERATIONS  FROM  STARTED B
 
 Call `add_record` with `source`, `entity_type` and a single `row` object. The server returns the `record` and `identity` IDs. If the record needs review, `identity` is null and `review` gives the item ID and candidate identities. Set `replace` to true to change a row under an existing key.
 
-The other tools in this table return a run. A run still going after 30 seconds comes back as `running`, and `get_run` with `wait_ms` waits up to 60 seconds more.
+Call `add_document` with `source` and a `document` object containing `key`, `text` and optionally `uri`. Pass `extractor` if the project declares more than one. The response contains the document ID and each record's ID, text span, and identity or review item. [Add one document](/docs/api#add-one-document)
+
+The bulk load, extraction, match and retraction tools return a run. A run still going after 30 seconds comes back as `running`, and `get_run` with `wait_ms` waits up to 60 seconds more.
 
 Differences from the HTTP API:
 

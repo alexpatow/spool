@@ -234,6 +234,12 @@ Ctrl-C stops it after the runs in progress finish. [`spool reset`](#spool-reset)
 
 Stores one row and returns the record ID and its identity ID. The project’s SQL rules compare the record with existing identities. If several identities fit, the response gives the review item and the identity is null. Pass `-` to read the JSON object from standard input. Use `--replace` to send a new version of a row under an existing key.
 
+## spool add-document
+
+`spool add-document --source notes samples/notes-1.txt --json`
+
+Stores one text document, extracts its mentions, and returns the document ID and each record's span, identity or review item. The file name is the document key unless you pass `--key`. Use `-` with `--key` to read text from standard input. Pass `--extractor` if the project declares more than one.
+
 ## spool load
 
 `spool load <file> [--source <name>] [--type <name>] [--delimiter <c>] [--batch <n>]`

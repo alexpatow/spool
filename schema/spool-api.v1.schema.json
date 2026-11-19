@@ -5,6 +5,52 @@
       "pattern": "^(engine|user:.+|agent:.+)$",
       "type": "string"
     },
+    "AddDocumentReport": {
+      "description": "The stored document and the placements of the records found in it.",
+      "properties": {
+        "document": {
+          "$ref": "#/$defs/DocumentId"
+        },
+        "records": {
+          "description": "One entry per mention, in text order.",
+          "items": {
+            "$ref": "#/$defs/DocumentRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "document",
+        "records"
+      ],
+      "type": "object"
+    },
+    "AddDocumentRequest": {
+      "additionalProperties": false,
+      "description": "`POST /v1/documents/add`: store, extract and match one document.",
+      "properties": {
+        "document": {
+          "$ref": "#/$defs/NewDocument"
+        },
+        "extractor": {
+          "default": null,
+          "description": "Which extractor to use. May be omitted if the project declares only one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "description": "The declared source that supplies the document.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "document"
+      ],
+      "type": "object"
+    },
     "AddPersonRequest": {
       "additionalProperties": false,
       "description": "`POST /v1/people`: add a person. Only an admin may. They sign in with\nthe password, with Google by the email, or with either: one of the two is\nneeded, and the email alone only where the server signs people in with\nGoogle.",
@@ -1371,6 +1417,55 @@
       "required": [
         "extractor",
         "run"
+      ],
+      "type": "object"
+    },
+    "DocumentRecord": {
+      "description": "The placement of one mention in an added document.",
+      "properties": {
+        "end": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "entity_type": {
+          "$ref": "#/$defs/EntityType"
+        },
+        "identity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IdentityId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "record": {
+          "$ref": "#/$defs/RecordId"
+        },
+        "review": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReviewEntry"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "start": {
+          "description": "The start and exclusive end, in Unicode code points.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "record",
+        "entity_type",
+        "start",
+        "end"
       ],
       "type": "object"
     },

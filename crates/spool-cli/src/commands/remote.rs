@@ -75,6 +75,10 @@ pub struct Remote {
 
 impl Remote {
     pub fn new(arguments: &RemoteArgs) -> Remote {
+        Self::with_timeout(arguments, Some(Duration::from_secs(120)))
+    }
+
+    pub fn with_timeout(arguments: &RemoteArgs, timeout: Option<Duration>) -> Remote {
         // A variable that is set and empty says nothing.
         let given = |value: Option<&String>| {
             value
@@ -85,7 +89,7 @@ impl Remote {
             // A refusal has a body that says why, which is read like any
             // other answer.
             .http_status_as_error(false)
-            .timeout_global(Some(Duration::from_secs(120)))
+            .timeout_global(timeout)
             .user_agent(concat!("spool/", env!("CARGO_PKG_VERSION")))
             .build();
         Remote {

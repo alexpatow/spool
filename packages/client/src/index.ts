@@ -5,6 +5,8 @@
 // it runs in.
 
 import type {
+  AddDocumentReport,
+  AddDocumentRequest,
   AddPersonRequest,
   AddRecordReport,
   AddRecordRequest,
@@ -317,6 +319,11 @@ export class SpoolClient {
   }
 
   // Documents and extraction
+
+  /** Stores and extracts one document, then returns a placement for each mention. */
+  addDocument(request: AddDocumentRequest): Promise<AddDocumentReport> {
+    return this.json("POST", "/v1/documents/add", { json: request });
+  }
 
   /**
    * Stores documents from one source, for an extractor to read. A document

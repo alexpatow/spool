@@ -20,12 +20,13 @@ use duckdb::vtab::arrow::ArrowBatchRegistration;
 use duckdb::{Connection, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use spool_core::{DocumentId, RecordId, RunId};
+use spool_core::{DocumentId, EntityType, IdentityId, RecordId, RunId};
 
 use crate::batch::{Column, batch, id_list};
 use crate::error::{Error, Result};
 use crate::order::{Key, Keyed, Sort};
 use crate::project::Extractor;
+use crate::review::ReviewEntry;
 use crate::store::parse;
 use crate::time::rfc3339;
 use crate::versions;
@@ -43,6 +44,28 @@ pub struct NewDocument {
     /// The document as text. Turning a PDF or a web page into text is the
     /// caller's work.
     pub text: String,
+}
+
+/// The stored document and the placements of the records found in it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct AddDocumentReport {
+    pub document: DocumentId,
+    /// One entry per mention, in text order.
+    pub records: Vec<DocumentRecord>,
+}
+
+/// The placement of one mention in an added document.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct DocumentRecord {
+    pub record: RecordId,
+    pub entity_type: EntityType,
+    /// The start and exclusive end, in Unicode code points.
+    pub start: u64,
+    pub end: u64,
+    pub identity: Option<IdentityId>,
+    pub review: Option<ReviewEntry>,
 }
 
 /// One version of a document as the store holds it.
