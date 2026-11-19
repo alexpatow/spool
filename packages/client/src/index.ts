@@ -110,10 +110,32 @@ export interface LoadArrowOptions {
   wait_ms?: number;
 }
 
-export interface RunFilter {
+/**
+ * Which way a list runs. A list given `order` without `sort` turns its own
+ * order around.
+ */
+export type SortOrder = "asc" | "desc";
+
+/**
+ * What a list read in pages, or cut at `limit`, is sorted by. The whole of
+ * it is sorted, and a page continues after its `after` in that order.
+ */
+export interface Sorted<By extends string> {
+  sort?: By;
+  order?: SortOrder;
+}
+
+export type RunSort = "run" | "kind" | "status" | "details" | "started_by" | "started";
+export type DocumentSort = "id" | "key" | "source" | "length" | "loaded";
+export type RecordSort = "id" | "source" | "key" | "label" | "entity_type" | "identity";
+export type IdentitySort = "id" | "label" | "entity_type" | "records" | "sources" | "created";
+export type LogSort = "seq" | "actor" | "operations" | "run" | "reason";
+
+export interface RunFilter extends Sorted<RunSort> {
   kind?: RunKind;
   status?: RunStatus;
   entity_type?: EntityType;
+  /** At most this many, newest first or the first in the order asked for. */
   limit?: number;
 }
 
@@ -138,7 +160,7 @@ export interface ConstraintFilter {
   removed?: boolean;
 }
 
-export interface IdentityFilter {
+export interface IdentityFilter extends Sorted<IdentitySort> {
   entity_type?: EntityType;
   /**
    * Only identities with a member that holds every word of this text: in a
@@ -156,7 +178,7 @@ export interface IdentityFilter {
   limit?: number;
 }
 
-export interface DocumentFilter {
+export interface DocumentFilter extends Sorted<DocumentSort> {
   source?: string;
   key?: string;
   /** Only the latest version of each document. Default: every version. */
@@ -166,7 +188,7 @@ export interface DocumentFilter {
   limit?: number;
 }
 
-export interface RecordFilter {
+export interface RecordFilter extends Sorted<RecordSort> {
   entity_type?: EntityType;
   source?: string;
   key?: string;
@@ -453,8 +475,12 @@ export class SpoolClient {
 
   // Changesets
 
-  /** A page of the log, oldest first, and the position of its end. */
-  changesets(options: { after?: Seq; limit?: number } = {}): Promise<ChangesetList> {
+  /**
+   * A page of the log, oldest first or in the order asked for, and the
+   * position of its end. Sorted, a page continues after the changeset at
+   * `after`, wherever it stands, and a full page may have one after it.
+   */
+  changesets(options: { after?: Seq; limit?: number } & Sorted<LogSort> = {}): Promise<ChangesetList> {
     return this.json("GET", "/v1/changesets", { query: { ...options } });
   }
 

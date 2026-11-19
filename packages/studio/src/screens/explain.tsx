@@ -163,17 +163,26 @@ function ExplanationView({ explanation }: { explanation: Explanation }) {
             columns={[
               {
                 title: "Run",
+                value: (comparison: Comparison) => comparison.run,
+                first: "desc",
                 cell: (comparison: Comparison) => (
                   <Ref kind="run" id={comparison.run} label={`Run ${comparison.run}`} />
                 ),
               },
-              { title: "Started", cell: (comparison) => <When at={comparison.started_at} /> },
+              {
+                title: "Started",
+                value: (comparison) => comparison.started_at,
+                first: "desc",
+                cell: (comparison) => <When at={comparison.started_at} />,
+              },
               {
                 title: "Strategy",
+                value: (comparison) => comparison.strategy?.name,
                 cell: (comparison) => (comparison.strategy ? <Code>{comparison.strategy.name}</Code> : "-"),
               },
               {
                 title: "Status",
+                value: (comparison) => comparison.status,
                 cell: (comparison) => (
                   <Row>
                     <Word value={comparison.status} />
@@ -188,6 +197,7 @@ function ExplanationView({ explanation }: { explanation: Explanation }) {
               },
               {
                 title: "Block rules",
+                value: (comparison) => comparison.blocked_by.join(", "),
                 cell: (comparison) =>
                   comparison.blocked_by.length === 0
                     ? "none"
@@ -200,6 +210,7 @@ function ExplanationView({ explanation }: { explanation: Explanation }) {
               },
               {
                 title: "Judgements",
+                value: (comparison) => comparison.judgements.map((judgement) => judgement.verdict).join(" "),
                 wrap: true,
                 cell: (comparison) =>
                   comparison.judgements.length === 0
@@ -447,10 +458,11 @@ function Rules({ rules }: { rules: RuleReading }) {
     <Section title="Current rules">
       <Table
         columns={[
-          { title: "Kind", cell: (row) => <Code>{row.group}</Code> },
-          { title: "Rule", cell: (row) => <Code>{row.name}</Code> },
+          { title: "Kind", value: (row) => row.group, cell: (row) => <Code>{row.group}</Code> },
+          { title: "Rule", value: (row) => row.name, cell: (row) => <Code>{row.name}</Code> },
           {
             title: "Predicate",
+            value: (row) => row.predicate.trim(),
             cell: (row) => (
               <code data-part="sql" {...stylex.props(styles.sql)}>
                 {row.predicate.trim()}
@@ -458,7 +470,11 @@ function Rules({ rules }: { rules: RuleReading }) {
             ),
             wrap: true,
           },
-          { title: "Result", cell: reading },
+          {
+            title: "Result",
+            value: (row) => (row.holds === true ? "holds" : row.holds === false ? "does not hold" : null),
+            cell: reading,
+          },
         ]}
         rows={rows}
         rowKey={(row) => `${row.group}/${row.name}`}

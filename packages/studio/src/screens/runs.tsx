@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import type { RunEntry, RunKind, RunStatus } from "../api.ts";
+import type { RunEntry, RunKind, RunSort, RunStatus } from "../api.ts";
 import {
   Code,
   Fields,
@@ -14,6 +14,7 @@ import {
   Ref,
   Section,
   Table,
+  useSorting,
   When,
   Word,
 } from "../components.tsx";
@@ -30,12 +31,15 @@ const STEP = 100;
 export function Runs({ route, types }: { route: Route; types: string[] }) {
   const { kind, status, type } = route.query;
   const limit = Number(route.query.limit) || STEP;
+  const sorting = useSorting(route, { by: "run", order: "desc" });
   const runs = useLoad((client) =>
     client.runs({
       kind: kind as RunKind | undefined,
       status: status as RunStatus | undefined,
       entity_type: type,
       limit,
+      sort: sorting.by as RunSort,
+      order: sorting.order,
     }),
   );
   return (
@@ -53,17 +57,24 @@ export function Runs({ route, types }: { route: Route; types: string[] }) {
         {(runs) => (
           <>
             <Table
+              sorting={sorting}
               columns={[
-                { title: "Run", cell: (run) => <Ref kind="run" id={run.run} label={`Run ${run.run}`} /> },
-                { title: "Kind", cell: (run) => run.kind },
-                { title: "Status", cell: (run) => <Word value={run.status} /> },
+                {
+                  title: "Run",
+                  cell: (run) => <Ref kind="run" id={run.run} label={`Run ${run.run}`} />,
+                  sort: "run",
+                  first: "desc",
+                },
+                { title: "Kind", cell: (run) => run.kind, sort: "kind" },
+                { title: "Status", cell: (run) => <Word value={run.status} />, sort: "status" },
                 {
                   title: "Details",
+                  sort: "details",
                   cell: (run) =>
                     [run.entity_type, run.strategy?.name, run.extractor?.name].filter((part) => part).join(", "),
                 },
-                { title: "Started by", cell: (run) => <Who actor={run.started_by} /> },
-                { title: "Started", cell: (run) => <When at={run.started_at} /> },
+                { title: "Started by", cell: (run) => <Who actor={run.started_by} />, sort: "started_by" },
+                { title: "Started", cell: (run) => <When at={run.started_at} />, sort: "started", first: "desc" },
               ]}
               rows={runs}
               rowKey={(run) => run.run}

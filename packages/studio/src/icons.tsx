@@ -3,6 +3,9 @@
 
 import {
   ActivityIcon as Activity,
+  ArrowDownIcon as ArrowDown,
+  ArrowUpDownIcon as ArrowUpDown,
+  ArrowUpIcon as ArrowUp,
   ArrowRightIcon as ArrowRight,
   DatabaseIcon as Database,
   FilePenLineIcon as FilePenLine,
@@ -42,7 +45,10 @@ type IconProps = Omit<SVGProps<SVGSVGElement>, "ref">;
 
 const DEFAULTS = { "aria-hidden": true, height: "1em", width: "1em" } as const;
 
+export const ArrowDownIcon = (props: IconProps) => <ArrowDown {...DEFAULTS} {...props} />;
 export const ArrowRightIcon = (props: IconProps) => <ArrowRight {...DEFAULTS} {...props} />;
+export const ArrowUpIcon = (props: IconProps) => <ArrowUp {...DEFAULTS} {...props} />;
+export const ArrowUpDownIcon = (props: IconProps) => <ArrowUpDown {...DEFAULTS} {...props} />;
 export const DraftIcon = (props: IconProps) => <FilePenLine {...DEFAULTS} {...props} />;
 export const ExplainIcon = (props: IconProps) => <GitCompareArrows {...DEFAULTS} {...props} />;
 export const IdentityIcon = (props: IconProps) => <Fingerprint {...DEFAULTS} {...props} />;

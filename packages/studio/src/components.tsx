@@ -16,9 +16,17 @@ import * as ShelfTable from "./components/ui/table";
 import { describeOp, plain, short, tail, when } from "./format.ts";
 import type { Part } from "./format.ts";
 import type { Loaded, Pages } from "./hooks.ts";
-import { ArrowRightIcon, CircleAlertIcon, CircleCheckIcon, InfoIcon } from "./icons.tsx";
+import {
+  ArrowDownIcon,
+  ArrowRightIcon,
+  ArrowUpDownIcon,
+  ArrowUpIcon,
+  CircleAlertIcon,
+  CircleCheckIcon,
+  InfoIcon,
+} from "./icons.tsx";
 import { href, navigate } from "./router.ts";
-import type { QueryValue } from "./router.ts";
+import type { QueryValue, Route } from "./router.ts";
 import { colors, radius, spacing, typography } from "./styles/shelf/tokens.stylex";
 import { tones } from "./styles/tones.stylex";
 
@@ -235,6 +243,11 @@ export function Fields({ rows }: { rows: Array<[string, ReactNode]> }) {
   );
 }
 
+export type Order = "asc" | "desc";
+
+/** What a value of a row is sorted as. What is missing comes last, whichever way. */
+export type Sortable = string | number | null | undefined;
+
 export interface Column<T> {
   title: string;
   cell: (row: T) => ReactNode;
@@ -242,6 +255,66 @@ export interface Column<T> {
   number?: boolean;
   /** Long text goes on to the next line where others stay on one. */
   wrap?: boolean;
+  /**
+   * What the server sorts a list read in pages by, when the table is
+   * sorted by this column. Such a table is given `sorting`.
+   */
+  sort?: string;
+  /** What a list read whole is sorted by in the page, when the table is sorted by this column. */
+  value?: (row: T) => Sortable;
+  /** Which way the first click sorts. Default: ascending, and descending for numbers. */
+  first?: Order;
+}
+
+/** What a table is sorted by: a column's `sort`, or its title when it sorts in the page. */
+export interface Sorted {
+  by: string;
+  order: Order;
+}
+
+/** The order of a list read in pages, which the server keeps, and what asks for another. */
+export interface Sorting extends Sorted {
+  choose: (sorted: Sorted) => void;
+}
+
+const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+
+function compare(a: Sortable, b: Sortable, order: Order): number {
+  const missing = (value: Sortable) => value === null || value === undefined || value === "";
+  if (missing(a) || missing(b)) return Number(missing(a)) - Number(missing(b));
+  const way = order === "asc" ? 1 : -1;
+  if (typeof a === "number" && typeof b === "number") return (a - b) * way;
+  return collator.compare(String(a), String(b)) * way;
+}
+
+/** The rows in the order of a column. Rows that sort the same keep the order they came in. */
+export function sortRows<T>(rows: T[], value: (row: T) => Sortable, order: Order): T[] {
+  return rows
+    .map((row, at) => ({ row, at, value: value(row) }))
+    .sort((a, b) => compare(a.value, b.value, order) || a.at - b.at)
+    .map(({ row }) => row);
+}
+
+const SAID = { asc: "ascending", desc: "descending" } as const;
+
+function firstOrder<T>(column: Column<T>): Order {
+  return column.first ?? (column.number ? "desc" : "asc");
+}
+
+/** What a column's header is, when the table can be sorted by it: a button that sorts, and which way it is sorted. */
+function SortHeader({ title, order, onSort }: { title: string; order: Order | null; onSort: () => void }) {
+  const Icon = order === "asc" ? ArrowUpIcon : order === "desc" ? ArrowDownIcon : ArrowUpDownIcon;
+  return (
+    <button
+      type="button"
+      data-part="sort"
+      onClick={onSort}
+      {...stylex.props(styles.sortButton, order !== null && styles.sortButtonOn)}
+    >
+      {title}
+      <Icon {...stylex.props(styles.sortIcon, order === null && styles.sortIconOff)} />
+    </button>
+  );
 }
 
 export function Table<T>({
@@ -250,6 +323,8 @@ export function Table<T>({
   rowKey,
   empty,
   label,
+  sorting,
+  initial,
 }: {
   columns: Array<Column<T>>;
   rows: T[];
@@ -258,7 +333,20 @@ export function Table<T>({
   empty: string;
   /** What the table lists, for a reader who cannot see what is above it. */
   label?: string;
+  /** How the server sorted the rows, for a list read in pages. Without it the table sorts its rows itself. */
+  sorting?: Sorting;
+  /**
+   * The order the table shows its rows in at first when it sorts them
+   * itself, by a column's title. Default: as they came.
+   */
+  initial?: Sorted;
 }) {
+  const [own, setOwn] = useState<Sorted | null>(initial ?? null);
+  const sorted: Sorted | null = sorting ?? own;
+  const choose = sorting?.choose ?? setOwn;
+  const keyOf = (column: Column<T>) => (sorting ? column.sort : column.value ? column.title : undefined);
+  const by = sorting ? undefined : columns.find((column) => column.title === own?.by)?.value;
+  const shown = by && own ? sortRows(rows, by, own.order) : rows;
   if (rows.length === 0) {
     return (
       <div data-part="empty" {...stylex.props(styles.panel, styles.empty)}>
@@ -271,18 +359,41 @@ export function Table<T>({
       <ShelfTable.Root aria-label={label}>
         <ShelfTable.Header>
           <ShelfTable.Row style={styles.headRow}>
-            {columns.map((column) => (
-              <ShelfTable.Head
-                key={column.title}
-                style={[styles.head, column.number && styles.number, column.title === "" && styles.tick]}
-              >
-                {column.title}
-              </ShelfTable.Head>
-            ))}
+            {columns.map((column) => {
+              const key = keyOf(column);
+              const order = key !== undefined && sorted?.by === key ? sorted.order : null;
+              return (
+                <ShelfTable.Head
+                  key={column.title}
+                  aria-sort={key === undefined ? undefined : order === null ? "none" : SAID[order]}
+                  style={[
+                    styles.head,
+                    column.number && styles.number,
+                    column.title === "" && styles.tick,
+                    key !== undefined && styles.sortable,
+                  ]}
+                >
+                  {key === undefined ? (
+                    column.title
+                  ) : (
+                    <SortHeader
+                      title={column.title}
+                      order={order}
+                      onSort={() =>
+                        choose({
+                          by: key,
+                          order: order === null ? firstOrder(column) : order === "asc" ? "desc" : "asc",
+                        })
+                      }
+                    />
+                  )}
+                </ShelfTable.Head>
+              );
+            })}
           </ShelfTable.Row>
         </ShelfTable.Header>
         <ShelfTable.Body>
-          {rows.map((row) => (
+          {shown.map((row) => (
             <ShelfTable.Row key={rowKey(row)} style={styles.bodyRow}>
               {columns.map((column) => (
                 <ShelfTable.Cell
@@ -312,6 +423,26 @@ export function More({ pages }: { pages: Pick<Pages<unknown>, "more" | "reading"
   );
 }
 
+/**
+ * The order of a list read in pages, kept in the address as `sort` and
+ * `order` so that a sorted list can be linked to. `own` is the order it has
+ * when the address names none.
+ */
+export function useSorting(route: Route, own: Sorted): Sorting {
+  const by = route.query.sort ?? own.by;
+  const order: Order =
+    route.query.order === "asc" || route.query.order === "desc"
+      ? route.query.order
+      : route.query.sort === undefined
+        ? own.order
+        : "asc";
+  return {
+    by,
+    order,
+    choose: ({ by, order }) => navigate(href(route.path, { ...route.query, sort: by, order })),
+  };
+}
+
 /** A list read in pages, with the button that reads the next one. */
 export function PagedTable<T>({
   pages,
@@ -322,6 +453,7 @@ export function PagedTable<T>({
   rowKey: (row: T) => string | number;
   empty: string;
   label?: string;
+  sorting?: Sorting;
 }) {
   return (
     <Load state={pages.loaded}>
@@ -977,6 +1109,37 @@ const styles = stylex.create({
   },
   tick: {
     width: "1.5rem",
+  },
+  sortable: {
+    paddingInline: spacing["1.5"],
+  },
+  sortButton: {
+    borderRadius: radius.sm,
+    borderStyle: "none",
+    gap: spacing["1"],
+    margin: 0,
+    paddingBlock: spacing["1"],
+    paddingInline: spacing["1.5"],
+    alignItems: "center",
+    backgroundColor: { default: "transparent", ":hover": colors.accent },
+    color: { default: "inherit", ":hover": colors.foreground },
+    cursor: "pointer",
+    display: "inline-flex",
+    font: "inherit",
+    outlineColor: colors.ring,
+    outlineOffset: 1,
+    outlineStyle: { default: "none", ":focus-visible": "solid" },
+    outlineWidth: 2,
+    whiteSpace: "nowrap",
+  },
+  sortButtonOn: {
+    color: colors.foreground,
+  },
+  sortIcon: {
+    flexShrink: 0,
+  },
+  sortIconOff: {
+    opacity: 0.5,
   },
   // A cell of running text wraps between words, and keeps the width to read
   // them in: on a narrow screen the table scrolls sideways before a name

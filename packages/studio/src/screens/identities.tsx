@@ -3,7 +3,14 @@ import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
 import { Act, At, Done } from "../act.tsx";
-import type { ConstraintEntry, HistoryEntry, IdentitySummary, IdentityView, RecordEntry } from "../api.ts";
+import type {
+  ConstraintEntry,
+  HistoryEntry,
+  IdentitySort,
+  IdentitySummary,
+  IdentityView,
+  RecordEntry,
+} from "../api.ts";
 import {
   Code,
   ExplainTicked,
@@ -29,6 +36,7 @@ import {
   When,
   Word,
   message,
+  useSorting,
   useTicks,
 } from "../components.tsx";
 import { Button } from "../components/ui/button";
@@ -52,8 +60,15 @@ export function identityName(identity: Pick<IdentitySummary, "id" | "label">): s
 export function Identities({ route, types }: { route: Route; types: string[] }) {
   const { type, q } = route.query;
   const { info } = useStudio();
+  const sorting = useSorting(route, { by: "label", order: "asc" });
   const pages = usePages(async (client, after) => {
-    const page = await client.identities({ entity_type: type, q, after: after as string | undefined });
+    const page = await client.identities({
+      entity_type: type,
+      q,
+      after: after as string | undefined,
+      sort: sorting.by as IdentitySort,
+      order: sorting.order,
+    });
     return { items: page.identities, next: page.next };
   });
   const total = info.store.entity_types
@@ -70,9 +85,11 @@ export function Identities({ route, types }: { route: Route; types: string[] }) 
       <PagedTable
         pages={pages}
         label="Identities"
+        sorting={sorting}
         columns={[
           {
             title: "Name",
+            sort: "label",
             cell: (identity) => (
               <Ref
                 kind="identity"
@@ -82,10 +99,16 @@ export function Identities({ route, types }: { route: Route; types: string[] }) 
             ),
             wrap: true,
           },
-          { title: "Entity type", cell: (identity) => identity.entity_type },
-          { title: "Records", cell: (identity) => identity.members, number: true },
-          { title: "Sources", cell: (identity) => <Sources sources={identity.sources} />, wrap: true },
-          { title: "ID", cell: (identity) => <Ref kind="identity" id={identity.id} /> },
+          { title: "Entity type", cell: (identity) => identity.entity_type, sort: "entity_type" },
+          { title: "Records", cell: (identity) => identity.members, number: true, sort: "records" },
+          {
+            title: "Sources",
+            cell: (identity) => <Sources sources={identity.sources} />,
+            wrap: true,
+            sort: "sources",
+            first: "desc",
+          },
+          { title: "ID", cell: (identity) => <Ref kind="identity" id={identity.id} />, sort: "id" },
         ]}
         rowKey={(identity) => identity.id}
         empty={q ? `No identities match “${q}”.` : "No identities."}
@@ -201,6 +224,7 @@ function IdentityScreen({ head, view, records, constraints, history }: Loaded) {
             { title: "", cell: (member) => tick(member.record) },
             {
               title: "Record",
+              value: (member) => byId.get(member.record)?.label ?? names.get(member.record),
               cell: (member) => {
                 const record = byId.get(member.record);
                 return (
@@ -212,9 +236,13 @@ function IdentityScreen({ head, view, records, constraints, history }: Loaded) {
               },
               wrap: true,
             },
-            { title: "Source", cell: (member) => <Source name={member.source} /> },
+            { title: "Source", value: (member) => member.source, cell: (member) => <Source name={member.source} /> },
             {
               title: "Key",
+              value: (member) => {
+                const record = byId.get(member.record);
+                return record ? keyOf(record) : member.key;
+              },
               cell: (member) => {
                 const record = byId.get(member.record);
                 return <Code>{record ? keyOf(record) : (member.key ?? "-")}</Code>;
@@ -222,6 +250,8 @@ function IdentityScreen({ head, view, records, constraints, history }: Loaded) {
             },
             {
               title: "Loaded",
+              value: (member) => byId.get(member.record)?.loaded_at,
+              first: "desc",
               cell: (member) => {
                 const record = byId.get(member.record);
                 return record ? (
@@ -234,6 +264,8 @@ function IdentityScreen({ head, view, records, constraints, history }: Loaded) {
             },
             {
               title: "Assigned",
+              value: (member) => member.since,
+              first: "desc",
               cell: (member) => <Placed since={member.since} entry={placed.get(member.since)} />,
               wrap: true,
             },
@@ -249,14 +281,20 @@ function IdentityScreen({ head, view, records, constraints, history }: Loaded) {
         <Section title="Constraints">
           <Table
             columns={[
-              { title: "Constraint", cell: (record) => <Word value={record.kind} /> },
+              { title: "Constraint", value: (record) => record.kind, cell: (record) => <Word value={record.kind} /> },
               {
                 title: "Between",
+                value: (record) => names.get(record.a) ?? record.a,
                 cell: (record) => <Ref kind="record" id={record.a} label={names.get(record.a)} />,
               },
-              { title: "And", cell: (record) => <Ref kind="record" id={record.b} label={names.get(record.b)} /> },
+              {
+                title: "And",
+                value: (record) => names.get(record.b) ?? record.b,
+                cell: (record) => <Ref kind="record" id={record.b} label={names.get(record.b)} /> },
               {
                 title: "Since",
+                value: (record) => record.from,
+                first: "desc",
                 cell: (record) => <Ref kind="log" id={record.from} label={`log position ${record.from}`} />,
               },
             ]}

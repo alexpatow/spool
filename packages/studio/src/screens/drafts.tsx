@@ -28,16 +28,24 @@ export function Drafts({ route, types }: { route: Route; types: string[] }) {
         {(drafts) => (
           <Table
             columns={[
-              { title: "Draft", cell: (draft) => <Ref kind="draft" id={draft.id} /> },
-              { title: "Entity type", cell: (draft) => draft.entity_type },
-              { title: "Status", cell: (draft) => <Word value={draft.status} /> },
-              { title: "Operations", cell: (draft) => draft.operations, number: true },
+              { title: "Draft", value: (draft) => draft.id, cell: (draft) => <Ref kind="draft" id={draft.id} /> },
+              { title: "Entity type", value: (draft) => draft.entity_type, cell: (draft) => draft.entity_type },
+              { title: "Status", value: (draft) => draft.status, cell: (draft) => <Word value={draft.status} /> },
+              {
+                title: "Operations",
+                value: (draft) => draft.operations,
+                cell: (draft) => draft.operations,
+                number: true,
+              },
               {
                 title: "Run",
+                value: (draft) => draft.match_run,
+                first: "desc",
                 cell: (draft) => <Ref kind="run" id={draft.match_run} label={`match run ${draft.match_run}`} />,
               },
             ]}
             rows={drafts}
+            initial={{ by: "Run", order: "desc" }}
             rowKey={(draft) => draft.id}
             empty="No drafts."
           />

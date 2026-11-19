@@ -672,7 +672,7 @@ function Screen({ route, types }: { route: Route; types: string[] }) {
     case "drafts":
       return id === undefined ? <Drafts route={route} types={types} /> : <Draft id={id} />;
     case "log":
-      return id === undefined ? <Log /> : <Changeset id={id} />;
+      return id === undefined ? <Log route={route} /> : <Changeset id={id} />;
     case "explain":
       return id === undefined ? <Explain route={route} /> : <Nowhere />;
     case "people":

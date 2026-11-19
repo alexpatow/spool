@@ -81,21 +81,32 @@ export function People() {
         {(rows) => (
           <Table
             columns={[
-              { title: "Name", cell: (person) => person.name },
-              { title: "Username", cell: (person) => <Code>{person.username}</Code> },
+              { title: "Name", value: (person) => person.name, cell: (person) => person.name },
+              {
+                title: "Username",
+                value: (person) => person.username,
+                cell: (person) => <Code>{person.username}</Code>,
+              },
               // Where nobody signs in with Google, everyone has a password and no more.
               ...(google || rows.some((person) => person.email)
                 ? [
-                    { title: "Email", cell: (person: Person) => person.email ?? "-" },
-                    { title: "Signs in with", cell: signsInWith },
+                    {
+                      title: "Email",
+                      value: (person: Person) => person.email,
+                      cell: (person: Person) => person.email ?? "-",
+                    },
+                    { title: "Signs in with", value: signsInWith, cell: signsInWith },
                   ]
                 : []),
               {
                 title: "Role",
+                value: (person) => (person.admin ? "admin" : null),
                 cell: (person) => (person.admin ? <Word value="admin" label="Admin" tone="plain" /> : "-"),
               },
               {
                 title: "Account",
+                value: (person) => (person.active ? "on" : "off"),
+                first: "desc",
                 cell: (person) =>
                   person.active ? (
                     <Word value="on" label="On" tone="good" />
@@ -119,6 +130,7 @@ export function People() {
                 : []),
             ]}
             rows={rows}
+            initial={{ by: "Name", order: "asc" }}
             rowKey={(person) => person.id}
             empty="No accounts."
             label="People"

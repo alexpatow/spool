@@ -1,7 +1,7 @@
 import * as stylex from "@stylexjs/stylex";
 import { useEffect, useMemo, useRef } from "react";
 
-import type { DocumentEntry, RecordEntry, SpoolClient } from "../api.ts";
+import type { DocumentEntry, DocumentSort, RecordEntry, SpoolClient } from "../api.ts";
 import {
   Code,
   Fields,
@@ -18,6 +18,7 @@ import {
   Source,
   Table,
   usePair,
+  useSorting,
   When,
   Word,
 } from "../components.tsx";
@@ -39,12 +40,15 @@ function readBy(document: DocumentEntry): string {
 
 export function Documents({ route }: { route: Route }) {
   const { source, key, latest } = route.query;
+  const sorting = useSorting(route, { by: "key", order: "asc" });
   const pages = usePages(async (client, after) => {
     const page = await client.documents({
       source,
       key,
       latest: latest === "true" ? true : undefined,
       after: after as string | undefined,
+      sort: sorting.by as DocumentSort,
+      order: sorting.order,
     });
     return { items: page.documents, next: page.next };
   });
@@ -61,9 +65,11 @@ export function Documents({ route }: { route: Route }) {
       />
       <PagedTable
         pages={pages}
+        sorting={sorting}
         columns={[
           {
             title: "Document",
+            sort: "key",
             cell: (document) => (
               <span {...stylex.props(styles.name)}>
                 <Ref kind="document" id={document.id} label={named(document.source, document.key)} />
@@ -71,10 +77,11 @@ export function Documents({ route }: { route: Route }) {
               </span>
             ),
           },
-          { title: "Source", cell: (document) => <Source name={document.source} /> },
-          { title: "Characters", cell: (document) => document.length, number: true },
+          { title: "Source", cell: (document) => <Source name={document.source} />, sort: "source" },
+          { title: "Characters", cell: (document) => document.length, number: true, sort: "length" },
+          { title: "Loaded", cell: (document) => <When at={document.loaded_at} />, sort: "loaded", first: "desc" },
           { title: "Extracted by", cell: readBy, wrap: true },
-          { title: "ID", cell: (document) => <Ref kind="document" id={document.id} /> },
+          { title: "ID", cell: (document) => <Ref kind="document" id={document.id} />, sort: "id" },
         ]}
         rowKey={(document) => document.id}
         empty="No documents."
@@ -189,22 +196,34 @@ function DocumentScreen({ document, found, cut, at }: Loaded & { at: number | nu
             { title: "", cell: ({ record }) => pair.tick(record.id) },
             {
               title: "Mention",
+              value: ({ mention }) => points.slice(mention.start, mention.end).join(""),
               cell: ({ record, mention }) => (
                 <a href={href(["records", record.id])} {...stylex.props(styles.link)}>
                   {points.slice(mention.start, mention.end).join("")}
                 </a>
               ),
             },
-            { title: "Characters", cell: ({ mention }) => `${mention.start} to ${mention.end}` },
-            { title: "Entity type", cell: ({ record }) => record.entity_type },
+            {
+              title: "Characters",
+              value: ({ mention }) => mention.start,
+              first: "asc",
+              cell: ({ mention }) => `${mention.start} to ${mention.end}`,
+            },
+            {
+              title: "Entity type",
+              value: ({ record }) => record.entity_type,
+              cell: ({ record }) => record.entity_type,
+            },
             {
               title: "Identity",
+              value: ({ record }) => (record.identity ? (labels.get(record.identity) ?? record.identity) : null),
               cell: ({ record }) =>
                 <Placed record={record} labels={labels} />,
             },
           ]}
           rows={found}
           rowKey={({ record }) => record.id}
+          initial={{ by: "Characters", order: "asc" }}
           empty="No mentions."
         />
       </Section>
