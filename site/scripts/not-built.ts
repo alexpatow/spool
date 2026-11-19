@@ -19,14 +19,6 @@ export interface NotBuilt {
 }
 
 export const notBuilt: Record<string, NotBuilt> = {
-  install: {
-    what: "A release: `install.sh` and the archives it fetches are in the repository, and no release has been published",
-    run: false,
-  },
-  image: {
-    what: "The container image `ghcr.io/alexpatow/spool:0.1.0`, which the Dockerfile of `spool build` starts from, is not published",
-    run: false,
-  },
   "agent-run": {
     what: "An agent has followed Getting started over MCP, and the page names the agent and its version",
     run: false,
