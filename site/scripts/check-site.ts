@@ -266,7 +266,9 @@ async function checkBuilt(pages: Page[]) {
         if (!markdown.body.includes(`\n# ${page.title}\n`)) {
           fail(`${page.url}.md`, "does not have the page's title as its heading");
         }
-        if (/<[A-Z][A-Za-z]*[\s/>]/.test(markdown.body.replace(/```[\s\S]*?```/g, ""))) {
+        // Code is left out, fenced or inline: `--type <NAME>` names a placeholder.
+        const prose = markdown.body.replace(/```[\s\S]*?```/g, "").replace(/`[^`\n]*`/g, "");
+        if (/<[A-Z][A-Za-z]*[\s/>]/.test(prose)) {
           fail(`${page.url}.md`, "has a component left in it");
         }
         const body = markdown.body.replace(/^---\n[\s\S]*?\n---\n\n/, "").trim();

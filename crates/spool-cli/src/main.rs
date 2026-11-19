@@ -3,6 +3,8 @@
 mod commands;
 mod output;
 mod progress;
+#[cfg(test)]
+mod reference;
 mod style;
 
 use std::ffi::OsString;
@@ -61,6 +63,31 @@ enum Command {
     Token(token::TokenArgs),
     Bench(bench::BenchArgs),
     Schema(commands::SchemaArgs),
+    Completions(CompletionsArgs),
+    #[command(hide = true)]
+    Man(ManArgs),
+}
+
+/// Print a shell completion script
+///
+/// Prints the script that completes `spool`'s commands, options and their
+/// values in a shell. The release puts the ones for bash, zsh and fish where
+/// those shells find them; this prints them for another place, or another
+/// shell.
+#[derive(clap::Args)]
+#[command(
+    after_help = "Examples:\n  spool completions bash > ~/.local/share/bash-completion/completions/spool\n  spool completions zsh > ~/.zfunc/_spool\n  spool completions fish > ~/.config/fish/completions/spool.fish"
+)]
+struct CompletionsArgs {
+    /// The shell
+    shell: clap_complete::Shell,
+}
+
+/// Write a man page for `spool` and for each of its commands
+#[derive(clap::Args)]
+struct ManArgs {
+    /// The directory to write them in, made if it is not there
+    dir: std::path::PathBuf,
 }
 
 /// How a command ended, other than well: what went wrong, and what to do
@@ -246,7 +273,20 @@ fn run(command: Command) -> (Vec<&'static str>, Result<(), Failure>) {
         Command::Token(args) => (vec!["token", args.action.name()], token::token(args)),
         Command::Bench(args) => (vec!["bench"], bench::bench(args)),
         Command::Schema(args) => (vec!["schema"], commands::schema(args)),
+        Command::Completions(args) => {
+            let mut command = Cli::command();
+            let mut out = std::io::stdout().lock();
+            clap_complete::generate(args.shell, &mut command, "spool", &mut out);
+            (vec!["completions"], Ok(()))
+        }
+        Command::Man(args) => (vec!["man"], man(&args.dir)),
     }
+}
+
+fn man(dir: &std::path::Path) -> Result<(), Failure> {
+    let wrote =
+        std::fs::create_dir_all(dir).and_then(|()| clap_mangen::generate_to(Cli::command(), dir));
+    wrote.map_err(|error| Failure::failed(format!("{}: {error}", dir.display())))
 }
 
 /// Rust ignores SIGPIPE, so printing to a pipe whose reader has gone, as in
@@ -273,6 +313,18 @@ mod tests {
     #[test]
     fn the_parser_is_consistent() {
         Cli::command().debug_assert();
+    }
+
+    /// The command reference of the documentation, against what the
+    /// commands say. `SNAPSHOTS=overwrite cargo test` writes it again.
+    #[test]
+    fn the_command_reference_is_what_the_commands_say() {
+        let page = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../site/content/docs/cli-reference.mdx");
+        snapbox::Assert::new().action_env("SNAPSHOTS").eq(
+            super::reference::page(&mut Cli::command()),
+            snapbox::Data::read_from(&page, None).raw(),
+        );
     }
 
     /// Every command's `-h`, against the snapshot in `tests/snapshots/help`.

@@ -19,7 +19,7 @@ This page installs Spool, makes a project with sample rows, matches them, shows 
 curl -fsSL https://github.com/alexpatow/spool/releases/latest/download/install.sh | sh
 ```
 
-The script downloads the release for your machine, checks it against its checksum, unpacks it under `~/.local/share/spool/0.1.0` and links `~/.local/bin/spool`. It needs no root and changes nothing else: if `~/.local/bin` is not on your search path, it prints the line that adds it and edits no file. To do it by hand, download `spool-0.1.0-<target>.tar.gz` from the [release](https://github.com/alexpatow/spool/releases/tag/v0.1.0), unpack it and put its `bin` directory on your search path. Keep `bin` and `lib` together: the binary loads the DuckDB library from `../lib`.
+The script downloads the release for your machine, checks it against its checksum, unpacks it under `~/.local/share/spool/0.1.0` and links `~/.local/bin/spool`, with its man pages and its bash, zsh and fish completions under `~/.local/share`. It needs no root and changes nothing else: if `~/.local/bin` is not on your search path, it prints the line that adds it and edits no file. To do it by hand, download `spool-0.1.0-<target>.tar.gz` from the [release](https://github.com/alexpatow/spool/releases/tag/v0.1.0), unpack it and put its `bin` directory on your search path. Keep `bin` and `lib` together: the binary loads the DuckDB library from `../lib`.
 
 ```sh
 spool --version

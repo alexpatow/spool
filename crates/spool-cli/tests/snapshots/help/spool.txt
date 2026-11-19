@@ -3,24 +3,25 @@ Extract, resolve and track entities
 Usage: spool [OPTIONS] [COMMAND]
 
 Commands:
-  init       Make a project, empty or from an example
-  info       List what a project declares, and check its SQL
-  dev        Run a server on localhost that applies file changes as they are saved
-  load       Send the rows of a file to a running server
-  extract    Find records in documents with one of the project's extractors
-  match      Match new records and place them in identities
-  recompute  Show what the current rules would change in the identities
-  show       Show what a running server holds
-  explain    Say why two records share an identity, or what holds one together
-  retract    Take back rows a source no longer holds
-  reset      Start the development store of `spool dev` over
-  build      Check a project and compile it into a manifest
-  apply      Apply a manifest to a store
-  serve      Run the server from a manifest and a store
-  token      Make, list and revoke the tokens of callers that are not people
-  bench      Run a benchmark scenario
-  schema     Print the JSON Schema of the server's API
-  help       Print this message or the help of the given subcommand(s)
+  init         Make a project, empty or from an example
+  info         List what a project declares, and check its SQL
+  dev          Run a server on localhost that applies file changes as they are saved
+  load         Send the rows of a file to a running server
+  extract      Find records in documents with one of the project's extractors
+  match        Match new records and place them in identities
+  recompute    Show what the current rules would change in the identities
+  show         Show what a running server holds
+  explain      Say why two records share an identity, or what holds one together
+  retract      Take back rows a source no longer holds
+  reset        Start the development store of `spool dev` over
+  build        Check a project and compile it into a manifest
+  apply        Apply a manifest to a store
+  serve        Run the server from a manifest and a store
+  token        Make, list and revoke the tokens of callers that are not people
+  bench        Run a benchmark scenario
+  schema       Print the JSON Schema of the server's API
+  completions  Print a shell completion script
+  help         Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help     Print help (see more with '--help')

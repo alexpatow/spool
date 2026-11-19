@@ -3,7 +3,7 @@ title: Command line
 description: Every spool command, what it takes and what it prints.
 ---
 
-`spool` is one binary. Three of its commands run a server, and the rest either work on a project directory or call a running server over HTTP. `spool <command> -h` lists a command's options, one line each, and `spool <command> --help` says what this page says about it.
+`spool` is one binary. Three of its commands run a server, and the rest either work on a project directory or call a running server over HTTP. `spool <command> -h` lists a command's options, one line each, and `spool <command> --help` says what this page says about it. The [command reference](/docs/cli-reference) is every option of every command, written from the binary's own help, and `man spool` has the same after an install.
 
 | Command | What it does | Works on |
 | --- | --- | --- |
@@ -23,6 +23,7 @@ description: Every spool command, what it takes and what it prints.
 | [`spool token`](#spool-token) | Makes, lists and revokes tokens | A store file |
 | [`spool schema`](#spool-schema) | Prints the JSON Schema of the API | Nothing |
 | [`spool bench`](#spool-bench) | Runs a benchmark scenario | A directory |
+| [`spool completions`](#spool-completions) | Prints a shell completion script | Nothing |
 
 The commands that call a server take `--url` (default `$SPOOL_URL`, or `http://127.0.0.1:7765`) and `--token` (default `$SPOOL_TOKEN`; `spool dev` asks for none).
 
@@ -663,6 +664,18 @@ Prints the JSON Schema of every value the API takes and returns.
 
 Runs a benchmark scenario from the repository: loads each step's files, matches, and scores the identities against the scenario's truth. A scenario with documents is also scored on what its extractors found, and on extraction and matching together. The [benchmarks](https://github.com/alexpatow/spool/tree/main/benchmarks) say what each scenario measures.
 
+## spool completions
+
+`spool completions <shell>`
+
+Prints the script that completes `spool`'s commands, options and their values, for `bash`, `zsh`, `fish`, `powershell` or `elvish`. The install script links the ones for bash, zsh and fish where those shells look, and says what to add to `~/.zshrc` for zsh. For another place or another shell:
+
+{/* sample: skip writes into the reader's home directory */}
+
+```sh
+spool completions fish > ~/.config/fish/completions/spool.fish
+```
+
 ## Environment
 
 | Variable | Meaning |
@@ -673,3 +686,4 @@ Runs a benchmark scenario from the repository: loads each step's files, matches,
 | `SPOOL_PUBLIC_URL` | The address people reach `spool serve` by |
 | `SPOOL_GOOGLE_CLIENT_ID`, `SPOOL_GOOGLE_CLIENT_SECRET` | Sign-in with Google for `spool serve` |
 | `SPOOL_UV`, `SPOOL_BUN` | The `uv` and `bun` commands, if they are not on the search path |
+| `NO_COLOR`, `CLICOLOR_FORCE` | No colour, or colour in a pipe too, unless `--color` says otherwise |

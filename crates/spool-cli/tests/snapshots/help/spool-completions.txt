@@ -1,0 +1,18 @@
+Print a shell completion script
+
+Usage: spool completions [OPTIONS] <SHELL>
+
+Arguments:
+  <SHELL>  The shell [possible values: bash, elvish, fish, powershell, zsh]
+
+Options:
+  -h, --help  Print help (see more with '--help')
+
+Global options:
+      --color <WHEN>  When to use colour [default: auto] [possible values: auto, always, never]
+  -q, --quiet         Print only the result and errors: no hints or progress
+
+Examples:
+  spool completions bash > ~/.local/share/bash-completion/completions/spool
+  spool completions zsh > ~/.zfunc/_spool
+  spool completions fish > ~/.config/fish/completions/spool.fish

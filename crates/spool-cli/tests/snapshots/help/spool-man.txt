@@ -1,0 +1,13 @@
+Write a man page for `spool` and for each of its commands
+
+Usage: spool man [OPTIONS] <DIR>
+
+Arguments:
+  <DIR>  The directory to write them in, made if it is not there
+
+Options:
+  -h, --help  Print help (see more with '--help')
+
+Global options:
+      --color <WHEN>  When to use colour [default: auto] [possible values: auto, always, never]
+  -q, --quiet         Print only the result and errors: no hints or progress

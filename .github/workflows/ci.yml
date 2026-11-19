@@ -9,6 +9,8 @@ name: CI
 #
 # The studio is built from the site's tokens, themes and mark, and its test
 # checks that its copies of them are the site's: those files start the jobs.
+# So does the command reference, which a test of `spool` checks is what the
+# commands' help says.
 # A later pattern wins over an earlier one, and files whose names begin
 # with a dot, such as this one, are named on their own.
 on:
@@ -19,6 +21,7 @@ on:
       - ".*/**"
       - "!docs/**"
       - "!site/**"
+      - "site/content/docs/cli-reference.mdx"
       - "site/src/styles/shelf/**"
       - "site/src/components/brand.tsx"
       - "site/src/app/icon.svg"
@@ -33,6 +36,7 @@ on:
       - ".*/**"
       - "!docs/**"
       - "!site/**"
+      - "site/content/docs/cli-reference.mdx"
       - "site/src/styles/shelf/**"
       - "site/src/components/brand.tsx"
       - "site/src/app/icon.svg"

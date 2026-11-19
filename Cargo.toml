@@ -38,6 +38,9 @@ rmcp = { version = "3.11", default-features = false, features = ["server", "tran
 # The `spool` command's arguments, help and usage errors. Only spool-cli
 # depends on it.
 clap = { version = "4.6", features = ["derive", "env", "wrap_help"] }
+# Shell completions and man pages, from the same definition of the commands.
+clap_complete = "4.6"
+clap_mangen = "0.3"
 # Colour: written as ANSI styles and taken out where the output is not a
 # terminal, or NO_COLOR or `--color never` says so.
 anstream = "1"
