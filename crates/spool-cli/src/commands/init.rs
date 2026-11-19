@@ -11,20 +11,19 @@ use super::project::{failed, write};
 use crate::Failure;
 use crate::output::{Output, OutputArgs, hint};
 
-/// Make a project, empty or from an example
+/// Create a project, empty or from an example
 ///
-/// Makes a project: the folders it uses, a .gitignore and a .env.example,
-/// with nothing in them. With --example it is a whole project instead, with
-/// sample rows and documents to load.
+/// Creates a project: the standard folders, a .gitignore and a .env.example.
+/// With --example, it's a complete project with sample rows and documents
+/// to load.
 ///
-/// The folder has to be empty: it may hold `.git` and `.DS_Store` and nothing
-/// else. A folder that holds anything more is refused, and nothing is
-/// written.
+/// The folder has to be empty apart from `.git` and `.DS_Store`. Otherwise
+/// it's refused and nothing is written.
 ///
-/// Spool hands the variables that the project's .env sets to the extractors
-/// and strategies it runs, and never prints their values. A variable that is
-/// set already where Spool runs keeps its value. Git ignores .env, and
-/// .env.example shows the form.
+/// Spool passes the variables in the project's .env to the extractors and
+/// strategies it runs, and never prints their values. Variables already set
+/// in Spool's environment win. Git ignores .env, and .env.example shows the
+/// format.
 #[derive(Args)]
 #[command(
     after_help = "Examples:\n  spool init companies --example companies\n  spool init my-data"

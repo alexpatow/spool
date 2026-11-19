@@ -1,4 +1,4 @@
-Make a project, empty or from an example
+Create a project, empty or from an example
 
 Usage: spool init [OPTIONS] [DIR]
 

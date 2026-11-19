@@ -21,34 +21,31 @@ use crate::progress;
 
 /// Find records in documents with one of the project's extractors
 ///
-/// Finds records in text, on a running server. Each file is one document: the
-/// server stores its text, and one of the project's extractors reads it. What
-/// the extractor finds are records like the rows of a source, and the next
-/// match run places them in identities.
+/// Extracts records from text, on a running server. Each file is one
+/// document: the server stores its text and one of the project's extractors
+/// reads it. What the extractor finds are records like any source's rows, and
+/// the next match places them in identities.
 ///
-/// A folder stands for every file under it, in the folders under it too.
-/// Files and folders whose names start with a dot are left out, and every
-/// other file has to be UTF-8 text. A file that is named is stored under its
-/// name, and a file found in a folder under its path from that folder:
-/// `dev/a.txt` for documents/dev/a.txt, when `documents` was named.
+/// A folder means every file under it, recursively. Dotfiles and dot-folders
+/// are skipped, and every other file must be UTF-8 text. A file you name is
+/// stored under its name. A file found in a folder is stored under its path
+/// from that folder, so naming `documents` stores documents/dev/a.txt as
+/// `dev/a.txt`.
 ///
-/// With no path, the extractor reads the documents the server holds and it
-/// has not read.
+/// With no path, the extractor reads every stored document it hasn't read.
 ///
-/// The extractor reads the documents in batches, and what it finds in a batch
-/// is kept when the batch ends. A command that is stopped or fails keeps the
-/// batches before it, and the same command again reads what is left. A batch
-/// the command no longer waits for goes on on the server and is kept as well.
-/// Each batch is made to take a small part of the time the server lets user
-/// code run (`--task-timeout` on `spool dev` or `spool serve`), so a long
-/// extraction needs no longer limit.
+/// Documents are read in batches, and each batch is kept when it ends. If the
+/// command stops or fails, earlier batches are kept, and running it again
+/// picks up the rest. A batch the command stops waiting for still finishes on
+/// the server. Batches are sized to a fraction of the server's user-code
+/// limit (`--task-timeout` on `spool dev` or `spool serve`), so long
+/// extractions don't need a longer limit.
 ///
-/// An extractor's first run may fetch what it depends on, a model for one. On
-/// a terminal, a spinner shows what the extractor says while its first batch
-/// starts, and a bar then shows how many documents are read. On standard
-/// error the command says how long a slow start took, what the batches came
-/// to when there was more than one, and what the extractor wrote, once its
-/// batch ends.
+/// An extractor's first run may download its dependencies, such as a model.
+/// On a terminal, a spinner shows the extractor's output while the first
+/// batch starts, then a progress bar counts documents. On standard error the
+/// command reports a slow start, batch totals when there are several, and the
+/// extractor's own output when its batch ends.
 #[derive(clap::Args)]
 #[command(
     after_help = "Examples:\n  spool extract samples/notes-1.txt\n  spool extract documents/ --source notes\n  spool extract --again"

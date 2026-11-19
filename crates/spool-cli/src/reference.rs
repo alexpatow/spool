@@ -9,14 +9,14 @@ use clap::{Arg, Command};
 const SHARED: [(&str, &str); 3] = [
     (
         "Output options",
-        "These go with every command that prints a result. [Output](/docs/cli#output) says what \
-         each format prints.",
+        "Every command that prints a result takes these. [Output](/docs/cli#output) shows each \
+         format.",
     ),
     (
         "Server options",
-        "These go with every command that calls a running server.",
+        "Every command that calls a running server takes these.",
     ),
-    ("Global options", "These go with every command."),
+    ("Global options", "Every command takes these."),
 ];
 
 pub fn page(cli: &mut Command) -> String {
@@ -24,12 +24,12 @@ pub fn page(cli: &mut Command) -> String {
     let mut page = String::from(
         "---\n\
          title: Command reference\n\
-         description: Every spool command and option, as the binary's help says them.\n\
+         description: Every spool command and option, generated from the binary's help.\n\
          ---\n\n\
          {/* Written from the definition of the commands by `SNAPSHOTS=overwrite cargo test -p \
          spool-cli --bin spool`. To change it, change the doc comments in crates/spool-cli/src. */}\n\n\
-         Every command of `spool` and every option it takes, as `spool <command> --help` says \
-         them. [Command line](/docs/cli) says what the commands do, with what they print.\n\n\
+         Every `spool` command and option, generated from `spool <command> --help`. [Command \
+         line](/docs/cli) shows what each command does and prints.\n\n\
          ## Options of many commands\n",
     );
     for (heading, about) in SHARED {
@@ -208,7 +208,7 @@ fn option(arg: &Arg) -> String {
     }
     if let Some(variable) = arg.get_env() {
         facts.push(format!(
-            "Read from `{}` when it is not given.",
+            "Falls back to `{}`.",
             variable.to_string_lossy()
         ));
     }

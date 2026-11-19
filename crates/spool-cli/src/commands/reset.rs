@@ -12,25 +12,23 @@ use crate::output::{Output, OutputArgs, hint, render};
 
 /// Start the development store of `spool dev` over
 ///
-/// Starts the development store of `spool dev` over: removes the store under
-/// <DIR>/.spool/, with every row, document, identity, run and changeset it
-/// holds, so that the next `spool dev` begins with an empty one. It says what
-/// it removes and what it keeps, and asks first.
+/// Deletes the development store under <DIR>/.spool/, with every row,
+/// document, identity, run and changeset in it, so the next `spool dev`
+/// starts empty. It lists what it will delete and keep, and asks first.
 ///
 /// It keeps the project's files, the accounts and tokens of `spool dev` (the
-/// .auth.sqlite file beside the store), the manifest `spool build` wrote, and
-/// everything else under .spool/, such as what an extractor keeps there.
+/// .auth.sqlite file beside the store), the manifest from `spool build`, and
+/// anything else under .spool/, such as an extractor's cache.
 ///
-/// It removes nothing else than these, and each only if it is what DuckDB
-/// makes: <store>.wal, a file; <store>.tmp, a directory, with what is in it,
-/// where a link in it is removed and not what the link points to; and
-/// <store>, a file, last. <store> is a .duckdb file directly under
-/// <DIR>/.spool/. If any of them, or .spool itself, is a link or of another
-/// kind, it removes nothing.
+/// It deletes only the files DuckDB creates: <store>.wal, the directory
+/// <store>.tmp and its contents (symlinks inside it are removed, not
+/// followed), then <store> itself, a .duckdb file directly under
+/// <DIR>/.spool/. If any of these, or .spool itself, is a symlink or an
+/// unexpected file type, it deletes nothing.
 ///
-/// It removes nothing while a `spool dev` has the store open: stop that one
-/// with Ctrl-C first. It starts over only a store under <DIR>/.spool/, never
-/// one a `spool serve` runs on.
+/// It refuses while a `spool dev` has the store open: stop that one with
+/// Ctrl-C first. It only resets stores under <DIR>/.spool/, never one that
+/// `spool serve` runs on.
 #[derive(Args)]
 pub struct ResetArgs {
     /// The project directory [default: the current directory]

@@ -30,12 +30,11 @@ pub struct InfoArgs {
 
 /// Check a project and compile it into a manifest
 ///
-/// Checks the project and compiles it into .spool/manifest.json. The server
-/// reads the manifest, and the strategy and extractor files it names. Writes
+/// Checks the project and compiles it into .spool/manifest.json, which the
+/// server reads along with the strategy and extractor files it names. Writes
 /// a Dockerfile if the project has none.
 ///
-/// SPOOL_UV and SPOOL_BUN name `uv` and `bun` if they are not on the search
-/// path.
+/// Set SPOOL_UV and SPOOL_BUN if `uv` and `bun` aren't on your PATH.
 #[derive(Args)]
 pub struct BuildArgs {
     /// The project directory [default: the current directory]
@@ -45,9 +44,9 @@ pub struct BuildArgs {
     base_image: Option<String>,
     /// Start each strategy and extractor once, to fetch what it needs
     ///
-    /// Starts each user-code strategy and extractor once with nothing to do,
-    /// so that `uv` and `bun` fetch what it depends on, a model it loads as
-    /// it starts is fetched too, and a file that cannot start is found now.
+    /// Starts each strategy and extractor once with no work, so `uv` and
+    /// `bun` install its dependencies, any model it loads at startup is
+    /// downloaded, and a file that can't start fails now rather than later.
     #[arg(long)]
     install: bool,
     #[command(flatten)]
@@ -56,9 +55,9 @@ pub struct BuildArgs {
 
 /// Apply a manifest to a store
 ///
-/// Applies a manifest to a store: declares new entity types, and computes the
-/// feature table again for each type whose declaration changed. Identities
-/// are not touched. The server must not be running on the store.
+/// Applies a manifest to a store: declares new entity types and rebuilds the
+/// feature table of each type whose declaration changed. Identities aren't
+/// touched. Stop the server on the store first.
 #[derive(Args)]
 pub struct ApplyArgs {
     /// The project directory [default: the current directory]

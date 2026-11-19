@@ -15,20 +15,20 @@ use crate::progress;
 
 /// Match new records and place them in identities
 ///
-/// Matches the records that no match has examined, on a running server, and
-/// places them in identities: the rules judge pairs of records, and each new
-/// record joins the identity of the records it matches or gets a new one.
-/// Identities that exist keep their IDs and their members.
+/// Matches the records no match has examined yet, on a running server. The
+/// rules judge pairs, and each new record joins the identity of the records
+/// it matches or starts a new one. Existing identities keep their IDs and
+/// their members.
 ///
-/// Each entity type the project declares is matched in a run of its own, one
-/// after the other, and the command reports each. A run that fails does not
-/// stop the ones after it, and the command then fails. `--type` matches one.
+/// Each entity type the project declares is matched in its own run, one
+/// after another, with a report for each. A failed run doesn't stop the
+/// rest, but the command then fails. `--type` matches one type.
 ///
-/// `spool show runs <run>` shows the whole report of a run, and `spool show
-/// records` what each record belongs to now.
+/// `spool show runs <run>` shows a run's full report, and `spool show
+/// records` shows where each record is now.
 ///
-/// As JSON it is, with `--type`, the run the server answered with, and
-/// without, `runs`: each type's `entity_type` and `run`.
+/// With `--type`, the JSON output is the run the server returned. Without
+/// it, the output is `runs`, with each type's `entity_type` and `run`.
 #[derive(Args)]
 pub struct MatchArgs {
     /// Only this entity type [default: every one the project declares]

@@ -1,60 +1,60 @@
 ---
 title: Command line
-description: Every spool command, what it takes and what it prints.
+description: Every spool command, what it takes and what it prints, with output formats and exit codes.
 ---
 
-`spool` is one binary. Three of its commands run a server, and the rest either work on a project directory or call a running server over HTTP. `spool <command> -h` lists a command's options, one line each, and `spool <command> --help` says what this page says about it. The [command reference](/docs/cli-reference) is every option of every command, written from the binary's own help, and from the release after 0.1.0 `man spool` has the same after an install.
+`spool` is one binary. Three commands run a server. The rest work on a project directory or call a running server over HTTP. `spool <command> -h` lists a command's options, and `spool <command> --help` gives the full description. The [command reference](/docs/cli-reference) lists every option, generated from the binary's help.
 
 | Command | What it does | Works on |
 | --- | --- | --- |
-| [`spool init`](#spool-init) | Makes a project, empty or with an example's sample rows | A directory |
+| [`spool init`](#spool-init) | Creates a project, empty or from an example | A directory |
 | [`spool info`](#spool-info) | Lists what a project declares and checks its SQL | A directory |
-| [`spool dev`](#spool-dev) | Runs the server on this machine and applies file changes as they are saved | A directory |
-| [`spool reset`](#spool-reset) | Starts the development store of `spool dev` over | A directory |
+| [`spool dev`](#spool-dev) | Runs a local server that reloads project files as you save | A directory |
+| [`spool reset`](#spool-reset) | Empties the development store of `spool dev` | A directory |
 | [`spool load`](#spool-load) | Loads a file of rows | A running server |
 | [`spool extract`](#spool-extract) | Stores text files as documents and runs an extractor | A running server |
-| [`spool match`](#spool-match) | Matches the records that are new, of every entity type | A running server |
+| [`spool match`](#spool-match) | Matches new records of every entity type | A running server |
 | [`spool show`](#spool-show) | Shows runs, records and their attributes, identities, documents, review items, drafts and the log | A running server |
-| [`spool explain`](#spool-explain) | Says why two records share an identity, or why they do not, and what holds an identity together | A running server |
-| [`spool retract`](#spool-retract) | Takes back rows a source no longer holds | A running server |
+| [`spool explain`](#spool-explain) | Says why two records share an identity or don't, and what holds an identity together | A running server |
+| [`spool retract`](#spool-retract) | Retracts rows a source no longer holds | A running server |
 | [`spool build`](#spool-build) | Checks a project and compiles it into a manifest | A directory |
 | [`spool apply`](#spool-apply) | Applies a manifest to a store | A store file |
 | [`spool serve`](#spool-serve) | Runs the server from a manifest and a store | A store file |
-| [`spool token`](#spool-token) | Makes, lists and revokes tokens | A store file |
+| [`spool token`](#spool-token) | Creates, lists and revokes tokens | A store file |
 | [`spool schema`](#spool-schema) | Prints the JSON Schema of the API | Nothing |
 | [`spool bench`](#spool-bench) | Runs a benchmark scenario | A directory |
 | [`spool completions`](#spool-completions) | Prints a shell completion script | Nothing |
 
-The commands that call a server take `--url` (default `$SPOOL_URL`, or `http://127.0.0.1:7765`) and `--token` (default `$SPOOL_TOKEN`; `spool dev` asks for none).
+Commands that call a server take `--url` (default `$SPOOL_URL`, or `http://127.0.0.1:7765`) and `--token` (default `$SPOOL_TOKEN`; `spool dev` needs none).
 
-The command line cannot merge, split, undo, decide a review item or approve a draft. Those are calls of [the HTTP API](/docs/api), buttons in the studio, and [MCP](/docs/mcp) tools.
+Merging, splitting, undoing, review decisions and draft approval go through [the HTTP API](/docs/api), the studio or [MCP](/docs/mcp).
 
 ## Output
 
-Every command that prints a result takes `-o, --output <format>`, and `--json` for `-o json`. The format is the same whether the output goes to a terminal or a pipe.
+Every command that prints a result takes `-o, --output <format>`, and `--json` as shorthand for `-o json`. The format is the same on a terminal and in a pipe.
 
 | Format | What it prints |
 | --- | --- |
-| `table` | Columns and labelled lines for people. The default. Columns may change between releases, so scripts should not parse it |
-| `json` | One JSON document: what the server answered, which [`spool schema`](#spool-schema) describes, or the report of a local command |
-| `ndjson` | A list one item per line, for `jq` and other streaming readers. Anything else is its JSON on one line |
-| `csv` | A list's columns, with the IDs a table may leave out and values that a table cuts short in full. A command that prints a report, such as `spool match` or `spool show runs <run>`, refuses `csv` before it does anything |
+| `table` | For people. The default. Columns can change between releases, so don't parse it in scripts |
+| `json` | One JSON document: the server's response, described by [`spool schema`](#spool-schema), or a local command's report |
+| `ndjson` | One list item per line, for `jq` and other streaming tools. Anything else is its JSON on one line |
+| `csv` | A list's columns, with full IDs and untruncated values. Commands that print a report, such as `spool match` or `spool show runs <run>`, reject `csv` up front |
 
-Standard output carries the result and nothing else. Hints, notes and what to run next go to standard error, and so does progress: a spinner or a bar while `spool load`, `spool extract`, `spool match`, `spool recompute` and `spool retract` wait, drawn on a terminal only. `-q` leaves out all of these. So `spool show identities -o csv > identities.csv` writes only the rows, and `spool load rows.csv -q` prints only the line that says what was loaded. `spool serve`, `spool dev` and `spool schema` take no `-o`: the first two run a server, and `spool schema` prints JSON.
+Standard output carries the result only. Hints, notes, next steps and progress go to standard error. Progress is a spinner or bar for `spool load`, `spool extract`, `spool match`, `spool recompute` and `spool retract`, drawn on a terminal only. `-q` silences all of it, so `spool show identities -o csv > identities.csv` writes only rows. `spool serve`, `spool dev` and `spool schema` take no `-o`: the first two run a server, and `spool schema` always prints JSON.
 
-Tables, hints and errors have colour on a terminal. `--color never` turns it off and `--color always` keeps it in a pipe; without the option, `NO_COLOR` turns it off and `CLICOLOR_FORCE` keeps it. JSON, NDJSON and CSV never have colour.
+Tables, hints and errors are coloured on a terminal. `--color never` turns colour off and `--color always` keeps it in a pipe. Without the flag, `NO_COLOR` and `CLICOLOR_FORCE` do the same. JSON, NDJSON and CSV are never coloured.
 
-A failure is said as `error:`, and what to do about it, where there is something, as `hint:` on the next line. A mistake in a command's arguments is said with its usage, and ends with status 2. A command that fails ends with status 1, and one stopped with Ctrl-C with 130.
+Failures print `error:`, followed by a `hint:` line when there's a fix. Bad arguments print usage and exit 2. Other failures exit 1, and Ctrl-C exits 130.
 
 ## spool init
 
 `spool init [<dir>] [--example <name>]`
 
-Makes a project in `<dir>`, which it creates, or in the current directory. The project is empty: the folders a project uses, `sources/`, `entities/`, `transforms/` and `extractors/`, each with a `.gitkeep` so that Git keeps it, a `.gitignore` that leaves out `.spool/` and `.env`, and a `.env.example`. Spool accepts it as it is, and `spool dev` runs on it.
+Creates a project in `<dir>`, or in the current directory. An empty project has `sources/`, `entities/`, `transforms/` and `extractors/` (each with a `.gitkeep`), a `.gitignore` covering `.spool/` and `.env`, and a `.env.example`. `spool dev` runs on it as is.
 
-The folder has to be empty. It may hold `.git`, so that a repository made with `git init` can be used, and `.DS_Store`, which macOS leaves, and nothing else. In a folder that holds anything more, `spool init` refuses, names a few of the files, and writes nothing.
+The folder must be empty apart from `.git` (so `git init` first is fine) and `.DS_Store`. Otherwise `spool init` lists a few of the files and writes nothing.
 
-`--example <name>` fills the project with an example instead. There is one, `companies`: a source of rows, `crm`, and a source of documents, `notes`, one entity type, `company`, with its features, a transform, three rules and an extractor. Under `samples/` it writes two files of rows, which the rules match as they stand, and a document, in which the extractor finds three records. An example that does not exist is refused with the list of those that do.
+`--example companies` writes a complete project instead: a row source, `crm`, a document source, `notes`, a `company` entity type with features, a transform, three rules and an extractor, plus two CSV files and a call note under `samples/`. An unknown example name is refused with the list of examples.
 
 {/* sample: new session */}
 
@@ -111,7 +111,7 @@ under entities/, then load your rows with `spool load`. To see a project that
 works first, with sample rows: spool init companies --example companies
 ```
 
-In a folder that holds files already, it names a few of them, says that `spool init <name>` makes a new folder, and writes nothing. In a project, it says so:
+In a folder that has files, it lists a few, suggests `spool init <name>` for a new folder, and writes nothing. Inside a project, it says so:
 
 {/* sample: fails */}
 
@@ -123,13 +123,13 @@ spool init
 error: this folder is a project already: it has an entities/ folder
 ```
 
-The project's `.env` sets environment variables for its extractors and strategies, such as the key of a hosted model. Spool reads it each time it starts one, and hands the code what it sets. A variable that is set already where Spool runs keeps its value, and Spool never prints a value. A line is `NAME=value`, which may start with `export ` and may put the value in quotes. Lines that start with `#` are comments.
+The project's `.env` sets environment variables for its extractors and strategies, such as a hosted model's API key. Spool rereads it each time it starts one and never prints a value. Variables already set in Spool's environment win. Each line is `NAME=value`, optionally prefixed with `export ` and optionally quoted. Lines starting with `#` are comments.
 
 ## spool info
 
 `spool info [<dir>]`
 
-Lists the project's sources, with each source's columns and the features each column becomes, its entity types, with their features, rules and strategies, and its extractors. It checks every SQL file on the way, and needs no server. What the records hold in those columns is on the server, and [`spool show attributes`](#spool-show) shows it.
+Lists the project's sources (with each column and the features it becomes), entity types (with features, rules and strategies) and extractors. It checks every SQL file and needs no server. To see what records actually hold, use [`spool show attributes`](#spool-show).
 
 ```sh
 spool info
@@ -166,9 +166,9 @@ extractor `companies` (python, extractors/companies.py)
 
 `spool dev [<dir>] [--listen <addr>] [--store <path>] [--task-timeout <s>] [--tasks <dir>]`
 
-Runs the server from a project directory, with its data in `.spool/dev.duckdb`. A change to the project's files is applied as it is saved. A change that does not compile is reported, and the last version that did keeps running.
+Runs a server straight from a project directory, with data in `.spool/dev.duckdb`. Project files are applied as you save them. A change that doesn't compile is reported, and the last good version keeps running.
 
-It listens on `127.0.0.1:7765`, on this machine only. Nobody signs in and a caller needs no token: every change is recorded under one account, an admin. `spool serve` is the server that others reach.
+It listens on `127.0.0.1:7765` only. There's no sign-in and no token: every change is recorded under one admin account. Use `spool serve` for a server other people reach.
 
 {/* sample: background */}
 
@@ -186,7 +186,7 @@ studio    http://127.0.0.1:7765/
 mcp       http://127.0.0.1:7765/mcp
 ```
 
-One server runs on a store at a time. A second `spool dev` on the same project is refused:
+One server runs on a store at a time, so a second `spool dev` on the same project is refused:
 
 {/* sample: fails */}
 
@@ -199,7 +199,7 @@ error: the store ./.spool/dev.duckdb is open in another process (PID 6644), most
 hint: one server runs on a store at a time: use the one that is running, or stop it with Ctrl-C and start this one again
 ```
 
-So is one on another project while the first has the port:
+So is one on another project while the first holds the port:
 
 ```sh
 spool init ../other
@@ -220,13 +220,13 @@ error: cannot listen on 127.0.0.1:7765: something else is listening there, perha
 hint: give this one another port by adding `--listen 127.0.0.1:7766` to the command, and point the commands that call it there with SPOOL_URL=http://127.0.0.1:7766
 ```
 
-Ctrl-C stops it. It finishes the runs it was given first. [`spool reset`](#spool-reset) starts its store over.
+Ctrl-C stops it after the runs in progress finish. [`spool reset`](#spool-reset) empties its store.
 
 ## spool load
 
 `spool load <file> [--source <name>] [--type <name>] [--delimiter <c>] [--batch <n>]`
 
-Loads a CSV file of rows into a source. `-` in place of the file reads standard input, and a file whose name ends in `.tsv` or `.tab` has tabs between its fields. The source may be left out when the project has one, or when the file is named after it: `crm-1.csv` and `crm.csv` are rows of `crm`. Failing both, it is the source that lists most of the file's columns. The entity type may be left out when one takes rows from the source. Loading does not match. A row that is already held adds nothing, and a row whose content changed under the same key is stored as a new version.
+Loads a CSV file into a source. `-` reads standard input, and `.tsv` or `.tab` files are tab-separated. `--source` defaults to the project's only source, then to the source the file is named after (`crm-1.csv` and `crm.csv` go to `crm`), then to the source that lists most of the file's columns. `--type` defaults to the only entity type that reads the source. Loading doesn't match. Rows already held are skipped, and a changed row under the same key becomes a new version.
 
 ```sh
 spool load samples/crm-1.csv
@@ -241,11 +241,11 @@ next: `spool match` places them in identities
 
 `spool extract [<path>...] [--source <name>] [--extractor <name>] [--again]`
 
-Stores each file as a document, then runs an extractor over the documents it has not read. A folder stands for every file under it, in the folders under it too, and files and folders whose names start with a dot are left out. A named file's key is its name, and a key of a file found in a folder is its path from that folder: `spool extract documents` stores documents/dev/a.txt as `dev/a.txt`. With no path it runs the extractor over the documents that are stored. The source is chosen as `spool load` chooses it, and `--extractor` may be left out when the project has one. `--again` reads every document again. An extractor's first run may fetch what it depends on, as the sample extractor fetches its model. [Extraction](/docs/concepts/extraction) explains what an extractor is.
+Stores each file as a document, then runs an extractor over every document it hasn't read. Folders are read recursively, skipping dotfiles. A named file's key is its name, and a file found in a folder is keyed by its path from that folder, so `spool extract documents` stores documents/dev/a.txt as `dev/a.txt`. With no path, it runs the extractor over stored documents. The source is picked the way `spool load` picks it, and `--extractor` defaults to the project's only one. `--again` rereads every document. A first run may download dependencies, such as the sample extractor's model. [Extraction](/docs/concepts/extraction) covers extractors in depth.
 
-The extractor reads the documents in batches, and each batch is kept when it ends. A batch is sized to take at most a fifth of the server's `--task-timeout`, and two minutes at most. On a terminal a spinner shows what the extractor says while its first batch starts, and a bar then shows how many documents are read and how long the rest should take. When there is more than one batch, the command ends by saying on standard error what they came to, and when the first took more than a few seconds, how long it took to start. A command that fails keeps the batches before the failure, and Ctrl-C cancels the batch that is running and keeps those before it. The same command again reads what is left; with `--again` it starts over.
+Documents are read in batches, and each batch is kept when it ends. A batch is sized to at most a fifth of the server's `--task-timeout`, capped at two minutes. On a terminal, a spinner shows the extractor's output while the first batch starts, then a progress bar shows documents read and time remaining. With several batches, the command prints a total on standard error, plus the startup time if the first batch was slow. A failure keeps earlier batches, and Ctrl-C cancels the current batch and keeps earlier ones. Run the same command again to read the rest; with `--again` it starts over.
 
-A document the extractor could not read is listed under `failed`, with why, and the same command reads it again. When a batch could not read any of its documents, the command stops. What the extractor writes to standard error is shown once its batch ends, indented, and a mention that no extractor finds any more is taken back, which the command says under `taken back`. [Extraction](/docs/concepts/extraction#when-an-extractor-fails) says more.
+Documents the extractor couldn't read are listed under `failed` with the reason, and the next run retries them. If a batch fails on every document, the command stops. The extractor's standard error is shown, indented, when its batch ends. Mentions no extractor finds any more are retracted and listed under `taken back`. See [When an extractor fails](/docs/concepts/extraction#when-an-extractor-fails).
 
 ```sh
 spool extract samples/notes-1.txt
@@ -268,7 +268,7 @@ next: `spool match` places them in identities
 
 `spool match [--type <name>] [--rematch] [--strategy <name>]`
 
-Matches the records no match has examined yet, waits, and prints the report. Each entity type the project declares is matched in a run of its own and reported apart; `--type` matches one. A type whose run fails does not stop the others, and the command then fails. `--rematch` examines every record again against the rules as they are now. A rematch suggests merges and makes none. `--strategy` says who judges: `rules`, which is the default, or one of the project's strategies for a type, named with `--type` when the project has more than one.
+Matches every record no match has examined yet, waits, and prints the report. Each entity type gets its own run and report; `--type` matches one. A failed run doesn't stop the others, but the command then fails. `--rematch` re-examines every record against the current rules and suggests merges without making them. `--strategy` picks the judge: `rules` (the default) or one of the project's strategies, with `--type` if the project has several types.
 
 ```sh
 spool match
@@ -286,13 +286,13 @@ placed      9 records, 5 identities created
 `spool recompute [--type <name>] [--identity <id>] [--detail] [--limit <n>] [--offset <n>]`
 `spool recompute --apply <plan> [--type <name>] [--reason <text>]`
 
-Shows what the identities would be if every record were matched again, all at once, by the rules as they are now, against the identities there are, and changes nothing. Every type is recomputed unless `--type` names one. The summary comes first, then the ten largest changes; `--detail` lists all of them, and `--identity` shows the one that holds an identity record by record. The last line is a plan, which `--apply` takes: applying works the result out again, refuses if it is not that plan, and commits one changeset by the engine for each type. [Matching](/docs/concepts/matching#recompute) shows the output.
+Previews the identities you'd get by matching every record from scratch with the current rules, compared with the identities you have. It changes nothing. Every type is recomputed unless `--type` names one. You get a summary, then the ten largest changes. `--detail` lists all of them, and `--identity` breaks down one change record by record. The last line is a plan hash for `--apply`. Applying recomputes, refuses if the result no longer matches the plan, and commits one engine changeset per type. [Matching](/docs/concepts/matching#recompute) shows the output.
 
 ## spool show
 
 `spool show [<list> [<id>]] [options]`
 
-Without a list it prints the entity types and how much there is of each:
+With no list, it prints the entity types and their counts:
 
 ```sh
 spool show
@@ -324,7 +324,7 @@ extractor `companies` (python, extractors/companies.py)
 | `drafts [<draft>]` | Drafts | One draft with the changeset it would commit |
 | `log` | The changeset log | |
 
-A record is named by its ID or as `<source>:<key>`, which names the latest version of that row. A record found in a document is named as the lists name it, `<source>:<document>[<start>-<end>]`.
+Name a record by its ID or as `<source>:<key>`, the latest version of that row. Name a record found in a document the way lists show it, `<source>:<document>[<start>-<end>]`.
 
 | Option | Meaning | Applies to |
 | --- | --- | --- |
@@ -343,9 +343,9 @@ A record is named by its ID or as `<source>:<key>`, which names the latest versi
 | `--after <id>` | Continue a list after this ID, or the log after this position, in the order of the list | identities, records, documents, review, log |
 | `--limit <n>` | List at most this many | runs, identities, records, documents, review, log |
 
-Each list takes only the options that apply to it, and none of them goes with an ID. `spool show <list> -h` lists them.
+Each list takes only the options that apply to it, and none apply when you pass an ID. `spool show <list> -h` lists them.
 
-A list of records or documents shows the version of each that nothing replaced: the row as its source last sent it, or a mention as the latest version of its document holds it. `--all-versions` lists the replaced versions too, with a column that says which is current.
+Record and document lists show current versions only: each row as its source last sent it, and each mention as the latest version of its document has it. `--all-versions` adds the replaced versions, with a column marking the current one.
 
 ```sh
 spool show runs
@@ -374,13 +374,13 @@ IDENTITY                              NAME                   MEMBERS  NAMES  UNL
 01a1efc6-41cd-775d-8758-e733aa086f7d  Larkfield Logistics    2        2      0%              log position 1
 ```
 
-Each identity comes with three numbers that point at a wrong merge without any labelled truth:
+Each identity has three numbers that flag a wrong merge without any labelled data:
 
-- **members**: how many records it has. Wrong merges grow, so the largest identities are the first to look at.
-- **names**: how many different labels its records have, whatever their case. One thing goes by a few names; dozens are many things.
-- **unlinked pairs**: the part of its pairs of records that no link joins directly. A link is a `match` from a run that finished, a `must_link` constraint, or one record being a later version of the other. A pair no link joins is together only through a chain: A matches B and B matches C, so A and C share an identity though no rule holds between them. An identity mostly held by chains is where rules that each hold joined things that are not one.
+- **members**: the record count. Wrong merges snowball, so look at the largest identities first.
+- **names**: distinct labels, ignoring case. One thing goes by a few names. Dozens means many things.
+- **unlinked pairs**: the share of record pairs no link joins directly. A link is a `match` from a finished run, a `must_link`, or one record being a later version of the other. An unlinked pair is together only through a chain: A matches B and B matches C, so A and C share an identity with no rule between them. Mostly chains means rules that each hold have joined things that aren't one.
 
-`--sort records --order desc` lists the largest identities first, and `--sort names --order desc` those with the most names. The counts are in the JSON as `members`, `names`, `linked_pairs` and `unlinked_pairs`. [`spool explain <identity>`](#spool-explain) says which rule joined the parts of one.
+`--sort records --order desc` lists the largest identities first, and `--sort names --order desc` those with the most names. The JSON has `members`, `names`, `linked_pairs` and `unlinked_pairs`. [`spool explain <identity>`](#spool-explain) shows which rule joined the parts.
 
 {/* sample: skip shows a project of a few thousand people that this page does not build */}
 
@@ -398,7 +398,7 @@ IDENTITY                              NAME      MEMBERS  NAMES  UNLINKED PAIRS  
 more: add `--after 01a1f132-2c64-71b6-b804-62474d9ea066`
 ```
 
-Before writing rules, `spool show attributes` says what the records hold. For each entity type and source it counts the records that stand, the latest version of each that its source has not taken back, and for each attribute says how many of them have a value, how many values it takes, the most common, and the features the type makes from it. Where every value is held by one record, the values are examples:
+Before you write rules, `spool show attributes` profiles the data. For each entity type and source it counts current, unretracted records, and for each attribute shows how many have a value, how many distinct values there are, the most common ones, and the features built from it. When every value is unique, it shows examples instead:
 
 ```sh
 spool show attributes
@@ -417,7 +417,7 @@ name       3 (100%)  3         e.g. Acorn Tools Ltd, Brightwater Foods Ltd, Lark
 `spool show records --attributes` lists the values record by record
 ```
 
-`spool show records --attributes` lists the values themselves, a column for each attribute:
+`spool show records --attributes` lists the values, one column per attribute:
 
 ```sh
 spool show records --source crm --attributes
@@ -446,7 +446,7 @@ POSITION  ACTOR   OPERATIONS  FROM             STARTED BY                       
 
 `spool explain <record> <record>`, `spool explain <identity>`
 
-Says where each record is and what placed it there, what each run that compared them concluded, the constraints and review items that name them, and what the rules say about the pair as it is now.
+Shows where each record is and what placed it there, what each run that compared them concluded, the constraints and review items that name them, and what the current rules say about the pair.
 
 ```sh
 spool explain crm:c-1 crm:c-2
@@ -476,7 +476,7 @@ runs that compared them
   run 5  rules  succeeded  block: name_prefix  match
 ```
 
-When two records share an identity but no link joins them, it shows the chain between them: each record by its label and its name, and each link by the run and the rule that made it, with the values the rule read. It says which rules every chain between them goes through, and the fewest links whose removal would part the records named as the one from those named as the other, with what each side would hold.
+When two records share an identity with no direct link, it shows the chain between them: each record by label, and each link by the run, the rule and the values it read. It also lists the rules every chain passes through, and the fewest links whose removal would separate the two, with what each side would hold.
 
 {/* sample: skip shows a project of people found in articles that this page does not build */}
 
@@ -513,12 +513,12 @@ what would part them
   with right: 5 records (4 × Christopher Tolkien, 1 × Tolkien)
 ```
 
-The values are the records' features as they are now, which are those the rule read unless the features changed since the run.
+Values are the records' current features, which match what the rule read unless features changed since the run.
 
-With one identity, named by its ID or by any of its records, it says how much of it only chains hold together and where it would come apart:
+With one identity, named by its ID or any of its records, it shows how much of it only chains hold together, and where it would come apart:
 
-- **Without each rule**: the pieces the identity would fall into without the links only that rule made. A rule that holds many pieces together is the one that chains different things; a stricter version of it, or a `no_match` rule, keeps them apart.
-- **Weakest links**: the links that alone hold a part on, and the fewest links that part the records of its most common name from those of each of the next eight, each with the two sides it would leave. Those are where a wrong merge entered. A set of more than twenty links is not listed: an identity that rules join through many records at once has none, and the pieces without each rule say what joined it.
+- **Without each rule**: the pieces the identity would fall into without the links only that rule made. A rule that holds many pieces together is chaining different things. Tighten it or add a `no_match` rule.
+- **Weakest links**: links that alone hold a part on, and the fewest links separating the most common name from each of the next eight, with the two sides each would leave. That's where a wrong merge came in. Cuts of more than twenty links aren't listed, because the pieces without each rule already say what joined them.
 
 {/* sample: skip shows a project of people found in articles that this page does not build */}
 
@@ -569,7 +569,7 @@ weakest 1: 2 links would part it
 
 `spool retract --source <name> --type <name> [<key>...] [--keys <file>] [--reason <text>]`
 
-Takes back rows a source no longer holds, by their keys. `--keys` names a file with one key on each line, and `-` reads standard input. The rows are taken back, not erased: every version stays in the store, leaves its identity by a changeset, and is examined by no later run. The identity keeps its ID and its other records. Loading a row under the same key again brings every version back. A key the source has no row under changes nothing.
+Retracts rows a source no longer holds, by key. `--keys` reads one key per line from a file, or from standard input with `-`. Every version stays in the store, leaves its identity in a changeset, and is ignored by later runs. The identity keeps its ID and other records. Loading the same key again restores every version. Unknown keys change nothing.
 
 ```sh
 spool retract --source crm --type company c-6 --reason "deleted in the CRM"
@@ -584,9 +584,9 @@ run 7: 1 key named, 1 record taken back
 
 `spool reset [<dir>] [--store <path>] [--yes]`
 
-Starts the development store of `spool dev` over, so that the next `spool dev` begins with an empty one. It removes the store under `.spool/`, with every row, document, identity, run and changeset in it, after saying what it removes and what it keeps. It keeps the project's files, the accounts and tokens of `spool dev`, the manifest `spool build` wrote, and everything else under `.spool/`, such as what an extractor keeps there.
+Empties the development store so the next `spool dev` starts fresh. It deletes the store under `.spool/`, with every row, document, identity, run and changeset, after listing what it will delete and keep. It keeps the project's files, `spool dev`'s accounts and tokens, the manifest from `spool build`, and anything else under `.spool/`, such as an extractor's cache.
 
-It asks before it removes anything, and where nobody can answer, as in a script, it removes nothing unless given `--yes`. It removes nothing while a `spool dev` has the store open:
+It asks first. Without a terminal, as in a script, it needs `--yes`. It refuses while a `spool dev` has the store open:
 
 {/* sample: fails */}
 
@@ -599,7 +599,7 @@ error: the store .spool/dev.duckdb is open in another process (PID 6644), most l
 hint: stop it with Ctrl-C, then run `spool reset` again
 ```
 
-Stopped, it goes ahead:
+With the server stopped, it goes ahead:
 
 {/* sample: stop servers */}
 
@@ -624,33 +624,33 @@ removed  .spool/dev.duckdb
 The next `spool dev` starts with an empty store. `spool load` and `spool extract` fill it again.
 ```
 
-`--store` names the store if `spool dev` was given one; it has to be a `.duckdb` file directly under `.spool/`. A store anywhere else may be the one a `spool serve` runs on, and `spool reset` refuses it.
+`--store` names the store if you gave `spool dev` one. It must be a `.duckdb` file directly under `.spool/`, so `spool reset` can never touch a store that `spool serve` runs on.
 
-It removes three things at most, and each only if it is what DuckDB makes: the store's log, `<store>.wal`, which has to be a file; the directory DuckDB spills into, `<store>.tmp`, with what is in it, where a link is removed and not what it points to; and the store itself, a file, last. If any of them, or `.spool` itself, is a link or of another kind, it removes nothing.
+It deletes at most three things, and only if DuckDB created them: the write-ahead log `<store>.wal`, the spill directory `<store>.tmp` (symlinks inside it are removed, not followed), and finally the store file. If any of them, or `.spool` itself, is a symlink or an unexpected file type, it deletes nothing.
 
 ## spool build
 
 `spool build [<dir>] [--base-image <image>] [--install]`
 
-Checks the project and compiles it into `.spool/manifest.json`, which is what `spool serve` reads. It writes a Dockerfile if the project has none. `--install` starts each strategy and extractor once so that `uv` and `bun` fetch what they depend on, a model that one loads as it starts with it.
+Checks the project and compiles it into `.spool/manifest.json` for `spool serve`. It writes a Dockerfile if the project has none. `--install` starts each strategy and extractor once so `uv` and `bun` install their dependencies, including any model loaded at startup.
 
 ## spool apply
 
 `spool apply [<dir>] --store <path> [--manifest <path>]`
 
-Applies a manifest to a store: declares new entity types, and computes the feature table again for each type whose declaration changed. Identities are not touched. The server must not be running on the store. The store is created if it does not exist.
+Applies a manifest to a store: declares new entity types and rebuilds the feature table of each type whose declaration changed. Identities aren't touched. Stop the server first. The store is created if it doesn't exist.
 
 ## spool serve
 
 `spool serve [--manifest <path>] [--store <path>] [--listen <addr>] [--public-url <url>] [--project <dir>] [--no-studio] [--plain-http] [--task-timeout <s>] [--tasks <dir>]`
 
-Runs the server that others reach. It listens on `0.0.0.0:7765`, and every caller is a person who signed in or a program with a token. [Deploying](/docs/deploying) goes through it.
+Runs the production server. It listens on `0.0.0.0:7765`, and every caller is a signed-in person or a program with a token. [Deploying](/docs/deploying) walks through it.
 
 ## spool token
 
 `spool token add <name> --store <path>`, `spool token list --store <path>`, `spool token revoke <name> --store <path>`
 
-Makes, lists and revokes the tokens of a server, on the server's machine, whether or not the server is running. `add` prints the token once and nothing else. A caller sends it as `Authorization: Bearer <token>`, and what it changes is recorded as `agent:<name>`.
+Creates, lists and revokes a server's tokens on the server's machine, whether or not the server is running. `add` prints the token once and nothing else. Callers send it as `Authorization: Bearer <token>`, and their changes are recorded as `agent:<name>`.
 
 ## spool schema
 
@@ -662,13 +662,13 @@ Prints the JSON Schema of every value the API takes and returns.
 
 `spool bench <scenario> [--db <path>] [--seed <n>] [--out <path>] [--list <n>] [--strategy <name>] [--task-timeout <s>] [--tasks <dir>]`
 
-Runs a benchmark scenario from the repository: loads each step's files, matches, and scores the identities against the scenario's truth. A scenario with documents is also scored on what its extractors found, and on extraction and matching together. The [benchmarks](https://github.com/alexpatow/spool/tree/main/benchmarks) say what each scenario measures.
+Runs a benchmark scenario: loads each step's files, matches, and scores the identities against the scenario's ground truth. Scenarios with documents are also scored on extraction, and on extraction and matching end to end. The [benchmarks](https://github.com/alexpatow/spool/tree/main/benchmarks) README describes each scenario.
 
 ## spool completions
 
 `spool completions <shell>`
 
-Prints the script that completes `spool`'s commands, options and their values, for `bash`, `zsh`, `fish`, `powershell` or `elvish`. From the release after 0.1.0, the install script links the ones for bash, zsh and fish where those shells look, and says what to add to `~/.zshrc` for zsh. For another place or another shell:
+Prints a completion script for `bash`, `zsh`, `fish`, `powershell` or `elvish`. To install one:
 
 {/* sample: skip writes into the reader's home directory */}
 
@@ -680,10 +680,10 @@ spool completions fish > ~/.config/fish/completions/spool.fish
 
 | Variable | Meaning |
 | --- | --- |
-| `SPOOL_URL` | The server the calling commands reach |
+| `SPOOL_URL` | The server that client commands call |
 | `SPOOL_TOKEN` | A token for it |
 | `SPOOL_STORE` | The store file of `serve`, `apply` and `token` |
 | `SPOOL_PUBLIC_URL` | The address people reach `spool serve` by |
 | `SPOOL_GOOGLE_CLIENT_ID`, `SPOOL_GOOGLE_CLIENT_SECRET` | Sign-in with Google for `spool serve` |
-| `SPOOL_UV`, `SPOOL_BUN` | The `uv` and `bun` commands, if they are not on the search path |
-| `NO_COLOR`, `CLICOLOR_FORCE` | No colour, or colour in a pipe too, unless `--color` says otherwise |
+| `SPOOL_UV`, `SPOOL_BUN` | Paths to `uv` and `bun`, if they aren't on your `PATH` |
+| `NO_COLOR`, `CLICOLOR_FORCE` | Turn colour off, or force it in a pipe, unless `--color` is given |
