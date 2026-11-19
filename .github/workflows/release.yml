@@ -69,7 +69,7 @@ jobs:
             runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Fails unless Cargo.toml, install.sh and the tag name one version.
       - name: Check the version
@@ -82,17 +82,17 @@ jobs:
       # What reads the sample note in the tests below. It is the version
       # CI tests with and the Dockerfile of `spool build` installs. Nothing
       # of a run is kept for the next.
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         if: matrix.arch == 'amd64'
         with:
           version: "0.13.8"
           enable-cache: false
 
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       # A dry run on the default branch warms the cache for the tag.
       - name: Build the archive files
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         env:
           DOCKER_BUILD_RECORD_UPLOAD: "false"
         with:
@@ -125,7 +125,7 @@ jobs:
         if: matrix.arch == 'arm64'
         run: release/test-install.sh dist buildpack-deps:bookworm-scm linux/arm64
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux-archive-${{ matrix.arch }}
           path: |
@@ -144,16 +144,16 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: linux-archive-*
           merge-multiple: true
           path: dist
 
       - name: Emulate arm64
-        run: docker run --privileged --rm tonistiigi/binfmt --install arm64
+        run: docker run --privileged --rm tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0 --install arm64
 
       - name: Build the image from the archives
         run: release/linux.sh --image-only dist
@@ -161,7 +161,7 @@ jobs:
       - name: Run the image
         run: release/test-image.sh dist
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux-image
           path: dist/spool-image.tar
@@ -181,7 +181,7 @@ jobs:
       # DuckDB library does.
       MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Check the version
         run: release/version.sh "$TAG"
@@ -190,7 +190,7 @@ jobs:
       # The archive and its smoke test still run on each runner.
       - name: Restore the release build
         id: release-build
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             target/release/spool
@@ -206,7 +206,7 @@ jobs:
           rustup toolchain install "$version" --profile minimal
           rustup default "$version"
 
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: "0.13.8"
           enable-cache: false
@@ -230,14 +230,14 @@ jobs:
 
       - name: Save the tested release build
         if: github.ref_type == 'branch' && steps.release-build.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             target/release/spool
             target/release/libduckdb.dylib
           key: ${{ steps.release-build.outputs.cache-primary-key }}
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macos
           path: |
@@ -259,7 +259,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Asked now and not read from the event, so that this job can be
       # started again once the repository has been made public.
@@ -270,7 +270,7 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: dist
           merge-multiple: true
