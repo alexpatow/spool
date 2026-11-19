@@ -25,6 +25,8 @@ import type {
   ErrorCode,
   Explanation,
   ExtractRequest,
+  Grant,
+  GrantList,
   HistoryEntry,
   IdentityId,
   IdentityList,
@@ -34,6 +36,8 @@ import type {
   Judgement,
   MintedIds,
   NewDocument,
+  OAuthDecided,
+  OAuthRequest,
   PasswordRequest,
   Person,
   RecordId,
@@ -676,6 +680,23 @@ export class SpoolClient {
     return this.json("POST", "/auth/password", { json: request });
   }
 
+  /**
+   * What an assistant that sent someone to `/oauth/authorize` asks for.
+   * `request` is the query of that address, without the `?`. Refused, with
+   * the reason, when it cannot be approved.
+   */
+  oauthRequest(request: string): Promise<OAuthRequest> {
+    return this.json("GET", `/auth/oauth?${request}`);
+  }
+
+  /**
+   * Approves the assistant as whoever is signed in, or turns it away. The
+   * browser goes to `to`, which takes the answer to the assistant.
+   */
+  decideOAuth(request: string, approve: boolean): Promise<OAuthDecided> {
+    return this.json("POST", "/auth/oauth", { json: { request, approve } });
+  }
+
   /** Everyone with an account. The log names a person as `user:<id>`. */
   async people(): Promise<Person[]> {
     const { people } = await this.json<{ people: Person[] }>("GET", "/v1/people");
@@ -717,6 +738,20 @@ export class SpoolClient {
   /** Takes a token away, so that the server no longer accepts it. Only an admin may. */
   revokeToken(id: string): Promise<Token> {
     return this.json("POST", `/v1/tokens/${encodeURIComponent(id)}/revoke`, { json: {} });
+  }
+
+  /**
+   * The assistants people approved with OAuth, such as Claude or ChatGPT on
+   * the web, in the order they were approved. Only an admin may read them.
+   */
+  async grants(): Promise<Grant[]> {
+    const { grants } = await this.json<GrantList>("GET", "/v1/grants");
+    return grants;
+  }
+
+  /** Ends an approval: the assistant's tokens stop working at once. Only an admin may. */
+  revokeGrant(id: string): Promise<Grant> {
+    return this.json("POST", `/v1/grants/${encodeURIComponent(id)}/revoke`, { json: {} });
   }
 
   // The wire

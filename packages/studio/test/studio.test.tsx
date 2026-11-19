@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "b
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
-import { PASSWORD, cookies } from "../../client/test/server.ts";
+import { PASSWORD, cookies, firstPerson } from "../../client/test/server.ts";
 import type { Server } from "../../client/test/server.ts";
 import { standInForGoogle } from "../scripts/google-stand-in.ts";
 import { SpoolClient } from "../src/api.ts";
@@ -134,7 +134,7 @@ describe("the door", () => {
       const server = await start(companies, 14);
       open(server, "/tokens");
       await heading("Tokens");
-      const table = await screen.findByRole("table");
+      const table = await screen.findByRole("table", { name: "Tokens" });
       // The token the tests call with was made on the server's machine.
       expect(rowsOf(table).map((cells) => cells.slice(0, 2))).toEqual([["api", "agent:api"]]);
       expect(rowsOf(table)[0]?.[2]).toMatch(/ by spool token add$/);
@@ -154,13 +154,81 @@ describe("the door", () => {
       expect((await agent.info()).api).toBe("v1");
       expect(table.textContent).not.toContain(secret);
 
-      fireEvent.click(within(screen.getAllByRole("row")[2]!).getByRole("button", { name: "Revoke" }));
+      fireEvent.click(within(within(table).getAllByRole("row")[2]!).getByRole("button", { name: "Revoke" }));
       const revoking = within(await screen.findByRole("dialog"));
       press("Revoke", revoking);
       await waitFor(() => expect(rowsOf(table).map((cells) => cells[0])).toEqual(["api"]));
       expect(screen.getByRole("status").textContent).toBe("Revoked load.");
       expect(document.body.textContent).not.toContain(secret);
       expect(await agent.info().catch((error: unknown) => (error as { code: string }).code)).toBe("unauthorized");
+    },
+    SEEDING,
+  );
+
+  test(
+    "an assistant is approved by whoever signs in at the address it sent them to, and an admin revokes it",
+    async () => {
+      const server = await start(companies, 16, { people: false });
+      const ada = await firstPerson(server);
+      const callback = "https://claude.ai/api/mcp/auth_callback";
+      const registered = await fetch(`${server.url}/oauth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_name: "Claude", redirect_uris: [callback] }),
+      });
+      const { client_id } = (await registered.json()) as { client_id: string };
+      const request = new URLSearchParams({
+        response_type: "code",
+        client_id,
+        redirect_uri: callback,
+        code_challenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+        code_challenge_method: "S256",
+        state: "kept",
+      });
+
+      // Not signed in, the door asks first, at the same address.
+      const browser = cookies();
+      const left: string[] = [];
+      window.history.replaceState(null, "", `/oauth/authorize?${request}`);
+      render(<App url={server.url} fetch={browser} storage={memory()} leave={(to) => left.push(to)} />);
+      await screen.findByLabelText("Username");
+      fill("Username", "ada");
+      fill("Password", PASSWORD);
+      press("Sign in");
+      expect((await screen.findByText(/asks to read and change/)).textContent).toContain("as you, Ada");
+      expect(document.querySelector("[data-part=host]")?.textContent).toBe("claude.ai");
+      press("Approve");
+      await waitFor(() => expect(left).toHaveLength(1));
+      const back = new URL(left[0]!);
+      expect(back.origin + back.pathname).toBe(callback);
+      expect(back.searchParams.get("state")).toBe("kept");
+      expect(back.searchParams.get("iss")).toBe(server.url);
+      expect(back.searchParams.get("code")).toMatch(/^[0-9a-f]{64}$/);
+      const token = await fetch(`${server.url}/oauth/token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "authorization_code",
+          code: back.searchParams.get("code")!,
+          client_id,
+          redirect_uri: callback,
+          code_verifier: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+        }),
+      });
+      expect(token.status).toBe(200);
+      cleanup();
+
+      // The admin sees who let it in, and takes it back.
+      window.history.replaceState(null, "", "/tokens");
+      render(<App url={server.url} fetch={ada.fetch} storage={memory()} />);
+      await heading("Tokens");
+      const table = await screen.findByRole("table", { name: "Assistants" });
+      await waitFor(() => expect(rowsOf(table).map((cells) => cells.slice(0, 2))).toEqual([["Claude", "claude.ai"]]));
+      expect(rowsOf(table)[0]?.[2]).toMatch(/ by Ada$/);
+      fireEvent.click(within(table).getByRole("button", { name: "Revoke" }));
+      press("Revoke", within(await screen.findByRole("dialog")));
+      await screen.findByText("No assistant has been approved.");
+      expect(screen.getByRole("status").textContent).toBe("Revoked Claude.");
     },
     SEEDING,
   );
