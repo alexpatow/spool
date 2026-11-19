@@ -101,14 +101,13 @@ pub struct RunsArgs {
 
 /// List identities, or show one with its members and history
 ///
-/// The list of identities says, for each, how many records it has, how many
-/// different names (labels, whatever their case) they have, and what part of
-/// its pairs of records no link joins directly: those are together only
-/// through a chain of others. An identity with many names and mostly unlinked
-/// pairs is where different things were joined, and `spool explain
-/// <identity>` says which rule joined them.
+/// The list shows each identity's record count, its number of distinct names
+/// (labels, ignoring case), and the share of its record pairs that no link
+/// joins directly, which are together only through a chain. Many names and
+/// mostly unlinked pairs usually means different things were joined. `spool
+/// explain <identity>` shows which rule did it.
 ///
-/// One identity is shown with its members, the constraints on them and its
+/// A single identity is shown with its members, their constraints and its
 /// history.
 #[derive(Args)]
 #[command(
@@ -286,25 +285,23 @@ pub struct LogArgs {
 
 /// Say why two records share an identity, or what holds one together
 ///
-/// With two records: says why they share an identity, or why they do not:
-/// where each is and what placed it there, what each run that compared them
-/// concluded, the constraints and review items that name them, and what the
-/// project's rules say about the pair as it is now. When they share an
-/// identity, it shows the chain of links between them, each record by its
-/// label and its name and each link by the rule that made it and the values
-/// that satisfied the rule; the rules every chain between them goes through;
-/// and the fewest links whose removal would part the records named as the one
-/// from those named as the other.
+/// With two records, it says why they share an identity or don't. You get
+/// where each one is and what placed it there, what each run that compared
+/// them concluded, the constraints and review items that name them, and what
+/// the current rules say about the pair. When they share an identity, it also
+/// shows the chain of links between them, with the rule and values behind
+/// each link, the rules every chain passes through, and the fewest links
+/// whose removal would separate them.
 ///
-/// With one identity: how much of it is held together only through chains,
-/// the pieces it would fall into without the links each rule alone made, and
-/// its weakest links: the fewest links whose removal would part it, each with
-/// the two sides it would leave. Those are where a wrong merge entered. An
-/// identity is named by its ID, or by any of its records.
+/// With one identity, it shows how much of it is held together only through
+/// chains, the pieces it would split into without each rule's links, and its
+/// weakest links: the fewest links whose removal would split it, with the
+/// two sides each would leave. That's where a wrong merge came in. Name an
+/// identity by its ID or by any of its records.
 ///
-/// A record is named by its ID or as <source>:<key>, which names the latest
-/// version of that row. A record found in a document is named as the lists
-/// name it, <source>:<document>[<start>-<end>].
+/// Name a record by its ID or as <source>:<key>, which means the latest
+/// version of that row. Name a record found in a document the way lists show
+/// it, <source>:<document>[<start>-<end>].
 #[derive(Args)]
 #[command(after_help = "Examples:\n  spool explain crm:c-1 crm:c-2\n  spool explain crm:c-1")]
 pub struct ExplainArgs {

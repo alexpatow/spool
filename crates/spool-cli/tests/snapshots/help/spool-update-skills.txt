@@ -6,7 +6,7 @@ Arguments:
   [DIR]  The project directory [default: the current directory]
 
 Options:
-      --force  Replace the files somebody edited as well
+      --force  Replace edited files too
   -h, --help   Print help (see more with '--help')
 
 Output options:

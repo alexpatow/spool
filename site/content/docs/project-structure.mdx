@@ -1,11 +1,11 @@
 ---
 title: Project structure
-description: Every file a Spool project can hold, with an example of each, the keys it takes, and how a file's path becomes its name.
+description: Every file a Spool project can contain, with an example of each, the keys it takes, and how a file's path becomes its name.
 ---
 
-A Spool project is a directory, meant to be kept in Git. It declares where records come from, what kinds of thing they describe and how those are matched. `spool dev` reads it as you save, and `spool build` compiles it into the one file a deployed server reads.
+A Spool project is a directory you keep in Git. It declares where records come from, what kinds of thing they describe, and how they're matched. `spool dev` reloads it as you save, and `spool build` compiles it into the single manifest a deployed server reads.
 
-This page is a reference: every file a project can hold, with an example of each and a link to the page that explains it. The examples are files `spool init --example companies` writes, and one that it does not. Without `--example`, `spool init` writes the folders, each with an empty `.gitkeep` so that Git keeps it, `.gitignore`, `.env.example` and the files for coding agents, and nothing else.
+This is the reference for every file a project can contain, with an example and a link to the page that explains it. The examples come from `spool init --example companies`, plus one strategy it doesn't write. Without `--example`, `spool init` writes just the folders (each with a `.gitkeep`), `.gitignore`, `.env.example` and the coding-agent files.
 
 {/* sample: new session */}
 
@@ -41,7 +41,7 @@ companies/
 ├── AGENTS.md                       what a coding agent should know here. Not read by the server
 ├── CLAUDE.md                       imports AGENTS.md, for Claude Code
 ├── .agents/skills/                 skills that teach coding agents Spool
-├── .claude/skills/                 a link to each of those, for Claude Code
+├── .claude/skills/                 a symlink to each of those, for Claude Code
 ├── .gitignore                      leaves out .spool/ and .env
 ├── .env.example                    the form of .env
 ├── .env                            yours: secrets for the project's code. Not committed
@@ -50,9 +50,9 @@ companies/
 
 ## The path is the name
 
-Nothing is registered by hand. `entities/company/` declares the entity type `company`. `entities/company/rules/match/similar_name.sql` is its match rule `similar_name`. `sources/crm.yaml` is the source `crm`. Renaming a file renames the thing.
+There's no registry. `entities/company/` declares the entity type `company`, `entities/company/rules/match/similar_name.sql` is its match rule `similar_name`, and `sources/crm.yaml` is the source `crm`. Rename the file and you rename the thing.
 
-Use lowercase letters, digits and underscores, starting with a letter: that is accepted for every kind of name. An entity type's name may have 48 characters at most.
+Use lowercase letters, digits and underscores, starting with a letter. Entity type names can be up to 48 characters.
 
 ## Source files
 
@@ -69,11 +69,11 @@ columns: [id, name, country]
 
 | Key | Meaning |
 | --- | --- |
-| `columns` | Every column a row may have. A row with another column is refused. Required |
-| `key` | The column that tells one row from another. Required for a source of rows. A source of documents has none: its records are keyed by where they were found |
-| `evidence` | A column of JSON text that says where a row was found. It is kept as the record's evidence and is not part of what is compared. Optional |
+| `columns` | Every column a row can have. Rows with other columns are rejected. Required |
+| `key` | The column that identifies a row. Required for row sources. Document sources have none: their records are keyed by position |
+| `evidence` | A column of JSON text saying where a row was found, stored as the record's evidence and not compared. Optional |
 
-There are no other keys, and a file with one is refused.
+Unknown keys are rejected.
 
 {/* sample: existing */}
 
@@ -85,7 +85,7 @@ columns: [name]
 
 ## Transform files
 
-`transforms/<transform>.sql`. The word `lambda`, the names of the arguments, and one DuckDB expression that turns column values into a feature. Lines that start with `--` are comments. A transform with no file is the DuckDB function of that name, such as `upper`. Explained in [Entity types and features](/docs/concepts/entity-types-and-features).
+`transforms/<transform>.sql`. The word `lambda`, the argument names, and one DuckDB expression that turns column values into a feature. Lines starting with `--` are comments. A transform with no file is the DuckDB function of that name, such as `upper`. Explained in [Entity types and features](/docs/concepts/entity-types-and-features).
 
 {/* sample: existing */}
 
@@ -121,21 +121,21 @@ mapping:
 
 | Key | Meaning |
 | --- | --- |
-| `features` | The columns of the type's feature table, which is what rules read |
-| `label` | The feature a record is called by when it is shown |
-| `mapping` | For each source, where each feature comes from: a column, or `{ from: <column>, transform: <transform> }`. `from` may be a list of columns for a transform with several arguments. A feature a source does not map is empty for its records |
+| `features` | The columns of the type's feature table, which rules read |
+| `label` | The feature a record is displayed by |
+| `mapping` | Per source, where each feature comes from: a column, or `{ from: <column>, transform: <transform> }`. `from` can be a list for multi-argument transforms. Unmapped features are empty for that source's records |
 
-There are no other keys, and a file with one is refused.
+Unknown keys are rejected.
 
 ## Rule files
 
-`entities/<type>/rules/<kind>/<rule>.sql`. One SQL condition over two rows of the type's feature table, `l` and `r`. The directory is the kind of rule. Explained in [Matching](/docs/concepts/matching).
+`entities/<type>/rules/<kind>/<rule>.sql`. One SQL condition over two rows of the type's feature table, `l` and `r`. The directory sets the kind. Explained in [Matching](/docs/concepts/matching).
 
 | Directory | A rule there says |
 | --- | --- |
 | `rules/block/` | This pair is worth comparing |
 | `rules/match/` | This pair is the same thing |
-| `rules/no_match/` | This pair is not the same thing. It wins over every match rule |
+| `rules/no_match/` | This pair isn't the same thing. Beats every match rule |
 
 {/* sample: existing */}
 
@@ -165,15 +165,15 @@ l.country <> r.country
 
 ## Extractors
 
-`extractors/<name>.py` or `.ts`. An extractor finds records in documents. Explained in [Extraction](/docs/concepts/extraction), which shows the one `spool init --example companies` writes, `extractors/companies.py`, and writes one in each language.
+`extractors/<name>.py` or `.ts`. An extractor finds records in documents. [Extraction](/docs/concepts/extraction) walks through the sample `extractors/companies.py` and writes one in each language.
 
-A `.py` file is run with [uv](https://docs.astral.sh/uv/) and a `.ts` file with [Bun](https://bun.sh), as a child process of the server.
+The server runs `.py` files with [uv](https://docs.astral.sh/uv/) and `.ts` files with [Bun](https://bun.sh), as child processes.
 
-`entities/<type>/extract.md` is prose: what a thing of this type is and how to quote it. An extractor written in code can read it, to tell a language model what to look for. [Extraction](/docs/concepts/extraction#with-a-hosted-model) has one.
+`entities/<type>/extract.md` is prose describing the type and how to quote it, which an extractor can pass to an LLM. [Extraction](/docs/concepts/extraction#with-a-hosted-model) has an example.
 
 ## Strategies
 
-`entities/<type>/strategies/<name>.py` or `.ts`. A strategy is matching written in code, for what SQL conditions cannot say: a trained model, a library, a call to a service. It is given the features of the records, new and known, and answers with judgements. Spool turns those into identities by the same fixed rules as for its own. A directory of the same name beside the file holds whatever else it needs.
+`entities/<type>/strategies/<name>.py` or `.ts`. A strategy is matching in code, for what SQL can't express: a trained model, a library, a service call. It gets the features of new and known records and returns judgements, which Spool turns into identities with its usual fixed rules. A directory with the same name next to the file holds anything else it needs.
 
 ```py title="entities/company/strategies/same_key.py"
 """Judges two records a match when their name keys are equal."""
@@ -197,9 +197,9 @@ def judge(features):
     return judged
 ```
 
-`features` is an Arrow table with a row for each record of the type: its features, `record_id`, `is_new`, and `identity_id` for a record that has one. A judgement names two records and gives a verdict, `match`, `no_match` or `unsure`, with an optional `score` and `detail`.
+`features` is an Arrow table with one row per record of the type: its features, `record_id`, `is_new`, and `identity_id` if placed. A judgement names two records and a verdict, `match`, `no_match` or `unsure`, with optional `score` and `detail`.
 
-A match uses a strategy when it is started with its name:
+Start a match with the strategy's name to use it:
 
 {/* sample: background */}
 
@@ -226,7 +226,7 @@ crm:c-5         Halden Group         01a1efc6-41cd-775d-8758-e7329447fd9a
 crm:c-6         Halden Group         01a1efc6-41cd-775d-8758-e7329447fd9a
 ```
 
-Equal keys are a weaker rule than close names, so "Acorn Tools Ltd" is alone here. A strategy replaces the rules, the country rule among them, so the two Halden Groups are one. `spool info` lists what the project declares:
+Exact keys are stricter than close names, so "Acorn Tools Ltd" stands alone here. A strategy replaces all the rules, the country rule included, so the two Halden Groups merge. `spool info` lists what the project declares:
 
 ```sh
 spool info
@@ -260,32 +260,34 @@ entity type `company`
 extractor `companies` (python, extractors/companies.py)
 ```
 
-The repository has a strategy that runs Splink, in [`benchmarks/resolution/people`](https://github.com/alexpatow/spool/tree/main/benchmarks/resolution/people/entities/person/strategies).
+[`benchmarks/resolution/people`](https://github.com/alexpatow/spool/tree/main/benchmarks/resolution/people/entities/person/strategies) has a strategy that runs Splink.
 
 ## Secrets
 
-**`.env`** sets environment variables for the project's extractors and strategies, such as the key of a hosted model. It is not committed: `spool init` puts it in `.gitignore`, and `spool build` leaves it out of the image through `.dockerignore`. Copy `.env.example` to `.env` and fill it in:
+**`.env`** sets environment variables for the project's extractors and strategies, such as a hosted model's API key. It stays out of Git (`spool init` adds it to `.gitignore`) and out of the image (`spool build` adds it to `.dockerignore`). Copy `.env.example` to `.env` and fill it in:
 
 ```text title=".env"
 OPENAI_API_KEY=sk-...
 ```
 
-An extractor or a strategy runs in the project directory, with the environment Spool was started with. Spool reads `.env` each time it starts one, so a change needs no restart, and adds each variable it sets. A variable that is set already where Spool runs keeps its value, and so do the ones Spool sets for the code itself. Spool's own token and the secret of its Google client are never handed on, whatever `.env` says. No value is printed: a line that is wrong is reported by its number. A line is `NAME=value`, and may start with `export `. A value in single or double quotes is what is between them, and one without ends before ` #`. Lines that start with `#` are comments. Spool itself does not read `.env`: `SPOOL_URL`, `SPOOL_TOKEN` and the rest are set where it runs.
+Extractors and strategies run in the project directory with Spool's environment. Spool rereads `.env` each time it starts one, so changes need no restart. Variables already set in Spool's environment win, as do the ones Spool sets for the code. Spool's own token and Google client secret are never passed on. Values are never printed, and a bad line is reported by line number.
+
+Each line is `NAME=value`, optionally prefixed with `export `. Quoted values (single or double) are taken as is, and unquoted values end before ` #`. Lines starting with `#` are comments. Spool doesn't read `.env` for its own settings: set `SPOOL_URL`, `SPOOL_TOKEN` and the rest in its environment.
 
 ## What Spool writes
 
-**`.spool/`** holds what is made from the project and is not committed. `spool init` puts it in `.gitignore`. `spool dev` keeps its store there, as `dev.duckdb`, with the accounts file beside it, and `spool build` writes the manifest there. [Deploying](/docs/deploying) covers `spool build` and `spool apply`.
+**`.spool/`** holds build output and stays out of Git (`spool init` adds it to `.gitignore`). `spool dev` keeps its store there as `dev.duckdb`, with the accounts file beside it, and `spool build` writes the manifest there. [Deploying](/docs/deploying) covers `spool build` and `spool apply`.
 
-No command starts the development store over. Stop `spool dev` and delete `.spool/`: the next `spool dev` compiles the project again and starts with an empty store and no accounts. The project's own files are not in `.spool/`, and nothing else is lost.
+[`spool reset`](/docs/cli#spool-reset) empties the development store. To also drop its accounts, stop `spool dev` and delete `.spool/`. The next `spool dev` recompiles the project and starts fresh. Your project files live outside `.spool/`, so nothing else is lost.
 
-Every run records the hash of the manifest it ran with, so a judgement can be traced to the version of the project that produced it. `spool info` and `spool dev` print that hash.
+Every run records the hash of the manifest it ran with, so any judgement traces back to the project version that produced it. `spool info` and `spool dev` print that hash.
 
 ## Files for coding agents
 
-`AGENTS.md`, `CLAUDE.md`, `.agents/skills/` and `.claude/skills/` are for coding agents such as Claude Code, Codex and Cursor, and the server reads none of them. `spool init` writes them and `spool update-skills` brings them to a later version's. [Coding agents](/docs/agents) says what is in them and what each agent reads.
+`AGENTS.md`, `CLAUDE.md`, `.agents/skills/` and `.claude/skills/` are for coding agents such as Claude Code, Codex and Cursor. The server reads none of them. `spool init` writes them, and `spool update-skills` updates them to a later version's. [Coding agents](/docs/agents) covers what's in them and which agent reads what.
 
-## What is ignored
+## What's ignored
 
-A file in the project's directories that this version does not use is listed by `spool info` under `not used by this version`, and has no effect. Files at the root of the project, such as a README, and the `samples/` directory are not read at all.
+Files in the project's directories that this version doesn't use are listed by `spool info` under `not used by this version` and have no effect. Files at the project root, such as a README, and `samples/` aren't read at all.
 
 [The command line](/docs/cli) lists the commands that read a project.

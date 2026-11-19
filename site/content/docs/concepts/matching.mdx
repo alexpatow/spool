@@ -1,15 +1,15 @@
 ---
 title: Matching
-description: Block rules pick the pairs worth comparing, match and no_match rules judge them, and a match places new records without moving the identities that exist.
+description: Block rules pick the pairs worth comparing, match and no_match rules judge them, and a match places new records without moving existing identities.
 ---
 
-Matching answers one question about two records: are they the same thing? In Spool the answer is a **judgement**: `match` or `no_match`. A third, `unsure`, can come only from a strategy written in code. A judgement is kept, and it changes nothing until a run turns judgements into identities.
+Matching answers one question about two records: are they the same thing? Spool's answer is a **judgement**: `match` or `no_match`, or `unsure` from a strategy written in code. Judgements are stored, and change nothing until a run turns them into identities.
 
-This page covers the three kinds of rule, what a match does with their judgements, what that costs, and what to do when a rule gets better.
+This page covers the three kinds of rule, what a match does with their judgements, the trade-off that keeps IDs stable, and how to roll out a better rule.
 
 ## Before you start
 
-The examples use the sample project with both of its files of rows loaded and matched, which is where [Getting started](/docs/getting-started) ends. If you have that project and its server is running, use it. If not, this makes it:
+The examples pick up where [Getting started](/docs/getting-started) leaves off, with both CSV files loaded and matched. If that server's still running, use it. Otherwise:
 
 {/* sample: new session */}
 
@@ -24,7 +24,7 @@ cd companies
 spool dev
 ```
 
-Leave that running. In a second terminal, in the `companies` directory:
+Leave it running. In a second terminal, in `companies`:
 
 ```sh
 spool load samples/crm-1.csv
@@ -35,13 +35,13 @@ spool match
 
 ## Three kinds of rule
 
-A rule is a SQL file that holds one condition over two rows of the feature table, `l` and `r`. The file's name is the rule's name, and the directory it is in says what kind it is.
+A rule is a SQL file holding one condition over two rows of the feature table, `l` and `r`. The file name is the rule's name, and its directory sets its kind.
 
 | Directory | What a rule there says |
 | --- | --- |
-| `rules/block/` | This pair is worth comparing. Pairs that no block rule finds are never compared. |
+| `rules/block/` | This pair is worth comparing. Pairs no block rule finds are never compared. |
 | `rules/match/` | This pair is the same thing. |
-| `rules/no_match/` | This pair is not the same thing. It wins over every match rule. |
+| `rules/no_match/` | This pair isn't the same thing. Beats every match rule. |
 
 The sample project has one of each:
 
@@ -71,9 +71,9 @@ jaro_winkler_similarity(l.name_key, r.name_key) >= 0.92
 l.country <> r.country
 ```
 
-`name_key` is a [feature](/docs/concepts/entity-types-and-features): the name in lower case, with the space around it removed.
+`name_key` is a [feature](/docs/concepts/entity-types-and-features): the name, lowercased and trimmed.
 
-Block rules exist because comparing every record with every other does not scale. A block rule should be an equality, so that the database can find the pairs with a join. An equality over an expression is fine, as here. Write one file per equality: a block rule that says `OR` compares everything with everything.
+Block rules exist because comparing every record with every other doesn't scale. Make each one an equality, so the database can find pairs with a join. An equality over an expression is fine, as here. Use one file per equality: an `OR` in a block rule compares everything with everything.
 
 For each pair the block rules find, the judgement is:
 
@@ -83,22 +83,22 @@ For each pair the block rules find, the judgement is:
 
 ## Empty values
 
-A comparison with an empty feature is neither true nor false, as in SQL, so a rule that is only that comparison does not hold. Two records without a country are not kept apart by `l.country <> r.country`.
+As in SQL, comparing with a NULL feature is neither true nor false, so a rule that's only that comparison doesn't hold. `l.country <> r.country` doesn't separate two records with no country.
 
-In a rule with `AND`, `OR` or `NOT`, say what an empty value should mean with `coalesce`: `coalesce(l.country = r.country, false)` holds only when both have a country and they are equal, and `NOT coalesce(l.country <> r.country, false)` holds unless both have a country and they differ.
+In rules with `AND`, `OR` or `NOT`, use `coalesce` to say what NULL means: `coalesce(l.country = r.country, false)` holds only when both have a country and they're equal, and `NOT coalesce(l.country <> r.country, false)` holds unless both have a country and they differ.
 
 ## What a match does
 
-`spool match` starts a run. A run has a scope: the records of one entity type that are new since the last run of that type that succeeded, plus any that an earlier run left for review. It compares new records with each other and with the ones that are placed. It does not compare two records that are both placed.
+`spool match` starts a run. Its scope is one entity type's records that are new since the last successful run, plus any left in review. It compares new records with each other and with placed ones, never two placed records with each other.
 
-It then turns the judgements into identities. The rules for that are fixed, and there is no setting for them:
+It then turns judgements into identities by four fixed rules:
 
 1. A new record that matches members of exactly one identity, with no `no_match` against it, joins that identity.
 2. New records that match only each other form a new identity.
-3. A new record that matches members of two or more identities is left without an identity, and a [review item](/docs/concepts/review) is recorded.
-4. Identities that exist are never merged or split by a run.
+3. A new record that matches members of two or more identities waits without one, and a [review item](/docs/concepts/review) is raised.
+4. A run never merges or splits existing identities.
 
-Load three rows that try them:
+Load three rows that exercise them:
 
 ```csv title="crm-3.csv"
 id,name,country
@@ -143,11 +143,11 @@ crm:c-9         Acorn Tool           01a1efc6-41cd-775d-8758-e7300637659a
 
 What happened to each new row:
 
-- **`crm:c-10`, Acorn Tooling, joined Acorn Tools.** The names are close enough for the match rule. If Acorn Tooling is another company, this is a wrong match, and a looser rule makes more of them. [Identities](/docs/concepts/identities#split) splits it.
-- **`crm:c-11`, The Halden Group, got an identity of its own.** Its name begins with `the `, so the block rule never put it beside `halden group`. That is a miss, and the last section of this page fixes it.
-- **`crm:c-12`, Kestrel Analytics in GB, got an identity of its own.** The one that exists is in the US, and the no_match rule held.
+- **`crm:c-10`, Acorn Tooling, joined Acorn Tools.** The names are close enough for the match rule. If Acorn Tooling is a different company, that's a wrong match, and looser rules make more of them. [Identities](/docs/concepts/identities#split) splits it.
+- **`crm:c-11`, The Halden Group, got its own identity.** Its name starts with `the `, so the block rule never paired it with `halden group`. That's a miss, fixed later on this page.
+- **`crm:c-12`, Kestrel Analytics in GB, got its own identity.** The existing one is in the US, and the no_match rule held.
 
-`spool explain` says which rules decided a pair:
+`spool explain` shows which rules decided a pair:
 
 ```sh
 spool explain crm:c-8 crm:c-12
@@ -178,7 +178,7 @@ runs that compared them
   run 8  rules  succeeded  block: name_prefix  no_match
 ```
 
-The run itself is in `spool show runs`. A match makes two runs: a match run, which judges pairs, and a reconcile run, which turns the judgements into identities and commits them as one [changeset](/docs/concepts/identities#the-log).
+The run shows up in `spool show runs`. A match makes two runs: a match run that judges pairs, and a reconcile run that turns judgements into identities and commits them as one [changeset](/docs/concepts/identities#the-log).
 
 ```sh
 spool show runs --limit 2
@@ -192,9 +192,9 @@ RUN  KIND       STATUS     ABOUT           STARTED BY                           
 
 ## The cost of IDs that stay
 
-Rule 4 is the reason an ID can be stored somewhere else and trusted. It also makes the result depend on the order rows arrive in. Two records that arrive together and match become one identity. The same two, each placed alone before a rule matched them, stay apart until someone merges them.
+Rule 4 is why you can store an ID elsewhere and trust it. It also makes results depend on arrival order. Two records that arrive together and match become one identity. The same two, each placed before a rule linked them, stay apart until someone merges them.
 
-So a better rule does not repair old data by itself. The next section shows what it does instead.
+So a better rule doesn't rewrite old data by itself. Here's what it does instead.
 
 ## Rules that get better
 
@@ -205,7 +205,7 @@ So a better rule does not repair old data by itself. The next section shows what
 lambda name: regexp_replace(lower(trim(name)), '^the ', '')
 ```
 
-`spool dev` computes the features again. No identity changes, because both records are placed. To see what the better rule says about records that are placed, match again with `--rematch`, which compares every record of the type:
+`spool dev` recomputes the features. No identity changes, because both records are placed. To see what the better rule says about placed records, run `--rematch`, which compares every record of the type:
 
 ```sh
 spool match --rematch
@@ -219,15 +219,15 @@ placed      0 records, 0 identities created
 suggested   1 merge, 0 splits: `spool show runs 10` lists them
 ```
 
-The run placed nothing and moved nothing. It reports a **suggested merge**: two identities with matches between their members. A person or an agent who agrees merges them, which [Identities](/docs/concepts/identities#merge) shows. A rematch reports suggested splits the same way, when a no_match rule holds between two members of one identity.
+The run placed and moved nothing. It reports a **suggested merge**: two identities with matches between their members. A person or agent who agrees merges them, as [Identities](/docs/concepts/identities#merge) shows. A rematch reports suggested splits the same way, when a no_match rule holds between two members of one identity.
 
-A better matcher run over old data produces a list of suggestions, not a change to IDs that other systems have stored.
+A better matcher run over old data produces suggestions, not changes to IDs other systems have stored.
 
-The suggestions are part of the run's report and are not kept as review items. `spool show runs <run>` lists them for any run, and `GET /v1/runs/<run>` has them as JSON. Nothing sorts or pages them, so a rule change that suggests thousands of merges gives a report of thousands of lines.
+Suggestions live in the run's report, not as review items. `spool show runs <run>` lists them, and `GET /v1/runs/<run>` returns them as JSON. They aren't paginated, so a rule change that suggests thousands of merges produces a report thousands of lines long.
 
 ## Recompute
 
-A rematch says where the rules disagree. It does not say what the identities would be. `spool recompute` does: it matches every record again, all at once, by the rules as they are now, as a new store would, and sets the result against the identities there are. It changes nothing.
+A rematch shows where the rules disagree. `spool recompute` shows what the identities would be: it matches every record from scratch with the current rules, as a fresh store would, and compares the result with the identities you have. It changes nothing.
 
 ```sh
 spool recompute
@@ -249,7 +249,7 @@ nothing was changed. This applies it:
 spool recompute --apply 0f0ae22918643710b875675543062faa05f144d428242c6efd7be2f9cce68d69
 ```
 
-The summary comes first. **pairs** is one number for how far apart the two groupings are: pairs of records that share an identity now, after, and both. Then come the changes, the largest first. A change is the identities of now and after that share records. Its kind is `split`, `merge`, `regroup` (several into several), `gain`, `lose` (records that would wait for review), `new` or `review` (every record would wait). Ten are listed, `--detail` lists all of them, and `--limit` and `--offset` page them, so a project with a hundred thousand records starts with the identities that change most.
+The summary comes first. **pairs** measures how far apart the two groupings are: record pairs that share an identity now, after, and in both. Then come the changes, largest first. A change groups the before and after identities that share records. Its kind is `split`, `merge`, `regroup` (several into several), `gain`, `lose` (records that would wait for review), `new` or `review` (every record would wait). Ten are listed by default. `--detail` lists all, and `--limit` and `--offset` page them, so large projects start with the biggest changes.
 
 `--identity` shows one change record by record:
 
@@ -278,9 +278,9 @@ nothing was changed. This applies every change, not only this one:
 spool recompute --apply 0f0ae22918643710b875675543062faa05f144d428242c6efd7be2f9cce68d69
 ```
 
-Which identity keeps its ID follows the rule a split follows. An identity keeps its ID with the group that gets most of its records. Where several identities have their most in one group, the one with the most records there keeps its ID, the older one on a tie, and the others are merged into it, so that a system that stored their IDs still finds the entity. A group in which no identity has its most is a new identity.
+Which identity keeps its ID follows the same rule as a split: an identity keeps its ID with the group that gets most of its records. If several identities have their most records in one group, the one with the most there keeps its ID (the older one on a tie), and the others merge into it, so systems that stored their IDs still find the entity. A group where no identity has its most records becomes a new identity.
 
-Applying is a separate step. The preview ends with the command, and the long hash in it is the plan, which is also in its JSON:
+Applying is a separate step. The preview ends with the command, and its hash is the plan, also available in the JSON:
 
 ```sh
 PLAN=$(spool recompute --json | jq -r .plan)
@@ -296,24 +296,22 @@ records     1 moved, 0 placed, 0 left an identity
 applied plan 0f0ae22918643710b875675543062faa05f144d428242c6efd7be2f9cce68d69
 ```
 
-It works the result out again and refuses if it is not that plan, so what is applied is what was shown: if rows were loaded, rules changed or identities moved in between, it says so and changes nothing. A match run judges every record and keeps its judgements, as any run does, and the changes are one changeset in the log. The engine is its author, because the rules decided it, and the run is recorded as started by whoever applied. `POST /v1/changesets/<seq>/undo` takes it back like any other changeset.
+Apply recomputes and refuses if the result isn't that plan, so what's applied is exactly what you saw. If rows were loaded, rules changed or identities moved in between, it says so and changes nothing. The match run stores its judgements like any run, and the changes land as one changeset authored by the engine, with the run recorded as started by whoever applied it. `POST /v1/changesets/<seq>/undo` reverses it like any other changeset.
 
-What people decided counts for more than the rules, and [Review](/docs/concepts/review#recompute-and-what-people-decided) says how. In short: a `must_link` or a `cannot_link` holds, records a person or an agent put together stay together, records a reviewer dismissed stay without an identity, and records their source took back are left out. Where the rules join a group and something in it says two of its records differ, the group waits for review without an identity, as new records do after a match. What people put together in such a group stays an identity, and only the other records wait.
+Human decisions outrank the rules, as [Review](/docs/concepts/review#recompute-and-what-people-decided) details. A `must_link` or `cannot_link` holds, records a person or agent put together stay together, records a reviewer dismissed stay unplaced, and retracted records are left out. If the rules join a group that contains a known difference, the group waits for review, as new records do after a match. What people put together in such a group stays an identity, and only the rest waits.
 
-Nothing recomputes by itself. A rule change alone still moves no identity.
+Nothing recomputes automatically. A rule change alone never moves an identity.
 
 ## Other ways to judge
 
-SQL rules are the built-in strategy. A project can also hold strategies written in Python or TypeScript under `entities/<type>/strategies/`, which the server runs as child processes with `uv` or `bun`. They read candidate pairs and write judgements, which may be `unsure`, and the same four rules turn them into identities. The repository's [`benchmarks/resolution/people`](https://github.com/alexpatow/spool/tree/main/benchmarks/resolution/people) project has a strategy that runs Splink.
+SQL rules are the built-in strategy. A project can also hold strategies in Python or TypeScript under `entities/<type>/strategies/`, run as child processes with `uv` or `bun`. They read candidate pairs and write judgements, including `unsure`, and the same four rules turn them into identities. [`benchmarks/resolution/people`](https://github.com/alexpatow/spool/tree/main/benchmarks/resolution/people) has a strategy that runs Splink.
 
-A caller can also open a run, fetch the candidates over the API and send judgements of its own. [The HTTP API](/docs/api#runs) lists the calls.
+A caller can also open a run, fetch candidates over the API and send its own judgements. See [the HTTP API](/docs/api#runs).
 
-## What matching does not do
+## Scope of rules
 
-- The four rules that turn judgements into identities cannot be changed.
-- A recompute runs the SQL rules. A strategy written in code cannot be recomputed.
-- No SQL rule says `unsure`. A pair is matched, kept apart, or not judged.
-- A rule sees the features of two records and not their sources. It cannot say that one source never holds the same thing twice.
+- The four placement rules are fixed.
+- Recompute runs the SQL rules. Strategies written in code aren't recomputed.
+- SQL rules return `match`, `no_match` or nothing. Only strategies return `unsure`.
+- A rule sees two records' features, not their sources.
 - Rules compare records of one entity type.
-
-[Limits](/docs/limits) has the rest.

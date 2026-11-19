@@ -13,16 +13,15 @@ use crate::output::{Output, OutputArgs};
 
 /// Run a benchmark scenario
 ///
-/// Runs a benchmark scenario: ingests each step's files, stores its documents
-/// and runs its extractors over them, takes back the rows it says a source no
-/// longer holds, applies its corrections, resolves, and scores committed
-/// state against the scenario's truth. A scenario with labelled mentions is
-/// also scored on what its extractors found, and on the two together, end to
-/// end. The store is verified after every step.
+/// Runs a benchmark scenario. For each step it loads the files, stores and
+/// extracts the documents, retracts the rows the step removes, applies its
+/// corrections and resolves, then scores the committed state against the
+/// scenario's ground truth. Scenarios with labelled mentions are also scored
+/// on extraction, and on extraction and resolution end to end. The store is
+/// verified after every step.
 ///
-/// Strategies and extractors that are `.py` files run with `uv`, and `.ts`
-/// files with `bun`. SPOOL_UV and SPOOL_BUN name the commands if they are not
-/// on the search path.
+/// Strategies and extractors run with `uv` for `.py` files and `bun` for
+/// `.ts` files. Set SPOOL_UV and SPOOL_BUN if they aren't on your PATH.
 #[derive(clap::Args)]
 pub struct BenchArgs {
     /// A scenario.toml, or the directory that holds one

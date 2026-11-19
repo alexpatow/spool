@@ -3,7 +3,7 @@ Extract, resolve and track entities
 Usage: spool [OPTIONS] [COMMAND]
 
 Commands:
-  init           Make a project, empty or from an example
+  init           Create a project, empty or from an example
   info           List what a project declares, and check its SQL
   dev            Run a server on localhost that applies file changes as they are saved
   load           Send the rows of a file to a running server
@@ -12,7 +12,7 @@ Commands:
   recompute      Show what the current rules would change in the identities
   show           Show what a running server holds
   explain        Say why two records share an identity, or what holds one together
-  retract        Take back rows a source no longer holds
+  retract        Retract rows a source no longer holds
   reset          Start the development store of `spool dev` over
   update-skills  Update the skills and AGENTS.md that tell coding agents how to use Spool
   build          Check a project and compile it into a manifest

@@ -27,20 +27,20 @@ spool match
 spool show identities`;
 
 const does = [
-  "Takes rows from several sources and keeps each one as it arrived.",
-  "Finds records in text with an extractor, which is code in Python or TypeScript, and keeps where in the text each one was found.",
-  "Matches records with rules you write in SQL, kept as files in Git.",
-  "Gives each real-world thing an ID that later runs and better rules do not change.",
-  "Records every merge, split and correction in a log, with an author, a reason and an undo.",
-  "Says why two records were matched, and leaves what it cannot decide for a person or an agent.",
+  "Keeps every row exactly as it arrived.",
+  "Extracts records from text with your own code.",
+  "Matches with SQL rules versioned in Git.",
+  "Mints IDs that survive new data and better rules.",
+  "Logs every merge, split and undo, with who and why.",
+  "Explains each match and queues the hard cases.",
 ];
 
-const notFor = [
-  "Deduplicating one file once. A script or a library is less to run.",
-  "Answering per record, in the request, whether a row is a duplicate. Matching runs in batches.",
-  "Matching with no rules of your own. There is no trained model inside.",
-  "Building a merged golden record, or writing corrections back to a source.",
-  "Many tenants, many writers or many machines. One server owns one store.",
+const waysIn = [
+  "A CLI to load, match and explain.",
+  "An HTTP API for your pipelines.",
+  "An MCP endpoint for your agents.",
+  "A studio for review and corrections.",
+  "One Rust binary, one DuckDB file.",
 ];
 
 export const metadata: Metadata = sharing({
@@ -73,9 +73,9 @@ export default function Home() {
               variant="outline"
               size="lg"
               nativeButton={false}
-              render={<Link href="/docs/limits" />}
+              render={<Link href="/docs" />}
             >
-              What it is not for
+              Read the docs
             </Button>
           </div>
         </section>
@@ -83,12 +83,12 @@ export default function Home() {
         <section aria-label="The sample project" {...stylex.props(styles.screen)}>
           <FirstScreen />
           <Typography.Muted style={styles.screenCaption}>
-            The sample project at the end of{" "}
+            The sample project from{" "}
             <Link href="/docs/getting-started" {...stylex.props(styles.link)}>
               Getting started
             </Link>
-            : nine rows from a CRM and one call note. "Acorn Tools Ltd" in the note joined the
-            identity that four CRM rows already had, and its ID did not change.
+            : nine CRM rows and one call note. &ldquo;Acorn Tools Ltd&rdquo; in the note joined the
+            identity four CRM rows already had, and the ID stayed the same.
           </Typography.Muted>
         </section>
 
@@ -108,15 +108,15 @@ export default function Home() {
           <div>
             <Typography.H2 style={styles.heading}>Then, in a second terminal</Typography.H2>
             <Typography.P>
-              Load the rows, match them, and get the companies out of the note. These seven commands
-              give the picture above.
+              Load the rows, match, and extract the companies from the note. These seven commands
+              produce the picture above.
             </Typography.P>
             <CodeBlock>{commands}</CodeBlock>
             <Typography.Muted>
               <Link href="/docs/getting-started" {...stylex.props(styles.link)}>
                 Getting started
               </Link>{" "}
-              has what each one prints, and the same steps over HTTP and MCP.
+              shows what each prints, and the same steps over HTTP and MCP.
             </Typography.Muted>
           </div>
         </section>
@@ -133,19 +133,20 @@ export default function Home() {
             </ul>
           </div>
           <div>
-            <Typography.H2 style={styles.heading}>What it is not meant for</Typography.H2>
+            <Typography.H2 style={styles.heading}>How you use it</Typography.H2>
             <ul {...stylex.props(styles.list)}>
-              {notFor.map((item) => (
+              {waysIn.map((item) => (
                 <li key={item} {...stylex.props(styles.item)}>
                   {item}
                 </li>
               ))}
             </ul>
             <Typography.Muted style={styles.caption}>
-              <Link href="/docs/limits" {...stylex.props(styles.link)}>
-                Limits
-              </Link>{" "}
-              has the full list, with what it does not do yet.
+              Benchmarked to 5,000,000 records on one machine.{" "}
+              <Link href="/docs/limits#benchmarks" {...stylex.props(styles.link)}>
+                See the numbers
+              </Link>
+              .
             </Typography.Muted>
           </div>
         </section>

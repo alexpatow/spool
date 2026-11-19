@@ -1,105 +1,49 @@
 ---
 title: Limits
-description: What Spool is not meant for, what it does not do yet, what stable IDs cost, and how large it has been run.
+description: What Spool is built for and what it isn't, the trade-off behind stable IDs, what 0.1.0 doesn't include, and the sizes it's benchmarked at.
 ---
 
-Read this page before you decide to use Spool. Its first commit was on 14 November 2026.
+Spool keeps entity IDs stable while data keeps arriving, on one machine. That focus rules some things out.
 
-## Not meant for
+## What it isn't for
 
-These follow from the design and are not planned to change.
+- **One-off deduplication.** If you have one file and nothing stores the IDs, [Splink](https://github.com/moj-analytical-services/splink) or [dedupe](https://github.com/dedupeio/dedupe) is less to run.
+- **An answer inside each request.** Rows load in batches and match in runs. A match of a few rows takes well under a second, but it's a separate call. [Senzing](https://senzing.com) resolves each record as it arrives.
+- **Streaming.** There's no Kafka or change-data-capture connector. Something else collects rows and sends them.
+- **Clusters and multi-tenancy.** One process owns one [DuckDB](https://duckdb.org) file on one machine, and a store holds one project.
+- **In-process use.** There are no Python or Node bindings. Your code calls the HTTP API.
+- **Golden records.** Spool says which records are one thing. It doesn't build a merged "best" record or write back to your sources.
+- **Matching without rules.** The built-in matcher runs SQL rules you write. To use a learned model, run it as a [strategy](/docs/concepts/matching#other-ways-to-judge): `benchmarks/resolution/people` runs Splink that way.
 
-- **Deduplicating one file once.** Spool exists to keep IDs the same as data arrives over time. If you have one file, will never get another, and nobody stores the IDs, use [Splink](https://github.com/moj-analytical-services/splink) or [dedupe](https://github.com/dedupeio/dedupe).
-- **A decision per record, in the request.** Rows are loaded in batches and matched by runs. Loading a row does not answer whether it is a duplicate. A match of a few rows takes well under a second, and it is still a second call. [Senzing](https://senzing.com) resolves each record as it arrives.
-- **Streaming.** There is no connection to Kafka or to a change feed. Something else has to collect rows and send them.
-- **Many writers or many machines.** One server process owns one file of [DuckDB](https://duckdb.org), a database that runs inside the process. It uses the cores and memory of one machine. There is no replication and no clustering.
-- **Many tenants in one server.** A store holds one project. Separate customers need separate servers.
-- **Embedding.** There are no Python or Node bindings. Your code calls the server over HTTP.
-- **Golden records.** Spool says which records are one thing. It does not produce one merged record with the best name and address, and it does not write anything back to a source.
-- **Matching with no rules.** The built-in matcher runs SQL conditions that you write. There is no trained model inside. Splink, dedupe and [Zingg](https://github.com/zinggAI/zingg) each learn one. A model can be plugged in as a strategy, which is your own code in Python or TypeScript.
-- **Reading PDFs, HTML or images.** Spool takes records from text through an extractor. Documents are text: turn anything else into text first.
+[Compared with other tools](/docs/compared) says when to pick each of those tools.
 
-[Compared with other tools](/docs/compared) says what each of those tools does with IDs and when to pick it.
+## The trade-off behind stable IDs
 
-## What stable IDs cost
+A match never merges or splits identities that exist. That's what makes an ID safe to store elsewhere, and it has three consequences:
 
-An ID that never changes by itself has a price, and this is it.
-
-- **The result depends on the order rows arrive in.** Two records that arrive together and match become one identity. The same two, each placed alone before a rule matched them, stay apart until someone merges them.
-- **A better rule changes nothing until someone applies it.** `spool recompute` shows what the identities would be under new rules, and applies it only when asked, with the plan it showed. A rematch lists the merges the rules now imply, in the run's report and nowhere else.
-- **A match never splits an identity.** A wrong match that was committed stays until someone splits it. When a row that held an identity together is taken back, a review item asks whether to split, and nothing is split by itself.
-- **An earlier version of a row still counts.** It stays in its identity and still matches, so a row that was corrected can raise a review item through the version it replaced. Earlier versions go where the latest version is placed, by a match or by a changeset someone sends. A split, an undo and a draft that is approved move only the records they name, so they can leave the versions of one row in two identities until the latest is placed again.
+- **Results depend on arrival order.** Two matching records that arrive together become one identity. If each was placed before a rule linked them, they stay apart until someone merges them.
+- **Better rules suggest, they don't move.** `spool match --rematch` lists the merges new rules imply. `spool recompute` previews the full regrouping and applies it when you ask.
+- **Old versions still count.** A replaced row stays in its identity and can still match, so a corrected row can raise a review item through its earlier version.
 
 [Matching](/docs/concepts/matching#the-cost-of-ids-that-stay) shows the first two with rows.
 
-## Not yet
+## Not in 0.1.0
 
-### Getting it
+- **Platforms.** Linux on x86-64 or arm64 with glibc 2.34+, macOS on Apple silicon, and a container image. There are no Windows, Intel Mac or Alpine builds, and no Homebrew, apt or Cargo packages.
+- **Connectors.** `spool load` reads CSV. The API takes CSV, JSON and Arrow. Nothing reads a database or a warehouse directly.
+- **Document formats.** Documents are plain text. Convert PDF and HTML first.
+- **Hard deletes.** `spool retract` takes a row out of its identity and out of matching, but the record stays in the store.
+- **Scoped tokens.** A token has full API access and doesn't expire, though you can revoke it. People sign in with a password or with Google.
+- **Agents.** Over MCP, an agent can't approve drafts, add people or create tokens.
+- **Corrections from the CLI.** Merge, split, undo and review decisions are HTTP calls, MCP tools or studio actions.
+- **Push notifications.** Consumers poll the [changeset log](/docs/using-the-ids#follow-the-log). There are no webhooks.
+- **Operations tooling.** There's no backup command: copy the store file while the server is stopped. There are no metrics or traces beyond `GET /healthz`. The store format can change before 1.0.
+- **Bundled runtimes.** Extractors and strategies need `uv` for Python or `bun` for TypeScript on the server.
+- **Request size.** API requests are capped at 256 MiB. MCP requests are capped at 4 MiB.
 
-- Releases are an archive for Linux on x86-64 and arm64 and for macOS on Apple silicon, and a container image. There is no Homebrew, apt or Cargo package, and no build for Windows or for a Mac with an Intel processor.
-- The Linux builds need version 2.34 or later of the GNU C library. They do not run on Alpine, whose C library is musl. The container image runs wherever Docker does.
-- Spool is two files, the binary and the DuckDB library in `lib` beside it. The archive and the image hold both. There is no single static binary.
+## Benchmarks
 
-### Loading and matching
-
-- `spool load` reads CSV files. Nothing reads a database, a warehouse or a file store.
-- A row is at whatever was loaded last. Spool does not know which of two files is newer, so an older file loaded after a newer one moves the rows that changed between them back to what the older one says, as new versions.
-- A row that was loaded by mistake cannot be erased. It can be taken back with `spool retract`: it leaves its identity and no later match looks at it, and it stays in the store. So there is no way to remove a person's data on request.
-- The rules by which a match places a record, starts an identity or leaves a record for review are fixed. There is no setting for them.
-- A rule sees the features of two records and not their sources. It cannot say that one source never holds the same thing twice.
-- No rule can say `unsure`. A pair is matched, kept apart, or not judged. A strategy can.
-- Rules compare records of one entity type. Nothing matches a company against a person.
-- An entity type is declared in the project's files. It cannot be added through the API.
-- Features are computed by SQL expressions only.
-
-### Extraction
-
-- An extractor is a Python or TypeScript file and needs `uv` or `bun` where the server runs.
-- No model is in the binary. The sample extractor fetches a small one on its first run, about 330 MB with what it needs, and finds what the word it is given asks for: given "company", it misses most universities, parties and charities.
-- The repository's tests run that model only when they are asked to, and no test calls a hosted model.
-- Documents are text: Spool does not read PDF or HTML.
-- An extractor that changed does not read the documents again until it is run with `--again`. Reading again takes back the mentions no extractor's latest reading finds, and an identity whose last record is taken back stays, with its ID and no records.
-- A document an extractor cannot read is failed and read again by the next `spool extract`, every time: nothing gives up on a document that always fails, and each attempt costs what the model costs.
-- One exception that leaves an extractor called once with every document, or an extractor that exits with an error, fails its whole batch, and nothing of the batch is stored or counted as read. `spool extract` reads in batches, so the batches before it are kept.
-- `spool extract --again` that is stopped starts over when it is run again.
-- An extractor's standard error is shown by `spool extract` when its batch ends. While the first batch runs, its last line is shown beside the spinner on a terminal. A run keeps only its last 100 lines.
-
-### Review
-
-- A `possible_split` item is raised when a row is taken back or sent again. It is not raised when a row's content changes and the new version no longer matches, and a rematch reports no splits.
-- A retraction that was cut short and sent again raises no item for the rows the first attempt took back.
-- Nothing notifies anyone that review items are waiting, and review items cannot be assigned to a person.
-
-### Agents
-
-- Over MCP an agent can load rows and documents, run extractors and matches, look things up and change identities. It cannot approve a draft, add a person or make a token.
-- A token has full access, so an agent that may read may also load and change. There are no read-only tokens and no tokens limited to one entity type.
-- A request to `/mcp` may be 4 MiB at most, and a tool's answer 256 KiB.
-- ChatGPT on the web and Claude on the web cannot connect to a server that asks for a token, because Spool is not an OAuth server.
-- How well an agent reviews has not been measured.
-
-### Access
-
-- Tokens do not expire. They can be revoked.
-- People sign in with a password or with Google. There is no other identity provider.
-- Anyone who can sign in can read everything and change identities. Only adding people and making tokens is kept to admins.
-
-### Clients
-
-- There is no published client library. `spool schema` prints the JSON Schema of the API.
-- The command line loads, extracts, matches, takes rows back, shows and explains. It cannot merge, split, undo, decide a review item or approve a draft. Those are HTTP calls, MCP tools, or buttons in the studio.
-- Nothing is pushed to other systems when an identity changes. A consumer reads the log from the position it last saw.
-- A changeset names records by their long IDs. `source:key` works on the command line and for explaining a pair.
-
-### Operating it
-
-- There is no backup command. A backup is a copy of the store file, taken while the server is stopped.
-- Until 1.0, nothing is promised about a store written by one version opening in the next.
-- There are no metrics and no tracing. `GET /healthz` says the server is up.
-
-## How large
-
-The repository's benchmarks ran the built-in rules on public data, on four cores and 16 GB of memory:
+The built-in rules on public data. Each run loads and matches the whole set from empty, on four cores and 16 GB:
 
 | Data | Records | Seconds | Peak memory | Pair precision | Pair recall |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -108,25 +52,8 @@ The repository's benchmarks ran the built-in rules on public data, on four cores
 | MusicBrainz songs, five sources | 193,750 | 8 | 0.7 GB | 0.997 | 0.862 |
 | MusicBrainz songs, five sources | 1,937,500 | 67 | 4.3 GB | 0.959 | 0.863 |
 
-Each row is a whole data set loaded and matched once, from nothing. The same rules lose precision as the set grows: twice the people in the same towns is four times the pairs of different people who look alike. The voter rules left 13,755 of the 5,000,000 records for review.
+Memory grows with the number of candidate pairs, so your block rules set how far one machine goes. Precision falls as a set grows, because the same towns hold more people who look alike. Measure rules at the size you'll run them.
 
-Memory grows with the number of pairs that are compared, so the block rules decide how far one machine goes. Nothing larger than 5,000,000 records has been tried.
+On changing data, the test was five sources of about 100,000 voters each. It then added 100,000 rows, retracted 50,000, rematched everything and resent 10,000. That took 216 seconds and 2.2 GB, and every record that wasn't retracted kept its identity.
 
-Data that changes was measured once: five sources of about 100,000 voters each, 100,000 rows added, 50,000 taken back, everything matched again, and 10,000 sent again, in 216 seconds and 2.2 GB. Every record that was not taken back kept its identity. Taking the rows back left 70 `possible_split` review items, which covered every pair of records that a store built from nothing would have kept apart.
-
-What it costs to add a day's rows to a store that already holds millions has not been measured.
-
-The scenarios, the rules and the method are in the repository's [`benchmarks/`](https://github.com/alexpatow/spool/tree/main/benchmarks) directory, and `spool bench` runs them.
-
-A request to the API may be 256 MiB at most.
-
-## Awkward today
-
-Each of these works and costs you something.
-
-- The API answers in JSON on one line. `spool show` is the readable way to see what a call did.
-- An identity is addressed only by its ID, which differs in every store, so a correction starts with a lookup.
-- `spool show records` puts `c-10` before `c-2`, because keys are text.
-- `spool dev` says nothing when a broken file is fixed by removing it.
-- A call that is refused still uses up a run number.
-- Strategies and extractors need `uv` or `bun` on the machine. `spool init --example companies` says so when `uv` is missing, and nothing else does until one is run.
+The scenarios and method are in [`benchmarks/`](https://github.com/alexpatow/spool/tree/main/benchmarks), and `spool bench` runs them.

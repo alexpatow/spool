@@ -1,31 +1,31 @@
 ---
 title: Command reference
-description: Every spool command and option, as the binary's help says them.
+description: Every spool command and option, generated from the binary's help.
 ---
 
 {/* Written from the definition of the commands by `SNAPSHOTS=overwrite cargo test -p spool-cli --bin spool`. To change it, change the doc comments in crates/spool-cli/src. */}
 
-Every command of `spool` and every option it takes, as `spool <command> --help` says them. [Command line](/docs/cli) says what the commands do, with what they print.
+Every `spool` command and option, generated from `spool <command> --help`. [Command line](/docs/cli) shows what each command does and prints.
 
 ## Options of many commands
 
 ### Output options
 
-These go with every command that prints a result. [Output](/docs/cli#output) says what each format prints.
+Every command that prints a result takes these. [Output](/docs/cli#output) shows each format.
 
 - `-o, --output <OUTPUT>`: Output format. Default `table`. One of `table`, `json`, `ndjson`, `csv`.
 - `--json`: Shorthand for `--output json`
 
 ### Server options
 
-These go with every command that calls a running server.
+Every command that calls a running server takes these.
 
-- `--url <URL>`: The server. Default `http://127.0.0.1:7765`. Read from `SPOOL_URL` when it is not given.
-- `--token <TOKEN>`: A token for that server; `spool dev` needs none. Read from `SPOOL_TOKEN` when it is not given.
+- `--url <URL>`: The server. Default `http://127.0.0.1:7765`. Falls back to `SPOOL_URL`.
+- `--token <TOKEN>`: A token for that server; `spool dev` needs none. Falls back to `SPOOL_TOKEN`.
 
 ### Global options
 
-These go with every command.
+Every command takes these.
 
 - `--color <WHEN>`: When to use colour. Default `auto`. One of `auto`, `always`, `never`.
 
@@ -34,15 +34,15 @@ These go with every command.
 
 ## spool init
 
-Make a project, empty or from an example
+Create a project, empty or from an example
 
-Makes a project: the folders it uses, a .gitignore and a .env.example, with nothing in them. With --example it is a whole project instead, with sample rows and documents to load.
+Creates a project: the standard folders, a .gitignore and a .env.example. With --example, it's a complete project with sample rows and documents to load.
 
-Either way it writes what coding agents read: AGENTS.md, which CLAUDE.md imports, and skills that teach them to use Spool, in .agents/skills/ with a link to each from .claude/skills/. `spool update-skills` brings those to a later version's.
+Either way, it writes what coding agents read: AGENTS.md (imported by CLAUDE.md) and skills for using Spool, in .agents/skills/ with a symlink to each from .claude/skills/. `spool update-skills` updates them to a later version's.
 
-The folder has to be empty: it may hold `.git` and `.DS_Store` and nothing else. A folder that holds anything more is refused, and nothing is written.
+The folder has to be empty apart from `.git` and `.DS_Store`. Otherwise it's refused and nothing is written.
 
-Spool hands the variables that the project's .env sets to the extractors and strategies it runs, and never prints their values. A variable that is set already where Spool runs keeps its value. Git ignores .env, and .env.example shows the form.
+Spool passes the variables in the project's .env to the extractors and strategies it runs, and never prints their values. Variables already set in Spool's environment win. Git ignores .env, and .env.example shows the format.
 
 ```text
 spool init [OPTIONS] [DIR]
@@ -89,15 +89,15 @@ It takes the [output options](#output-options).
 
 Run a server on localhost that applies file changes as they are saved
 
-Runs the server on localhost from a project directory, against a development store under .spool/. A change to the project's files is applied as it is saved; a change that does not compile is reported and the last version that did keeps running.
+Runs a development server straight from a project directory, with its store under .spool/. Project files are applied as you save them. A change that doesn't compile is reported, and the last good version keeps running.
 
-Open the address it listens on in a browser for the studio, which shows what the store holds and takes changes. Nobody signs in, and a caller needs no token: every change is recorded under an account called `dev`, an admin. So it listens on this machine only, and answers only what is sent to `localhost` or to a loopback address; `spool serve` runs a server that others reach. A caller that does present a token writes as that token, as it would there.
+Open its address in a browser for the studio. There's no sign-in and no token: every change is recorded under an admin account called `dev`. That's why it only listens on, and answers, localhost. Use `spool serve` for a server other people reach. A caller that does send a token writes as that token.
 
-An assistant on this machine that speaks the Model Context Protocol, such as Claude Code, is pointed at `/mcp`, where the server offers it tools to load rows and documents, to match them, to look things up and to change identities.
+Agents on this machine that speak the Model Context Protocol, such as Claude Code, connect at `/mcp`, with tools to load rows and documents, match, look things up and change identities.
 
-Strategies and extractors that are `.py` files run with `uv`, and `.ts` files with `bun`. SPOOL_UV and SPOOL_BUN name the commands if they are not on the search path. They are given the variables that the project's .env sets, except those that are set already where the server runs, and the file is read again each time one starts.
+Strategies and extractors run with `uv` for `.py` files and `bun` for `.ts` files. Set SPOOL_UV and SPOOL_BUN if they aren't on your PATH. They get the variables the project's .env sets, except those already set in the server's environment, and .env is reread each time one starts.
 
-Ctrl-C stops it, the way `spool serve --help` says a server stops.
+Ctrl-C stops it, as described in `spool serve --help`.
 
 ```text
 spool dev [OPTIONS] [DIR]
@@ -162,15 +162,15 @@ cat rows.csv | spool load - --source crm
 
 Find records in documents with one of the project's extractors
 
-Finds records in text, on a running server. Each file is one document: the server stores its text, and one of the project's extractors reads it. What the extractor finds are records like the rows of a source, and the next match run places them in identities.
+Extracts records from text, on a running server. Each file is one document: the server stores its text and one of the project's extractors reads it. What the extractor finds are records like any source's rows, and the next match places them in identities.
 
-A folder stands for every file under it, in the folders under it too. Files and folders whose names start with a dot are left out, and every other file has to be UTF-8 text. A file that is named is stored under its name, and a file found in a folder under its path from that folder: `dev/a.txt` for documents/dev/a.txt, when `documents` was named.
+A folder means every file under it, recursively. Dotfiles and dot-folders are skipped, and every other file must be UTF-8 text. A file you name is stored under its name. A file found in a folder is stored under its path from that folder, so naming `documents` stores documents/dev/a.txt as `dev/a.txt`.
 
-With no path, the extractor reads the documents the server holds and it has not read.
+With no path, the extractor reads every stored document it hasn't read.
 
-The extractor reads the documents in batches, and what it finds in a batch is kept when the batch ends. A command that is stopped or fails keeps the batches before it, and the same command again reads what is left. A batch the command no longer waits for goes on on the server and is kept as well. Each batch is made to take a small part of the time the server lets user code run (`--task-timeout` on `spool dev` or `spool serve`), so a long extraction needs no longer limit.
+Documents are read in batches, and each batch is kept when it ends. If the command stops or fails, earlier batches are kept, and running it again picks up the rest. A batch the command stops waiting for still finishes on the server. Batches are sized to a fraction of the server's user-code limit (`--task-timeout` on `spool dev` or `spool serve`), so long extractions don't need a longer limit.
 
-An extractor's first run may fetch what it depends on, a model for one. On a terminal, a spinner shows what the extractor says while its first batch starts, and a bar then shows how many documents are read. On standard error the command says how long a slow start took, what the batches came to when there was more than one, and what the extractor wrote, once its batch ends.
+An extractor's first run may download its dependencies, such as a model. On a terminal, a spinner shows the extractor's output while the first batch starts, then a progress bar counts documents. On standard error the command reports a slow start, batch totals when there are several, and the extractor's own output when its batch ends.
 
 ```text
 spool extract [OPTIONS] [PATH]...
@@ -206,13 +206,13 @@ spool extract --again
 
 Match new records and place them in identities
 
-Matches the records that no match has examined, on a running server, and places them in identities: the rules judge pairs of records, and each new record joins the identity of the records it matches or gets a new one. Identities that exist keep their IDs and their members.
+Matches the records no match has examined yet, on a running server. The rules judge pairs, and each new record joins the identity of the records it matches or starts a new one. Existing identities keep their IDs and their members.
 
-Each entity type the project declares is matched in a run of its own, one after the other, and the command reports each. A run that fails does not stop the ones after it, and the command then fails. `--type` matches one.
+Each entity type the project declares is matched in its own run, one after another, with a report for each. A failed run doesn't stop the rest, but the command then fails. `--type` matches one type.
 
-`spool show runs <run>` shows the whole report of a run, and `spool show records` what each record belongs to now.
+`spool show runs <run>` shows a run's full report, and `spool show records` shows where each record is now.
 
-As JSON it is, with `--type`, the run the server answered with, and without, `runs`: each type's `entity_type` and `run`.
+With `--type`, the JSON output is the run the server returned. Without it, the output is `runs`, with each type's `entity_type` and `run`.
 
 ```text
 spool match [OPTIONS]
@@ -318,9 +318,9 @@ It takes the [output options](#output-options) and the [server options](#server-
 
 List identities, or show one with its members and history
 
-The list of identities says, for each, how many records it has, how many different names (labels, whatever their case) they have, and what part of its pairs of records no link joins directly: those are together only through a chain of others. An identity with many names and mostly unlinked pairs is where different things were joined, and `spool explain <identity>` says which rule joined them.
+The list shows each identity's record count, its number of distinct names (labels, ignoring case), and the share of its record pairs that no link joins directly, which are together only through a chain. Many names and mostly unlinked pairs usually means different things were joined. `spool explain <identity>` shows which rule did it.
 
-One identity is shown with its members, the constraints on them and its history.
+A single identity is shown with its members, their constraints and its history.
 
 ```text
 spool show identities [OPTIONS] [IDENTITY]
@@ -494,11 +494,11 @@ It takes the [output options](#output-options) and the [server options](#server-
 
 Say why two records share an identity, or what holds one together
 
-With two records: says why they share an identity, or why they do not: where each is and what placed it there, what each run that compared them concluded, the constraints and review items that name them, and what the project's rules say about the pair as it is now. When they share an identity, it shows the chain of links between them, each record by its label and its name and each link by the rule that made it and the values that satisfied the rule; the rules every chain between them goes through; and the fewest links whose removal would part the records named as the one from those named as the other.
+With two records, it says why they share an identity or don't. You get where each one is and what placed it there, what each run that compared them concluded, the constraints and review items that name them, and what the current rules say about the pair. When they share an identity, it also shows the chain of links between them, with the rule and values behind each link, the rules every chain passes through, and the fewest links whose removal would separate them.
 
-With one identity: how much of it is held together only through chains, the pieces it would fall into without the links each rule alone made, and its weakest links: the fewest links whose removal would part it, each with the two sides it would leave. Those are where a wrong merge entered. An identity is named by its ID, or by any of its records.
+With one identity, it shows how much of it is held together only through chains, the pieces it would split into without each rule's links, and its weakest links: the fewest links whose removal would split it, with the two sides each would leave. That's where a wrong merge came in. Name an identity by its ID or by any of its records.
 
-A record is named by its ID or as `<source>:<key>`, which names the latest version of that row. A record found in a document is named as the lists name it, `<source>:<document>[<start>-<end>`].
+Name a record by its ID or as `<source>:<key>`, which means the latest version of that row. Name a record found in a document the way lists show it, `<source>:<document>[<start>-<end>`].
 
 ```text
 spool explain [OPTIONS] <RECORD> [RECORD]
@@ -522,13 +522,13 @@ spool explain crm:c-1
 
 ## spool retract
 
-Take back rows a source no longer holds
+Retract rows a source no longer holds
 
-Takes back rows a source no longer holds, on a running server. The rows are named by their keys: the values of the column the source's file names as its key.
+Retracts rows from a source, on a running server. Rows are named by their key, the column the source's file declares as `key`.
 
-Every version of each row stays in the store as evidence, and leaves its identity by a changeset recorded under the caller. The identity keeps its ID and its other members. No run examines the records after that, and they cannot be given an identity, until the source sends the row again: loading a row under the same key, changed or not, brings every version back.
+Every version of each row stays in the store, and leaves its identity in a changeset recorded under the caller. The identity keeps its ID and its other members. No run looks at the records again, and they can't be placed, until the source sends the row again: loading the same key, changed or not, restores every version.
 
-A key the source has no row under changes nothing, so the same keys can be sent twice.
+Keys the source doesn't hold change nothing, so retracting is idempotent.
 
 ```text
 spool retract [OPTIONS] --source <NAME> --type <NAME> [KEYS]...
@@ -560,13 +560,13 @@ spool retract --source crm --type company --keys gone.txt
 
 Start the development store of `spool dev` over
 
-Starts the development store of `spool dev` over: removes the store under `<DIR>/.spool/`, with every row, document, identity, run and changeset it holds, so that the next `spool dev` begins with an empty one. It says what it removes and what it keeps, and asks first.
+Deletes the development store under `<DIR>/.spool/`, with every row, document, identity, run and changeset in it, so the next `spool dev` starts empty. It lists what it will delete and keep, and asks first.
 
-It keeps the project's files, the accounts and tokens of `spool dev` (the .auth.sqlite file beside the store), the manifest `spool build` wrote, and everything else under .spool/, such as what an extractor keeps there.
+It keeps the project's files, the accounts and tokens of `spool dev` (the .auth.sqlite file beside the store), the manifest from `spool build`, and anything else under .spool/, such as an extractor's cache.
 
-It removes nothing else than these, and each only if it is what DuckDB makes: `<store>.wal`, a file; `<store>.tmp`, a directory, with what is in it, where a link in it is removed and not what the link points to; and `<store>`, a file, last. `<store>` is a .duckdb file directly under `<DIR>/.spool/`. If any of them, or .spool itself, is a link or of another kind, it removes nothing.
+It deletes only the files DuckDB creates: `<store>.wal`, the directory `<store>.tmp` and its contents (symlinks inside it are removed, not followed), then `<store>` itself, a .duckdb file directly under `<DIR>/.spool/`. If any of these, or .spool itself, is a symlink or an unexpected file type, it deletes nothing.
 
-It removes nothing while a `spool dev` has the store open: stop that one with Ctrl-C first. It starts over only a store under `<DIR>/.spool/`, never one a `spool serve` runs on.
+It refuses while a `spool dev` has the store open: stop that one with Ctrl-C first. It only resets stores under `<DIR>/.spool/`, never one that `spool serve` runs on.
 
 ```text
 spool reset [OPTIONS] [DIR]
@@ -589,11 +589,11 @@ It takes the [output options](#output-options).
 
 Update the skills and AGENTS.md that tell coding agents how to use Spool
 
-Writes the files for coding agents that `spool init` writes, as this version of spool has them: a skill for each part of the work in .agents/skills/, which Codex and Cursor read, a link to each from .claude/skills/, which Claude Code reads, Spool's part of AGENTS.md, and a CLAUDE.md that imports AGENTS.md where there is none.
+Rewrites the coding-agent files `spool init` creates, as this version of spool ships them: a skill per task in .agents/skills/ (read by Codex and Cursor), a symlink to each from .claude/skills/ (read by Claude Code), Spool's section of AGENTS.md, and a CLAUDE.md that imports AGENTS.md if there isn't one.
 
-A file somebody edited since Spool wrote it is kept, and the command says so; --force replaces it. Spool's part of AGENTS.md is between its two marker lines, and the rest of the file is never changed. A skill of Spool's that this version no longer has is removed, unless it was edited.
+Files you've edited since Spool wrote them are kept, and the command lists them. --force replaces them too. Spool's section of AGENTS.md sits between two marker lines, and the rest of the file is never touched. Skills this version no longer ships are removed, unless you edited them.
 
-It does not update spool itself: the install script does.
+To update spool itself, rerun the install script.
 
 ```text
 spool update-skills [OPTIONS] [DIR]
@@ -605,7 +605,7 @@ Arguments:
 
 Options:
 
-- `--force`: Replace the files somebody edited as well
+- `--force`: Replace edited files too
 
 It takes the [output options](#output-options).
 
@@ -613,9 +613,9 @@ It takes the [output options](#output-options).
 
 Check a project and compile it into a manifest
 
-Checks the project and compiles it into .spool/manifest.json. The server reads the manifest, and the strategy and extractor files it names. Writes a Dockerfile if the project has none.
+Checks the project and compiles it into .spool/manifest.json, which the server reads along with the strategy and extractor files it names. Writes a Dockerfile if the project has none.
 
-SPOOL_UV and SPOOL_BUN name `uv` and `bun` if they are not on the search path.
+Set SPOOL_UV and SPOOL_BUN if `uv` and `bun` aren't on your PATH.
 
 ```text
 spool build [OPTIONS] [DIR]
@@ -630,7 +630,7 @@ Options:
 - `--base-image <IMAGE>`: The image the written Dockerfile starts from
 - `--install`: Start each strategy and extractor once, to fetch what it needs
 
-  Starts each user-code strategy and extractor once with nothing to do, so that `uv` and `bun` fetch what it depends on, a model it loads as it starts is fetched too, and a file that cannot start is found now.
+  Starts each strategy and extractor once with no work, so `uv` and `bun` install its dependencies, any model it loads at startup is downloaded, and a file that can't start fails now rather than later.
 
 It takes the [output options](#output-options).
 
@@ -638,7 +638,7 @@ It takes the [output options](#output-options).
 
 Apply a manifest to a store
 
-Applies a manifest to a store: declares new entity types, and computes the feature table again for each type whose declaration changed. Identities are not touched. The server must not be running on the store.
+Applies a manifest to a store: declares new entity types and rebuilds the feature table of each type whose declaration changed. Identities aren't touched. Stop the server on the store first.
 
 ```text
 spool apply [OPTIONS] [DIR]
@@ -650,7 +650,7 @@ Arguments:
 
 Options:
 
-- `--store <PATH>`: The store's database file; created if it does not exist. Read from `SPOOL_STORE` when it is not given.
+- `--store <PATH>`: The store's database file; created if it does not exist. Falls back to `SPOOL_STORE`.
 - `--manifest <PATH>`: The manifest to apply [default: `<DIR>/.spool/manifest.json`]
 
 It takes the [output options](#output-options).
@@ -659,23 +659,23 @@ It takes the [output options](#output-options).
 
 Run the server from a manifest and a store
 
-Runs the server. It is the only process that opens the store.
+Runs the production server. It's the only process that opens the store.
 
-An empty store is set up from the manifest. A store that was applied with another manifest is refused: run `spool apply` on it first.
+An empty store is set up from the manifest. A store applied with a different manifest is refused: run `spool apply` on it first.
 
-The server answers a browser at its address with the studio, which shows what the store holds and takes the changes of whoever is signed in. People sign in with a username and a password. Their accounts are kept in a file beside the store, named after it: `spool.auth.sqlite` for `spool.duckdb`. While no admin can sign in, the server prints a link when it starts; whoever opens it makes the first account and is the admin, who adds everyone else.
+A browser at the server's address gets the studio, Spool's web UI. People sign in with a username and password, and their accounts live in a file beside the store: `spool.auth.sqlite` for `spool.duckdb`. Until an admin exists, the server prints a link on startup. Whoever opens it creates the first account and becomes the admin who adds everyone else.
 
-Passwords are for getting started. A server that people rely on should sign them in with Google: with SPOOL_GOOGLE_CLIENT_ID and SPOOL_GOOGLE_CLIENT_SECRET set to an OAuth client made in Google's console, the sign-in page offers it, and an admin adds a person by the email of their Google account, which is a Gmail address or one of an organisation's Google Workspace. The server prints the redirect URI to give that client when it starts.
+For a server people rely on, use Google sign-in. Set SPOOL_GOOGLE_CLIENT_ID and SPOOL_GOOGLE_CLIENT_SECRET to an OAuth client from Google's console, and the sign-in page offers it. An admin then adds people by the email of their Google account, Gmail or Google Workspace. The server prints the redirect URI for that client on startup.
 
-A caller that is not a person presents a token, which an admin makes on the studio's Tokens page and `spool token add` makes on this machine. What it changes is recorded under the token's name, as `agent:<name>`.
+Programs authenticate with a token, which an admin creates on the studio's Tokens page or with `spool token add` on this machine. Changes are recorded under the token's name, as `agent:<name>`.
 
-An assistant that speaks the Model Context Protocol, such as Claude or ChatGPT, is pointed at `/mcp`, where the server offers it tools to load rows and documents, to match them, to look things up and to change identities. It presents a token as any other caller does, and what it changes is recorded under that token's name.
+Agents that speak the Model Context Protocol, such as Claude or ChatGPT, connect at `/mcp`. They get tools to load rows and documents, match, look things up and change identities, and they authenticate with a token like any other program.
 
-Strategies and extractors that are `.py` files run with `uv`, and `.ts` files with `bun`. SPOOL_UV and SPOOL_BUN name the commands if they are not on the search path. The server runs such a file only while it is the one the manifest was compiled from. It is given the variables that the project's .env sets, except those that are set already where the server runs.
+Strategies and extractors run with `uv` for `.py` files and `bun` for `.ts` files. Set SPOOL_UV and SPOOL_BUN if they aren't on your PATH. The server only runs a file that matches the one the manifest was compiled from. It passes the variables the project's .env sets, except those already set in the server's environment.
 
-The server stops on Ctrl-C or SIGTERM, and prints `stopping`. It takes no new request. Whoever waits on a run with `wait_ms` is answered at once, with the run as far as it has got. Other requests are answered if that takes no more than 5 seconds; one that a client has not sent in full by then gets no answer. A client that was refused while still sending has 1 second more to read why. So the server is done with its clients within 6 seconds.
+On Ctrl-C or SIGTERM the server prints `stopping` and takes no new requests. Callers waiting on a run with `wait_ms` get the run as it stands. Other requests get up to 5 seconds to finish, plus 1 second for a refused client to read why, so clients are done within 6 seconds.
 
-It then finishes the runs the engine was given, however long they take, and prints `stopped`. A run is not cut off half way. If the process is killed first, the run is recorded as failed when the store is next opened.
+It then finishes every run it was given, however long they take, and prints `stopped`. Runs are never cut off halfway. If the process is killed first, the run is marked failed the next time the store opens.
 
 ```text
 spool serve [OPTIONS]
@@ -684,9 +684,9 @@ spool serve [OPTIONS]
 Options:
 
 - `--manifest <PATH>`: The manifest to run on. Default `.spool/manifest.json`.
-- `--store <PATH>`: The store's database file. Read from `SPOOL_STORE` when it is not given.
+- `--store <PATH>`: The store's database file. Falls back to `SPOOL_STORE`.
 - `--listen <ADDR>`: The address to listen on. Default `0.0.0.0:7765`.
-- `--public-url <URL>`: The address people reach the server by, such as https://spool.example.com. Read from `SPOOL_PUBLIC_URL` when it is not given.
+- `--public-url <URL>`: The address people reach the server by, such as https://spool.example.com. Falls back to `SPOOL_PUBLIC_URL`.
 
   The default is the address it listens on when that is on this machine only. Sign-in with Google comes back to it.
 - `--project <DIR>`: The project directory, where the files the manifest names are found [default: the current directory]
@@ -716,7 +716,7 @@ spool token [OPTIONS] <COMMAND>
 
 Options:
 
-- `--store <PATH>`: The store's database file; the tokens are in the accounts file beside it. Read from `SPOOL_STORE` when it is not given.
+- `--store <PATH>`: The store's database file; the tokens are in the accounts file beside it. Falls back to `SPOOL_STORE`.
 
 It takes the [output options](#output-options).
 
@@ -736,7 +736,7 @@ Arguments:
 
 Options:
 
-- `--store <PATH>`: The store's database file; the tokens are in the accounts file beside it. Read from `SPOOL_STORE` when it is not given.
+- `--store <PATH>`: The store's database file; the tokens are in the accounts file beside it. Falls back to `SPOOL_STORE`.
 
 It takes the [output options](#output-options).
 
@@ -750,7 +750,7 @@ spool token list [OPTIONS]
 
 Options:
 
-- `--store <PATH>`: The store's database file; the tokens are in the accounts file beside it. Read from `SPOOL_STORE` when it is not given.
+- `--store <PATH>`: The store's database file; the tokens are in the accounts file beside it. Falls back to `SPOOL_STORE`.
 
 It takes the [output options](#output-options).
 
@@ -768,7 +768,7 @@ Arguments:
 
 Options:
 
-- `--store <PATH>`: The store's database file; the tokens are in the accounts file beside it. Read from `SPOOL_STORE` when it is not given.
+- `--store <PATH>`: The store's database file; the tokens are in the accounts file beside it. Falls back to `SPOOL_STORE`.
 
 It takes the [output options](#output-options).
 
@@ -776,9 +776,9 @@ It takes the [output options](#output-options).
 
 Run a benchmark scenario
 
-Runs a benchmark scenario: ingests each step's files, stores its documents and runs its extractors over them, takes back the rows it says a source no longer holds, applies its corrections, resolves, and scores committed state against the scenario's truth. A scenario with labelled mentions is also scored on what its extractors found, and on the two together, end to end. The store is verified after every step.
+Runs a benchmark scenario. For each step it loads the files, stores and extracts the documents, retracts the rows the step removes, applies its corrections and resolves, then scores the committed state against the scenario's ground truth. Scenarios with labelled mentions are also scored on extraction, and on extraction and resolution end to end. The store is verified after every step.
 
-Strategies and extractors that are `.py` files run with `uv`, and `.ts` files with `bun`. SPOOL_UV and SPOOL_BUN name the commands if they are not on the search path.
+Strategies and extractors run with `uv` for `.py` files and `bun` for `.ts` files. Set SPOOL_UV and SPOOL_BUN if they aren't on your PATH.
 
 ```text
 spool bench [OPTIONS] <SCENARIO>
