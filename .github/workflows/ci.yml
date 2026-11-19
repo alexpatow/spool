@@ -57,6 +57,7 @@ env:
   # toolchain is named so that a release does not fail a build nobody changed.
   RUST_TOOLCHAIN: "1.98.1"
   NEXTEST_VERSION: "0.9.152"
+  NEXTEST_LINUX_X64_SHA256: d039b43c3e0958441b6ad0a39c8884d018b3d2e8fb9928f209074b1100b5e17a
   # Each test binary carries the debug information of everything it links,
   # and with all of it they fill the runner's disk. Line numbers are kept,
   # for a backtrace, and only those of this workspace: see `Configure Cargo`.
@@ -71,7 +72,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # The runner comes with a Rust of its own, a newer one whenever its
       # image is renewed, and the key of the cache below covers every
@@ -150,7 +151,7 @@ jobs:
           fi
           exit "$failed"
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           cache-bin: false
 
@@ -246,7 +247,7 @@ jobs:
             studio: 2/2
             without_uv: true
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust
         run: |
@@ -263,7 +264,7 @@ jobs:
 
       # The key does not see the step above: change the number in it when
       # that step changes.
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: test-1-${{ matrix.cache }}
           save-if: ${{ matrix.save == true }}
@@ -272,17 +273,22 @@ jobs:
       # Runs each test in a process of its own, as many at a time as the
       # runner has cores, and divides the tests among jobs.
       - name: Install cargo-nextest
-        run: curl -LsSf "https://get.nexte.st/$NEXTEST_VERSION/linux" | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+        run: |
+          archive=$(mktemp)
+          trap 'rm -f "$archive"' EXIT
+          curl -fsSL "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-$NEXTEST_VERSION/cargo-nextest-$NEXTEST_VERSION-x86_64-unknown-linux-gnu.tar.gz" -o "$archive"
+          printf '%s  %s\n' "$NEXTEST_LINUX_X64_SHA256" "$archive" | sha256sum --check --strict
+          tar -xzf "$archive" -C "${CARGO_HOME:-$HOME/.cargo}/bin"
 
       # The TypeScript packages' tests run from the Rust tests, against the
       # binary they build.
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: "1.4.4"
 
       # Python strategies are run with uv, which fetches what each one
       # depends on. Their tests run from the Rust tests too.
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         if: ${{ !matrix.without_uv }}
         with:
           version: "0.13.8"
@@ -292,7 +298,7 @@ jobs:
       # read: the newest copy it saved is the one restored.
       - name: Restore datasets
         id: datasets
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: benchmarks/.cache
           key: datasets-${{ matrix.name }}-${{ hashFiles('benchmarks/datasets.toml') }}-
@@ -316,7 +322,7 @@ jobs:
       # happens when a test is added or moves from one job to another.
       - name: Save datasets
         if: hashFiles('benchmarks/.cache/**') != '' && !endsWith(steps.datasets.outputs.cache-matched-key, hashFiles('benchmarks/.cache/**'))
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: benchmarks/.cache
           key: datasets-${{ matrix.name }}-${{ hashFiles('benchmarks/datasets.toml') }}-${{ hashFiles('benchmarks/.cache/**') }}
@@ -332,7 +338,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # `rust-version` in Cargo.toml, which is also what the Dockerfile builds with.
       - name: Install Rust
@@ -342,7 +348,7 @@ jobs:
           rustup default "$version"
           rustup toolchain list --quiet | { grep -v "^$version-" || true; } | xargs --no-run-if-empty rustup toolchain uninstall
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           cache-bin: false
 

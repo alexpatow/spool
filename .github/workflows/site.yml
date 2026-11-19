@@ -54,9 +54,9 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: "1.4.4"
 
@@ -66,7 +66,7 @@ jobs:
       # Shelf's components are copied into the site as source. This fails if
       # one of them was edited, since an update would then overwrite the edit.
       - name: Check Shelf's files
-        run: bunx shelf check
+        run: bun run shelf check
 
       - name: Type check
         run: bun run typecheck
@@ -94,14 +94,14 @@ jobs:
       CARGO_TERM_COLOR: always
       RUST_TOOLCHAIN: "1.98.1"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust
         run: |
           rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
           rustup default "$RUST_TOOLCHAIN"
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: site-samples
           cache-bin: false
@@ -109,7 +109,7 @@ jobs:
       - name: Build spool
         run: cargo build --release --locked -p spool-cli
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: "1.4.4"
 
@@ -122,7 +122,7 @@ jobs:
       # fetches. The script puts a file that needs no model in its place
       # unless SPOOL_TEST_MODEL is set, and it is not set here, so this job
       # fetches no model.
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: "0.13.8"
 
