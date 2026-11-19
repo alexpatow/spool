@@ -15,7 +15,7 @@ use clap::{ColorChoice, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use commands::{
     bench, extract, init, load, matching, project, recompute, reset, retract, serve, show, token,
-    update_skills,
+    update, update_skills,
 };
 
 /// Extract, resolve and track entities
@@ -58,6 +58,7 @@ enum Command {
     Explain(show::ExplainArgs),
     Retract(retract::RetractArgs),
     Reset(reset::ResetArgs),
+    Update(update::UpdateArgs),
     UpdateSkills(update_skills::UpdateSkillsArgs),
     Build(project::BuildArgs),
     Apply(project::ApplyArgs),
@@ -214,7 +215,7 @@ fn main() -> ExitCode {
     if !matches!(command, Command::Serve(_) | Command::Dev(_)) {
         end_quietly_when_the_output_closes();
     }
-    let (path, ended) = run(command);
+    let (path, ended) = run(command, choice);
     let Err(failure) = ended else {
         return ExitCode::SUCCESS;
     };
@@ -252,7 +253,7 @@ fn main() -> ExitCode {
 
 /// Runs a command, and says which it was: the names of the command and of
 /// its subcommand, for the usage a mistake is shown with.
-fn run(command: Command) -> (Vec<&'static str>, Result<(), Failure>) {
+fn run(command: Command, color: ColorChoice) -> (Vec<&'static str>, Result<(), Failure>) {
     match command {
         Command::Init(args) => (vec!["init"], init::init(args)),
         Command::Info(args) => (vec!["info"], project::info(args)),
@@ -269,6 +270,7 @@ fn run(command: Command) -> (Vec<&'static str>, Result<(), Failure>) {
         Command::Explain(args) => (vec!["explain"], show::explain(args)),
         Command::Retract(args) => (vec!["retract"], retract::retract(args)),
         Command::Reset(args) => (vec!["reset"], reset::reset(args)),
+        Command::Update(args) => (vec!["update"], update::update(args, color)),
         Command::UpdateSkills(args) => (vec!["update-skills"], update_skills::update_skills(args)),
         Command::Build(args) => (vec!["build"], project::build(args)),
         Command::Apply(args) => (vec!["apply"], project::apply(args)),

@@ -11,6 +11,7 @@ description: Every spool command, what it takes and what it prints, with output 
 | [`spool info`](#spool-info) | Lists what a project declares and checks its SQL | A directory |
 | [`spool dev`](#spool-dev) | Runs a local server that reloads project files as you save | A directory |
 | [`spool reset`](#spool-reset) | Empties the development store of `spool dev` | A directory |
+| [`spool update`](#spool-update) | Installs the latest stable Spool release and refreshes project skills | A Spool installation |
 | [`spool update-skills`](#spool-update-skills) | Updates a project's coding-agent skills to this version's | A directory |
 | [`spool load`](#spool-load) | Loads a file of rows | A running server |
 | [`spool extract`](#spool-extract) | Stores text files as documents and runs an extractor | A running server |
@@ -633,11 +634,19 @@ The next `spool dev` starts with an empty store. `spool load` and `spool extract
 
 It deletes at most three things, and only if DuckDB created them: the write-ahead log `<store>.wal`, the spill directory `<store>.tmp` (symlinks inside it are removed, not followed), and finally the store file. If any of them, or `.spool` itself, is a symlink or an unexpected file type, it deletes nothing.
 
+## spool update
+
+`spool update [<dir>]`
+
+Checks for the latest stable GitHub release and upgrades Spool if you installed it with `install.sh`. The installer verifies the archive and starts the new binary before switching the installation to it. For a manual installation or a container, upgrade using the same method you installed it with.
+
+If you run it at a project's root or give its directory, the installed binary runs `spool update-skills` for that project, even when Spool is already current. Edited skills are kept. Restart any running Spool servers to use the new version.
+
 ## spool update-skills
 
 `spool update-skills [<dir>] [--force]`
 
-Updates the coding-agent files `spool init` wrote to match the installed `spool`: the skills in `.agents/skills/`, their symlinks in `.claude/skills/`, Spool's section of `AGENTS.md`, and a `CLAUDE.md` if there isn't one. Run it after installing a new release. To update `spool` itself, rerun the install script.
+Updates the coding-agent files `spool init` wrote to match the installed `spool`: the skills in `.agents/skills/`, their symlinks in `.claude/skills/`, Spool's section of `AGENTS.md`, and a `CLAUDE.md` if there isn't one. Use [`spool update`](#spool-update) to upgrade a script installation and refresh its project skills together.
 
 Files you've edited since Spool wrote them are kept and listed, and `--force` replaces them too. Spool's section of `AGENTS.md` sits between two marker lines, and the rest of the file is never touched. [Coding agents](/docs/agents) explains how edits are detected.
 

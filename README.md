@@ -62,6 +62,8 @@ The script downloads the build for your platform, verifies its checksum, unpacks
 
 To install by hand, unpack `spool-0.2.0-<target>.tar.gz` from the [release](https://github.com/alexpatow/spool/releases/tag/v0.2.0) and put its `bin/` on your `PATH`. Keep `bin/` and `lib/` side by side, because the binary loads DuckDB from `../lib`. `spool --version` prints `spool 0.2.0`.
 
+`spool update` brings an installation made with the script to the latest stable release. Run it from a project to refresh that project's coding-agent skills too.
+
 ### Create a project
 
 `spool init companies --example companies` creates `companies/` with the sample project, initializes its Git repository, and lists what it wrote:
@@ -205,7 +207,7 @@ Ctrl-C stops the server. Data stays in `.spool/dev.duckdb`. Delete `.spool/` to 
 
 ### With a coding agent
 
-`spool init` also sets a project up for Claude Code, Codex and Cursor. It writes an `AGENTS.md` and skills in `.agents/skills/`, symlinked from `.claude/skills/`, that teach the agent to declare sources, write rules and extractors, and run the commands for your version of `spool`. After an upgrade, `spool update-skills` refreshes them. See [Coding agents](https://spool.alexpatow.com/docs/agents).
+`spool init` also sets a project up for Claude Code, Codex and Cursor. It writes an `AGENTS.md` and skills in `.agents/skills/`, symlinked from `.claude/skills/`, that teach the agent to declare sources, write rules and extractors, and run the commands for your version of `spool`. `spool update-skills` refreshes them to the installed version. See [Coding agents](https://spool.alexpatow.com/docs/agents).
 
 ## When to use something else
 

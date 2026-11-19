@@ -587,6 +587,22 @@ Options:
 
 It takes the [output options](#output-options).
 
+## spool update
+
+Update Spool itself and refresh the project's coding-agent skills
+
+Checks for the latest stable GitHub release and updates an installation made with install.sh. The installer verifies the archive and checks that the new binary starts before switching the command to it.
+
+The installed binary then refreshes the project's skills, keeping edits. It does this even when Spool is already current. Outside a project, you can give its directory or run this command to update just Spool.
+
+```text
+spool update [OPTIONS] [DIR]
+```
+
+Arguments:
+
+- `[DIR]`: The project to refresh [default: the current directory if it is a project]
+
 ## spool update-skills
 
 Update the skills and AGENTS.md that tell coding agents how to use Spool
@@ -595,7 +611,7 @@ Rewrites the coding-agent files `spool init` creates, as this version of spool s
 
 Files you've edited since Spool wrote them are kept, and the command lists them. --force replaces them too. Spool's section of AGENTS.md sits between two marker lines, and the rest of the file is never touched. Skills this version no longer ships are removed, unless you edited them.
 
-To update spool itself, rerun the install script.
+Use `spool update` to install the latest release and refresh these files together.
 
 ```text
 spool update-skills [OPTIONS] [DIR]

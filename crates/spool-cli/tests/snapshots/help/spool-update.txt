@@ -1,0 +1,13 @@
+Update Spool itself and refresh the project's coding-agent skills
+
+Usage: spool update [OPTIONS] [DIR]
+
+Arguments:
+  [DIR]  The project to refresh [default: the current directory if it is a project]
+
+Options:
+  -h, --help  Print help (see more with '--help')
+
+Global options:
+      --color <WHEN>  When to use colour [default: auto] [possible values: auto, always, never]
+  -q, --quiet         Print only the result and errors: no hints or progress

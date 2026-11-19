@@ -37,7 +37,7 @@ use crate::style::{self, paint};
 /// between two marker lines, and the rest of the file is never touched.
 /// Skills this version no longer ships are removed, unless you edited them.
 ///
-/// To update spool itself, rerun the install script.
+/// Use `spool update` to install the latest release and refresh these files together.
 #[derive(Args)]
 pub struct UpdateSkillsArgs {
     /// The project directory [default: the current directory]
