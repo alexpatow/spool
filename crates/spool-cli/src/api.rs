@@ -14,7 +14,8 @@ use spool::core::{
 use spool::{
     Authored, DocumentEntry, DraftEntry, DraftSummary, Explanation, HistoryEntry,
     IdentityExplanation, IdentitySummary, IdentityView, LoggedChangeset, MintedIds, NewDocument,
-    RecordEntry, ReviewCase, ReviewEntry, RunEntry, SplitReport, StoreInfo, StrategyRef,
+    RecomputeApplied, RecomputeReport, RecordEntry, ReviewCase, ReviewEntry, RunEntry,
+    SplitReport, StoreInfo, StrategyRef,
     TypeResolution,
 };
 
@@ -187,6 +188,43 @@ pub struct MatchRequest {
     /// far as it has got.
     #[serde(default)]
     pub wait_ms: Option<u64>,
+}
+
+/// `POST /v1/recompute`: what the identities would be under the rules as
+/// they are now, against the identities there are. Nothing is changed.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RecomputeRequest {
+    /// One entity type. Left out, every type the project declares.
+    #[serde(default)]
+    pub entity_type: Option<EntityType>,
+    /// Show whole the change that holds this identity, with each of its
+    /// records and where it would go.
+    #[serde(default)]
+    pub identity: Option<IdentityId>,
+    /// How many changes to list for each type, largest first: 10 when left
+    /// out, at most 1,000.
+    #[serde(default)]
+    pub limit: Option<u64>,
+    /// How many of the largest changes to pass over first.
+    #[serde(default)]
+    pub offset: Option<u64>,
+}
+
+/// `POST /v1/recompute/apply`: make the identities what a recomputation
+/// showed. Refused with `409` if what it finds now is not the plan.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ApplyRecomputeRequest {
+    /// The type the preview was of. Left out, every type, as the preview
+    /// was.
+    #[serde(default)]
+    pub entity_type: Option<EntityType>,
+    /// The `plan` of the preview.
+    pub plan: String,
+    /// Why, kept with the changeset in the log.
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 /// A run, as the response of a call that started one or read one. `run` is
@@ -621,6 +659,10 @@ struct Wire {
     judgements_response: JudgementsResponse,
     reconcile_request: ReconcileRequest,
     type_resolution: TypeResolution,
+    recompute_request: RecomputeRequest,
+    recompute_report: RecomputeReport,
+    apply_recompute_request: ApplyRecomputeRequest,
+    recompute_applied: RecomputeApplied,
     candidate_list: CandidateList,
     draft_list: DraftList,
     draft_entry: DraftEntry,

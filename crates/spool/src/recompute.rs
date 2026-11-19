@@ -456,7 +456,8 @@ pub(crate) struct Outcome {
     merged: BTreeMap<IdentityId, IdentityId>,
     /// The `no_match` pairs inside each waiting group, with what says so.
     blocked: Vec<Vec<Contradiction>>,
-    labels: HashMap<RecordId, String>,
+    /// Each record's label, with its load run.
+    labels: HashMap<RecordId, (String, i64)>,
     shaped: BTreeMap<IdentityId, Vec<PersonDecision>>,
     approved: BTreeMap<RecordId, (ChangesetId, Seq)>,
     constraints: Vec<ConstraintNote>,
@@ -851,15 +852,19 @@ fn strings(conn: &Connection, sql: &str) -> Result<Vec<String>> {
     Ok(found)
 }
 
-fn labels(conn: &Connection) -> Result<HashMap<RecordId, String>> {
+fn labels(conn: &Connection) -> Result<HashMap<RecordId, (String, i64)>> {
     let mut statement = conn.prepare(&format!(
-        "SELECT l.record_id::VARCHAR, l.label FROM spool.record_label l
+        "SELECT l.record_id::VARCHAR, l.label, o.load_run FROM spool.record_label l
+         JOIN spool.record o ON o.record_id = l.record_id
          WHERE l.label IS NOT NULL AND l.record_id IN (SELECT record_id FROM {SCOPE})"
     ))?;
     let mut rows = statement.query([])?;
     let mut found = HashMap::new();
     while let Some(row) = rows.next()? {
-        found.insert(parse(&row.get::<_, String>(0)?)?, row.get(1)?);
+        found.insert(
+            parse(&row.get::<_, String>(0)?)?,
+            (row.get(1)?, row.get(2)?),
+        );
     }
     Ok(found)
 }
@@ -1087,13 +1092,16 @@ impl Outcome {
             .collect()
     }
 
+    /// The label most of the records have; of labels as many have, the one
+    /// loaded first.
     fn label_of<'a>(&self, records: impl Iterator<Item = &'a RecordId>) -> Option<String> {
-        let mut counts: BTreeMap<&str, (u64, RecordId)> = BTreeMap::new();
+        let mut counts: BTreeMap<&str, (u64, (i64, RecordId))> = BTreeMap::new();
         for record in records {
-            if let Some(label) = self.labels.get(record) {
-                let entry = counts.entry(label.as_str()).or_insert((0, *record));
+            if let Some((label, loaded)) = self.labels.get(record) {
+                let first = (*loaded, *record);
+                let entry = counts.entry(label.as_str()).or_insert((0, first));
                 entry.0 += 1;
-                entry.1 = entry.1.min(*record);
+                entry.1 = entry.1.min(first);
             }
         }
         counts
@@ -1511,7 +1519,7 @@ impl Outcome {
                 record: *record,
                 source,
                 key,
-                label: self.labels.get(record).cloned(),
+                label: self.labels.get(record).map(|(label, _)| label.clone()),
                 from: self.now.get(record).copied(),
                 to,
             });
