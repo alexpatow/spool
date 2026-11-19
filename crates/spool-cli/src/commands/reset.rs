@@ -19,6 +19,14 @@ It keeps the project's files, the accounts and tokens of `spool dev` (the
 .auth.sqlite file beside the store), the manifest `spool build` wrote, and
 everything else under .spool/, such as what an extractor keeps there.
 
+It removes nothing else than these, and each only if it is what DuckDB makes:
+  <store>.wal   a file
+  <store>.tmp   a directory, with what is in it; a link in it is removed,
+                not what the link points to
+  <store>       a file, last
+where <store> is a .duckdb file directly under <dir>/.spool/. If any of them,
+or .spool itself, is a link or of another kind, it removes nothing.
+
 It removes nothing while a `spool dev` has the store open: stop that one with
 Ctrl-C first. It starts over only a store under <dir>/.spool/, never one a
 `spool serve` runs on.
@@ -54,7 +62,15 @@ pub fn reset(arguments: &[String]) -> Result<(), Failure> {
             .to_string()
     };
 
-    if !spool_dir.is_dir() {
+    let spool_kind = std::fs::symlink_metadata(&spool_dir).map(|found| found.file_type());
+    if spool_kind.as_ref().is_ok_and(|kind| kind.is_symlink()) {
+        return Err(Failure::Failed(format!(
+            "{} is a link to another place, and `spool reset` removes nothing outside the \
+             project. Nothing was removed.",
+            spool_dir.display()
+        )));
+    }
+    if !spool_kind.is_ok_and(|kind| kind.is_dir()) {
         println!(
             "{} does not exist, so there is no development store to remove",
             spool_dir.display()
@@ -79,15 +95,34 @@ pub fn reset(arguments: &[String]) -> Result<(), Failure> {
         )));
     }
 
-    // DuckDB's log of writes not yet in the file, and where it spills
-    // what does not fit in memory.
-    let mut removed: Vec<PathBuf> = vec![store.clone()];
-    for suffix in ["wal", "tmp"] {
+    // DuckDB's log of writes not yet in the file, and where it spills what
+    // does not fit in memory, then the store itself: the store goes last,
+    // so that the lock on it is held while the others are removed. Each
+    // must be what DuckDB makes, and none a link, or nothing is removed.
+    let sidecar = |suffix: &str| {
         let mut path = store.clone().into_os_string();
-        path.push(format!(".{suffix}"));
-        removed.push(PathBuf::from(path));
+        path.push(suffix);
+        PathBuf::from(path)
+    };
+    let mut removed: Vec<(PathBuf, Kind)> = Vec::new();
+    for (path, kind) in [
+        (sidecar(".wal"), Kind::File),
+        (sidecar(".tmp"), Kind::Directory),
+        (store.clone(), Kind::File),
+    ] {
+        match kind.check(&path) {
+            Ok(true) => removed.push((path, kind)),
+            Ok(false) => {}
+            Err(is) => {
+                return Err(Failure::Failed(format!(
+                    "{} is {is}, where `spool reset` expects {}. It removes only what DuckDB \
+                     makes, so nothing was removed.",
+                    path.display(),
+                    kind.expected()
+                )));
+            }
+        }
     }
-    removed.retain(|path| path.exists());
     if removed.is_empty() {
         println!(
             "there is no development store at {}: nothing to remove",
@@ -116,7 +151,7 @@ pub fn reset(arguments: &[String]) -> Result<(), Failure> {
     let mut entries: Vec<PathBuf> = std::fs::read_dir(&spool_dir)
         .map_err(|error| Failure::Failed(format!("{}: {error}", spool_dir.display())))?
         .filter_map(|entry| Some(entry.ok()?.path()))
-        .filter(|path| !removed.contains(path))
+        .filter(|path| !removed.iter().any(|(gone, _)| gone == path))
         .collect();
     entries.sort();
     for path in entries {
@@ -154,7 +189,7 @@ pub fn reset(arguments: &[String]) -> Result<(), Failure> {
         }
     );
     println!("\nremoves");
-    for path in &removed {
+    for (path, _) in &removed {
         println!("  {}", shown(path));
     }
     println!("\nkeeps");
@@ -185,10 +220,20 @@ pub fn reset(arguments: &[String]) -> Result<(), Failure> {
         }
     }
 
-    for path in &removed {
-        let gone = match path.is_dir() {
-            true => std::fs::remove_dir_all(path),
-            false => std::fs::remove_file(path),
+    for (path, kind) in &removed {
+        // Checked again: it may have changed while the question was asked.
+        if let Err(is) = kind.check(path) {
+            return Err(Failure::Failed(format!(
+                "{} is {is} now, where `spool reset` expects {}; it stopped there",
+                path.display(),
+                kind.expected()
+            )));
+        }
+        // `remove_dir_all` removes a link inside the directory, not what
+        // it points to.
+        let gone = match kind {
+            Kind::Directory => std::fs::remove_dir_all(path),
+            Kind::File => std::fs::remove_file(path),
         };
         gone.map_err(|error| Failure::Failed(format!("{}: {error}", path.display())))?;
         println!("removed  {}", shown(path));
@@ -209,5 +254,39 @@ fn columns(rows: &[(String, String)]) {
         .unwrap_or(0);
     for (left, right) in rows {
         println!("  {left:<width$}  {right}");
+    }
+}
+
+/// What a path `spool reset` removes must be.
+#[derive(Clone, Copy)]
+enum Kind {
+    File,
+    Directory,
+}
+
+impl Kind {
+    /// Whether there is such a thing at `path`, without following a link.
+    /// `Err` with what is there instead, if it is anything else.
+    fn check(self, path: &Path) -> Result<bool, &'static str> {
+        let found = match std::fs::symlink_metadata(path) {
+            Ok(found) => found.file_type(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(_) => return Err("something that cannot be read"),
+        };
+        match (self, found) {
+            (_, found) if found.is_symlink() => Err("a link"),
+            (Kind::File, found) if found.is_file() => Ok(true),
+            (Kind::Directory, found) if found.is_dir() => Ok(true),
+            (_, found) if found.is_dir() => Err("a directory"),
+            (_, found) if found.is_file() => Err("a file"),
+            _ => Err("neither a file nor a directory"),
+        }
+    }
+
+    fn expected(self) -> &'static str {
+        match self {
+            Kind::File => "a file",
+            Kind::Directory => "a directory",
+        }
     }
 }

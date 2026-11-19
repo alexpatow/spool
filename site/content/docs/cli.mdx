@@ -597,6 +597,8 @@ The next `spool dev` starts with an empty store. `spool load` and `spool extract
 
 `--store` names the store if `spool dev` was given one; it has to be a `.duckdb` file directly under `.spool/`. A store anywhere else may be the one a `spool serve` runs on, and `spool reset` refuses it.
 
+It removes three things at most, and each only if it is what DuckDB makes: the store's log, `<store>.wal`, which has to be a file; the directory DuckDB spills into, `<store>.tmp`, with what is in it, where a link is removed and not what it points to; and the store itself, a file, last. If any of them, or `.spool` itself, is a link or of another kind, it removes nothing.
+
 ## spool build
 
 `spool build [<dir>] [--base-image <image>] [--install]`
