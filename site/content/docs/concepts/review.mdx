@@ -144,7 +144,7 @@ Answer a `possible_merge` or `conflict` in one of these ways. The studio offers 
 | Place them in one identity | They join it | Every identity keeps its ID, and the others are unchanged | Only the `assign` | A match never moves a record that has an identity. Nothing keeps the identities apart, so a later record that matches both raises the question again |
 | Merge the identities | They join the one that stands | The others are merged into it, and their IDs then answer with its ID | The `merge` and the `assign` | A match never splits an identity |
 | A new identity | Each becomes an identity of its own | Unchanged | `create_identity` and `assign` | As for placing them |
-| Dismiss | They keep no identity | Unchanged | Who dismissed it, when and why | No match looks at them again, a rematch included. A dismissed item is not opened again, and a changeset can still place them |
+| Dismiss | They keep no identity | Unchanged | Who dismissed it, when and why | Matches and rematches skip them. The item never reopens, though a changeset can still place them |
 | Leave it open | They keep no identity | Unchanged | Nothing | Every match looks at them again |
 
 The studio's merge keeps the identity with the most records. A merge is rejected while a `cannot_link` spans the identities, and a record can't be placed in an identity whose members it has a `cannot_link` with.
@@ -159,8 +159,8 @@ A `possible_split` has its own answers:
 
 | Answer | What it does |
 | --- | --- |
-| Split the identity | The larger side keeps the identity's ID, and the side that was not named keeps it on a tie. The other side becomes a new identity. With `keep_apart`, the default, one `cannot_link` between a record of each side is recorded, so no merge puts them back while it stands. Undone, the records go back and the `cannot_link` is removed; the new identity's ID stays, with no records |
-| Say they are one thing | A `must_link` between a record of each group. The identity stays as it is. The `must_link` holds the groups together while the records it names stay in the identity: the question is not raised again when other records come and go, and it can be if a source takes back one of the records it names. Undone, the `must_link` is removed and the question is not raised again |
+| Split the identity | The larger side keeps the ID, and on a tie the side you didn't name keeps it. The other side becomes a new identity. With `keep_apart` (the default), a `cannot_link` between the sides stops any merge from rejoining them. Undoing it moves the records back and removes the `cannot_link`. The new identity's ID stays, with no records |
+| Say they're one thing | Adds a `must_link` between a record of each group, and the identity stays as is. While the linked records stay, the question won't come back as other records come and go. It can if a source retracts one of the linked records. Undoing it removes the `must_link`, and the question doesn't return |
 | Dismiss | The identity stays as it is, and nothing is recorded about it. The question comes back if another of its records is taken back, or one comes back |
 | Leave it open | Nothing changes. No match looks at it, since its records have an identity. It closes by itself if the record that was taken back comes back, or a new record matches more than one group |
 
@@ -462,9 +462,9 @@ Each entity type has at most one open draft, and a later match replaces it. Reco
 | Decision | What a recompute does with it |
 | --- | --- |
 | `must_link` | Its two records are in one identity, whatever the rules say. |
-| `cannot_link` | Its two records are not. Where the rules join a group through other records and a `cannot_link` is inside it, the group waits for review without an identity, under a `conflict` item, and the output names the constraint and who recorded it. |
-| Records a person or an agent placed, or identities they merged | They stay together, as the person put them, while what they joined is still whole. A rule's no_match between them is not read. Where the rules also join them with records that something says differ, they stay an identity and only those other records wait. |
-| A split or a move with no `cannot_link` | Nothing says the records differ, so the rules may put them back together. The output marks every change to an identity a person or an agent changed, with the log positions. |
+| `cannot_link` | Its two records aren't. If the rules join a group through other records and a `cannot_link` sits inside it, the group waits for review under a `conflict` item, and the output names the constraint and who recorded it. |
+| Records a person or agent placed, or identities they merged | They stay together while what they joined is intact, and no_match rules between them are ignored. If the rules also join them with records known to differ, they stay an identity and only those other records wait. |
+| A split or move with no `cannot_link` | Nothing says the records differ, so the rules may rejoin them. The output flags every change to an identity a person or agent touched, with log positions. |
 | A dismissed `possible_merge` or `conflict` | Its records stay without an identity. |
 | A dismissed `possible_split` | The identity's records stay together. |
 | An approved draft | It binds no more than the run that drafted it: approving accepted what the rules said then. The output marks every change that touches records an approved draft placed. |
