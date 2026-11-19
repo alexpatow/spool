@@ -1,18 +1,18 @@
 ---
 title: HTTP API
-description: Every path under /v1, with what it takes and answers, the operations of a changeset, and errors.
+description: Every path under /v1, what it takes and returns, changeset operations, and errors.
 ---
 
-Everything Spool does is a call of this API. The command line, the studio and the MCP endpoint all call it. This page lists every path and shows the ones a pipeline uses.
+The CLI, the studio and the MCP endpoint are all clients of this API. Every path is below, with examples for the ones a pipeline calls.
 
 ## Calling it
 
 - **Address.** `spool dev` listens on `http://127.0.0.1:7765`. Every path here is under `/v1`, except `/healthz`.
-- **Who is calling.** `spool dev` asks for nothing. `spool serve` wants `Authorization: Bearer <token>`, with a token from `spool token add` or the studio's Tokens page.
-- **Bodies.** JSON in, JSON out, on one line. No `content-type` header is needed for JSON. A field the server does not know is refused.
-- **Waiting.** A call that starts work answers at once with a run whose `status` is `running`. With `wait_ms`, in the body or the query, it waits that long for the run to finish first. `GET /v1/runs/<run>?wait_ms=5000` waits for a run that was started before.
-- **Lists.** A list answers up to 100 entries, or `limit` up to 1,000, and `next` when there are more. Pass it back as `after`.
-- **Sorting.** `GET /v1/documents`, `/v1/records`, `/v1/identities`, `/v1/runs` and `/v1/changesets` take `sort`, what to sort by, and `order`, `asc` or `desc`. The whole list is sorted, and a page continues after its `after` in that order. `order` alone turns a list's own order around. What each sorts by:
+- **Auth.** `spool dev` needs none. `spool serve` needs `Authorization: Bearer <token>`, with a token from `spool token add` or the studio's Tokens page.
+- **Bodies.** JSON in, JSON out, on one line. JSON needs no `content-type` header. Unknown fields are rejected.
+- **Waiting.** Calls that start work return immediately with a run whose `status` is `running`. Pass `wait_ms`, in the body or the query, to wait up to that long for it to finish. `GET /v1/runs/<run>?wait_ms=5000` waits on a run started earlier.
+- **Pagination.** Lists return 100 entries by default, or up to 1,000 with `limit`, plus `next` when there are more. Pass it back as `after`.
+- **Sorting.** `GET /v1/documents`, `/v1/records`, `/v1/identities`, `/v1/runs` and `/v1/changesets` take `sort` and `order` (`asc` or `desc`). Sorting applies to the whole list, and pages continue in that order. `order` alone reverses the default order. Sort keys:
 
   | Path | `sort` |
   | --- | --- |
@@ -22,55 +22,55 @@ Everything Spool does is a call of this API. The command line, the studio and th
   | `/v1/runs` | `run`, `kind`, `status`, `details`, `started_by`, `started` |
   | `/v1/changesets` | `seq`, `actor`, `operations`, `run`, `reason` |
 
-  Text sorts whatever its case, and what has no value comes last either way. Sorted, the log has no `next`: a full page may have more after it.
-- **Errors.** A refusal is `{"error": {"code": "...", "message": "..."}}` with a 4xx status. The message says what was wrong and names the thing.
-- **Schema.** `spool schema` prints the JSON Schema of every value on this page.
+  Text sorts case-insensitively, and empty values sort last either way. A sorted log has no `next`, so a full page may have more after it.
+- **Errors.** `{"error": {"code": "...", "message": "..."}}` with a 4xx status. The message names what was wrong.
+- **Schema.** `spool schema` prints the JSON Schema for every value on this page.
 
 ## Every path
 
 | Method and path | What it does |
 | --- | --- |
-| `GET /v1/info` | The entity types and their features, the sources and the extractors the project declares, counts, and the head of the log |
+| `GET /v1/info` | The project's entity types and features, sources and extractors, counts, and the log head |
 | `POST /v1/load` | [Loads rows](#load-rows) into a source |
-| `POST /v1/retract` | [Takes back rows](#take-rows-back) a source no longer holds |
-| `GET /v1/documents`, `POST /v1/documents` | Lists documents, stores [documents](#documents-and-extraction) |
+| `POST /v1/retract` | [Retracts rows](#retract-rows) a source no longer holds |
+| `GET /v1/documents`, `POST /v1/documents` | Lists or stores [documents](#documents-and-extraction) |
 | `GET /v1/documents/{document}` | One document with its text |
-| `POST /v1/extractions` | Runs an extractor over the documents it has not read |
+| `POST /v1/extractions` | Runs an extractor over the documents it hasn't read |
 | `POST /v1/match` | Starts a [match](#runs) |
-| `POST /v1/recompute` | What the identities would be under the rules as they are now, against those there are. [Changes nothing](#recompute) |
+| `POST /v1/recompute` | Previews the identities the current rules would produce. [Read-only](#recompute) |
 | `POST /v1/recompute/apply` | Applies what a recompute showed, by its `plan` |
 | `GET /v1/runs` | Lists runs |
 | `GET /v1/runs/{run}` | One run and its report |
 | `GET /v1/runs/{run}/candidates` | The candidate pairs of a run that waits for judgements |
 | `POST /v1/runs/{run}/judgements` | Sends judgements for those pairs |
 | `POST /v1/runs/{run}/reconcile` | Turns a run's judgements into a changeset |
-| `POST /v1/runs/{run}/cancel` | Cancels a run that waits for judgements, or stops a running extraction and keeps nothing it found |
-| `GET /v1/records` | Records by `entity_type`, `source`, `key`, `document`, `identity`, words in `q`, or `unassigned`. `latest=true` leaves out the versions that later loads replaced, as it does for documents |
+| `POST /v1/runs/{run}/cancel` | Cancels a run waiting for judgements, or stops a running extraction and discards its results |
+| `GET /v1/records` | Filter by `entity_type`, `source`, `key`, `document`, `identity`, `q` (search) or `unassigned`. `latest=true` omits replaced versions, here and for documents |
 | `GET /v1/records/{record}` | One record |
 | `POST /v1/records/identities` | The identity of each of many records |
-| `GET /v1/attributes` | For each entity type and source, by `entity_type` or `source`: the records that stand, and for each attribute how many have a value, how many values it takes, the three most common, and the features made from it |
-| `GET /v1/identities` | Identities by `entity_type`, words in `q`, or `ids`. Each says how many `members` and `names` it has, and how many of its pairs of members a link joins (`linked_pairs`) and how many only a chain (`unlinked_pairs`), as [`spool show identities`](/docs/cli#spool-show) explains. `sort=names` orders them by how many names |
-| `GET /v1/identities/{identity}` | One identity and its records. An ID that was merged away answers with the identity that took its place |
+| `GET /v1/attributes` | A profile per entity type and source: current records, and per attribute the fill count, distinct values, top three values and derived features. Filter by `entity_type` or `source` |
+| `GET /v1/identities` | Filter by `entity_type`, `q` (search) or `ids`. Each entry has `members`, `names`, `linked_pairs` (member pairs matched directly) and `unlinked_pairs` (member pairs joined only through a chain). See [`spool show identities`](/docs/cli#spool-show). `sort=names` orders by name count |
+| `GET /v1/identities/{identity}` | One identity and its records. A merged-away ID returns the identity that absorbed it |
 | `GET /v1/identities/{identity}/history` | Every changeset that touched it |
-| `GET /v1/identities/{identity}/explain` | What holds it together: how many of its pairs of records are linked directly and how many only through chains, the pieces it would fall into without each rule, and its weakest links, each with the two sides it would leave |
+| `GET /v1/identities/{identity}/explain` | What holds it together: direct vs. chained pairs, the pieces it would split into without each rule, and its weakest links with the sides each would leave |
 | `POST /v1/identities/{identity}/split` | Splits an identity |
-| `GET /v1/explain?a=&b=` | Why two records share an identity, or why they do not. Each is a record's ID, its `source:key`, or the name the lists give a record found in a document |
+| `GET /v1/explain?a=&b=` | Why two records share an identity or don't. Pass a record ID, a `source:key`, or a mention's name as lists show it |
 | `GET /v1/changesets`, `POST /v1/changesets` | Reads the log, commits a [changeset](#changesets) |
 | `POST /v1/changesets/{seq}/undo` | Undoes one changeset with a new one |
 | `POST /v1/ids` | Mints identity IDs for `create_identity` |
 | `GET /v1/constraints` | The `must_link` and `cannot_link` constraints in force, by `record` or `identity` |
-| `GET /v1/review`, `GET /v1/review/{item}` | Review items by `status`, `entity_type` or `record`. Every item, or with `limit` a page, and `after` the `next` of the page before |
+| `GET /v1/review`, `GET /v1/review/{item}` | Review items, filtered by `status`, `entity_type` or `record`. All items, or a page with `limit` and `after` |
 | `GET /v1/review/{item}/case` | One item with everything needed to decide it |
-| `POST /v1/review/{item}/dismiss` | Closes an item and leaves things as they are |
+| `POST /v1/review/{item}/dismiss` | Closes an item without changing anything |
 | `GET /v1/drafts`, `GET /v1/drafts/{draft}` | Drafts |
 | `POST /v1/drafts/{draft}/approve`, `.../reject` | Commits a draft, or closes it |
-| `GET /v1/people`, `POST /v1/people`, `POST /v1/people/{person}` | The accounts of people. Admins only |
+| `GET /v1/people`, `POST /v1/people`, `POST /v1/people/{person}` | People's accounts. Admins only |
 | `GET /v1/tokens`, `POST /v1/tokens`, `POST /v1/tokens/{token}/revoke` | Tokens. Admins only |
 | `GET /healthz` | `{"status":"ok"}`, with no sign-in |
 
-Sign-in for browsers is under `/auth`, and the MCP endpoint is `/mcp`. [MCP](/docs/mcp) covers it.
+Browser sign-in is under `/auth`, and the MCP endpoint is `/mcp` ([MCP](/docs/mcp)).
 
-The examples below start from an empty project:
+The examples below start from the sample project with nothing loaded:
 
 {/* sample: new session */}
 
@@ -87,7 +87,7 @@ spool dev
 
 ## Load rows
 
-`POST /v1/load` takes rows as JSON objects, each with the columns the source declares:
+`POST /v1/load` takes rows as JSON objects with the source's columns:
 
 ```sh
 curl -s -X POST http://127.0.0.1:7765/v1/load -d '{"source": "crm", "entity_type": "company", "wait_ms": 5000, "rows": [{"id": "c-1", "name": "Acorn Tools", "country": "GB"}, {"id": "c-2", "name": "ACORN TOOLS", "country": "GB"}, {"id": "c-5", "name": "Halden Group", "country": "GB"}, {"id": "c-6", "name": "Halden Group", "country": "US"}]}'
@@ -97,17 +97,17 @@ curl -s -X POST http://127.0.0.1:7765/v1/load -d '{"source": "crm", "entity_type
 {"run":{"run":1,"kind":"load","status":"succeeded","started_by":"user:01a1f0a3-7961-77eb-b436-a883824aafc0","entity_type":"company","strategy":null,"extractor":null,"started_at":"2026-11-18T21:50:07.715530Z","finished_at":"2026-11-18T21:50:07.726734Z","error":null,"load":{"run":1,"received":4,"inserted":4,"duplicates":0,"superseded":0,"restored":0,"returned":0,"committed":null,"possible_splits":0},"extraction":null,"resolution":null,"retraction":null}}
 ```
 
-The answer is the load run. `received` is the rows sent, `inserted` the new records, `duplicates` the rows that were already held, and `superseded` the rows that are a new version of a row held before. Nothing is matched yet.
+The response is the load run. `received` counts rows sent, `inserted` new records, `duplicates` rows already held, and `superseded` new versions of existing rows. Nothing is matched yet.
 
-A CSV file goes as it is, with the source and the type in the query:
+Send CSV as is, with the source and type in the query:
 
 ```sh
 curl -s -X POST 'http://127.0.0.1:7765/v1/load?source=crm&entity_type=company&wait_ms=5000' -H 'content-type: text/csv' --data-binary @samples/crm-2.csv
 ```
 
-Large loads go as an Arrow IPC stream in the body, with `content-type: application/vnd.apache.arrow.stream` and the same query. That is how the benchmarks load five million rows.
+For large loads, send an Arrow IPC stream with `content-type: application/vnd.apache.arrow.stream` and the same query. The benchmarks load five million rows this way.
 
-A row with a column the source does not declare, or without its key, is refused, and the whole call with it. A row under a key the server holds, with other values, becomes the next version of that row. With `"replace": false` in the body such a row is refused, and the whole call with it.
+A row with an undeclared column, or without its key, fails the whole call. A row with an existing key and different values becomes the next version of that row. With `"replace": false`, such a row fails the whole call instead.
 
 ## Runs
 
@@ -124,12 +124,12 @@ curl -s -X POST http://127.0.0.1:7765/v1/match -d '{"entity_type": "company", "w
 | Field | Meaning |
 | --- | --- |
 | `entity_type` | The type to match. Required |
-| `rematch` | `true` examines every record again by the rules as they are now. It suggests merges and makes none |
-| `commit` | `false` leaves the changeset as a [draft](/docs/concepts/review#drafts) to approve |
-| `strategy` | `{"name": "..."}`: a strategy of the project, or a name of your own for a run you judge yourself. Left out, the rules run |
+| `rematch` | `true` re-examines every record against the current rules, and suggests merges without making them |
+| `commit` | `false` stores the changeset as a [draft](/docs/concepts/review#drafts) to approve |
+| `strategy` | `{"name": "..."}`: one of the project's strategies, or any other name for a run you judge yourself. Defaults to the rules |
 | `wait_ms` | How long to wait for it to finish |
 
-The run that answers is the match run. The reconcile run that turned its judgements into a changeset is the next one:
+The response is the match run. The reconcile run, which turned its judgements into a changeset, comes next:
 
 ```sh
 spool show runs
@@ -145,19 +145,19 @@ RUN  KIND       STATUS     ABOUT           STARTED BY                           
 
 ## Recompute
 
-`POST /v1/recompute` matches every record again, all at once, by the rules as they are now, and answers with what would change. It changes nothing and records nothing. [Matching](/docs/concepts/matching#recompute) shows what it prints.
+`POST /v1/recompute` rematches every record from scratch with the current rules and returns what would change, without changing or recording anything. [Matching](/docs/concepts/matching#recompute) shows the output.
 
 | Field | Meaning |
 | --- | --- |
-| `entity_type` | One type. Left out, every type |
-| `identity` | Answer with the whole change that holds this identity, record by record, in `detail` |
-| `limit`, `offset` | Which changes to list, the largest first: 10 when left out, at most 1,000 |
+| `entity_type` | One type. Defaults to every type |
+| `identity` | Return the change containing this identity, record by record, in `detail` |
+| `limit`, `offset` | Which changes to list, largest first. Default 10, maximum 1,000 |
 
-The answer has a `plan` and, for each type, a `summary` of counts, the `decisions` of people that shaped or stopped the result, `changes_total` and the `changes` asked for. `POST /v1/recompute/apply` with `{"plan": "...", "reason": "..."}`, and the same `entity_type` as the preview, applies it. It answers `409` with the code `conflict` if what it finds now is not that plan, and changes nothing. Otherwise it answers with each type's runs, its `summary`, the changeset it `committed` and the `review` items it left.
+The response has a `plan` and, per type, a `summary`, the human `decisions` that shaped the result, `changes_total` and the requested `changes`. To apply, call `POST /v1/recompute/apply` with `{"plan": "...", "reason": "..."}` and the same `entity_type`. If the result no longer matches the plan, it returns `409` with code `conflict` and changes nothing. Otherwise it returns each type's runs, `summary`, `committed` changeset and any `review` items.
 
 ### A run you judge yourself
 
-A run with a strategy name the project does not have waits for judgements from the caller. This is how a matcher written in anything, running anywhere, takes part: Spool finds the candidate pairs, the caller judges them, and Spool applies the same four rules to the result as to its own.
+A run with a strategy name the project doesn't define waits for you to judge it. That's how a matcher in any language, running anywhere, plugs in: Spool finds the candidate pairs, you judge them, and Spool places records with the same four rules it uses for its own judgements.
 
 ```sh
 curl -s -X POST http://127.0.0.1:7765/v1/load -d '{"source": "crm", "entity_type": "company", "wait_ms": 5000, "rows": [{"id": "c-10", "name": "Acorn Tooling", "country": "GB"}]}'
@@ -180,7 +180,7 @@ curl -s -H 'accept: application/json' http://127.0.0.1:7765/v1/runs/$RUN/candida
 {"candidates":[{"left_country":"GB","left_id":"34c3d52d-e53b-1559-7404-1892fb1fd4e3","left_name":"Acorn Tool","left_name_key":"acorn tool","right_country":"GB","right_id":"875986b9-a764-1450-33d1-2d4612fb4daa","right_name":"Acorn Tooling","right_name_key":"acorn tooling"},{"left_country":"GB","left_id":"875986b9-a764-1450-33d1-2d4612fb4daa","left_name":"Acorn Tooling","left_name_key":"acorn tooling","right_country":"GB","right_id":"a780fcfe-cb2f-21dd-25ea-11db898fd6a2","right_name":"ACORN TOOLS","right_name_key":"acorn tools"},{"left_country":"GB","left_id":"875986b9-a764-1450-33d1-2d4612fb4daa","left_name":"Acorn Tooling","left_name_key":"acorn tooling","right_country":"GB","right_id":"ab8e9d59-0aaa-96b9-ddb7-db0bff7a9356","right_name":"Acorn Tools","right_name_key":"acorn tools"}]}
 ```
 
-Each candidate is a pair of records with the features of each. Without the `accept` header the candidates come as an Arrow IPC stream, which is what a matcher over many pairs wants. Judge them and reconcile:
+Each candidate is a pair of records with their features. Without the `accept` header you get an Arrow IPC stream, which suits matchers working through many pairs. Judge them and reconcile:
 
 ```sh
 LEFT=$(spool show records crm:c-10 | awk '/^record/ {print $2}')
@@ -196,9 +196,9 @@ curl -s -X POST http://127.0.0.1:7765/v1/runs/$RUN/reconcile -d '{}'
 {"entity_type":"company","match_run":6,"reconcile_run":7,"new_records":1,"reexamined":0,"candidates":3,"judgements":{"match":1,"no_match":0,"unsure":0},"identities_created":0,"records_assigned":1,"versions_moved":0,"records_unassigned":0,"review":[],"committed":{"seq":2,"changeset":"01a1f0b5-ba40-73bd-93b5-b29d667d9177","content_hash":"2166ed732fd26d3f68d52397ab5d896778167df0dab41e344bb652b16f20004b"},"draft":null,"suggestions":null}
 ```
 
-`verdict` is `match`, `no_match` or `unsure`. A pair that gets no judgement is left undecided. `score` and `detail` are kept with the judgement and shown by `spool explain`.
+`verdict` is `match`, `no_match` or `unsure`. Pairs you don't judge stay undecided. `score` and `detail` are stored with the judgement and shown by `spool explain`.
 
-## Take rows back
+## Retract rows
 
 ```sh
 curl -s -X POST http://127.0.0.1:7765/v1/retract -d '{"source": "crm", "entity_type": "company", "keys": ["c-6"], "reason": "deleted in the CRM", "wait_ms": 5000}'
@@ -208,23 +208,23 @@ curl -s -X POST http://127.0.0.1:7765/v1/retract -d '{"source": "crm", "entity_t
 {"run":{"run":8,"kind":"retract","status":"succeeded","started_by":"user:01a1f0a3-7961-77eb-b436-a883824aafc0","entity_type":"company","strategy":null,"extractor":null,"started_at":"2026-11-18T21:55:21.428136Z","finished_at":"2026-11-18T21:55:21.435621Z","error":null,"load":null,"extraction":null,"resolution":null,"retraction":{"run":8,"received":1,"unknown":0,"retracted":1,"detached":1,"committed":{"seq":3,"changeset":"01a1f0a8-42d6-74a1-b108-f39ff16b5c91","content_hash":"a0a2fdd9d12ab55045afa04fe03e66aa8ebc5d68859201f76ba9741d722f0e2e"},"possible_splits":0}}}
 ```
 
-The rows are taken back, not erased. [Records and sources](/docs/concepts/records-and-sources#a-row-the-source-no-longer-holds) says what that means.
+Retracted rows stay in the store. [Records and sources](/docs/concepts/records-and-sources#a-row-the-source-no-longer-holds) explains what retraction does.
 
 ## Documents and extraction
 
-A document is a text, stored as it arrived. One goes as it is, with its source and key in the query:
+A document is text, stored as it arrived. Send one as is, with its source and key in the query:
 
 ```sh
 curl -s -X POST 'http://127.0.0.1:7765/v1/documents?source=notes&key=notes-1.txt&wait_ms=5000' -H 'content-type: text/plain' --data-binary @samples/notes-1.txt
 ```
 
-Several go as JSON:
+Send several as JSON:
 
 ```sh
 curl -s -X POST http://127.0.0.1:7765/v1/documents -d '{"source": "notes", "wait_ms": 5000, "documents": [{"key": "notes-1.txt", "text": "Call with Dana Reyes on 12 November. She has moved to Acorn Tools Ltd and runs purchasing there."}]}'
 ```
 
-`POST /v1/extractions` runs an extractor over the documents it has not read:
+`POST /v1/extractions` runs an extractor over every document it hasn't read:
 
 ```sh
 curl -s -X POST http://127.0.0.1:7765/v1/extractions -d '{"extractor": "companies", "wait_ms": 60000}'
@@ -236,18 +236,18 @@ curl -s -X POST http://127.0.0.1:7765/v1/extractions -d '{"extractor": "companie
 
 | Field | Meaning |
 | --- | --- |
-| `extractor` | The extractor to run. May be left out when the project has one |
+| `extractor` | The extractor to run. Optional when the project has one |
 | `source` | Only the documents of this source |
-| `again` | `true` reads every document again |
-| `limit` | Read at most this many documents. The run's `extraction.left` says how many it left out |
-| `since` | Leave out the documents this extractor read, or could not read, in this run or a later one: each batch after the first of a reading in batches passes the first batch's run |
+| `again` | `true` rereads every document |
+| `limit` | Read at most this many documents. The run's `extraction.left` says how many remain |
+| `since` | Skip documents this extractor read, or failed on, in this run or later. Batched reads pass the first batch's run here |
 | `wait_ms` | How long to wait for it to finish |
 
-What the extractor found are records, which the next match places. `failed` lists the documents it could not read, with why: they are not read, and the next extraction reads them. `taken_back` counts the mentions no extractor finds any more, which the `retract_runs` took back, and `stderr` holds the last 100 lines the extractor wrote to standard error. [Extraction](/docs/concepts/extraction) writes an extractor in each language.
+What the extractor finds are records, which the next match places. `failed` lists documents it couldn't read, with the reason, and the next extraction retries them. `taken_back` counts mentions no extractor finds any more, retracted by `retract_runs`. `stderr` holds the extractor's last 100 lines of standard error. [Extraction](/docs/concepts/extraction) shows extractors in both languages.
 
 ## Changesets
 
-Every change to an identity is a changeset: one or more operations that are committed together or not at all, with an author and a reason. A match writes them, and so can any caller:
+Every change to an identity is a changeset: one or more operations committed atomically, with an author and a reason. Matches write them, and so can any caller:
 
 ```sh
 A=$(spool show records crm:c-5 | awk '/^record/ {print $2}')
@@ -263,28 +263,28 @@ curl -s -X POST http://127.0.0.1:7765/v1/changesets -d '{"reason": "Halden Group
 
 | Operation | Fields | What it does |
 | --- | --- | --- |
-| `create_identity` | `identity`, `entity_type` | Makes an identity with an ID from `POST /v1/ids` |
-| `assign` | `record`, `from`, `to` | Moves a record. `from` is the identity it is in now, or `null`. `to` is where it goes, or `null` |
-| `merge` | `from`, `into` | Moves every record of `from` into `into`. `from` then answers with `into` |
+| `create_identity` | `identity`, `entity_type` | Creates an identity with an ID from `POST /v1/ids` |
+| `assign` | `record`, `from`, `to` | Moves a record. `from` is its current identity or `null`, and `to` is the target or `null` |
+| `merge` | `from`, `into` | Moves every record of `from` into `into`. Lookups of `from` then return `into` |
 | `reinstate` | `identity` | Makes a merged identity current again. Used by undo |
-| `constrain` | `kind`, `a`, `b` | `must_link` or `cannot_link` between two records, which every later change must respect |
+| `constrain` | `kind`, `a`, `b` | Adds a `must_link` or `cannot_link` between two records, which every later change must respect |
 | `unconstrain` | `kind`, `a`, `b` | Removes one |
 
-The body may carry `base`, the log position the caller last read. Each operation says what it expects to find, an `assign` its `from` for example, and a changeset whose expectations no longer hold is refused whole, with the operation that failed. So is one that would put two `cannot_link` records in one identity, or leave two `must_link` records apart.
+The body may include `base`, the log position you last read. Each operation states what it expects, such as an `assign`'s `from`. If any expectation no longer holds, the whole changeset is rejected and the response names the failing operation. The same happens if it would put two `cannot_link` records in one identity, or separate two `must_link` records.
 
-A changeset that places the latest version of a row moves its earlier versions along. The server adds those moves to the changeset, so the log may show more operations than were sent. A match run counts them in `versions_moved`.
+Placing the latest version of a row moves its earlier versions too. The server adds those moves to the changeset, so the log can show more operations than you sent. Match runs count them in `versions_moved`.
 
 `GET /v1/changesets?after=<seq>` reads the log. [Using the IDs](/docs/using-the-ids#follow-the-log) shows a consumer following it.
 
-Three calls write a changeset for you:
+Three calls build the changeset for you:
 
-- `POST /v1/identities/{identity}/split` with `{"records": [...], "reason": "..."}` makes a new identity, moves the named records into it, and adds a `cannot_link` between the sides unless `keep_apart` is `false`.
-- `POST /v1/changesets/{seq}/undo` with `{"reason": "..."}` commits the changeset that reverses one. With `"commit": false` it answers that changeset and commits nothing.
+- `POST /v1/identities/{identity}/split` with `{"records": [...], "reason": "..."}` creates an identity, moves the named records into it, and adds a `cannot_link` between the sides unless `keep_apart` is `false`.
+- `POST /v1/changesets/{seq}/undo` with `{"reason": "..."}` commits the reversing changeset. With `"commit": false` it returns that changeset without committing.
 - `POST /v1/drafts/{draft}/approve` commits a draft.
 
-[Identities](/docs/concepts/identities) runs each of them.
+[Identities](/docs/concepts/identities) walks through each.
 
-## What a refusal looks like
+## Errors
 
 ```sh
 curl -s -X POST http://127.0.0.1:7765/v1/match -d '{"entity_type": "person"}'
@@ -294,9 +294,6 @@ curl -s -X POST http://127.0.0.1:7765/v1/match -d '{"entity_type": "person"}'
 {"error":{"code":"invalid","message":"entity type `person` is not declared; apply a manifest that declares it first"}}
 ```
 
-## What the API does not have
+## Versioning
 
-- No stream and no webhook. A consumer polls the log.
-- No call that loads and matches in one step.
-- No bulk export.
-- Version `v1` is the only version, and before 1.0 a release may change it. The changelog of each release will say so.
+`v1` is the current version. Until 1.0, a release can change it, and the release notes say how.
