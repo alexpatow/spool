@@ -9,6 +9,8 @@ description: Call a Spool server over its HTTP API under /v1 or its MCP endpoint
 
 ## Load and match
 
+To store one row and find its identity in one call, send `source`, `entity_type` and one `row` to `POST /v1/records` or the `add_record` MCP tool. If the record needs review, `identity` is null and `review` names the item and the possible identities. Set `replace` to true only if the person asked to change the row under that key.
+
 ```sh
 curl -s -X POST http://127.0.0.1:7765/v1/load -d '{"source": "crm", "entity_type": "company", "wait_ms": 5000, "rows": [{"id": "c-1", "name": "Acorn Tools", "country": "GB"}]}'
 curl -s -X POST 'http://127.0.0.1:7765/v1/load?source=crm&entity_type=company&wait_ms=5000' -H 'content-type: text/csv' --data-binary @samples/crm-2.csv
@@ -61,7 +63,7 @@ claude mcp add --transport http spool http://127.0.0.1:7765/mcp
 codex mcp add spool --url http://127.0.0.1:7765/mcp
 ```
 
-Tools: `describe_store`, `search_identities`, `get_identity`, `get_identity_history`, `search_records`, `get_record`, `explain_pair`, `list_review_items`, `get_review_case`, `list_constraints`, `list_changesets`, `list_changeset_ops`, `get_run`, `mint_identity_ids`; and the changes `load_rows`, `load_documents`, `run_extraction`, `run_match`, `retract_rows`, `commit_changeset`, `split_identity`, `undo_changeset`, `dismiss_review_item`. Changes need a `reason`. `load_rows` refuses a changed row unless `"replace": true`. An agent cannot approve drafts, make tokens or change project files over MCP.
+Read with `describe_store`, `search_identities`, `get_identity`, `get_identity_history`, `search_records`, `get_record`, `explain_pair`, `list_review_items`, `get_review_case`, `list_constraints`, `list_changesets`, `list_changeset_ops`, `get_run` and `mint_identity_ids`. Write with `add_record`, `load_rows`, `load_documents`, `run_extraction`, `run_match`, `retract_rows`, `commit_changeset`, `split_identity`, `undo_changeset` and `dismiss_review_item`. Retractions and manual identity or review decisions need a `reason`. `add_record` and `load_rows` refuse a changed row unless `"replace": true`. An agent cannot approve drafts, make tokens or change project files over MCP.
 
 `list_changesets` gives summaries with operation counts. Pass `next` as `after` to read the next page. To inspect a changeset, pass its `seq` to `list_changeset_ops`, then pass `next` as `offset` until it is null.
 

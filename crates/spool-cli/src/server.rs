@@ -104,14 +104,14 @@ use crate::accounts::{
     ACCESS_PREFIX, Accounts, Change, Entered, GOOGLE, MARK, MAX_USERNAME, New, PERSON, Refused,
 };
 use crate::api::{
-    self, ARROW_STREAM, AddPersonRequest, AddTokenRequest, AddedToken, AttributeList,
-    CandidateList, ChangePersonRequest, ChangesetList, CommitRequest, ConstraintList,
-    DismissRequest, DocumentList, DocumentsRequest, DraftList, ErrorBody, ErrorCode, ErrorResponse,
-    ExtractRequest, History, IdentitiesOfRequest, IdentitiesOfResponse, IdentityList, Info,
-    JudgementsRequest, JudgementsResponse, LoadParams, LoadRequest, MatchRequest, MintRequest,
-    PasswordRequest, Person, PersonList, ReconcileRequest, RecordList, RejectDraftRequest,
-    RetractRequest, ReviewList, RunList, RunResponse, SessionState, SetupRequest, SignInRequest,
-    SplitRequest, TokenList, UndoRequest,
+    self, ARROW_STREAM, AddPersonRequest, AddRecordRequest, AddTokenRequest, AddedToken,
+    AttributeList, CandidateList, ChangePersonRequest, ChangesetList, CommitRequest,
+    ConstraintList, DismissRequest, DocumentList, DocumentsRequest, DraftList, ErrorBody,
+    ErrorCode, ErrorResponse, ExtractRequest, History, IdentitiesOfRequest, IdentitiesOfResponse,
+    IdentityList, Info, JudgementsRequest, JudgementsResponse, LoadParams, LoadRequest,
+    MatchRequest, MintRequest, PasswordRequest, Person, PersonList, ReconcileRequest, RecordList,
+    RejectDraftRequest, RetractRequest, ReviewList, RunList, RunResponse, SessionState,
+    SetupRequest, SignInRequest, SplitRequest, TokenList, UndoRequest,
 };
 use crate::delimited::{self, Malformed};
 use crate::google::{Failed, Google, Provider, Started};
@@ -428,7 +428,7 @@ fn router_until(engine: Arc<Engine>, options: &ServerOptions, stopping: Stopping
         .route("/identities/{identity}/explain", get(explain_identity))
         .route("/identities/{identity}/split", post(split))
         .route("/constraints", get(list_constraints))
-        .route("/records", get(list_records))
+        .route("/records", get(list_records).post(add_record))
         .route("/records/identities", post(identities_of))
         .route("/records/{record}", get(read_record))
         .route("/attributes", get(list_attributes))
@@ -1746,6 +1746,24 @@ async fn load(
         Ok(Some(report.run))
     })
     .await
+}
+
+async fn add_record(
+    State(app): State<App>,
+    Extension(caller): Extension<Caller>,
+    body: Bytes,
+) -> ApiResult {
+    let request: AddRecordRequest = json_body(&body)?;
+    let report = engine(&app, move |engine| {
+        engine.acting(caller.actor).add_record(
+            &request.source,
+            &request.entity_type,
+            &request.row,
+            request.replace.unwrap_or(false),
+        )
+    })
+    .await?;
+    ok(report)
 }
 
 /// Loads rows as the call asked: a load replaces a row the store holds

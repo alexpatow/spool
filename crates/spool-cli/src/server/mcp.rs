@@ -45,9 +45,9 @@ use super::{
     RecordsQuery, ReviewQuery, ServerOptions, WaitQuery,
 };
 use crate::api::{
-    CommitRequest, DismissRequest, DocumentsRequest, ErrorBody, ErrorCode, ErrorResponse,
-    ExtractRequest, LoadParams, LoadRequest, MatchRequest, MintRequest, RetractRequest,
-    SplitRequest, UndoRequest,
+    AddRecordRequest, CommitRequest, DismissRequest, DocumentsRequest, ErrorBody, ErrorCode,
+    ErrorResponse, ExtractRequest, LoadParams, LoadRequest, MatchRequest, MintRequest,
+    RetractRequest, SplitRequest, UndoRequest,
 };
 
 /// The largest request the endpoint reads. A request is a tool call, and the
@@ -95,7 +95,8 @@ the same thing, and to correct identities. Start with `describe_store`, \
 which lists the entity types this store has and the sources each takes \
 rows from.
 
-Loading and matching: `load_rows` stores rows from one source as records, \
+Loading and matching: `add_record` loads one row and returns its record and identity, or a review item. \
+`load_rows` stores rows from one source as records, \
 and `run_match` then places the records no run has examined: each joins the \
 identity it matches or gets a new one, and identities that exist keep their \
 IDs. `describe_store` names each source the project declares in `sources`, \
@@ -532,6 +533,16 @@ struct LoadRows {
     replace: Option<bool>,
 }
 
+/// Treat empty strings as missing, as the file loaders do. Keep every
+/// column name so the engine can still refuse columns the source does not list.
+fn empty_fields(row: &mut JsonObject) {
+    for value in row.values_mut() {
+        if value.as_str() == Some("") {
+            *value = Value::Null;
+        }
+    }
+}
+
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct LoadDocuments {
@@ -959,6 +970,17 @@ static TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
             "New identity IDs for a `create_identity` operation. An ID that is never used \
              costs nothing. Changes nothing in the store.",
         ),
+        tool::<AddRecordRequest>(
+            "add_record",
+            "Add a record and find its identity",
+            Effect::Changes,
+            "Store one row as a record and use the project's rules to match it against existing \
+             identities. Returns the record ID and its identity. If it needs review, the identity \
+             is null and the result includes the review item and the identities it matched. \
+             Retry with the same row to get the same record. Set `replace` only when the person \
+             asked to change a row under a key the source already holds. Use `load_rows` and \
+             `run_match` to load and compare a batch of rows together.",
+        ),
         tool::<LoadRows>(
             "load_rows",
             "Load rows",
@@ -1303,6 +1325,11 @@ impl Tools {
                 };
                 super::mint_ids(app, body(&request)?).await
             }
+            "add_record" => {
+                let mut request: AddRecordRequest = arguments(tool, given)?;
+                empty_fields(&mut request.row);
+                super::add_record(app, caller, body(&request)?).await
+            }
             "load_rows" => {
                 let asked: LoadRows = arguments(tool, given)?;
                 // The path takes its rows as JSON or as Arrow, and reads
@@ -1320,10 +1347,8 @@ impl Tools {
                 // where it should say nothing. The column stays in the
                 // row, so one the source does not list is still refused.
                 let mut rows = asked.rows;
-                for value in rows.iter_mut().flat_map(JsonObject::values_mut) {
-                    if value.as_str() == Some("") {
-                        *value = Value::Null;
-                    }
+                for row in &mut rows {
+                    empty_fields(row);
                 }
                 // The API replaces a row unless it is told not to. An
                 // assistant is to add rows unless it is told to change one.

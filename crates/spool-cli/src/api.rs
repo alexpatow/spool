@@ -12,10 +12,10 @@ use spool::core::{
     RecordId, Rejection, RunId, Seq, Verdict,
 };
 use spool::{
-    AttributeGroup, Authored, DocumentEntry, DraftEntry, DraftSummary, Explanation, HistoryEntry,
-    IdentityExplanation, IdentitySummary, IdentityView, LoggedChangeset, MintedIds, NewDocument,
-    RecomputeApplied, RecomputeReport, RecordEntry, ReviewCase, ReviewEntry, RunEntry, SplitReport,
-    StoreInfo, StrategyRef, TypeResolution,
+    AddRecordReport, AttributeGroup, Authored, DocumentEntry, DraftEntry, DraftSummary,
+    Explanation, HistoryEntry, IdentityExplanation, IdentitySummary, IdentityView, LoggedChangeset,
+    MintedIds, NewDocument, RecomputeApplied, RecomputeReport, RecordEntry, ReviewCase,
+    ReviewEntry, RunEntry, SplitReport, StoreInfo, StrategyRef, TypeResolution,
 };
 
 /// The version of the API, which is the first segment of every path.
@@ -52,6 +52,22 @@ pub struct LoadRequest {
     pub replace: Option<bool>,
     #[serde(default)]
     pub wait_ms: Option<u64>,
+}
+
+/// `POST /v1/records`: store one row and match its record.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AddRecordRequest {
+    /// The source that supplies the row.
+    pub source: String,
+    /// The entity type the row describes.
+    pub entity_type: EntityType,
+    /// One row, with the source's columns as keys. Values are text,
+    /// numbers, booleans or null for missing values.
+    pub row: serde_json::Map<String, serde_json::Value>,
+    /// Allow a new version under an existing key. The default is false.
+    #[serde(default)]
+    pub replace: Option<bool>,
 }
 
 /// `POST /v1/retract`: take back rows a source no longer holds. The
@@ -713,6 +729,8 @@ pub struct OAuthDecided {
 #[allow(dead_code)]
 struct Wire {
     load_request: LoadRequest,
+    add_record_request: AddRecordRequest,
+    add_record_report: AddRecordReport,
     retract_request: RetractRequest,
     documents_request: DocumentsRequest,
     document_list: DocumentList,

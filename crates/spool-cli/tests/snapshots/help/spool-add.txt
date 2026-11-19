@@ -1,0 +1,27 @@
+Add one row and get its identity
+
+Usage: spool add [OPTIONS] --source <NAME> --type <NAME> <ROW>
+
+Arguments:
+  <ROW>  A JSON object of column values, or `-` to read it from standard input
+
+Options:
+      --source <NAME>  The source that supplies the row
+      --type <NAME>    The entity type the row describes
+      --replace        Allow a new version under an existing key
+  -h, --help           Print help (see more with '--help')
+
+Output options:
+  -o, --output <OUTPUT>  Output format [default: table] [possible values: table, json, ndjson, csv]
+      --json             Shorthand for `--output json`
+
+Server options:
+      --url <URL>      The server [env: SPOOL_URL] [default: http://127.0.0.1:7765]
+      --token <TOKEN>  A token for that server; `spool dev` needs none [env: SPOOL_TOKEN]
+
+Global options:
+      --color <WHEN>  When to use colour [default: auto] [possible values: auto, always, never]
+  -q, --quiet         Print only the result and errors: no hints or progress
+
+Example:
+  spool add --source crm --type company '{"id":"c-1","name":"Acorn Tools"}' --json

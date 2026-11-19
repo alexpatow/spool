@@ -6,6 +6,8 @@
 
 import type {
   AddPersonRequest,
+  AddRecordReport,
+  AddRecordRequest,
   AddedToken,
   Authored,
   ChangePersonRequest,
@@ -267,6 +269,11 @@ export class SpoolClient {
   }
 
   // Load
+
+  /** Stores one row and returns its record ID and identity, or a review item. */
+  addRecord(request: AddRecordRequest): Promise<AddRecordReport> {
+    return this.json("POST", "/v1/records", { json: request });
+  }
 
   /**
    * Adds rows as records. A row that was loaded before, with the same

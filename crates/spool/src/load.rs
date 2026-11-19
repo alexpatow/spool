@@ -19,6 +19,7 @@ use crate::batch::{Column, batch};
 use crate::error::{Error, Result};
 use crate::project::Source;
 use crate::retract;
+use crate::store::parse;
 use crate::versions;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,6 +64,29 @@ pub(crate) struct Stored {
     pub inserted: u64,
     /// Records that had been taken back and came back.
     pub restored: u64,
+}
+
+/// A row just stored, or the version it repeats. Staging uses the content
+/// ID, which can differ from the latest ID when a keyed row changed back.
+pub(crate) fn stored_record(
+    conn: &Connection,
+    source: &str,
+    entity_type: &str,
+    staged: &RecordBatch,
+) -> Result<RecordId> {
+    let key = staged.column(2).as_string::<i32>();
+    if key.is_null(0) {
+        return parse(staged.column(1).as_string::<i32>().value(0));
+    }
+    let id: String = conn.query_row(
+        "SELECT o.record_id::VARCHAR FROM spool.record o
+         WHERE o.entity_type = ? AND o.source_id = ? AND o.source_key = ?
+           AND NOT EXISTS (
+             SELECT 1 FROM spool.record later WHERE later.supersedes = o.record_id)",
+        params![entity_type, source, key.value(0)],
+        |row| row.get(0),
+    )?;
+    parse(&id)
 }
 
 /// The rows of one incoming batch, as a batch of `ord`, `record_id`,

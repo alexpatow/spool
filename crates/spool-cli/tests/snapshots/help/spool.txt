@@ -6,6 +6,7 @@ Commands:
   init           Create a project, empty or from an example
   info           List what a project declares, and check its SQL
   dev            Run a server on localhost that applies file changes as they are saved
+  add            Add one row and get its identity
   load           Send the rows of a file to a running server
   extract        Find records in documents with one of the project's extractors
   match          Match new records and place them in identities

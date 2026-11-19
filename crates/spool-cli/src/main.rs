@@ -14,8 +14,8 @@ use anstream::eprintln;
 use clap::{ColorChoice, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use commands::{
-    bench, extract, init, load, matching, project, recompute, reset, retract, serve, show, token,
-    update, update_skills,
+    add, bench, extract, init, load, matching, project, recompute, reset, retract, serve, show,
+    token, update, update_skills,
 };
 
 /// Extract, resolve and track entities
@@ -50,6 +50,7 @@ enum Command {
     Init(init::InitArgs),
     Info(project::InfoArgs),
     Dev(serve::DevArgs),
+    Add(add::AddArgs),
     Load(load::LoadArgs),
     Extract(extract::ExtractArgs),
     Match(matching::MatchArgs),
@@ -258,6 +259,7 @@ fn run(command: Command, color: ColorChoice) -> (Vec<&'static str>, Result<(), F
         Command::Init(args) => (vec!["init"], init::init(args)),
         Command::Info(args) => (vec!["info"], project::info(args)),
         Command::Dev(args) => (vec!["dev"], serve::dev(args)),
+        Command::Add(args) => (vec!["add"], add::add(args)),
         Command::Load(args) => (vec!["load"], load::load(args)),
         Command::Extract(args) => (vec!["extract"], extract::extract(args)),
         Command::Match(args) => (vec!["match"], matching::run(args)),

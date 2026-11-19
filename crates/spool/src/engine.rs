@@ -35,7 +35,7 @@ use crate::possible_split;
 use crate::project::{EntityTypeManifest, Manifest, Strategy, hash_json};
 use crate::recompute::{self, AppliedType, RecomputeApplied, RecomputeReport, RecomputeRequest};
 use crate::retract::{self, RetractReport};
-use crate::review::{self, ReviewCase, ReviewEntry, ReviewFilter};
+use crate::review::{self, ReviewCase, ReviewEntry, ReviewFilter, ReviewKind, ReviewStatus};
 use crate::rows::Rows;
 use crate::rules;
 use crate::runs::{self, RunEntry, RunFilter, RunStatus};
@@ -106,7 +106,8 @@ impl StrategyRef {
 }
 
 /// Which records a match run treats as new: those of one entity type
-/// loaded since the last match run of that type that succeeded.
+/// loaded since the last batch match of that type that succeeded and still
+/// need to be examined.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Scope {
     pub entity_type: EntityType,
@@ -192,6 +193,18 @@ pub struct ApplyReport {
 pub struct ResolveReport {
     /// One entry per entity type that had new records.
     pub resolved: Vec<TypeResolution>,
+}
+
+/// The result of storing one row and placing its record, or leaving it for review.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct AddRecordReport {
+    pub record: RecordId,
+    pub identity: Option<IdentityId>,
+    pub review: Option<ReviewEntry>,
+    pub load_run: RunId,
+    /// A retry of a placed record or one already waiting for review starts no match.
+    pub match_run: Option<RunId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -432,6 +445,9 @@ struct MatchConfig {
     /// are examined again.
     #[serde(default)]
     review_items: Vec<u64>,
+    /// Set for a match that examined only this record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    record: Option<RecordId>,
     /// Every record of the type is examined, not only the new ones.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     rematch: bool,
@@ -439,6 +455,22 @@ struct MatchConfig {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     recompute: bool,
     rules: crate::project::RuleSet,
+}
+
+impl MatchConfig {
+    fn create_scope(&self, conn: &Connection, run: RunId) -> Result<()> {
+        match self.record {
+            Some(record) => rules::create_record_scope(conn, record),
+            None => rules::create_scope(
+                conn,
+                &self.entity_type,
+                self.after_run,
+                run,
+                &self.review_items,
+                self.rematch,
+            ),
+        }
+    }
 }
 
 /// The strategy a resolve runs for an entity type.
@@ -636,6 +668,32 @@ impl Engine {
             .load(&Actor::Engine, source, entity_type, rows, false)
     }
 
+    /// Stores a row and matches its record against existing identities with
+    /// the project's SQL rules. An ambiguous record stays unassigned.
+    pub fn add_record(
+        &self,
+        source: &str,
+        entity_type: &EntityType,
+        row: &serde_json::Map<String, serde_json::Value>,
+        replace: bool,
+    ) -> Result<AddRecordReport> {
+        self.add_record_by(&Actor::Engine, source, entity_type, row, replace)
+    }
+
+    fn add_record_by(
+        &self,
+        by: &Actor,
+        source: &str,
+        entity_type: &EntityType,
+        row: &serde_json::Map<String, serde_json::Value>,
+        replace: bool,
+    ) -> Result<AddRecordReport> {
+        let rows = Rows::from_json(std::slice::from_ref(row))?;
+        let _turn = lock(&self.resolving);
+        self.lock()
+            .add_record(by, source, entity_type, rows, replace)
+    }
+
     /// Takes back rows a source no longer holds, named by their keys. Every
     /// version of each row stays in the store as evidence and leaves its
     /// identity, by one changeset under `actor`'s name. From then on no run
@@ -668,7 +726,7 @@ impl Engine {
     /// stays open across a restart.
     pub fn begin_run(&self, strategy: &StrategyRef, scope: &Scope) -> Result<RunId> {
         self.lock()
-            .begin_match(&Actor::Engine, strategy, scope, RunStatus::Open)
+            .begin_match(&Actor::Engine, strategy, scope, RunStatus::Open, None)
     }
 
     /// A run's candidate pairs with both sides' features: `left_id`,
@@ -927,8 +985,13 @@ impl Engine {
             };
             let resolution = match chosen {
                 Chosen::Rules => {
-                    let run =
-                        inner.begin_match(by, &StrategyRef::rules(), &scope, RunStatus::Running)?;
+                    let run = inner.begin_match(
+                        by,
+                        &StrategyRef::rules(),
+                        &scope,
+                        RunStatus::Running,
+                        None,
+                    )?;
                     inner.in_run(run, |inner| {
                         inner.judge_with_rules(run)?;
                         inner.conclude(by, run, &Policy::default(), then)
@@ -942,7 +1005,8 @@ impl Engine {
                         name: strategy.name.clone(),
                         version: Some(strategy.hash.clone()),
                     };
-                    let run = inner.begin_match(by, &reference, &scope, RunStatus::Running)?;
+                    let run =
+                        inner.begin_match(by, &reference, &scope, RunStatus::Running, None)?;
                     let mut task =
                         inner.in_run(run, |inner| inner.write_task(run, &strategy, &user_code))?;
                     // The user code runs with the writer let go. The run
@@ -1713,6 +1777,19 @@ impl Inner {
         rows: impl RecordBatchReader,
         replace: bool,
     ) -> Result<LoadReport> {
+        self.load_rows(by, source, entity_type, rows, replace, false)
+            .map(|(report, _)| report)
+    }
+
+    fn load_rows(
+        &mut self,
+        by: &Actor,
+        source: &str,
+        entity_type: &str,
+        rows: impl RecordBatchReader,
+        replace: bool,
+        single: bool,
+    ) -> Result<(LoadReport, Option<RecordId>)> {
         if source.is_empty() {
             return Err(Error::Load("the source needs a name".to_owned()));
         }
@@ -1730,11 +1807,12 @@ impl Inner {
             None,
             &json!({ "source": source.name, "entity_type": name }),
         )?;
-        let report = self.in_run(run, |inner| {
+        let (report, record) = self.in_run(run, |inner| {
             let now = inner.store.clock.now_micros();
             let tx = inner.store.conn.transaction()?;
             let mut seen = HashSet::new();
             let (mut received, mut inserted, mut restored) = (0u64, 0u64, 0u64);
+            let mut record = None;
 
             for incoming in rows {
                 let incoming = incoming?;
@@ -1765,9 +1843,13 @@ impl Inner {
                     )));
                 }
 
+                let submitted = single.then(|| staged.clone());
                 let stored = load::insert(&tx, name.as_str(), &source.name, now, run, staged)?;
                 inserted += stored.inserted;
                 restored += stored.restored;
+                if let Some(submitted) = submitted {
+                    record = Some(load::stored_record(&tx, &source.name, name.as_str(), &submitted)?);
+                }
             }
             if !replace && let Some(refusal) = load::replacing(&tx, run)? {
                 return Err(Error::Load(refusal));
@@ -1808,12 +1890,71 @@ impl Inner {
                 params![finished, json!(report).to_string(), run.0 as i64],
             )?;
             tx.commit()?;
-            Ok(report)
+            Ok((report, record))
         })?;
-        self.give_back(
+        let report = self.give_back(
             report,
             format!("source `{}` sent the rows again", source.name),
-        )
+        )?;
+        Ok((report, record))
+    }
+
+    fn add_record(
+        &mut self,
+        by: &Actor,
+        source: &str,
+        entity_type: &EntityType,
+        rows: Rows,
+        replace: bool,
+    ) -> Result<AddRecordReport> {
+        let (load, record) =
+            self.load_rows(by, source, entity_type.as_str(), rows, replace, true)?;
+        let record = record.ok_or_else(|| Error::Load("the load returned no record".to_owned()))?;
+        let mut report = AddRecordReport {
+            record,
+            identity: store::read_assignments(&self.store.conn, &[record])?[0],
+            review: None,
+            load_run: load.run,
+            match_run: None,
+        };
+        if report.identity.is_some() {
+            return Ok(report);
+        }
+        report.review = self.record_review(record)?;
+        if report.review.is_some() {
+            return Ok(report);
+        }
+        let run = self.begin_match(
+            by,
+            &StrategyRef::rules(),
+            &Scope::new(entity_type.clone()),
+            RunStatus::Running,
+            Some(record),
+        )?;
+        self.in_run(run, |inner| {
+            inner.judge_with_rules(run)?;
+            inner.conclude(by, run, &Policy::default(), Disposition::Commit)
+        })?;
+        report.match_run = Some(run);
+        report.identity = store::read_assignments(&self.store.conn, &[record])?[0];
+        if report.identity.is_none() {
+            report.review = self.record_review(record)?;
+        }
+        Ok(report)
+    }
+
+    fn record_review(&self, record: RecordId) -> Result<Option<ReviewEntry>> {
+        let items = review::list(
+            &self.store.conn,
+            &ReviewFilter {
+                record: Some(record),
+                ..ReviewFilter::default()
+            },
+        )?;
+        Ok(items.into_iter().rev().find(|item| {
+            item.kind != ReviewKind::PossibleSplit
+                && matches!(item.status, ReviewStatus::Open | ReviewStatus::Dismissed)
+        }))
     }
 
     /// Puts the records that came back in a load into the identity each
@@ -1997,19 +2138,24 @@ impl Inner {
         strategy: &StrategyRef,
         scope: &Scope,
         then: RunStatus,
+        record: Option<RecordId>,
     ) -> Result<RunId> {
         let (manifest, entry, version) = self.declared(scope.entity_type.as_str())?;
         let entity_type = entry.name.clone();
         let manifest_hash = manifest.hash.clone();
         let rules = entry.rules.clone();
-        let after_run = self.last_match_run(&entity_type)?;
-        let review_items = review::open_ids(&self.store.conn, &entity_type)?;
+        let after_run = self.last_batch_match(&entity_type)?;
+        let review_items = match record {
+            Some(_) => Vec::new(),
+            None => review::open_ids(&self.store.conn, &entity_type)?,
+        };
         let config = MatchConfig {
             entity_type: entity_type.clone(),
             declaration_version: version,
             manifest_hash,
             after_run,
             review_items,
+            record,
             rematch: scope.rematch,
             recompute: false,
             rules,
@@ -2018,15 +2164,17 @@ impl Inner {
         let run = self.start_run("match", by, Some(strategy), &json!(config))?;
         self.in_run(run, |inner| {
             let tx = inner.store.conn.transaction()?;
-            rules::create_scope(
-                &tx,
-                &entity_type,
-                config.after_run,
-                run,
-                &config.review_items,
-                config.rematch,
-            )?;
-            rules::generate_candidates(&tx, &entity_type, run, &config.rules.block)?;
+            config.create_scope(&tx, run)?;
+            match record {
+                Some(record) => rules::generate_record_candidates(
+                    &tx,
+                    &entity_type,
+                    run,
+                    record,
+                    &config.rules.block,
+                )?,
+                None => rules::generate_candidates(&tx, &entity_type, run, &config.rules.block)?,
+            }
             if then != RunStatus::Running {
                 tx.execute(
                     "UPDATE spool.run SET status = ? WHERE run_id = ?",
@@ -2038,12 +2186,13 @@ impl Inner {
         })
     }
 
-    /// The last match run of an entity type that succeeded, or run 0. What
-    /// was loaded after it is new.
-    fn last_match_run(&self, entity_type: &EntityType) -> Result<RunId> {
+    /// The last successful match covering the entity type, or run 0. A
+    /// single-record match does not advance this position.
+    fn last_batch_match(&self, entity_type: &EntityType) -> Result<RunId> {
         let run: i64 = self.store.conn.query_row(
             "SELECT coalesce(max(run_id), 0) FROM spool.run
              WHERE kind = 'match' AND status = 'succeeded'
+               AND json_extract_string(config, '$.record') IS NULL
                AND json_extract_string(config, '$.entity_type') = ?",
             [entity_type.as_str()],
             |row| row.get(0),
@@ -2062,14 +2211,7 @@ impl Inner {
                 message: format!("it is {} and takes no judgements", row.status),
             });
         }
-        rules::create_scope(
-            &self.store.conn,
-            &config.entity_type,
-            config.after_run,
-            run,
-            &config.review_items,
-            config.rematch,
-        )?;
+        config.create_scope(&self.store.conn, run)?;
         Ok(config)
     }
 
@@ -2299,7 +2441,9 @@ impl Inner {
             }
             // Whatever this run drafts, an earlier draft of the type was
             // written against a state this one may change.
-            drafts::supersede(&tx, &entity_type, reconcile_run)?;
+            if config.record.is_none() {
+                drafts::supersede(&tx, &entity_type, reconcile_run)?;
+            }
             if then == Disposition::LeaveForReview {
                 let result = json!(report).to_string();
                 if held {
@@ -2366,14 +2510,7 @@ impl Inner {
     fn evidence(&self, run: RunId, config: &MatchConfig) -> Result<EvidenceSummary> {
         let conn = &self.store.conn;
         let scope = rules::SCOPE;
-        rules::create_scope(
-            conn,
-            &config.entity_type,
-            config.after_run,
-            run,
-            &config.review_items,
-            config.rematch,
-        )?;
+        config.create_scope(conn, run)?;
         // A record that has an identity is not new: one that got it
         // since the run began, and in a rematch every one that had it.
         conn.execute_batch(&format!(
@@ -2718,8 +2855,9 @@ impl Inner {
                 entity_type: name.clone(),
                 declaration_version: version,
                 manifest_hash: manifest.hash.clone(),
-                after_run: self.last_match_run(name)?,
+                after_run: self.last_batch_match(name)?,
                 review_items: review::open_ids(&self.store.conn, name)?,
+                record: None,
                 rematch: true,
                 recompute: true,
                 rules: entry.rules.clone(),
@@ -2877,18 +3015,19 @@ impl Inner {
     /// came back since then after their source had taken them back, or open
     /// review items with records that wait for an identity.
     fn has_work(&self, entity_type: &EntityType) -> Result<bool> {
-        let after_run = self.last_match_run(entity_type)?;
+        let after_run = self.last_batch_match(entity_type)?;
         let loaded = self.count(&format!(
             "SELECT count(*) FROM spool.record
              WHERE entity_type = '{entity_type}'
-               AND (load_run > {after_run} OR (
+               AND ((load_run > {after_run} {unmatched}) OR (
                  record_id IN (
                    SELECT record_id FROM spool.retraction WHERE restored_run > {after_run})
                  AND record_id NOT IN (
                    SELECT record_id FROM spool.membership WHERE to_seq IS NULL)))
                AND {} AND {}",
             rules::NOT_DISMISSED,
-            retract::NOT_RETRACTED
+            retract::NOT_RETRACTED,
+            unmatched = rules::not_matched_individually(after_run, None),
         ))?;
         Ok(loaded > 0 || !review::open_ids(&self.store.conn, entity_type)?.is_empty())
     }

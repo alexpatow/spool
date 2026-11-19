@@ -27,6 +27,43 @@ export interface AddPersonRequest {
 }
 
 /**
+ * The result of storing one row and placing its record, or leaving it for review.
+ */
+export interface AddRecordReport {
+  identity?: IdentityId | null;
+  load_run: RunId;
+  /**
+   * A retry of a placed record or one already waiting for review starts no match.
+   */
+  match_run?: RunId | null;
+  record: RecordId;
+  review?: ReviewEntry | null;
+}
+
+/**
+ * `POST /v1/records`: store one row and match its record.
+ */
+export interface AddRecordRequest {
+  /**
+   * The entity type the row describes.
+   */
+  entity_type: EntityType;
+  /**
+   * Allow a new version under an existing key. The default is false.
+   */
+  replace?: boolean | null;
+  /**
+   * One row, with the source's columns as keys. Values are text,
+   * numbers, booleans or null for missing values.
+   */
+  row: Record<string, unknown>;
+  /**
+   * The source that supplies the row.
+   */
+  source: string;
+}
+
+/**
  * `POST /v1/tokens`: make a token. Only an admin may.
  */
 export interface AddTokenRequest {

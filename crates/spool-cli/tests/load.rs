@@ -76,6 +76,55 @@ fn load_runs(server: &Server) -> Vec<Value> {
 }
 
 #[test]
+fn add_returns_the_identity_of_the_exact_row_version() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("project");
+    write_things(&project);
+    let server = Server::serve(&project, dir.path(), 1);
+    let output = server
+        .spool_in(
+            &project,
+            &[
+                "add",
+                "--source",
+                "shop",
+                "--type",
+                "thing",
+                r#"{"id":"1","code":"anvil","colour":"black"}"#,
+                "--json",
+            ],
+        )
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    let added: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(added["identity"].is_string(), "{added}");
+    assert!(added["match_run"].is_number(), "{added}");
+    let request = |colour, replace| {
+        json!({
+            "source": "shop", "entity_type": "thing", "replace": replace,
+            "row": { "id": "1", "code": "anvil", "colour": colour }
+        })
+    };
+    server
+        .request("POST", "/v1/records")
+        .json(&request("red", false))
+        .send()
+        .error(400, "invalid");
+    let red = server.call("/v1/records", request("red", true));
+    let black = server.call("/v1/records", request("black", true));
+    assert_ne!(black["record"], added["record"], "the row changed back");
+    assert_ne!(black["record"], red["record"]);
+    assert_eq!(black["identity"], added["identity"]);
+    assert_eq!(red["identity"], black["identity"]);
+    let retry = server.call("/v1/records", request("black", false));
+    assert_eq!(retry["record"], black["record"]);
+    assert_eq!(retry["identity"], black["identity"]);
+    assert!(retry["match_run"].is_null(), "{retry}");
+    assert!(server.call("/v1/match", json!({ "entity_type": "thing" }))["run"].is_null());
+}
+
+#[test]
 fn load_sends_the_rows_of_a_file_and_says_what_became_of_them() {
     let dir = tempfile::tempdir().unwrap();
     let project = init_companies(dir.path());
