@@ -348,7 +348,7 @@ spool show identities
 
 ```text title="Output"
 identity                              name                   members  names  unlinked pairs  created at
-01a1efc6-41cd-775d-8758-e7300637659a  Acorn Tools Ltd        4        3      0%              log position 1
+01a1efc6-41cd-775d-8758-e7300637659a  Acorn Tools Ltd        4        2      0%              log position 1
 01a1efc6-41cd-775d-8758-e731c61371cb  Halden Group           1        1      -               log position 1
 01a1efc6-41cd-775d-8758-e7329447fd9a  Halden Group           1        1      -               log position 1
 01a1efc6-43a9-7403-b9f6-1f8ee76184ed  Brightwater Foods Ltd  1        1      -               log position 1
@@ -363,9 +363,13 @@ Each identity comes with three numbers that point at a wrong merge without any l
 
 `--sort records --order desc` lists the largest identities first, and `--sort names --order desc` those with the most names. The counts are in `--json` as `members`, `names`, `linked_pairs` and `unlinked_pairs`. [`spool explain <identity>`](#spool-explain) says which rule joined the parts of one.
 
+{/* sample: skip shows a project of a few thousand people that this page does not build */}
+
 ```sh
 spool show identities --type person --sort records --order desc --limit 3
 ```
+
+{/* sample: skip shows a project of a few thousand people that this page does not build */}
 
 ```text title="Output"
 identity                              name        members  names  unlinked pairs  created at
@@ -457,9 +461,13 @@ runs that compared them
 
 When two records share an identity but no link joins them, it shows the chain between them: each record by its label and its name, and each link by the run and the rule that made it, with the values the rule read. It says which rules every chain between them goes through, and the fewest links whose removal would part the records named as the one from those named as the other, with what each side would hold.
 
+{/* sample: skip shows a project of people found in articles that this page does not build */}
+
 ```sh
 spool explain mentions:t1 mentions:t12
 ```
+
+{/* sample: skip shows a project of people found in articles that this page does not build */}
 
 ```text title="Output"
 `mentions:t1` and `mentions:t12` belong to the same identity, 01a1f132-93bf-7586-89d0-459a8d1a39fe.
@@ -495,9 +503,13 @@ With one identity, named by its ID or by any of its records, it says how much of
 - **Without each rule**: the pieces the identity would fall into without the links only that rule made. A rule that holds many pieces together is the one that chains different things; a stricter version of it, or a `no_match` rule, keeps them apart.
 - **Weakest links**: the links that alone hold a part on, and the fewest links that part the records of its most common name from those of each of the next eight, each with the two sides it would leave. Those are where a wrong merge entered. A set of more than twenty links is not listed: an identity that rules join through many records at once has none, and the pieces without each rule say what joined it.
 
+{/* sample: skip shows a project of people found in articles that this page does not build */}
+
 ```sh
 spool explain mentions:t1
 ```
+
+{/* sample: skip shows a project of people found in articles that this page does not build */}
 
 ```text title="Output"
 `J. R. R. Tolkien` is a `person` identity of 15 records with 3 different names.
