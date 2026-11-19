@@ -1,18 +1,16 @@
 ---
 title: Deploying
-description: Run Spool for other people with spool build, spool apply and spool serve, sign them in, give programs tokens, and back up the store.
+description: Run Spool for a team with spool build, spool apply and spool serve: sign people in, give programs tokens, ship a container, and back up the store.
 ---
 
-`spool dev` is for one person on one machine. `spool serve` is the server other people and programs reach. It is the same binary and the same store format. What changes is that every caller is known, and that the server reads a compiled manifest in place of the project's files.
-
-This page says how Spool is meant to be run, and each command on it was run as shown.
+`spool dev` is for one person on one machine. `spool serve` is the server your team and your pipelines reach. Same binary, same store format. The differences: every caller is authenticated, and the server runs from a compiled manifest instead of the project's files.
 
 ## What a deployment is
 
-- **One process** on one machine. There is no cluster mode, no replica and no failover.
-- **One store file**, a DuckDB database, which that process alone opens.
-- **One accounts file** beside it, named after it: `spool.auth.sqlite` for `spool.duckdb`. It holds people and tokens.
-- **The project**, at the version you built: the manifest, plus any strategy and extractor files.
+- **One process** on one machine.
+- **One store file**, a DuckDB database that only that process opens.
+- **One accounts file** beside it, named after it (`spool.auth.sqlite` for `spool.duckdb`), holding people and tokens.
+- **The project** at the version you built: the manifest, plus any strategy and extractor files.
 
 ## Build
 
@@ -35,7 +33,7 @@ wrote     ./Dockerfile
 wrote     ./.dockerignore
 ```
 
-`spool build` checks the project and writes `.spool/manifest.json`, which holds every rule and declaration with a hash of the whole. It also writes a `Dockerfile` and a `.dockerignore` if the project has none.
+`spool build` checks the project and writes `.spool/manifest.json`, with every rule and declaration and a hash of the whole. It also writes a `Dockerfile` and `.dockerignore` if the project has none.
 
 ## Apply
 
@@ -49,7 +47,7 @@ manifest  b6dff33d6c0977f4afb2497792bcaa9785e8b865994fa5c94eb9761f57a6e0a7
 declared  company
 ```
 
-`spool apply` creates the store if there is none, declares new entity types, and computes the features again for each type whose declaration changed. Identities are not touched. It runs while the server is stopped, so a change of rules is: build, stop the server, apply, start the server.
+`spool apply` creates the store if needed, declares new entity types, and rebuilds features for each type whose declaration changed. Identities aren't touched. It runs with the server stopped, so a rule change is: build, stop, apply, start.
 
 ## Serve
 
@@ -69,19 +67,19 @@ setup     http://127.0.0.1:7765/setup#8903cd40f174a29b7c4f4151e5f06e9105827d80da
 no admin can sign in yet: open that link, at the address people reach this server by, to make the first account
 ```
 
-Left out, `--listen` is `0.0.0.0:7765`. Put a reverse proxy with TLS in front, and give the server the address people reach it by with `--public-url https://spool.example.com`. Spool does not terminate TLS.
+`--listen` defaults to `0.0.0.0:7765`. Put a TLS-terminating reverse proxy in front, and pass the public address with `--public-url https://spool.example.com`.
 
-A server refuses to start on a store that was applied with another manifest, and says to run `spool apply` first.
+The server refuses a store applied with a different manifest, and tells you to run `spool apply` first.
 
 ## The first account
 
-While no admin can sign in, the server prints a link when it starts. Whoever opens it makes the first account, with a username and a password, and is the admin who adds everyone else on the studio's People page.
+Until an admin exists, the server prints a setup link on startup. Whoever opens it creates the first account, with a username and password, and becomes the admin who adds everyone else on the studio's People page.
 
-Passwords are for getting started. They have no second factor and no reset by email. A server that people rely on should sign them in with Google: set `SPOOL_GOOGLE_CLIENT_ID` and `SPOOL_GOOGLE_CLIENT_SECRET` to an OAuth client of the type "Web application", whose redirect URI is the public URL followed by `/auth/google/callback`. The server prints the exact value on the line that begins with `google`. An admin then adds each person by the email of their Google account. Google is the only identity provider there is. There is no SAML and no generic OIDC.
+Passwords get you started. For a server people rely on, use Google sign-in: set `SPOOL_GOOGLE_CLIENT_ID` and `SPOOL_GOOGLE_CLIENT_SECRET` to a "Web application" OAuth client whose redirect URI is the public URL plus `/auth/google/callback`. The server prints the exact value on the line starting with `google`. An admin then adds each person by their Google account email.
 
 ## Tokens for programs
 
-A pipeline or an agent presents a token. Make one on the server's machine, or on the studio's Tokens page:
+Pipelines and agents authenticate with a token. Create one on the server's machine, or on the studio's Tokens page:
 
 ```sh
 TOKEN=$(spool token add pipeline --store spool.duckdb)
@@ -92,7 +90,7 @@ That is the token `pipeline`, kept in spool.auth.sqlite. It is shown this once.
 A caller sends it as `Authorization: Bearer <token>`, and what it changes is recorded under `agent:pipeline`.
 ```
 
-The token itself is the only thing on standard output, which is why it can be caught in a variable. It is shown this once. The server keeps a hash of it.
+The token is the only thing on standard output, so you can capture it in a variable. It's shown once, and the server stores only a hash.
 
 ```sh
 spool token list --store spool.duckdb
@@ -103,13 +101,13 @@ TOKEN     MADE AT                   MADE BY          LAST USED
 pipeline  2026-11-18T17:22:33.382Z  spool token add  never
 ```
 
-A caller sends it as a bearer token, and what it changes is recorded as `agent:pipeline`:
+Callers send it as a bearer token, and their changes are recorded as `agent:pipeline`:
 
 ```sh
 curl -s -X POST http://127.0.0.1:7765/v1/load -H "Authorization: Bearer $TOKEN" -d '{"source": "crm", "entity_type": "company", "wait_ms": 5000, "rows": [{"id": "c-1", "name": "Acorn Tools", "country": "GB"}]}'
 ```
 
-Without one, the server says so:
+Without one, the request is rejected:
 
 ```sh
 curl -s http://127.0.0.1:7765/v1/info
@@ -119,7 +117,7 @@ curl -s http://127.0.0.1:7765/v1/info
 {"error":{"code":"unauthorized","message":"sign in, or send a token: `Authorization: Bearer <token>`"}}
 ```
 
-The command line takes the token from `SPOOL_TOKEN` and the address from `SPOOL_URL`:
+The CLI reads the token from `SPOOL_TOKEN` and the address from `SPOOL_URL`:
 
 ```sh
 SPOOL_TOKEN=$TOKEN spool show
@@ -140,7 +138,7 @@ entity type `company`
 extractor `companies` (python, extractors/companies.py)
 ```
 
-There are two kinds of caller. An admin adds people and makes tokens. Everyone else, and every token, can read everything and change identities. There are no finer permissions, and nothing limits a caller to one entity type or one source.
+There are two roles. Admins add people and create tokens. Everyone else, and every token, can read everything and change identities.
 
 ## A container
 
@@ -151,27 +149,27 @@ docker build -t companies .
 docker run -p 7765:7765 -v spool-data:/data companies
 ```
 
-The Dockerfile that `spool build` writes starts from the image `ghcr.io/alexpatow/spool:0.1.0`, builds the manifest in it, and runs `spool serve` with the store at `/data/spool.duckdb`, on a volume. For a project with a Python file, as the sample project has, it also copies `uv` in and runs `spool build --install`, which fetches what each strategy and extractor depends on, the sample extractor's model with it, so that the server fetches nothing as it runs. A changed project is applied with the server stopped: `docker run --rm -v spool-data:/data companies apply`.
+The generated Dockerfile starts from `ghcr.io/alexpatow/spool:0.1.0`, builds the manifest, and runs `spool serve` with the store at `/data/spool.duckdb` on a volume. For projects with Python files, like the sample, it also copies in `uv` and runs `spool build --install`, which installs every strategy's and extractor's dependencies, including the sample model, so the server downloads nothing at runtime. To apply a changed project, stop the server and run `docker run --rm -v spool-data:/data companies apply`.
 
-The image does not hold the project's `.env`: the `.dockerignore` that `spool build` writes leaves it out. Give the container the variables your code reads where it runs, as with `docker run --env-file .env`. On a server without Docker, set them in the environment of `spool serve`, or put a `.env` in its project directory, which `--project` names.
+The generated `.dockerignore` keeps `.env` out of the image. Pass your code's variables at runtime, for example with `docker run --env-file .env`. Without Docker, set them in `spool serve`'s environment, or put a `.env` in the project directory named by `--project`.
 
 ## Backing up
 
-The store is one file and the accounts are another. Stop the server, copy both, start it. There is no online backup and no export.
+The store is one file and the accounts are another. Stop the server, copy both, start it again.
 
-Everything that decides an identity is in the store: the records, every judgement, and the whole log. Nothing is derived from the project at read time, so a copy of the store is a copy of the identities.
+Everything that decides an identity is in the store: the records, every judgement, and the full log. Nothing is derived from the project at read time, so a copy of the store is a complete copy of the identities.
 
 ## Upgrading
 
-Until 1.0, nothing is promised about a store written by one version opening in the next. Where a release can upgrade a store, it does so when the store is opened, and the release notes say which formats it reads. Copy the store before starting a new version on it.
+Releases that can upgrade a store do it when the store opens, and the release notes list the formats each reads. Copy the store before starting a new version on it. The format can change before 1.0.
 
 ## Stopping
 
-The server stops on Ctrl-C or SIGTERM and prints `stopping`. It takes no new request, answers the ones it has within six seconds, finishes the runs it was given, however long they take, and prints `stopped`. If the process is killed first, the run is recorded as failed when the store is next opened.
+On Ctrl-C or SIGTERM the server prints `stopping`, refuses new requests, finishes in-flight requests within six seconds, completes every run it was given, and prints `stopped`. If the process is killed first, the run is marked failed when the store next opens.
 
-## What to watch
+## Operating it
 
-- **Memory.** A match holds its candidate pairs in memory. Five million records with 76 million candidate pairs peaked at 13.4 GB in the repository's benchmark.
-- **One writer.** Calls that change the store run one after another. A long match holds up a load that arrives during it.
-- **`GET /healthz`** answers `{"status":"ok"}` with no sign-in. There are no metrics and no tracing.
-- **User code.** Strategies and extractors that are `.py` files run with `uv`, and `.ts` files with `bun`. Both must be on the server's machine, and each run is limited by `--task-timeout`, 600 seconds unless set.
+- **Memory.** A match holds its candidate pairs in memory. In the benchmark, five million records with 76 million candidate pairs peaked at 13.4 GB.
+- **One writer.** Writes run one after another, so a load that arrives during a long match waits for it.
+- **Health check.** `GET /healthz` returns `{"status":"ok"}` without auth.
+- **User code.** Strategies and extractors need `uv` (Python) or `bun` (TypeScript) on the server, and each run is capped by `--task-timeout`, 600 seconds by default.
