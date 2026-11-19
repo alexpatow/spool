@@ -13,9 +13,10 @@ use spool::core::{
 };
 use spool::{
     AddDocumentReport, AddRecordReport, AttributeGroup, Authored, DocumentEntry, DraftEntry,
-    DraftSummary, Explanation, HistoryEntry, IdentityExplanation, IdentitySummary, IdentityView,
-    LoggedChangeset, MintedIds, NewDocument, RecomputeApplied, RecomputeReport, RecordEntry,
-    ReviewCase, ReviewEntry, RunEntry, SplitReport, StoreInfo, StrategyRef, TypeResolution,
+    DraftSummary, Explanation, HistoryEntry, IdentityExplanation, IdentitySnapshot,
+    IdentitySummary, IdentityView, LoggedChangeset, MintedIds, NewDocument, RecomputeApplied,
+    RecomputeReport, RecordEntry, ReviewCase, ReviewEntry, RunEntry, SplitReport, StoreInfo,
+    StrategyRef, TypeResolution,
 };
 
 /// The version of the API, which is the first segment of every path.
@@ -781,6 +782,7 @@ struct Wire {
     minted_ids: MintedIds,
     identity_list: IdentityList,
     identity_view: IdentityView,
+    identity_snapshot: IdentitySnapshot,
     history: History,
     record_list: RecordList,
     record_from_row: RecordEntry,

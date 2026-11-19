@@ -86,8 +86,8 @@ pub use explain::{
 pub use load::LoadReport;
 pub use lookup::{
     ChangesetSummary, DeclaredSource, FoundBy, HistoryEntry, IdentityFilter, IdentityMatch,
-    IdentitySort, IdentitySummary, IdentityView, LogSort, LoggedChangeset, Member, RecordEntry,
-    RecordFilter, RecordSort, SourceCount, SourceInfo, StoreInfo, TypeInfo,
+    IdentitySnapshot, IdentitySort, IdentitySummary, IdentityView, LogSort, LoggedChangeset,
+    Member, RecordEntry, RecordFilter, RecordSort, SourceCount, SourceInfo, StoreInfo, TypeInfo,
 };
 pub use metrics::{
     BCubed, Churn, EndToEndMetrics, ExtractionMetrics, IdStability, Metrics, OrderSensitivity,

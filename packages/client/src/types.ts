@@ -1260,6 +1260,36 @@ export type IdentityMatch =
     };
 
 /**
+ * An identity as it stood immediately after the given changeset.
+ */
+export interface IdentitySnapshot {
+  as_of_seq: Seq;
+  /**
+   * The log position that created the identity that was asked for.
+   */
+  created: Seq;
+  /**
+   * The active identity it stands for: itself, or the one it was merged
+   * into.
+   */
+  current: IdentityId;
+  entity_type: EntityType;
+  /**
+   * The ID that was asked for.
+   */
+  id: IdentityId;
+  /**
+   * What a person would call the current identity: the label most of its
+   * members have. `None` when no member's payload names it.
+   */
+  label?: string | null;
+  /**
+   * The members of the current identity, ordered by record ID.
+   */
+  members: Member[];
+}
+
+/**
  * An active identity in a list.
  */
 export interface IdentitySummary {

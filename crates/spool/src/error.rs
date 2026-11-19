@@ -154,6 +154,16 @@ pub enum Error {
     #[error("identity {0} does not exist")]
     UnknownIdentity(IdentityId),
 
+    #[error("identity {id} did not exist at changeset {seq}. It was created at {created}")]
+    IdentityNotYetCreated {
+        id: IdentityId,
+        seq: Seq,
+        created: Seq,
+    },
+
+    #[error("changeset {seq} is beyond the store head at {head}")]
+    FutureIdentitySnapshot { seq: Seq, head: Seq },
+
     #[error("there is no record {0}")]
     UnknownRecord(RecordId),
 

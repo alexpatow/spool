@@ -3,8 +3,9 @@
 //! `record_id` and `declaration_version`.
 
 use duckdb::Connection;
-use spool_core::{EntityType, RunId};
+use spool_core::{EntityType, RecordId, RunId};
 
+use crate::batch::id_list;
 use crate::error::Result;
 use crate::project::{Declaration, FeatureColumn, Transform};
 use crate::retract::{self, NOT_RETRACTED};
@@ -130,6 +131,32 @@ pub(crate) fn label_view<'a>(
 /// The label view of a store in which no type names a label.
 pub(crate) const NO_LABELS: &str =
     "SELECT NULL::UUID AS record_id, NULL::VARCHAR AS label WHERE false";
+
+/// Recomputes labels for an ordered sample with a saved declaration. The
+/// sample can include records since retracted and absent from today's features.
+pub(crate) fn snapshot_labels(
+    conn: &Connection,
+    declaration: &Declaration,
+    label: &str,
+    records: &[RecordId],
+) -> Result<Vec<String>> {
+    define(conn, &declaration.transforms)?;
+    let mut statement = conn.prepare(&format!(
+        "WITH picked AS (SELECT id::UUID AS record_id, ord FROM arrow(?)),
+              record AS (SELECT r.* FROM spool.record r JOIN picked USING (record_id))
+         SELECT nullif(trim(f.{label}::VARCHAR), '')
+         FROM (\n{}\n) f JOIN picked USING (record_id) ORDER BY picked.ord",
+        declaration.features
+    ))?;
+    let mut rows = statement.query([&id_list(records)?])?;
+    let mut labels = Vec::new();
+    while let Some(row) = rows.next()? {
+        if let Some(label) = row.get(0)? {
+            labels.push(label);
+        }
+    }
+    Ok(labels)
+}
 
 /// Drops the feature table and the entity view, to rebuild them under a
 /// changed declaration.

@@ -53,6 +53,7 @@ The CLI, the studio and the MCP endpoint are all clients of this API. Every path
 | `GET /v1/attributes` | A profile per entity type and source: current records, and per attribute the fill count, distinct values, top three values and derived features. Filter by `entity_type` or `source` |
 | `GET /v1/identities` | Filter by `entity_type`, `q` (search) or `ids`. Each entry has `members`, `names`, `linked_pairs` (member pairs matched directly) and `unlinked_pairs` (member pairs joined only through a chain). See [`spool show identities`](/docs/cli#spool-show). `sort=names` orders by name count |
 | `GET /v1/identities/{identity}` | One identity and its records. A merged-away ID returns the identity that absorbed it |
+| `GET /v1/identities/{identity}/at?seq=N` | [An identity snapshot](#identity-snapshots) after changeset `N` |
 | `GET /v1/identities/{identity}/history` | Every changeset that touched it |
 | `GET /v1/identities/{identity}/explain` | What holds it together: direct vs. chained pairs, the pieces it would split into without each rule, and its weakest links with the sides each would leave |
 | `POST /v1/identities/{identity}/split` | Splits an identity |
@@ -272,6 +273,16 @@ curl -s -X POST http://127.0.0.1:7765/v1/extractions -d '{"extractor": "companie
 | `wait_ms` | How long to wait for it to finish |
 
 What the extractor finds are records, which the next match places. `failed` lists documents it couldn't read, with the reason, and the next extraction retries them. `taken_back` counts mentions no extractor finds any more, retracted by `retract_runs`. `stderr` holds the extractor's last 100 lines of standard error. [Extraction](/docs/concepts/extraction) shows extractors in both languages.
+
+## Identity snapshots
+
+`GET /v1/identities/{identity}/at?seq=5` reads the identity immediately after changeset `5`. It returns the same fields as the live identity read plus `as_of_seq`.
+
+`id` and `created` describe the requested identity. `current` is the active identity it stood for at that sequence. The label and members are those of `current` at that point. Each member's `since` is the changeset that placed it there. Later merges, splits, reassignments, retractions, and undos leave earlier snapshots intact. Earlier record versions appear while they belonged to the identity.
+
+The label is computed from the historical members using the latest saved entity declaration at the changeset's commit time. Project configuration changes alone do not create a changeset.
+
+Sequence `0` is the empty store. The server returns `404 not_found` for an unknown identity or one created after the requested sequence, and `400 invalid` for a sequence beyond the store head or a negative sequence.
 
 ## Changesets
 

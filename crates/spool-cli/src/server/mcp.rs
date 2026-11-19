@@ -42,7 +42,7 @@ use spool::{NewDocument, ReviewStatus, StrategyRef};
 
 use super::{
     ApiError, ApiResult, App, Caller, ConstraintsQuery, ExplainQuery, IdentitiesQuery,
-    RecordsQuery, ReviewQuery, ServerOptions, WaitQuery,
+    IdentityAtQuery, RecordsQuery, ReviewQuery, ServerOptions, WaitQuery,
 };
 use crate::api::{
     AddDocumentRequest, AddRecordRequest, CommitRequest, DismissRequest, DocumentsRequest,
@@ -115,7 +115,8 @@ something becomes a record, and `run_match` places those as it places rows.
 
 Looking things up: `search_identities` and `search_records` find by words; \
 `get_identity` lists an identity's records and `search_records` with \
-`identity` shows what each one says; `explain_pair` says why two records \
+`identity` shows what each one says; `get_identity_at` reads its records \
+as of a changeset; `explain_pair` says why two records \
 share an identity or do not; `list_review_items` and `get_review_case` show \
 what the server could not decide by itself.
 
@@ -447,6 +448,14 @@ struct SearchIdentities {
 #[serde(deny_unknown_fields)]
 struct OneIdentity {
     identity: IdentityId,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct IdentityAt {
+    identity: IdentityId,
+    /// The inclusive changeset position, from `list_changesets` or identity history.
+    seq: Seq,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -873,6 +882,14 @@ static TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
              and the operations that named the identity. Use this to answer how an identity \
              came to hold what it holds, and to find the `seq` of a change to undo.",
         ),
+        tool::<IdentityAt>(
+            "get_identity_at",
+            "Get an identity at a changeset",
+            Effect::Reads,
+            "Read what an identity contained immediately after changeset `seq`. The response \
+             gives the requested `id`, the survivor at that point as `current`, and its label \
+             and members at that point. Position zero is the empty store.",
+        ),
         tool::<SearchRecords>(
             "search_records",
             "Search records",
@@ -1258,6 +1275,15 @@ impl Tools {
             "get_identity_history" => {
                 let asked: OneIdentity = arguments(tool, given)?;
                 super::identity_history(app, Path(asked.identity.to_string())).await
+            }
+            "get_identity_at" => {
+                let asked: IdentityAt = arguments(tool, given)?;
+                super::identity_at(
+                    app,
+                    Path(asked.identity.to_string()),
+                    Ok(Query(IdentityAtQuery { seq: asked.seq })),
+                )
+                .await
             }
             "search_records" => {
                 let asked: SearchRecords = arguments(tool, given)?;

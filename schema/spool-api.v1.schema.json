@@ -2494,6 +2494,53 @@
         }
       ]
     },
+    "IdentitySnapshot": {
+      "description": "An identity as it stood immediately after the given changeset.",
+      "properties": {
+        "as_of_seq": {
+          "$ref": "#/$defs/Seq"
+        },
+        "created": {
+          "$ref": "#/$defs/Seq",
+          "description": "The log position that created the identity that was asked for."
+        },
+        "current": {
+          "$ref": "#/$defs/IdentityId",
+          "description": "The active identity it stands for: itself, or the one it was merged\ninto."
+        },
+        "entity_type": {
+          "$ref": "#/$defs/EntityType"
+        },
+        "id": {
+          "$ref": "#/$defs/IdentityId",
+          "description": "The ID that was asked for."
+        },
+        "label": {
+          "default": null,
+          "description": "What a person would call the current identity: the label most of its\nmembers have. `None` when no member's payload names it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "members": {
+          "description": "The members of the current identity, ordered by record ID.",
+          "items": {
+            "$ref": "#/$defs/Member"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "current",
+        "entity_type",
+        "created",
+        "members",
+        "as_of_seq"
+      ],
+      "type": "object"
+    },
     "IdentitySummary": {
       "description": "An active identity in a list.",
       "properties": {
