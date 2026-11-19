@@ -1,15 +1,15 @@
 ---
 title: Getting started
-description: Install Spool, load sample rows, match them, see each company keep its ID as more rows arrive, and get records out of a text, from the command line, over HTTP and over MCP.
+description: Install Spool, load and match sample rows, watch each company keep its ID as more rows arrive, and extract records from a call note, from the CLI, over HTTP and over MCP.
 ---
 
-This page installs Spool, makes a project with sample rows, matches them, shows that each company keeps its ID when more rows arrive, and gets three records out of a call note. It takes five minutes. Each step is shown three ways: the command, the HTTP call and the MCP tool. Use the command and read the other two. To find out first whether Spool fits your problem, read [Limits](/docs/limits).
+In five minutes you'll install Spool, load and match a CRM export, watch each company keep its ID as more rows arrive, and pull three more records out of a call note. Each step shows the CLI command, then the same step over HTTP and as an MCP tool call. Run the commands. The other two are for reference.
 
-## What you need
+## Requirements
 
-- Linux on x86-64 or arm64 with version 2.34 or later of the GNU C library, or macOS on Apple silicon. There is no build for Windows, for a Mac with an Intel processor, or for Alpine, whose C library is musl.
+- Linux (x86-64 or arm64, glibc 2.34+) or macOS on Apple silicon.
 - `curl` and `tar`.
-- For the step that reads a text, [`uv`](https://docs.astral.sh/uv/), which runs the sample extractor. Every other step works without it.
+- [`uv`](https://docs.astral.sh/uv/) for the extraction step, which runs the sample extractor. Every other step works without it.
 
 ## Install
 
@@ -19,7 +19,9 @@ This page installs Spool, makes a project with sample rows, matches them, shows 
 curl -fsSL https://github.com/alexpatow/spool/releases/latest/download/install.sh | sh
 ```
 
-The script downloads the release for your machine, checks it against its checksum, unpacks it under `~/.local/share/spool/0.1.0` and links `~/.local/bin/spool`. It needs no root and changes nothing else: if `~/.local/bin` is not on your search path, it prints the line that adds it and edits no file. To do it by hand, download `spool-0.1.0-<target>.tar.gz` from the [release](https://github.com/alexpatow/spool/releases/tag/v0.1.0), unpack it and put its `bin` directory on your search path. Keep `bin` and `lib` together: the binary loads the DuckDB library from `../lib`.
+The script downloads the build for your platform, verifies its checksum, unpacks it to `~/.local/share/spool/0.1.0` and symlinks `~/.local/bin/spool`. It doesn't need root or touch your shell config. If `~/.local/bin` isn't on your `PATH`, it prints the line to add.
+
+To install by hand, unpack `spool-0.1.0-<target>.tar.gz` from the [release](https://github.com/alexpatow/spool/releases/tag/v0.1.0) and put its `bin/` on your `PATH`. Keep `bin/` and `lib/` side by side, because the binary loads DuckDB from `../lib`.
 
 ```sh
 spool --version
@@ -60,7 +62,7 @@ The extractor is a Python file, which Spool runs with `uv`. Its first run fetche
 about 330 MB, most of it the model, and later runs fetch nothing.
 ```
 
-A project is a directory of files that you keep in Git. `spool init companies` makes the directory `companies`, and `--example companies` fills it with the sample project this page uses. Without `--example`, the project is empty: that is where your own data goes. This one declares a source of rows, `crm`, a source of documents, `notes`, and one entity type, `company`. An entity type is a kind of thing you want one ID for. The sample rows:
+A project is a directory you keep in Git. `--example companies` fills it with the sample used on this page. Leave it off to get an empty project for your own data. The sample declares a source of rows, `crm`, a source of documents, `notes`, and one **entity type**, `company`. An entity type is a kind of thing you want one ID for. The first rows:
 
 {/* sample: existing */}
 
@@ -92,9 +94,9 @@ studio    http://127.0.0.1:7765/
 mcp       http://127.0.0.1:7765/mcp
 ```
 
-It listens on this machine only and asks nobody to sign in. Its data is in `.spool/dev.duckdb`, and it applies changes to the project's files as you save them. The last two lines are the addresses of the browser interface and of the endpoint an agent connects to. Leave it running and open a second terminal in the `companies` directory.
+`spool dev` listens on localhost with no sign-in, keeps its data in `.spool/dev.duckdb`, and reloads project files as you save them. The last two lines are the studio, Spool's web UI, and the MCP endpoint for agents. Leave it running and open a second terminal in `companies`.
 
-If something else is listening on port 7765, `spool dev` says so and names the fix: add `--listen 127.0.0.1:7766` to the command, set `SPOOL_URL=http://127.0.0.1:7766` in the second terminal, and use that address in the HTTP calls. A second `spool dev` on the same project is refused, because one server runs on a store at a time.
+If port 7765 is taken, start it with `--listen 127.0.0.1:7766`, set `SPOOL_URL=http://127.0.0.1:7766` in the second terminal, and use that address in the HTTP calls. One server runs on a store at a time, so a second `spool dev` on the same project is refused.
 
 ## Load rows
 
@@ -107,9 +109,9 @@ loaded  6 rows into source `crm`, type `company`: 6 new
 next: `spool match` places them in identities
 ```
 
-Each row is now a record. Loading does not match, and loading the same file again adds nothing.
+Each row is now a **record**. Loading doesn't match, and loading the same file again adds nothing.
 
-The same over HTTP:
+Over HTTP:
 
 {/* sample: after */}
 
@@ -117,7 +119,7 @@ The same over HTTP:
 curl -s -X POST 'http://127.0.0.1:7765/v1/load?source=crm&entity_type=company' -H 'content-type: text/csv' --data-binary @samples/crm-1.csv
 ```
 
-The same as an MCP tool call, with one object for each row:
+As an MCP tool call, with one object per row:
 
 {/* sample: after */}
 
@@ -139,15 +141,15 @@ judgements  3 match, 1 no_match
 placed      6 records, 4 identities created
 ```
 
-A match run compares the records that are new, with each other and with the ones it has placed before, and puts each in an identity. Four pairs were worth comparing. Three were judged the same company and one was not.
+A match compares new records with each other and with everything already placed, and puts each one in an identity. Four pairs were worth comparing: three were judged the same company, and one wasn't.
 
-The same over HTTP, where a match is a run:
+Over HTTP, where a match is a run:
 
 ```sh
 curl -s -X POST http://127.0.0.1:7765/v1/match -d '{"entity_type": "company"}'
 ```
 
-The same as an MCP tool call:
+As an MCP tool call:
 
 ```json title="MCP tool call"
 { "name": "run_match", "arguments": { "entity_type": "company" } }
@@ -169,15 +171,15 @@ crm:c-5         Halden Group         01a1efc6-41cd-775d-8758-e7329447fd9a
 crm:c-6         Halden Group         01a1efc6-41cd-775d-8758-e731c61371cb
 ```
 
-An identity is one company, with its ID and the records that belong to it. The three spellings of Acorn Tools have one identity. Its ID, in the last column, is the company's ID, and it is what other systems store. Yours differs from this one, because an identity's ID is minted when the identity is created. A record has an ID of its own as well, which `spool show records --ids` lists. It is derived from the record's source, its key and its content, so yours are the same as the ones on these pages.
+An **identity** is one company: an ID and the records that belong to it. The three spellings of Acorn Tools share one. That ID, in the last column, is what other systems store. It's minted when the identity is created, so yours will differ. Records have IDs too (`spool show records --ids`). Those are derived from source, key and content, so they match the ones on these pages.
 
-The same over HTTP:
+Over HTTP:
 
 ```sh
 curl -s 'http://127.0.0.1:7765/v1/records?source=crm'
 ```
 
-The same as an MCP tool call:
+As an MCP tool call:
 
 ```json title="MCP tool call"
 { "name": "search_records", "arguments": { "source": "crm" } }
@@ -213,7 +215,7 @@ runs that compared them
   run 2  rules  succeeded  block: name_prefix  no_match
 ```
 
-The two Halden Groups have the same name and different countries. The rule that kept them apart is one line:
+The two Halden Groups share a name but not a country. The rule that kept them apart is one line:
 
 {/* sample: existing */}
 
@@ -234,15 +236,15 @@ The rule that matched "Acorn Tools Ltd" to "Acorn Tools" is one line too:
 jaro_winkler_similarity(l.name_key, r.name_key) >= 0.92
 ```
 
-A rule is a SQL condition over two records, `l` and `r`. [Matching](/docs/concepts/matching) explains the three kinds.
+A rule is a SQL condition over two records, `l` and `r`. [Matching](/docs/concepts/matching) covers the three kinds.
 
-The same over HTTP:
+Over HTTP:
 
 ```sh
 curl -s 'http://127.0.0.1:7765/v1/explain?a=crm:c-5&b=crm:c-6'
 ```
 
-The same as an MCP tool call:
+As an MCP tool call:
 
 ```json title="MCP tool call"
 { "name": "explain_pair", "arguments": { "a": "crm:c-5", "b": "crm:c-6" } }
@@ -250,7 +252,7 @@ The same as an MCP tool call:
 
 ## Send more rows
 
-The second sample file has two names that are spelt wrongly and one company that is new:
+The second file has two typos and one new company:
 
 {/* sample: existing */}
 
@@ -292,11 +294,11 @@ crm:c-8         Kestrel Analytics    01a1efc6-42c0-7776-b736-83fde0cb4498
 crm:c-9         Acorn Tool           01a1efc6-41cd-775d-8758-e7300637659a
 ```
 
-"Acorn Tool" and "Larkfeild Logistics" joined the identities that existed, and those kept their IDs. Kestrel Analytics is new and got a new one. Nothing that was placed before moved.
+"Acorn Tool" and "Larkfeild Logistics" joined their existing identities, which kept their IDs. Kestrel Analytics is new and got a new one. Nothing placed earlier moved.
 
 ## Extract records from text
 
-Rows are one way in. The other is text: an extractor reads a document and says where it names a company, and each place becomes a record. The project has a sample document and a sample extractor.
+Records can also come from text. An **extractor** reads a document and reports where it names a company, and each place becomes a record. The project includes a sample document and extractor.
 
 {/* sample: existing */}
 
@@ -367,7 +369,7 @@ def find(document):
             yield piece.mention(LOOK_FOR[found["label"]], start, end, name=found["text"])
 ```
 
-This extractor is a Python file, which Spool runs with `uv`. It asks a small model, which runs on this machine, where the text names a company, and the text it found is the record's `name`. No document leaves the machine and there is no key to set. The first run fetches about 330 MB, most of it the model, and later runs fetch nothing.
+Spool runs it with `uv`. It asks a small local model where the text names a company, and the matched text becomes the record's `name`. There's no API key, and nothing leaves your machine.
 
 ```sh
 spool extract samples/notes-1.txt
@@ -386,7 +388,7 @@ found      3 records in 1 document: 3 new, 0 already held
 next: `spool match` places them in identities
 ```
 
-Three records came out of the note. Each keeps where it was found: the document and the characters. They are records like the rows, so the same rules match them.
+Three records came out of the note, each with its document and character range. They're records like the rows, so the same rules match them.
 
 ```sh
 spool match
@@ -410,9 +412,9 @@ notes:notes-1.txt[119-142]  Larkfield Logistics Ltd  01a1efc6-41cd-775d-8758-e73
 notes:notes-1.txt[179-200]  Brightwater Foods Ltd    01a1efc6-43a9-7403-b9f6-1f8ee76184ed
 ```
 
-"Acorn Tools Ltd" in the note has the ID that the CRM rows for Acorn Tools have, and Larkfield Logistics has its own. Nothing held Brightwater Foods, so it got a new ID. `spool show records <record>` prints the sentence a record was found in.
+"Acorn Tools Ltd" in the note has the same ID as the Acorn Tools rows, and "Larkfield Logistics Ltd" joined Larkfield. Brightwater Foods is new, so it got a new ID. `spool show records <record>` prints the sentence a record was found in.
 
-The same over HTTP, in two calls: store the document, then run the extractor.
+Over HTTP, it's two calls: store the document, then run the extractor.
 
 ```sh
 curl -s -X POST 'http://127.0.0.1:7765/v1/documents?source=notes&key=notes-1.txt' -H 'content-type: text/plain' --data-binary @samples/notes-1.txt
@@ -422,7 +424,7 @@ curl -s -X POST 'http://127.0.0.1:7765/v1/documents?source=notes&key=notes-1.txt
 curl -s -X POST http://127.0.0.1:7765/v1/extractions -d '{}'
 ```
 
-The same as MCP tool calls:
+As MCP tool calls:
 
 ```json title="MCP tool call"
 { "name": "load_documents", "arguments": { "source": "notes",
@@ -433,11 +435,11 @@ The same as MCP tool calls:
 { "name": "run_extraction", "arguments": { "extractor": "companies" } }
 ```
 
-The word the model is given decides what it finds: `LOOK_FOR` in the file gives it "company", and another word finds other things. An extractor is a Python or TypeScript file in `extractors/`, which Spool runs with `uv` or `bun`, so one of those has to be installed for it. [Extraction](/docs/concepts/extraction) writes one.
+`LOOK_FOR` in the file tells the model to look for "company". Change the word and it finds other things. Extractors are Python or TypeScript files in `extractors/`, run with `uv` or `bun`. [Extraction](/docs/concepts/extraction) walks through writing one.
 
 ## Connect an agent
 
-The server speaks the Model Context Protocol (MCP) at the `mcp` address it printed. `spool dev` asks for no token. For Claude Code:
+The server speaks the Model Context Protocol (MCP) at the `mcp` address it printed, and `spool dev` needs no token. For Claude Code:
 
 {/* sample: not built agent-run */}
 
@@ -453,24 +455,25 @@ For Codex:
 codex mcp add spool --url http://127.0.0.1:7765/mcp
 ```
 
-Then ask it, for example: "Load samples/crm-2.csv into Spool, match it, and tell me why c-5 and c-6 are different companies." The tools it has for that are `load_rows`, `run_match`, `search_records` and `explain_pair`, with `load_documents` and `run_extraction` for text. [MCP](/docs/mcp) lists every tool and what an agent cannot do.
+Then try: "Load samples/crm-2.csv into Spool, match it, and tell me why c-5 and c-6 are different companies." It'll use `load_rows`, `run_match`, `search_records` and `explain_pair`, plus `load_documents` and `run_extraction` for text. [MCP](/docs/mcp) lists every tool.
 
 ## Look at it in a browser
 
-The studio is at [http://127.0.0.1:7765/](http://127.0.0.1:7765/). Its Identities screen lists the six companies:
+Open the studio at [http://127.0.0.1:7765/](http://127.0.0.1:7765/). Its Identities screen lists the six companies:
 
 ![The studio's Identities screen, listing six companies with the number of records each has](/images/studio-identities.png)
 
-The studio shows the same records, identities and explanations, and it can merge two identities, split one and undo a change.
+It shows the same records, identities and explanations, and lets you merge, split and undo.
 
 ## Stop
 
-Ctrl-C in the first terminal stops the server. The data stays in `.spool/dev.duckdb`. To start from nothing, stop the server and delete `.spool`.
+Ctrl-C in the first terminal stops the server. Data stays in `.spool/dev.duckdb`. Delete `.spool/` to start over.
 
 ## Next
 
-- Start a project for your own rows: `spool init <name>` makes an empty one, with the folders a project uses. Copy what you need from this one, then `spool load your-file.csv`. [Project structure](/docs/project-structure) lists every file.
-- Write an extractor that asks a model. [Extraction](/docs/concepts/extraction)
-- What happens when a rule gets better. [Matching](/docs/concepts/matching#rules-that-get-better)
-- Merge, split and undo. [Identities](/docs/concepts/identities)
-- Read the IDs from your own code. [Using the IDs](/docs/using-the-ids)
+- **Your own data:** `spool init <name>` creates an empty project. Copy what you need from this one, then `spool load your-file.csv`. [Project structure](/docs/project-structure) lists every file.
+- **Build a project from scratch:** [Entity types and features](/docs/concepts/entity-types-and-features) models a product catalog from two suppliers.
+- **Write an extractor that calls a model:** [Extraction](/docs/concepts/extraction).
+- **Improve a rule without moving IDs:** [Matching](/docs/concepts/matching#rules-that-get-better).
+- **Merge, split and undo:** [Identities](/docs/concepts/identities).
+- **Read the IDs from your own code:** [Using the IDs](/docs/using-the-ids).
