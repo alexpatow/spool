@@ -25,7 +25,7 @@
 
 // @bun
 // src/index.ts
-import { readFile, rename, writeFile } from "fs/promises";
+import { readFile, rename, rm, writeFile } from "fs/promises";
 import { join } from "path";
 
 // node_modules/hyparquet/src/constants.js
@@ -7300,13 +7300,14 @@ class ExtractTask {
     return this.read;
   }
   async write(mentions) {
+    const given = [...mentions];
     const failed = new Map;
-    for (const row of mentions) {
+    for (const row of given) {
       if (isFailure(row) && !failed.has(String(row.document_id))) {
         failed.set(String(row.document_id), String(row.failed));
       }
     }
-    const rows = [...mentions].filter((row) => !isFailure(row) && !failed.has(String(row?.document_id)));
+    const rows = given.filter((row) => !isFailure(row) && !failed.has(String(row?.document_id)));
     rows.forEach(checkMention);
     if (failed.size > 0 && this.info.failed !== undefined) {
       const reasons = parquetWriteBuffer({
@@ -7316,6 +7317,8 @@ class ExtractTask {
         ]
       });
       await writeWhole(join(this.dir, this.info.failed), reasons);
+    } else if (this.info.failed !== undefined) {
+      await rm(join(this.dir, this.info.failed), { force: true });
     }
     const buffer = parquetWriteBuffer({
       columnData: [

@@ -40,6 +40,7 @@ function taskDirectory(kind = "extract"): string {
       ],
       inputs: { documents: "documents.parquet" },
       output: "mentions.parquet",
+      failed: "failed.parquet",
     }),
   );
   const buffer = parquetWriteBuffer({
@@ -118,6 +119,39 @@ describe("an extraction task", () => {
       { document_id: "d-2", entity_type: "company", start: 19, end: 27, attributes: '{"name":"Acme Inc"}' },
     ]);
     expect(existsSync(join(dir, "mentions.parquet.part"))).toBe(false);
+  });
+
+  test("takes its mentions from a generator, which gives them only once", async () => {
+    const dir = taskDirectory();
+    await run(dir, async (task) => {
+      const [first] = await task.documents();
+      return (function* () {
+        yield first!.mention("company", 3, 11, { name: "Acme Inc" });
+        yield first!.mention("company", 30, 40, { name: "Globex Ltd" });
+      })();
+    });
+    expect((await written(dir)).map((row) => row.start)).toEqual([2, 29]);
+  });
+
+  test("writes the documents it could not read, and a write replaces them", async () => {
+    const dir = taskDirectory();
+    await run(dir, async (task) => {
+      const [first, second] = await task.documents();
+      return [first!.mention("company", 3, 11, { name: "Acme Inc" }), second!.failed("the model answered 500")];
+    });
+    expect(await written(dir)).toHaveLength(1);
+    const bytes = readFileSync(join(dir, "failed.parquet"));
+    expect(
+      await parquetReadObjects({ file: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) }),
+    ).toEqual([{ document_id: "d-2", reason: "the model answered 500" }]);
+
+    // Written again with the document read, it is not failed any more.
+    await run(dir, async (task) => {
+      const [, second] = await task.documents();
+      return [second!.mention("company", 0, 11, { name: "Société Ltd" })];
+    });
+    expect(existsSync(join(dir, "failed.parquet"))).toBe(false);
+    expect((await written(dir)).map((row) => row.document_id)).toEqual(["d-2"]);
   });
 
   test("with no mentions still gets its file", async () => {

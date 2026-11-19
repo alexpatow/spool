@@ -496,11 +496,20 @@ impl Inner {
                 let column = |value: fn(&Mention) -> String| {
                     Column::Text(staged.iter().map(|mention| Some(value(mention))).collect())
                 };
+                // The record a mention found is the version its key holds
+                // now that it is stored: content held before under the key
+                // and found again is a version of its own, and not the
+                // record the content first made.
                 tx.execute(
                     "INSERT INTO spool.extraction_found
                      SELECT $1, f.document_id::UUID, $2, $3, f.entity_type, f.record_key,
-                            f.record_id::UUID
-                     FROM arrow($4) f",
+                            r.record_id
+                     FROM arrow($4) f
+                     JOIN spool.record r
+                       ON r.entity_type = f.entity_type AND r.source_id = f.source
+                      AND r.source_key = f.record_key
+                     WHERE NOT EXISTS (
+                         SELECT 1 FROM spool.record later WHERE later.supersedes = r.record_id)",
                     params![
                         run.0 as i64,
                         extractor.name,
@@ -511,8 +520,8 @@ impl Inner {
                                 column(|mention| mention.document.to_string())
                             ),
                             ("entity_type", column(|mention| mention.entity_type.clone())),
+                            ("source", column(|mention| mention.source.clone())),
                             ("record_key", column(|mention| mention.key.clone())),
-                            ("record_id", column(|mention| mention.record.to_string())),
                         ])?)
                     ],
                 )?;

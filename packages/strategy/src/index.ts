@@ -49,7 +49,7 @@
 // it: `bun run build` writes that file, and the engine puts it where `bun`
 // finds it. A strategy or an extractor needs nothing installed to import it.
 
-import { readFile, rename, writeFile } from "node:fs/promises";
+import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { parquetReadObjects } from "hyparquet";
@@ -465,13 +465,15 @@ export class ExtractTask {
    * `document.failed(...)` made. Whatever was written before is replaced.
    */
   async write(mentions: Iterable<Mention | Failure>): Promise<void> {
+    // Read once: a generator gives its rows only the first time.
+    const given = [...mentions];
     const failed = new Map<string, string>();
-    for (const row of mentions) {
+    for (const row of given) {
       if (isFailure(row) && !failed.has(String(row.document_id))) {
         failed.set(String(row.document_id), String(row.failed));
       }
     }
-    const rows = [...mentions].filter(
+    const rows = given.filter(
       (row): row is Mention => !isFailure(row) && !failed.has(String((row as Mention | null)?.document_id)),
     );
     rows.forEach(checkMention);
@@ -483,6 +485,9 @@ export class ExtractTask {
         ],
       });
       await writeWhole(join(this.dir, this.info.failed), reasons);
+    } else if (this.info.failed !== undefined) {
+      // What an earlier call wrote is replaced, failures included.
+      await rm(join(this.dir, this.info.failed), { force: true });
     }
     const buffer = parquetWriteBuffer({
       columnData: [

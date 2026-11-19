@@ -504,6 +504,8 @@ class ExtractTask:
         what `document.failed(...)` made. Whatever was written before is
         replaced."""
         pyarrow = _pyarrow()
+        # Read once: an iterator gives its rows only the first time.
+        mentions = list(mentions)
         failed = {}
         for row in mentions:
             if isinstance(row, dict) and "failed" in row:
@@ -523,6 +525,9 @@ class ExtractTask:
                 }
             )
             _write(pyarrow, table, self.dir / self.info["failed"])
+        elif "failed" in self.info:
+            # What an earlier call wrote is replaced, failures included.
+            (self.dir / self.info["failed"]).unlink(missing_ok=True)
 
 
 def extractor(function):

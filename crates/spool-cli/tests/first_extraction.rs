@@ -1215,6 +1215,50 @@ fn a_mention_no_extractor_finds_any_more_is_taken_back() {
     );
 }
 
+/// An extractor that finds nothing at all takes back what was found
+/// before, as a broken one would, and the command says so out loud.
+#[test]
+#[ignore = "runs uv"]
+fn a_reading_that_finds_nothing_at_all_says_what_it_took_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = init_with_stand_in(dir.path());
+    let server = Server::dev(&project);
+    assert_eq!(
+        extracted(&server, &project, &["samples/notes-1.txt"]),
+        FIRST
+    );
+
+    drop(server);
+    write(
+        &project.join("extractors/companies.py"),
+        "from spool import extractor\n\n\n@extractor\ndef find(document):\n    return []\n",
+    );
+    let server = Server::dev(&project);
+    let output = server
+        .spool_in(&project, &["extract", "--again"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    let run = runs(&server, "extract")
+        .into_iter()
+        .map(|run| run["run"].as_u64().unwrap())
+        .max()
+        .unwrap();
+    assert_eq!(
+        text(&output.stderr),
+        format!(
+            "taken back 3 records that run {run} found nowhere, though it found nothing at all: \
+             if the extractor is wrong, mend it and run `spool extract --again`, and what it \
+             finds again goes back to the identity it left\n"
+        )
+    );
+    assert!(
+        text(&output.stdout).contains("taken back 3 records: no extractor finds them any more"),
+        "{}",
+        text(&output.stdout)
+    );
+}
+
 /// Ctrl-C cancels the batch that is running: the server stops the
 /// extractor and keeps nothing of the batch, the batches before it are
 /// kept, and the command says so. While the batch runs, its documents say

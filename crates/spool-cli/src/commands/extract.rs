@@ -336,6 +336,18 @@ pub fn extract(arguments: &[String]) -> Result<(), Failure> {
             .ok_or_else(|| unreported(&run, "what it found"))?;
         found.add(report);
         progress.relay(&report.stderr);
+        // An extractor that finds nothing anywhere takes back all that was
+        // found before, which is what a broken one does too. It is taken
+        // back all the same, and comes back when it is found again.
+        if report.mentions == 0 && report.taken_back > 0 {
+            eprintln!(
+                "taken back {} that run {} found nowhere, though it found nothing at all: if the \
+                 extractor is wrong, mend it and run `spool extract --again`, and what it finds \
+                 again goes back to the identity it left",
+                plural(report.taken_back, "record", "records"),
+                run.run
+            );
+        }
         // A batch none of whose documents could be read says more about the
         // extractor than about them: a key that is wrong, a model that is
         // not there. Going on would fail every batch after it.

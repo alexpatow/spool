@@ -1400,6 +1400,91 @@ def find(document):
 
 #[test]
 #[ignore = "runs uv"]
+fn a_task_written_from_an_iterator_and_written_again_keeps_the_last() {
+    let news = News::new();
+    // Without the decorator: a failure written first, then replaced with
+    // mentions given by a generator, which gives them only once.
+    news.extractor(
+        "names.py",
+        r#"
+import os
+from spool import ExtractTask
+
+if os.environ.get("SPOOL_TASK_DIR"):
+    task = ExtractTask(os.environ["SPOOL_TASK_DIR"])
+    first, second = task.documents
+    task.write([second.failed("the first try")])
+    task.write(
+        document.mention("company", start, end, name=document.text[start:end])
+        for document in (first, second)
+        for start, end in document.find("Acme Inc")
+    )
+"#,
+    );
+    news.add(&[("a", FIRST), ("b", SECOND)]);
+    let report = news.extract("names").unwrap();
+    assert_eq!((report.mentions, report.failed.len()), (2, 0), "{report:?}");
+    let read = news.engine.document(id("b", SECOND)).unwrap();
+    assert_eq!(read.extractions[0].failure, None);
+}
+
+#[test]
+#[ignore = "runs uv"]
+fn a_reading_is_recorded_against_the_version_it_found() {
+    let news = News::new();
+    let saying = |form: &str| {
+        format!(
+            r#"
+from spool import extractor
+
+@extractor
+def find(document):
+    for start, end in document.find("Acme Inc"):
+        yield document.mention("company", start, end, name="Acme Inc", form="{form}")
+"#
+        )
+    };
+    news.add(&[("a", FIRST)]);
+    let document = id("a", FIRST);
+    let mut runs = Vec::new();
+    // The mention says Inc, then Ltd, then Inc again: three versions, the
+    // last of which holds what the first held.
+    for form in ["Inc", "Ltd", "Inc"] {
+        news.extractor("names.py", &saying(form));
+        let report = news
+            .engine
+            .extract(&ExtractOptions {
+                again: true,
+                ..ExtractOptions::with("names")
+            })
+            .unwrap();
+        runs.push(report.run);
+    }
+    let versions = news
+        .engine
+        .records(&RecordFilter::keyed(
+            "news",
+            locator(document, "company", 2, 10),
+        ))
+        .unwrap();
+    assert_eq!(versions.len(), 3);
+    let current = versions
+        .iter()
+        .find(|record| record.superseded_by.is_none())
+        .unwrap();
+    let found: Vec<_> = current.found_by.iter().map(|found| found.run).collect();
+    assert_eq!(found, [runs[2]], "{versions:?}");
+    // Each earlier version keeps the reading that found it.
+    let earlier: BTreeSet<_> = versions
+        .iter()
+        .filter(|record| record.superseded_by.is_some())
+        .flat_map(|record| record.found_by.iter().map(|found| found.run))
+        .collect();
+    assert_eq!(earlier, BTreeSet::from([runs[0], runs[1]]));
+}
+
+#[test]
+#[ignore = "runs uv"]
 fn mentions_no_extractor_finds_any_more_are_taken_back_and_come_back() {
     let news = News::new();
     let finding = |names: &[&str]| {
