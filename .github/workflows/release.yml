@@ -53,13 +53,21 @@ env:
   TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
 
 jobs:
-  # Both Linux archives and the image come from one build of the Dockerfile,
-  # which compiles for arm64 on this x86-64 machine. What it builds for arm64
-  # runs here under emulation.
-  linux:
-    name: Linux archives and the image
-    runs-on: ubuntu-24.04
+  # Each Linux archive is built and tested on a runner of its architecture.
+  linux-archive:
+    name: Linux archive (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
     steps:
       - uses: actions/checkout@v7
 
@@ -68,25 +76,45 @@ jobs:
         run: release/version.sh "$TAG"
 
       - name: Lint the scripts
+        if: matrix.arch == 'amd64'
         run: shellcheck install.sh release/*.sh
 
       # What reads the sample note in the tests below. It is the version
       # CI tests with and the Dockerfile of `spool build` installs. Nothing
       # of a run is kept for the next.
       - uses: astral-sh/setup-uv@v10.3.3
+        if: matrix.arch == 'amd64'
         with:
           version: "0.13.8"
           enable-cache: false
 
-      - name: Emulate arm64
-        run: docker run --privileged --rm tonistiigi/binfmt --install arm64
+      - uses: docker/setup-buildx-action@v4
 
-      - name: Build the archives and the image
-        run: release/linux.sh dist
+      # A dry run on the default branch warms the cache for the tag.
+      - name: Build the archive files
+        uses: docker/build-push-action@v7
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: "false"
+        with:
+          context: .
+          platforms: linux/${{ matrix.arch }}
+          target: archive
+          outputs: type=local,dest=${{ runner.temp }}/spool-archive
+          cache-from: type=gha,scope=release-linux-${{ matrix.arch }}
+          cache-to: >-
+            ${{ github.ref_name == github.event.repository.default_branch && github.ref_type == 'branch'
+              && format('type=gha,scope=release-linux-{0},mode=max,ignore-error=true', matrix.arch) || '' }}
+
+      - name: Make the archive
+        env:
+          ARCHIVE_FILES: ${{ runner.temp }}/spool-archive
+          RUST_TARGET: ${{ matrix.target }}
+        run: release/archive.sh "$RUST_TARGET" "$ARCHIVE_FILES/bin/spool" "$ARCHIVE_FILES/lib/libduckdb.so" dist
 
       # The whole start of the README, with a stand-in for the sample
       # extractor: see release/smoke.sh.
       - name: Install from the archive for x86-64
+        if: matrix.arch == 'amd64'
         env:
           SPOOL_SMOKE_NOTE: required
         run: release/test-install.sh dist
@@ -94,20 +122,50 @@ jobs:
       # The container has no `uv`, so here the rows are loaded and matched
       # and the note is not read.
       - name: Install from the archive for arm64
+        if: matrix.arch == 'arm64'
         run: release/test-install.sh dist buildpack-deps:bookworm-curl linux/arm64
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-archive-${{ matrix.arch }}
+          path: |
+            dist/spool-*.tar.gz
+            dist/spool-*.tar.gz.sha256
+          if-no-files-found: error
+          # All of it is compressed already.
+          compression-level: 0
+          retention-days: 1
+
+  # Both images use the binaries from the tested archives. The arm64 image
+  # needs emulation here to install certificates and run its smoke test.
+  linux-image:
+    name: Linux multi-platform image
+    needs: linux-archive
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: linux-archive-*
+          merge-multiple: true
+          path: dist
+
+      - name: Emulate arm64
+        run: docker run --privileged --rm tonistiigi/binfmt --install arm64
+
+      - name: Build the image from the archives
+        run: release/linux.sh --image-only dist
 
       - name: Run the image
         run: release/test-image.sh dist
 
       - uses: actions/upload-artifact@v7
         with:
-          name: linux
-          path: |
-            dist/spool-*.tar.gz
-            dist/spool-*.tar.gz.sha256
-            dist/spool-image.tar
+          name: linux-image
+          path: dist/spool-image.tar
           if-no-files-found: error
-          # All of it is compressed already.
           compression-level: 0
           retention-days: 1
 
@@ -168,7 +226,7 @@ jobs:
 
   publish:
     name: Publish
-    needs: [linux, macos]
+    needs: [linux-image, macos]
     if: github.event_name == 'push' && github.ref_type == 'tag' && github.repository == 'alexpatow/spool'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
