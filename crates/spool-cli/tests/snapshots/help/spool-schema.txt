@@ -1,0 +1,6 @@
+Print the JSON Schema of the server's API
+
+Usage: spool schema
+
+Options:
+  -h, --help  Print help (see more with '--help')

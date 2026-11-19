@@ -378,7 +378,7 @@ fn the_usage_says_how_to_open_the_studio_and_how_to_turn_it_off() {
     let refused = run(&["dev", "--no-studio"]);
     assert_eq!(refused.status.code(), Some(2));
     assert!(
-        text(&refused.stderr).contains("unknown option `--no-studio`"),
+        text(&refused.stderr).contains("unexpected argument '--no-studio'"),
         "{}",
         text(&refused.stderr)
     );

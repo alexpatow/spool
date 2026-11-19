@@ -1,0 +1,26 @@
+Send the rows of a file to a running server
+
+Usage: spool load [OPTIONS] <FILE>
+
+Arguments:
+  <FILE>  The file to read; `-` reads standard input
+
+Options:
+      --source <NAME>     The source the rows come from
+      --type <NAME>       The entity type they are records of [default: the only type whose mapping
+                          reads the source]
+      --delimiter <CHAR>  The character between the fields, or `tab` [default: a comma, or a tab for
+                          .tsv and .tab]
+      --batch <ROWS>      Send at most this many rows in one request [default: as many as make about
+                          32 MiB]
+      --json              Print the load runs the server answered with, as JSON
+  -h, --help              Print help (see more with '--help')
+
+Server options:
+      --url <URL>      The server [env: SPOOL_URL] [default: http://127.0.0.1:7765]
+      --token <TOKEN>  A token for that server; `spool dev` needs none [env: SPOOL_TOKEN]
+
+Examples:
+  spool load samples/crm-1.csv
+  spool load export.tsv --source crm
+  cat rows.csv | spool load - --source crm

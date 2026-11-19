@@ -679,10 +679,10 @@ fn tokens_are_made_and_revoked_on_the_servers_machine_while_it_runs() {
     assert!(!dir.path().join("typo.auth.sqlite").exists());
 
     for (arguments, complaint) in [
-        (&["token"][..], "say what to do"),
-        (&["token", "add"], "needs the token's name"),
-        (&["token", "frob", "ci"], "not `frob`"),
-        (&["token", "list", "ci"], "unexpected argument `ci`"),
+        (&["token"][..], "Usage: spool token"),
+        (&["token", "add"], "<NAME>"),
+        (&["token", "frob", "ci"], "unrecognized subcommand 'frob'"),
+        (&["token", "list", "ci"], "unexpected argument 'ci'"),
         (&["token", "add", "ci"], "SPOOL_STORE"),
     ] {
         let refused = run(arguments);

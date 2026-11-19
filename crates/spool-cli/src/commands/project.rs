@@ -1,65 +1,72 @@
 //! The commands that work on a project directory: `info`, `build` and
 //! `apply`.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use clap::Args;
 use spool::{Engine, Manifest, Options, Project, Runtime};
 
-use super::manifest_path;
+use super::{manifest_path, project_dir};
 use crate::Failure;
-use crate::args::Spec;
 
-pub const INFO_USAGE: &str = "\
-Usage: spool info [<dir>] [options]
+/// List what a project declares, and check its SQL
+///
+/// Lists what the project directory declares: its sources, with the columns
+/// each has and the features each column becomes; its entity types, with
+/// their feature columns, their rules and their user-code strategies; and its
+/// extractors. Every SQL file is checked on the way.
+///
+/// What the records hold in those columns is on the server: `spool show
+/// attributes` says how many records have each and the values most have.
+#[derive(Args)]
+pub struct InfoArgs {
+    /// The project directory [default: the current directory]
+    dir: Option<PathBuf>,
+    /// Print the listing as JSON
+    #[arg(long)]
+    json: bool,
+}
 
-Lists what the project directory declares: its sources, with the columns
-each has and the features each column becomes; its entity types, with their
-feature columns, their rules and their user-code strategies; and its
-extractors. Every SQL file is checked on the way.
+/// Check a project and compile it into a manifest
+///
+/// Checks the project and compiles it into .spool/manifest.json. The server
+/// reads the manifest, and the strategy and extractor files it names. Writes
+/// a Dockerfile if the project has none.
+///
+/// SPOOL_UV and SPOOL_BUN name `uv` and `bun` if they are not on the search
+/// path.
+#[derive(Args)]
+pub struct BuildArgs {
+    /// The project directory [default: the current directory]
+    dir: Option<PathBuf>,
+    /// The image the written Dockerfile starts from
+    #[arg(long, value_name = "IMAGE")]
+    base_image: Option<String>,
+    /// Start each strategy and extractor once, to fetch what it needs
+    ///
+    /// Starts each user-code strategy and extractor once with nothing to do,
+    /// so that `uv` and `bun` fetch what it depends on, a model it loads as
+    /// it starts is fetched too, and a file that cannot start is found now.
+    #[arg(long)]
+    install: bool,
+}
 
-What the records hold in those columns is on the server: `spool show
-attributes` says how many records have each and the values most have.
-
-  <dir>     the project directory (default: the current directory)
-
-Options:
-  --json    print the listing as JSON
-";
-
-pub const BUILD_USAGE: &str = "\
-Usage: spool build [<dir>] [options]
-
-Checks the project and compiles it into .spool/manifest.json. The server
-reads the manifest, and the strategy and extractor files it names. Writes a
-Dockerfile if the project has none.
-
-  <dir>                  the project directory (default: the current directory)
-
-Options:
-  --base-image <image>   the image the written Dockerfile starts from
-  --install              start each user-code strategy and extractor once
-                         with nothing to do, so that `uv` and `bun` fetch
-                         what it depends on, a model it loads as it starts
-                         is fetched too, and a file that cannot start is
-                         found now
-
-SPOOL_UV and SPOOL_BUN name `uv` and `bun` if they are not on the search path.
-";
-
-pub const APPLY_USAGE: &str = "\
-Usage: spool apply [<dir>] --store <path> [options]
-
-Applies a manifest to a store: declares new entity types, and computes the
-feature table again for each type whose declaration changed. Identities are
-not touched. The server must not be running on the store.
-
-  <dir>               the project directory (default: the current directory)
-
-Options:
-  --store <path>      the store's database file; created if it does not exist
-                      (default: $SPOOL_STORE)
-  --manifest <path>   the manifest to apply (default: <dir>/.spool/manifest.json)
-";
+/// Apply a manifest to a store
+///
+/// Applies a manifest to a store: declares new entity types, and computes the
+/// feature table again for each type whose declaration changed. Identities
+/// are not touched. The server must not be running on the store.
+#[derive(Args)]
+pub struct ApplyArgs {
+    /// The project directory [default: the current directory]
+    dir: Option<PathBuf>,
+    /// The store's database file; created if it does not exist
+    #[arg(long, env = "SPOOL_STORE", hide_env_values = true, value_name = "PATH")]
+    store: Option<PathBuf>,
+    /// The manifest to apply [default: <DIR>/.spool/manifest.json]
+    #[arg(long, value_name = "PATH")]
+    manifest: Option<PathBuf>,
+}
 
 /// The default base image of a written Dockerfile.
 fn base_image() -> String {
@@ -210,16 +217,8 @@ pub(super) fn write(path: &Path, contents: &str) -> Result<(), Failure> {
     std::fs::write(path, contents).map_err(|error| failed(format!("{}: {error}", path.display())))
 }
 
-pub fn info(arguments: &[String]) -> Result<(), Failure> {
-    let arguments = super::arguments(
-        arguments,
-        &Spec {
-            values: &[],
-            flags: &["--json"],
-            positional: 1,
-        },
-    )?;
-    let dir = arguments.project_dir();
+pub fn info(arguments: InfoArgs) -> Result<(), Failure> {
+    let dir = project_dir(&arguments.dir);
     let project = Project::read(&dir)?;
     let manifest = project.compile()?;
 
@@ -253,7 +252,7 @@ pub fn info(arguments: &[String]) -> Result<(), Failure> {
         .map(|path| path.display().to_string())
         .collect();
 
-    if arguments.flag("--json") {
+    if arguments.json {
         let listing = serde_json::json!({
             "manifest_hash": manifest.hash,
             "sources": manifest.sources,
@@ -426,16 +425,8 @@ fn print_source(manifest: &Manifest, source: &spool::Source) {
     }
 }
 
-pub fn build(arguments: &[String]) -> Result<(), Failure> {
-    let arguments = super::arguments(
-        arguments,
-        &Spec {
-            values: &["--base-image"],
-            flags: &["--install"],
-            positional: 1,
-        },
-    )?;
-    let dir = arguments.project_dir();
+pub fn build(arguments: BuildArgs) -> Result<(), Failure> {
+    let dir = project_dir(&arguments.dir);
     let manifest = Manifest::load(&dir)?;
     let path = manifest_path(&dir);
     manifest.write_file(&path)?;
@@ -466,16 +457,14 @@ pub fn build(arguments: &[String]) -> Result<(), Failure> {
 
     let dockerfile_path = dir.join("Dockerfile");
     if dockerfile_path.exists() {
-        if arguments.value("--base-image").is_some() {
+        if arguments.base_image.is_some() {
             return Err(failed(format!(
                 "{} already exists and belongs to the project; change its base image there",
                 dockerfile_path.display()
             )));
         }
     } else {
-        let image = arguments
-            .value("--base-image")
-            .map_or_else(base_image, str::to_owned);
+        let image = arguments.base_image.clone().unwrap_or_else(base_image);
         let contents = if runtimes.is_empty() {
             dockerfile(&image)
         } else {
@@ -490,8 +479,8 @@ pub fn build(arguments: &[String]) -> Result<(), Failure> {
         }
     }
 
-    if arguments.flag("--install") {
-        let user_code = super::user_code(&arguments, &dir)?;
+    if arguments.install {
+        let user_code = super::user_code(None, &dir);
         for strategy in strategies {
             user_code.install(strategy)?;
             println!("starts    {}", strategy.file);
@@ -504,19 +493,12 @@ pub fn build(arguments: &[String]) -> Result<(), Failure> {
     Ok(())
 }
 
-pub fn apply(arguments: &[String]) -> Result<(), Failure> {
-    let arguments = super::arguments(
-        arguments,
-        &Spec {
-            values: &["--store", "--manifest"],
-            flags: &[],
-            positional: 1,
-        },
-    )?;
-    let store = super::store_path(&arguments)?;
+pub fn apply(arguments: ApplyArgs) -> Result<(), Failure> {
+    let store = super::store_path(&arguments.store)?;
     let manifest_file = arguments
-        .path("--manifest")
-        .unwrap_or_else(|| manifest_path(&arguments.project_dir()));
+        .manifest
+        .clone()
+        .unwrap_or_else(|| manifest_path(&project_dir(&arguments.dir)));
     let manifest = Manifest::read_file(&manifest_file)?;
 
     let engine = Engine::open(&store, Options::default())?;

@@ -143,7 +143,7 @@ fn reset_starts_over_only_a_store_under_the_projects_spool_directory() {
         assert_eq!(refused.status.code(), Some(2));
         let said = text(&refused.stderr);
         assert!(
-            said.starts_with("spool: `spool reset` removes only a development store: a .duckdb file directly under "),
+            said.starts_with("error: `spool reset` removes only a development store: a .duckdb file directly under "),
             "{said}"
         );
         assert!(said.contains("which no command removes."), "{said}");

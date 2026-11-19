@@ -1,0 +1,12 @@
+Revoke a token: the server no longer accepts it
+
+Usage: spool token revoke [OPTIONS] <NAME>
+
+Arguments:
+  <NAME>  The token's name
+
+Options:
+      --store <PATH>  The store's database file; the tokens are in the accounts file beside it [env:
+                      SPOOL_STORE]
+      --json          Print the tokens as JSON
+  -h, --help          Print help

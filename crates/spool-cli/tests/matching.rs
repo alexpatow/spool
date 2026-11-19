@@ -401,11 +401,11 @@ nothing to match: there are no `person` records yet
     for (arguments, complaint) in [
         (
             &["match", "samples/crm-1.csv"][..],
-            "spool: unexpected argument `samples/crm-1.csv`\n\nUsage: spool match [options]\n",
+            "error: unexpected argument 'samples/crm-1.csv' found\n\nUsage: spool match [OPTIONS]\n",
         ),
         (
             &["match", "--all"],
-            "spool: unknown option `--all`\n\nUsage: spool match [options]\n",
+            "error: unexpected argument '--all' found\n\nUsage: spool match [OPTIONS]\n",
         ),
     ] {
         let output = server.spool_in(&project, arguments).output().unwrap();

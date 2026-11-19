@@ -1,0 +1,16 @@
+List drafts, or show one with the changeset it would commit
+
+Usage: spool show drafts [OPTIONS] [DRAFT]
+
+Arguments:
+  [DRAFT]  A draft's ID, to show the changeset it would commit
+
+Options:
+      --type <NAME>      Only this entity type
+      --status <STATUS>  Only this status [possible values: open, committed, rejected, superseded]
+      --json             Print what the server answered, as JSON
+  -h, --help             Print help
+
+Server options:
+      --url <URL>      The server [env: SPOOL_URL] [default: http://127.0.0.1:7765]
+      --token <TOKEN>  A token for that server; `spool dev` needs none [env: SPOOL_TOKEN]

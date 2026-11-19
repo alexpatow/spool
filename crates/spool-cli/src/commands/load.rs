@@ -14,42 +14,51 @@ use spool::{DeclaredSource, LoadReport, RunStatus};
 use spool_cli::api::{ARROW_STREAM, Info};
 use spool_cli::delimited::{EMPTY, Reader};
 
-use super::remote::{self, Remote, WAIT_MS, print_json, unsuccessful};
+use super::remote::{self, Remote, RemoteArgs, WAIT_MS, print_json, unsuccessful};
 use super::show::{count, fields};
 use crate::Failure;
-use crate::args::Spec;
 
-pub const USAGE: &str = "\
-Usage: spool load <file> [options]
-
-Sends the rows of a CSV file to a running server, which keeps each row as a
-record. The first line of the file names the columns, and each has to be a
-column the source lists in its sources/<name>.yaml. Every value is text, and
-an empty field is a missing value.
-
-Loading does not match: `spool match` places the records in identities.
-Loading the same rows again adds nothing. A row that comes again under the
-same key with other content is a new version of that row.
-
-  <file>             the file to read; `-` reads standard input. A file whose
-                     name ends in .tsv or .tab has tabs between its fields
-
-Options:
-  --source <name>    the source the rows come from (default: the only source
-                     the project declares, the one the file is named after,
-                     as crm-1.csv is after `crm`, or else the one that lists
-                     most of the file's columns)
-  --type <name>      the entity type they are records of (default: the only
-                     type whose mapping reads the source)
-  --delimiter <c>    the character between the fields, or `tab` (default: a
-                     comma, or a tab for .tsv and .tab)
-  --batch <n>        send at most this many rows in one request (default: as
-                     many as make about 32 MiB)
-  --url <url>        the server (default: $SPOOL_URL, or http://127.0.0.1:7765)
-  --token <token>    a token of that server (default: $SPOOL_TOKEN); `spool dev`
-                     asks for none
-  --json             print the load runs the server answered with, as JSON
-";
+/// Send the rows of a file to a running server
+///
+/// Sends the rows of a CSV file to a running server, which keeps each row as
+/// a record. The first line of the file names the columns, and each has to be
+/// a column the source lists in its sources/<name>.yaml. Every value is text,
+/// and an empty field is a missing value.
+///
+/// Loading does not match: `spool match` places the records in identities.
+/// Loading the same rows again adds nothing. A row that comes again under the
+/// same key with other content is a new version of that row.
+#[derive(clap::Args)]
+#[command(
+    after_help = "Examples:\n  spool load samples/crm-1.csv\n  spool load export.tsv --source crm\n  cat rows.csv | spool load - --source crm"
+)]
+pub struct LoadArgs {
+    /// The file to read; `-` reads standard input
+    ///
+    /// A file whose name ends in .tsv or .tab has tabs between its fields.
+    file: String,
+    /// The source the rows come from
+    ///
+    /// The default is the only source the project declares, the one the file
+    /// is named after, as crm-1.csv is after `crm`, or else the one that lists
+    /// most of the file's columns.
+    #[arg(long, value_name = "NAME")]
+    source: Option<String>,
+    /// The entity type they are records of [default: the only type whose mapping reads the source]
+    #[arg(long = "type", value_name = "NAME")]
+    entity_type: Option<String>,
+    /// The character between the fields, or `tab` [default: a comma, or a tab for .tsv and .tab]
+    #[arg(long, value_name = "CHAR")]
+    delimiter: Option<String>,
+    /// Send at most this many rows in one request [default: as many as make about 32 MiB]
+    #[arg(long, value_name = "ROWS", value_parser = clap::value_parser!(u64).range(1..))]
+    batch: Option<u64>,
+    /// Print the load runs the server answered with, as JSON
+    #[arg(long)]
+    json: bool,
+    #[command(flatten)]
+    remote: RemoteArgs,
+}
 
 /// About how much one request holds. A server reads 256 MiB unless it was
 /// told otherwise, and this is well inside that.
@@ -59,31 +68,13 @@ const PART_BYTES: usize = 32 * 1024 * 1024;
 /// one it was read with.
 const OTHER_DELIMITERS: [char; 4] = [';', '\t', '|', ','];
 
-pub fn load(arguments: &[String]) -> Result<(), Failure> {
-    let arguments = super::arguments(
-        arguments,
-        &Spec {
-            values: &[
-                "--source",
-                "--type",
-                "--delimiter",
-                "--batch",
-                remote::VALUES[0],
-                remote::VALUES[1],
-            ],
-            flags: &["--json"],
-            positional: 1,
-        },
-    )?;
-    let Some(file) = arguments.positional.first() else {
-        return Err(Failure::Usage("name the file to load".to_owned()));
-    };
-    let most_rows = match arguments.number("--batch").map_err(Failure::Usage)? {
-        Some(0) => return Err(Failure::Usage("`--batch` needs at least 1".to_owned())),
+pub fn load(arguments: LoadArgs) -> Result<(), Failure> {
+    let file = &arguments.file;
+    let most_rows = match arguments.batch {
         Some(rows) => usize::try_from(rows).unwrap_or(usize::MAX),
         None => usize::MAX,
     };
-    let delimiter = delimiter(arguments.value("--delimiter"), file)?;
+    let delimiter = delimiter(arguments.delimiter.as_deref(), file)?;
 
     // The file first: what is wrong with it can be said without a server.
     let (input, name) = open(file)?;
@@ -94,7 +85,7 @@ pub fn load(arguments: &[String]) -> Result<(), Failure> {
         ))
     };
     // A text file that was not said to hold rows may be a document.
-    let may_be_text = arguments.value("--delimiter").is_none() && named_as_text(file);
+    let may_be_text = arguments.delimiter.is_none() && named_as_text(file);
     let mut reader = Reader::new(input, delimiter).map_err(|why| {
         let said = unreadable(&why).message();
         Failure::Failed(match may_be_text && why.0 != EMPTY {
@@ -109,7 +100,7 @@ pub fn load(arguments: &[String]) -> Result<(), Failure> {
         .map(|field| field.name().clone())
         .collect();
 
-    let remote = Remote::new(&arguments);
+    let remote = Remote::new(&arguments.remote);
     let info = remote.info()?;
     // A first line that names no column of any source is prose, unless
     // it is the columns with another character between them.
@@ -136,12 +127,12 @@ pub fn load(arguments: &[String]) -> Result<(), Failure> {
         &info,
         (file != "-").then_some(file.as_str()),
         &columns,
-        arguments.value("--source"),
-        arguments.value("--type"),
+        arguments.source.as_deref(),
+        arguments.entity_type.as_deref(),
     )?;
     check_columns(&name, &columns, delimiter, source)?;
 
-    let json = arguments.flag("--json");
+    let json = arguments.json;
     if let Some(key) = &source.key
         && !columns.contains(key)
         && !json

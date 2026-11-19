@@ -355,7 +355,7 @@ c-9,Acorn Tool,GB
     let complaint = text(&refused.stderr);
     assert!(
         complaint.starts_with(
-            "spool: there is no example `people`: the examples are `companies`\n\nUsage: spool init"
+            "error: invalid value 'people' for '--example <NAME>'\n  [possible values: companies]\n"
         ),
         "{complaint}"
     );

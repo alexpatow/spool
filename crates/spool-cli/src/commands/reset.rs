@@ -3,57 +3,52 @@
 use std::io::{BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
+use clap::Args;
+
 use super::accounts_path;
 use crate::Failure;
-use crate::args::Spec;
 
-pub const USAGE: &str = "\
-Usage: spool reset [<dir>] [options]
+/// Start the development store of `spool dev` over
+///
+/// Starts the development store of `spool dev` over: removes the store under
+/// <DIR>/.spool/, with every row, document, identity, run and changeset it
+/// holds, so that the next `spool dev` begins with an empty one. It says what
+/// it removes and what it keeps, and asks first.
+///
+/// It keeps the project's files, the accounts and tokens of `spool dev` (the
+/// .auth.sqlite file beside the store), the manifest `spool build` wrote, and
+/// everything else under .spool/, such as what an extractor keeps there.
+///
+/// It removes nothing else than these, and each only if it is what DuckDB
+/// makes: <store>.wal, a file; <store>.tmp, a directory, with what is in it,
+/// where a link in it is removed and not what the link points to; and
+/// <store>, a file, last. <store> is a .duckdb file directly under
+/// <DIR>/.spool/. If any of them, or .spool itself, is a link or of another
+/// kind, it removes nothing.
+///
+/// It removes nothing while a `spool dev` has the store open: stop that one
+/// with Ctrl-C first. It starts over only a store under <DIR>/.spool/, never
+/// one a `spool serve` runs on.
+#[derive(Args)]
+pub struct ResetArgs {
+    /// The project directory [default: the current directory]
+    dir: Option<PathBuf>,
+    /// The development store, if `spool dev` was given one with `--store` [default: <DIR>/.spool/dev.duckdb]
+    ///
+    /// It must be directly under <DIR>/.spool/.
+    #[arg(long, value_name = "PATH")]
+    store: Option<PathBuf>,
+    /// Remove it without asking, which is needed where nobody can answer, as in a script
+    #[arg(long)]
+    yes: bool,
+}
 
-Starts the development store of `spool dev` over: removes the store under
-<dir>/.spool/, with every row, document, identity, run and changeset it
-holds, so that the next `spool dev` begins with an empty one. It says what it
-removes and what it keeps, and asks first.
-
-It keeps the project's files, the accounts and tokens of `spool dev` (the
-.auth.sqlite file beside the store), the manifest `spool build` wrote, and
-everything else under .spool/, such as what an extractor keeps there.
-
-It removes nothing else than these, and each only if it is what DuckDB makes:
-  <store>.wal   a file
-  <store>.tmp   a directory, with what is in it; a link in it is removed,
-                not what the link points to
-  <store>       a file, last
-where <store> is a .duckdb file directly under <dir>/.spool/. If any of them,
-or .spool itself, is a link or of another kind, it removes nothing.
-
-It removes nothing while a `spool dev` has the store open: stop that one with
-Ctrl-C first. It starts over only a store under <dir>/.spool/, never one a
-`spool serve` runs on.
-
-  <dir>           the project directory (default: the current directory)
-
-Options:
-  --store <path>  the development store, if `spool dev` was given one with
-                  `--store`; it must be under <dir>/.spool/
-                  (default: <dir>/.spool/dev.duckdb)
-  --yes           remove it without asking, which is needed where nobody
-                  can answer, as in a script
-";
-
-pub fn reset(arguments: &[String]) -> Result<(), Failure> {
-    let arguments = super::arguments(
-        arguments,
-        &Spec {
-            values: &["--store"],
-            flags: &["--yes"],
-            positional: 1,
-        },
-    )?;
-    let dir = arguments.project_dir();
+pub fn reset(arguments: ResetArgs) -> Result<(), Failure> {
+    let dir = super::project_dir(&arguments.dir);
     let spool_dir = dir.join(".spool");
     let store = arguments
-        .path("--store")
+        .store
+        .clone()
         .unwrap_or_else(|| spool_dir.join("dev.duckdb"));
     let shown = |path: &Path| -> String {
         path.strip_prefix(&dir)
@@ -183,8 +178,8 @@ pub fn reset(arguments: &[String]) -> Result<(), Failure> {
 
     println!(
         "This starts the development store of {} over.",
-        match arguments.positional.first() {
-            Some(given) => given.clone(),
+        match &arguments.dir {
+            Some(given) => given.display().to_string(),
             None => "this project".to_owned(),
         }
     );
@@ -200,7 +195,7 @@ pub fn reset(arguments: &[String]) -> Result<(), Failure> {
     columns(&kept);
     println!();
 
-    if !arguments.flag("--yes") {
+    if !arguments.yes {
         if !std::io::stdin().is_terminal() {
             return Err(Failure::Failed(
                 "nothing was removed: nobody can be asked here, so add `--yes` to remove it"

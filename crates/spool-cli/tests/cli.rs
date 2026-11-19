@@ -1,4 +1,5 @@
-//! The `spool` command's arguments and exit codes.
+//! The `spool` command's arguments and exit codes. The help of each command
+//! is checked against its snapshot by a test inside the binary.
 
 mod support;
 
@@ -22,12 +23,15 @@ fn copy_dir(from: &Path, to: &Path) {
 }
 
 #[test]
-fn usage_is_printed_on_request_and_on_a_mistake() {
-    for arguments in [&[][..], &["--help"], &["help"]] {
+fn help_is_printed_on_request() {
+    for arguments in [&[][..], &["--help"], &["help"], &["-h"]] {
         let output = spool(arguments);
-        assert!(output.status.success());
+        assert!(output.status.success(), "{arguments:?}");
         let stdout = text(&output.stdout);
-        assert!(stdout.starts_with("Usage: spool <command>"), "{stdout}");
+        assert!(
+            stdout.starts_with("Extract, resolve and track entities\n\nUsage: spool"),
+            "{stdout}"
+        );
         for command in [
             "init", "info", "build", "apply", "serve", "dev", "show", "retract", "explain",
             "token", "bench", "schema",
@@ -35,71 +39,163 @@ fn usage_is_printed_on_request_and_on_a_mistake() {
             assert!(stdout.contains(&format!("\n  {command} ")), "{command}");
         }
     }
-    for command in [
-        "init", "info", "build", "apply", "serve", "dev", "show", "retract", "explain", "token",
-        "bench", "schema",
-    ] {
-        for arguments in [&[command, "--help"][..], &[command, "x", "-h"]] {
+    for command in ["init", "show", "token"] {
+        for arguments in [
+            &[command, "--help"][..],
+            &["help", command],
+            &[command, "-h"],
+        ] {
             let output = spool(arguments);
-            assert!(output.status.success());
+            assert!(output.status.success(), "{arguments:?}");
             let stdout = text(&output.stdout);
             assert!(
-                stdout.starts_with(&format!("Usage: spool {command}")),
+                stdout.contains(&format!("\nUsage: spool {command} ")),
                 "{stdout}"
             );
         }
     }
+    // `-h` is a line for each option, and `--help` says more.
+    let short = text(&spool(&["show", "records", "-h"]).stdout);
+    let long = text(&spool(&["show", "records", "--help"]).stdout);
+    assert!(short.lines().count() < long.lines().count());
+    assert!(long.contains("They have none, and their source has not taken them back."));
     assert_eq!(
         text(&spool(&["--version"]).stdout),
         format!("spool {}\n", env!("CARGO_PKG_VERSION"))
     );
+}
 
+/// A mistake in the arguments is said with the usage of the command it was
+/// made in, and exits with 2.
+#[test]
+fn a_mistake_is_said_with_the_usage_and_exits_with_two() {
     for (arguments, expected) in [
-        (&["frobnicate"][..], "unknown command `frobnicate`"),
-        (&["bench"], "`bench` needs a scenario"),
-        (&["bench", "a", "b"], "unexpected argument `b`"),
-        (&["bench", "a", "--fast"], "unknown option `--fast`"),
-        (&["bench", "a", "--seed"], "`--seed` needs a value"),
-        (&["bench", "a", "--seed", "lucky"], "needs a whole number"),
         (
-            &["init", "a", "--example", "Not An Example"],
-            "there is no example `Not An Example`: the examples are `companies`",
+            &["recompte"][..],
+            "error: unrecognized subcommand 'recompte'\n\n  tip: a similar subcommand exists: 'recompute'\n\nUsage: spool [COMMAND]\n\nFor more information, try '--help'.\n",
         ),
-        (&["init", "a", "--example"], "`--example` needs a value"),
-        (&["info", "a", "b"], "unexpected argument `b`"),
-        (&["apply", "a"], "`--store` or `SPOOL_STORE`"),
-        (&["serve", "extra"], "unexpected argument `extra`"),
         (
-            &["serve", "--store", "s", "--listen", "nowhere"],
-            "`--listen` needs an address",
+            &["show", "identitis"],
+            "error: unrecognized subcommand 'identitis'\n\n  tip: some similar subcommands exist: 'documents', 'identities'\n\nUsage: spool show [OPTIONS] [COMMAND]\n\nFor more information, try '--help'.\n",
         ),
-        (&["dev", "--port", "1"], "unknown option `--port`"),
-        // The server's own token is gone: a caller presents one that was made.
-        (&["dev", "--token", "dev"], "unknown option `--token`"),
-        // Nobody signs in to it, so it is not for anyone else to reach.
+        (
+            &["show", "identities", "--sort", "size"],
+            "error: invalid value 'size' for '--sort <SORT>'\n  [possible values: records, names, sources, label, entity_type, created, id]\n\nFor more information, try '--help'.\n",
+        ),
+        (
+            &["load", "rows.csv", "--sauce", "crm"],
+            "error: unexpected argument '--sauce' found\n\n  tip: a similar argument exists: '--source'\n\nUsage: spool load --source <NAME> <FILE>\n\nFor more information, try '--help'.\n",
+        ),
+        (
+            &["bench"],
+            "error: the following required arguments were not provided:\n  <SCENARIO>\n\nUsage: spool bench <SCENARIO>\n\nFor more information, try '--help'.\n",
+        ),
+        (
+            &["show", "records", "crm:c-1", "--ids"],
+            "error: the argument '[RECORD]' cannot be used with '--ids'\n\nUsage: spool show records <RECORD>\n\nFor more information, try '--help'.\n",
+        ),
+        (
+            &["init", "a", "--example", "people"],
+            "error: invalid value 'people' for '--example <NAME>'\n  [possible values: companies]\n\nFor more information, try '--help'.\n",
+        ),
+        // Said by the command, not by the parser, with the same usage.
         (
             &["dev", "--listen", "0.0.0.0:7765"],
-            "listens on this machine only",
+            "error: `spool dev` has no sign-in, so it listens on this machine only: `--listen` needs an address such as 127.0.0.1:7765, not `0.0.0.0:7765`. `spool serve` runs a server that others reach, and they sign in to it.\n\nUsage: spool dev [OPTIONS] [DIR]\n\nFor more information, try '--help'.\n",
         ),
+    ] {
+        let output = spool(arguments);
+        assert_eq!(output.status.code(), Some(2), "{arguments:?}");
+        assert_eq!(text(&output.stderr), expected, "{arguments:?}");
+        assert_eq!(text(&output.stdout), "", "{arguments:?}");
+    }
+
+    for (arguments, expected) in [
+        (&["bench", "a", "b"][..], "unexpected argument 'b'"),
+        (
+            &["bench", "a", "--seed"],
+            "a value is required for '--seed <SEED>'",
+        ),
+        (
+            &["bench", "a", "--seed", "lucky"],
+            "invalid value 'lucky' for '--seed <SEED>'",
+        ),
+        (&["info", "a", "b"], "unexpected argument 'b'"),
+        (&["apply", "a"], "`--store` or `SPOOL_STORE`"),
+        (&["serve", "extra"], "unexpected argument 'extra'"),
+        (
+            &["serve", "--store", "s", "--listen", "nowhere"],
+            "invalid value 'nowhere' for '--listen <ADDR>'",
+        ),
+        (&["dev", "--port", "1"], "unexpected argument '--port'"),
+        // The server's own token is gone: a caller presents one that was made.
+        (&["dev", "--token", "dev"], "unexpected argument '--token'"),
         (
             &["dev", "--listen", "192.168.1.20:7765"],
             "listens on this machine only",
         ),
-        (
-            &["show", "weather"],
-            "`weather` is not something `show` shows",
-        ),
+        (&["dev", "--task-timeout", "0"], "0 is not in 1.."),
         (
             &["explain", "a:1", "b:2", "c:3"],
-            "unexpected argument `c:3`",
+            "unexpected argument 'c:3'",
         ),
+        (&["explain"], "<RECORD>"),
+        (
+            &["show", "runs", "first"],
+            "invalid value 'first' for '[RUN]'",
+        ),
+        (
+            &["show", "runs", "--sort", "kind"],
+            "unexpected argument '--sort'",
+        ),
+        (
+            &["show", "runs", "1", "--kind", "load"],
+            "cannot be used with",
+        ),
+        (&["show", "log", "1"], "unexpected argument '1'"),
+        (
+            &["show", "--type", "company"],
+            "unexpected argument '--type'",
+        ),
+        (
+            &["show", "drafts", "anvil"],
+            "invalid value 'anvil' for '[DRAFT]'",
+        ),
+        (
+            &["show", "identities", "anvil"],
+            "invalid value 'anvil' for '[IDENTITY]'",
+        ),
+        (
+            &["recompute", "--identity", "x"],
+            "invalid value 'x' for '--identity <ID>'",
+        ),
+        (&["recompute", "--reason", "x"], "--apply <PLAN>"),
+        (
+            &["recompute", "--apply", "p", "--limit", "1"],
+            "cannot be used with",
+        ),
+        (&["load"], "<FILE>"),
+        (&["load", "rows.csv", "--batch", "0"], "0 is not in 1.."),
+        (&["retract", "--type", "thing", "1"], "--source <NAME>"),
+        (
+            &["retract", "--source", "shop", "--type", "thing"],
+            "<KEYS>...",
+        ),
+        (&["token", "list", "ci"], "unexpected argument 'ci'"),
+        (&["token", "add"], "<NAME>"),
+        (&["token", "make", "ci"], "unrecognized subcommand 'make'"),
+        (&["match", "rows.csv"], "unexpected argument 'rows.csv'"),
     ] {
         let output = spool(arguments);
         assert_eq!(output.status.code(), Some(2), "{arguments:?}");
         let stderr = text(&output.stderr);
         assert!(stderr.contains(expected), "{arguments:?}: {stderr}");
-        assert!(stderr.contains("Usage:"));
+        assert!(stderr.starts_with("error: "), "{arguments:?}: {stderr}");
     }
+    // A command that is only its subcommands lists them.
+    let output = spool(&["token"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(text(&output.stderr).contains("\nUsage: spool token [OPTIONS] <COMMAND>\n"));
 }
 
 #[test]
@@ -111,6 +207,18 @@ fn a_failed_run_says_why_and_exits_with_one() {
     let stderr = text(&output.stderr);
     assert!(stderr.starts_with("spool: "), "{stderr}");
     assert!(stderr.contains("no-such-scenario"), "{stderr}");
+}
+
+/// A variable that is set and empty is as good as one that is not set.
+#[test]
+fn an_empty_variable_says_nothing() {
+    let output = support::spool()
+        .args(["apply", "nowhere"])
+        .env("SPOOL_STORE", "")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(text(&output.stderr).contains("'--store <PATH>'"));
 }
 
 #[test]

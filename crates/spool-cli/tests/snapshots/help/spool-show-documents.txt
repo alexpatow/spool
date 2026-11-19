@@ -1,0 +1,19 @@
+List documents, or show one with its text
+
+Usage: spool show documents [OPTIONS] [DOCUMENT]
+
+Arguments:
+  [DOCUMENT]  A document's ID, to show it with its text
+
+Options:
+      --source <NAME>  Only this source
+      --key <KEY>      Only this key within its source
+      --all-versions   Every version, the replaced ones too
+      --after <ID>     Continue the list after this ID, in its order
+      --limit <LIMIT>  List at most this many
+      --json           Print what the server answered, as JSON
+  -h, --help           Print help (see more with '--help')
+
+Server options:
+      --url <URL>      The server [env: SPOOL_URL] [default: http://127.0.0.1:7765]
+      --token <TOKEN>  A token for that server; `spool dev` needs none [env: SPOOL_TOKEN]

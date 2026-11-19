@@ -3,72 +3,63 @@
 
 use std::io::Read;
 
+use clap::Args;
 use serde_json::json;
 use spool::{RunEntry, RunStatus};
 
-use super::remote::{self, Remote, print_json, typed};
+use super::remote::{Remote, RemoteArgs, print_json, typed};
 use crate::Failure;
-use crate::args::Spec;
 
-pub const USAGE: &str = "\
-Usage: spool retract --source <name> --type <name> [<key>...] [options]
-
-Takes back rows a source no longer holds, on a running server. The rows are
-named by their keys: the values of the column the source's file names as its
-key.
-
-Every version of each row stays in the store as evidence, and leaves its
-identity by a changeset recorded under the caller. The identity keeps its ID
-and its other members. No run examines the records after that, and they
-cannot be given an identity, until the source sends the row again: loading
-a row under the same key, changed or not, brings every version back.
-
-A key the source has no row under changes nothing, so the same keys can be
-sent twice.
-
-  <key>              the key of a row to take back
-
-Options:
-  --source <name>    the source that held the rows
-  --type <name>      their entity type
-  --keys <file>      a file of keys, one per line; `-` reads standard input
-  --reason <text>    why, for the changeset that detaches the records
-  --url <url>        the server (default: $SPOOL_URL, or http://127.0.0.1:7765)
-  --token <token>    a token of that server (default: $SPOOL_TOKEN); `spool dev`
-                     asks for none
-  --json             print the run the server answered with, as JSON
-";
+/// Take back rows a source no longer holds
+///
+/// Takes back rows a source no longer holds, on a running server. The rows
+/// are named by their keys: the values of the column the source's file names
+/// as its key.
+///
+/// Every version of each row stays in the store as evidence, and leaves its
+/// identity by a changeset recorded under the caller. The identity keeps its
+/// ID and its other members. No run examines the records after that, and they
+/// cannot be given an identity, until the source sends the row again: loading
+/// a row under the same key, changed or not, brings every version back.
+///
+/// A key the source has no row under changes nothing, so the same keys can be
+/// sent twice.
+#[derive(Args)]
+#[command(
+    after_help = "Examples:\n  spool retract --source crm --type company c-6 --reason \"deleted in the CRM\"\n  spool retract --source crm --type company --keys gone.txt"
+)]
+pub struct RetractArgs {
+    /// The keys of the rows to take back
+    #[arg(required_unless_present = "keys_file")]
+    keys: Vec<String>,
+    /// The source that held the rows
+    #[arg(long, value_name = "NAME")]
+    source: String,
+    /// Their entity type
+    #[arg(long = "type", value_name = "NAME")]
+    entity_type: String,
+    /// A file of keys, one per line; `-` reads standard input
+    #[arg(long = "keys", value_name = "FILE")]
+    keys_file: Option<String>,
+    /// Why, for the changeset that detaches the records
+    #[arg(long, value_name = "TEXT")]
+    reason: Option<String>,
+    /// Print the run the server answered with, as JSON
+    #[arg(long)]
+    json: bool,
+    #[command(flatten)]
+    remote: RemoteArgs,
+}
 
 /// How long one request waits for the run before asking again.
 const WAIT_MS: u64 = 30_000;
 
-pub fn retract(arguments: &[String]) -> Result<(), Failure> {
-    let arguments = super::arguments(
-        arguments,
-        &Spec {
-            values: &[
-                "--source",
-                "--type",
-                "--keys",
-                "--reason",
-                remote::VALUES[0],
-                remote::VALUES[1],
-            ],
-            flags: &["--json"],
-            positional: usize::MAX,
-        },
-    )?;
-    let needed = |option: &str| {
-        arguments
-            .value(option)
-            .map(str::to_owned)
-            .ok_or_else(|| Failure::Usage(format!("`{option}` is needed")))
-    };
-    let source = needed("--source")?;
-    let entity_type = needed("--type")?;
+pub fn retract(arguments: RetractArgs) -> Result<(), Failure> {
+    let source = arguments.source.clone();
+    let entity_type = arguments.entity_type.clone();
 
-    let mut keys = arguments.positional.clone();
-    if let Some(file) = arguments.value("--keys") {
+    let mut keys = arguments.keys.clone();
+    if let Some(file) = &arguments.keys_file {
         let text = if file == "-" {
             let mut text = String::new();
             std::io::stdin()
@@ -92,14 +83,14 @@ pub fn retract(arguments: &[String]) -> Result<(), Failure> {
         ));
     }
 
-    let remote = Remote::new(&arguments);
+    let remote = Remote::new(&arguments.remote);
     let mut answer = remote.post(
         "/retract",
         &json!({
             "source": source,
             "entity_type": entity_type,
             "keys": keys,
-            "reason": arguments.value("--reason"),
+            "reason": arguments.reason,
             "wait_ms": WAIT_MS,
         }),
     )?;
@@ -112,7 +103,7 @@ pub fn retract(arguments: &[String]) -> Result<(), Failure> {
         )?;
         run = typed(&answer["run"])?;
     }
-    if arguments.flag("--json") {
+    if arguments.json {
         print_json(&answer);
     }
     if run.status != RunStatus::Succeeded {
@@ -123,7 +114,7 @@ pub fn retract(arguments: &[String]) -> Result<(), Failure> {
             run.error.as_deref().unwrap_or("the server did not say why")
         )));
     }
-    if arguments.flag("--json") {
+    if arguments.json {
         return Ok(());
     }
     let report = run.retraction.ok_or_else(|| {

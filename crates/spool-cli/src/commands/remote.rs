@@ -12,7 +12,6 @@ use spool::{RunEntry, RunStatus};
 use spool_cli::api::{ErrorResponse, Info};
 
 use crate::Failure;
-use crate::args::Arguments;
 
 /// Where `spool dev` listens unless it is told otherwise.
 const DEFAULT_URL: &str = "http://127.0.0.1:7765";
@@ -25,7 +24,16 @@ const MAX_BODY_BYTES: u64 = 256 * 1024 * 1024;
 pub const WAIT_MS: u64 = 30_000;
 
 /// The options every command that calls a server takes.
-pub const VALUES: [&str; 2] = ["--url", "--token"];
+#[derive(clap::Args, Debug)]
+#[command(next_help_heading = "Server options")]
+pub struct RemoteArgs {
+    /// The server
+    #[arg(long, env = "SPOOL_URL", hide_env_values = true, default_value = DEFAULT_URL, global = true)]
+    url: String,
+    /// A token for that server; `spool dev` needs none
+    #[arg(long, env = "SPOOL_TOKEN", hide_env_values = true, global = true)]
+    token: Option<String>,
+}
 
 /// The source a file is named after, of the `sources` a project declares:
 /// the one its name begins with, up to the dot or to a character that is
@@ -66,14 +74,12 @@ pub struct Remote {
 }
 
 impl Remote {
-    pub fn new(arguments: &Arguments) -> Remote {
-        let named = |option: &str, variable: &str| {
-            arguments.value(option).map(str::to_owned).or_else(|| {
-                std::env::var(variable)
-                    .ok()
-                    .map(|value| value.trim().to_owned())
-                    .filter(|value| !value.is_empty())
-            })
+    pub fn new(arguments: &RemoteArgs) -> Remote {
+        // A variable that is set and empty says nothing.
+        let given = |value: Option<&String>| {
+            value
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
         };
         let config = ureq::Agent::config_builder()
             // A refusal has a body that says why, which is read like any
@@ -84,11 +90,11 @@ impl Remote {
             .build();
         Remote {
             agent: ureq::Agent::new_with_config(config),
-            url: named("--url", "SPOOL_URL")
+            url: given(Some(&arguments.url))
                 .unwrap_or_else(|| DEFAULT_URL.to_owned())
                 .trim_end_matches('/')
                 .to_owned(),
-            token: named("--token", "SPOOL_TOKEN"),
+            token: given(arguments.token.as_ref()),
         }
     }
 
@@ -306,6 +312,22 @@ mod tests {
             assert_eq!(named_after(file, &sources), source, "{file}");
         }
         assert_eq!(named_after("crm.csv", &[]), None);
+    }
+
+    #[test]
+    fn a_variable_that_is_set_and_empty_says_nothing() {
+        let remote = Remote::new(&RemoteArgs {
+            url: " ".to_owned(),
+            token: Some(String::new()),
+        });
+        assert_eq!(remote.url, DEFAULT_URL);
+        assert_eq!(remote.token, None);
+        let remote = Remote::new(&RemoteArgs {
+            url: "http://spool.example.com/".to_owned(),
+            token: Some(" secret\n".to_owned()),
+        });
+        assert_eq!(remote.url, "http://spool.example.com");
+        assert_eq!(remote.token.as_deref(), Some("secret"));
     }
 
     #[test]

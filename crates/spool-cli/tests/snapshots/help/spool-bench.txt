@@ -1,0 +1,20 @@
+Run a benchmark scenario
+
+Usage: spool bench [OPTIONS] <SCENARIO>
+
+Arguments:
+  <SCENARIO>  A scenario.toml, or the directory that holds one
+
+Options:
+      --db <PATH>        The database file to build; replaced if it exists [default:
+                         .spool/bench.duckdb in the project directory]
+      --seed <SEED>      The seed for identity and changeset IDs [default: 0]
+      --out <PATH>       Write the results as JSON to this file
+      --list <N>         Print at most this many identities per step [default: 50]
+      --strategy <NAME>  The strategy of every step that does not name its own [default: the
+                         scenario's, or `rules`]
+  -h, --help             Print help (see more with '--help')
+
+User code options:
+      --task-timeout <SECONDS>  How long a user-code strategy or an extractor may run [default: 600]
+      --tasks <DIR>             Where the task directories of user code are made

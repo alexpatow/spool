@@ -1,0 +1,22 @@
+Show what the current rules would change in the identities
+
+Usage: spool recompute [OPTIONS]
+
+Options:
+      --type <NAME>    One entity type [default: every type]
+      --identity <ID>  Show the change that holds an identity, record by record
+      --detail         List every change, not only the largest
+      --limit <LIMIT>  How many changes to list [default: 10, or 1000 with --detail]
+      --offset <N>     Pass over this many of the largest changes first
+      --apply <PLAN>   Make the identities what the preview with this plan showed
+      --reason <TEXT>  Why, kept with the changeset
+      --json           Print what the server answered, as JSON
+  -h, --help           Print help (see more with '--help')
+
+Server options:
+      --url <URL>      The server [env: SPOOL_URL] [default: http://127.0.0.1:7765]
+      --token <TOKEN>  A token for that server; `spool dev` needs none [env: SPOOL_TOKEN]
+
+Examples:
+  spool recompute --detail
+  spool recompute --apply <plan> --reason "stricter name rule"

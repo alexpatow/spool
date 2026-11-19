@@ -1,0 +1,29 @@
+List records by source and key, or show one with its payload and evidence
+
+Usage: spool show records [OPTIONS] [RECORD]
+
+Arguments:
+  [RECORD]  A record, by its ID or as <source>:<key>, to show it
+
+Options:
+      --type <NAME>    Only this entity type
+      --source <NAME>  Only this source
+      --key <KEY>      Only this key within its source
+      --document <ID>  Only the mentions found in this document
+      --unassigned     Only records that wait for an identity
+      --all-versions   Every version, the replaced ones too
+      --attributes     A column for each attribute of the records
+      --ids            List each record's ID as well
+      --after <ID>     Continue the list after this ID, in its order
+      --json           Print what the server answered, as JSON
+      --limit <LIMIT>  List at most this many
+  -h, --help           Print help (see more with '--help')
+
+Server options:
+      --url <URL>      The server [env: SPOOL_URL] [default: http://127.0.0.1:7765]
+      --token <TOKEN>  A token for that server; `spool dev` needs none [env: SPOOL_TOKEN]
+
+Examples:
+  spool show records --source crm --attributes
+  spool show records --unassigned
+  spool show records crm:c-1

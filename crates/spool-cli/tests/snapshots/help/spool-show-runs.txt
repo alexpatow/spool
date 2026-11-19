@@ -1,0 +1,20 @@
+List the latest runs, or show one and what it reported
+
+Usage: spool show runs [OPTIONS] [RUN]
+
+Arguments:
+  [RUN]  A run, to show what it reported
+
+Options:
+      --type <NAME>      Only this entity type
+      --status <STATUS>  Only this status [possible values: running, open, drafted, succeeded,
+                         failed]
+      --kind <KIND>      Only runs of this kind [possible values: load, extract, match, reconcile,
+                         retract]
+      --limit <LIMIT>    List at most this many
+      --json             Print what the server answered, as JSON
+  -h, --help             Print help
+
+Server options:
+      --url <URL>      The server [env: SPOOL_URL] [default: http://127.0.0.1:7765]
+      --token <TOKEN>  A token for that server; `spool dev` needs none [env: SPOOL_TOKEN]

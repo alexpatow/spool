@@ -7,6 +7,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use clap::{Args, Subcommand};
 use serde::Serialize;
 use serde_json::{Value, json};
 use spool::core::{ChangesetId, ConstraintEntry, DocumentId, IdentityId, Op, RecordId, ReviewItem};
@@ -18,228 +19,354 @@ use spool::{
 };
 use spool_cli::api::{DocumentList, Info, RecordList};
 
-use super::remote::{self, Remote, print_json, typed};
+use super::remote::{Remote, RemoteArgs, print_json, typed};
 use crate::Failure;
-use crate::args::{Arguments, Spec};
 
-pub const SHOW_USAGE: &str = "\
-Usage: spool show [<what> [<id>]] [options]
+/// Show what a running server holds
+///
+/// Shows what a running server holds. Without a subcommand: its entity types
+/// and how much there is of each.
+///
+/// A record is named by its ID or as <source>:<key>, which names the latest
+/// version of that row. A record found in a document is named as the lists
+/// name it, <source>:<document>[<start>-<end>].
+#[derive(Args)]
+#[command(
+    after_help = "Examples:\n  spool show\n  spool show identities --sort records --order desc\n  spool show records crm:c-1"
+)]
+pub struct ShowArgs {
+    #[command(subcommand)]
+    pub what: Option<What>,
+    /// Print what the server answered, as JSON
+    #[arg(long, global = true)]
+    json: bool,
+    #[command(flatten)]
+    remote: RemoteArgs,
+}
 
-Shows what a running server holds. Without <what>: its entity types and how
-much there is of each.
+#[derive(Subcommand)]
+pub enum What {
+    Runs(RunsArgs),
+    Identities(IdentitiesArgs),
+    Records(RecordsArgs),
+    Attributes(AttributesArgs),
+    Documents(DocumentsArgs),
+    Review(ReviewArgs),
+    Drafts(DraftsArgs),
+    Log(LogArgs),
+}
 
-  runs [<run>]                   the latest runs, or one run and what it reported
-  identities [<identity>]        identities, or one with its members, the
-                                 constraints on them and its history
-  records [<record>]             records by source and key, or one with its
-                                 payload, its evidence and, for a mention, the
-                                 place in the document it was found in
-  attributes                     for each entity type and source, the
-                                 attributes its records have: how many have
-                                 each, how many values it takes, the most
-                                 common, and the features made from it
-  documents [<document>]         documents, or one with its text
-  review [<item>]                review items, or one with its records
-  drafts [<draft>]               drafts, or one with the changeset it would commit
-  log                            the changeset log
+impl What {
+    pub fn name(&self) -> &'static str {
+        match self {
+            What::Runs(_) => "runs",
+            What::Identities(_) => "identities",
+            What::Records(_) => "records",
+            What::Attributes(_) => "attributes",
+            What::Documents(_) => "documents",
+            What::Review(_) => "review",
+            What::Drafts(_) => "drafts",
+            What::Log(_) => "log",
+        }
+    }
+}
 
-The list of identities says, for each, how many records it has, how many
-different names (labels, whatever their case) they have, and what part of
-its pairs of records no link joins directly: those are together only
-through a chain of others. An identity with many names and mostly unlinked
-pairs is where different things were joined, and `spool explain <identity>`
-says which rule joined them. `--sort records --order desc` lists the largest
-first.
+/// List the latest runs, or show one and what it reported
+#[derive(Args)]
+pub struct RunsArgs {
+    /// A run, to show what it reported
+    run: Option<u64>,
+    /// Only this entity type
+    #[arg(long = "type", value_name = "NAME", conflicts_with = "run")]
+    entity_type: Option<String>,
+    /// Only this status
+    #[arg(
+        long,
+        value_parser = ["running", "open", "drafted", "succeeded", "failed"],
+        conflicts_with = "run"
+    )]
+    status: Option<String>,
+    /// Only runs of this kind
+    #[arg(
+        long,
+        value_parser = ["load", "extract", "match", "reconcile", "retract"],
+        conflicts_with = "run"
+    )]
+    kind: Option<String>,
+    /// List at most this many
+    #[arg(long, conflicts_with = "run")]
+    limit: Option<u64>,
+}
 
-A record is named by its ID or as <source>:<key>, which names the
-latest version of that row. A record found in a document is named as the
-lists name it, <source>:<document>[<start>-<end>].
+/// List identities, or show one with its members and history
+///
+/// The list of identities says, for each, how many records it has, how many
+/// different names (labels, whatever their case) they have, and what part of
+/// its pairs of records no link joins directly: those are together only
+/// through a chain of others. An identity with many names and mostly unlinked
+/// pairs is where different things were joined, and `spool explain
+/// <identity>` says which rule joined them.
+///
+/// One identity is shown with its members, the constraints on them and its
+/// history.
+#[derive(Args)]
+#[command(
+    after_help = "Examples:\n  spool show identities --sort records --order desc\n  spool show identities --type company --limit 10"
+)]
+pub struct IdentitiesArgs {
+    /// An identity's ID, to show it
+    identity: Option<IdentityId>,
+    /// Only this entity type
+    #[arg(long = "type", value_name = "NAME", conflicts_with = "identity")]
+    entity_type: Option<String>,
+    /// Sort by this column
+    ///
+    /// `records` is how many records each has, and `names` how many different
+    /// labels.
+    #[arg(
+        long,
+        value_parser = ["records", "names", "sources", "label", "entity_type", "created", "id"],
+        conflicts_with = "identity"
+    )]
+    sort: Option<String>,
+    /// The order of the sort [default: asc]
+    #[arg(long, value_parser = ["asc", "desc"], conflicts_with = "identity")]
+    order: Option<String>,
+    /// Continue the list after this ID, in its order
+    #[arg(long, value_name = "ID", conflicts_with = "identity")]
+    after: Option<String>,
+    /// List at most this many
+    #[arg(long, conflicts_with = "identity")]
+    limit: Option<u64>,
+}
 
-Lists of records and documents show the version of each that nothing
-replaced; `--all-versions` shows the versions that later loads replaced as
-well. Attributes are counted over the records that stand: the latest
-version of each, and not one its source took back.
+/// List records by source and key, or show one with its payload and evidence
+///
+/// A list shows the version of each record that nothing replaced;
+/// `--all-versions` shows the versions that later loads replaced as well.
+///
+/// One record is shown with its payload, its evidence and, for a mention, the
+/// place in the document it was found in. It is named by its ID or as
+/// <source>:<key>, which names the latest version of that row. A record found
+/// in a document is named as the lists name it,
+/// <source>:<document>[<start>-<end>].
+#[derive(Args)]
+#[command(
+    after_help = "Examples:\n  spool show records --source crm --attributes\n  spool show records --unassigned\n  spool show records crm:c-1"
+)]
+pub struct RecordsArgs {
+    /// A record, by its ID or as <source>:<key>, to show it
+    record: Option<String>,
+    /// Only this entity type
+    #[arg(long = "type", value_name = "NAME", conflicts_with = "record")]
+    entity_type: Option<String>,
+    /// Only this source
+    #[arg(long, value_name = "NAME", conflicts_with = "record")]
+    source: Option<String>,
+    /// Only this key within its source
+    #[arg(long, conflicts_with = "record")]
+    key: Option<String>,
+    /// Only the mentions found in this document
+    #[arg(long, value_name = "ID", conflicts_with = "record")]
+    document: Option<String>,
+    /// Only records that wait for an identity
+    ///
+    /// They have none, and their source has not taken them back.
+    #[arg(long, conflicts_with = "record")]
+    unassigned: bool,
+    /// Every version, the replaced ones too
+    #[arg(long, conflicts_with = "record")]
+    all_versions: bool,
+    /// A column for each attribute of the records
+    #[arg(long, conflicts_with = "record")]
+    attributes: bool,
+    /// List each record's ID as well
+    #[arg(long, conflicts_with = "record")]
+    ids: bool,
+    /// Continue the list after this ID, in its order
+    #[arg(long, value_name = "ID", conflicts_with = "record")]
+    after: Option<String>,
+    /// List at most this many
+    #[arg(long, conflicts_with = "record")]
+    limit: Option<u64>,
+}
 
-Options:
-  --type <name>      only this entity type (runs, identities, records,
-                     attributes, review, drafts)
-  --status <status>  only this status (runs, review, drafts)
-  --kind <kind>      only runs of this kind: load, extract, match, reconcile,
-                     retract
-  --source <name>    only this source (records, attributes, documents)
-  --key <key>        only this key within its source (records, documents)
-  --document <id>    only the mentions found in this document (records)
-  --unassigned       only records that wait for an identity: they have
-                     none, and their source has not taken them back
-  --all-versions     every version, the replaced ones too (records,
-                     documents)
-  --attributes       a column for each attribute of the records (records)
-  --ids              list each record's ID as well (records)
-  --sort <column>    list identities by this, with --order: records (how
-                     many records), names (how many different labels),
-                     sources, label, entity_type, created, or id
-  --order <order>    asc or desc (default: asc). `--sort records --order desc`
-                     lists the largest identities first
-  --after <id>       continue a list after this ID, or the log after this
-                     position, in the order of the list (identities,
-                     records, documents, review, log)
-  --limit <n>        list at most this many (runs, identities, records,
-                     documents, review, log)
-  --url <url>        the server (default: $SPOOL_URL, or http://127.0.0.1:7765)
-  --token <token>    a token of that server (default: $SPOOL_TOKEN); `spool dev`
-                     asks for none
-  --json             print what the server answered, as JSON
-";
+/// For each entity type and source, the attributes its records have
+///
+/// For each entity type and source, the attributes its records have: how many
+/// have each, how many values it takes, the most common, and the features
+/// made from it. Attributes are counted over the records that stand: the
+/// latest version of each, and not one its source took back.
+#[derive(Args)]
+pub struct AttributesArgs {
+    /// Only this entity type
+    #[arg(long = "type", value_name = "NAME")]
+    entity_type: Option<String>,
+    /// Only this source
+    #[arg(long, value_name = "NAME")]
+    source: Option<String>,
+}
 
-pub const EXPLAIN_USAGE: &str = "\
-Usage: spool explain <record> <record> [options]
-       spool explain <identity> [options]
+/// List documents, or show one with its text
+///
+/// A list shows the version of each document that nothing replaced;
+/// `--all-versions` shows the versions that later loads replaced as well.
+#[derive(Args)]
+pub struct DocumentsArgs {
+    /// A document's ID, to show it with its text
+    document: Option<DocumentId>,
+    /// Only this source
+    #[arg(long, value_name = "NAME", conflicts_with = "document")]
+    source: Option<String>,
+    /// Only this key within its source
+    #[arg(long, conflicts_with = "document")]
+    key: Option<String>,
+    /// Every version, the replaced ones too
+    #[arg(long, conflicts_with = "document")]
+    all_versions: bool,
+    /// Continue the list after this ID, in its order
+    #[arg(long, value_name = "ID", conflicts_with = "document")]
+    after: Option<String>,
+    /// List at most this many
+    #[arg(long, conflicts_with = "document")]
+    limit: Option<u64>,
+}
 
-With two records: says why they share an identity, or why they do not:
-where each is and what placed it there, what each run that compared them
-concluded, the constraints and review items that name them, and what the
-project's rules say about the pair as it is now. When they share an
-identity, it shows the chain of links between them, each record by its
-label and its name and each link by the rule that made it and the values
-that satisfied the rule; the rules every chain between them goes through;
-and the fewest links whose removal would part the records named as the one
-from those named as the other.
+/// List review items, or show one with its records
+#[derive(Args)]
+pub struct ReviewArgs {
+    /// A review item's number, to show it with its records
+    item: Option<u64>,
+    /// Only this entity type
+    #[arg(long = "type", value_name = "NAME", conflicts_with = "item")]
+    entity_type: Option<String>,
+    /// Only this status
+    #[arg(
+        long,
+        value_parser = ["open", "resolved", "superseded", "dismissed"],
+        conflicts_with = "item"
+    )]
+    status: Option<String>,
+    /// Continue the list after this item, in its order
+    #[arg(long, value_name = "ITEM", conflicts_with = "item")]
+    after: Option<String>,
+    /// List at most this many
+    #[arg(long, conflicts_with = "item")]
+    limit: Option<u64>,
+}
 
-With one identity: how much of it is held together only through chains,
-the pieces it would fall into without the links each rule alone made, and
-its weakest links: the fewest links whose removal would part it, each with
-the two sides it would leave. Those are where a wrong merge entered. An
-identity is named by its ID, or by any of its records.
+/// List drafts, or show one with the changeset it would commit
+#[derive(Args)]
+pub struct DraftsArgs {
+    /// A draft's ID, to show the changeset it would commit
+    draft: Option<ChangesetId>,
+    /// Only this entity type
+    #[arg(long = "type", value_name = "NAME", conflicts_with = "draft")]
+    entity_type: Option<String>,
+    /// Only this status
+    #[arg(
+        long,
+        value_parser = ["open", "committed", "rejected", "superseded"],
+        conflicts_with = "draft"
+    )]
+    status: Option<String>,
+}
 
-A record is named by its ID or as <source>:<key>, which names the
-latest version of that row. A record found in a document is named as the
-lists name it, <source>:<document>[<start>-<end>].
+/// List the changeset log
+#[derive(Args)]
+pub struct LogArgs {
+    /// Continue the log after this position
+    #[arg(long, value_name = "POSITION")]
+    after: Option<String>,
+    /// List at most this many
+    #[arg(long)]
+    limit: Option<u64>,
+}
 
-Options:
-  --url <url>        the server (default: $SPOOL_URL, or http://127.0.0.1:7765)
-  --token <token>    a token of that server (default: $SPOOL_TOKEN); `spool dev`
-                     asks for none
-  --json             print what the server answered, as JSON
-";
-
-/// The options that narrow a list, each with the query parameter it becomes
-/// and whether it takes a value.
-const FILTERS: [(&str, &str, bool); 11] = [
-    ("--type", "entity_type", true),
-    ("--sort", "sort", true),
-    ("--order", "order", true),
-    ("--status", "status", true),
-    ("--kind", "kind", true),
-    ("--source", "source", true),
-    ("--key", "key", true),
-    ("--document", "document", true),
-    ("--after", "after", true),
-    ("--limit", "limit", true),
-    ("--unassigned", "unassigned", false),
-];
+/// Say why two records share an identity, or what holds one together
+///
+/// With two records: says why they share an identity, or why they do not:
+/// where each is and what placed it there, what each run that compared them
+/// concluded, the constraints and review items that name them, and what the
+/// project's rules say about the pair as it is now. When they share an
+/// identity, it shows the chain of links between them, each record by its
+/// label and its name and each link by the rule that made it and the values
+/// that satisfied the rule; the rules every chain between them goes through;
+/// and the fewest links whose removal would part the records named as the one
+/// from those named as the other.
+///
+/// With one identity: how much of it is held together only through chains,
+/// the pieces it would fall into without the links each rule alone made, and
+/// its weakest links: the fewest links whose removal would part it, each with
+/// the two sides it would leave. Those are where a wrong merge entered. An
+/// identity is named by its ID, or by any of its records.
+///
+/// A record is named by its ID or as <source>:<key>, which names the latest
+/// version of that row. A record found in a document is named as the lists
+/// name it, <source>:<document>[<start>-<end>].
+#[derive(Args)]
+#[command(after_help = "Examples:\n  spool explain crm:c-1 crm:c-2\n  spool explain crm:c-1")]
+pub struct ExplainArgs {
+    /// A record; alone, an identity, by its ID or by any of its records
+    #[arg(value_name = "RECORD")]
+    first: String,
+    /// A second record, to say why the two share an identity or do not
+    #[arg(value_name = "RECORD")]
+    second: Option<String>,
+    /// Print what the server answered, as JSON
+    #[arg(long)]
+    json: bool,
+    #[command(flatten)]
+    remote: RemoteArgs,
+}
 
 /// How much of a document is shown on either side of a mention, in
 /// characters.
 const CONTEXT: usize = 80;
 
-pub fn show(arguments: &[String]) -> Result<(), Failure> {
-    let arguments = super::arguments(
-        arguments,
-        &Spec {
-            values: &[
-                "--type",
-                "--status",
-                "--kind",
-                "--source",
-                "--key",
-                "--document",
-                "--after",
-                "--limit",
-                "--sort",
-                "--order",
-                remote::VALUES[0],
-                remote::VALUES[1],
-            ],
-            flags: &[
-                "--unassigned",
-                "--all-versions",
-                "--attributes",
-                "--ids",
-                "--json",
-            ],
-            positional: 2,
-        },
-    )?;
-    let remote = Remote::new(&arguments);
+pub fn show(arguments: ShowArgs) -> Result<(), Failure> {
+    let remote = Remote::new(&arguments.remote);
     let view = View {
         remote: &remote,
-        arguments: &arguments,
-        json: arguments.flag("--json"),
+        json: arguments.json,
     };
-    let what = arguments.positional.first().map(String::as_str);
-    let id = arguments.positional.get(1).map(String::as_str);
-    for flag in ["--ids", "--attributes"] {
-        if arguments.flag(flag) && !matches!((what, id), (Some("record" | "records"), None)) {
-            return Err(Failure::Usage(format!(
-                "`{flag}` goes with the list of records"
-            )));
-        }
-    }
-    if arguments.flag("--all-versions")
-        && !matches!(
-            (what, id),
-            (Some("record" | "records" | "document" | "documents"), None)
-        )
-    {
-        return Err(Failure::Usage(
-            "`--all-versions` goes with the lists of records and documents".to_owned(),
-        ));
-    }
-    match (what, id) {
-        (None, _) => view.overview(),
-        (Some("run" | "runs"), None) => view.runs(),
-        (Some("run" | "runs"), Some(id)) => view.run(id),
-        (Some("identity" | "identities"), None) => view.identities(),
-        (Some("identity" | "identities"), Some(id)) => view.identity(id),
-        (Some("record" | "records"), None) => view.records(),
-        (Some("record" | "records"), Some(id)) => view.record(id),
-        (Some("attribute" | "attributes"), None) => view.attributes(),
-        (Some("attribute" | "attributes"), Some(id)) => {
-            Err(Failure::Usage(format!("unexpected argument `{id}`")))
-        }
-        (Some("document" | "documents"), None) => view.documents(),
-        (Some("document" | "documents"), Some(id)) => view.document(id),
-        (Some("review" | "reviews"), None) => view.review_items(),
-        (Some("review" | "reviews"), Some(id)) => view.review_item(id),
-        (Some("draft" | "drafts"), None) => view.drafts(),
-        (Some("draft" | "drafts"), Some(id)) => view.draft(id),
-        (Some("log"), None) => view.log(),
-        (Some("log"), Some(id)) => Err(Failure::Usage(format!("unexpected argument `{id}`"))),
-        (Some(other), _) => Err(Failure::Usage(format!(
-            "`{other}` is not something `show` shows"
-        ))),
+    match &arguments.what {
+        None => view.overview(),
+        Some(What::Runs(what)) => match what.run {
+            Some(run) => view.run(run),
+            None => view.runs(what),
+        },
+        Some(What::Identities(what)) => match what.identity {
+            Some(identity) => view.identity(identity),
+            None => view.identities(what),
+        },
+        Some(What::Records(what)) => match &what.record {
+            Some(record) => view.record(record),
+            None => view.records(what),
+        },
+        Some(What::Attributes(what)) => view.attributes(what),
+        Some(What::Documents(what)) => match what.document {
+            Some(document) => view.document(document),
+            None => view.documents(what),
+        },
+        Some(What::Review(what)) => match what.item {
+            Some(item) => view.review_item(item),
+            None => view.review_items(what),
+        },
+        Some(What::Drafts(what)) => match what.draft {
+            Some(draft) => view.draft(draft),
+            None => view.drafts(what),
+        },
+        Some(What::Log(what)) => view.log(what),
     }
 }
 
-pub fn explain(arguments: &[String]) -> Result<(), Failure> {
-    let arguments = super::arguments(
-        arguments,
-        &Spec {
-            values: &remote::VALUES,
-            flags: &["--json"],
-            positional: 2,
-        },
-    )?;
-    let remote = Remote::new(&arguments);
-    let json = arguments.flag("--json");
-    let (a, b) = match &arguments.positional[..] {
-        [one] => return explain_identity(&remote, one, json),
-        [a, b] => (a, b),
-        _ => {
-            return Err(Failure::Usage(
-                "`explain` needs two records, or an identity".to_owned(),
-            ));
-        }
+pub fn explain(arguments: ExplainArgs) -> Result<(), Failure> {
+    let remote = Remote::new(&arguments.remote);
+    let json = arguments.json;
+    let (a, b) = match &arguments.second {
+        None => return explain_identity(&remote, &arguments.first, json),
+        Some(second) => (&arguments.first, second),
     };
     let a = find_record(&remote, a)?;
     let b = find_record(&remote, b)?;
@@ -426,32 +553,27 @@ fn newest_first(versions: Vec<DocumentEntry>) -> Vec<DocumentEntry> {
 
 struct View<'a> {
     remote: &'a Remote,
-    arguments: &'a Arguments,
     json: bool,
 }
 
-impl View<'_> {
-    /// The query of a list, from the options that narrow it. An option that
-    /// says nothing about `what` is a mistake, not something to ignore.
-    fn query(&self, what: &str, allowed: &[&str]) -> Result<Vec<(&'static str, String)>, Failure> {
-        let mut query = Vec::new();
-        for (option, parameter, takes_value) in FILTERS {
-            let value = match takes_value {
-                true => self.arguments.value(option).map(str::to_owned),
-                false => self.arguments.flag(option).then(|| "true".to_owned()),
-            };
-            let Some(value) = value else { continue };
-            if !allowed.contains(&option) {
-                return Err(Failure::Usage(format!(
-                    "`{option}` does not go with `{what}`"
-                )));
-            }
-            query.push((parameter, value));
+/// The query of a list: a parameter for each option that was given.
+#[derive(Default)]
+struct Query(Vec<(&'static str, String)>);
+
+impl Query {
+    fn add(mut self, parameter: &'static str, value: Option<impl ToString>) -> Self {
+        if let Some(value) = value {
+            self.0.push((parameter, value.to_string()));
         }
-        self.arguments.number("--limit").map_err(Failure::Usage)?;
-        Ok(query)
+        self
     }
 
+    fn flag(self, parameter: &'static str, given: bool) -> Self {
+        self.add(parameter, given.then_some("true"))
+    }
+}
+
+impl View<'_> {
     /// The documents that the mentions among `records` were found in and
     /// that a later version replaced. Such a mention is not current, though
     /// nothing replaced the mention itself: one found in the new version is
@@ -471,14 +593,12 @@ impl View<'_> {
         Ok(replaced)
     }
 
-    /// Whether a list shows every version. Without `--all-versions` it asks
-    /// for the ones nothing replaced.
-    fn all_versions(&self, query: &mut Vec<(&'static str, String)>) -> bool {
-        let all = self.arguments.flag("--all-versions");
-        if !all {
-            query.push(("latest", "true".to_owned()));
+    /// Asks a list for the versions nothing replaced, unless it is to show
+    /// every version.
+    fn latest(query: &mut Query, all_versions: bool) {
+        if !all_versions {
+            query.0.push(("latest", "true".to_owned()));
         }
-        all
     }
 
     /// The attributes a list of records shows a column for: the columns
@@ -515,8 +635,11 @@ impl View<'_> {
         Ok(columns)
     }
 
-    fn attributes(&self) -> Result<(), Failure> {
-        let query = self.query("attributes", &["--type", "--source"])?;
+    fn attributes(&self, what: &AttributesArgs) -> Result<(), Failure> {
+        let query = Query::default()
+            .add("entity_type", what.entity_type.as_ref())
+            .add("source", what.source.as_ref())
+            .0;
         let answer = self.remote.list("/attributes", &query)?;
         if self.json {
             print_json(&answer);
@@ -580,13 +703,7 @@ impl View<'_> {
         Ok(())
     }
 
-    /// A single thing takes no options that narrow a list.
-    fn one(&self, what: &str) -> Result<(), Failure> {
-        self.query(what, &[]).map(|_| ())
-    }
-
     fn overview(&self) -> Result<(), Failure> {
-        self.one("the overview")?;
         let answer = self.remote.list("/info", &[])?;
         if self.json {
             print_json(&answer);
@@ -663,8 +780,13 @@ impl View<'_> {
         Ok(())
     }
 
-    fn runs(&self) -> Result<(), Failure> {
-        let query = self.query("runs", &["--type", "--status", "--kind", "--limit"])?;
+    fn runs(&self, what: &RunsArgs) -> Result<(), Failure> {
+        let query = Query::default()
+            .add("entity_type", what.entity_type.as_ref())
+            .add("status", what.status.as_ref())
+            .add("kind", what.kind.as_ref())
+            .add("limit", what.limit)
+            .0;
         let answer = self.remote.list("/runs", &query)?;
         if self.json {
             print_json(&answer);
@@ -697,11 +819,7 @@ impl View<'_> {
         Ok(())
     }
 
-    fn run(&self, id: &str) -> Result<(), Failure> {
-        self.one("a run")?;
-        let run: u64 = id
-            .parse()
-            .map_err(|_| Failure::Usage(format!("`{id}` is not a run ID")))?;
+    fn run(&self, run: u64) -> Result<(), Failure> {
         let answer = self.remote.get(&format!("/runs/{run}"), &[], || {
             format!("there is no run {run}")
         })?;
@@ -918,11 +1036,14 @@ impl View<'_> {
         Ok(())
     }
 
-    fn identities(&self) -> Result<(), Failure> {
-        let query = self.query(
-            "identities",
-            &["--type", "--after", "--limit", "--sort", "--order"],
-        )?;
+    fn identities(&self, what: &IdentitiesArgs) -> Result<(), Failure> {
+        let query = Query::default()
+            .add("entity_type", what.entity_type.as_ref())
+            .add("sort", what.sort.as_ref())
+            .add("order", what.order.as_ref())
+            .add("after", what.after.as_ref())
+            .add("limit", what.limit)
+            .0;
         let answer = self.remote.list("/identities", &query)?;
         if self.json {
             print_json(&answer);
@@ -962,11 +1083,7 @@ impl View<'_> {
         Ok(())
     }
 
-    fn identity(&self, id: &str) -> Result<(), Failure> {
-        self.one("an identity")?;
-        let identity: IdentityId = id
-            .parse()
-            .map_err(|_| Failure::Usage(format!("`{id}` is not an identity ID")))?;
+    fn identity(&self, identity: IdentityId) -> Result<(), Failure> {
         let missing = || format!("there is no identity {identity}");
         let view = self
             .remote
@@ -1105,22 +1222,19 @@ impl View<'_> {
         }
     }
 
-    fn records(&self) -> Result<(), Failure> {
-        let mut query = self.query(
-            "records",
-            &[
-                "--type",
-                "--source",
-                "--key",
-                "--document",
-                "--unassigned",
-                "--after",
-                "--limit",
-            ],
-        )?;
-        let narrowed = !query.is_empty();
-        let all_versions = self.all_versions(&mut query);
-        let answer = self.remote.list("/records", &query)?;
+    fn records(&self, what: &RecordsArgs) -> Result<(), Failure> {
+        let mut query = Query::default()
+            .add("entity_type", what.entity_type.as_ref())
+            .add("source", what.source.as_ref())
+            .add("key", what.key.as_ref())
+            .add("document", what.document.as_ref())
+            .flag("unassigned", what.unassigned)
+            .add("after", what.after.as_ref())
+            .add("limit", what.limit);
+        let narrowed = !query.0.is_empty();
+        let all_versions = what.all_versions;
+        Self::latest(&mut query, all_versions);
+        let answer = self.remote.list("/records", &query.0)?;
         if self.json {
             print_json(&answer);
             return Ok(());
@@ -1130,8 +1244,8 @@ impl View<'_> {
             println!("no records: `spool load <file>` sends rows");
             return Ok(());
         }
-        let ids = self.arguments.flag("--ids");
-        let attributes = match self.arguments.flag("--attributes") {
+        let ids = what.ids;
+        let attributes = match what.attributes {
             true => self.attribute_columns(&records)?,
             false => Vec::new(),
         };
@@ -1144,7 +1258,7 @@ impl View<'_> {
             headers.push("type");
         }
         headers.push("source and key");
-        if self.arguments.flag("--attributes") {
+        if what.attributes {
             headers.extend(attributes.iter().map(String::as_str));
         } else {
             headers.push("name");
@@ -1171,7 +1285,7 @@ impl View<'_> {
                         row.push(record.entity_type.to_string());
                     }
                     row.push(record_name(record));
-                    if self.arguments.flag("--attributes") {
+                    if what.attributes {
                         row.extend(attributes.iter().map(|attribute| {
                             match record.payload.get(attribute) {
                                 Some(value) if !value.is_null() => label(Some(&plain(value))),
@@ -1215,7 +1329,6 @@ impl View<'_> {
     }
 
     fn record(&self, reference: &str) -> Result<(), Failure> {
-        self.one("a record")?;
         let record = find_record(self.remote, reference)?;
         let review = self
             .remote
@@ -1364,10 +1477,15 @@ impl View<'_> {
         }))
     }
 
-    fn documents(&self) -> Result<(), Failure> {
-        let mut query = self.query("documents", &["--source", "--key", "--after", "--limit"])?;
-        let all_versions = self.all_versions(&mut query);
-        let answer = self.remote.list("/documents", &query)?;
+    fn documents(&self, what: &DocumentsArgs) -> Result<(), Failure> {
+        let mut query = Query::default()
+            .add("source", what.source.as_ref())
+            .add("key", what.key.as_ref())
+            .add("after", what.after.as_ref())
+            .add("limit", what.limit);
+        let all_versions = what.all_versions;
+        Self::latest(&mut query, all_versions);
+        let answer = self.remote.list("/documents", &query.0)?;
         if self.json {
             print_json(&answer);
             return Ok(());
@@ -1400,11 +1518,7 @@ impl View<'_> {
         Ok(())
     }
 
-    fn document(&self, id: &str) -> Result<(), Failure> {
-        self.one("a document")?;
-        let document: DocumentId = id
-            .parse()
-            .map_err(|_| Failure::Usage(format!("`{id}` is not a document ID")))?;
+    fn document(&self, document: DocumentId) -> Result<(), Failure> {
         let answer = self
             .remote
             .get(&format!("/documents/{document}"), &[], || {
@@ -1440,8 +1554,13 @@ impl View<'_> {
         Ok(())
     }
 
-    fn review_items(&self) -> Result<(), Failure> {
-        let query = self.query("review", &["--type", "--status", "--after", "--limit"])?;
+    fn review_items(&self, what: &ReviewArgs) -> Result<(), Failure> {
+        let query = Query::default()
+            .add("entity_type", what.entity_type.as_ref())
+            .add("status", what.status.as_ref())
+            .add("after", what.after.as_ref())
+            .add("limit", what.limit)
+            .0;
         let answer = self.remote.list("/review", &query)?;
         if self.json {
             print_json(&answer);
@@ -1469,11 +1588,7 @@ impl View<'_> {
         Ok(())
     }
 
-    fn review_item(&self, id: &str) -> Result<(), Failure> {
-        self.one("a review item")?;
-        let item: u64 = id
-            .parse()
-            .map_err(|_| Failure::Usage(format!("`{id}` is not a review item ID")))?;
+    fn review_item(&self, item: u64) -> Result<(), Failure> {
         let answer = self.remote.get(&format!("/review/{item}"), &[], || {
             format!("there is no review item {item}")
         })?;
@@ -1577,8 +1692,11 @@ impl View<'_> {
         Ok(())
     }
 
-    fn drafts(&self) -> Result<(), Failure> {
-        let query = self.query("drafts", &["--type", "--status"])?;
+    fn drafts(&self, what: &DraftsArgs) -> Result<(), Failure> {
+        let query = Query::default()
+            .add("entity_type", what.entity_type.as_ref())
+            .add("status", what.status.as_ref())
+            .0;
         let answer = self.remote.list("/drafts", &query)?;
         if self.json {
             print_json(&answer);
@@ -1604,11 +1722,7 @@ impl View<'_> {
         Ok(())
     }
 
-    fn draft(&self, id: &str) -> Result<(), Failure> {
-        self.one("a draft")?;
-        let draft: ChangesetId = id
-            .parse()
-            .map_err(|_| Failure::Usage(format!("`{id}` is not a draft ID")))?;
+    fn draft(&self, draft: ChangesetId) -> Result<(), Failure> {
         let answer = self.remote.get(&format!("/drafts/{draft}"), &[], || {
             format!("there is no draft {draft}")
         })?;
@@ -1660,8 +1774,11 @@ impl View<'_> {
         Ok(())
     }
 
-    fn log(&self) -> Result<(), Failure> {
-        let query = self.query("log", &["--after", "--limit"])?;
+    fn log(&self, what: &LogArgs) -> Result<(), Failure> {
+        let query = Query::default()
+            .add("after", what.after.as_ref())
+            .add("limit", what.limit)
+            .0;
         let answer = self.remote.list("/changesets", &query)?;
         if self.json {
             print_json(&answer);

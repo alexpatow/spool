@@ -12,55 +12,65 @@ use spool::{
     DeclaredSource, ExtractReport, Extractor, FailedDocument, RecordEntry, RunEntry, RunStatus,
 };
 
-use super::remote::{self, Remote, WAIT_MS, listed, print_json, typed};
+use super::remote::{self, Remote, RemoteArgs, WAIT_MS, listed, print_json, typed};
 use crate::Failure;
-use crate::args::Spec;
 
-pub const USAGE: &str = "\
-Usage: spool extract [<path>...] [options]
-
-Finds records in text, on a running server. Each file is one document: the
-server stores its text, and one of the project's extractors reads it. What
-the extractor finds are records like the rows of a source, and the next match
-run places them in identities.
-
-A folder stands for every file under it, in the folders under it too. Files
-and folders whose names start with a dot are left out, and every other file
-has to be UTF-8 text. A file that is named is stored under its name, and a
-file found in a folder under its path from that folder: `dev/a.txt` for
-documents/dev/a.txt, when `documents` was named.
-
-With no path, the extractor reads the documents the server holds and it has
-not read.
-
-The extractor reads the documents in batches, and what it finds in a batch
-is kept when the batch ends. A command that is stopped or fails keeps the
-batches before it, and the same command again reads what is left. A batch
-the command no longer waits for goes on on the server and is kept as well.
-Each batch is made to take a small part of the time the server lets user
-code run (`--task-timeout` on `spool dev` or `spool serve`), so a long
-extraction needs no longer limit. When there is more than one batch, the
-command says on standard error how far it is.
-
-An extractor's first run may fetch what it depends on, a model for one. When
-a run takes more than a few seconds, the command says on standard error which
-file is running, and what the file says as it goes.
-
-  <path>               a file of UTF-8 text, or a folder of them
-
-Options:
-  --source <name>      the source the documents belong to (default: the
-                       project's only source, or the one the files are named
-                       after, as notes-1.txt is after `notes`)
-  --extractor <name>   the extractor (default: the project's only one)
-  --again              read every document of the source, and not only the
-                       ones the extractor has not read. Stopped, the command
-                       starts over when it is run again
-  --url <url>          the server (default: $SPOOL_URL, or http://127.0.0.1:7765)
-  --token <token>      a token of that server (default: $SPOOL_TOKEN); `spool dev`
-                       asks for none
-  --json               print the runs the server answered with, as JSON
-";
+/// Find records in documents with one of the project's extractors
+///
+/// Finds records in text, on a running server. Each file is one document: the
+/// server stores its text, and one of the project's extractors reads it. What
+/// the extractor finds are records like the rows of a source, and the next
+/// match run places them in identities.
+///
+/// A folder stands for every file under it, in the folders under it too.
+/// Files and folders whose names start with a dot are left out, and every
+/// other file has to be UTF-8 text. A file that is named is stored under its
+/// name, and a file found in a folder under its path from that folder:
+/// `dev/a.txt` for documents/dev/a.txt, when `documents` was named.
+///
+/// With no path, the extractor reads the documents the server holds and it
+/// has not read.
+///
+/// The extractor reads the documents in batches, and what it finds in a batch
+/// is kept when the batch ends. A command that is stopped or fails keeps the
+/// batches before it, and the same command again reads what is left. A batch
+/// the command no longer waits for goes on on the server and is kept as well.
+/// Each batch is made to take a small part of the time the server lets user
+/// code run (`--task-timeout` on `spool dev` or `spool serve`), so a long
+/// extraction needs no longer limit. When there is more than one batch, the
+/// command says on standard error how far it is.
+///
+/// An extractor's first run may fetch what it depends on, a model for one.
+/// When a run takes more than a few seconds, the command says on standard
+/// error which file is running, and what the file says as it goes.
+#[derive(clap::Args)]
+#[command(
+    after_help = "Examples:\n  spool extract samples/notes-1.txt\n  spool extract documents/ --source notes\n  spool extract --again"
+)]
+pub struct ExtractArgs {
+    /// Files of UTF-8 text, or folders of them
+    #[arg(value_name = "PATH")]
+    paths: Vec<String>,
+    /// The source the documents belong to
+    ///
+    /// The default is the project's only source, or the one the files are
+    /// named after, as notes-1.txt is after `notes`.
+    #[arg(long, value_name = "NAME")]
+    source: Option<String>,
+    /// The extractor [default: the project's only one]
+    #[arg(long, value_name = "NAME")]
+    extractor: Option<String>,
+    /// Read every document of the source again, not only the new ones
+    ///
+    /// Stopped, the command starts over when it is run again.
+    #[arg(long)]
+    again: bool,
+    /// Print the runs the server answered with, as JSON
+    #[arg(long)]
+    json: bool,
+    #[command(flatten)]
+    remote: RemoteArgs,
+}
 
 /// The most records that are listed.
 const LISTED: usize = 20;
@@ -172,34 +182,21 @@ impl Answered {
     }
 }
 
-pub fn extract(arguments: &[String]) -> Result<(), Failure> {
-    let arguments = super::arguments(
-        arguments,
-        &Spec {
-            values: &[
-                "--source",
-                "--extractor",
-                remote::VALUES[0],
-                remote::VALUES[1],
-            ],
-            flags: &["--again", "--json"],
-            positional: usize::MAX,
-        },
-    )?;
-    let files = read(&arguments.positional)?;
+pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
+    let files = read(&arguments.paths)?;
     catch_ctrl_c();
 
-    let remote = Remote::new(&arguments);
+    let remote = Remote::new(&arguments.remote);
     let info = remote.info()?;
     let timeout = info.task_timeout_ms.map(Duration::from_millis);
     let info = info.store;
-    let extractor = extractor(&info.extractors, arguments.value("--extractor"))?;
-    let source = source_of(&info.sources, arguments.value("--source"), &files)?;
+    let extractor = extractor(&info.extractors, arguments.extractor.as_deref())?;
+    let source = source_of(&info.sources, arguments.source.as_deref(), &files)?;
     if let Some(source) = &source {
         readable(&info.sources, source)?;
     }
-    let as_json = arguments.flag("--json");
-    let again = arguments.flag("--again");
+    let as_json = arguments.json;
+    let again = arguments.again;
     let mut answered = Answered::default();
 
     if let Some(source) = &source
@@ -264,7 +261,7 @@ pub fn extract(arguments: &[String]) -> Result<(), Failure> {
             println!(
                 "read       {} from {}",
                 plural(files.len() as u64, "document", "documents"),
-                match (arguments.positional.as_slice(), files.as_slice()) {
+                match (arguments.paths.as_slice(), files.as_slice()) {
                     (_, [file]) => file.path.clone(),
                     ([named], _) if Path::new(named).is_dir() => named.clone(),
                     (_, files) => plural(files.len() as u64, "file", "files"),

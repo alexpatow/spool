@@ -1,0 +1,10 @@
+List what a project declares, and check its SQL
+
+Usage: spool info [OPTIONS] [DIR]
+
+Arguments:
+  [DIR]  The project directory [default: the current directory]
+
+Options:
+      --json  Print the listing as JSON
+  -h, --help  Print help (see more with '--help')

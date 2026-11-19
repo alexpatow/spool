@@ -1,40 +1,47 @@
 //! `spool init`: an empty project, or one filled with an example.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use clap::Args;
+use clap::builder::PossibleValue;
 use spool::{Manifest, Runtime};
 
 use super::project::{failed, write};
 use crate::Failure;
-use crate::args::Spec;
 
-pub const USAGE: &str = "\
-Usage: spool init [<dir>] [options]
+/// Make a project, empty or from an example
+///
+/// Makes a project: the folders it uses, a .gitignore and a .env.example,
+/// with nothing in them. With --example it is a whole project instead, with
+/// sample rows and documents to load.
+///
+/// The folder has to be empty: it may hold `.git` and `.DS_Store` and nothing
+/// else. A folder that holds anything more is refused, and nothing is
+/// written.
+///
+/// Spool hands the variables that the project's .env sets to the extractors
+/// and strategies it runs, and never prints their values. A variable that is
+/// set already where Spool runs keeps its value. Git ignores .env, and
+/// .env.example shows the form.
+#[derive(Args)]
+#[command(
+    after_help = "Examples:\n  spool init companies --example companies\n  spool init my-data"
+)]
+pub struct InitArgs {
+    /// The folder to make the project in, made if it is not there [default: the current folder]
+    dir: Option<PathBuf>,
+    /// Fill the project with an example
+    #[arg(long, value_name = "NAME", value_parser = examples())]
+    example: Option<String>,
+}
 
-Makes a project: the folders it uses, a .gitignore and a .env.example, with
-nothing in them. With --example it is a whole project instead, with sample
-rows and documents to load.
-
-  <dir>              the folder to make the project in, made if it is not
-                     there (default: the current folder)
-
-Options:
-  --example <name>   fill the project with an example
-
-Examples:
-  companies          a CRM's rows and a call note, matched into companies by
-                     three rules of SQL. Its extractor finds company names
-                     with a small model: a Python file that Spool runs with
-                     `uv`, whose first run fetches about 330 MB.
-
-The folder has to be empty: it may hold `.git` and `.DS_Store` and nothing
-else. A folder that holds anything more is refused, and nothing is written.
-
-Spool hands the variables that the project's .env sets to the extractors and
-strategies it runs, and never prints their values. A variable that is set
-already where Spool runs keeps its value. Git ignores .env, and .env.example
-shows the form.
-";
+/// The names of the examples, each with what it holds.
+fn examples() -> Vec<PossibleValue> {
+    EXAMPLES
+        .iter()
+        .map(|example| PossibleValue::new(example.name).help(example.about))
+        .collect()
+}
 
 /// What may be in a folder that `spool init` takes for empty: a repository
 /// made with `git init`, and what the Finder leaves.
@@ -74,6 +81,8 @@ const ENV_EXAMPLE: &str = "\
 /// A project to start from, which `--example <name>` writes.
 struct Example {
     name: &'static str,
+    /// What the example is, in the help.
+    about: &'static str,
     /// Each file, by its path in the project.
     files: &'static [(&'static str, &'static str)],
     /// What `spool init` lists of it, with what each holds.
@@ -95,6 +104,9 @@ macro_rules! example_files {
 
 const EXAMPLES: &[Example] = &[Example {
     name: "companies",
+    about: "a CRM's rows and a call note, matched into companies by three rules of SQL. Its \
+            extractor finds company names with a small model: a Python file that Spool runs \
+            with `uv`, whose first run fetches about 330 MB",
     files: example_files!("companies":
         "sources/crm.yaml",
         "sources/notes.yaml",
@@ -167,35 +179,15 @@ const ALWAYS: [(&str, &str); 2] = [
     ),
 ];
 
-pub fn init(arguments: &[String]) -> Result<(), Failure> {
-    let arguments = super::arguments(
-        arguments,
-        &Spec {
-            values: &["--example"],
-            flags: &[],
-            positional: 1,
-        },
-    )?;
-    let example = match arguments.value("--example") {
-        None => None,
-        Some(name) => Some(
-            EXAMPLES
-                .iter()
-                .find(|example| example.name == name)
-                .ok_or_else(|| {
-                    let known: Vec<String> = EXAMPLES
-                        .iter()
-                        .map(|example| format!("`{}`", example.name))
-                        .collect();
-                    Failure::Usage(format!(
-                        "there is no example `{name}`: the examples are {}",
-                        known.join(", ")
-                    ))
-                })?,
-        ),
-    };
-    let named = !arguments.positional.is_empty();
-    let dir = arguments.project_dir();
+pub fn init(arguments: InitArgs) -> Result<(), Failure> {
+    let example = arguments.example.as_deref().map(|name| {
+        EXAMPLES
+            .iter()
+            .find(|example| example.name == name)
+            .expect("the parser takes only the names of examples")
+    });
+    let named = arguments.dir.is_some();
+    let dir = super::project_dir(&arguments.dir);
     refuse_unless_empty(&dir, named)?;
 
     let mut files: Vec<(String, &str)> = example
@@ -263,7 +255,7 @@ pub fn init(arguments: &[String]) -> Result<(), Failure> {
     match example {
         Some(example) => {
             println!("\n{}", example.note);
-            let user_code = super::user_code(&arguments, &dir)?;
+            let user_code = super::user_code(None, &dir);
             for runtime in example.runtimes {
                 let program = match runtime {
                     Runtime::Python => "uv",
@@ -375,17 +367,6 @@ fn is_current_dir(dir: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_usage_names_every_example() {
-        for example in EXAMPLES {
-            assert!(
-                USAGE.contains(&format!("\n  {:<19}", example.name)),
-                "{}",
-                example.name
-            );
-        }
-    }
 
     #[test]
     fn what_an_example_lists_is_what_it_writes() {

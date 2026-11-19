@@ -6,87 +6,56 @@ use spool::arrow::array::{Array, AsArray};
 use spool::core::ReviewItem;
 use spool::{BenchReport, Engine, Options, Scenario, StepReport, StrategyRef, UserCode};
 
+use super::UserCodeArgs;
 use crate::Failure;
-use crate::args::Spec;
 
-pub const USAGE: &str = "\
-Usage: spool bench <scenario> [options]
-
-Runs a benchmark scenario: ingests each step's files, stores its documents and
-runs its extractors over them, takes back the rows it says a source no longer
-holds, applies its corrections, resolves, and scores committed state against
-the scenario's truth. A scenario with labelled mentions is also scored on what
-its extractors found, and on the two together, end to end. The store is
-verified after every step.
-
-  <scenario>      a scenario.toml, or the directory that holds one
-
-Options:
-  --db <path>         the database file to build; replaced if it exists
-                      (default: .spool/bench.duckdb in the project directory)
-  --seed <n>          the seed for identity and changeset IDs (default: 0)
-  --out <path>        write the results as JSON to this file
-  --list <n>          print at most this many identities per step (default: 50)
-  --strategy <name>   the strategy of every step that does not name its own:
-                      `rules`, or one of the project's user-code strategies
-                      (default: the scenario's, or `rules`)
-  --task-timeout <s>  how long a user-code strategy or an extractor may run,
-                      in seconds (default: 600)
-  --tasks <dir>       where the task directories of user code are made
-                      (default: spool-tasks in the temporary directory)
-
-Strategies and extractors that are `.py` files run with `uv`, and `.ts` files
-with `bun`.
-SPOOL_UV and SPOOL_BUN name the commands if they are not on the search path.
-";
-
-const SPEC: Spec = Spec {
-    values: &[
-        "--db",
-        "--seed",
-        "--out",
-        "--list",
-        "--strategy",
-        "--task-timeout",
-        "--tasks",
-    ],
-    flags: &[],
-    positional: 1,
-};
-
-struct Arguments {
+/// Run a benchmark scenario
+///
+/// Runs a benchmark scenario: ingests each step's files, stores its documents
+/// and runs its extractors over them, takes back the rows it says a source no
+/// longer holds, applies its corrections, resolves, and scores committed
+/// state against the scenario's truth. A scenario with labelled mentions is
+/// also scored on what its extractors found, and on the two together, end to
+/// end. The store is verified after every step.
+///
+/// Strategies and extractors that are `.py` files run with `uv`, and `.ts`
+/// files with `bun`. SPOOL_UV and SPOOL_BUN name the commands if they are not
+/// on the search path.
+#[derive(clap::Args)]
+pub struct BenchArgs {
+    /// A scenario.toml, or the directory that holds one
     scenario: PathBuf,
+    /// The database file to build; replaced if it exists [default: .spool/bench.duckdb in the project directory]
+    #[arg(long, value_name = "PATH")]
     db: Option<PathBuf>,
+    /// The seed for identity and changeset IDs
+    #[arg(long, default_value_t = 0)]
     seed: u64,
+    /// Write the results as JSON to this file
+    #[arg(long, value_name = "PATH")]
     out: Option<PathBuf>,
+    /// Print at most this many identities per step
+    #[arg(long, value_name = "N", default_value_t = 50)]
     list: usize,
+    /// The strategy of every step that does not name its own [default: the scenario's, or `rules`]
+    ///
+    /// `rules`, or one of the project's user-code strategies.
+    #[arg(long, value_name = "NAME")]
     strategy: Option<String>,
+    #[command(flatten)]
+    user_code: UserCodeArgs,
 }
 
-pub fn bench(arguments: &[String]) -> Result<(), Failure> {
-    let parsed = super::arguments(arguments, &SPEC)?;
-    let usage = Failure::Usage;
-    let arguments = Arguments {
-        scenario: parsed
-            .positional
-            .first()
-            .map(PathBuf::from)
-            .ok_or_else(|| usage("`bench` needs a scenario".to_owned()))?,
-        db: parsed.path("--db"),
-        seed: parsed.number("--seed").map_err(usage)?.unwrap_or(0),
-        out: parsed.path("--out"),
-        list: parsed.number("--list").map_err(usage)?.unwrap_or(50) as usize,
-        strategy: parsed.value("--strategy").map(str::to_owned),
-    };
+pub fn bench(arguments: BenchArgs) -> Result<(), Failure> {
     let mut scenario = Scenario::load(&arguments.scenario)?;
     if let Some(strategy) = &arguments.strategy {
         scenario = scenario.with_strategy(strategy);
     }
-    let user_code = super::user_code(&parsed, &scenario.project_dir())?;
+    let user_code = super::user_code(Some(&arguments.user_code), &scenario.project_dir());
     Ok(run(&arguments, scenario, user_code)?)
 }
 
-fn run(arguments: &Arguments, scenario: Scenario, user_code: UserCode) -> spool::Result<()> {
+fn run(arguments: &BenchArgs, scenario: Scenario, user_code: UserCode) -> spool::Result<()> {
     let db = match &arguments.db {
         Some(db) => db.clone(),
         None => scenario.project_dir().join(".spool").join("bench.duckdb"),

@@ -13,118 +13,146 @@ use spool_cli::accounts;
 use spool_cli::google::{self, Google};
 use spool_cli::server::{self, ServerOptions};
 
-use super::manifest_path;
+use clap::Args;
+
+use super::UserCodeArgs;
 use crate::Failure;
-use crate::args::{Arguments, Spec};
 
-pub const SERVE_USAGE: &str = "\
-Usage: spool serve [options]
+/// Run the server from a manifest and a store
+///
+/// Runs the server. It is the only process that opens the store.
+///
+/// An empty store is set up from the manifest. A store that was applied with
+/// another manifest is refused: run `spool apply` on it first.
+///
+/// The server answers a browser at its address with the studio, which shows
+/// what the store holds and takes the changes of whoever is signed in. People
+/// sign in with a username and a password. Their accounts are kept in a file
+/// beside the store, named after it: `spool.auth.sqlite` for `spool.duckdb`.
+/// While no admin can sign in, the server prints a link when it starts;
+/// whoever opens it makes the first account and is the admin, who adds
+/// everyone else.
+///
+/// Passwords are for getting started. A server that people rely on should
+/// sign them in with Google: with SPOOL_GOOGLE_CLIENT_ID and
+/// SPOOL_GOOGLE_CLIENT_SECRET set to an OAuth client made in Google's console,
+/// the sign-in page offers it, and an admin adds a person by the email of
+/// their Google account, which is a Gmail address or one of an organisation's
+/// Google Workspace. The server prints the redirect URI to give that client
+/// when it starts.
+///
+/// A caller that is not a person presents a token, which an admin makes on
+/// the studio's Tokens page and `spool token add` makes on this machine. What
+/// it changes is recorded under the token's name, as `agent:<name>`.
+///
+/// An assistant that speaks the Model Context Protocol, such as Claude or
+/// ChatGPT, is pointed at `/mcp`, where the server offers it tools to load
+/// rows and documents, to match them, to look things up and to change
+/// identities. It presents a token as any other caller does, and what it
+/// changes is recorded under that token's name.
+///
+/// Strategies and extractors that are `.py` files run with `uv`, and `.ts`
+/// files with `bun`. SPOOL_UV and SPOOL_BUN name the commands if they are not
+/// on the search path. The server runs such a file only while it is the one
+/// the manifest was compiled from. It is given the variables that the
+/// project's .env sets, except those that are set already where the server
+/// runs.
+///
+/// The server stops on Ctrl-C or SIGTERM, and prints `stopping`. It takes no
+/// new request. Whoever waits on a run with `wait_ms` is answered at once,
+/// with the run as far as it has got. Other requests are answered if that
+/// takes no more than 5 seconds; one that a client has not sent in full by
+/// then gets no answer. A client that was refused while still sending has 1
+/// second more to read why. So the server is done with its clients within 6
+/// seconds.
+///
+/// It then finishes the runs the engine was given, however long they take,
+/// and prints `stopped`. A run is not cut off half way. If the process is
+/// killed first, the run is recorded as failed when the store is next opened.
+#[derive(Args)]
+pub struct ServeArgs {
+    /// The manifest to run on
+    #[arg(long, value_name = "PATH", default_value = ".spool/manifest.json")]
+    manifest: PathBuf,
+    /// The store's database file
+    #[arg(long, env = "SPOOL_STORE", hide_env_values = true, value_name = "PATH")]
+    store: Option<PathBuf>,
+    /// The address to listen on
+    #[arg(long, value_name = "ADDR", default_value = "0.0.0.0:7765")]
+    listen: SocketAddr,
+    /// The address people reach the server by, such as https://spool.example.com
+    ///
+    /// The default is the address it listens on when that is on this machine
+    /// only. Sign-in with Google comes back to it.
+    #[arg(
+        long,
+        env = "SPOOL_PUBLIC_URL",
+        hide_env_values = true,
+        value_name = "URL"
+    )]
+    public_url: Option<String>,
+    /// The project directory, where the files the manifest names are found [default: the current directory]
+    #[arg(long, value_name = "DIR")]
+    project: Option<PathBuf>,
+    /// Do not serve the studio
+    #[arg(long)]
+    no_studio: bool,
+    /// Browsers reach the server over HTTP, not HTTPS
+    ///
+    /// The session cookie may then travel over HTTP. It is the default when
+    /// the server listens on this machine only.
+    #[arg(long)]
+    plain_http: bool,
+    /// Makes IDs and timestamps reproducible, for tests
+    #[arg(long, hide = true)]
+    seed: Option<u64>,
+    #[command(flatten)]
+    user_code: UserCodeArgs,
+}
 
-Runs the server. It is the only process that opens the store.
-
-An empty store is set up from the manifest. A store that was applied with
-another manifest is refused: run `spool apply` on it first.
-
-The server answers a browser at its address with the studio, which shows what
-the store holds and takes the changes of whoever is signed in. People sign in
-with a username and a password. Their accounts are kept in a file beside the
-store, named after it: `spool.auth.sqlite` for `spool.duckdb`. While no admin
-can sign in, the server prints a link when it starts; whoever opens it makes
-the first account and is the admin, who adds everyone else.
-
-Passwords are for getting started. A server that people rely on should sign
-them in with Google: with SPOOL_GOOGLE_CLIENT_ID and SPOOL_GOOGLE_CLIENT_SECRET
-set to an OAuth client made in Google's console, the sign-in page offers it,
-and an admin adds a person by the email of their Google account, which is a
-Gmail address or one of an organisation's Google Workspace. The server prints
-the redirect URI to give that client when it starts.
-
-A caller that is not a person presents a token, which an admin makes on the
-studio's Tokens page and `spool token add` makes on this machine. What it
-changes is recorded under the token's name, as `agent:<name>`.
-
-An assistant that speaks the Model Context Protocol, such as Claude or
-ChatGPT, is pointed at `/mcp`, where the server offers it tools to load rows
-and documents, to match them, to look things up and to change identities. It
-presents a token as any other caller does, and what it changes is recorded
-under that token's name. docs/mcp.md says how to add the server to each.
-
-Options:
-  --manifest <path>   the manifest to run on (default: .spool/manifest.json)
-  --store <path>      the store's database file (default: $SPOOL_STORE)
-  --listen <addr>     the address to listen on (default: 0.0.0.0:7765)
-  --public-url <url>  the address people reach the server by, such as
-                      https://spool.example.com (default: $SPOOL_PUBLIC_URL,
-                      or the address it listens on when that is on this
-                      machine only). Sign-in with Google comes back to it.
-  --project <dir>     the project directory, where the strategy and extractor
-                      files the manifest names are found (default: the
-                      current directory)
-  --task-timeout <s>  how long a user-code strategy or an extractor may run,
-                      in seconds (default: 600)
-  --tasks <dir>       where the task directories of user code are made
-                      (default: spool-tasks in the temporary directory)
-  --no-studio         do not serve the studio
-  --plain-http        browsers reach the server over HTTP, not HTTPS, so the
-                      session cookie may travel over HTTP (the default when
-                      listening on this machine only)
-
-Strategies and extractors that are `.py` files run with `uv`, and `.ts` files
-with `bun`. SPOOL_UV and SPOOL_BUN name the commands if they are not on the
-search path. The server runs such a file only while it is the one the
-manifest was compiled from. It is given the variables that the project's
-.env sets, except those that are set already where the server runs.
-
-The server stops on Ctrl-C or SIGTERM, and prints `stopping`. It takes no new
-request. Whoever waits on a run with `wait_ms` is answered at once, with the
-run as far as it has got. Other requests are answered if that takes no more
-than 5 seconds; one that a client has not sent in full by then gets no
-answer. A client that was refused while still sending has 1 second more to
-read why. So the server is done with its clients within 6 seconds.
-
-It then finishes the runs the engine was given, however long they take, and
-prints `stopped`. A run is not cut off half way. If the process is killed
-first, the run is recorded as failed when the store is next opened.
-";
-
-pub const DEV_USAGE: &str = "\
-Usage: spool dev [<dir>] [options]
-
-Runs the server on localhost from a project directory, against a development
-store under .spool/. A change to the project's files is applied as it is
-saved; a change that does not compile is reported and the last version that
-did keeps running.
-
-Open the address it listens on in a browser for the studio, which shows what
-the store holds and takes changes. Nobody signs in, and a caller needs no
-token: every change is recorded under an account called `dev`, an admin. So
-it listens on this machine only, and answers only what is sent to `localhost`
-or to a loopback address; `spool serve` runs a server that others reach. A
-caller that does present a token writes as that token, as it would there.
-
-An assistant on this machine that speaks the Model Context Protocol, such as
-Claude Code, is pointed at `/mcp`, where the server offers it tools to load
-rows and documents, to match them, to look things up and to change
-identities. docs/mcp.md says how.
-
-  <dir>               the project directory (default: the current directory)
-
-Options:
-  --listen <addr>     the loopback address to listen on (default: 127.0.0.1:7765)
-  --store <path>      the store's database file (default: <dir>/.spool/dev.duckdb)
-  --task-timeout <s>  how long a user-code strategy or an extractor may run,
-                      in seconds (default: 600)
-  --tasks <dir>       where the task directories of user code are made
-                      (default: spool-tasks in the temporary directory)
-
-Strategies and extractors that are `.py` files run with `uv`, and `.ts` files
-with `bun`. SPOOL_UV and SPOOL_BUN name the commands if they are not on the
-search path. They are given the variables that the project's .env sets,
-except those that are set already where the server runs, and the file is
-read again each time one starts.
-
-Ctrl-C stops it, the way `spool serve --help` says a server stops.
-";
+/// Run a server on localhost that applies file changes as they are saved
+///
+/// Runs the server on localhost from a project directory, against a
+/// development store under .spool/. A change to the project's files is
+/// applied as it is saved; a change that does not compile is reported and the
+/// last version that did keeps running.
+///
+/// Open the address it listens on in a browser for the studio, which shows
+/// what the store holds and takes changes. Nobody signs in, and a caller needs
+/// no token: every change is recorded under an account called `dev`, an
+/// admin. So it listens on this machine only, and answers only what is sent
+/// to `localhost` or to a loopback address; `spool serve` runs a server that
+/// others reach. A caller that does present a token writes as that token, as
+/// it would there.
+///
+/// An assistant on this machine that speaks the Model Context Protocol, such
+/// as Claude Code, is pointed at `/mcp`, where the server offers it tools to
+/// load rows and documents, to match them, to look things up and to change
+/// identities.
+///
+/// Strategies and extractors that are `.py` files run with `uv`, and `.ts`
+/// files with `bun`. SPOOL_UV and SPOOL_BUN name the commands if they are not
+/// on the search path. They are given the variables that the project's .env
+/// sets, except those that are set already where the server runs, and the
+/// file is read again each time one starts.
+///
+/// Ctrl-C stops it, the way `spool serve --help` says a server stops.
+#[derive(Args)]
+pub struct DevArgs {
+    /// The project directory [default: the current directory]
+    dir: Option<PathBuf>,
+    /// The loopback address to listen on
+    #[arg(long, value_name = "ADDR", default_value = "127.0.0.1:7765")]
+    listen: SocketAddr,
+    /// The store's database file [default: <DIR>/.spool/dev.duckdb]
+    #[arg(long, value_name = "PATH")]
+    store: Option<PathBuf>,
+    /// Makes IDs and timestamps reproducible, for tests
+    #[arg(long, hide = true)]
+    seed: Option<u64>,
+    #[command(flatten)]
+    user_code: UserCodeArgs,
+}
 
 /// Prints a line, and carries on if nobody is reading: a server must not
 /// stop because its output was closed.
@@ -142,45 +170,18 @@ fn failed(message: impl Into<String>) -> Failure {
     Failure::Failed(message.into())
 }
 
-fn listen_address(arguments: &Arguments, default: &str) -> Result<SocketAddr, Failure> {
-    let address = arguments.value("--listen").unwrap_or(default);
-    address.parse().map_err(|_| {
-        Failure::Usage(format!(
-            "`--listen` needs an address such as 127.0.0.1:{DEFAULT_PORT}, not `{address}`"
-        ))
-    })
-}
-
 /// IDs and the clock: the system's, or reproducible ones for tests.
-fn options(arguments: &Arguments) -> Result<Options, Failure> {
-    Ok(match arguments.number("--seed").map_err(Failure::Usage)? {
+fn options(seed: Option<u64>) -> Options {
+    match seed {
         Some(seed) => Options::seeded(seed),
         None => Options::default(),
-    })
+    }
 }
 
-pub fn serve(arguments: &[String]) -> Result<(), Failure> {
-    let arguments = super::arguments(
-        arguments,
-        &Spec {
-            // `--seed` is for tests: it makes IDs and timestamps reproducible.
-            values: &[
-                "--manifest",
-                "--store",
-                "--listen",
-                "--public-url",
-                "--seed",
-                "--project",
-                "--task-timeout",
-                "--tasks",
-            ],
-            flags: &["--no-studio", "--plain-http"],
-            positional: 0,
-        },
-    )?;
-    let listen = listen_address(&arguments, &format!("0.0.0.0:{DEFAULT_PORT}"))?;
+pub fn serve(arguments: ServeArgs) -> Result<(), Failure> {
+    let listen = arguments.listen;
     let reached = Reached {
-        at: public_url(&arguments)?,
+        at: public_url(arguments.public_url.as_deref())?,
         google: GoogleClient::read()?,
     };
     if reached.google.is_some() && reached.at.is_none() && !listen.ip().is_loopback() {
@@ -190,17 +191,13 @@ pub fn serve(arguments: &[String]) -> Result<(), Failure> {
                 .to_owned(),
         ));
     }
-    let store = super::store_path(&arguments)?;
-    let manifest_file = arguments
-        .path("--manifest")
-        .unwrap_or_else(|| manifest_path(Path::new(".")));
+    let store = super::store_path(&arguments.store)?;
+    let manifest_file = arguments.manifest.clone();
     let manifest = Manifest::read_file(&manifest_file)?;
-    let project = arguments
-        .path("--project")
-        .unwrap_or_else(|| PathBuf::from("."));
-    let user_code = super::user_code(&arguments, &project)?;
+    let project = super::project_dir(&arguments.project);
+    let user_code = super::user_code(Some(&arguments.user_code), &project);
 
-    let engine = Engine::open(&store, options(&arguments)?)?;
+    let engine = Engine::open(&store, options(arguments.seed))?;
     engine.set_user_code(user_code);
     match engine.applied_manifest_hash()? {
         None => {
@@ -227,8 +224,8 @@ pub fn serve(arguments: &[String]) -> Result<(), Failure> {
         .map_err(|refused| failed(refused.to_string()))?;
     let mut options = ServerOptions::new(accounts);
     options.setup = empty.then(accounts::code);
-    options.https = !(arguments.flag("--plain-http") || listen.ip().is_loopback());
-    options.studio = !arguments.flag("--no-studio");
+    options.https = !(arguments.plain_http || listen.ip().is_loopback());
+    options.studio = !arguments.no_studio;
     run(Arc::new(engine), listen, options, reached)
 }
 
@@ -280,11 +277,8 @@ impl GoogleClient {
     }
 }
 
-fn public_url(arguments: &Arguments) -> Result<Option<String>, Failure> {
-    let given = arguments
-        .value("--public-url")
-        .map(str::to_owned)
-        .or_else(|| std::env::var("SPOOL_PUBLIC_URL").ok())
+fn public_url(given: Option<&str>) -> Result<Option<String>, Failure> {
+    let given = given
         .map(|url| url.trim().trim_end_matches('/').to_owned())
         .filter(|url| !url.is_empty());
     match given {
@@ -297,17 +291,9 @@ fn public_url(arguments: &Arguments) -> Result<Option<String>, Failure> {
     }
 }
 
-pub fn dev(arguments: &[String]) -> Result<(), Failure> {
-    let arguments = super::arguments(
-        arguments,
-        &Spec {
-            values: &["--listen", "--store", "--seed", "--task-timeout", "--tasks"],
-            flags: &[],
-            positional: 1,
-        },
-    )?;
-    let dir = arguments.project_dir();
-    let listen = listen_address(&arguments, &format!("127.0.0.1:{DEFAULT_PORT}"))?;
+pub fn dev(arguments: DevArgs) -> Result<(), Failure> {
+    let dir = super::project_dir(&arguments.dir);
+    let listen = arguments.listen;
     // Whoever reaches a development server is its admin.
     if !listen.ip().is_loopback() {
         return Err(Failure::Usage(format!(
@@ -317,7 +303,8 @@ pub fn dev(arguments: &[String]) -> Result<(), Failure> {
         )));
     }
     let store = arguments
-        .path("--store")
+        .store
+        .clone()
         .unwrap_or_else(|| dir.join(".spool").join("dev.duckdb"));
     let seen = fingerprint(&dir);
     let manifest = Manifest::load(&dir)?;
@@ -328,8 +315,8 @@ pub fn dev(arguments: &[String]) -> Result<(), Failure> {
         std::fs::create_dir_all(parent)
             .map_err(|error| failed(format!("{}: {error}", parent.display())))?;
     }
-    let user_code = super::user_code(&arguments, &dir)?;
-    let engine = Engine::open(&store, options(&arguments)?).map_err(|error| match error {
+    let user_code = super::user_code(Some(&arguments.user_code), &dir);
+    let engine = Engine::open(&store, options(arguments.seed)).map_err(|error| match error {
         // The usual cause by far, and what to do about it.
         spool::Error::StoreInUse { path, holder } => failed(format!(
             "the store {} is open in another process{}, most likely a `spool dev` that is \

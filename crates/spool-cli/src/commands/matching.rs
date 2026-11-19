@@ -1,57 +1,57 @@
 //! `spool match`: starts a match run on a running server and says what it
 //! did.
 
+use clap::Args;
 use serde_json::{Value, json};
 use spool::core::EntityType;
 use spool::{RunEntry, RunStatus, StrategyRef, TypeInfo};
 
-use super::remote::{self, Remote, WAIT_MS, print_json, unsuccessful};
+use super::remote::{Remote, RemoteArgs, WAIT_MS, print_json, unsuccessful};
 use super::show::{count, fields, placed};
 use crate::Failure;
-use crate::args::Spec;
 
-pub const USAGE: &str = "\
-Usage: spool match [options]
+/// Match new records and place them in identities
+///
+/// Matches the records that no match has examined, on a running server, and
+/// places them in identities: the rules judge pairs of records, and each new
+/// record joins the identity of the records it matches or gets a new one.
+/// Identities that exist keep their IDs and their members.
+///
+/// Each entity type the project declares is matched in a run of its own, one
+/// after the other, and the command reports each. A run that fails does not
+/// stop the ones after it, and the command then fails. `--type` matches one.
+///
+/// `spool show runs <run>` shows the whole report of a run, and `spool show
+/// records` what each record belongs to now.
+#[derive(Args)]
+pub struct MatchArgs {
+    /// Only this entity type [default: every one the project declares]
+    #[arg(long = "type", value_name = "NAME")]
+    entity_type: Option<String>,
+    /// Examine every record again, not only the new ones
+    ///
+    /// Records that have an identity keep it, and the run reports where the
+    /// rules disagree with the identities.
+    #[arg(long)]
+    rematch: bool,
+    /// Who judges: `rules`, or one of the project's strategies for the type
+    ///
+    /// A strategy is for one entity type, which `--type` names when the
+    /// project declares more than one.
+    #[arg(long, value_name = "NAME", default_value = StrategyRef::RULES)]
+    strategy: String,
+    /// Print the runs the server answered with, as JSON
+    ///
+    /// With `--type`, its answer, and without, `runs`, a list of each type's
+    /// `entity_type` and `run`.
+    #[arg(long)]
+    json: bool,
+    #[command(flatten)]
+    remote: RemoteArgs,
+}
 
-Matches the records that no match has examined, on a running server, and
-places them in identities: the rules judge pairs of records, and each new
-record joins the identity of the records it matches or gets a new one.
-Identities that exist keep their IDs and their members.
-
-Each entity type the project declares is matched in a run of its own, one
-after the other, and the command reports each. A run that fails does not
-stop the ones after it, and the command then fails. `--type` matches one.
-
-`spool show runs <run>` shows the whole report of a run, and
-`spool show records` what each record belongs to now.
-
-Options:
-  --type <name>      only this entity type (default: every one the project
-                     declares)
-  --rematch          examine every record again, not only the new ones.
-                     Records that have an identity keep it, and the run
-                     reports where the rules disagree with the identities
-  --strategy <name>  who judges: `rules`, or one of the project's strategies
-                     for the type, which `--type` names when the project
-                     declares more than one (default: rules)
-  --url <url>        the server (default: $SPOOL_URL, or http://127.0.0.1:7765)
-  --token <token>    a token of that server (default: $SPOOL_TOKEN); `spool dev`
-                     asks for none
-  --json             print the runs the server answered with, as JSON: with
-                     `--type`, its answer, and without, `runs`, a list of
-                     each type's `entity_type` and `run`
-";
-
-pub fn run(arguments: &[String]) -> Result<(), Failure> {
-    let arguments = super::arguments(
-        arguments,
-        &Spec {
-            values: &["--type", "--strategy", remote::VALUES[0], remote::VALUES[1]],
-            flags: &["--rematch", "--json"],
-            positional: 0,
-        },
-    )?;
-    let remote = Remote::new(&arguments);
+pub fn run(arguments: MatchArgs) -> Result<(), Failure> {
+    let remote = Remote::new(&arguments.remote);
     let info = remote.info()?;
     let types = &info.store.entity_types;
     if types.is_empty() {
@@ -61,7 +61,7 @@ pub fn run(arguments: &[String]) -> Result<(), Failure> {
                 .to_owned(),
         ));
     }
-    let named = arguments.value("--type");
+    let named = arguments.entity_type.as_deref();
     let chosen: Vec<&TypeInfo> = match named {
         Some(name) => vec![
             types
@@ -80,10 +80,8 @@ pub fn run(arguments: &[String]) -> Result<(), Failure> {
     // The server takes a name it does not know for a strategy the caller
     // runs, and starts a run that waits for judgements. Nobody would send
     // them here.
-    let strategy = arguments.value("--strategy");
-    if let Some(strategy) = strategy
-        && strategy != StrategyRef::RULES
-    {
+    let strategy = Some(arguments.strategy.as_str()).filter(|name| *name != StrategyRef::RULES);
+    if let Some(strategy) = strategy {
         let [entity_type] = chosen.as_slice() else {
             return Err(Failure::Failed(format!(
                 "a strategy judges one entity type: say which `{strategy}` is for with \
@@ -113,8 +111,8 @@ pub fn run(arguments: &[String]) -> Result<(), Failure> {
         }
     }
 
-    let rematch = arguments.flag("--rematch");
-    let as_json = arguments.flag("--json");
+    let rematch = arguments.rematch;
+    let as_json = arguments.json;
     let mut answered = Vec::new();
     let mut hints: Vec<&str> = Vec::new();
     let mut failures = Vec::new();

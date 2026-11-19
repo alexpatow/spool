@@ -1,0 +1,18 @@
+List review items, or show one with its records
+
+Usage: spool show review [OPTIONS] [ITEM]
+
+Arguments:
+  [ITEM]  A review item's number, to show it with its records
+
+Options:
+      --type <NAME>      Only this entity type
+      --status <STATUS>  Only this status [possible values: open, resolved, superseded, dismissed]
+      --after <ITEM>     Continue the list after this item, in its order
+      --limit <LIMIT>    List at most this many
+      --json             Print what the server answered, as JSON
+  -h, --help             Print help
+
+Server options:
+      --url <URL>      The server [env: SPOOL_URL] [default: http://127.0.0.1:7765]
+      --token <TOKEN>  A token for that server; `spool dev` needs none [env: SPOOL_TOKEN]

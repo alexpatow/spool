@@ -1,0 +1,24 @@
+List identities, or show one with its members and history
+
+Usage: spool show identities [OPTIONS] [IDENTITY]
+
+Arguments:
+  [IDENTITY]  An identity's ID, to show it
+
+Options:
+      --type <NAME>    Only this entity type
+      --sort <SORT>    Sort by this column [possible values: records, names, sources, label,
+                       entity_type, created, id]
+      --order <ORDER>  The order of the sort [default: asc] [possible values: asc, desc]
+      --after <ID>     Continue the list after this ID, in its order
+      --limit <LIMIT>  List at most this many
+      --json           Print what the server answered, as JSON
+  -h, --help           Print help (see more with '--help')
+
+Server options:
+      --url <URL>      The server [env: SPOOL_URL] [default: http://127.0.0.1:7765]
+      --token <TOKEN>  A token for that server; `spool dev` needs none [env: SPOOL_TOKEN]
+
+Examples:
+  spool show identities --sort records --order desc
+  spool show identities --type company --limit 10

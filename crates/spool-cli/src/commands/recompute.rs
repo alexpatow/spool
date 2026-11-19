@@ -1,6 +1,7 @@
 //! `spool recompute`: what the identities would be under the rules as they
 //! are now, against the identities there are, and applying that when asked.
 
+use clap::Args;
 use serde_json::json;
 use spool::core::IdentityId;
 use spool::{
@@ -8,76 +9,74 @@ use spool::{
     TypeRecompute,
 };
 
-use super::remote::{self, Remote, print_json, typed};
+use super::remote::{Remote, RemoteArgs, print_json, typed};
 use super::show::{aligned, count, fields, table};
 use crate::Failure;
-use crate::args::Spec;
 
-pub const USAGE: &str = "\
-Usage: spool recompute [options]
-       spool recompute --apply <plan> [options]
-
-Shows what the identities would be if every record were matched again, all
-at once, by the rules as they are now, against the identities there are. It
-changes nothing. Identities keep their members when rules change, so this is
-how a better rule reaches records that are already placed.
-
-What people decided counts for more than the rules: a `must_link` or a
-`cannot_link` holds, records a person or an agent put together stay
-together, and records a reviewer dismissed from review stay without an
-identity. Records whose source took them back are left out.
-
-An identity keeps its ID with the group that gets most of its records. Where
-several identities have their most in one group, the one with the most
-records there keeps its ID and the others are merged into it, so that their
-IDs stand for it. A group the rules join but something in it says differ
-waits for review without an identity, as records do after a match.
-
-The summary comes first, then the largest changes. It ends with the command
-that applies it, which names a plan: a hash of where each record is and would
-go. Applying works the result out again and refuses if it is not that plan,
-so what is applied is what was shown.
-
-Options:
-  --type <name>      one entity type (default: every type)
-  --identity <id>    show the change that holds an identity, record by record
-  --detail           list every change, not only the largest
-  --limit <n>        how many changes to list (default: 10, or 1000 with
-                     --detail)
-  --offset <n>       pass over this many of the largest changes first
-  --apply <plan>     make the identities what the preview with this plan
-                     showed: a changeset in the log, by the engine, from runs
-                     started in your name
-  --reason <text>    with --apply, why; kept with the changeset
-  --url <url>        the server (default: $SPOOL_URL, or http://127.0.0.1:7765)
-  --token <token>    a token of that server (default: $SPOOL_TOKEN); `spool dev`
-                     asks for none
-  --json             print what the server answered, as JSON
-";
+/// Show what the current rules would change in the identities
+///
+/// Shows what the identities would be if every record were matched again,
+/// all at once, by the rules as they are now, against the identities there
+/// are. It changes nothing. Identities keep their members when rules change,
+/// so this is how a better rule reaches records that are already placed.
+///
+/// What people decided counts for more than the rules: a `must_link` or a
+/// `cannot_link` holds, records a person or an agent put together stay
+/// together, and records a reviewer dismissed from review stay without an
+/// identity. Records whose source took them back are left out.
+///
+/// An identity keeps its ID with the group that gets most of its records.
+/// Where several identities have their most in one group, the one with the
+/// most records there keeps its ID and the others are merged into it, so that
+/// their IDs stand for it. A group the rules join but something in it says
+/// differ waits for review without an identity, as records do after a match.
+///
+/// The summary comes first, then the largest changes. It ends with the
+/// command that applies it, which names a plan: a hash of where each record
+/// is and would go. Applying works the result out again and refuses if it is
+/// not that plan, so what is applied is what was shown.
+#[derive(Args)]
+#[command(
+    after_help = "Examples:\n  spool recompute --detail\n  spool recompute --apply <plan> --reason \"stricter name rule\""
+)]
+pub struct RecomputeArgs {
+    /// One entity type [default: every type]
+    #[arg(long = "type", value_name = "NAME")]
+    entity_type: Option<String>,
+    /// Show the change that holds an identity, record by record
+    #[arg(long, value_name = "ID", conflicts_with = "apply")]
+    identity: Option<IdentityId>,
+    /// List every change, not only the largest
+    #[arg(long, conflicts_with = "apply")]
+    detail: bool,
+    /// How many changes to list [default: 10, or 1000 with --detail]
+    #[arg(long, conflicts_with = "apply")]
+    limit: Option<u64>,
+    /// Pass over this many of the largest changes first
+    #[arg(long, value_name = "N", conflicts_with = "apply")]
+    offset: Option<u64>,
+    /// Make the identities what the preview with this plan showed
+    ///
+    /// The change is a changeset in the log, by the engine, from runs started
+    /// in your name.
+    #[arg(long, value_name = "PLAN")]
+    apply: Option<String>,
+    /// Why, kept with the changeset
+    #[arg(long, value_name = "TEXT", requires = "apply")]
+    reason: Option<String>,
+    /// Print what the server answered, as JSON
+    #[arg(long)]
+    json: bool,
+    #[command(flatten)]
+    remote: RemoteArgs,
+}
 
 /// How many changes `--detail` lists when `--limit` does not say.
 const DETAIL_LIMIT: u64 = 1_000;
 
-pub fn run(arguments: &[String]) -> Result<(), Failure> {
-    let arguments = super::arguments(
-        arguments,
-        &Spec {
-            values: &[
-                "--type",
-                "--identity",
-                "--limit",
-                "--offset",
-                "--apply",
-                "--reason",
-                remote::VALUES[0],
-                remote::VALUES[1],
-            ],
-            flags: &["--detail", "--json"],
-            positional: 0,
-        },
-    )?;
-    let remote = Remote::new(&arguments);
-    let entity_type = arguments.value("--type");
+pub fn run(arguments: RecomputeArgs) -> Result<(), Failure> {
+    let remote = Remote::new(&arguments.remote);
+    let entity_type = arguments.entity_type.as_deref();
     if let Some(name) = entity_type {
         let info = remote.info()?;
         let types = &info.store.entity_types;
@@ -96,62 +95,42 @@ pub fn run(arguments: &[String]) -> Result<(), Failure> {
         }
     }
 
-    if let Some(plan) = arguments.value("--apply") {
-        for refused in ["--identity", "--limit", "--offset"] {
-            if arguments.value(refused).is_some() {
-                return Err(Failure::Usage(format!(
-                    "`{refused}` is for a preview, and `--apply` applies one"
-                )));
-            }
-        }
+    if let Some(plan) = &arguments.apply {
         let mut request = json!({ "plan": plan });
         if let Some(name) = entity_type {
             request["entity_type"] = json!(name);
         }
-        if let Some(reason) = arguments.value("--reason") {
+        if let Some(reason) = &arguments.reason {
             request["reason"] = json!(reason);
         }
         let answer = remote.post("/recompute/apply", &request)?;
-        if arguments.flag("--json") {
+        if arguments.json {
             print_json(&answer);
         } else {
             print_applied(&typed(&answer)?);
         }
         return Ok(());
     }
-    if arguments.value("--reason").is_some() {
-        return Err(Failure::Usage(
-            "`--reason` goes with `--apply`: a preview changes nothing".to_owned(),
-        ));
-    }
 
-    let detail = arguments.flag("--detail");
-    let limit = arguments
-        .number("--limit")
-        .map_err(Failure::Usage)?
-        .unwrap_or(if detail {
-            DETAIL_LIMIT
-        } else {
-            spool::DEFAULT_CHANGES
-        });
+    let detail = arguments.detail;
+    let limit = arguments.limit.unwrap_or(if detail {
+        DETAIL_LIMIT
+    } else {
+        spool::DEFAULT_CHANGES
+    });
     let mut request = json!({ "limit": limit });
-    if let Some(offset) = arguments.number("--offset").map_err(Failure::Usage)? {
+    if let Some(offset) = arguments.offset {
         request["offset"] = json!(offset);
     }
     if let Some(name) = entity_type {
         request["entity_type"] = json!(name);
     }
-    let identity = match arguments.value("--identity") {
-        Some(text) => Some(text.parse::<IdentityId>().map_err(|_| {
-            Failure::Usage(format!("`--identity` takes an identity ID, not `{text}`"))
-        })?),
-        None => None,
-    };
+    let identity = arguments.identity;
     if let Some(identity) = identity {
         request["identity"] = json!(identity);
     }
     let answer = remote.post("/recompute", &request)?;
-    if arguments.flag("--json") {
+    if arguments.json {
         print_json(&answer);
         return Ok(());
     }

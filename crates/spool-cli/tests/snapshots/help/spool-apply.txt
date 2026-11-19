@@ -1,0 +1,11 @@
+Apply a manifest to a store
+
+Usage: spool apply [OPTIONS] [DIR]
+
+Arguments:
+  [DIR]  The project directory [default: the current directory]
+
+Options:
+      --store <PATH>     The store's database file; created if it does not exist [env: SPOOL_STORE]
+      --manifest <PATH>  The manifest to apply [default: <DIR>/.spool/manifest.json]
+  -h, --help             Print help (see more with '--help')

@@ -167,7 +167,7 @@ fn a_row_that_is_loaded_as_it_was_before_it_changed_is_that_again() {
     let server = Server::dev(&project);
     let named = |reference: &str| -> Value {
         let output = server
-            .spool_in(&project, &["show", "record", reference, "--json"])
+            .spool_in(&project, &["show", "records", reference, "--json"])
             .output()
             .unwrap();
         assert!(output.status.success(), "{}", text(&output.stderr));
@@ -338,7 +338,7 @@ next    `spool match` places it in an identity
     assert_eq!(output.status.code(), Some(2));
     assert!(
         text(&output.stderr).starts_with(
-            "spool: `--delimiter` needs one character such as `;`, or `tab`, not `::`\n"
+            "error: `--delimiter` needs one character such as `;`, or `tab`, not `::`\n"
         ),
         "{}",
         text(&output.stderr)
@@ -425,7 +425,7 @@ next    `spool match` places them in identities
         .unwrap();
     assert_eq!(output.status.code(), Some(2));
     assert!(
-        text(&output.stderr).starts_with("spool: `--batch` needs at least 1\n"),
+        text(&output.stderr).contains("invalid value '0' for '--batch <ROWS>': 0 is not in 1.."),
         "{}",
         text(&output.stderr)
     );
@@ -540,7 +540,8 @@ fn load_says_what_is_wrong_with_the_file() {
     let output = server.spool_in(&project, &["load"]).output().unwrap();
     assert_eq!(output.status.code(), Some(2));
     assert!(
-        text(&output.stderr).starts_with("spool: name the file to load\n\nUsage: spool load"),
+        text(&output.stderr)
+            .contains("required arguments were not provided:\n  <FILE>\n\nUsage: spool load"),
         "{}",
         text(&output.stderr)
     );

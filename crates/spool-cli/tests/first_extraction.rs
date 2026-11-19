@@ -420,7 +420,7 @@ fn the_steps_after_init(project: &Path) {
     );
     let run = shown(&[
         "show",
-        "run",
+        "runs",
         &runs(&server, "extract")[0]["run"].to_string(),
     ]);
     assert!(run.contains(&format!("\nstarted by  {dev}\n")), "{run}");

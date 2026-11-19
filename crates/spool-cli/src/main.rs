@@ -1,34 +1,47 @@
 //! The `spool` command.
 
-mod args;
 mod commands;
 
 use std::process::ExitCode;
 
-const USAGE: &str = "\
-Usage: spool <command> [options]
+use clap::{CommandFactory, Parser, Subcommand};
 
-Commands:
-  init       make a project, empty or from an example
-  info       list what a project directory declares
-  build      check a project and compile it into a manifest
-  apply      apply a manifest to a store
-  serve      run the server from a manifest and a store
-  dev        run the server on localhost and apply file changes as they are saved
-  reset      start the development store of `spool dev` over
-  load       send the rows of a file to a running server
-  extract    find records in documents with one of the project's extractors
-  match      match the new records on a running server and place them in identities
-  recompute  show what the rules as they are now would change in the identities
-  show       show what a running server holds
-  explain    say why two records share an identity, or what holds one together
-  retract    take back rows a source no longer holds
-  token      make, list and revoke the tokens of callers that are not people
-  bench      run a benchmark scenario
-  schema     print the JSON Schema of the server's API
+use commands::{
+    bench, extract, init, load, matching, project, recompute, reset, retract, serve, show, token,
+};
 
-`spool <command> --help` describes a command.
-";
+/// Extract, resolve and track entities
+#[derive(Parser)]
+#[command(
+    name = "spool",
+    version,
+    after_help = "Run `spool <command> --help` for a command's options, or see https://spool.alexpatow.com/docs/cli"
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    Init(init::InitArgs),
+    Info(project::InfoArgs),
+    Dev(serve::DevArgs),
+    Load(load::LoadArgs),
+    Extract(extract::ExtractArgs),
+    Match(matching::MatchArgs),
+    Recompute(recompute::RecomputeArgs),
+    Show(show::ShowArgs),
+    Explain(show::ExplainArgs),
+    Retract(retract::RetractArgs),
+    Reset(reset::ResetArgs),
+    Build(project::BuildArgs),
+    Apply(project::ApplyArgs),
+    Serve(serve::ServeArgs),
+    Token(token::TokenArgs),
+    Bench(bench::BenchArgs),
+    Schema(commands::SchemaArgs),
+}
 
 /// How a command ended, other than well.
 pub enum Failure {
@@ -58,59 +71,30 @@ impl From<spool::Error> for Failure {
     }
 }
 
-type Command = fn(&[String]) -> Result<(), Failure>;
-
 fn main() -> ExitCode {
-    let arguments: Vec<String> = std::env::args().skip(1).collect();
-    let Some((command, rest)) = arguments.split_first() else {
-        print!("{USAGE}");
+    let cli = Cli::parse();
+    let Some(command) = cli.command else {
+        let _ = Cli::command().print_help();
         return ExitCode::SUCCESS;
     };
-    if !matches!(command.as_str(), "serve" | "dev") {
+    if !matches!(command, Command::Serve(_) | Command::Dev(_)) {
         end_quietly_when_the_output_closes();
     }
-    let (usage, run): (&str, Command) = match command.as_str() {
-        "--help" | "-h" | "help" => {
-            print!("{USAGE}");
-            return ExitCode::SUCCESS;
-        }
-        "--version" | "-V" => {
-            println!("spool {}", env!("CARGO_PKG_VERSION"));
-            return ExitCode::SUCCESS;
-        }
-        "init" => (commands::init::USAGE, commands::init::init),
-        "info" => (commands::project::INFO_USAGE, commands::project::info),
-        "build" => (commands::project::BUILD_USAGE, commands::project::build),
-        "apply" => (commands::project::APPLY_USAGE, commands::project::apply),
-        "serve" => (commands::serve::SERVE_USAGE, commands::serve::serve),
-        "dev" => (commands::serve::DEV_USAGE, commands::serve::dev),
-        "reset" => (commands::reset::USAGE, commands::reset::reset),
-        "load" => (commands::load::USAGE, commands::load::load),
-        "extract" => (commands::extract::USAGE, commands::extract::extract),
-        "match" => (commands::matching::USAGE, commands::matching::run),
-        "recompute" => (commands::recompute::USAGE, commands::recompute::run),
-        "show" => (commands::show::SHOW_USAGE, commands::show::show),
-        "retract" => (commands::retract::USAGE, commands::retract::retract),
-        "explain" => (commands::show::EXPLAIN_USAGE, commands::show::explain),
-        "token" => (commands::token::USAGE, commands::token::token),
-        "bench" => (commands::bench::USAGE, commands::bench::bench),
-        "schema" => (commands::SCHEMA_USAGE, commands::schema),
-        other => {
-            eprintln!("spool: unknown command `{other}`\n\n{USAGE}");
-            return ExitCode::from(2);
-        }
-    };
-    if rest
-        .iter()
-        .any(|argument| argument == "--help" || argument == "-h")
-    {
-        print!("{usage}");
-        return ExitCode::SUCCESS;
-    }
-    match run(rest) {
+    let (path, ended) = run(command);
+    match ended {
         Ok(()) => ExitCode::SUCCESS,
         Err(Failure::Usage(message)) => {
-            eprintln!("spool: {message}\n\n{usage}");
+            let mut cli = Cli::command();
+            cli.build();
+            let mut command = &mut cli;
+            for name in path {
+                command = command
+                    .find_subcommand_mut(name)
+                    .expect("a command that ran is one the parser knows");
+            }
+            let _ = command
+                .error(clap::error::ErrorKind::ValueValidation, message)
+                .print();
             ExitCode::from(2)
         }
         Err(Failure::Failed(message)) => {
@@ -124,6 +108,34 @@ fn main() -> ExitCode {
     }
 }
 
+/// Runs a command, and says which it was: the names of the command and of
+/// its subcommand, for the usage a mistake is shown with.
+fn run(command: Command) -> (Vec<&'static str>, Result<(), Failure>) {
+    match command {
+        Command::Init(args) => (vec!["init"], init::init(args)),
+        Command::Info(args) => (vec!["info"], project::info(args)),
+        Command::Dev(args) => (vec!["dev"], serve::dev(args)),
+        Command::Load(args) => (vec!["load"], load::load(args)),
+        Command::Extract(args) => (vec!["extract"], extract::extract(args)),
+        Command::Match(args) => (vec!["match"], matching::run(args)),
+        Command::Recompute(args) => (vec!["recompute"], recompute::run(args)),
+        Command::Show(args) => {
+            let mut path = vec!["show"];
+            path.extend(args.what.as_ref().map(show::What::name));
+            (path, show::show(args))
+        }
+        Command::Explain(args) => (vec!["explain"], show::explain(args)),
+        Command::Retract(args) => (vec!["retract"], retract::retract(args)),
+        Command::Reset(args) => (vec!["reset"], reset::reset(args)),
+        Command::Build(args) => (vec!["build"], project::build(args)),
+        Command::Apply(args) => (vec!["apply"], project::apply(args)),
+        Command::Serve(args) => (vec!["serve"], serve::serve(args)),
+        Command::Token(args) => (vec!["token", args.action.name()], token::token(args)),
+        Command::Bench(args) => (vec!["bench"], bench::bench(args)),
+        Command::Schema(args) => (vec!["schema"], commands::schema(args)),
+    }
+}
+
 /// Rust ignores SIGPIPE, so printing to a pipe whose reader has gone, as in
 /// `spool info | head`, panics. A command that prints and exits takes the
 /// signal's default instead and ends there. The server does not: it must not
@@ -134,5 +146,52 @@ fn end_quietly_when_the_output_closes() {
     // other thread exists.
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use clap::CommandFactory;
+
+    use super::Cli;
+
+    #[test]
+    fn the_parser_is_consistent() {
+        Cli::command().debug_assert();
+    }
+
+    /// Every command's `-h`, against the snapshot in `tests/snapshots/help`.
+    /// `SNAPSHOTS=overwrite cargo test` writes them again.
+    #[test]
+    fn the_help_of_every_command_is_its_snapshot() {
+        fn visit(command: &mut clap::Command, path: &str, found: &mut Vec<String>) {
+            let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots/help");
+            let help = command.render_help().to_string();
+            snapbox::Assert::new().action_env("SNAPSHOTS").eq(
+                help,
+                snapbox::Data::read_from(&dir.join(format!("{path}.txt")), None).raw(),
+            );
+            found.push(format!("{path}.txt"));
+            for sub in command.get_subcommands_mut() {
+                if sub.get_name() != "help" {
+                    let name = format!("{path}-{}", sub.get_name());
+                    visit(sub, &name, found);
+                }
+            }
+        }
+        let mut command = Cli::command().term_width(100);
+        command.build();
+        let mut found = Vec::new();
+        visit(&mut command, "spool", &mut found);
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots/help");
+        let mut written: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        written.sort();
+        found.sort();
+        assert_eq!(written, found, "a snapshot of a command that is gone");
     }
 }
