@@ -818,11 +818,24 @@ impl Task {
     /// one entry for each line that is not blank, what a progress bar left
     /// last, and only the last lines. Read once the code has ended.
     pub(crate) fn said(&self) -> Vec<String> {
-        let Ok(end) = last_bytes(&self.dir.join("stderr.log"), 64 * 1024) else {
+        const BYTES: u64 = 64 * 1024;
+        let path = self.dir.join("stderr.log");
+        let Ok(end) = last_bytes(&path, BYTES) else {
             return Vec::new();
         };
         let text = String::from_utf8_lossy(&end);
-        let lines: Vec<String> = text
+        // What follows the last line feed is a bar that never ended its
+        // line, and what precedes the first is part of a line, when only
+        // the end of the file was read.
+        let Some((whole, _)) = text.rsplit_once('\n') else {
+            return Vec::new();
+        };
+        let cut = std::fs::metadata(&path).is_ok_and(|file| file.len() > BYTES);
+        let whole = match cut {
+            true => whole.split_once('\n').map_or("", |(_, rest)| rest),
+            false => whole,
+        };
+        let lines: Vec<String> = whole
             .lines()
             .filter_map(|line| {
                 line.rsplit('\r')

@@ -950,9 +950,7 @@ impl View<'_> {
                     .map(|found| {
                         format!(
                             "{} version {} in run {}",
-                            found.extractor,
-                            short_hash(&found.version),
-                            found.run
+                            found.extractor, found.version, found.run
                         )
                     })
                     .collect::<Vec<_>>()
@@ -1807,11 +1805,6 @@ fn versioned(name: &str, version: Option<&str>) -> String {
         Some(version) => format!("{name}, version {version}"),
         None => name.to_owned(),
     }
-}
-
-/// The first characters of a version's hash, which tell versions apart.
-fn short_hash(hash: &str) -> &str {
-    hash.get(..8).unwrap_or(hash)
 }
 
 /// Which extractors read a document, which could not and why, and which is

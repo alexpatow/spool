@@ -215,7 +215,7 @@ curl -s -X POST http://127.0.0.1:7765/v1/extractions -d '{"extractor": "companie
 ```
 
 ```text title="Output"
-{"run":{"run":11,"kind":"extract","status":"succeeded","started_by":"user:01a1f0a3-7961-77eb-b436-a883824aafc0","entity_type":null,"strategy":null,"extractor":{"name":"companies","version":"eacb9397cacc366a1cd065d8f328039484a5e5d4fbf49b8ca1f2a3cbd34f8c92"},"started_at":"2026-11-18T21:55:21.478610Z","finished_at":"2026-11-18T21:55:22.855886Z","error":null,"load":null,"extraction":{"run":11,"documents":1,"mentions":1,"inserted":1,"duplicates":0,"superseded":0,"load_run":12,"left":0},"resolution":null,"retraction":null}}
+{"run":{"run":11,"kind":"extract","status":"succeeded","started_by":"user:01a1f0a3-7961-77eb-b436-a883824aafc0","entity_type":null,"strategy":null,"extractor":{"name":"companies","version":"eacb9397cacc366a1cd065d8f328039484a5e5d4fbf49b8ca1f2a3cbd34f8c92"},"started_at":"2026-11-18T21:55:21.478610Z","finished_at":"2026-11-18T21:55:22.855886Z","error":null,"load":null,"extraction":{"run":11,"documents":1,"mentions":1,"inserted":1,"duplicates":0,"superseded":0,"load_run":12,"left":0,"failed":[],"taken_back":0,"retract_runs":[],"stderr":[]},"resolution":null,"retraction":null}}
 ```
 
 | Field | Meaning |
@@ -224,10 +224,10 @@ curl -s -X POST http://127.0.0.1:7765/v1/extractions -d '{"extractor": "companie
 | `source` | Only the documents of this source |
 | `again` | `true` reads every document again |
 | `limit` | Read at most this many documents. The run's `extraction.left` says how many it left out |
-| `again_since` | With `again`, leave out the documents read in this run or a later one: each batch after the first of a reading in batches passes the first batch's run |
+| `since` | Leave out the documents this extractor read, or could not read, in this run or a later one: each batch after the first of a reading in batches passes the first batch's run |
 | `wait_ms` | How long to wait for it to finish |
 
-What the extractor found are records, which the next match places. [Extraction](/docs/concepts/extraction) writes an extractor in each language.
+What the extractor found are records, which the next match places. `failed` lists the documents it could not read, with why: they are not read, and the next extraction reads them. `taken_back` counts the mentions no extractor finds any more, which the `retract_runs` took back, and `stderr` holds the last 100 lines the extractor wrote to standard error. [Extraction](/docs/concepts/extraction) writes an extractor in each language.
 
 ## Changesets
 

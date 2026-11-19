@@ -1344,7 +1344,10 @@ def find(document):
         document.extractions[0].failure.as_deref(),
         Some("RuntimeError: the model answered 500")
     );
-    assert_eq!(report.stderr, ["news:b: RuntimeError: the model answered 500"]);
+    assert_eq!(
+        report.stderr,
+        ["news:b: RuntimeError: the model answered 500"]
+    );
 
     // The next extraction reads the two that failed, and not the one that
     // was read.
@@ -1449,11 +1452,17 @@ def find(document):
     assert!(members(&news.engine, globex).is_empty());
     let view = news.engine.identity(globex).unwrap();
     assert_eq!((view.current, view.members.len()), (globex, 0));
-    assert_eq!(news.engine.run(retract_run).unwrap().started_by, Actor::Engine);
+    assert_eq!(
+        news.engine.run(retract_run).unwrap().started_by,
+        Actor::Engine
+    );
     // Acme stays, found by both versions of `names` and by `others`.
     let found = &news
         .engine
-        .records(&RecordFilter::keyed("news", locator(document, "company", 2, 10)))
+        .records(&RecordFilter::keyed(
+            "news",
+            locator(document, "company", 2, 10),
+        ))
         .unwrap()[0];
     let versions: BTreeSet<(&str, &str)> = found
         .found_by

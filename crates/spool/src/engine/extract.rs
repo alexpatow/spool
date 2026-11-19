@@ -506,7 +506,10 @@ impl Inner {
                         extractor.name,
                         extractor.hash,
                         &ArrowBatchRegistration::new(batch(vec![
-                            ("document_id", column(|mention| mention.document.to_string())),
+                            (
+                                "document_id",
+                                column(|mention| mention.document.to_string())
+                            ),
                             ("entity_type", column(|mention| mention.entity_type.clone())),
                             ("record_key", column(|mention| mention.key.clone())),
                             ("record_id", column(|mention| mention.record.to_string())),
@@ -626,7 +629,13 @@ impl Inner {
                     ))
                 })?;
             let reason = reason
-                .map(|reason| reason.trim().chars().take(MOST_OF_A_REASON).collect::<String>())
+                .map(|reason| {
+                    reason
+                        .trim()
+                        .chars()
+                        .take(MOST_OF_A_REASON)
+                        .collect::<String>()
+                })
                 .filter(|reason| !reason.is_empty())
                 .unwrap_or_else(|| "the extractor did not say why".to_owned());
             failures.entry(document).or_insert(reason);

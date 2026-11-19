@@ -794,14 +794,18 @@ impl<'a> Progress<'a> {
     /// long the rest takes at the pace so far.
     fn kept(&mut self, found: &Found, left: u64, took: Duration) {
         self.announce();
+        let failed = found.failed.len() as u64;
         let mut line = format!(
-            "kept       {} of {}, {}",
+            "kept       {} of {}, ",
             found.documents,
-            plural(found.documents + left, "document", "documents"),
-            plural(found.mentions, "record", "records"),
+            plural(found.documents + failed + left, "document", "documents"),
         );
-        if left > 0 && found.documents > 0 {
-            let rest = took.mul_f64(left as f64 / found.documents as f64);
+        if failed > 0 {
+            line.push_str(&format!("{failed} failed, "));
+        }
+        line.push_str(&plural(found.mentions, "record", "records"));
+        if left > 0 && found.documents + failed > 0 {
+            let rest = took.mul_f64(left as f64 / (found.documents + failed) as f64);
             line.push_str(&format!(", about {} left", about(rest)));
         }
         eprintln!("{line}");
@@ -834,9 +838,9 @@ fn counts_documents(line: &str) -> bool {
         .and_then(|rest| rest.strip_suffix(" documents"))
         .and_then(|rest| rest.split_once(" of "))
         .is_some_and(|(read, of)| {
-            [read, of]
-                .iter()
-                .all(|number| !number.is_empty() && number.chars().all(|c| c.is_ascii_digit() || c == ','))
+            [read, of].iter().all(|number| {
+                !number.is_empty() && number.chars().all(|c| c.is_ascii_digit() || c == ',')
+            })
         })
 }
 

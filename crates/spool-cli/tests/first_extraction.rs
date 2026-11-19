@@ -507,7 +507,24 @@ found      3 records in 1 document: 0 new, 3 already held
   company  Brightwater Foods Ltd    notes:notes-1.txt[179-200]
 "
     );
-    assert_eq!(found(&server), records);
+    // The same records, each found once more.
+    let without_readings = |records: Vec<Value>| -> Vec<Value> {
+        records
+            .into_iter()
+            .map(|mut record| {
+                record.as_object_mut().unwrap().remove("found_by");
+                record
+            })
+            .collect()
+    };
+    let again = found(&server);
+    assert!(
+        again
+            .iter()
+            .all(|record| record["found_by"].as_array().unwrap().len() == 2),
+        "{again:?}"
+    );
+    assert_eq!(without_readings(again), without_readings(records));
 
     // A document longer than the sample's model reads at once is read in
     // pieces, and a name is found wherever it is: here after two thousand
@@ -902,13 +919,25 @@ fn a_batch_that_is_stopped_keeps_the_ones_before_it() {
 fn a_batch_that_fails_at_once_keeps_the_ones_before_it() {
     let dir = tempfile::tempdir().unwrap();
     let project = init_companies(dir.path());
+    // It fails for every document of a batch that holds the slow note:
+    // what fails a run, and not one document.
     write(
         &project.join("extractors/companies.py"),
-        &BY_LEGAL_FORM.replacen(
-            "    for found in",
-            "    if \"slow\" in document.text:\n        raise RuntimeError(\"cannot read this one\")\n    for found in",
-            1,
-        ),
+        r#"import re
+
+from spool import extractor
+
+NAME = re.compile(r"(?:[A-Z][A-Za-z]+ )+(?:Ltd|Inc|LLC|GmbH|plc)\b")
+
+
+@extractor
+def find(documents):
+    if any("slow" in document.text for document in documents):
+        raise RuntimeError("cannot read this one")
+    for document in documents:
+        for found in NAME.finditer(document.text):
+            yield document.mention("company", found.start(), found.end(), name=found.group())
+"#,
     );
     notes(&project.join("documents"), 8, Some(7));
     let server = Server::dev(&project);
@@ -965,6 +994,225 @@ fn a_batch_that_fails_at_once_keeps_the_ones_before_it() {
     };
     assert_eq!(kept["status"], "succeeded", "{answered}");
     assert_eq!(kept["extraction"]["documents"], 5, "{answered}");
+}
+
+/// The stand-in, made to fail with `RuntimeError("cannot read this one")`
+/// for a note with `slow` in it, or for every note.
+fn failing_stand_in(every: bool) -> String {
+    let when = if every {
+        "True"
+    } else {
+        "\"slow\" in document.text"
+    };
+    BY_LEGAL_FORM.replacen(
+        "    for found in",
+        &format!(
+            "    if {when}:\n        raise RuntimeError(\"cannot read this one\")\n    for found in"
+        ),
+        1,
+    )
+}
+
+/// A document the extractor cannot read is failed, with why: the command
+/// lists it, `spool show documents` says so, and the same command reads it
+/// alone once the extractor can. A batch none of whose documents could be
+/// read stops the command.
+#[test]
+#[ignore = "runs uv"]
+fn a_document_that_cannot_be_read_is_failed_and_read_again_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = init_companies(dir.path());
+    notes(&project.join("documents"), 8, Some(7));
+
+    // Every document fails: a key that is wrong, say. The first batch
+    // says so, and nothing more is tried.
+    write(
+        &project.join("extractors/companies.py"),
+        &failing_stand_in(true),
+    );
+    let server = Server::dev(&project);
+    let output = server
+        .spool_in(&project, &["extract", "documents", "--source", "notes"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let said = text(&output.stderr);
+    assert!(
+        said.trim_end().ends_with(
+            "could not read any of its 5 documents, as notes:note-01.txt says: RuntimeError: \
+             cannot read this one. They are not read, and the same command reads them again."
+        ),
+        "{said}"
+    );
+    assert_eq!(runs(&server, "extract").len(), 1);
+
+    // One document fails: the others are read, and it is listed.
+    drop(server);
+    write(
+        &project.join("extractors/companies.py"),
+        &failing_stand_in(false),
+    );
+    let server = Server::dev(&project);
+    let output = server
+        .spool_in(&project, &["extract", "documents", "--source", "notes"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    let printed = text(&output.stdout);
+    assert!(
+        printed.contains(
+            "found      7 records in 7 documents: 7 new, 0 already held\n\
+             failed     1 document: they are not read, and the same command reads them again\n  \
+             notes:note-07.txt  RuntimeError: cannot read this one\n"
+        ),
+        "{printed}"
+    );
+    // What the helper wrote of it reaches the terminal, after its batch.
+    let said = text(&output.stderr);
+    assert!(
+        said.contains("\n           notes:note-07.txt: RuntimeError: cannot read this one\n"),
+        "{said}"
+    );
+    assert!(
+        said.contains("kept       7 of 8 documents, 1 failed, 7 records"),
+        "{said}"
+    );
+    let listed = shown(
+        &server,
+        &project,
+        &["show", "documents", "--source", "notes"],
+    );
+    let line = listed
+        .lines()
+        .find(|line| line.contains("notes:note-07.txt"))
+        .unwrap_or_else(|| panic!("{listed}"));
+    assert!(
+        line.contains("companies failed in run ")
+            && line.ends_with(": RuntimeError: cannot read this one"),
+        "{listed}"
+    );
+
+    // Once it can be read, the same command reads it and nothing else.
+    drop(server);
+    write(&project.join("extractors/companies.py"), BY_LEGAL_FORM);
+    let server = Server::dev(&project);
+    let read = extracted(&server, &project, &["documents", "--source", "notes"]);
+    assert!(
+        read.contains("found      1 record in 1 document: 1 new, 0 already held"),
+        "{read}"
+    );
+}
+
+/// What an extractor writes to standard error reaches whoever runs
+/// `spool extract`, however short the run, and the terminal of `spool dev`.
+#[test]
+#[ignore = "runs uv"]
+fn what_an_extractor_says_reaches_both_terminals_on_a_short_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = init_companies(dir.path());
+    write(
+        &project.join("extractors/companies.py"),
+        &BY_LEGAL_FORM
+            .replacen("import re\n", "import re\nimport sys\n", 1)
+            .replacen(
+                "    for found in",
+                "    print(f\"{document.key}: dropped a quote the text does not have\", file=sys.stderr)\n    for found in",
+                1,
+            ),
+    );
+    let server = Server::dev(&project);
+    let output = server
+        .spool_in(&project, &["extract", "samples/notes-1.txt"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    assert_eq!(text(&output.stdout), FIRST);
+    assert_eq!(
+        text(&output.stderr),
+        "running    extractors/companies.py\n           notes-1.txt: dropped a quote the text \
+         does not have\n"
+    );
+    let run = runs(&server, "extract")[0]["run"].as_u64().unwrap();
+    assert_eq!(
+        server.printed("extractor `companies`"),
+        format!("extractor `companies`, run {run}:")
+    );
+    assert_eq!(
+        server.printed("dropped a quote").trim(),
+        "notes-1.txt: dropped a quote the text does not have"
+    );
+}
+
+/// A mention a changed extractor no longer finds is taken back: the
+/// command says so, the record says why it has no identity, and a record
+/// says which versions of which extractor found it.
+#[test]
+#[ignore = "runs uv"]
+fn a_mention_no_extractor_finds_any_more_is_taken_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = init_with_stand_in(dir.path());
+    let server = Server::dev(&project);
+    assert_eq!(
+        extracted(&server, &project, &["samples/notes-1.txt"]),
+        FIRST
+    );
+    shown(&server, &project, &["match"]);
+
+    // Now it finds what ends in `Ltd` only when it is not Brightwater.
+    drop(server);
+    write(
+        &project.join("extractors/companies.py"),
+        &BY_LEGAL_FORM.replacen(
+            "        yield document.mention",
+            "        if found.group().startswith(\"Brightwater\"):\n            continue\n        yield document.mention",
+            1,
+        ),
+    );
+    let server = Server::dev(&project);
+    let again = extracted(&server, &project, &["--again"]);
+    assert!(
+        again.contains(
+            "found      2 records in 1 document: 0 new, 2 already held\n\
+             taken back 1 record: no extractor finds it any more\n"
+        ),
+        "{again}"
+    );
+    let records = found(&server);
+    let taken = records
+        .iter()
+        .find(|record| record["payload"]["name"] == "Brightwater Foods Ltd")
+        .unwrap();
+    let shown_taken = shown(
+        &server,
+        &project,
+        &["show", "records", taken["id"].as_str().unwrap()],
+    );
+    assert!(
+        shown_taken.contains("identity  none: taken back in run "),
+        "{shown_taken}"
+    );
+    assert!(
+        shown_taken.contains(", as no extractor finds it any more\n"),
+        "{shown_taken}"
+    );
+    let kept = records
+        .iter()
+        .find(|record| record["payload"]["name"] == "Acorn Tools Ltd")
+        .unwrap();
+    assert_eq!(kept["found_by"].as_array().unwrap().len(), 2, "{kept}");
+    assert_ne!(
+        kept["found_by"][0]["version"],
+        kept["found_by"][1]["version"]
+    );
+    let shown_kept = shown(
+        &server,
+        &project,
+        &["show", "records", kept["id"].as_str().unwrap()],
+    );
+    assert!(
+        shown_kept.contains("found by  companies version "),
+        "{shown_kept}"
+    );
 }
 
 /// Ctrl-C cancels the batch that is running: the server stops the
