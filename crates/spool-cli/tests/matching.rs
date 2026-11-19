@@ -146,7 +146,15 @@ nothing to match: no `company` record is new since the last match
 `spool load <file>` sends more rows, and `spool match --rematch` examines them all again
 "
     );
-    assert_eq!(shown(&["match", "--json"]), "{\n  \"run\": null\n}\n");
+    assert_eq!(
+        shown(&["match", "--type", "company", "--json"]),
+        "{\n  \"run\": null\n}\n"
+    );
+    let answer: Value = serde_json::from_str(&shown(&["match", "--json"])).unwrap();
+    assert_eq!(
+        answer,
+        json!({ "runs": [{ "entity_type": "company", "run": null }] })
+    );
     assert_eq!(match_runs(&server).len(), 1);
 
     // More rows: one for a company that is new, and two that join
@@ -318,7 +326,14 @@ fn match_prints_the_run_as_json_and_takes_a_strategy() {
     );
     assert_eq!(match_runs(&server), Vec::<Value>::new());
 
-    let printed = shown(&["match", "--strategy", "rules", "--json"]);
+    let printed = shown(&[
+        "match",
+        "--type",
+        "company",
+        "--strategy",
+        "rules",
+        "--json",
+    ]);
     let answer: Value = serde_json::from_str(&printed).unwrap();
     let run = &answer["run"];
     assert_eq!(run["kind"], "match");
@@ -349,9 +364,20 @@ fn match_says_what_is_wrong_with_the_command() {
     write_two_of_each(&project);
     let server = Server::serve(&project, dir.path(), 1);
 
+    // With no type named, each type is matched, and says why it had
+    // nothing to match.
     assert_eq!(
-        refused(&server, &project, &[]),
-        "say which entity type to match with `--type`: the project has `company`, `person`"
+        shown(&server, &project, &["match"]),
+        "\
+nothing to match: there are no `company` records yet
+nothing to match: there are no `person` records yet
+`spool load <file>` sends rows
+"
+    );
+    assert_eq!(
+        refused(&server, &project, &["--strategy", "ml"]),
+        "a strategy judges one entity type: say which `ml` is for with `--type`. The project \
+         has `company`, `person`."
     );
     assert_eq!(
         refused(&server, &project, &["--type", "place"]),
@@ -428,4 +454,162 @@ fn match_says_when_no_server_answers() {
         ),
         "{complaint}"
     );
+}
+
+#[test]
+fn match_matches_every_type_and_reports_each() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("project");
+    write_two_of_each(&project);
+    let server = Server::serve(&project, dir.path(), 1);
+    let shown = |arguments: &[&str]| shown(&server, &project, arguments);
+    std::fs::write(
+        project.join("registry.csv"),
+        "id,name\nr-1,Acorn\nr-2,Acorn\nr-3,Kestrel\n",
+    )
+    .unwrap();
+    std::fs::write(
+        project.join("crm.csv"),
+        "id,name\nc-1,Dana\nc-2,Dana\nc-3,Ravi\n",
+    )
+    .unwrap();
+    shown(&["load", "registry.csv"]);
+    shown(&["load", "crm.csv", "--type", "person"]);
+
+    // One run for each type, one after the other, each with its report.
+    let printed = shown(&["match"]);
+    let reports: Vec<&str> = printed.split("\n\n").collect();
+    assert_eq!(reports.len(), 2, "{printed}");
+    assert!(reports[0].starts_with("run         "), "{printed}");
+    assert!(
+        reports[0]
+            .lines()
+            .next()
+            .unwrap()
+            .ends_with(", type `company`"),
+        "{printed}"
+    );
+    assert!(
+        reports[1]
+            .lines()
+            .next()
+            .unwrap()
+            .ends_with(", type `person`"),
+        "{printed}"
+    );
+    for report in &reports {
+        assert!(
+            report.contains("placed      3 records, 2 identities created"),
+            "{printed}"
+        );
+    }
+    let runs = match_runs(&server);
+    assert_eq!(runs.len(), 2);
+    assert!(runs.iter().all(|run| run["status"] == "succeeded"));
+
+    // A type with nothing new says so, and the others are still matched.
+    std::fs::write(project.join("people.csv"), "id,name\nc-4,Mira\n").unwrap();
+    shown(&["load", "people.csv", "--source", "crm", "--type", "person"]);
+    let printed = shown(&["match"]);
+    assert!(
+        printed.starts_with(
+            "nothing to match: no `company` record is new since the last match\n\nrun         "
+        ),
+        "{printed}"
+    );
+    assert!(printed.contains(", type `person`\n"), "{printed}");
+    assert!(printed.contains("placed      1 record"), "{printed}");
+    assert!(
+        printed.ends_with(
+            "`spool load <file>` sends more rows, and `spool match --rematch` examines them all \
+             again\n"
+        ),
+        "{printed}"
+    );
+
+    // As JSON, each type with its run, or none.
+    let answer: Value = serde_json::from_str(&shown(&["match", "--json"])).unwrap();
+    assert_eq!(
+        answer,
+        json!({ "runs": [
+            { "entity_type": "company", "run": null },
+            { "entity_type": "person", "run": null },
+        ] })
+    );
+    let answer: Value = serde_json::from_str(&shown(&["match", "--rematch", "--json"])).unwrap();
+    let runs = answer["runs"].as_array().unwrap();
+    assert_eq!(runs.len(), 2, "{answer}");
+    assert_eq!(runs[0]["entity_type"], "company");
+    assert_eq!(runs[0]["run"]["entity_type"], "company");
+    assert_eq!(runs[1]["run"]["entity_type"], "person");
+    assert_eq!(runs[1]["run"]["status"], "succeeded");
+}
+
+#[test]
+fn a_type_whose_match_fails_does_not_stop_the_others() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("project");
+    write_two_of_each(&project);
+    // A rule that cannot be worked out for these names: the run fails as
+    // soon as it compares two of them, well within the wait.
+    std::fs::write(
+        project.join("entities/company/rules/match/same_name.sql"),
+        "CAST(l.name AS INTEGER) = CAST(r.name AS INTEGER)\n",
+    )
+    .unwrap();
+    let server = Server::serve(&project, dir.path(), 1);
+    std::fs::write(
+        project.join("registry.csv"),
+        "id,name\nr-1,Acorn\nr-2,Acorn\n",
+    )
+    .unwrap();
+    std::fs::write(project.join("crm.csv"), "id,name\nc-1,Dana\nc-2,Dana\n").unwrap();
+    shown(&server, &project, &["load", "registry.csv"]);
+    shown(&server, &project, &["load", "crm.csv", "--type", "person"]);
+
+    let output = server.spool_in(&project, &["match"]).output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let printed = text(&output.stdout);
+    assert!(
+        printed.starts_with(
+            "failed      type `company`: the match did not run to the end\n\nrun         "
+        ),
+        "{printed}"
+    );
+    assert!(printed.contains(", type `person`\n"), "{printed}");
+    assert!(
+        printed.contains("placed      2 records, 1 identity created"),
+        "{printed}"
+    );
+    let complaint = text(&output.stderr);
+    assert!(
+        complaint.starts_with("spool: type `company`: "),
+        "{complaint}"
+    );
+    assert!(complaint.contains("INTEGER"), "{complaint}");
+
+    // As JSON, the failed type with its error, and the others with their
+    // runs.
+    std::fs::write(project.join("people.csv"), "id,name\nc-3,Ravi\n").unwrap();
+    shown(
+        &server,
+        &project,
+        &["load", "people.csv", "--source", "crm", "--type", "person"],
+    );
+    let output = server
+        .spool_in(&project, &["match", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let answer: Value = serde_json::from_str(&text(&output.stdout)).unwrap();
+    let runs = answer["runs"].as_array().unwrap();
+    assert_eq!(runs.len(), 2, "{answer}");
+    assert_eq!(runs[0]["entity_type"], "company");
+    assert_eq!(runs[0]["run"], Value::Null);
+    assert!(
+        runs[0]["error"].as_str().unwrap().contains("INTEGER"),
+        "{answer}"
+    );
+    assert_eq!(runs[1]["entity_type"], "person");
+    assert_eq!(runs[1]["run"]["status"], "succeeded");
 }

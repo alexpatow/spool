@@ -67,6 +67,19 @@ pub struct DocumentEntry {
     pub superseded_by: Option<DocumentId>,
     /// Each time an extractor read this version, oldest first.
     pub extractions: Vec<DocumentExtraction>,
+    /// The extract run that is reading this version now. What it finds is
+    /// stored when the run ends, and nothing is if it fails or is cancelled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reading: Option<DocumentReading>,
+}
+
+/// An extractor that is reading a document now.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct DocumentReading {
+    pub extractor: String,
+    /// The extract run.
+    pub run: RunId,
 }
 
 /// One reading of a document by an extractor.
@@ -160,6 +173,11 @@ pub struct ExtractOptions {
     /// it an extraction reads only what the extractor has not seen, whatever
     /// version of the extractor saw it.
     pub again: bool,
+    /// With `again`: leave out the documents this extractor read in this
+    /// run or a later one. Reading every document again in batches, each
+    /// batch after the first names the first one's run, so that no document
+    /// is read twice.
+    pub again_since: Option<RunId>,
     /// Read at most this many documents, oldest first.
     pub limit: Option<u64>,
 }
@@ -210,6 +228,10 @@ pub struct ExtractReport {
     /// The load run the records were stored under. There is none
     /// when nothing was found.
     pub load_run: Option<RunId>,
+    /// Documents the extraction would have read but for its `limit`: what
+    /// the same extraction reads next.
+    #[serde(default)]
+    pub left: u64,
 }
 
 impl ExtractReport {
@@ -222,6 +244,7 @@ impl ExtractReport {
             duplicates: 0,
             superseded: 0,
             load_run: None,
+            left: 0,
         }
     }
 }
@@ -343,6 +366,7 @@ fn entry(row: &duckdb::Row<'_>) -> Result<DocumentEntry> {
         supersedes: id(7)?,
         superseded_by: id(8)?,
         extractions: Vec::new(),
+        reading: None,
     })
 }
 

@@ -1787,22 +1787,29 @@ fn versioned(name: &str, version: Option<&str>) -> String {
     }
 }
 
+/// Which extractors read a document, and which is reading it now.
 fn read_by(document: &DocumentEntry) -> String {
-    match document.extractions.is_empty() {
-        true => "no extractor".to_owned(),
-        false => document
-            .extractions
-            .iter()
-            .map(|extraction| {
-                format!(
-                    "{} in run {} ({})",
-                    extraction.extractor,
-                    extraction.run,
-                    count(extraction.mentions, "mention")
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(", "),
+    let mut said: Vec<String> = document
+        .extractions
+        .iter()
+        .map(|extraction| {
+            format!(
+                "{} in run {} ({})",
+                extraction.extractor,
+                extraction.run,
+                count(extraction.mentions, "mention")
+            )
+        })
+        .collect();
+    if let Some(reading) = &document.reading {
+        said.push(format!(
+            "being read by {} in run {}",
+            reading.extractor, reading.run
+        ));
+    }
+    match said.is_empty() {
+        true => "not read yet".to_owned(),
+        false => said.join(", "),
     }
 }
 

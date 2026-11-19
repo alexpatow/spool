@@ -34,6 +34,20 @@ pub enum Failure {
     Usage(String),
     /// The command failed. Printed; exit 1.
     Failed(String),
+    /// The command was stopped with Ctrl-C, and says what that left.
+    /// Printed; exit 130, as for a command the signal ended.
+    Stopped(String),
+}
+
+impl Failure {
+    /// What the failure says, without the usage a wrong command is shown.
+    pub fn message(self) -> String {
+        match self {
+            Failure::Usage(message) | Failure::Failed(message) | Failure::Stopped(message) => {
+                message
+            }
+        }
+    }
 }
 
 impl From<spool::Error> for Failure {
@@ -98,6 +112,10 @@ fn main() -> ExitCode {
         Err(Failure::Failed(message)) => {
             eprintln!("spool: {message}");
             ExitCode::FAILURE
+        }
+        Err(Failure::Stopped(message)) => {
+            eprintln!("spool: {message}");
+            ExitCode::from(130)
         }
     }
 }

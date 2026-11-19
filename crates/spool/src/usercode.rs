@@ -37,7 +37,7 @@
 //! writes them out beside the tasks. The TypeScript one is built from
 //! `packages/strategy`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -158,13 +158,67 @@ pub struct UserCode {
     pub running: Running,
 }
 
-/// The runs whose code is running now, and where each writes what it says.
+/// The runs whose code is running now, where each writes what it says, and
+/// the runs whose code is to be stopped.
 #[derive(Clone, Debug, Default)]
-pub struct Running(Arc<Mutex<HashMap<RunId, PathBuf>>>);
+pub struct Running {
+    said: Arc<Mutex<HashMap<RunId, PathBuf>>>,
+    control: Arc<Mutex<Control>>,
+}
+
+/// Which runs were cancelled, and which are storing what their code found
+/// and can no longer be. One lock holds both, so that a cancellation and
+/// the start of storing cannot both succeed.
+#[derive(Debug, Default)]
+struct Control {
+    cancelled: HashSet<RunId>,
+    storing: HashSet<RunId>,
+}
 
 impl Running {
     fn held(&self) -> std::sync::MutexGuard<'_, HashMap<RunId, PathBuf>> {
-        self.0.lock().unwrap_or_else(|held| held.into_inner())
+        self.said.lock().unwrap_or_else(|held| held.into_inner())
+    }
+
+    fn control(&self) -> std::sync::MutexGuard<'_, Control> {
+        self.control.lock().unwrap_or_else(|held| held.into_inner())
+    }
+
+    fn is_cancelled(&self, run: RunId) -> bool {
+        self.control().cancelled.contains(&run)
+    }
+
+    /// Asks for the code of a run to be stopped, with every process it
+    /// started, as one that runs out of time is. Code that has not started
+    /// yet is not started, and what code that has finished found is not
+    /// stored. The run then fails. `false` when the run has begun to store
+    /// what its code found, which is then too late.
+    pub fn cancel(&self, run: RunId) -> bool {
+        let mut control = self.control();
+        if control.storing.contains(&run) {
+            return false;
+        }
+        control.cancelled.insert(run);
+        true
+    }
+
+    /// Marks a run as storing what its code found, after which it can no
+    /// longer be cancelled. `false` when it was cancelled first, and is to
+    /// store nothing.
+    pub fn begin_storing(&self, run: RunId) -> bool {
+        let mut control = self.control();
+        if control.cancelled.contains(&run) {
+            return false;
+        }
+        control.storing.insert(run);
+        true
+    }
+
+    /// Forgets a run's cancellation and storing, once it has ended.
+    pub fn forget(&self, run: RunId) {
+        let mut control = self.control();
+        control.cancelled.remove(&run);
+        control.storing.remove(&run);
     }
 
     /// The last whole line the code of a run has written to its standard
@@ -709,7 +763,8 @@ impl Task {
         // While the code runs, what it says can be asked for.
         let running = self.user_code.running.clone();
         running.held().insert(self.run, self.dir.join("stderr.log"));
-        let finished = run(&mut self.command, timeout);
+        let this = self.run;
+        let finished = run(&mut self.command, timeout, &|| running.is_cancelled(this));
         running.held().remove(&self.run);
         let finished = finished.map_err(|error| {
             self.fail(format!(
@@ -719,6 +774,10 @@ impl Task {
             ))
         })?;
         match finished {
+            Finished::Cancelled => {
+                let _ = std::fs::remove_dir_all(&self.dir);
+                Err(self.cancelled())
+            }
             Finished::TimedOut => {
                 let said = end_of(&self.dir.join("stderr.log"))
                     .ok()
@@ -745,6 +804,12 @@ impl Task {
             }
             Finished::Exited(_) => Ok(()),
         }
+    }
+
+    /// The error of a run that was cancelled.
+    pub(crate) fn cancelled(&self) -> Error {
+        self.code
+            .fail("it was cancelled, and nothing it found is kept".to_owned())
     }
 
     /// What went wrong with what the code wrote, as an error that says
@@ -808,11 +873,20 @@ fn tail(path: &Path) -> String {
 pub(crate) enum Finished {
     Exited(ExitStatus),
     TimedOut,
+    Cancelled,
 }
 
-/// Starts a command and waits for it, for at most `timeout`. A command that
-/// runs out of time is killed together with every process it started.
-pub(crate) fn run(command: &mut Command, timeout: Duration) -> std::io::Result<Finished> {
+/// Starts a command and waits for it, for at most `timeout` and until
+/// `cancelled` says to stop. A command that runs out of time or is
+/// cancelled is killed together with every process it started.
+pub(crate) fn run(
+    command: &mut Command,
+    timeout: Duration,
+    cancelled: &dyn Fn() -> bool,
+) -> std::io::Result<Finished> {
+    if cancelled() {
+        return Ok(Finished::Cancelled);
+    }
     // A group of its own, so that the processes it starts can be stopped
     // with it: `uv run` is the parent of the interpreter, not the interpreter.
     #[cfg(unix)]
@@ -824,7 +898,12 @@ pub(crate) fn run(command: &mut Command, timeout: Duration) -> std::io::Result<F
         if let Some(status) = child.try_wait()? {
             return Ok(Finished::Exited(status));
         }
-        if Instant::now() >= deadline {
+        let stop = match (Instant::now() >= deadline, cancelled()) {
+            (true, _) => Some(Finished::TimedOut),
+            (false, true) => Some(Finished::Cancelled),
+            (false, false) => None,
+        };
+        if let Some(stop) = stop {
             #[cfg(unix)]
             {
                 // SAFETY: `kill` takes no pointers. The group is the child's
@@ -833,7 +912,7 @@ pub(crate) fn run(command: &mut Command, timeout: Duration) -> std::io::Result<F
             }
             let _ = child.kill();
             let _ = child.wait();
-            return Ok(Finished::TimedOut);
+            return Ok(stop);
         }
         std::thread::sleep(pause);
         pause = (pause * 2).min(Duration::from_millis(50));
@@ -857,13 +936,15 @@ mod tests {
 
     #[test]
     fn a_command_that_finishes_reports_its_exit_status() {
-        let Finished::Exited(status) = run(&mut shell("exit 0"), Duration::from_secs(30)).unwrap()
+        let Finished::Exited(status) =
+            run(&mut shell("exit 0"), Duration::from_secs(30), &|| false).unwrap()
         else {
             panic!("the command had time to finish");
         };
         assert!(status.success());
 
-        let Finished::Exited(status) = run(&mut shell("exit 3"), Duration::from_secs(30)).unwrap()
+        let Finished::Exited(status) =
+            run(&mut shell("exit 3"), Duration::from_secs(30), &|| false).unwrap()
         else {
             panic!("the command had time to finish");
         };
@@ -878,12 +959,53 @@ mod tests {
         // long after the timeout if it were left running.
         let script = format!("(sleep 2; touch '{}') & sleep 60", marker.display());
         let started = Instant::now();
-        let finished = run(&mut shell(&script), Duration::from_millis(200)).unwrap();
+        let finished = run(&mut shell(&script), Duration::from_millis(200), &|| false).unwrap();
         assert!(matches!(finished, Finished::TimedOut));
         assert!(started.elapsed() < Duration::from_secs(2));
 
         std::thread::sleep(Duration::from_millis(2500));
         assert!(!marker.exists(), "the process it started outlived it");
+    }
+
+    #[test]
+    fn a_run_is_cancelled_or_stores_what_it_found_and_never_both() {
+        let running = Running::default();
+        // Cancelled first: what the code found is not stored.
+        assert!(running.cancel(RunId(1)));
+        assert!(!running.begin_storing(RunId(1)));
+        // Storing first: it is too late to cancel.
+        assert!(running.begin_storing(RunId(2)));
+        assert!(!running.cancel(RunId(2)));
+        // A run that ended is forgotten.
+        running.forget(RunId(1));
+        running.forget(RunId(2));
+        assert!(running.begin_storing(RunId(1)));
+        assert!(running.cancel(RunId(2)));
+    }
+
+    #[test]
+    fn a_command_that_is_cancelled_is_stopped_with_what_it_started() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("still-running");
+        let script = format!("(sleep 2; touch '{}') & sleep 60", marker.display());
+        let started = Instant::now();
+        let asked = || started.elapsed() >= Duration::from_millis(200);
+        let finished = run(&mut shell(&script), Duration::from_secs(30), &asked).unwrap();
+        assert!(matches!(finished, Finished::Cancelled));
+        assert!(started.elapsed() < Duration::from_secs(2));
+
+        std::thread::sleep(Duration::from_millis(2500));
+        assert!(!marker.exists(), "the process it started outlived it");
+
+        // A command that was cancelled before it started is not started.
+        let finished = run(
+            &mut shell(&format!("touch '{}'", marker.display())),
+            Duration::from_secs(30),
+            &|| true,
+        )
+        .unwrap();
+        assert!(matches!(finished, Finished::Cancelled));
+        assert!(!marker.exists());
     }
 
     #[test]
@@ -1244,7 +1366,7 @@ WITH_EQUALS=a=b
     #[test]
     fn a_command_that_does_not_exist_is_an_error() {
         let mut command = Command::new("spool-no-such-command");
-        assert!(run(&mut command, Duration::from_secs(1)).is_err());
+        assert!(run(&mut command, Duration::from_secs(1), &|| false).is_err());
     }
 
     #[test]

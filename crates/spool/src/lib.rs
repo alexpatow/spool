@@ -62,8 +62,8 @@ pub use bench::{
     PossibleSplits, RetractSummary, Scenario, StepReport,
 };
 pub use documents::{
-    DocumentEntry, DocumentExtraction, DocumentFilter, DocumentSort, ExtractOptions, ExtractReport,
-    ExtractorRef, NewDocument, locator,
+    DocumentEntry, DocumentExtraction, DocumentFilter, DocumentReading, DocumentSort,
+    ExtractOptions, ExtractReport, ExtractorRef, NewDocument, locator,
 };
 pub use drafts::{DraftEntry, DraftFilter, DraftStatus, DraftSummary};
 pub use engine::{

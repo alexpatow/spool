@@ -1497,6 +1497,10 @@ async fn info(State(app): State<App>) -> ApiResult {
     ok(Info {
         api: api::VERSION.to_owned(),
         store,
+        task_timeout_ms: app
+            .engine
+            .user_code()
+            .map(|user_code| user_code.timeout.as_millis() as u64),
     })
 }
 
@@ -1755,10 +1759,18 @@ async fn extract(
             }
         }
     };
+    let again = request.again.unwrap_or(false);
+    if request.again_since.is_some() && !again {
+        return Err(ApiError::invalid(
+            "`again_since` goes with `again`: without it an extraction reads only what the \
+             extractor has never read",
+        ));
+    }
     let options = ExtractOptions {
         extractor,
         source: request.source,
-        again: request.again.unwrap_or(false),
+        again,
+        again_since: request.again_since,
         limit: request.limit,
     };
     job(&app, request.wait_ms, move |engine| {

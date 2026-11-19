@@ -399,10 +399,10 @@ def find(document, task):
 
 - The key and the model go in the project's `.env`, which Git ignores: copy `.env.example` to `.env` and set `OPENAI_API_KEY=...` and `OPENAI_MODEL=...` there. Spool reads it each time it starts the extractor, so a change needs no restart, and never prints a value. A variable set in the terminal that started the server wins over `.env`. [Project structure](/docs/project-structure#secrets) has the rules of the file.
 - `find` asks for `document` and `task`. `task.instructions("company")` is the text of `extract.md`.
-- The `try` is what keeps one bad answer from losing the run: an exception that leaves the extractor fails the whole run and keeps nothing. [When an extractor fails](#when-an-extractor-fails) says what a skipped document costs.
+- The `try` is what keeps one bad answer from losing the batch: an exception that leaves the extractor fails its run, which keeps nothing of the batch it was given. [When an extractor fails](#when-an-extractor-fails) says what a skipped document costs.
 - The model gives quotes, and `document.find` places each one. A quote the text does not have, letter for letter, is found nowhere and dropped.
 
-The repository's [`llm.py`](https://github.com/alexpatow/spool/blob/main/benchmarks/extraction/company-news/extractors/llm.py) does the same for every entity type the project declares, with attributes, and gives a place to the longest of two overlapping quotes. No test in the repository calls a hosted model. An extractor that calls a model costs what the model costs, for every document, and the server stops one that runs longer than `--task-timeout`, which is 600 seconds unless set.
+The repository's [`llm.py`](https://github.com/alexpatow/spool/blob/main/benchmarks/extraction/company-news/extractors/llm.py) does the same for every entity type the project declares, with attributes, and gives a place to the longest of two overlapping quotes. No test in the repository calls a hosted model. An extractor that calls a model costs what the model costs, for every document. The server stops a run that takes longer than `--task-timeout`, which is 600 seconds unless set, and `spool extract` gives the extractor the documents in batches that each take a fifth of that at most, so a long extraction needs no longer limit.
 
 ### Every document at once
 
@@ -485,7 +485,7 @@ The server starts the file as a child process for each run, and waits for it.
 
 - **Working directory**: the project directory, so a relative path is relative to it.
 - **Environment**: the server's own, with what the project's `.env` sets for variables the server's does not, without `SPOOL_TOKEN` and `SPOOL_GOOGLE_CLIENT_SECRET` whatever `.env` says, and with `SPOOL_TASK_DIR`, the directory of the run's files. Without `SPOOL_TASK_DIR`, `@extractor` does nothing, so the file can be imported and its function called in a test.
-- **Input and output**: no standard input. Standard output is shown nowhere. Standard error is shown to whoever waits for a run that takes more than a few seconds, and its last 20 lines are in the error of a run that fails. Of a run that ends sooner and succeeds, nothing it wrote is shown or kept.
+- **Input and output**: no standard input. Standard output is shown nowhere. `spool extract` shows standard error while the first batch runs, once it has taken more than a few seconds, and after that says how many documents each batch kept instead. The last 20 lines are in the error of a run that fails. Of a run that ends sooner and succeeds, and of the batches after the first, nothing it wrote is shown or kept.
 - **Its files**: the documents and what the extractor writes are Parquet files in `SPOOL_TASK_DIR`, under `spool-tasks` in the system's temporary directory unless the server was started with `--tasks`. A run that fails leaves them there, with `stderr.log`, and its error names the directory. `spool` and `spool-strategy` hide them.
 
 A `.py` file runs as `uv run --with pyarrow --script <file>`:
@@ -500,19 +500,23 @@ A `.ts` file runs as `bun run <file>`, and finds `spool-strategy` through `NODE_
 
 ## When an extractor fails
 
-A run keeps everything or nothing. One exception that leaves the extractor, an exit status other than 0, a run stopped for taking too long, or one mention the server refuses, such as one with an attribute its source does not list, fails the whole run. No mention is stored, and no document counts as read, not even those read before the failure, so the next run reads every one of them again, and an extractor that calls a model pays for them again.
+`spool extract` gives the extractor the documents in batches, each in a run of its own, and what a run finds is stored when it ends. A run keeps everything or nothing. One exception that leaves the extractor, an exit status other than 0, a run stopped for taking too long, or one mention the server refuses, such as one with an attribute its source does not list, fails the run. No mention of its batch is stored, and no document of it counts as read, so the next run reads them again, and an extractor that calls a model pays for them again. The batches before it are kept, and the command stops and says how many documents they read. The same command again reads what is left.
 
-An extractor that calls a model therefore catches errors for each document, as `llm.py` above does: it lets through only what would fail every document alike, and skips the document otherwise. A skipped document counts as read, with 0 mentions, the same as a document that names nothing, and nothing marks it to be read again. Sending the same file again adds nothing, and `--again` reads every document again. The line `llm.py` writes for a skipped document is on standard error, so in a run that ends within a few seconds nobody sees it.
+Ctrl-C cancels the batch that is running: the server stops the extractor and every process it started, keeps nothing of that batch, and the command says what the batches before it kept, then exits. A second Ctrl-C quits without waiting. `POST /v1/runs/{run}/cancel` does the same for a client of its own.
+
+While a run reads a document, `spool show documents` and the studio say it is being read, and by which run. A document of a run that failed or was cancelled is not read yet again.
+
+An extractor that calls a model therefore catches errors for each document, as `llm.py` above does: it lets through only what would fail every document alike, and skips the document otherwise. A skipped document counts as read, with 0 mentions, the same as a document that names nothing, and nothing marks it to be read again. Sending the same file again adds nothing, and `--again` reads every document again. The line `llm.py` writes for a skipped document is on standard error, so in a run that ends within a few seconds, and in every batch after the first, nobody sees it.
 
 ## Over HTTP and MCP
 
 | | Store a document | Run an extractor |
 | --- | --- | --- |
-| Command | `spool extract <file>` does both | `spool extract` with no file |
+| Command | `spool extract <path>` does both | `spool extract` with no path |
 | HTTP | `POST /v1/documents` | `POST /v1/extractions` |
 | MCP | `load_documents` | `run_extraction` |
 
-[Getting started](/docs/getting-started#extract-records-from-text) has a call of each. `POST /v1/extractions` takes `extractor`, `source` to keep to the documents of one source, `again` to read every document again, and `limit`.
+[Getting started](/docs/getting-started#extract-records-from-text) has a call of each. `POST /v1/extractions` takes `extractor`, `source` to keep to the documents of one source, `again` to read every document again, and `limit`. Its run reports in `left` how many documents the limit left out, which is how `spool extract` reads in batches: it asks again until none are left. Reading everything again in batches, each batch after the first passes `again_since` with the first batch's run, so that no document is read twice.
 
 ## How good is it
 
@@ -530,7 +534,7 @@ cd spool
 uv run benchmarks/extraction/linked-docred/run.py --spool "$(command -v spool)"
 ```
 
-It writes each article as a text file under `benchmarks/.cache/linked-docred/documents/`, which is also where to take them from to try an extractor of your own, scores two extractors that need no model, and prints the reports. `--documents 200` takes the first 200 articles of each of the dataset's three files.
+It writes each article as a text file under `benchmarks/.cache/linked-docred/documents/`, which is also where to take them from to try an extractor of your own, scores two extractors that need no model, and prints the reports. `spool extract benchmarks/.cache/linked-docred/documents` stores all 5,051 in a project of your own and reads them in batches, and `spool match` then matches every entity type the project declares. `--documents 200` takes the first 200 articles of each of the dataset's three files.
 
 ## What extraction does not do
 
@@ -540,5 +544,5 @@ It writes each article as a text file under `benchmarks/.cache/linked-docred/doc
 - **A mention is a place.** Two mentions of one company in one document are two records, in one identity.
 - **A changed extractor does not read again by itself.** `--again` has it read every document again.
 - **Reading again takes nothing back.** The mentions a changed extractor no longer finds stay, beside what it finds now. A mention it finds again unchanged keeps the version of the extractor that first found it, so no record tells a stale mention from a current one.
-- **A run keeps everything or nothing.** [When an extractor fails](#when-an-extractor-fails) has the pattern that keeps one bad document from losing the rest.
+- **A batch keeps everything or nothing.** The batches before a failed one are kept. [When an extractor fails](#when-an-extractor-fails) has the pattern that keeps one bad document from losing its batch.
 - **A document is one request.** A file larger than the API's limit of 256 MiB cannot be stored.

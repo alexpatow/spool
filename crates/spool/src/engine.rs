@@ -11,8 +11,8 @@ use duckdb::{Connection, params};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use spool_core::{
-    Actor, Changeset, ChangesetId, Clock, Committed, ConstraintEntry, ConstraintKind, Draft,
-    EntityType, EvidenceSummary, IdGenerator, IdentityId, IdentityLink, IdentityState,
+    Actor, Changeset, ChangesetId, Clock, Committed, ConstraintEntry, ConstraintKind, DocumentId,
+    Draft, EntityType, EvidenceSummary, IdGenerator, IdentityId, IdentityLink, IdentityState,
     IdentityStatus, IdentityStore, LogEntry, MemoryState, NewPair, NewRecord, Op, Policy,
     RandomIds, RecordId, ReviewItem, RunId, SeededIds, Seq, Snapshot, StepClock, SystemClock,
     ValidationError, Verdict, inverse, reconcile, validate,
@@ -341,6 +341,16 @@ pub struct Engine {
     /// same records again, as a second extraction would read the same
     /// documents again.
     resolving: Mutex<()>,
+    /// The documents the extraction in progress was given, so that a list
+    /// of documents can say they are being read.
+    reading: Mutex<Option<Reading>>,
+}
+
+/// What the extraction in progress reads.
+struct Reading {
+    run: RunId,
+    extractor: String,
+    documents: HashSet<DocumentId>,
 }
 
 struct Inner {
@@ -491,6 +501,7 @@ impl Engine {
             manifest: RwLock::new(None),
             user_code: RwLock::new(None),
             resolving: Mutex::new(()),
+            reading: Mutex::new(None),
         })
     }
 
@@ -714,9 +725,34 @@ impl Engine {
         Ok(report)
     }
 
-    /// Gives up an open match run. It is recorded as failed, and its
-    /// records are still new to the next run.
+    /// Gives up an open match run, or a running extract run. Either is
+    /// recorded as failed. The records of a match run are still new to the
+    /// next run. An extract run's extractor is stopped with every process it
+    /// started, nothing it found is stored, and its documents are still
+    /// unread; the run ends when the extractor has stopped, which may be
+    /// after this returns. Once what the extractor found is being stored,
+    /// it is too late, and the cancellation is refused.
     pub fn cancel_run(&self, run: RunId) -> Result<()> {
+        let row = self.read(|conn| run_row(conn, run))?;
+        if row.kind == "extract" {
+            if row.status != RunStatus::Running {
+                return Err(Error::Run {
+                    run,
+                    message: format!("it is {} and cannot be cancelled", row.status),
+                });
+            }
+            if let Some(user_code) = self.user_code()
+                && !user_code.running.cancel(run)
+            {
+                return Err(Error::Run {
+                    run,
+                    message: "its extractor has finished and what it found is being stored, so \
+                              it is too late to cancel it"
+                        .to_owned(),
+                });
+            }
+            return Ok(());
+        }
         self.lock().cancel_run(run)
     }
 
