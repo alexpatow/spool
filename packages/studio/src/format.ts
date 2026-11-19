@@ -1,7 +1,18 @@
 // How the studio words what the server answers. Nothing here decides
 // anything: a sentence that says why comes from the engine.
 
-import type { DocumentEntry, RecordEntry, Op } from "./api.ts";
+import type { DocumentEntry, IdentityMatch, RecordEntry, Op } from "./api.ts";
+
+export function identityMatch(match: IdentityMatch | null | undefined): string | undefined {
+  switch (match?.kind) {
+    case "label":
+      return "Name match";
+    case "alias":
+      return `Alias “${match.value}”`;
+    case "record":
+      return match.field ? `Record field “${match.field}”` : "Record match";
+  }
+}
 
 /** `3 records`, `1 identity`. */
 export function count(number: number, what: string): string {

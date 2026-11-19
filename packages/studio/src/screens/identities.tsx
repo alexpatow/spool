@@ -45,7 +45,7 @@ import * as ShelfTable from "../components/ui/table";
 import { facts, latest, sourcesOf } from "../facts.ts";
 import type { Fact } from "../facts.ts";
 import { findIdentity } from "../find.ts";
-import { count, identitiesOf, recordName, recordsOf, short, tail } from "../format.ts";
+import { count, identitiesOf, identityMatch, recordName, recordsOf, short, tail } from "../format.ts";
 import { useLabels, useLoad, useNames, usePages, useStudio } from "../hooks.ts";
 import { IdentityIcon, MergeIcon, SplitIcon } from "../icons.tsx";
 import type { Route } from "../router.ts";
@@ -59,15 +59,16 @@ export function identityName(identity: Pick<IdentitySummary, "id" | "label">): s
 
 export function Identities({ route, types }: { route: Route; types: string[] }) {
   const { type, q } = route.query;
+  const searching = Boolean(q?.trim());
   const { info } = useStudio();
-  const sorting = useSorting(route, { by: "label", order: "asc" });
+  const sorting = useSorting(route, { by: searching ? "" : "label", order: "asc" });
   const pages = usePages(async (client, after) => {
     const page = await client.identities({
       entity_type: type,
       q,
       after: after as string | undefined,
-      sort: sorting.by as IdentitySort,
-      order: sorting.order,
+      sort: sorting.by ? (sorting.by as IdentitySort) : undefined,
+      order: sorting.by ? sorting.order : undefined,
     });
     return { items: page.identities, next: page.next };
   });
@@ -79,7 +80,7 @@ export function Identities({ route, types }: { route: Route; types: string[] }) 
       <Filters
         path={["identities"]}
         query={route.query}
-        search={{ name: "q", label: "Search", placeholder: "Any value in its records" }}
+        search={{ name: "q", label: "Search", placeholder: "Name, alias or record value" }}
         selects={[{ name: "type", label: "Entity type", choices: types.map((value) => ({ value })) }]}
       />
       <PagedTable
@@ -99,6 +100,9 @@ export function Identities({ route, types }: { route: Route; types: string[] }) 
             ),
             wrap: true,
           },
+          ...(searching
+            ? [{ title: "Match", cell: (identity: IdentitySummary) => identityMatch(identity.match), wrap: true }]
+            : []),
           { title: "Entity type", cell: (identity) => identity.entity_type, sort: "entity_type" },
           { title: "Records", cell: (identity) => identity.members, number: true, sort: "records" },
           {
