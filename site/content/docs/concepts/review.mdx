@@ -164,7 +164,7 @@ A `possible_split` has its own answers:
 | Dismiss | The identity stays as it is, and nothing is recorded about it. The question comes back if another of its records is taken back, or one comes back |
 | Leave it open | Nothing changes. No match looks at it, since its records have an identity. It closes by itself if the record that was taken back comes back, or a new record matches more than one group |
 
-Every answer is checked when it is made: a changeset written against identities that changed since they were read is refused, and nothing is changed.
+A merge or a split written against identities whose records changed since they were read is refused, and nothing is changed. A placement is refused if one of its records has an identity by then, and is not checked for anything else that changed since.
 
 ## A conflict
 

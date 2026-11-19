@@ -667,8 +667,9 @@ function Answers({
       </ol>
       <div {...stylex.props(styles.checked)}>
         <Quiet>
-          Each change is checked when it is made. If what it changes moved since this screen was read, it is refused
-          and nothing happens.
+          A merge is refused, changing nothing, if the records of these identities changed since this screen was read.
+          A placement is refused if one of its records has an identity by then. Neither is checked for anything else
+          that changed since.
         </Quiet>
       </div>
     </section>
@@ -1487,8 +1488,8 @@ function SplitCard({
           </ol>
           <div {...stylex.props(styles.checked)}>
             <Quiet>
-              Each change is checked when it is made. If the identity's records changed since this screen was read,
-              it is refused and nothing happens.
+              A split is refused, changing nothing, if the identity's records changed since this screen was read.
+              Keeping them as one or dismissing is not checked against what changed since.
             </Quiet>
           </div>
         </section>

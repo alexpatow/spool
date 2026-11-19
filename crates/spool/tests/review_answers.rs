@@ -388,3 +388,54 @@ fn keeping_the_groups_as_one_holds_while_the_records_the_must_link_names_stay() 
     assert_eq!(report.possible_splits, 1);
     assert_eq!(open(&engine).len(), 1);
 }
+
+#[test]
+fn a_merge_is_refused_after_its_identities_changed_and_a_placement_only_if_its_record_was_placed() {
+    let (engine, asked) = asked();
+    let read = engine.head().unwrap();
+    // Someone else gives the anvils another record after the screen was read.
+    load(&engine, "yard", &[("8", Some("hammer"), None)]);
+    let stranger = record_id(&engine, "yard", "8");
+    commit(
+        &engine,
+        vec![Op::Assign {
+            record: stranger,
+            from: None,
+            to: Some(asked.anvils),
+        }],
+    );
+    let at = |ops: Vec<Op>| {
+        engine.commit(Changeset {
+            id: engine.mint_ids(0, 1).changesets[0],
+            base: read,
+            actor: reviewer(),
+            reason: None,
+            run: None,
+            ops,
+        })
+    };
+    // A merge written against what was read is refused.
+    assert!(
+        at(vec![Op::Merge {
+            from: asked.hammer,
+            into: asked.anvils,
+        }])
+        .is_err()
+    );
+    // A placement in the identity that changed is made all the same.
+    at(vec![Op::Assign {
+        record: asked.waiting,
+        from: None,
+        to: Some(asked.anvils),
+    }])
+    .unwrap();
+    // And one of a record that has an identity by then is refused.
+    assert!(
+        at(vec![Op::Assign {
+            record: asked.waiting,
+            from: None,
+            to: Some(asked.hammer),
+        }])
+        .is_err()
+    );
+}
