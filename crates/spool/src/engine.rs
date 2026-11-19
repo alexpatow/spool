@@ -1134,13 +1134,15 @@ impl Engine {
     /// At most `limit` committed changesets in another order than the
     /// log's, each with who started the run it came from. A page continues
     /// after the changeset at `after`, wherever that stands in the order.
+    /// `names` says what people are called, for sorting by who decided.
     pub fn logged_sorted(
         &self,
         sort: Sort<LogSort>,
         after: Option<Seq>,
         limit: u64,
+        names: &[(Actor, String)],
     ) -> Result<Vec<LoggedChangeset>> {
-        self.read(|conn| lookup::logged(conn, lookup::changesets(conn, sort, after, limit)?))
+        self.read(|conn| lookup::logged(conn, lookup::changesets(conn, sort, after, limit, names)?))
     }
 
     /// All of identity state, read from the projection tables.

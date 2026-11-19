@@ -23,7 +23,7 @@ import { useLoad } from "../hooks.ts";
 import { href } from "../router.ts";
 import { colors, radius, spacing, typography } from "../styles/shelf/tokens.stylex";
 import { tones } from "../styles/tones.stylex";
-import { Who } from "../who.tsx";
+import { useCalled, Who } from "../who.tsx";
 
 /** How many of the latest runs the overview lists. */
 const RUNS = 5;
@@ -47,6 +47,7 @@ export function Overview() {
 
 function Store({ info, runs }: { info: Info; runs: RunEntry[] }) {
   const { store } = info;
+  const called = useCalled();
   return (
     <>
       <Waiting types={store.entity_types} />
@@ -165,7 +166,11 @@ function Store({ info, runs }: { info: Info; runs: RunEntry[] }) {
               value: details,
               cell: details,
             },
-            { title: "Started by", value: (run) => run.started_by, cell: (run) => <Who actor={run.started_by} /> },
+            {
+              title: "Started by",
+              value: (run) => called(run.started_by),
+              cell: (run) => <Who actor={run.started_by} />,
+            },
             {
               title: "Started",
               value: (run) => run.started_at,

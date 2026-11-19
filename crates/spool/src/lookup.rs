@@ -14,7 +14,7 @@ use spool_core::{
 };
 
 use crate::error::Result;
-use crate::order::{Key, Keyed, Sort};
+use crate::order::{Key, Keyed, Sort, called, names_table};
 use crate::project::{Extractor, FeatureColumn, Manifest, Strategy};
 use crate::schema;
 use crate::store::{OpRow, op_from_row, parse};
@@ -1004,6 +1004,7 @@ pub(crate) fn history(conn: &Connection, id: IdentityId) -> Result<Vec<HistoryEn
 pub enum LogSort {
     /// The log position: the order of the log.
     Seq,
+    /// Who decided it: a person by their name, whatever its case.
     Actor,
     /// How many operations the changeset has.
     Operations,
@@ -1017,7 +1018,7 @@ impl LogSort {
     fn keys(self) -> Vec<Key> {
         let mut keys = match self {
             Self::Seq => Vec::new(),
-            Self::Actor => Key::text("c.actor").into(),
+            Self::Actor => Key::text("coalesce(called.name, c.actor)").into(),
             Self::Operations => vec![Key::of(
                 "(SELECT count(*) FROM spool.changeset_op o WHERE o.seq = c.seq)",
             )],
@@ -1033,16 +1034,23 @@ impl LogSort {
 }
 
 /// At most `most` committed changesets in the order `sort` says, after
-/// the one at `after` in that order.
+/// the one at `after` in that order. `names` says what people are called.
 pub(crate) fn changesets(
     conn: &Connection,
     sort: Sort<LogSort>,
     after: Option<Seq>,
     most: u64,
+    names: &[(Actor, String)],
 ) -> Result<Vec<LogEntry>> {
+    let named = sort.by == LogSort::Actor;
     let keyed = Keyed {
-        before: None,
-        from: "spool.changeset c".to_owned(),
+        before: named.then(|| called("$3")),
+        from: if named {
+            "spool.changeset c LEFT JOIN called ON called.actor = c.actor"
+        } else {
+            "spool.changeset c"
+        }
+        .to_owned(),
         id: "c.seq".to_owned(),
         keys: sort.by.keys(),
         direction: sort.direction,
@@ -1058,7 +1066,14 @@ pub(crate) fn changesets(
         keyed.order_by(),
     ))?;
     let after = after.and_then(|seq| i64::try_from(seq.0).ok());
-    let mut rows = statement.query(params![after, self::limit(most)])?;
+    let most = self::limit(most);
+    let table = names_table(names)?;
+    let table = &table;
+    let mut values: Vec<&dyn duckdb::ToSql> = vec![&after, &most];
+    if named {
+        values.push(&table);
+    }
+    let mut rows = statement.query(values.as_slice())?;
     let mut order = Vec::new();
     while let Some(row) = rows.next()? {
         order.push(Seq(row.get::<_, i64>(0)? as u64));

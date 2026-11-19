@@ -495,7 +495,7 @@ fn the_log_is_sorted_by_each_column_in_pages() {
     ] {
         for direction in DIRECTIONS {
             let sort = Sort { by, direction };
-            let list = |after, limit| engine.logged_sorted(sort, after, limit).unwrap();
+            let list = |after, limit| engine.logged_sorted(sort, after, limit, &[]).unwrap();
             let all = list(None, 1000);
             let what = format!("the log by {by:?}");
             let mut seqs: Vec<Seq> = all.iter().map(|entry| entry.entry.seq).collect();
@@ -530,7 +530,7 @@ fn the_log_is_sorted_by_each_column_in_pages() {
         }
     }
     let newest = engine
-        .logged_sorted(Sort::descending(LogSort::Seq), None, 2)
+        .logged_sorted(Sort::descending(LogSort::Seq), None, 2, &[])
         .unwrap();
     assert_eq!(
         newest
@@ -539,4 +539,97 @@ fn the_log_is_sorted_by_each_column_in_pages() {
             .collect::<Vec<_>>(),
         [5, 4]
     );
+}
+
+#[test]
+fn who_did_something_is_sorted_by_what_they_are_called() {
+    let engine = engine();
+    load(
+        &engine,
+        "shop",
+        &[("1", Some("anvil"), None), ("2", Some("bolt"), None)],
+    );
+    engine.resolve(&ResolveOptions::default()).unwrap();
+    let (zed, ada) = (Actor::User("zz".to_owned()), Actor::User("aa".to_owned()));
+    let document = |key: &str| NewDocument {
+        key: key.to_owned(),
+        uri: None,
+        text: format!("the text of {key}"),
+    };
+    engine
+        .acting(zed.clone())
+        .add_documents("shop", &[document("a.txt")])
+        .unwrap();
+    engine
+        .acting(ada.clone())
+        .add_documents("shop", &[document("b.txt")])
+        .unwrap();
+    // Zoe keeps the two apart, and Ada takes that back.
+    let (anvil, bolt) = (
+        record_id(&engine, "shop", "1"),
+        record_id(&engine, "shop", "2"),
+    );
+    let ops = [
+        Op::Constrain {
+            kind: ConstraintKind::CannotLink,
+            a: anvil,
+            b: bolt,
+        },
+        Op::Unconstrain {
+            kind: ConstraintKind::CannotLink,
+            a: anvil,
+            b: bolt,
+        },
+    ];
+    for (actor, op) in [&ada, &zed].into_iter().zip(ops) {
+        engine
+            .commit(Changeset {
+                id: engine.mint_ids(0, 1).changesets[0],
+                base: engine.head().unwrap(),
+                actor: actor.clone(),
+                reason: None,
+                run: None,
+                ops: vec![op],
+            })
+            .unwrap();
+    }
+    // `zz` is Ada and `aa` is Zoe: by name, Ada comes first, then the engine, then Zoe.
+    let names = vec![
+        (zed.clone(), "Ada".to_owned()),
+        (ada.clone(), "Zoe".to_owned()),
+    ];
+
+    let runs = engine
+        .runs(&RunFilter {
+            sort: Some(Sort::ascending(RunSort::StartedBy)),
+            names: names.clone(),
+            ..RunFilter::default()
+        })
+        .unwrap();
+    let started: Vec<Actor> = runs.iter().map(|run| run.started_by.clone()).collect();
+    assert_eq!(started.first(), Some(&zed), "{started:?}");
+    assert_eq!(started.last(), Some(&ada), "{started:?}");
+    assert!(
+        started[1..started.len() - 1]
+            .iter()
+            .all(|actor| *actor == Actor::Engine)
+    );
+    // Without the names, each is sorted by itself.
+    let unnamed = engine
+        .runs(&RunFilter {
+            sort: Some(Sort::ascending(RunSort::StartedBy)),
+            ..RunFilter::default()
+        })
+        .unwrap();
+    assert_eq!(unnamed.last().map(|run| &run.started_by), Some(&zed));
+
+    let log = engine
+        .logged_sorted(Sort::ascending(LogSort::Actor), None, 100, &names)
+        .unwrap();
+    let actors: Vec<Actor> = log
+        .iter()
+        .map(|entry| entry.entry.changeset.actor.clone())
+        .collect();
+    assert_eq!(actors.first(), Some(&zed), "{actors:?}");
+    assert_eq!(actors.last(), Some(&ada), "{actors:?}");
 }

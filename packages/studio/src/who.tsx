@@ -4,6 +4,13 @@
 import { Code } from "./components.tsx";
 import { useStudio } from "./hooks.ts";
 
+/** What an actor is called where `Who` shows it, for sorting by it. */
+export function useCalled(): (actor: string) => string {
+  const { people } = useStudio();
+  return (actor) =>
+    (actor.startsWith("user:") ? people.get(actor.slice("user:".length))?.name : undefined) ?? actor;
+}
+
 export function Who({ actor }: { actor: string }) {
   const { people } = useStudio();
   const person = actor.startsWith("user:") ? people.get(actor.slice("user:".length)) : undefined;

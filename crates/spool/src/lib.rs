@@ -86,7 +86,7 @@ pub use metrics::{
     BCubed, Churn, EndToEndMetrics, ExtractionMetrics, IdStability, Metrics, OrderSensitivity,
     OverridePersistence, PairMetrics, Rebuild, SplitRecovery, UpgradeStability,
 };
-pub use order::{Direction, Sort};
+pub use order::{ActorNames, Direction, Sort};
 pub use project::{
     Declaration, EntityTypeManifest, EntityTypeSource, Extractor, FeatureColumn, Manifest, Project,
     Rule, RuleSet, Runtime, Source, SqlFile, Strategy, StrategySource, Transform, YamlFile,

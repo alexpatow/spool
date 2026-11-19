@@ -7,7 +7,12 @@
 //! Each order ends with the entry's ID, so that no two entries stand in the
 //! same place.
 
+use duckdb::vtab::arrow::ArrowBatchRegistration;
 use serde::{Deserialize, Serialize};
+use spool_core::Actor;
+
+use crate::batch::{Column, batch};
+use crate::error::Result;
 
 /// Which way a list runs.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -162,4 +167,32 @@ impl Keyed {
             .collect();
         keys.join(", ")
     }
+}
+
+/// What the people named by their account are called: `user:<id>` and a
+/// name. A list sorted by who did something sorts them by that, and an
+/// actor not named here by the actor itself, as each is shown.
+pub type ActorNames = Vec<(Actor, String)>;
+
+/// A common table expression `called`, of `actor` and `name`, read from the
+/// table that the parameter `param` is bound to with [`names_table`].
+pub(crate) fn called(param: &str) -> String {
+    format!("called AS (SELECT actor, name FROM arrow({param}))")
+}
+
+/// The names as a table to bind to the parameter of [`called`]. With none,
+/// it is a row of nulls, which names nobody.
+pub(crate) fn names_table(names: &[(Actor, String)]) -> Result<ArrowBatchRegistration> {
+    let (actors, called): (Vec<Option<String>>, Vec<Option<String>>) = if names.is_empty() {
+        (vec![None], vec![None])
+    } else {
+        names
+            .iter()
+            .map(|(actor, name)| (Some(actor.to_string()), Some(name.clone())))
+            .unzip()
+    };
+    Ok(ArrowBatchRegistration::new(batch(vec![
+        ("actor", Column::Text(actors)),
+        ("name", Column::Text(called)),
+    ])?))
 }

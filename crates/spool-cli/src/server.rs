@@ -86,10 +86,10 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use spool::core::{Actor, Changeset, DocumentId, EntityType, Policy, RecordId, RunId, Seq};
 use spool::{
-    ConstraintFilter, Direction, Disposition, DocumentFilter, DocumentSort, DraftFilter,
-    DraftStatus, Engine, ExtractOptions, IdentityFilter, IdentitySort, LogSort, RecordFilter,
-    RecordSort, ResolveOptions, ReviewFilter, ReviewStatus, Rows, RunFilter, RunKind, RunSort,
-    RunStatus, Scope, Sort, StrategyRef, watch_runs,
+    ActorNames, ConstraintFilter, Direction, Disposition, DocumentFilter, DocumentSort,
+    DraftFilter, DraftStatus, Engine, ExtractOptions, IdentityFilter, IdentitySort, LogSort,
+    RecordFilter, RecordSort, ResolveOptions, ReviewFilter, ReviewStatus, Rows, RunFilter, RunKind,
+    RunSort, RunStatus, Scope, Sort, StrategyRef, watch_runs,
 };
 use tokio::net::TcpListener;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch};
@@ -766,6 +766,16 @@ async fn people<T: Send + 'static>(
         Ok(result) => Ok(result?),
         Err(_) => Err(ApiError::internal("the accounts stopped while working")),
     }
+}
+
+/// What each person is called, by the actor the log names them as: a list
+/// sorted by who did something sorts them as the studio shows them.
+async fn names(app: &App) -> ApiResult<ActorNames> {
+    let people = people(app, Accounts::list).await?;
+    Ok(people
+        .into_iter()
+        .map(|person| (Actor::User(person.id), person.name))
+        .collect())
 }
 
 /// Runs work that hashes a password, which `permit` allows: it is held until
@@ -1861,12 +1871,18 @@ async fn list_runs(
     params: Result<Query<RunsQuery>, QueryRejection>,
 ) -> ApiResult {
     let params = query(params)?;
+    let sort = sorted(params.sort, params.order, RunSort::Run);
+    let names = match sort {
+        Some(sort) if sort.by == RunSort::StartedBy => names(&app).await?,
+        _ => Vec::new(),
+    };
     let filter = RunFilter {
         kind: params.kind,
         status: params.status,
         entity_type: params.entity_type,
         limit: page(params.limit),
-        sort: sorted(params.sort, params.order, RunSort::Run),
+        sort,
+        names,
     };
     let runs = engine(&app, move |engine| engine.runs(&filter)).await?;
     ok(RunList { runs })
@@ -2179,12 +2195,16 @@ async fn list_changesets(
     let params = query(params)?;
     let limit = page(params.limit);
     let sort = sorted(params.sort, params.order, LogSort::Seq);
+    let names = match sort {
+        Some(sort) if sort.by == LogSort::Actor => names(&app).await?,
+        _ => Vec::new(),
+    };
     ok(engine(&app, move |engine| {
         // Sorted, a page continues after the changeset at `after`,
         // wherever that stands in the order.
         let changesets = match sort {
             None => engine.logged_after(Seq(params.after.unwrap_or(0)), limit)?,
-            Some(sort) => engine.logged_sorted(sort, params.after.map(Seq), limit)?,
+            Some(sort) => engine.logged_sorted(sort, params.after.map(Seq), limit, &names)?,
         };
         Ok(ChangesetList {
             changesets,

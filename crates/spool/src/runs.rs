@@ -4,7 +4,7 @@
 //! ID, and reads the run until its status says the engine has stopped working
 //! on it.
 
-use duckdb::{Connection, params};
+use duckdb::{Connection, ToSql};
 use serde::{Deserialize, Serialize};
 use spool_core::{Actor, Committed, ContentHash, EntityType, RunId, Seq, StateError};
 
@@ -12,7 +12,7 @@ use crate::documents::{ExtractReport, ExtractorRef};
 use crate::engine::{StrategyRef, TypeResolution};
 use crate::error::{Error, Result};
 use crate::load::LoadReport;
-use crate::order::{Key, Keyed, Sort};
+use crate::order::{ActorNames, Key, Keyed, Sort, called, names_table};
 use crate::retract::RetractReport;
 use crate::store::parse;
 use crate::time::rfc3339;
@@ -147,6 +147,8 @@ pub struct RunFilter {
     /// listed.
     pub limit: u64,
     pub sort: Option<Sort<RunSort>>,
+    /// What people are called, for sorting by who started a run.
+    pub names: ActorNames,
 }
 
 /// What a list of runs can be sorted by. Each ends with the run's ID.
@@ -159,6 +161,7 @@ pub enum RunSort {
     /// What it was about: its entity type, strategy and extractor, as a
     /// list shows them. Those about nothing last.
     Details,
+    /// Who started it: a person by their name, whatever its case.
     StartedBy,
     Started,
 }
@@ -176,7 +179,7 @@ impl RunSort {
                 &Key::text(DETAILS),
             ]
             .concat(),
-            Self::StartedBy => Key::text("r.started_by").into(),
+            Self::StartedBy => Key::text("coalesce(called.name, r.started_by)").into(),
             Self::Started => vec![Key::of("r.started_at")],
         };
         keys.push(Key::of("r.run_id"));
@@ -192,6 +195,7 @@ impl Default for RunFilter {
             entity_type: None,
             limit: 100,
             sort: None,
+            names: Vec::new(),
         }
     }
 }
@@ -309,9 +313,15 @@ pub(crate) fn list(conn: &Connection, filter: &RunFilter) -> Result<Vec<RunEntry
              LIMIT $4"
         ),
         Some(sort) => {
+            let named = sort.by == RunSort::StartedBy;
             let keyed = Keyed {
-                before: None,
-                from: "spool.run r".to_owned(),
+                before: named.then(|| called("$5")),
+                from: if named {
+                    "spool.run r LEFT JOIN called ON called.actor = r.started_by"
+                } else {
+                    "spool.run r"
+                }
+                .to_owned(),
                 id: "r.run_id".to_owned(),
                 keys: sort.by.keys(),
                 direction: sort.direction,
@@ -328,12 +338,22 @@ pub(crate) fn list(conn: &Connection, filter: &RunFilter) -> Result<Vec<RunEntry
         }
     };
     let mut statement = conn.prepare(&sql)?;
-    let mut rows = statement.query(params![
+    let (kind, status) = (
         filter.kind.map(RunKind::as_str),
         filter.status.map(RunStatus::as_str),
-        filter.entity_type.as_ref().map(EntityType::as_str),
-        filter.limit.min(i64::MAX as u64) as i64,
-    ])?;
+    );
+    let entity_type = filter.entity_type.as_ref().map(EntityType::as_str);
+    let limit = filter.limit.min(i64::MAX as u64) as i64;
+    let table = names_table(&filter.names)?;
+    let names = &table;
+    let mut values: Vec<&dyn ToSql> = vec![&kind, &status, &entity_type, &limit];
+    if filter
+        .sort
+        .is_some_and(|sort| sort.by == RunSort::StartedBy)
+    {
+        values.push(&names);
+    }
+    let mut rows = statement.query(values.as_slice())?;
     let mut runs = Vec::new();
     while let Some(row) = rows.next()? {
         runs.push(entry(row)?);
