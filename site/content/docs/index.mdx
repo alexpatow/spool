@@ -1,54 +1,54 @@
 ---
 title: Introduction
-description: How Spool's parts fit together, who it is for, and what each page of these docs covers.
+description: What Spool is, how its parts fit together, who it's for, and where to go next in these docs.
 ---
 
-Spool pulls records out of text and rows, decides which are the same real-world thing, and gives each thing an ID that stays the same as more arrive. Working out which records are the same thing is called entity resolution, or record linkage. Spool does that, takes records from text as well as from tables, and keeps the IDs.
+Spool pulls records out of text and rows, decides which are the same real-world thing, and gives each thing an ID that stays the same as more arrive. Matching records that describe the same thing is called entity resolution, or record linkage. Spool does that, takes records from text as well as tables, and keeps the IDs stable.
 
-New to these terms? [What the hell is Entity Extraction and Resolution?](/explained) shows each step on the sample data, in pictures.
+New to the terms? [What the hell is Entity Extraction and Resolution?](/explained) walks through each step on the sample data.
 
 ## How the parts fit
 
-Spool is one server. It is written in Rust and keeps its data in one file of [DuckDB](https://duckdb.org), a database that runs inside the server's process. It is driven by a project, which is a directory of YAML and SQL files that you keep in Git.
+Spool is one server, written in Rust, with its data in a single embedded [DuckDB](https://duckdb.org) file. A project, a Git repo of YAML and SQL files, tells it what to do.
 
 1. **A project is a directory.** Sources, features, rules and extractors are files, and a file's path is its name. [Project structure](/docs/project-structure)
-2. **Records come from rows or from text.** A row of a source becomes a record. A document is stored, and an extractor finds the places where it names a thing: each place becomes a record. An extractor is code in Python or TypeScript, which the server runs as a child process. The one a new project has asks a small model that runs on your machine. A record is never changed, and loading it twice does nothing. [Records and sources](/docs/concepts/records-and-sources), [Extraction](/docs/concepts/extraction)
-3. **Records are compared by features.** Each source's columns are mapped onto the features of an entity type, such as `company`, that you declare. [Entity types and features](/docs/concepts/entity-types-and-features)
-4. **Rules judge pairs.** A match compares what is new with what is known and records a judgement for each pair: `match` or `no_match`. A rule is a SQL condition over two records. [Matching](/docs/concepts/matching)
-5. **Judgements become identities.** New records join an identity or start one. A match never merges or splits identities that exist. Every change is an entry in a log, with an author and a reason, and can be undone. [Identities](/docs/concepts/identities)
-6. **What cannot be decided waits.** A record that fits two identities, and an identity that may have come apart, are left for a person or an agent. [Review](/docs/concepts/review)
-7. **Other systems store the ID.** They look it up by a row's source and key, and follow the log to learn of merges and splits. [Using the IDs](/docs/using-the-ids)
+2. **Records come from rows or text.** Each row of a source becomes a record. Documents are stored, and an extractor finds where each one names something. Each of those places becomes a record too. Extractors are Python or TypeScript that the server runs as child processes, and the sample one uses a small local model. Records are immutable, and loads are idempotent. [Records and sources](/docs/concepts/records-and-sources), [Extraction](/docs/concepts/extraction)
+3. **Records are compared by features.** Each source's columns map onto the features of an entity type you declare, such as `company`. [Entity types and features](/docs/concepts/entity-types-and-features)
+4. **Rules judge pairs.** A match compares new records with known ones and records a judgement per pair: `match` or `no_match`. A rule is a SQL condition over two records. [Matching](/docs/concepts/matching)
+5. **Judgements become identities.** New records join an identity or start one. A match never merges or splits existing identities. Every change is a log entry with an author and a reason, and every change can be undone. [Identities](/docs/concepts/identities)
+6. **Hard cases wait for review.** A record that fits two identities, or an identity that may have come apart, goes to a person or an agent. [Review](/docs/concepts/review)
+7. **Other systems store the ID.** They look it up by a row's source and key, and follow the log for merges and splits. [Using the IDs](/docs/using-the-ids)
 
-There are four ways in, and they reach the same server:
+Four interfaces reach the same server:
 
 | | For | Page |
 | --- | --- | --- |
-| The command line | Loading, extracting, matching, showing and explaining | [Command line](/docs/cli) |
-| The HTTP API | Everything. The other three call it | [HTTP API](/docs/api) |
-| The MCP endpoint at `/mcp` | An agent that loads, looks things up and corrects | [MCP](/docs/mcp) |
-| The studio, in a browser | Looking, reviewing, merging, splitting and undoing | [Getting started](/docs/getting-started#look-at-it-in-a-browser) |
+| The CLI | Loading, extracting, matching, inspecting and explaining | [Command line](/docs/cli) |
+| The HTTP API | Everything. The other three are clients of it | [HTTP API](/docs/api) |
+| The MCP endpoint at `/mcp` | Agents that load data, look things up and make corrections | [MCP](/docs/mcp) |
+| The studio, in a browser | Browsing, reviewing, merging, splitting and undoing | [Getting started](/docs/getting-started#look-at-it-in-a-browser) |
 
-## Who it is for
+## Who it's for
 
-- You maintain a list of companies, people or products that several sources feed, and other systems refer to them by ID.
-- Some of what you know about them is in text: notes, articles, emails.
-- You want to read why two records were matched, and take a wrong match back without rebuilding everything.
-- You want matching rules reviewed like code, in files, with a history.
-- You have people or agents making corrections, and need every correction attributed and reversible.
-- You have thousands to a few million records, and one machine is enough.
+- You maintain a list of companies, people or products fed by several sources, and other systems refer to them by ID.
+- Some of what you know is in text: notes, articles, emails.
+- You want to see why two records matched, and undo a wrong match without rebuilding everything.
+- You want matching rules reviewed like code, in files, with history.
+- People or agents make corrections, and every correction has to be attributed and reversible.
+- You have thousands to millions of records. Spool has been benchmarked at 5,000,000 on one machine.
 
-[Use cases](/docs/use-cases) goes through these case by case, from venture capital data to agent memory. If that is not you, [Limits](/docs/limits) says what Spool is not meant for, and [Compared with other tools](/docs/compared) says what to use.
+[Use cases](/docs/use-cases) goes through real scenarios, from venture capital data to agent memory.
 
 ## The pages
 
 **Start**
 
-- [Use cases](/docs/use-cases): where it fits, with an example of each.
-- [Getting started](/docs/getting-started): install it, load rows, match them, extract records from a note. Five minutes.
-- [Limits](/docs/limits): what it is not meant for, what stable IDs cost, what it does not do yet, how large it has been run.
+- [Use cases](/docs/use-cases): where Spool fits, with a worked example for each.
+- [Getting started](/docs/getting-started): install, load rows, match, and extract records from a note in five minutes.
+- [Limits](/docs/limits): the trade-offs, what's not in 0.1.0, and benchmarks.
 - [Compared with other tools](/docs/compared): Splink, dedupe, Zingg, Senzing, nomenklatura, GoldenMatch, and a `GROUP BY`.
 
-**Concepts.** Each page starts from the sample project and can be run by itself.
+**Concepts.** Each page runs on its own.
 
 - [Records and sources](/docs/concepts/records-and-sources)
 - [Extraction](/docs/concepts/extraction)
@@ -61,16 +61,10 @@ There are four ways in, and they reach the same server:
 
 - [Using the IDs](/docs/using-the-ids): from another system.
 - [MCP](/docs/mcp): connecting an agent, and every tool.
-- [Deploying](/docs/deploying): running it for other people.
+- [Deploying](/docs/deploying): running Spool for a team.
 
 **Reference**
 
-- [Command line](/docs/cli), [HTTP API](/docs/api), [Project structure](/docs/project-structure)
+- [Command line](/docs/cli), [Command reference](/docs/cli-reference), [HTTP API](/docs/api), [Project structure](/docs/project-structure)
 
-## Where it stands
-
-Spool's first commit was on 14 November 2026. It is version 0.1.0, under the MIT licence, and formats and the API can still change.
-
-Every command on these pages is run by a script, [`site/scripts/check-samples.ts`](https://github.com/alexpatow/spool/blob/main/site/scripts/check-samples.ts), against a build of the source, and the output shown is compared with what was printed. It is run by hand before a page changes. Where a page runs the sample extractor, the script puts a file that needs no model in its place, unless it is told to run the model, and what is printed is the same.
-
-The source is at [github.com/alexpatow/spool](https://github.com/alexpatow/spool).
+Spool 0.1.0 is MIT licensed. The source is at [github.com/alexpatow/spool](https://github.com/alexpatow/spool).
