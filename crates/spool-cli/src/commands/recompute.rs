@@ -9,7 +9,7 @@ use spool::{
 };
 
 use super::remote::{self, Remote, print_json, typed};
-use super::show::{count, fields, table};
+use super::show::{aligned, count, fields, table};
 use crate::Failure;
 use crate::args::Spec;
 
@@ -166,16 +166,22 @@ fn print_report(report: &RecomputeReport, entity_type: Option<&str>) -> Result<(
         println!("the project declares no entity type, so there is nothing to recompute");
         return Ok(());
     }
+    let several = report.types.len() > 1;
     let mut first = true;
     for recomputed in &report.types {
+        if recomputed.changes_total == 0 && !several {
+            continue;
+        }
         if !first {
             println!();
         }
         first = false;
         print_type(recomputed);
     }
-    println!();
     let changes: u64 = report.types.iter().map(|t| t.changes_total).sum();
+    if !first {
+        println!();
+    }
     if changes == 0 {
         println!("nothing would change: the identities are what the rules say they are");
         return Ok(());
@@ -570,32 +576,45 @@ fn print_change(recomputed: &TypeRecompute, detail: &ChangeDetail) {
     ]);
     println!();
     println!("now");
-    for before in &change.before {
-        match before.identity {
-            Some(identity) => println!(
-                "  {identity}  {}  {}",
+    let rows: Vec<Vec<String>> = change
+        .before
+        .iter()
+        .map(|before| match before.identity {
+            Some(identity) => vec![
+                identity.to_string(),
                 name(&before.label),
+                count(before.records, "record"),
+            ],
+            None => vec![format!(
+                "{} without an identity",
                 count(before.records, "record")
-            ),
-            None => println!("  {} without an identity", count(before.records, "record")),
-        }
-    }
+            )],
+        })
+        .collect();
+    aligned(&rows, "  ");
     println!();
     println!("after");
+    let mut rows: Vec<Vec<String>> = Vec::new();
     for (at, after) in change.after.iter().enumerate() {
         let what = match (after.fate, after.identity) {
             (Fate::Kept, Some(identity)) => format!("{identity}, keeps its ID"),
             (Fate::New, _) => "a new identity".to_owned(),
             _ => "waits for review without an identity".to_owned(),
         };
-        println!(
-            "  {}  {what}  {}  {}",
-            at + 1,
+        rows.push(vec![
+            (at + 1).to_string(),
+            what,
             name(&after.label),
-            count(after.records, "record")
-        );
+            count(after.records, "record"),
+        ]);
+    }
+    aligned(&rows, "  ");
+    for (at, after) in change.after.iter().enumerate() {
         for merged in &after.merged {
-            println!("     {merged} is merged into it, and its ID stands for it");
+            println!(
+                "  {merged} is merged into {}, and its ID stands for it",
+                at + 1
+            );
         }
     }
     println!();

@@ -141,9 +141,15 @@ plan  {plan}: nothing was changed. `spool recompute --apply {plan}` applies it
         detail.contains("crm:c-3         Acorn Tools Ltd"),
         "{detail}"
     );
-    assert!(detail.contains(&format!(
-        "  1  {acorn}, keeps its ID  ACORN TOOLS  3 records"
-    )));
+    let kept = detail
+        .lines()
+        .find(|line| line.starts_with(&format!("  1  {acorn}, keeps its ID")))
+        .unwrap_or_else(|| panic!("{detail}"));
+    assert!(
+        kept.contains("ACORN TOOLS") && kept.ends_with("3 records"),
+        "{kept}"
+    );
+    assert!(detail.contains("  2  a new identity"), "{detail}");
 
     // The same facts as JSON.
     let report: Value = serde_json::from_str(&shown(&["recompute", "--json"])).unwrap();

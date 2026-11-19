@@ -2186,7 +2186,7 @@ pub(super) fn table(what: &str, headers: &[&str], rows: Vec<Vec<String>>) {
 
 /// Prints rows with their cells in columns. The last cell is as long as it
 /// is.
-fn aligned(rows: &[Vec<String>], indent: &str) {
+pub(super) fn aligned(rows: &[Vec<String>], indent: &str) {
     let columns = rows.iter().map(Vec::len).max().unwrap_or(0);
     let widths: Vec<usize> = (0..columns)
         .map(|column| {
