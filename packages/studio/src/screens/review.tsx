@@ -6,6 +6,7 @@ import { Act, At, Done, Mistake } from "../act.tsx";
 import type {
   Candidate,
   CaseConstraint,
+  IdentitySummary,
   RecordEntry,
   Op,
   PairJudgement,
@@ -36,12 +37,12 @@ import {
 import { Button } from "../components/ui/button";
 import * as ShelfTable from "../components/ui/table";
 import { facts, fieldsOf, latest, same, sourcesOf, valueOf } from "../facts.ts";
-import { count, recordName, short } from "../format.ts";
+import { count, recordName, short, tail } from "../format.ts";
 import { useLoad, useNames, useStudio } from "../hooks.ts";
 import { CheckIcon, InboxIcon, MergeIcon, PlusIcon, SplitIcon } from "../icons.tsx";
 import { href, navigate } from "../router.ts";
 import type { Route } from "../router.ts";
-import { colors, radius, spacing, typography } from "../styles/shelf/tokens.stylex";
+import { colors, display, linen, radius, spacing, typography } from "../styles/shelf/tokens.stylex";
 import { tones } from "../styles/tones.stylex";
 import { foremost, tally } from "../verdicts.ts";
 import { identityName } from "./identities.tsx";
@@ -283,13 +284,47 @@ function ruled({ candidates, constraints }: ReviewCase, waiting: RecordEntry[]):
   };
 }
 
-/** What the item is about, in a line. */
+/**
+ * What to call each of the identities a case names, where they are named
+ * together: two that are called the same are told apart by the end of
+ * their IDs.
+ */
+function namer(candidates: Candidate[]): (identity: IdentitySummary) => string {
+  const names = candidates.map((candidate) => identityName(candidate.identity));
+  return (identity) => {
+    const name = identityName(identity);
+    return names.filter((other) => other === name).length > 1 ? `${name} (…${tail(identity.id)})` : name;
+  };
+}
+
+/** Names in a sentence: `a`, `a and b`, `a, b and c`. */
+export function listed(names: string[]): string {
+  if (names.length <= 1) return names.join("");
+  return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+}
+
+/** The records an item is about, as a sentence names them: the one by its label, or how many. */
+function theRecords(records: RecordEntry[]): string {
+  return records.length === 1 ? labelOf(records[0]!) : count(records.length, "record");
+}
+
+/** What the item asks, in a line. */
 function asked({ item, records, candidates }: ReviewCase): string {
-  if (item.kind === "possible_split") return `Are these ${count(records.length, "record")} still one thing?`;
-  const what = records.length === 1 ? labelOf(records[0]!) : count(records.length, "record");
-  return item.kind === "possible_merge"
-    ? `${what} matched ${count(candidates.length, "identity")}`
-    : `Conflicting evidence about ${what}`;
+  const call = namer(candidates);
+  const names = candidates.map((candidate) => call(candidate.identity));
+  if (item.kind === "possible_split") {
+    return `Is ${names[0] ?? "this identity"} still one thing?`;
+  }
+  const what = theRecords(records);
+  const one = records.length === 1;
+  if (item.kind === "possible_merge") {
+    return candidates.length === 2
+      ? `${what} ${one ? "matches" : "match"} both ${names[0]} and ${names[1]}. Are they the same thing?`
+      : `${what} ${one ? "matches" : "match"} ${count(candidates.length, "identity")}. Are they one thing?`;
+  }
+  return candidates.length === 1
+    ? `Does ${what} belong in ${names[0]}?`
+    : `${one ? "Does" : "Do"} ${what} belong together?`;
 }
 
 function CaseCard({
@@ -311,34 +346,333 @@ function CaseCard({
   const rules = ruled(found, waiting);
   return (
     <article aria-label={`Review item ${item.id}`} {...stylex.props(styles.card)}>
-      <CardHead found={found} linked={linked} />
-      <Compare found={found} open={open} waiting={waiting} rules={rules} done={done} />
-      {open ? (
-        <footer {...stylex.props(styles.cardFoot)}>
-          {waiting.length > 0 && candidates.length > 1 ? (
-            rules.apart ? (
-              <span data-part="apart" {...stylex.props(styles.apart)}>
-                Cannot be merged: a cannot_link constraint is between them.
-              </span>
-            ) : (
-              <MergeAndPlace found={found} head={head} waiting={waiting} done={done} />
-            )
-          ) : null}
-          <Act
-            label="Dismiss"
-            variant="ghost"
-            title={`Dismiss review item ${item.id}`}
-            about="Its records stay unassigned, and later runs skip them."
-            why="Reason"
-            act={async (client, { reason }) => {
-              await client.dismissReview(item.id, { reason });
-              return "Dismissed.";
-            }}
-            done={done}
-          />
-        </footer>
-      ) : null}
+      <CardHead found={found} linked={linked}>
+        {open ? <Lead found={found} waiting={waiting} /> : null}
+      </CardHead>
+      {candidates.length > 0 ? <SideBySide found={found} /> : null}
+      {open ? <Answers found={found} head={head} waiting={waiting} rules={rules} done={done} /> : null}
+      <section aria-label="Field by field" {...stylex.props(styles.compare)}>
+        <h3 {...stylex.props(styles.partTitle)}>Field by field</h3>
+        <Compare found={found} />
+      </section>
     </article>
+  );
+}
+
+/** Why the item waits for a person, and what waits meanwhile. */
+function Lead({ found, waiting }: { found: ReviewCase; waiting: RecordEntry[] }) {
+  const { item, candidates, judgements } = found;
+  const what = theRecords(waiting.length > 0 ? waiting : found.records);
+  const one = (waiting.length > 0 ? waiting : found.records).length === 1;
+  const it = one ? "it" : "they";
+  const against = judgements.some((judgement) => judgement.verdict === "no_match");
+  const call = namer(candidates);
+  return (
+    <p data-part="lead" {...stylex.props(styles.why)}>
+      {item.kind === "possible_merge"
+        ? `The latest match run judged ${what} a match with records of each of these identities. A match run never merges identities, so placing ${one ? "it" : "them"} in one would be a guess and in all of them would merge them: it left the question to a person. `
+        : `The latest match run judged ${what} a match${candidates.length === 1 ? ` with records of ${call(candidates[0]!.identity)}` : ""}, and ${against ? "a no_match rule held against " + (candidates.length === 1 ? "others of its records" : "some of the pairs") : "the evidence does not agree"}. It does not place records against a no_match: it left the question to a person. `}
+      {waiting.length === 0
+        ? "None of its records waits any more."
+        : `Until someone answers, ${it} ${one ? "has" : "have"} no identity, and every match run of ${item.entity_type} looks at ${one ? "it" : "them"} again.`}
+    </p>
+  );
+}
+
+/** The most members of an identity a card names as a sample. */
+const SAMPLE = 5;
+
+/** The most fields a side names where the identities differ. */
+const MOST_DIFFERENCES = 3;
+
+/**
+ * The fields in which what most of the shown records of each identity say
+ * is not the same for all of them, with what each says. A record's own key
+ * is left out: it tells every record from every other.
+ */
+function differences(candidates: Candidate[]): Array<{ field: string; values: Array<string | null> }> {
+  const said = candidates.map((candidate) =>
+    facts(latest(candidate.members)).filter((fact) =>
+      fact.values.every(({ value, records }) => records.every((record) => record.key !== value)),
+    ),
+  );
+  const fields = [...new Set(said.flatMap((facts) => facts.map((fact) => fact.field)))];
+  return fields
+    .map((field) => ({
+      field,
+      values: said.map((facts) => facts.find((fact) => fact.field === field)?.values[0]?.value ?? null),
+    }))
+    .filter(({ values }) => values.some((value) => !same(value, values[0] ?? null)))
+    .slice(0, MOST_DIFFERENCES);
+}
+
+/** The identities the records matched, side by side: what each is, a few of its records, and what links them. */
+function SideBySide({ found }: { found: ReviewCase }) {
+  const { records, candidates, judgements } = found;
+  const differ = differences(candidates);
+  const held = new Set(records.map((record) => record.id));
+  const call = namer(candidates);
+  return (
+    <section aria-label="The identities" data-part="identities" {...stylex.props(styles.sides)}>
+      {candidates.map((candidate) => {
+        const { identity, members } = candidate;
+        const mine = judgements.filter(
+          (judgement) => judgement.identity === identity.id && held.has(judgement.record),
+        );
+        const matches = mine.filter((judgement) => judgement.verdict === "match");
+        const against = mine.filter((judgement) => judgement.verdict === "no_match");
+        const rulesHeld = [...new Set(matches.flatMap((judgement) => rulesOf(judgement.detail, "match")))];
+        const others = new Set(matches.map((judgement) => judgement.other));
+        return (
+          <div key={identity.id} data-part="side" {...stylex.props(styles.side)}>
+            <span {...stylex.props(styles.columnKind)}>Matched identity</span>
+            <span {...stylex.props(styles.columnName)}>
+              <Ref kind="identity" id={identity.id} label={call(identity)} />
+            </span>
+            <span data-part="size" {...stylex.props(styles.columnMeta)}>
+              {count(identity.members, "record")}
+              <Sources sources={identity.sources} />
+            </span>
+            <ul data-part="members" aria-label={`Some records of ${call(identity)}`} {...stylex.props(styles.sample)}>
+              {members.slice(0, SAMPLE).map((record) => (
+                <li key={record.id}>
+                  <Ref kind="record" id={record.id} label={labelOf(record)} />{" "}
+                  <span {...stylex.props(styles.times)}>{recordName(record)}</span>
+                </li>
+              ))}
+              {identity.members > SAMPLE ? (
+                <li {...stylex.props(styles.none)}>and {count(identity.members - Math.min(SAMPLE, members.length), "more record")}</li>
+              ) : null}
+            </ul>
+            {differ.length > 0 ? (
+              <p data-part="differs" {...stylex.props(styles.links)}>
+                Unlike the other{candidates.length > 2 ? "s" : ""}:{" "}
+                {differ.map(({ field, values }, at) => (
+                  <span key={field}>
+                    {at > 0 ? ", " : ""}
+                    <Code>{field}</Code> {values[candidates.indexOf(candidate)] ?? "empty"}
+                  </span>
+                ))}
+              </p>
+            ) : null}
+            <p data-part="links" {...stylex.props(styles.links)}>
+              {matches.length === 0
+                ? "No judgement of this case links the records to it."
+                : `Linked by ${matches.length === 1 ? "1 match" : `${matches.length} matches`} with ${others.size} of its records${rulesHeld.length > 0 ? `, by ${listed(rulesHeld)}` : ""}.`}
+              {against.length > 0 ? ` ${against.length} no_match against it.` : ""}
+            </p>
+          </div>
+        );
+      })}
+    </section>
+  );
+}
+
+/** One answer to an item: what it is called, what it does, and the button that gives it. */
+function Answer({
+  name,
+  title,
+  does,
+  action,
+}: {
+  name: string;
+  title: string;
+  does: ReactNode[];
+  action?: ReactNode;
+}) {
+  return (
+    <li data-part="answer" data-answer={name} {...stylex.props(styles.answer)}>
+      <div {...stylex.props(styles.answerText)}>
+        <h4 {...stylex.props(styles.answerTitle)}>{title}</h4>
+        <ul {...stylex.props(styles.does)}>
+          {does.map((said, index) => (
+            <li key={index}>{said}</li>
+          ))}
+        </ul>
+      </div>
+      {action ? <div {...stylex.props(styles.answerAction)}>{action}</div> : null}
+    </li>
+  );
+}
+
+/** What undoing a placement from the log does. */
+const UNDO_WAITS = (
+  <>
+    Undo it from the log and the records wait again with no identity. No match run asks about them then, only a
+    rematch (<Code>spool match --rematch</Code>).
+  </>
+);
+
+/**
+ * Each answer the item can be given, with what it does before it is given:
+ * where the records go, what becomes of the identities and their IDs, what
+ * is recorded, what later runs do, and what undoing it puts back.
+ */
+function Answers({
+  found,
+  head,
+  waiting,
+  rules,
+  done,
+}: {
+  found: ReviewCase;
+  head: number;
+  waiting: RecordEntry[];
+  rules: Ruled;
+  done: (said: ReactNode) => void;
+}) {
+  const { item, candidates } = found;
+  const n = waiting.length;
+  const these = n === 1 ? labelOf(waiting[0]!) : `The ${count(n, "record")}`;
+  const those = n === 1 ? labelOf(waiting[0]!) : `the ${count(n, "record")}`;
+  const them = n === 1 ? "it" : "them";
+  const call = namer(candidates);
+  const names = candidates.map((candidate) => call(candidate.identity));
+  const [into, ...others] = [...candidates].sort((a, b) => b.identity.members - a.identity.members);
+  const dismiss = (
+    <Act
+      label="Dismiss"
+      variant="ghost"
+      title={`Dismiss review item ${item.id}`}
+      about="Its records keep no identity, and no later match run looks at them again."
+      why="Reason"
+      act={async (client, { reason }) => {
+        await client.dismissReview(item.id, { reason });
+        return "Dismissed.";
+      }}
+      done={done}
+    />
+  );
+  if (n === 0) {
+    return (
+      <section aria-label="Answers" {...stylex.props(styles.answers)}>
+        <h3 {...stylex.props(styles.partTitle)}>Answers</h3>
+        <ol {...stylex.props(styles.answerList)}>
+          <Answer
+            name="dismiss"
+            title="Close it"
+            does={["None of its records waits for an identity any more, so there is nothing to place. Dismissing it changes no identity."]}
+            action={dismiss}
+          />
+        </ol>
+      </section>
+    );
+  }
+  return (
+    <section aria-label="Answers" {...stylex.props(styles.answers)}>
+      <h3 {...stylex.props(styles.partTitle)}>What each answer does</h3>
+      <ol {...stylex.props(styles.answerList)}>
+        {into && others.length > 0 ? (
+          <Answer
+            name="merge"
+            title={`${candidates.length === 2 ? "They are" : "All of them are"} the same thing: merge them`}
+            does={
+              rules.apart
+                ? [
+                    "Not possible: a cannot_link constraint is between records of these identities, so a changeset that merges them is refused. The field by field comparison below names it.",
+                  ]
+                : [
+                    `${listed(others.map(({ identity }) => call(identity)))} ${others.length === 1 ? "is" : "are"} merged into ${call(into.identity)}, which ${others.every(({ identity }) => identity.members < into.identity.members) ? "has the most records" : "has as many records as any and comes first"} and keeps its ID. ${others.length === 1 ? "The other ID" : "The other IDs"} then ${others.length === 1 ? "answers" : "answer"} with ${call(into.identity)}'s, so links to ${others.length === 1 ? "it" : "them"} keep working.`,
+                    `${these} ${n === 1 ? "is" : "are"} placed in it too: ${call(into.identity)} then has ${count(candidates.reduce((sum, { identity }) => sum + identity.members, 0) + n, "record")}.`,
+                    "No constraint is recorded. A match run never splits an identity, so they stay together until a person splits them.",
+                    `Undo it from the log and ${listed(others.map(({ identity }) => call(identity)))} ${others.length === 1 ? "gets its ID and its records" : "get their IDs and their records"} back, and ${those} ${n === 1 ? "waits" : "wait"} again. No match run asks about ${them} then, only a rematch.`,
+                  ]
+            }
+            action={rules.apart ? undefined : <MergeAndPlace found={found} head={head} waiting={waiting} done={done} />}
+          />
+        ) : null}
+        {candidates.length > 0 ? (
+          <Answer
+            name="assign"
+            title={
+              candidates.length === 1
+                ? `${n === 1 ? "It belongs" : "They belong"} in ${names[0]}`
+                : `${n === 1 ? "It belongs" : "They belong"} in one of them, and the identities are different things`
+            }
+            does={[
+              candidates.length === 1
+                ? `${these} ${n === 1 ? "is" : "are"} placed in ${names[0]}, which then has ${count(candidates[0]!.identity.members + n, "record")}. Its ID stays as it is.`
+                : `${these} ${n === 1 ? "is" : "are"} placed in the one you choose, which then has ${listed(candidates.map(({ identity }) => `${count(identity.members + n, "record")} for ${call(identity)}`))}. The others stay as they are, and every ID stays.`,
+              candidates.length > 1
+                ? "Nothing is recorded that keeps the identities apart: a later record that matches more than one of them is asked about again. A match run never moves a record that has an identity."
+                : "A match run never moves a record that has an identity.",
+              UNDO_WAITS,
+              ...(n > 1 ? ["Before it is made, the dialog lets each record go somewhere else, or stay waiting."] : []),
+              ...candidates
+                .filter((candidate) => waiting.every((record) => rules.barred(record.id, candidate.identity.id)))
+                .map(
+                  (candidate) =>
+                    `Not ${call(candidate.identity)}: a cannot_link keeps ${them} apart from one of its records.`,
+                ),
+            ]}
+            action={
+              <div {...stylex.props(styles.choices)}>
+                {candidates
+                  .filter((candidate) => !waiting.every((record) => rules.barred(record.id, candidate.identity.id)))
+                  .map((candidate) => (
+                    <Place
+                      key={candidate.identity.id}
+                      found={found}
+                      waiting={waiting}
+                      rules={rules}
+                      to={candidate.identity.id}
+                      label={`Assign to ${call(candidate.identity)}`}
+                      icon={<CheckIcon />}
+                      primary
+                      done={done}
+                    />
+                  ))}
+              </div>
+            }
+          />
+        ) : null}
+        <Answer
+          name="new"
+          title={`${n === 1 ? "It is" : "They are"} none of ${candidates.length === 0 ? "the identities there are" : listed(names)}`}
+          does={[
+            n === 1
+              ? `${these} becomes an identity of its own, with an ID made when the change is made.`
+              : `Each of the ${count(n, "record")} becomes an identity of its own, with an ID made when the change is made. The dialog lets some of them go elsewhere instead.`,
+            candidates.length > 0 ? `${listed(names)} ${candidates.length === 1 ? "stays as it is" : "stay as they are"}.` : null,
+            "Undo it from the log and the records wait again with no identity, and only a rematch asks about them. An identity that was made is not taken back: its ID stays, with no records.",
+          ].filter((said): said is string => said !== null)}
+          action={
+            <Place
+              found={found}
+              waiting={waiting}
+              rules={rules}
+              to={NEW}
+              label={n === 1 ? "New identity" : "New identities"}
+              icon={<PlusIcon />}
+              done={done}
+            />
+          }
+        />
+        <Answer
+          name="dismiss"
+          title="Not sure, or not one to keep: dismiss it"
+          does={[
+            `${these} ${n === 1 ? "keeps" : "keep"} no identity, and no later match run looks at ${them} again, a rematch included.`,
+            `A dismissed item is not opened again. A changeset can still place ${them}, from the screen of each record.`,
+          ]}
+          action={dismiss}
+        />
+        <Answer
+          name="leave"
+          title="Leave it open"
+          does={[
+            `Nothing changes. Every match run of ${item.entity_type} looks at ${them} again: if the evidence has changed by then, it places ${them} or replaces this item with another.`,
+          ]}
+        />
+      </ol>
+      <div {...stylex.props(styles.checked)}>
+        <Quiet>
+          A merge is refused, changing nothing, if the records of these identities changed since this screen was read.
+          A placement is refused if one of its records has an identity by then. Neither is checked for anything else
+          that changed since.
+        </Quiet>
+      </div>
+    </section>
   );
 }
 
@@ -425,19 +759,7 @@ const MOST_VALUES = 4;
  * a row, so that what agrees and what does not is read across. Under each
  * column is the decision that column stands for.
  */
-function Compare({
-  found,
-  open,
-  waiting,
-  rules,
-  done,
-}: {
-  found: ReviewCase;
-  open: boolean;
-  waiting: RecordEntry[];
-  rules: Ruled;
-  done: (said: ReactNode) => void;
-}) {
+function Compare({ found }: { found: ReviewCase }) {
   const { records, candidates, judgements, constraints } = found;
   const fields = fieldsOf([...records, ...candidates.flatMap((candidate) => candidate.members)]);
   // What a candidate is compared with: the first record the item names.
@@ -589,42 +911,6 @@ function Compare({
                     constraints={constraints.filter(({ identities }) => identities.includes(candidate.identity.id))}
                     names={names}
                   />
-                </ShelfTable.Cell>
-              ))}
-            </ShelfTable.Row>
-          ) : null}
-          {open && waiting.length > 0 ? (
-            <ShelfTable.Row style={[styles.row, styles.decide]}>
-              <ShelfTable.Head scope="row" style={[styles.cell, styles.rowName]}>
-                Assign
-              </ShelfTable.Head>
-              <ShelfTable.Cell colSpan={records.length} style={[styles.cell, styles.waits]}>
-                <Place
-                  found={found}
-                  waiting={waiting}
-                  rules={rules}
-                  to={NEW}
-                  label={waiting.length === 1 ? "New identity" : "New identities"}
-                  icon={<PlusIcon />}
-                  done={done}
-                />
-              </ShelfTable.Cell>
-              {candidates.map((candidate) => (
-                <ShelfTable.Cell key={candidate.identity.id} style={styles.cell}>
-                  {waiting.every((record) => rules.barred(record.id, candidate.identity.id)) ? (
-                    <span {...stylex.props(styles.none)}>Blocked by a constraint</span>
-                  ) : (
-                    <Place
-                      found={found}
-                      waiting={waiting}
-                      rules={rules}
-                      to={candidate.identity.id}
-                      label={`Assign to ${identityName(candidate.identity)}`}
-                      icon={<CheckIcon />}
-                      primary
-                      done={done}
-                    />
-                  )}
                 </ShelfTable.Cell>
               ))}
             </ShelfTable.Row>
@@ -848,12 +1134,13 @@ function MergeAndPlace({
     (a: Candidate, b: Candidate) => b.identity.members - a.identity.members,
   );
   if (!into) return null;
+  const call = namer(found.candidates);
   return (
     <Act
       label="Merge identities"
       icon={<MergeIcon />}
       title={`Merge ${count(found.candidates.length, "identity")}`}
-      about={`Merges ${others.map(({ identity }) => identityName(identity)).join(", ")} into ${identityName(into.identity)}, and assigns ${waiting.length === 1 ? recordName(waiting[0]!) : count(waiting.length, "record")} to it.`}
+      about={`Merges ${others.map(({ identity }) => call(identity)).join(", ")} into ${call(into.identity)}, and assigns ${waiting.length === 1 ? recordName(waiting[0]!) : count(waiting.length, "record")} to it.`}
       why="Reason"
       act={async (client, { reason }) => {
         const committed = await client.commit({
@@ -1065,24 +1352,40 @@ function SplitCard({
                 ))}
               </ShelfTable.Row>
             ) : null}
-            {open && identity && left.length > 1 ? (
-              <ShelfTable.Row style={[styles.row, styles.decide]}>
-                <ShelfTable.Head scope="row" style={[styles.cell, styles.rowName]}>
-                  Different things
-                </ShelfTable.Head>
-                {groups.map((_, index) => {
+          </ShelfTable.Body>
+        </ShelfTable.Root>
+      </div>
+      {open && identity ? (
+        <section aria-label="Answers" {...stylex.props(styles.answers)}>
+          <h3 {...stylex.props(styles.partTitle)}>What each answer does</h3>
+          <ol {...stylex.props(styles.answerList)}>
+            {left.length > 1
+              ? groups.map((_, index) => {
                   const side = still[index]!;
                   const rest = left.reduce((sum, group) => sum + group.length, 0) - side.length;
                   // Of two groups, splitting off either is the same split, so it is offered once.
                   const offered = side.length > 0 && (left.length > 2 || side !== left[0]);
-                  // The engine leaves the larger side under the identity's ID.
+                  if (!offered) return null;
+                  const name = identityName(identity);
+                  // The engine leaves the larger side under the identity's ID, and on a tie the side not named.
+                  const moves = side.length > rest ? rest : side.length;
                   const would =
                     side.length > rest
-                      ? `The other ${count(rest, "record")} of ${identityName(identity)} ${rest === 1 ? "moves" : "move"} to a new identity. Group ${index + 1} keeps this one.`
-                      : `${side.length === 1 ? recordName(side[0]!) : `The ${count(side.length, "record")} of group ${index + 1}`} ${side.length === 1 ? "moves" : "move"} to a new identity. The other ${count(rest, "record")} ${rest === 1 ? "stays" : "stay"} in ${identityName(identity)}.`;
+                      ? `Group ${index + 1} keeps ${name} and its ID. The other ${count(rest, "record")} ${rest === 1 ? "moves" : "move"} to a new identity, with an ID made when the split is made.`
+                      : `${side.length === 1 ? recordName(side[0]!) : `The ${count(side.length, "record")} of group ${index + 1}`} ${side.length === 1 ? "moves" : "move"} to a new identity, with an ID made when the split is made. The other ${count(rest, "record")} ${rest === 1 ? "stays" : "stay"} in ${name}, which keeps its ID.`;
                   return (
-                    <ShelfTable.Cell key={index} style={styles.cell}>
-                      {offered ? (
+                    <Answer
+                      key={index}
+                      name="split"
+                      title={`They are different things: split off group ${index + 1}`}
+                      does={[
+                        would,
+                        apart
+                          ? "With the two sides kept apart, as is ticked in the dialog, one cannot_link between a record of each side is recorded, so no changeset can merge them again while it stands."
+                          : "With the two sides not kept apart, nothing is recorded between them. A match run never merges identities, so only a person can put them back together.",
+                        `Undo it from the log and the ${count(moves, "record")} ${moves === 1 ? "moves" : "move"} back to ${name}${apart ? " and the cannot_link goes" : ""}. The new identity is not taken back: its ID stays, with no records. The question is not asked again.`,
+                      ]}
+                      action={
                         <Act
                           label={`Split off group ${index + 1}`}
                           icon={<SplitIcon />}
@@ -1110,58 +1413,86 @@ function SplitCard({
                         >
                           <Flag label="Keep the two sides apart in later runs" checked={apart} onChange={setApart} />
                         </Act>
-                      ) : null}
-                    </ShelfTable.Cell>
+                      }
+                    />
                   );
-                })}
-                {takenBack.map((record) => (
-                  <ShelfTable.Cell key={record.id} style={[styles.cell, styles.waits]} />
-                ))}
-              </ShelfTable.Row>
+                })
+              : null}
+            {left.length > 1 ? (
+              <Answer
+                name="keep"
+                title="They are one thing: keep them as one"
+                does={[
+                  `A must_link is recorded between ${recordName(left[0]![0]!)} and ${listed(left.slice(1).map((group) => recordName(group[0]!)))}, one record of each group. ${identityName(identity)} stays as it is, with all ${count(left.reduce((sum, group) => sum + group.length, 0), "record")} and its ID.`,
+                  left.length > 2
+                    ? "The must_links hold the groups together while the records they name stay: the question is not asked again when other records come and go, and it can be if a source takes back one of those."
+                    : "The must_link holds the groups together while the two records it names stay: the question is not asked again when other records come and go, and it can be if a source takes back one of those two.",
+                  "Undo it from the log and the must_link goes. The question is not asked again then.",
+                ]}
+                action={
+                  <Act
+                    label="Keep as one"
+                    icon={<CheckIcon />}
+                    title="Keep as one identity"
+                    about="Records that a record of each group must share an identity (must_link), so the groups hold together and the question is answered."
+                    why="Reason"
+                    act={async (client, { reason }) => {
+                      const [first, ...others] = left;
+                      const committed = await client.commit({
+                        reason,
+                        base: head,
+                        ops: others.map(
+                          (group): Op => ({ op: "constrain", kind: "must_link", a: first![0]!.id, b: group[0]!.id }),
+                        ),
+                      });
+                      return (
+                        <>
+                          Kept as one identity at <At committed={committed} />.
+                        </>
+                      );
+                    }}
+                    done={done}
+                  />
+                }
+              />
             ) : null}
-          </ShelfTable.Body>
-        </ShelfTable.Root>
-      </div>
-      {open ? (
-        <footer {...stylex.props(styles.cardFoot)}>
-          {identity && left.length > 1 ? (
-            <Act
-              label="Keep as one"
-              icon={<CheckIcon />}
-              title="Keep as one identity"
-              about={`Records that a record of each group must share an identity (must_link), so the groups hold together and the question is answered.`}
-              why="Reason"
-              act={async (client, { reason }) => {
-                const [first, ...others] = left;
-                const committed = await client.commit({
-                  reason,
-                  base: head,
-                  ops: others.map(
-                    (group): Op => ({ op: "constrain", kind: "must_link", a: first![0]!.id, b: group[0]!.id }),
-                  ),
-                });
-                return (
-                  <>
-                    Kept as one identity at <At committed={committed} />.
-                  </>
-                );
-              }}
-              done={done}
+            <Answer
+              name="dismiss"
+              title="Not sure: dismiss it"
+              does={[
+                `${identityName(identity)} stays as it is, and nothing is recorded about whether its records are one thing.`,
+                "The question is asked again if another of its records is taken back by its source, or one comes back.",
+              ]}
+              action={
+                <Act
+                  label="Dismiss"
+                  variant="ghost"
+                  title={`Dismiss review item ${item.id}`}
+                  about="The identity stays as it is, and nothing is recorded about whether its records are one thing."
+                  why="Reason"
+                  act={async (client, { reason }) => {
+                    await client.dismissReview(item.id, { reason });
+                    return "Dismissed.";
+                  }}
+                  done={done}
+                />
+              }
             />
-          ) : null}
-          <Act
-            label="Dismiss"
-            variant="ghost"
-            title={`Dismiss review item ${item.id}`}
-            about="The identity stays as it is, and nothing is recorded about whether its records are one thing."
-            why="Reason"
-            act={async (client, { reason }) => {
-              await client.dismissReview(item.id, { reason });
-              return "Dismissed.";
-            }}
-            done={done}
-          />
-        </footer>
+            <Answer
+              name="leave"
+              title="Leave it open"
+              does={[
+                "Nothing changes, and no match run looks at it: its records have an identity. It closes by itself if the record that was taken back comes back, or a new record matches more than one group.",
+              ]}
+            />
+          </ol>
+          <div {...stylex.props(styles.checked)}>
+            <Quiet>
+              A split is refused, changing nothing, if the identity's records changed since this screen was read.
+              Keeping them as one or dismissing is not checked against what changed since.
+            </Quiet>
+          </div>
+        </section>
       ) : null}
     </article>
   );
@@ -1379,5 +1710,120 @@ const styles = stylex.create({
   },
   decide: {
     backgroundColor: colors.card,
+  },
+  partTitle: {
+    margin: 0,
+    paddingBlock: spacing["3"],
+    paddingInline: spacing["4"],
+    color: colors.foreground,
+    fontFamily: display.fontFamily,
+    fontSize: typography.fontSizeLg,
+    fontVariationSettings: '"opsz" 24',
+    fontWeight: linen.displayWeight,
+    letterSpacing: display.tracking,
+    lineHeight: typography.lineHeightLg,
+  },
+  sides: {
+    borderTopColor: colors.border,
+    borderTopStyle: "solid",
+    borderTopWidth: 1,
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(16rem, 1fr))",
+  },
+  side: {
+    borderInlineStartColor: colors.border,
+    borderInlineStartStyle: "solid",
+    borderInlineStartWidth: { default: 1, ":first-child": 0 },
+    gap: spacing["1"],
+    padding: spacing["4"],
+    display: "flex",
+    flexDirection: "column",
+    minWidth: 0,
+  },
+  sample: {
+    margin: 0,
+    gap: spacing["1"],
+    marginTop: spacing["2"],
+    padding: 0,
+    display: "flex",
+    flexDirection: "column",
+    fontSize: typography.fontSizeSm,
+    lineHeight: typography.lineHeightSm,
+    listStyleType: "none",
+    overflowWrap: "anywhere",
+  },
+  links: {
+    margin: 0,
+    color: colors.mutedForeground,
+    fontSize: typography.fontSizeSm,
+    lineHeight: typography.lineHeightSm,
+    marginTop: spacing["2"],
+  },
+  answers: {
+    borderTopColor: colors.border,
+    borderTopStyle: "solid",
+    borderTopWidth: 1,
+    gap: spacing["2"],
+    paddingBottom: spacing["4"],
+    backgroundColor: colors.card,
+    display: "flex",
+    flexDirection: "column",
+  },
+  answerList: {
+    margin: 0,
+    paddingInline: spacing["4"],
+    gap: spacing["2"],
+    display: "flex",
+    flexDirection: "column",
+    listStyleType: "none",
+  },
+  answer: {
+    borderColor: colors.border,
+    borderStyle: "solid",
+    borderWidth: 1,
+    gap: spacing["4"],
+    padding: spacing["3"],
+    alignItems: "flex-start",
+    backgroundColor: colors.background,
+    display: "flex",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+  },
+  answerText: {
+    gap: spacing["1"],
+    display: "flex",
+    flexBasis: "32rem",
+    flexDirection: "column",
+    flexGrow: 1,
+    minWidth: 0,
+  },
+  answerTitle: {
+    margin: 0,
+    fontSize: typography.fontSizeSm,
+    fontWeight: typography.fontWeightMedium,
+    lineHeight: typography.lineHeightSm,
+  },
+  does: {
+    margin: 0,
+    gap: spacing["1"],
+    paddingInlineStart: spacing["4"],
+    color: colors.mutedForeground,
+    display: "flex",
+    flexDirection: "column",
+    fontSize: typography.fontSizeSm,
+    lineHeight: typography.lineHeightSm,
+    maxWidth: "52rem",
+  },
+  answerAction: {
+    flexShrink: 0,
+  },
+  checked: {
+    paddingInline: spacing["4"],
+  },
+  choices: {
+    gap: spacing["2"],
+    alignItems: "flex-end",
+    display: "flex",
+    flexDirection: "column",
   },
 });

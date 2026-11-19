@@ -37,8 +37,8 @@ spool match
 
 | Kind | The question | Raised when |
 | --- | --- | --- |
-| `possible_merge` | Which identity does this record belong to? | A new record matches members of two or more identities. |
-| `conflict` | Does this record belong here or not? | A new record matches one member of an identity and a no_match rule holds against another. |
+| `possible_merge` | Are these identities one thing? If not, which of them does the record belong to? | A new record matches members of two or more identities. |
+| `conflict` | Does this record belong here or not? | A new record matches one member of an identity and a no_match rule holds against another, or new records match each other and a no_match rule holds between them. |
 | `possible_split` | Are these records still one thing? | A row is taken back, and nothing is left that joins the identity's other records. |
 
 A record in an open `possible_merge` or `conflict` has no identity. An identity in an open `possible_split` stays as it is. Nothing is merged or split without someone deciding.
@@ -98,9 +98,9 @@ identities they matched
 
 The record matched both Halden Groups by name, and with no country the rule that keeps them apart had nothing to compare. Joining either would be a guess, and joining both would merge two identities, which a match never does. So the record has no identity, and a `possible_merge` item says why.
 
-The studio, at [http://127.0.0.1:7765/](http://127.0.0.1:7765/), shows the same item on its Review screen, with the record beside each identity it matched and a button to assign it to each:
+The studio, at [http://127.0.0.1:7765/](http://127.0.0.1:7765/), shows the same item on its Review screen. It asks the question in words, shows the two identities side by side with some of their records and what links the record to each, and says what each answer does before it is given:
 
-![The studio's Review screen with one open item: the record crm:c-13, Halden Group, beside the two identities it matched, each with a button to assign the record to it](/images/studio-review-item.png)
+![The studio's Review screen with one open item: the record crm:c-13, Halden Group, matches both Halden Group identities, which are side by side, and below them each answer says what it does](/images/studio-review-item.png)
 
 ## Decide it
 
@@ -134,6 +134,37 @@ An item closes in one of three ways:
 - **Dismissed.** A reviewer closed it and left things as they are.
 
 Open items are looked at again by every later match of their entity type. If the reviewer had fixed a rule so that the record matched only one identity, the next match would have placed the record and resolved the item.
+
+## What each answer does
+
+A `possible_merge` or a `conflict` is answered in one of these ways. The studio offers each, and says this before it is given.
+
+| Answer | The records | The identities and their IDs | What is recorded | Later matches |
+| --- | --- | --- | --- | --- |
+| Place them in one identity | They join it | Every identity keeps its ID, and the others are unchanged | Only the `assign` | A match never moves a record that has an identity. Nothing keeps the identities apart, so a later record that matches both raises the question again |
+| Merge the identities | They join the one that stands | The others are merged into it, and their IDs then answer with its ID | The `merge` and the `assign` | A match never splits an identity |
+| A new identity | Each becomes an identity of its own | Unchanged | `create_identity` and `assign` | As for placing them |
+| Dismiss | They keep no identity | Unchanged | Who dismissed it, when and why | No match looks at them again, a rematch included. A dismissed item is not opened again, and a changeset can still place them |
+| Leave it open | They keep no identity | Unchanged | Nothing | Every match looks at them again |
+
+The studio's merge keeps the identity with the most records. A merge is refused while a `cannot_link` is between records of the identities, and a record cannot be placed in an identity that one of its members has a `cannot_link` with.
+
+`POST /v1/changesets/{seq}/undo` takes an answer back, with a changeset of its own:
+
+- **A placement** is undone by moving the records out again. They wait with no identity, but the item stays resolved, so no match asks about them: only a rematch does, with `spool match --rematch`.
+- **A merge** is undone by giving each merged identity its ID and its records back, and the records that were placed wait again, as above.
+- **A new identity** is not taken back: its ID stays, with no records.
+
+A `possible_split` has its own answers:
+
+| Answer | What it does |
+| --- | --- |
+| Split the identity | The larger side keeps the identity's ID, and the side that was not named keeps it on a tie. The other side becomes a new identity. With `keep_apart`, the default, one `cannot_link` between a record of each side is recorded, so no merge puts them back while it stands. Undone, the records go back and the `cannot_link` is removed; the new identity's ID stays, with no records |
+| Say they are one thing | A `must_link` between a record of each group. The identity stays as it is. The `must_link` holds the groups together while the records it names stay in the identity: the question is not raised again when other records come and go, and it can be if a source takes back one of the records it names. Undone, the `must_link` is removed and the question is not raised again |
+| Dismiss | The identity stays as it is, and nothing is recorded about it. The question comes back if another of its records is taken back, or one comes back |
+| Leave it open | Nothing changes. No match looks at it, since its records have an identity. It closes by itself if the record that was taken back comes back, or a new record matches more than one group |
+
+A merge or a split written against identities whose records changed since they were read is refused, and nothing is changed. A placement is refused if one of its records has an identity by then, and is not checked for anything else that changed since.
 
 ## A conflict
 
@@ -238,7 +269,7 @@ curl -s -X POST http://127.0.0.1:7765/v1/review/$ITEM/dismiss -d '{"reason": "a 
 {"id":2,"run":12,"entity_type":"company","kind":"conflict","records":["4adcad34-e94d-d0d7-bd50-5ed0599dab66"],"identities":["01a1efc6-41cd-775d-8758-e7329447fd9a"],"groups":[],"status":"dismissed","resolved_seq":null,"superseded_by":null,"dismissed":{"by":"user:01a1f0a0-a4da-74d5-bf74-28797e6632ab","at":"2026-11-18T21:47:02.755334Z","reason":"a French company we do not track"}}
 ```
 
-The record stays without an identity, and later matches stop asking about it. A changeset can still place it.
+The record stays without an identity, and later matches stop asking about it, a rematch included. A dismissed item is not opened again. A changeset can still place the record.
 
 ## A possible split
 
