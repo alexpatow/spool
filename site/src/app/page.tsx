@@ -26,13 +26,19 @@ spool extract samples/notes-1.txt
 spool match
 spool show identities`;
 
-const does = [
-  "Keeps every row exactly as it arrived.",
-  "Extracts records from text with your own code.",
-  "Matches with SQL rules versioned in Git.",
-  "Mints IDs that survive new data and better rules.",
-  "Logs every merge, split and undo, with who and why.",
-  "Explains each match and queues the hard cases.",
+const properties = [
+  {
+    title: "Persistent identities",
+    description: "Store a Spool ID in your application and keep using it as more records join the identity.",
+  },
+  {
+    title: "Explainable decisions",
+    description: "See which records, rules and runs led to a match. Send ambiguous cases to review.",
+  },
+  {
+    title: "Reversible by design",
+    description: "Merge or split identities and undo corrections, with a history of who changed what and why.",
+  },
 ];
 
 const waysIn = [
@@ -60,9 +66,6 @@ export default function Home() {
 
       <main {...stylex.props(styles.main)}>
         <section {...stylex.props(styles.hero)}>
-          <Link href={explainer.path} {...stylex.props(styles.newcomer)}>
-            New to this? <span {...stylex.props(styles.newcomerTitle)}>{explainer.title}</span>
-          </Link>
           <Typography.H1 style={styles.title}>{site.headline}</Typography.H1>
           <Typography.P style={styles.lead}>{site.summary}</Typography.P>
           <div {...stylex.props(styles.actions)}>
@@ -80,38 +83,69 @@ export default function Home() {
           </div>
         </section>
 
-        <section aria-label="The sample project" {...stylex.props(styles.screen)}>
+        <div {...stylex.props(styles.screen)}>
           <FirstScreen />
-          <Typography.Muted style={styles.screenCaption}>
-            The sample project from{" "}
-            <Link href="/docs/getting-started" {...stylex.props(styles.link)}>
-              Getting started
+          <div {...stylex.props(styles.screenLinks)}>
+            <Link href={explainer.path} {...stylex.props(styles.newcomer)}>
+              New to this? <span {...stylex.props(styles.newcomerTitle)}>{explainer.title}</span>
             </Link>
-            : nine CRM rows and one call note. &ldquo;Acorn Tools Ltd&rdquo; in the note joined the
-            identity four CRM rows already had, and the ID stayed the same.
-          </Typography.Muted>
+          </div>
+        </div>
+
+        <section aria-labelledby="agents" {...stylex.props(styles.section)}>
+          <Typography.H2 id="agents" style={styles.heading}>
+            A shared identity for everything your agents encounter.
+          </Typography.H2>
+          <Typography.P style={styles.sectionLead}>
+            Agents discover information across documents, databases, APIs, and other tools. But
+            without a shared identity, each agent has to independently figure out whether it's
+            encountered the same thing before.
+          </Typography.P>
+          <Typography.P style={styles.sectionLead}>
+            Spool gives agents a common reference to the people, places, organizations, and other
+            entities they discover. As new information arrives, it becomes part of an existing
+            identity rather than another disconnected record.
+          </Typography.P>
+          <Typography.P>One identity, shared across agents and applications.</Typography.P>
+          <Button
+            variant="outline"
+            nativeButton={false}
+            render={<Link href="/docs/use-cases" />}
+            style={styles.useCasesButton}
+          >
+            View use cases
+          </Button>
         </section>
 
-        <section aria-labelledby="start" {...stylex.props(styles.section, styles.columns)}>
-          <div>
+        <section aria-label="Identity properties" {...stylex.props(styles.section, styles.properties)}>
+          {properties.map(({ title, description }) => (
+            <div key={title}>
+              <Typography.H2 style={styles.heading}>{title}</Typography.H2>
+              <Typography.P style={styles.sectionLead}>{description}</Typography.P>
+            </div>
+          ))}
+        </section>
+
+        <section aria-labelledby="start" {...stylex.props(styles.section, styles.columns, styles.terminals)}>
+          <div {...stylex.props(styles.terminal)}>
             <Typography.H2 id="start" style={styles.heading}>
               Run it
             </Typography.H2>
             <Typography.P>
               Install it, make the sample project and start the server on your machine.
             </Typography.P>
-            <CodeBlock>{server}</CodeBlock>
+            <CodeBlock wrap>{server}</CodeBlock>
             <Typography.Muted>
               Linux or macOS on Apple silicon. Version {site.version}, {site.licence} licence.
             </Typography.Muted>
           </div>
-          <div>
+          <div {...stylex.props(styles.terminal)}>
             <Typography.H2 style={styles.heading}>Then, in a second terminal</Typography.H2>
             <Typography.P>
-              Load the rows, match, and extract the companies from the note. These seven commands
-              produce the picture above.
+              Load the rows, match, and extract the companies from the note to reproduce the
+              Acorn Tools demo.
             </Typography.P>
-            <CodeBlock>{commands}</CodeBlock>
+            <CodeBlock wrap>{commands}</CodeBlock>
             <Typography.Muted>
               <Link href="/docs/getting-started" {...stylex.props(styles.link)}>
                 Getting started
@@ -121,17 +155,7 @@ export default function Home() {
           </div>
         </section>
 
-        <section aria-label="Scope" {...stylex.props(styles.section, styles.columns)}>
-          <div>
-            <Typography.H2 style={styles.heading}>What it does</Typography.H2>
-            <ul {...stylex.props(styles.list)}>
-              {does.map((item) => (
-                <li key={item} {...stylex.props(styles.item)}>
-                  {item}
-                </li>
-              ))}
-            </ul>
-          </div>
+        <section aria-label="How you use it" {...stylex.props(styles.section)}>
           <div>
             <Typography.H2 style={styles.heading}>How you use it</Typography.H2>
             <ul {...stylex.props(styles.list)}>
@@ -163,7 +187,6 @@ const styles = stylex.create({
   },
   newcomer: {
     gap: spacing["2"],
-    marginBottom: "1.75rem",
     paddingBlock: spacing["1.5"],
     paddingInline: spacing["3"],
     alignItems: "baseline",
@@ -223,19 +246,25 @@ const styles = stylex.create({
     textWrap: "pretty",
   },
   actions: {
-    gap: spacing["3"],
+    gap: { default: spacing["3"], [breakpoints.narrow]: spacing["4"] },
     display: "flex",
     flexWrap: "wrap",
     justifyContent: "center",
-    marginTop: "2rem",
+    marginTop: { default: "2rem", [breakpoints.narrow]: spacing["6"] },
   },
   screen: {
-    marginTop: "4rem",
+    display: "flex",
+    flexDirection: "column",
+    gap: "1.75rem",
+    marginTop: { default: "4rem", [breakpoints.narrow]: spacing["6"] },
   },
-  screenCaption: {
-    marginInline: "auto",
-    marginTop: spacing["4"],
-    maxWidth: "44rem",
+  screenLinks: {
+    alignItems: "center",
+    display: "flex",
+    flexWrap: "wrap",
+    fontSize: "0.875rem",
+    gap: spacing["4"],
+    justifyContent: "center",
     textAlign: "center",
   },
   section: {
@@ -248,6 +277,10 @@ const styles = stylex.create({
   heading: {
     fontSize: "1.375rem",
   },
+  sectionLead: {
+    marginTop: spacing["3"],
+    color: colors.mutedForeground,
+  },
   caption: {
     marginTop: spacing["4"],
   },
@@ -258,6 +291,26 @@ const styles = stylex.create({
       default: "minmax(0, 1fr) minmax(0, 1fr)",
       [breakpoints.narrow]: "minmax(0, 1fr)",
     },
+  },
+  terminals: {
+    rowGap: { default: 0, [breakpoints.narrow]: "3rem" },
+  },
+  terminal: {
+    display: { default: "grid", [breakpoints.narrow]: "block" },
+    gridRow: { default: "span 4", [breakpoints.narrow]: "auto" },
+    gridTemplateRows: { default: "subgrid", [breakpoints.narrow]: "none" },
+    minWidth: 0,
+  },
+  properties: {
+    display: "grid",
+    gap: "2rem",
+    gridTemplateColumns: {
+      default: "repeat(3, minmax(0, 1fr))",
+      [breakpoints.mobile]: "minmax(0, 1fr)",
+    },
+  },
+  useCasesButton: {
+    marginTop: spacing["6"],
   },
   list: {
     margin: 0,

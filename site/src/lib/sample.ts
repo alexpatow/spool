@@ -76,8 +76,8 @@ function mentions(names: string[], placed: number[]): SampleRecord[] {
 }
 
 /** What each of the three matches wrote to the changeset log, oldest first. */
-export const log = [
-  { after: "crm-1.csv", did: "4 identities created, 6 records placed" },
-  { after: "crm-2.csv", did: "1 identity created, 3 records placed" },
-  { after: "notes-1.txt", did: "1 identity created, 3 records placed" },
+export const matchRuns = [
+  { after: "crm-1.csv", label: "First CRM export", did: "4 identities created, 6 records placed" },
+  { after: "crm-2.csv", label: "More CRM rows", did: "1 identity created, 3 records placed" },
+  { after: "notes-1.txt", label: "Call note arrives", did: "1 identity created, 3 records placed" },
 ] as const;

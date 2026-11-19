@@ -1,9 +1,11 @@
 ---
 title: Use cases
-description: Where Spool fits, case by case, from venture capital data and sales accounts to due diligence, support, KYC name matching, agent memory and product catalogs.
+description: How applications and agents use persistent IDs across new records and sources, from venture capital and agent memory to sales, support and catalogs.
 ---
 
-Spool fits when several sources name the same things, some of them only in text, and other systems store the ID. Each case shows the mess, how it maps onto Spool, and a worked example.
+Give a company, customer or product one ID when you first start keeping track of it. As new sources arrive, Spool matches their rows and text mentions to the identities you already hold. Applications can join data on that ID, and agents can use it to refer to the same thing across tools.
+
+Each case below shows how to map sources into Spool and use the resulting IDs.
 
 ## Venture capital
 
@@ -66,6 +68,18 @@ Run 4 (strategy `rules`) made them a candidate pair (block rule `name_prefix`) a
 ...
 `people:319` was placed at log position 3 by `user:01a1f134-c5cc-7462-bd8e-190729dee5e1` ("Acme Systems is the former name of Acme Robotics").
 ```
+
+## Agent memory and knowledge bases
+
+**The mess.** A research agent reads about Acme Systems in a memo. A sourcing agent sees Acme Robotics Inc. in a funding database export. An assistant looking at the CRM knows it as Acme. When each agent stores what it learns under the name it saw, the next agent has to figure out all over again which facts belong to the same company.
+
+**With Spool.**
+
+- Load rows from your exports and extract mentions from the documents the agents read. Each record keeps its source and key.
+- Run matching and review uncertain links. In the [venture capital example](#venture-capital), a reviewer confirms the former name and merges the identities.
+- Give the agents the current Spool ID as the key for notes, retrieved chunks and follow-up tasks. Agents can look it up over [HTTP](/docs/api) or [MCP](/docs/mcp) and use `explain_pair` to see why two records share it.
+
+**Example.** In [Getting started](/docs/getting-started), an agent can call `search_identities` for Acorn Tools, then pass that identity ID to `get_identity`. One of its records is `notes:notes-1.txt[54-69]`, the characters that say "Acorn Tools Ltd". A sales application can use the same ID for the CRM rows, and both can keep using it when new records arrive.
 
 ## Sales accounts and contacts
 
@@ -193,18 +207,6 @@ list:L-90       HOLT, Maren  01a1f136-777c-7294-a038-849dbed83c87
 ```
 
 `k-1` has `L-88`'s date of birth and joined it: a hit. `k-2` matched both entries, so it waits in a `possible_merge` item. Without a date of birth, picking either would be a guess.
-
-## Agent memory and knowledge bases
-
-**The mess.** An agent remembers what it reads and hears: conversations, notes, wiki pages, tickets. "Dana", "Dana Reyes" and "the purchasing lead at Acorn" are one person, and "Acorn" and "ACORN TOOLS" are one company. A memory that stores each as written fills with duplicates. One that merges by guesswork mixes up two people's facts, and nobody can say why later.
-
-**With Spool.**
-
-- What the agent reads is stored as documents, and an extractor finds what they name, and where.
-- Mentions resolve to the same identities as your lists' rows. The identity ID is the key the memory files facts under, or the tag on a retrieved chunk.
-- An agent connected to [`/mcp`](/docs/mcp) looks up identities, asks why two records matched with `explain_pair`, and fixes a wrong match with a merge, split or undo. Each correction is a changeset with an author and a reason.
-
-**Example.** In the sample project, an agent asked which notes mention Acorn Tools needs two tools. `search_identities` finds the identity by a word in its records, and `get_identity` lists its five records. One is `notes:notes-1.txt[54-69]`: the note, and the characters that say "Acorn Tools Ltd".
 
 ## Catalogs
 

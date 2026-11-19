@@ -22,7 +22,8 @@ export function CodeBlock({
   title,
   children,
   copy = true,
-}: ComponentProps<"pre"> & { copy?: boolean }) {
+  wrap = false,
+}: ComponentProps<"pre"> & { copy?: boolean; wrap?: boolean }) {
   // MDX wraps the lines in a `code` element; render its lines in ours, so the
   // inline-code style does not apply.
   const lines = isValidElement<{ children?: ReactNode }>(children)
@@ -34,7 +35,7 @@ export function CodeBlock({
     <figure {...stylex.props(styles.figure)}>
       {title ? <figcaption {...stylex.props(styles.title)}>{title}</figcaption> : null}
       <div {...stylex.props(styles.body)}>
-        <pre className={`shiki ${stylex.props(styles.pre).className ?? ""}`} tabIndex={0}>
+        <pre className={`shiki ${stylex.props(styles.pre, wrap && styles.wrap).className ?? ""}`} tabIndex={0}>
           <code {...stylex.props(styles.code)}>{lines}</code>
         </pre>
         {copy ? (
@@ -92,6 +93,10 @@ const styles = stylex.create({
   },
   code: {
     fontFamily: "inherit",
+  },
+  wrap: {
+    overflowWrap: "anywhere",
+    whiteSpace: "pre-wrap",
   },
   copy: {
     backgroundColor: colors.card,

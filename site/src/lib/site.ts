@@ -1,14 +1,15 @@
 /** What the site says about itself, in one place. */
+const summary =
+  "Give real-world things persistent IDs. Spool extracts records from text and matches them with structured data, keeping identities consistent as new information arrives.";
+
 export const site = {
   name: "Spool",
   /** The front page's headline. */
-  headline: "Extract, resolve and track entities.",
+  headline: "One identity. Every source.",
   /** The sentence under it, and the description a search result shows. */
-  summary:
-    "Spool pulls records out of text and rows, decides which are the same real-world thing, and gives each thing an ID that stays the same as more arrive.",
-  title: "Spool: extract, resolve and track entities",
-  description:
-    "Spool pulls records out of text and rows, decides which are the same real-world thing, and gives each thing an ID that stays the same as more arrive.",
+  summary,
+  title: "Spool: one identity across every source",
+  description: summary,
   // What `spool --version` prints. The samples check compares the two on the
   // Getting started page.
   version: "0.2.0",
