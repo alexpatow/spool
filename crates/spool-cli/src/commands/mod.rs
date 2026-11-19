@@ -15,6 +15,7 @@ pub mod token;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use anstream::println;
 use clap::Args;
 use spool::UserCode;
 use spool_cli::accounts::Accounts;
@@ -38,7 +39,7 @@ fn store_path(store: &Option<PathBuf>) -> Result<PathBuf, Failure> {
         .clone()
         .filter(|path| !path.as_os_str().is_empty())
         .ok_or_else(|| {
-            Failure::Usage("say where the store is with `--store` or `SPOOL_STORE`".to_owned())
+            Failure::usage("say where the store is with `--store` or `SPOOL_STORE`".to_owned())
         })
 }
 
@@ -58,7 +59,7 @@ fn accounts_path(store: &Path) -> PathBuf {
 fn open_accounts(store: &Path) -> Result<Accounts, Failure> {
     let path = accounts_path(store);
     Accounts::open(&path)
-        .map_err(|refused| Failure::Failed(format!("{}: {refused}", path.display())))
+        .map_err(|refused| Failure::failed(format!("{}: {refused}", path.display())))
 }
 
 /// How user code is run, for the commands that run it.

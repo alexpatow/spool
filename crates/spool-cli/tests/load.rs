@@ -46,7 +46,7 @@ fn failure(output: &Output, arguments: &[&str]) -> String {
     assert_eq!(text(&output.stdout), "", "nothing is printed on a failure");
     let complaint = text(&output.stderr);
     complaint
-        .strip_prefix("spool: ")
+        .strip_prefix("error: ")
         .unwrap_or_else(|| panic!("{complaint}"))
         .trim_end()
         .to_owned()
@@ -567,8 +567,9 @@ fn load_says_when_no_server_answers_or_it_asks_for_a_token() {
         "{complaint}"
     );
     assert!(
-        complaint
-            .ends_with("\nStart one with `spool dev`, or name another with `--url` or SPOOL_URL."),
+        complaint.ends_with(
+            "\nhint: start one with `spool dev`, or name another with `--url` or SPOOL_URL"
+        ),
         "{complaint}"
     );
 
@@ -596,7 +597,7 @@ fn load_says_when_no_server_answers_or_it_asks_for_a_token() {
         .unwrap();
     let complaint = failure(&without, &["rows.csv"]);
     assert!(
-        complaint.starts_with(&format!("the server at {url} asks for a token: ")),
+        complaint.starts_with(&format!("the server at {url} asks for a token\nhint: ")),
         "{complaint}"
     );
     let wrong = spool()
@@ -607,7 +608,9 @@ fn load_says_when_no_server_answers_or_it_asks_for_a_token() {
         .unwrap();
     let complaint = failure(&wrong, &["rows.csv"]);
     assert!(
-        complaint.starts_with(&format!("the server at {url} did not accept the token: ")),
+        complaint.starts_with(&format!(
+            "the server at {url} did not accept the token\nhint: "
+        )),
         "{complaint}"
     );
     // With its token, in the environment or as an option.
@@ -797,16 +800,16 @@ loaded  {rows} rows into source `crm`, type `company`: {rows} new
         refused(&["samples/notes-1.txt"]),
         "samples/notes-1.txt does not look like rows: its first line names no column that a \
          source of the project lists. `spool load` reads CSV, with the names of the columns on \
-         its first line.\n\
-         If it is a document, `spool extract samples/notes-1.txt` reads it: an extractor finds \
-         the records in its text."
+         its first line.\nhint: \
+         if it is a document, `spool extract samples/notes-1.txt` reads it: an extractor finds \
+         the records in its text"
     );
     write(
         &project.join("call.md"),
         "# A call\n\nWith Acorn Tools Ltd.\n",
     );
     assert!(
-        refused(&["call.md"]).ends_with("\nIf it is a document, `spool extract call.md` reads it: an extractor finds the records in its text."),
+        refused(&["call.md"]).ends_with("\nhint: if it is a document, `spool extract call.md` reads it: an extractor finds the records in its text"),
     );
     // A first line that cannot name columns is said as it is of any file,
     // with where a document goes.
@@ -815,8 +818,8 @@ loaded  {rows} rows into source `crm`, type `company`: {rows} new
         refused(&["letter.txt"]),
         "letter.txt cannot be read as CSV: line 1: column 2 has no name. The first line has to \
          name the columns\n\
-         If it is a document, `spool extract letter.txt` reads it: an extractor finds the \
-         records in its text."
+         hint: if it is a document, `spool extract letter.txt` reads it: an extractor finds the \
+         records in its text"
     );
     // Nothing is said of documents where they are not the question: a file
     // with nothing in it, a file of rows, and one said to hold rows.

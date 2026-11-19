@@ -3,6 +3,7 @@
 
 use std::io::Read;
 
+use anstream::println;
 use clap::Args;
 use serde_json::json;
 use spool::{RunEntry, RunStatus};
@@ -65,11 +66,11 @@ pub fn retract(arguments: RetractArgs) -> Result<(), Failure> {
             let mut text = String::new();
             std::io::stdin()
                 .read_to_string(&mut text)
-                .map_err(|error| Failure::Failed(format!("standard input: {error}")))?;
+                .map_err(|error| Failure::failed(format!("standard input: {error}")))?;
             text
         } else {
             std::fs::read_to_string(file)
-                .map_err(|error| Failure::Failed(format!("{file}: {error}")))?
+                .map_err(|error| Failure::failed(format!("{file}: {error}")))?
         };
         keys.extend(
             text.lines()
@@ -79,7 +80,7 @@ pub fn retract(arguments: RetractArgs) -> Result<(), Failure> {
         );
     }
     if keys.is_empty() {
-        return Err(Failure::Usage(
+        return Err(Failure::usage(
             "name the keys of the rows to take back, or a file of them with `--keys`".to_owned(),
         ));
     }
@@ -108,7 +109,7 @@ pub fn retract(arguments: RetractArgs) -> Result<(), Failure> {
         out.json(&answer);
     }
     if run.status != RunStatus::Succeeded {
-        return Err(Failure::Failed(format!(
+        return Err(Failure::failed(format!(
             "run {} {}: {}",
             run.run,
             run.status,
@@ -119,7 +120,7 @@ pub fn retract(arguments: RetractArgs) -> Result<(), Failure> {
         return Ok(());
     }
     let report = run.retraction.ok_or_else(|| {
-        Failure::Failed(format!(
+        Failure::failed(format!(
             "run {} succeeded and reported no retraction; is the server of this version?",
             run.run
         ))

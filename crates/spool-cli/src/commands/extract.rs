@@ -6,6 +6,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use anstream::println;
 use serde_json::{Value, json};
 use spool::core::{DocumentId, RunId};
 use spool::{
@@ -207,7 +208,7 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
         let mut stored = 0;
         for sent in sending(&files) {
             if was_interrupted() {
-                return Err(Failure::Stopped(format!(
+                return Err(Failure::stopped(format!(
                     "stopped: {stored} of {} are stored and none is read yet. The same command \
                      again stores the rest and reads them.",
                     plural(files.len() as u64, "document", "documents")
@@ -287,7 +288,7 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
     let began = Instant::now();
     loop {
         if was_interrupted() {
-            return Err(Failure::Stopped(stopped(&found, again, None)));
+            return Err(Failure::stopped(stopped(&found, again, None)));
         }
         let mut request = json!({
             "extractor": extractor.name,
@@ -323,7 +324,7 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
                 answered.print(out);
             }
             if progress.cancelled {
-                return Err(Failure::Stopped(stopped(&found, again, Some(run.run))));
+                return Err(Failure::stopped(stopped(&found, again, Some(run.run))));
             }
             progress.stopped(found.documents, again, Some(run.run));
             return Err(remote::unsuccessful(&run));
@@ -355,7 +356,7 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
             }
             progress.stopped(found.documents, again, Some(run.run));
             let first = &report.failed[0];
-            return Err(Failure::Failed(format!(
+            return Err(Failure::failed(format!(
                 "run {} could not read any of its {}, as {}:{} says: {}. They are not \
                  read, and the same command reads them again.",
                 run.run,
@@ -369,7 +370,7 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
             if as_json {
                 answered.print(out);
             }
-            return Err(Failure::Stopped(stopped(&found, again, None)));
+            return Err(Failure::stopped(stopped(&found, again, None)));
         }
         progress.batches += 1;
         if since.is_none() {
@@ -501,12 +502,12 @@ fn read(paths: &[String]) -> Result<Vec<File>, Failure> {
     let mut found: Vec<(String, String)> = Vec::new();
     for path in paths {
         let metadata =
-            std::fs::metadata(path).map_err(|error| Failure::Failed(format!("{path}: {error}")))?;
+            std::fs::metadata(path).map_err(|error| Failure::failed(format!("{path}: {error}")))?;
         if metadata.is_dir() {
             let before = found.len();
             under(Path::new(path), "", &mut found)?;
             if found.len() == before {
-                return Err(Failure::Failed(format!(
+                return Err(Failure::failed(format!(
                     "{path} is a folder with no files in it, other than ones whose names start \
                      with a dot"
                 )));
@@ -516,7 +517,7 @@ fn read(paths: &[String]) -> Result<Vec<File>, Failure> {
         let name = Path::new(path)
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
-            .ok_or_else(|| Failure::Failed(format!("{path} does not name a file")))?;
+            .ok_or_else(|| Failure::failed(format!("{path} does not name a file")))?;
         found.push((path.clone(), name));
     }
 
@@ -525,7 +526,7 @@ fn read(paths: &[String]) -> Result<Vec<File>, Failure> {
     let mut keys: HashMap<&str, &str> = HashMap::new();
     for (path, name) in &found {
         if let Some(first) = keys.insert(name, path) {
-            return Err(Failure::Failed(format!(
+            return Err(Failure::failed(format!(
                 "{first} and {path} would both be stored as `{name}`: a file is stored under its \
                  name, or under its path from the folder that was named, and a second document \
                  under one key is taken for a new version of the first. Name the folder that \
@@ -537,15 +538,15 @@ fn read(paths: &[String]) -> Result<Vec<File>, Failure> {
     let mut files = Vec::with_capacity(found.len());
     for (path, name) in found {
         let bytes =
-            std::fs::read(&path).map_err(|error| Failure::Failed(format!("{path}: {error}")))?;
+            std::fs::read(&path).map_err(|error| Failure::failed(format!("{path}: {error}")))?;
         let text = String::from_utf8(bytes).map_err(|_| {
-            Failure::Failed(format!(
+            Failure::failed(format!(
                 "{path} is not text: a document is stored as UTF-8 text. Turn a PDF or a web \
                  page into text first."
             ))
         })?;
         if text.trim().is_empty() {
-            return Err(Failure::Failed(format!("{path} is empty")));
+            return Err(Failure::failed(format!("{path} is empty")));
         }
         files.push(File { path, name, text });
     }
@@ -558,7 +559,7 @@ fn read(paths: &[String]) -> Result<Vec<File>, Failure> {
 /// and a link to a folder is not followed, since it can lead back up.
 fn under(folder: &Path, prefix: &str, found: &mut Vec<(String, String)>) -> Result<(), Failure> {
     let unreadable =
-        |error: std::io::Error| Failure::Failed(format!("{}: {error}", folder.display()));
+        |error: std::io::Error| Failure::failed(format!("{}: {error}", folder.display()));
     let mut entries = std::fs::read_dir(folder)
         .and_then(|entries| entries.collect::<Result<Vec<_>, _>>())
         .map_err(unreadable)?;
@@ -579,7 +580,7 @@ fn under(folder: &Path, prefix: &str, found: &mut Vec<(String, String)>) -> Resu
             false
         } else if kind.is_symlink() {
             std::fs::metadata(&path)
-                .map_err(|error| Failure::Failed(format!("{}: {error}", path.display())))?
+                .map_err(|error| Failure::failed(format!("{}: {error}", path.display())))?
                 .is_file()
         } else {
             kind.is_file()
@@ -598,7 +599,7 @@ fn extractor<'a>(known: &'a [Extractor], named: Option<&str>) -> Result<&'a Extr
         .map(|extractor| extractor.name.as_str())
         .collect();
     match (named, known) {
-        (_, []) => Err(Failure::Failed(
+        (_, []) => Err(Failure::failed(
             "the project has no extractors: one is a file under extractors/, and \
              `spool init <dir> --example companies` makes a project with a sample"
                 .to_owned(),
@@ -607,13 +608,13 @@ fn extractor<'a>(known: &'a [Extractor], named: Option<&str>) -> Result<&'a Extr
             .iter()
             .find(|extractor| extractor.name == named)
             .ok_or_else(|| {
-                Failure::Failed(format!(
+                Failure::failed(format!(
                     "the project has no extractor `{named}`: it has {}",
                     listed(&names)
                 ))
             }),
         (None, [only]) => Ok(only),
-        (None, _) => Err(Failure::Failed(format!(
+        (None, _) => Err(Failure::failed(format!(
             "the project has the extractors {}: say which with `--extractor`",
             listed(&names)
         ))),
@@ -632,7 +633,7 @@ fn source_of(
     let names: Vec<&str> = sources.iter().map(|source| source.name.as_str()).collect();
     if let Some(named) = named {
         if !names.is_empty() && !names.contains(&named) {
-            return Err(Failure::Failed(format!(
+            return Err(Failure::failed(format!(
                 "the project has no source `{named}`: there is no sources/{named}.yaml. It has \
                  {}.",
                 listed(&names)
@@ -645,7 +646,7 @@ fn source_of(
     }
     match names.as_slice() {
         [] => {
-            return Err(Failure::Failed(
+            return Err(Failure::failed(
                 "the project declares no source, so there is nothing a document can belong to. \
                  A source is a file sources/<name>.yaml that lists what a record found in its \
                  documents may say."
@@ -658,7 +659,7 @@ fn source_of(
     let mut found: Option<&str> = None;
     for file in files {
         let Some(source) = remote::named_after(&file.name, &names) else {
-            return Err(Failure::Failed(format!(
+            return Err(Failure::failed(format!(
                 "the project has the sources {}, and {} is named after {}: say which its \
                  documents belong to with `--source`",
                 listed(&names),
@@ -671,7 +672,7 @@ fn source_of(
         };
         match found {
             Some(first) if first != source => {
-                return Err(Failure::Failed(format!(
+                return Err(Failure::failed(format!(
                     "the files are named after different sources, `{first}` and `{source}`: \
                      extract them one source at a time, or say which they all belong to with \
                      `--source`"
@@ -692,7 +693,7 @@ fn readable(sources: &[DeclaredSource], source: &str) -> Result<(), Failure> {
         return Ok(());
     };
     if declared.entity_types.is_empty() {
-        return Err(Failure::Failed(format!(
+        return Err(Failure::failed(format!(
             "no entity type reads source `{source}`, so nothing found in its documents can be \
              a record. Add the source to the `mapping` in an entities/<type>/entity.yaml."
         )));
@@ -896,7 +897,7 @@ fn about(time: Duration) -> String {
 /// Waits for the run a call started.
 fn ended(remote: &Remote, answer: Value) -> Result<(Value, RunEntry), Failure> {
     remote.ended(answer)?.ok_or_else(|| {
-        Failure::Failed(
+        Failure::failed(
             "the server started no run; is it a Spool server of this version?".to_owned(),
         )
     })
@@ -974,7 +975,7 @@ fn plural(number: u64, one: &str, many: &str) -> String {
 }
 
 fn unreported(run: &RunEntry, what: &str) -> Failure {
-    Failure::Failed(format!(
+    Failure::failed(format!(
         "run {} succeeded and did not report {what}; is the server of this version?",
         run.run
     ))

@@ -6,6 +6,7 @@
 
 use std::path::PathBuf;
 
+use anstream::println;
 use clap::{Args, Subcommand};
 use spool_cli::accounts::Accounts;
 use spool_cli::api::{AddedToken, TokenList};
@@ -82,7 +83,7 @@ pub fn token(arguments: TokenArgs) -> Result<(), Failure> {
 fn accounts(arguments: &TokenArgs) -> Result<(Accounts, PathBuf), Failure> {
     let store = super::store_path(&arguments.store)?;
     if !store.is_file() {
-        return Err(Failure::Failed(format!(
+        return Err(Failure::failed(format!(
             "there is no store at {}: `spool serve` or `spool apply` makes one",
             store.display()
         )));
@@ -91,7 +92,7 @@ fn accounts(arguments: &TokenArgs) -> Result<(Accounts, PathBuf), Failure> {
 }
 
 fn refused(refused: spool_cli::accounts::Refused) -> Failure {
-    Failure::Failed(refused.to_string())
+    Failure::failed(refused.to_string())
 }
 
 fn add(arguments: &TokenArgs, name: &str) -> Result<(), Failure> {

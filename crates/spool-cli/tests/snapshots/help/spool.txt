@@ -23,10 +23,11 @@ Commands:
   help       Print this message or the help of the given subcommand(s)
 
 Options:
-  -h, --help     Print help
+  -h, --help     Print help (see more with '--help')
   -V, --version  Print version
 
 Global options:
-  -q, --quiet  Print only the result and errors: no hints or progress
+      --color <WHEN>  When to use colour [default: auto] [possible values: auto, always, never]
+  -q, --quiet         Print only the result and errors: no hints or progress
 
 Run `spool <command> --help` for a command's options, or see https://spool.alexpatow.com/docs/cli

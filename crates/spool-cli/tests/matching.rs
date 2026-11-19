@@ -38,7 +38,7 @@ fn refused(server: &Server, dir: &Path, arguments: &[&str]) -> String {
     assert_eq!(text(&output.stdout), "", "nothing is printed on a failure");
     let complaint = text(&output.stderr);
     complaint
-        .strip_prefix("spool: ")
+        .strip_prefix("error: ")
         .unwrap_or_else(|| panic!("{complaint}"))
         .trim_end()
         .to_owned()
@@ -418,7 +418,9 @@ nothing to match: there are no `person` records yet
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
     assert!(
-        text(&output.stderr).starts_with(&format!("spool: the server at {url} asks for a token: ")),
+        text(&output.stderr).starts_with(&format!(
+            "error: the server at {url} asks for a token\nhint: pass one with `--token`"
+        )),
         "{}",
         text(&output.stderr)
     );
@@ -438,12 +440,12 @@ fn match_says_when_no_server_answers() {
     assert_eq!(text(&output.stdout), "");
     let complaint = text(&output.stderr);
     assert!(
-        complaint.starts_with(&format!("spool: the server at {url} cannot be reached: ")),
+        complaint.starts_with(&format!("error: the server at {url} cannot be reached: ")),
         "{complaint}"
     );
     assert!(
         complaint.ends_with(
-            "\nStart one with `spool dev`, or name another with `--url` or SPOOL_URL.\n"
+            "\nhint: start one with `spool dev`, or name another with `--url` or SPOOL_URL\n"
         ),
         "{complaint}"
     );
@@ -576,7 +578,7 @@ fn a_type_whose_match_fails_does_not_stop_the_others() {
     );
     let complaint = text(&output.stderr);
     assert!(
-        complaint.starts_with("spool: type `company`: "),
+        complaint.starts_with("error: type `company`: "),
         "{complaint}"
     );
     assert!(complaint.contains("INTEGER"), "{complaint}");

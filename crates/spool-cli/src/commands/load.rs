@@ -7,6 +7,7 @@
 use std::io::Read;
 use std::path::Path;
 
+use anstream::println;
 use arrow::ipc::writer::StreamWriter;
 use arrow::record_batch::RecordBatch;
 use serde_json::{Value, json};
@@ -80,7 +81,7 @@ pub fn load(arguments: LoadArgs) -> Result<(), Failure> {
     // The file first: what is wrong with it can be said without a server.
     let (input, name) = open(file)?;
     let unreadable = |why: &dyn std::fmt::Display| {
-        Failure::Failed(format!(
+        Failure::failed(format!(
             "{name} cannot be read as {}: {why}",
             format(delimiter)
         ))
@@ -88,11 +89,11 @@ pub fn load(arguments: LoadArgs) -> Result<(), Failure> {
     // A text file that was not said to hold rows may be a document.
     let may_be_text = arguments.delimiter.is_none() && named_as_text(file);
     let mut reader = Reader::new(input, delimiter).map_err(|why| {
-        let said = unreadable(&why).message();
-        Failure::Failed(match may_be_text && why.0 != EMPTY {
-            true => format!("{said}\n{}", extract_reads(&name)),
+        let said = unreadable(&why);
+        match may_be_text && why.0 != EMPTY {
+            true => said.hint(extract_reads(&name)),
             false => said,
-        })
+        }
     })?;
     let columns: Vec<String> = reader
         .schema()
@@ -117,12 +118,12 @@ pub fn load(arguments: LoadArgs) -> Result<(), Failure> {
                     .any(|part| listed(part.trim()))
         })
     {
-        return Err(Failure::Failed(format!(
+        return Err(Failure::failed(format!(
             "{name} does not look like rows: its first line names no column that a source of \
              the project lists. `spool load` reads CSV, with the names of the columns on its \
-             first line.\n{}",
-            extract_reads(&name)
-        )));
+             first line."
+        ))
+        .hint(extract_reads(&name)));
     }
     let (source, entity_type) = target(
         &info,
@@ -261,19 +262,18 @@ impl Total {
 
     /// A failure, with what was loaded before it if anything was.
     fn before(&self, failure: Failure, name: &str) -> Failure {
-        let why = failure.message();
         if self.rows == 0 {
-            return Failure::Failed(why);
+            return failure;
         }
         let runs = match self.runs {
             Some((1, run, _)) => format!("run {run}"),
             Some((count, first, last)) => format!("{count} runs, {first} to {last}"),
             None => "no run".to_owned(),
         };
-        Failure::Failed(format!(
-            "{why}\nThis was after the first {} of {name} {} loaded, in {runs}. In what the \
-             server says, rows are counted from the one after them. Loading the file again \
-             sends them once more and adds nothing.",
+        failure.and(format!(
+            "This was after the first {} of {name} {} loaded, in {runs}. In what the server \
+             says, rows are counted from the one after them. Loading the file again sends them \
+             once more and adds nothing.",
             count(self.rows, "row"),
             if self.rows == 1 { "was" } else { "were" },
         ))
@@ -288,7 +288,7 @@ fn send(
     batch: &RecordBatch,
 ) -> Result<(Value, LoadReport), Failure> {
     let cannot_write = |error: arrow::error::ArrowError| {
-        Failure::Failed(format!("the rows cannot be sent: {error}"))
+        Failure::failed(format!("the rows cannot be sent: {error}"))
     };
     let mut body = Vec::new();
     let mut writer = StreamWriter::try_new(&mut body, &batch.schema()).map_err(cannot_write)?;
@@ -307,7 +307,7 @@ fn send(
         &body,
     )?;
     let unexpected = || {
-        Failure::Failed(
+        Failure::failed(
             "the server took the rows and reported no load run; is it of this version?".to_owned(),
         )
     };
@@ -328,16 +328,16 @@ fn open(file: &str) -> Result<(Box<dyn Read>, String), Failure> {
         ));
     }
     if Path::new(file).is_dir() {
-        return Err(Failure::Failed(format!(
+        return Err(Failure::failed(format!(
             "`{file}` is a directory: name a file of rows"
         )));
     }
     match std::fs::File::open(file) {
         Ok(opened) => Ok((Box::new(opened), file.to_owned())),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            Err(Failure::Failed(format!("there is no file `{file}`")))
+            Err(Failure::failed(format!("there is no file `{file}`")))
         }
-        Err(error) => Err(Failure::Failed(format!(
+        Err(error) => Err(Failure::failed(format!(
             "`{file}` cannot be opened: {error}"
         ))),
     }
@@ -350,7 +350,7 @@ fn delimiter(asked: Option<&str>, file: &str) -> Result<u8, Failure> {
         Some("tab" | "\\t" | "\t") => Ok(b'\t'),
         Some(other) => match other.as_bytes() {
             [one] if one.is_ascii() && !matches!(one, b'"' | b'\n' | b'\r') => Ok(*one),
-            _ => Err(Failure::Usage(format!(
+            _ => Err(Failure::usage(format!(
                 "`--delimiter` needs one character such as `;`, or `tab`, not `{other}`"
             ))),
         },
@@ -383,8 +383,8 @@ fn named_as_text(file: &str) -> bool {
 /// Where a document goes: said of a file that is no rows.
 fn extract_reads(name: &str) -> String {
     format!(
-        "If it is a document, `spool extract {name}` reads it: an extractor finds the records \
-         in its text."
+        "if it is a document, `spool extract {name}` reads it: an extractor finds the records \
+         in its text"
     )
 }
 
@@ -420,7 +420,7 @@ fn target<'a>(
     };
     let source_names = || quoted(sources.iter().map(|source| source.name.as_str()).collect());
     if sources.is_empty() {
-        return Err(Failure::Failed(
+        return Err(Failure::failed(
             "the project declares no source, so there is nothing rows can be loaded as. A \
              source is a file sources/<name>.yaml that lists the columns of its rows."
                 .to_owned(),
@@ -433,7 +433,7 @@ fn target<'a>(
             .iter()
             .any(|declared| declared.name.as_str() == entity_type)
     {
-        return Err(Failure::Failed(format!(
+        return Err(Failure::failed(format!(
             "the project has no entity type `{entity_type}`. It has {}.",
             quoted(
                 info.store
@@ -456,7 +456,7 @@ fn target<'a>(
             .iter()
             .find(|source| source.name == name)
             .ok_or_else(|| {
-                Failure::Failed(format!(
+                Failure::failed(format!(
                     "the project has no source `{name}`: there is no sources/{name}.yaml. It \
                      has {}.",
                     source_names()
@@ -471,7 +471,7 @@ fn target<'a>(
             match (fitting.as_slice(), entity_type) {
                 ([only], _) => *only,
                 ([], Some(entity_type)) => {
-                    return Err(Failure::Failed(format!(
+                    return Err(Failure::failed(format!(
                         "the mapping of `{entity_type}` reads no source, so no rows can be \
                          loaded as `{entity_type}` records. Add a source to the `mapping` in \
                          entities/{entity_type}/entity.yaml."
@@ -493,7 +493,7 @@ fn target<'a>(
                             None => "the project has".to_owned(),
                         };
                         let listed = remote::listed(&names);
-                        return Err(Failure::Failed(match file {
+                        return Err(Failure::failed(match file {
                             Some(file) => format!(
                                 "{has} the sources {listed}, and {file} is named after {}: say \
                                  which its rows come from with `--source`",
@@ -521,14 +521,14 @@ fn target<'a>(
     let entity_type = match (entity_type, readers.as_slice()) {
         (Some(entity_type), _) if reads(source, entity_type) => entity_type,
         (Some(entity_type), []) => {
-            return Err(Failure::Failed(format!(
+            return Err(Failure::failed(format!(
                 "the mapping of `{entity_type}` has nothing for source `{}`: add it to \
                  entities/{entity_type}/entity.yaml",
                 source.name
             )));
         }
         (Some(entity_type), _) => {
-            return Err(Failure::Failed(format!(
+            return Err(Failure::failed(format!(
                 "the mapping of `{entity_type}` has nothing for source `{}`, so its rows \
                  cannot be `{entity_type}` records. They can be loaded as {}.",
                 source.name,
@@ -537,14 +537,14 @@ fn target<'a>(
         }
         (None, [only]) => *only,
         (None, []) => {
-            return Err(Failure::Failed(format!(
+            return Err(Failure::failed(format!(
                 "no entity type reads source `{}`, so its rows cannot be loaded yet. Add the \
                  source to the `mapping` in an entities/<type>/entity.yaml.",
                 source.name
             )));
         }
         (None, _) => {
-            return Err(Failure::Failed(format!(
+            return Err(Failure::failed(format!(
                 "say which entity type the rows are records of with `--type`: source `{}` is \
                  read by {}",
                 source.name,
@@ -614,13 +614,13 @@ fn check_columns(
             '\t' => ("a tab".to_owned(), "tab".to_owned()),
             other => (format!("`{other}`"), format!("'{other}'")),
         };
-        return Err(Failure::Failed(format!(
+        return Err(Failure::failed(format!(
             "the first line of {name} is one column, `{only}`, and sources/{}.yaml lists \
              {listed}. If {between} stands between its fields, add `--delimiter {option}`.",
             source.name,
         )));
     }
-    Err(Failure::Failed(format!(
+    Err(Failure::failed(format!(
         "{name} has {} {}, which sources/{}.yaml does not list. It lists {listed}. Add {} to \
          that file to keep {}, or leave {} out of the rows.",
         if unknown.len() == 1 {

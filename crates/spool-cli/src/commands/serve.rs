@@ -167,7 +167,7 @@ macro_rules! say {
 const DEFAULT_PORT: u16 = 7765;
 
 fn failed(message: impl Into<String>) -> Failure {
-    Failure::Failed(message.into())
+    Failure::failed(message.into())
 }
 
 /// IDs and the clock: the system's, or reproducible ones for tests.
@@ -185,7 +185,7 @@ pub fn serve(arguments: ServeArgs) -> Result<(), Failure> {
         google: GoogleClient::read()?,
     };
     if reached.google.is_some() && reached.at.is_none() && !listen.ip().is_loopback() {
-        return Err(Failure::Usage(
+        return Err(Failure::usage(
             "sign-in with Google comes back to the address people reach this server by: \
              pass it with `--public-url` or in SPOOL_PUBLIC_URL, such as https://spool.example.com"
                 .to_owned(),
@@ -207,10 +207,14 @@ pub fn serve(arguments: ServeArgs) -> Result<(), Failure> {
         Some(applied) if applied == manifest.hash => engine.adopt(&manifest)?,
         Some(applied) => {
             return Err(failed(format!(
-                "the store at {} was applied with manifest {applied}, and this server runs on manifest {}.\n\
-                 Applying a changed project is a step of its own: run `spool apply --store {} --manifest {}` and start again.",
+                "the store at {} was applied with manifest {applied}, and this server runs on \
+                 manifest {}",
                 store.display(),
                 manifest.hash,
+            ))
+            .hint(format!(
+                "applying a changed project is a step of its own: run `spool apply --store {} \
+                 --manifest {}` and start again",
                 store.display(),
                 manifest_file.display(),
             )));
@@ -283,7 +287,7 @@ fn public_url(given: Option<&str>) -> Result<Option<String>, Failure> {
         .filter(|url| !url.is_empty());
     match given {
         Some(url) if !(url.starts_with("https://") || url.starts_with("http://")) => {
-            Err(Failure::Usage(format!(
+            Err(Failure::usage(format!(
                 "`--public-url` needs an address such as https://spool.example.com, not `{url}`"
             )))
         }
@@ -296,7 +300,7 @@ pub fn dev(arguments: DevArgs) -> Result<(), Failure> {
     let listen = arguments.listen;
     // Whoever reaches a development server is its admin.
     if !listen.ip().is_loopback() {
-        return Err(Failure::Usage(format!(
+        return Err(Failure::usage(format!(
             "`spool dev` has no sign-in, so it listens on this machine only: `--listen` needs \
              an address such as 127.0.0.1:{DEFAULT_PORT}, not `{listen}`. `spool serve` runs a \
              server that others reach, and they sign in to it."
@@ -320,19 +324,21 @@ pub fn dev(arguments: DevArgs) -> Result<(), Failure> {
         // The usual cause by far, and what to do about it.
         spool::Error::StoreInUse { path, holder } => failed(format!(
             "the store {} is open in another process{}, most likely a `spool dev` that is \
-             already running on this project.\n\
-             One server runs on a store at a time. Use the one that is running, or stop it \
-             with Ctrl-C and start this one again.",
+             already running on this project",
             path.display(),
             holder.map_or_else(String::new, |pid| format!(" (PID {pid})")),
-        )),
+        ))
+        .hint(
+            "one server runs on a store at a time: use the one that is running, or stop it \
+             with Ctrl-C and start this one again",
+        ),
         // A store that another version of `spool` made.
         spool::Error::FormatVersion { found, expected } => failed(format!(
             "the store {} has format version {found}, and this `spool` reads only version \
-             {expected}: it does not convert a store.\n\
-             Move the file away or name another with `--store`, then load the rows again.",
+             {expected}: it does not convert a store",
             store.display(),
-        )),
+        ))
+        .hint("move the file away or name another with `--store`, then load the rows again"),
         other => other.into(),
     })?;
     let engine = Arc::new(engine);
@@ -399,7 +405,7 @@ fn watch(dir: &Path, engine: &Engine, mut seen: u64) {
             Err(error) => {
                 let _ = writeln!(
                     std::io::stderr(),
-                    "spool: {error}\nspool: still running the last version that compiled"
+                    "error: {error}\nnote: still running the last version that compiled"
                 );
             }
         }
@@ -447,7 +453,7 @@ fn run(
     runtime.block_on(async {
         let listener = tokio::net::TcpListener::bind(listen)
             .await
-            .map_err(|error| failed(cannot_listen(listen, &error, options.dev)))?;
+            .map_err(|error| cannot_listen(listen, &error, options.dev))?;
         let address = listener
             .local_addr()
             .map_err(|error| failed(error.to_string()))?;
@@ -501,9 +507,9 @@ fn run(
 
 /// Why the server could not listen on `listen`. A port that is taken is
 /// said in words, with another port to try: the next one up.
-fn cannot_listen(listen: SocketAddr, error: &std::io::Error, dev: bool) -> String {
+fn cannot_listen(listen: SocketAddr, error: &std::io::Error, dev: bool) -> Failure {
     if error.kind() != std::io::ErrorKind::AddrInUse {
-        return format!("cannot listen on {listen}: {error}");
+        return failed(format!("cannot listen on {listen}: {error}"));
     }
     let mut other = listen;
     other.set_port(match listen.port() {
@@ -511,17 +517,21 @@ fn cannot_listen(listen: SocketAddr, error: &std::io::Error, dev: bool) -> Strin
         port => port + 1,
     });
     if dev {
-        format!(
+        failed(format!(
             "cannot listen on {listen}: something else is listening there, perhaps a \
-             `spool dev` on another project.\n\
-             Give this one another port by adding `--listen {other}` to the command, and \
-             point the commands that call it there with SPOOL_URL=http://{other}."
-        )
+             `spool dev` on another project"
+        ))
+        .hint(format!(
+            "give this one another port by adding `--listen {other}` to the command, and point \
+             the commands that call it there with SPOOL_URL=http://{other}"
+        ))
     } else {
-        format!(
-            "cannot listen on {listen}: something else is listening there.\n\
-             Give this server another port by adding `--listen {other}` to the command."
-        )
+        failed(format!(
+            "cannot listen on {listen}: something else is listening there"
+        ))
+        .hint(format!(
+            "give this server another port by adding `--listen {other}` to the command"
+        ))
     }
 }
 

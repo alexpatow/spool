@@ -15,4 +15,5 @@ Output options:
       --json             Shorthand for `--output json`
 
 Global options:
-  -q, --quiet  Print only the result and errors: no hints or progress
+      --color <WHEN>  When to use colour [default: auto] [possible values: auto, always, never]
+  -q, --quiet         Print only the result and errors: no hints or progress

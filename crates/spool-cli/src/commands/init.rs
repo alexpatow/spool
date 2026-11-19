@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
+use anstream::println;
 use clap::Args;
 use clap::builder::PossibleValue;
 use spool::{Manifest, Runtime};

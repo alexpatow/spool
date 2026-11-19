@@ -205,7 +205,7 @@ fn a_failed_run_says_why_and_exits_with_one() {
     let output = spool(&["bench", missing.to_str().unwrap()]);
     assert_eq!(output.status.code(), Some(1));
     let stderr = text(&output.stderr);
-    assert!(stderr.starts_with("spool: "), "{stderr}");
+    assert!(stderr.starts_with("error: "), "{stderr}");
     assert!(stderr.contains("no-such-scenario"), "{stderr}");
 }
 

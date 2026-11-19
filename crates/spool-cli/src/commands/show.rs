@@ -7,6 +7,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use anstream::println;
 use clap::{Args, Subcommand};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -20,8 +21,8 @@ use spool::{
 use spool_cli::api::{DocumentList, Info, RecordList};
 
 use super::remote::{Remote, RemoteArgs, typed};
-use crate::Failure;
 use crate::output::{Cell, Output, OutputArgs, Table, aligned, fields, hint, indented, table};
+use crate::{Failure, Kind};
 
 /// Show what a running server holds
 ///
@@ -409,15 +410,15 @@ fn explain_identity(remote: &Remote, reference: &str, out: Output) -> Result<(),
             identity
         }
         _ => {
-            let record = find_record(remote, reference).map_err(|failure| match failure {
-                Failure::Failed(_) if reference.parse::<IdentityId>().is_ok() => {
-                    Failure::Failed(format!("there is no identity or record {reference}"))
+            let record = find_record(remote, reference).map_err(|failure| {
+                match failure.kind() == Kind::Failed && reference.parse::<IdentityId>().is_ok() {
+                    true => Failure::failed(format!("there is no identity or record {reference}")),
+                    false => failure,
                 }
-                other => other,
             })?;
             record
                 .identity
-                .ok_or_else(|| Failure::Failed(format!("`{}` has no identity", record.name())))?
+                .ok_or_else(|| Failure::failed(format!("`{}` has no identity", record.name())))?
         }
     };
     let answer = remote.get(&format!("/identities/{identity}/explain"), &[], || {
@@ -441,7 +442,7 @@ fn find_record(remote: &Remote, reference: &str) -> Result<RecordEntry, Failure>
         return typed(&found);
     }
     let Some((source, key)) = reference.split_once(':') else {
-        return Err(Failure::Usage(format!(
+        return Err(Failure::usage(format!(
             "`{reference}` does not name a record: give its ID, or <source>:<key>"
         )));
     };
@@ -472,7 +473,7 @@ fn find_record(remote: &Remote, reference: &str) -> Result<RecordEntry, Failure>
     if let Some(mention) = find_mention(remote, reference, source, key)? {
         return Ok(mention);
     }
-    Err(Failure::Failed(format!(
+    Err(Failure::failed(format!(
         "there is no record with key `{key}` from source `{source}`"
     )))
 }
@@ -534,7 +535,7 @@ fn find_mention(
             1 => return Ok(found.pop()),
             several => {
                 let ids: Vec<String> = found.iter().map(|record| record.id.to_string()).collect();
-                return Err(Failure::Failed(format!(
+                return Err(Failure::failed(format!(
                     "{several} records are named `{reference}`: name one by its ID, of {}",
                     ids.join(", ")
                 )));

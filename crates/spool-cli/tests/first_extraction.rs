@@ -179,7 +179,7 @@ fn complaint(output: &std::process::Output, arguments: &[&str]) -> String {
     );
     let complaint = text(&output.stderr);
     complaint
-        .strip_prefix("spool: ")
+        .strip_prefix("error: ")
         .unwrap_or_else(|| panic!("{complaint}"))
         .trim_end()
         .to_owned()
@@ -1347,7 +1347,7 @@ fn ctrl_c_cancels_the_batch_that_is_running_and_keeps_the_ones_before() {
     );
     assert!(
         said.trim_end().ends_with(&format!(
-            "spool: stopped: run {run} was cancelled, and nothing it read is kept. The 5 \
+            "error: stopped: run {run} was cancelled, and nothing it read is kept. The 5 \
              documents read before it are kept, and the same command again reads the rest."
         )),
         "{said}"
@@ -1591,8 +1591,9 @@ fn extract_says_what_is_in_the_way() {
         "{nobody}"
     );
     assert!(
-        nobody
-            .ends_with("\nStart one with `spool dev`, or name another with `--url` or SPOOL_URL."),
+        nobody.ends_with(
+            "\nhint: start one with `spool dev`, or name another with `--url` or SPOOL_URL"
+        ),
         "{nobody}"
     );
 
@@ -2070,7 +2071,7 @@ found      2 records in 1 document: 2 new, 0 already held
         let output = server.spool_in(&project, &visit).output().unwrap();
         let said = text(&output.stderr);
         assert_eq!(output.status.code(), Some(1), "{said}");
-        assert!(said.starts_with("spool: extractor `model`: "), "{said}");
+        assert!(said.starts_with("error: extractor `model`: "), "{said}");
         assert!(said.contains(answer), "{said}");
     }
     let nothing = shown(&server, &project, &visit);

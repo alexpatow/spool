@@ -1,6 +1,7 @@
 //! `spool recompute`: what the identities would be under the rules as they
 //! are now, against the identities there are, and applying that when asked.
 
+use anstream::println;
 use clap::Args;
 use serde_json::json;
 use spool::core::IdentityId;
@@ -86,7 +87,7 @@ pub fn run(arguments: RecomputeArgs) -> Result<(), Failure> {
                 .iter()
                 .map(|declared| format!("`{}`", declared.name))
                 .collect();
-            return Err(Failure::Failed(match declared.is_empty() {
+            return Err(Failure::failed(match declared.is_empty() {
                 true => format!("the project has no entity type `{name}`, and declares none"),
                 false => format!(
                     "the project has no entity type `{name}`. It has {}.",

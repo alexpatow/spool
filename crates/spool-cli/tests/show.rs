@@ -406,7 +406,7 @@ fn explain_says_why_two_records_are_together_or_apart() {
     assert_eq!(code, Some(1));
     assert_eq!(
         complaint,
-        "spool: there is no record with key `9` from source `shop`\n"
+        "error: there is no record with key `9` from source `shop`\n"
     );
     let (code, complaint) = refused(&server, &["explain", "shop:1", "shop:1"]);
     assert_eq!(code, Some(1));
@@ -414,7 +414,7 @@ fn explain_says_why_two_records_are_together_or_apart() {
     let unknown = "00000000-0000-7000-8000-000000000000";
     let (code, complaint) = refused(&server, &["explain", "shop:1", unknown]);
     assert_eq!(code, Some(1));
-    assert_eq!(complaint, format!("spool: there is no record {unknown}\n"));
+    assert_eq!(complaint, format!("error: there is no record {unknown}\n"));
 }
 
 /// Things matched by code and by name: an anvil and a tongs that share no
@@ -623,7 +623,7 @@ fn explain_names_each_link_of_a_chain_by_its_records_and_its_rule() {
     assert_eq!(code, Some(1));
     assert_eq!(
         complaint,
-        format!("spool: there is no identity or record {unknown}\n")
+        format!("error: there is no identity or record {unknown}\n")
     );
     server
         .get(&format!("/v1/identities/{unknown}/explain"))
@@ -755,7 +755,7 @@ crm:c-117       Pioneer Supplies  -
 
     let (code, complaint) = refused(&server, &["show", "review", "9"]);
     assert_eq!(code, Some(1));
-    assert_eq!(complaint, "spool: there is no review item 9\n");
+    assert_eq!(complaint, "error: there is no review item 9\n");
 
     // The same company under a second key is held back with the first. When
     // the CRM takes that row back, the item says which of the two still
@@ -893,7 +893,7 @@ fn a_mention_is_shown_in_its_document() {
     assert_eq!(code, Some(1));
     assert_eq!(
         complaint,
-        "spool: there is no record with key `a.txt[1-2]` from source `notes`\n"
+        "error: there is no record with key `a.txt[1-2]` from source `notes`\n"
     );
 
     // Evidence that points outside the document is shown as it is.
@@ -1016,7 +1016,7 @@ fn a_mention_named_by_its_place_is_the_latest_there_is() {
     );
     assert!(
         complaint
-            .starts_with("spool: 2 records are named `notes:a.txt[4-9]`: name one by its ID, of "),
+            .starts_with("error: 2 records are named `notes:a.txt[4-9]`: name one by its ID, of "),
         "{complaint}"
     );
     assert!(complaint.contains(&second), "{complaint}");
@@ -1487,23 +1487,23 @@ fn a_mistake_or_a_server_that_does_not_answer_is_said_plainly() {
     for (arguments, expected) in [
         (
             &["show", "runs", "99"][..],
-            "spool: there is no run 99\n".to_owned(),
+            "error: there is no run 99\n".to_owned(),
         ),
         (
             &["show", "identities", "00000000-0000-7000-8000-000000000000"],
-            "spool: there is no identity 00000000-0000-7000-8000-000000000000\n".to_owned(),
+            "error: there is no identity 00000000-0000-7000-8000-000000000000\n".to_owned(),
         ),
         (
             &["show", "records", "shop:9"],
-            "spool: there is no record with key `9` from source `shop`\n".to_owned(),
+            "error: there is no record with key `9` from source `shop`\n".to_owned(),
         ),
         (
             &["show", "documents", "00000000-0000-7000-8000-000000000000"],
-            "spool: there is no document 00000000-0000-7000-8000-000000000000\n".to_owned(),
+            "error: there is no document 00000000-0000-7000-8000-000000000000\n".to_owned(),
         ),
         (
             &["show", "drafts", "00000000-0000-7000-8000-000000000000"],
-            "spool: there is no draft 00000000-0000-7000-8000-000000000000\n".to_owned(),
+            "error: there is no draft 00000000-0000-7000-8000-000000000000\n".to_owned(),
         ),
     ] {
         let (code, complaint) = refused(&server, arguments);
@@ -1560,7 +1560,7 @@ fn a_mistake_or_a_server_that_does_not_answer_is_said_plainly() {
     let complaint = text(&gone.stderr);
     assert!(
         complaint.starts_with(&format!(
-            "spool: the server at http://{address} cannot be reached: "
+            "error: the server at http://{address} cannot be reached: "
         )),
         "{complaint}"
     );

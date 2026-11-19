@@ -37,6 +37,11 @@ pub fn spool() -> Command {
         "SPOOL_GOOGLE_CLIENT_ID",
         "SPOOL_GOOGLE_CLIENT_SECRET",
         "SPOOL_GOOGLE_ISSUER",
+        // Colour follows the output the test reads, whatever the terminal
+        // it was started from says.
+        "NO_COLOR",
+        "CLICOLOR",
+        "CLICOLOR_FORCE",
     ] {
         command.env_remove(name);
     }

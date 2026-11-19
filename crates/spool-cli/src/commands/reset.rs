@@ -3,6 +3,7 @@
 use std::io::{BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
+use anstream::{eprint, eprintln, println};
 use clap::Args;
 
 use super::accounts_path;
@@ -74,7 +75,7 @@ pub fn reset(arguments: ResetArgs) -> Result<(), Failure> {
 
     let spool_kind = std::fs::symlink_metadata(&spool_dir).map(|found| found.file_type());
     if spool_kind.as_ref().is_ok_and(|kind| kind.is_symlink()) {
-        return Err(Failure::Failed(format!(
+        return Err(Failure::failed(format!(
             "{} is a link to another place, and `spool reset` removes nothing outside the \
              project. Nothing was removed.",
             spool_dir.display()
@@ -98,7 +99,7 @@ pub fn reset(arguments: ResetArgs) -> Result<(), Failure> {
             .extension()
             .is_none_or(|extension| extension != "duckdb")
     {
-        return Err(Failure::Usage(format!(
+        return Err(Failure::usage(format!(
             "`spool reset` removes only a development store: a .duckdb file directly under {}. \
              {} is not one, and may be the store of a `spool serve`, which no command removes.",
             spool_dir.display(),
@@ -125,7 +126,7 @@ pub fn reset(arguments: ResetArgs) -> Result<(), Failure> {
             Ok(true) => removed.push((path, kind)),
             Ok(false) => {}
             Err(is) => {
-                return Err(Failure::Failed(format!(
+                return Err(Failure::failed(format!(
                     "{} is {is}, where `spool reset` expects {}. It removes only what DuckDB \
                      makes, so nothing was removed.",
                     path.display(),
@@ -148,12 +149,13 @@ pub fn reset(arguments: ResetArgs) -> Result<(), Failure> {
     let _held = match spool::hold_store(&store) {
         Ok(held) => Some(held),
         Err(spool::Error::StoreInUse { holder, .. }) => {
-            return Err(Failure::Failed(format!(
+            return Err(Failure::failed(format!(
                 "the store {} is open in another process{}, most likely a `spool dev` on this \
-                 project.\nStop it with Ctrl-C, then run `spool reset` again. Nothing was removed.",
+                 project. Nothing was removed.",
                 shown(&store),
                 holder.map_or_else(String::new, |pid| format!(" (PID {pid})")),
-            )));
+            ))
+            .hint("stop it with Ctrl-C, then run `spool reset` again"));
         }
         Err(_) => None,
     };
@@ -161,7 +163,7 @@ pub fn reset(arguments: ResetArgs) -> Result<(), Failure> {
     let mut kept: Vec<(String, String)> = Vec::new();
     let accounts = accounts_path(&store);
     let mut entries: Vec<PathBuf> = std::fs::read_dir(&spool_dir)
-        .map_err(|error| Failure::Failed(format!("{}: {error}", spool_dir.display())))?
+        .map_err(|error| Failure::failed(format!("{}: {error}", spool_dir.display())))?
         .filter_map(|entry| Some(entry.ok()?.path()))
         .filter(|path| !removed.iter().any(|(gone, _)| gone == path))
         .collect();
@@ -222,7 +224,7 @@ pub fn reset(arguments: ResetArgs) -> Result<(), Failure> {
 
     if !arguments.yes {
         if !std::io::stdin().is_terminal() {
-            return Err(Failure::Failed(
+            return Err(Failure::failed(
                 "nothing was removed: nobody can be asked here, so add `--yes` to remove it"
                     .to_owned(),
             ));
@@ -233,7 +235,7 @@ pub fn reset(arguments: ResetArgs) -> Result<(), Failure> {
         std::io::stdin()
             .lock()
             .read_line(&mut answer)
-            .map_err(|error| Failure::Failed(format!("reading the answer: {error}")))?;
+            .map_err(|error| Failure::failed(format!("reading the answer: {error}")))?;
         if !matches!(answer.trim().to_lowercase().as_str(), "y" | "yes") {
             say("nothing was removed");
             nothing();
@@ -244,7 +246,7 @@ pub fn reset(arguments: ResetArgs) -> Result<(), Failure> {
     for (path, kind) in &removed {
         // Checked again: it may have changed while the question was asked.
         if let Err(is) = kind.check(path) {
-            return Err(Failure::Failed(format!(
+            return Err(Failure::failed(format!(
                 "{} is {is} now, where `spool reset` expects {}; it stopped there",
                 path.display(),
                 kind.expected()
@@ -256,7 +258,7 @@ pub fn reset(arguments: ResetArgs) -> Result<(), Failure> {
             Kind::Directory => std::fs::remove_dir_all(path),
             Kind::File => std::fs::remove_file(path),
         };
-        gone.map_err(|error| Failure::Failed(format!("{}: {error}", path.display())))?;
+        gone.map_err(|error| Failure::failed(format!("{}: {error}", path.display())))?;
         if out.is_table() {
             println!("removed  {}", shown(path));
         }

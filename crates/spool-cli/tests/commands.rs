@@ -213,7 +213,7 @@ fn init_writes_nothing_into_a_folder_that_holds_files() {
     assert_eq!(text(&refused.stdout), "");
     assert_eq!(
         text(&refused.stderr),
-        "spool: this folder already holds files (Documents, Downloads, notes.txt and 2 more), \
+        "error: this folder already holds files (Documents, Downloads, notes.txt and 2 more), \
          and `spool init` makes a project only in an empty one. Nothing was written. \
          `spool init <name>` makes the project in a new folder of that name\n"
     );
@@ -228,7 +228,7 @@ fn init_writes_nothing_into_a_folder_that_holds_files() {
     assert_eq!(refused.status.code(), Some(1));
     assert_eq!(
         text(&refused.stderr),
-        "spool: taken already holds files (rows.csv). `spool init` makes a project only in a \
+        "error: taken already holds files (rows.csv). `spool init` makes a project only in a \
          new or empty folder: give it another name\n"
     );
     assert_eq!(files_of(&taken), ["rows.csv"]);
@@ -239,13 +239,13 @@ fn init_writes_nothing_into_a_folder_that_holds_files() {
     assert_eq!(refused.status.code(), Some(1));
     assert_eq!(
         text(&refused.stderr),
-        "spool: project is a project already: it has an entities/ folder\n"
+        "error: project is a project already: it has an entities/ folder\n"
     );
     assert!(!dir.path().join("project/samples").exists());
     let refused = init_in(&dir.path().join("project"), &[]);
     assert_eq!(
         text(&refused.stderr),
-        "spool: this folder is a project already: it has an entities/ folder\n"
+        "error: this folder is a project already: it has an entities/ folder\n"
     );
 
     // A file.
@@ -254,7 +254,7 @@ fn init_writes_nothing_into_a_folder_that_holds_files() {
     assert_eq!(refused.status.code(), Some(1));
     assert_eq!(
         text(&refused.stderr),
-        "spool: a-file is a file, and a project is a folder\n"
+        "error: a-file is a file, and a project is a folder\n"
     );
     assert_eq!(read(&dir.path().join("a-file")), "mine\n");
 }
@@ -567,7 +567,7 @@ fn a_project_that_does_not_compile_is_reported_with_its_file() {
         let output = run(&[command, path(dir.path())]);
         assert_eq!(output.status.code(), Some(1), "{command}");
         let stderr = text(&output.stderr);
-        assert!(stderr.starts_with("spool: "), "{stderr}");
+        assert!(stderr.starts_with("error: "), "{stderr}");
         assert!(stderr.contains("same_code.sql"), "{stderr}");
         assert!(stderr.contains("no_such_column"), "{stderr}");
     }
@@ -786,7 +786,7 @@ fn dev_serves_a_project_directory_and_applies_changes_as_they_are_saved() {
     // with what it had.
     std::fs::write(&entity, "features: [code\n").unwrap();
     let complaint = server.complained("entity.yaml");
-    assert!(complaint.starts_with("spool: "), "{complaint}");
+    assert!(complaint.starts_with("error: "), "{complaint}");
     server.complained("still running the last version that compiled");
     assert_eq!(server.read("/v1/info")["store"]["manifest_hash"], second);
 
@@ -1033,7 +1033,7 @@ fn a_second_server_on_a_store_or_a_port_says_what_is_wrong() {
     let said = stopped.output;
     assert!(
         said.starts_with(&format!(
-            "spool: the store {} is open in another process",
+            "error: the store {} is open in another process",
             store.display()
         )),
         "{said}"
@@ -1054,7 +1054,7 @@ fn a_second_server_on_a_store_or_a_port_says_what_is_wrong() {
     let said = text(&applied.stderr);
     assert!(
         said.starts_with(&format!(
-            "spool: the store at {} is open in another process",
+            "error: the store at {} is open in another process",
             store.display()
         )),
         "{said}"
@@ -1076,7 +1076,7 @@ fn a_second_server_on_a_store_or_a_port_says_what_is_wrong() {
     let next = format!("{host}:{next}");
     assert!(
         said.contains(&format!(
-            "spool: cannot listen on {}: something else is listening there",
+            "error: cannot listen on {}: something else is listening there",
             running.address
         )),
         "{said}"

@@ -1,6 +1,7 @@
 //! `spool match`: starts a match run on a running server and says what it
 //! did.
 
+use anstream::println;
 use clap::Args;
 use serde_json::{Value, json};
 use spool::core::EntityType;
@@ -56,7 +57,7 @@ pub fn run(arguments: MatchArgs) -> Result<(), Failure> {
     let info = remote.info()?;
     let types = &info.store.entity_types;
     if types.is_empty() {
-        return Err(Failure::Failed(
+        return Err(Failure::failed(
             "the project declares no entity type, so there is nothing to match. An entity \
              type is a directory entities/<name> with an entity.yaml."
                 .to_owned(),
@@ -69,7 +70,7 @@ pub fn run(arguments: MatchArgs) -> Result<(), Failure> {
                 .iter()
                 .find(|declared| declared.name.as_str() == name)
                 .ok_or_else(|| {
-                    Failure::Failed(format!(
+                    Failure::failed(format!(
                         "the project has no entity type `{name}`. It has {}.",
                         declared(types)
                     ))
@@ -84,7 +85,7 @@ pub fn run(arguments: MatchArgs) -> Result<(), Failure> {
     let strategy = Some(arguments.strategy.as_str()).filter(|name| *name != StrategyRef::RULES);
     if let Some(strategy) = strategy {
         let [entity_type] = chosen.as_slice() else {
-            return Err(Failure::Failed(format!(
+            return Err(Failure::failed(format!(
                 "a strategy judges one entity type: say which `{strategy}` is for with \
                  `--type`. The project has {}.",
                 declared(types)
@@ -104,7 +105,7 @@ pub fn run(arguments: MatchArgs) -> Result<(), Failure> {
                 )
                 .map(|known| format!("`{known}`"))
                 .collect();
-            return Err(Failure::Failed(format!(
+            return Err(Failure::failed(format!(
                 "`{}` has no strategy `{strategy}`. It has {}.",
                 entity_type.name,
                 known.join(", ")
@@ -149,7 +150,7 @@ pub fn run(arguments: MatchArgs) -> Result<(), Failure> {
                     part(false);
                     println!("failed      type `{name}`: the match did not run to the end");
                 }
-                failures.push(Failure::Failed(format!("type `{name}`: {message}")));
+                failures.push(Failure::failed(format!("type `{name}`: {message}")));
                 continue;
             }
             Err(failure) => return Err(failure),
@@ -177,7 +178,7 @@ pub fn run(arguments: MatchArgs) -> Result<(), Failure> {
         if run.status != RunStatus::Succeeded {
             let failure = match named {
                 Some(_) => unsuccessful(&run),
-                None => Failure::Failed(format!("type `{name}`: {}", unsuccessful(&run).message())),
+                None => Failure::failed(format!("type `{name}`: {}", unsuccessful(&run).message())),
             };
             if !as_json {
                 part(false);
@@ -200,7 +201,7 @@ pub fn run(arguments: MatchArgs) -> Result<(), Failure> {
     match failures.len() {
         0 => Ok(()),
         1 => Err(failures.remove(0)),
-        _ => Err(Failure::Failed(
+        _ => Err(Failure::failed(
             failures
                 .into_iter()
                 .map(Failure::message)
@@ -241,7 +242,7 @@ fn nothing(entity_type: &TypeInfo, rematch: bool) -> (String, &'static str) {
 /// Prints the report of a match run that succeeded.
 fn report(run: &RunEntry, name: &EntityType, rematch: bool) -> Result<(), Failure> {
     let report = run.resolution.as_ref().ok_or_else(|| {
-        Failure::Failed(format!(
+        Failure::failed(format!(
             "run {} succeeded and reported no match; is the server of this version?",
             run.run
         ))

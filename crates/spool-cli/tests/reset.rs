@@ -38,11 +38,13 @@ fn reset_removes_the_development_store_and_keeps_everything_else() {
     assert_eq!(refused.status.code(), Some(1));
     let said = text(&refused.stderr);
     assert!(
-        said.starts_with("spool: the store .spool/dev.duckdb is open in another process (PID "),
+        said.starts_with("error: the store .spool/dev.duckdb is open in another process (PID "),
         "{said}"
     );
     assert!(
-        said.contains("Stop it with Ctrl-C, then run `spool reset` again. Nothing was removed."),
+        said.ends_with(
+            "Nothing was removed.\nhint: stop it with Ctrl-C, then run `spool reset` again\n"
+        ),
         "{said}"
     );
     assert!(spool_dir.join("dev.duckdb").is_file());
@@ -72,7 +74,7 @@ fn reset_removes_the_development_store_and_keeps_everything_else() {
     }
     assert_eq!(
         text(&unasked.stderr),
-        "spool: nothing was removed: nobody can be asked here, so add `--yes` to remove it\n"
+        "error: nothing was removed: nobody can be asked here, so add `--yes` to remove it\n"
     );
     assert!(spool_dir.join("dev.duckdb").is_file());
 

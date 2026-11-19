@@ -3,6 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
+use anstream::println;
 use clap::Args;
 use spool::{Engine, Manifest, Options, Project, Runtime};
 
@@ -210,7 +211,7 @@ const DOCKERIGNORE: &str = "\
 ";
 
 pub(super) fn failed(message: impl Into<String>) -> Failure {
-    Failure::Failed(message.into())
+    Failure::failed(message.into())
 }
 
 pub(super) fn write(path: &Path, contents: &str) -> Result<(), Failure> {

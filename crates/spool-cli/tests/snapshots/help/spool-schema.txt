@@ -6,4 +6,5 @@ Options:
   -h, --help  Print help (see more with '--help')
 
 Global options:
-  -q, --quiet  Print only the result and errors: no hints or progress
+      --color <WHEN>  When to use colour [default: auto] [possible values: auto, always, never]
+  -q, --quiet         Print only the result and errors: no hints or progress

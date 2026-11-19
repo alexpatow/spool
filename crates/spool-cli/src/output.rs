@@ -16,6 +16,7 @@
 use std::io::IsTerminal;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use anstream::{eprintln, println};
 use clap::{Args, ValueEnum};
 use comfy_table::presets::NOTHING;
 use comfy_table::{ContentArrangement, Table as Layout};
@@ -23,6 +24,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::Failure;
+use crate::style::{self, paint};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Format {
@@ -71,9 +73,22 @@ pub fn quiet() -> bool {
 /// Says something beside the result, on standard error, unless `-q` was
 /// given: a hint, a note, what to run next.
 pub fn hint(text: impl AsRef<str>) {
-    if !quiet() {
-        eprintln!("{}", text.as_ref());
+    if quiet() {
+        return;
     }
+    let text = text.as_ref();
+    for (prefix, style) in [
+        ("next:", style::HINT),
+        ("more:", style::HINT),
+        ("note:", style::HINT),
+        ("warning:", style::WARNING),
+    ] {
+        if let Some(rest) = text.strip_prefix(prefix) {
+            eprintln!("{}{rest}", paint(style, prefix));
+            return;
+        }
+    }
+    eprintln!("{text}");
 }
 
 /// Where a command prints its result, in the format that was asked for.
@@ -101,7 +116,7 @@ impl Output {
     /// Refuses CSV for what is not a list, such as one thing of `spool show`.
     pub fn refuse_csv(&self, what: &str) -> Result<(), Failure> {
         match self.format {
-            Format::Csv => Err(Failure::Usage(format!(
+            Format::Csv => Err(Failure::usage(format!(
                 "{what} is a report, not a list, so it cannot be CSV: use `-o json` or `-o ndjson`"
             ))),
             _ => Ok(()),
@@ -247,7 +262,7 @@ impl Table {
             .collect();
         let header: Vec<String> = shown
             .iter()
-            .map(|&column| self.columns[column].name.to_uppercase())
+            .map(|&column| paint(style::HEADER, &self.columns[column].name.to_uppercase()))
             .collect();
         let rows: Vec<Vec<String>> = self
             .rows
@@ -255,7 +270,10 @@ impl Table {
             .map(|row| {
                 shown
                     .iter()
-                    .map(|&column| one_line(&row[column].shown))
+                    .map(|&column| {
+                        let value = one_line(&row[column].shown);
+                        paint(column_style(&self.columns[column].name, &value), &value)
+                    })
                     .collect()
             })
             .collect();
@@ -283,8 +301,18 @@ impl Table {
         });
         // A reader that has gone ends the command, as SIGPIPE does.
         if let Err(error) = written {
-            eprintln!("spool: {error}");
+            eprintln!("{} {error}", paint(style::ERROR, "error:"));
         }
+    }
+}
+
+/// How a cell is shown in a column: an ID is dim, and a status has the
+/// colour of what it says.
+fn column_style(column: &str, value: &str) -> anstyle::Style {
+    match column {
+        "identity" | "record" | "document" | "draft" => style::ID,
+        "status" | "version" => style::status(value),
+        _ => anstyle::Style::new(),
     }
 }
 
@@ -343,7 +371,7 @@ pub fn indented(rows: &[(&str, String)]) {
 fn pairs(rows: &[(&str, String)], indent: usize) {
     let rows: Vec<Vec<String>> = rows
         .iter()
-        .map(|(label, value)| vec![(*label).to_owned(), value.clone()])
+        .map(|(label, value)| vec![paint(style::LABEL, label), value.clone()])
         .collect();
     aligned(&rows, indent);
 }

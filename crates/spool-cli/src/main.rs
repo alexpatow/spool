@@ -2,10 +2,13 @@
 
 mod commands;
 mod output;
+mod style;
 
+use std::ffi::OsString;
 use std::process::ExitCode;
 
-use clap::{CommandFactory, Parser, Subcommand};
+use anstream::eprintln;
+use clap::{ColorChoice, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use commands::{
     bench, extract, init, load, matching, project, recompute, reset, retract, serve, show, token,
@@ -21,6 +24,18 @@ use commands::{
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
+    /// When to use colour
+    ///
+    /// `auto` uses it on a terminal, unless NO_COLOR is set, and where
+    /// CLICOLOR_FORCE is. JSON, NDJSON and CSV never have colour.
+    #[arg(
+        long,
+        value_name = "WHEN",
+        default_value_t = ColorChoice::Auto,
+        global = true,
+        help_heading = "Global options"
+    )]
+    color: ColorChoice,
     /// Print only the result and errors: no hints or progress
     #[arg(short, long, global = true, help_heading = "Global options")]
     quiet: bool,
@@ -47,38 +62,122 @@ enum Command {
     Schema(commands::SchemaArgs),
 }
 
-/// How a command ended, other than well.
-pub enum Failure {
+/// How a command ended, other than well: what went wrong, and what to do
+/// about it where there is something.
+pub struct Failure {
+    kind: Kind,
+    message: String,
+    hint: Option<String>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
     /// The arguments were wrong. Printed with the command's usage; exit 2.
-    Usage(String),
+    Usage,
     /// The command failed. Printed; exit 1.
-    Failed(String),
+    Failed,
     /// The command was stopped with Ctrl-C, and says what that left.
     /// Printed; exit 130, as for a command the signal ended.
-    Stopped(String),
+    Stopped,
 }
 
 impl Failure {
-    /// What the failure says, without the usage a wrong command is shown.
+    pub fn usage(message: impl Into<String>) -> Failure {
+        Failure {
+            kind: Kind::Usage,
+            message: message.into(),
+            hint: None,
+        }
+    }
+
+    pub fn failed(message: impl Into<String>) -> Failure {
+        Failure {
+            kind: Kind::Failed,
+            message: message.into(),
+            hint: None,
+        }
+    }
+
+    pub fn stopped(message: impl Into<String>) -> Failure {
+        Failure {
+            kind: Kind::Stopped,
+            message: message.into(),
+            hint: None,
+        }
+    }
+
+    /// More that the failure says, on a line of its own after it.
+    pub fn and(mut self, more: impl AsRef<str>) -> Failure {
+        self.message.push('\n');
+        self.message.push_str(more.as_ref());
+        self
+    }
+
+    /// What to do about it, said after it as `hint:`.
+    pub fn hint(mut self, hint: impl Into<String>) -> Failure {
+        self.hint = Some(hint.into());
+        self
+    }
+
+    pub fn kind(&self) -> Kind {
+        self.kind
+    }
+
+    /// What the failure says, with its hint if it has one.
     pub fn message(self) -> String {
-        match self {
-            Failure::Usage(message) | Failure::Failed(message) | Failure::Stopped(message) => {
-                message
-            }
+        match self.hint {
+            Some(hint) => format!("{}\nhint: {hint}", self.message),
+            None => self.message,
         }
     }
 }
 
 impl From<spool::Error> for Failure {
     fn from(error: spool::Error) -> Self {
-        Failure::Failed(error.to_string())
+        Failure::failed(error.to_string())
+    }
+}
+
+/// The colour `--color` asks for, read before the arguments are parsed, so
+/// that the help and the usage errors follow it as well.
+fn color(arguments: &[OsString]) -> ColorChoice {
+    let mut given = None;
+    let mut words = arguments.iter().skip(1).map(|word| word.to_string_lossy());
+    while let Some(word) = words.next() {
+        if word == "--" {
+            break;
+        }
+        if let Some(value) = word.strip_prefix("--color=") {
+            given = Some(value.to_owned());
+        } else if word == "--color" {
+            given = words.next().map(|value| value.into_owned());
+        }
+    }
+    match given.as_deref() {
+        Some("always") => ColorChoice::Always,
+        Some("never") => ColorChoice::Never,
+        _ => ColorChoice::Auto,
     }
 }
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let arguments: Vec<OsString> = std::env::args_os().collect();
+    let choice = color(&arguments);
+    anstream::ColorChoice::write_global(match choice {
+        ColorChoice::Auto => anstream::ColorChoice::Auto,
+        ColorChoice::Always => anstream::ColorChoice::Always,
+        ColorChoice::Never => anstream::ColorChoice::Never,
+    });
+    let command = || Cli::command().color(choice).styles(style::clap());
+    let cli = match Cli::from_arg_matches(&command().get_matches_from(&arguments)) {
+        Ok(cli) => cli,
+        Err(error) => error.format(&mut command()).exit(),
+    };
     let Some(command) = cli.command else {
-        let _ = Cli::command().print_help();
+        let _ = Cli::command()
+            .color(choice)
+            .styles(style::clap())
+            .print_help();
         return ExitCode::SUCCESS;
     };
     output::set_quiet(cli.quiet);
@@ -86,30 +185,38 @@ fn main() -> ExitCode {
         end_quietly_when_the_output_closes();
     }
     let (path, ended) = run(command);
-    match ended {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(Failure::Usage(message)) => {
-            let mut cli = Cli::command();
-            cli.build();
-            let mut command = &mut cli;
-            for name in path {
-                command = command
-                    .find_subcommand_mut(name)
-                    .expect("a command that ran is one the parser knows");
-            }
-            let _ = command
-                .error(clap::error::ErrorKind::ValueValidation, message)
-                .print();
-            ExitCode::from(2)
+    let Err(failure) = ended else {
+        return ExitCode::SUCCESS;
+    };
+    if failure.kind == Kind::Usage {
+        let mut cli = Cli::command().color(choice).styles(style::clap());
+        cli.build();
+        let mut command = &mut cli;
+        for name in path {
+            command = command
+                .find_subcommand_mut(name)
+                .expect("a command that ran is one the parser knows");
         }
-        Err(Failure::Failed(message)) => {
-            eprintln!("spool: {message}");
-            ExitCode::FAILURE
-        }
-        Err(Failure::Stopped(message)) => {
-            eprintln!("spool: {message}");
-            ExitCode::from(130)
-        }
+        let message = match &failure.hint {
+            Some(hint) => format!("{}\n\n  tip: {hint}", failure.message),
+            None => failure.message,
+        };
+        let _ = command
+            .error(clap::error::ErrorKind::ValueValidation, message)
+            .print();
+        return ExitCode::from(2);
+    }
+    eprintln!(
+        "{} {}",
+        style::paint(style::ERROR, "error:"),
+        failure.message
+    );
+    if let Some(hint) = &failure.hint {
+        eprintln!("{} {hint}", style::paint(style::HINT, "hint:"));
+    }
+    match failure.kind {
+        Kind::Stopped => ExitCode::from(130),
+        _ => ExitCode::FAILURE,
     }
 }
 

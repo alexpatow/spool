@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
+use anstream::println;
 use spool::arrow::array::{Array, AsArray};
 use spool::core::ReviewItem;
 use spool::{BenchReport, Engine, Options, Scenario, StepReport, StrategyRef, UserCode};

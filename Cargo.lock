@@ -3139,6 +3139,8 @@ dependencies = [
 name = "spool-cli"
 version = "0.1.0"
 dependencies = [
+ "anstream",
+ "anstyle",
  "arrow",
  "async-trait",
  "axum",

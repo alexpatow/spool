@@ -257,3 +257,104 @@ fn the_local_commands_print_json_too() {
         serde_json::from_str(&succeed(&["reset", path(&project), "--yes", "--json"])).unwrap();
     assert_eq!(reset["removed"], serde_json::json!([]));
 }
+
+/// `spool <arguments>` with `environment`, and what it printed on each
+/// stream, whether or not it succeeded.
+fn streams(
+    server: &Server,
+    dir: &Path,
+    arguments: &[&str],
+    environment: &[(&str, &str)],
+) -> (String, String) {
+    let output = server
+        .spool_in(dir, arguments)
+        .envs(environment.iter().copied())
+        .output()
+        .unwrap();
+    (text(&output.stdout), text(&output.stderr))
+}
+
+fn coloured(printed: &str) -> bool {
+    printed.contains('\u{1b}')
+}
+
+#[test]
+fn colour_is_only_on_a_terminal_or_when_asked_for_and_never_in_data() {
+    let dir = tempfile::tempdir().unwrap();
+    let (server, project) = matched(dir.path());
+
+    // Piped, as here, nothing has colour: not the result, not a hint, not
+    // an error.
+    for arguments in [
+        &["show", "identities", "--limit", "2"][..],
+        &["show", "runs"],
+        &["show"],
+        &["load", "samples/crm-2.csv"],
+        &["load", "no-such.csv"],
+        &["show", "runs", "--sort", "kind"],
+    ] {
+        let (result, beside) = streams(&server, &project, arguments, &[]);
+        assert!(!coloured(&result), "{arguments:?}: {result}");
+        assert!(!coloured(&beside), "{arguments:?}: {beside}");
+    }
+
+    // Asked for, a table and what is said beside it have colour, and data
+    // never does.
+    let always = &["--color", "always"][..];
+    let (table, beside) = streams(
+        &server,
+        &project,
+        &[&["show", "identities", "--limit", "1"][..], always].concat(),
+        &[],
+    );
+    assert!(table.starts_with("\u{1b}[1mIDENTITY\u{1b}[0m"), "{table}");
+    assert!(beside.starts_with("\u{1b}[1m\u{1b}[96mmore:"), "{beside}");
+    for format in ["json", "ndjson", "csv"] {
+        let (data, _) = streams(
+            &server,
+            &project,
+            &[&["show", "identities", "-o", format][..], always].concat(),
+            &[],
+        );
+        assert!(!coloured(&data), "{format}: {data}");
+    }
+    let (_, error) = streams(
+        &server,
+        &project,
+        &[&["load", "no-such.csv"][..], always].concat(),
+        &[],
+    );
+    assert!(
+        error.starts_with("\u{1b}[1m\u{1b}[91merror:\u{1b}[0m there is no file"),
+        "{error}"
+    );
+
+    // The variables, and the option over them.
+    for (environment, option, expected) in [
+        (&[("CLICOLOR_FORCE", "1")][..], &[][..], true),
+        (&[("CLICOLOR_FORCE", "1"), ("NO_COLOR", "1")], &[], false),
+        (&[("NO_COLOR", "1")], &["--color", "always"], true),
+        (&[("CLICOLOR_FORCE", "1")], &["--color", "never"], false),
+        (&[("CLICOLOR_FORCE", "1")], &["--color=never"], false),
+    ] {
+        let (table, _) = streams(
+            &server,
+            &project,
+            &[&["show", "runs"][..], option].concat(),
+            environment,
+        );
+        assert_eq!(coloured(&table), expected, "{environment:?} {option:?}");
+    }
+
+    // The help follows `--color` too.
+    let help = text(
+        &spool()
+            .args(["show", "-h", "--color", "always"])
+            .output()
+            .unwrap()
+            .stdout,
+    );
+    assert!(coloured(&help), "{help}");
+    let help = text(&spool().args(["show", "-h"]).output().unwrap().stdout);
+    assert!(!coloured(&help), "{help}");
+}

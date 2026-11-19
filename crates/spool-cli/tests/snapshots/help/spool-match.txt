@@ -18,4 +18,5 @@ Server options:
       --token <TOKEN>  A token for that server; `spool dev` needs none [env: SPOOL_TOKEN]
 
 Global options:
-  -q, --quiet  Print only the result and errors: no hints or progress
+      --color <WHEN>  When to use colour [default: auto] [possible values: auto, always, never]
+  -q, --quiet         Print only the result and errors: no hints or progress

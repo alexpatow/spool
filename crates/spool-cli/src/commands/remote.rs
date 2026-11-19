@@ -121,7 +121,7 @@ impl Remote {
             request = request.header("Authorization", format!("Bearer {token}"));
         }
         self.answer(request.send(body.to_string()))?.ok_or_else(|| {
-            Failure::Failed(format!(
+            Failure::failed(format!(
                 "{} has no `/v1{path}`; is it a Spool server of this version?",
                 self.url
             ))
@@ -148,7 +148,7 @@ impl Remote {
             request = request.query(*name, value);
         }
         self.answer(request.send(body))?.ok_or_else(|| {
-            Failure::Failed(format!(
+            Failure::failed(format!(
                 "{} has no `/v1{path}`; is it a Spool server of this version?",
                 self.url
             ))
@@ -186,10 +186,11 @@ impl Remote {
         sent: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
     ) -> Result<Option<Value>, Failure> {
         let mut response = sent.map_err(|error| {
-            Failure::Failed(format!(
-                "the server at {} cannot be reached: {error}\nStart one with `spool dev`, or name another with `--url` or SPOOL_URL.",
+            Failure::failed(format!(
+                "the server at {} cannot be reached: {error}",
                 self.url
             ))
+            .hint("start one with `spool dev`, or name another with `--url` or SPOOL_URL")
         })?;
         let status = response.status().as_u16();
         let body = response
@@ -198,13 +199,13 @@ impl Remote {
             .limit(MAX_BODY_BYTES)
             .read_to_string()
             .map_err(|error| {
-                Failure::Failed(format!(
+                Failure::failed(format!(
                     "the answer of the server at {} could not be read: {error}",
                     self.url
                 ))
             })?;
         let unexpected = || {
-            Failure::Failed(format!(
+            Failure::failed(format!(
                 "{} answered {status} and not the way a Spool server does; is it one?",
                 self.url
             ))
@@ -217,19 +218,20 @@ impl Remote {
         let refusal: ErrorResponse = serde_json::from_str(&body).map_err(|_| unexpected())?;
         match status {
             404 => Ok(None),
-            401 => Err(Failure::Failed(match self.token {
-                Some(_) => format!(
-                    "the server at {} did not accept the token: pass one of its tokens with `--token` or in SPOOL_TOKEN",
+            401 => Err(match self.token {
+                Some(_) => Failure::failed(format!(
+                    "the server at {} did not accept the token",
                     self.url
-                ),
-                None => format!(
-                    "the server at {} asks for a token: pass one with `--token` or in SPOOL_TOKEN. \
-                     An admin makes one on the studio's Tokens page, and `spool token add` makes \
-                     one on the server's machine.",
-                    self.url
-                ),
-            })),
-            _ => Err(Failure::Failed(refusal.error.message)),
+                ))
+                .hint("pass one of its tokens with `--token` or in SPOOL_TOKEN"),
+                None => Failure::failed(format!("the server at {} asks for a token", self.url))
+                    .hint(
+                        "pass one with `--token` or in SPOOL_TOKEN. An admin makes one on the \
+                         studio's Tokens page, and `spool token add` makes one on the server's \
+                         machine",
+                    ),
+            }),
+            _ => Err(Failure::failed(refusal.error.message)),
         }
     }
 
@@ -242,7 +244,7 @@ impl Remote {
         missing: impl FnOnce() -> String,
     ) -> Result<Value, Failure> {
         self.find(path, query)?
-            .ok_or_else(|| Failure::Failed(missing()))
+            .ok_or_else(|| Failure::failed(missing()))
     }
 
     /// `GET <path>` of something that is always there, such as a list.
@@ -259,7 +261,7 @@ impl Remote {
 /// Reads a value the server sent as one of the API's types.
 pub fn typed<T: DeserializeOwned>(value: &Value) -> Result<T, Failure> {
     T::deserialize(value).map_err(|error| {
-        Failure::Failed(format!(
+        Failure::failed(format!(
             "the server's answer is not what this version of `spool` expects: {error}"
         ))
     })
@@ -267,7 +269,7 @@ pub fn typed<T: DeserializeOwned>(value: &Value) -> Result<T, Failure> {
 
 /// Why a run that did not succeed ended as it did, as a command's failure.
 pub fn unsuccessful(run: &RunEntry) -> Failure {
-    Failure::Failed(format!(
+    Failure::failed(format!(
         "run {} {}: {}",
         run.run,
         run.status,
