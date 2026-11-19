@@ -1,6 +1,7 @@
 //! `spool init`: an empty project, or one filled with an example.
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use anstream::println;
 use clap::Args;
@@ -16,6 +17,9 @@ use crate::output::{Output, OutputArgs, hint};
 /// Creates a project: the standard folders, a .gitignore and a .env.example.
 /// With --example, it's a complete project with sample rows and documents
 /// to load.
+///
+/// Runs git init if the folder has no repository. This requires Git on PATH
+/// and creates an empty repository with no commits.
 ///
 /// Either way, it writes what coding agents read: AGENTS.md (imported by
 /// CLAUDE.md) and skills for using Spool, in .agents/skills/ with a symlink
@@ -206,6 +210,7 @@ pub fn init(arguments: InitArgs) -> Result<(), Failure> {
     let named = arguments.dir.is_some();
     let dir = super::project_dir(&arguments.dir);
     refuse_unless_empty(&dir, named)?;
+    init_git(&dir)?;
 
     let mut files: Vec<(String, &str)> = example
         .map(|example| {
@@ -319,6 +324,46 @@ fn program(runtime: Runtime) -> &'static str {
         Runtime::Python => "uv",
         Runtime::Typescript => "bun",
     }
+}
+
+fn init_git(dir: &Path) -> Result<(), Failure> {
+    let git = dir.join(".git");
+    // Worktrees use a .git file. A failed git init can leave a .git
+    // directory without a HEAD or an objects directory.
+    if git.is_file() || (git.join("HEAD").is_file() && git.join("objects").is_dir()) {
+        return Ok(());
+    }
+
+    let output = Command::new("git")
+        .args(["init", "--quiet", "--"])
+        .arg(dir)
+        // A command called from Git can inherit paths for another repository.
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_OBJECT_DIRECTORY")
+        .output()
+        .map_err(|error| {
+            let failure = failed(format!(
+                "could not run git init in {}: {error}",
+                dir.display()
+            ));
+            if error.kind() == std::io::ErrorKind::NotFound {
+                failure.hint("install Git and make sure git is on PATH")
+            } else {
+                failure
+            }
+        })?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let detail = String::from_utf8_lossy(&output.stderr);
+    Err(failed(format!(
+        "git init in {} failed ({}): {}",
+        dir.display(),
+        output.status,
+        detail.trim()
+    )))
 }
 
 /// Fails unless `dir` is not there or holds nothing but what [`MAY_HOLD`]

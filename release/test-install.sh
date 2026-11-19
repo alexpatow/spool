@@ -9,8 +9,8 @@
 # release/archive.sh. They are served, with install.sh, at an address on
 # this machine, as a release's files are on GitHub, and install.sh is fetched
 # from there and piped to `sh`. That happens on this machine, or with an
-# <image> in a container of it, which has to have `curl`; <platform> is one
-# for `docker run --platform`, as in linux/arm64.
+# <image> in a container of it, which has to have `curl` and `git`.
+# <platform> is one for `docker run --platform`, as in linux/arm64.
 #
 # It checks that the release is unpacked and linked where the README says,
 # that a second run replaces it, that an archive which is not the one
