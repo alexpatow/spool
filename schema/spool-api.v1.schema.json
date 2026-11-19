@@ -75,6 +75,146 @@
       ],
       "type": "object"
     },
+    "After": {
+      "properties": {
+        "fate": {
+          "$ref": "#/$defs/Fate"
+        },
+        "identity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IdentityId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The identity that keeps its ID. `None` for a new identity, whose ID\nis minted when the result is applied, and for records that wait."
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "merged": {
+          "description": "Identities of now that would be merged into this one.",
+          "items": {
+            "$ref": "#/$defs/IdentityId"
+          },
+          "type": "array"
+        },
+        "records": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "fate",
+        "records"
+      ],
+      "type": "object"
+    },
+    "AppliedType": {
+      "properties": {
+        "committed": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Committed"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The changeset, or `None` when nothing changed."
+        },
+        "entity_type": {
+          "$ref": "#/$defs/EntityType"
+        },
+        "match_run": {
+          "$ref": "#/$defs/RunId",
+          "description": "The match run that judged every record by the rules. Its judgements\nare kept as any run's are."
+        },
+        "reconcile_run": {
+          "$ref": "#/$defs/RunId",
+          "description": "The reconcile run that wrote the changeset."
+        },
+        "review": {
+          "description": "The review items the records that wait were left in.",
+          "items": {
+            "$ref": "#/$defs/ReviewItem"
+          },
+          "type": "array"
+        },
+        "summary": {
+          "$ref": "#/$defs/RecomputeSummary"
+        }
+      },
+      "required": [
+        "entity_type",
+        "match_run",
+        "reconcile_run",
+        "summary",
+        "review"
+      ],
+      "type": "object"
+    },
+    "ApplyRecomputeRequest": {
+      "additionalProperties": false,
+      "description": "`POST /v1/recompute/apply`: make the identities what a recomputation\nshowed. Refused with `409` if what it finds now is not the plan.",
+      "properties": {
+        "entity_type": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EntityType"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The type the preview was of. Left out, every type, as the preview\nwas."
+        },
+        "plan": {
+          "description": "The `plan` of the preview.",
+          "type": "string"
+        },
+        "reason": {
+          "default": null,
+          "description": "Why, kept with the changeset in the log.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "plan"
+      ],
+      "type": "object"
+    },
+    "ApprovedPlacement": {
+      "properties": {
+        "draft": {
+          "$ref": "#/$defs/ChangesetId",
+          "description": "The draft, by its changeset ID."
+        },
+        "record": {
+          "$ref": "#/$defs/RecordId"
+        },
+        "seq": {
+          "$ref": "#/$defs/Seq",
+          "description": "Where it was committed in the log."
+        }
+      },
+      "required": [
+        "record",
+        "draft",
+        "seq"
+      ],
+      "type": "object"
+    },
     "Authored": {
       "description": "A changeset the engine wrote for a caller, and its receipt.",
       "properties": {
@@ -95,6 +235,37 @@
       },
       "required": [
         "changeset"
+      ],
+      "type": "object"
+    },
+    "Before": {
+      "properties": {
+        "identity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IdentityId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "`None` for the records in the change that have no identity."
+        },
+        "label": {
+          "description": "The label most of its records have.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "records": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "records"
       ],
       "type": "object"
     },
@@ -175,6 +346,150 @@
         "identities"
       ],
       "type": "object"
+    },
+    "Change": {
+      "description": "One connected part of what would change: the identities of now and\nafter that share records, with no record shared with any other.",
+      "properties": {
+        "after": {
+          "description": "What there would be after, the largest first.",
+          "items": {
+            "$ref": "#/$defs/After"
+          },
+          "type": "array"
+        },
+        "approved_drafts": {
+          "description": "How many of its records a draft placed that a reviewer approved.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "before": {
+          "description": "The identities of now, the largest first. One without an ID stands\nfor records that have no identity.",
+          "items": {
+            "$ref": "#/$defs/Before"
+          },
+          "type": "array"
+        },
+        "blocked_by": {
+          "description": "What stops a group in it from being an identity: two of its records\nthat something says differ.",
+          "items": {
+            "$ref": "#/$defs/Contradiction"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "$ref": "#/$defs/ChangeKind"
+        },
+        "moved": {
+          "description": "Those whose identity would be another than now, or none.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rank": {
+          "description": "Its place among the type's changes, the largest first, from 1.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "records": {
+          "description": "The records in it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "shaped_by": {
+          "description": "Changesets by people or agents that shaped an identity in it.",
+          "items": {
+            "$ref": "#/$defs/PersonDecision"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "rank",
+        "kind",
+        "records",
+        "moved",
+        "before",
+        "after"
+      ],
+      "type": "object"
+    },
+    "ChangeDetail": {
+      "description": "A change with each of its records.",
+      "properties": {
+        "approved_drafts": {
+          "default": [],
+          "description": "Its records that drafts placed which reviewers approved.",
+          "items": {
+            "$ref": "#/$defs/ApprovedPlacement"
+          },
+          "type": "array"
+        },
+        "change": {
+          "$ref": "#/$defs/Change"
+        },
+        "constraints": {
+          "default": [],
+          "description": "The constraints in force between its records.",
+          "items": {
+            "$ref": "#/$defs/ConstraintNote"
+          },
+          "type": "array"
+        },
+        "records": {
+          "description": "Ordered by where they would go, then by source and key.",
+          "items": {
+            "$ref": "#/$defs/RecordMove"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "change",
+        "records"
+      ],
+      "type": "object"
+    },
+    "ChangeKind": {
+      "oneOf": [
+        {
+          "const": "new",
+          "description": "Records without an identity would become a new one.",
+          "type": "string"
+        },
+        {
+          "const": "gain",
+          "description": "An identity would gain records that have no identity now.",
+          "type": "string"
+        },
+        {
+          "const": "lose",
+          "description": "An identity would lose records to review.",
+          "type": "string"
+        },
+        {
+          "const": "split",
+          "description": "An identity's records would go to more than one identity.",
+          "type": "string"
+        },
+        {
+          "const": "merge",
+          "description": "Identities would become one.",
+          "type": "string"
+        },
+        {
+          "const": "regroup",
+          "description": "Several identities would become several others.",
+          "type": "string"
+        },
+        {
+          "const": "review",
+          "description": "Every record of the identities in it would wait for review.",
+          "type": "string"
+        }
+      ]
     },
     "ChangePersonRequest": {
       "additionalProperties": false,
@@ -479,9 +794,132 @@
       ],
       "type": "object"
     },
+    "ConstraintNote": {
+      "properties": {
+        "decision": {
+          "$ref": "#/$defs/PersonDecision"
+        },
+        "kind": {
+          "$ref": "#/$defs/ConstraintKind"
+        },
+        "records": {
+          "items": {
+            "$ref": "#/$defs/RecordId"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "records",
+        "decision"
+      ],
+      "type": "object"
+    },
     "ContentHash": {
       "description": "SHA-256 of the canonical encoding of a list of operations, as lowercase hex.",
       "type": "string"
+    },
+    "Contradiction": {
+      "description": "Two records of a group that something says are not the same thing.",
+      "properties": {
+        "constraint": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PersonDecision"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A `cannot_link` that someone recorded, if that is what says so."
+        },
+        "records": {
+          "items": {
+            "$ref": "#/$defs/RecordId"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "rules": {
+          "description": "The `no_match` rules that hold for the pair, if those say so.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "records"
+      ],
+      "type": "object"
+    },
+    "DecisionSummary": {
+      "description": "What people decided, as far as it reaches this result.",
+      "properties": {
+        "blocked_by_constraints": {
+          "description": "Groups left waiting for review because a `cannot_link` contradicts\nwhat the rules join.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "blocked_by_rules": {
+          "description": "Groups left waiting for review because a `no_match` rule\ncontradicts what the rules join.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "cannot_link": {
+          "description": "`cannot_link` constraints in force between records of the type. Each\nkeeps its two records apart.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "changes_shaped_by_people": {
+          "description": "Changes that touch an identity a changeset by a person or an agent\nshaped. Such a change may undo what they did.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "changes_with_approved_drafts": {
+          "description": "Changes that touch records a draft placed that a reviewer approved.\nAn approved draft binds no more than the run that drafted it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "dismissed_splits": {
+          "description": "`possible_split` items a reviewer dismissed, whose records stay\ntogether.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "held_together": {
+          "description": "Groups of records that people's decisions hold together, of more\nthan one record. Each stays together whatever the rules say.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "must_link": {
+          "description": "`must_link` constraints in force between records of the type. Each\nkeeps its two records in one identity.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "must_link",
+        "cannot_link",
+        "held_together",
+        "dismissed_splits",
+        "blocked_by_constraints",
+        "blocked_by_rules",
+        "changes_shaped_by_people",
+        "changes_with_approved_drafts"
+      ],
+      "type": "object"
     },
     "DeclaredSource": {
       "description": "A source as the project declares it, whether or not it has sent rows.",
@@ -1336,6 +1774,25 @@
         "reason"
       ],
       "type": "object"
+    },
+    "Fate": {
+      "oneOf": [
+        {
+          "const": "kept",
+          "description": "An identity of now, with its ID.",
+          "type": "string"
+        },
+        {
+          "const": "new",
+          "description": "A new identity.",
+          "type": "string"
+        },
+        {
+          "const": "waiting",
+          "description": "Records that would wait for review without an identity.",
+          "type": "string"
+        }
+      ]
     },
     "FeatureColumn": {
       "properties": {
@@ -2552,6 +3009,28 @@
       ],
       "type": "object"
     },
+    "PersonDecision": {
+      "description": "A changeset by a person or an agent.",
+      "properties": {
+        "actor": {
+          "$ref": "#/$defs/Actor"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "seq": {
+          "$ref": "#/$defs/Seq"
+        }
+      },
+      "required": [
+        "seq",
+        "actor"
+      ],
+      "type": "object"
+    },
     "PersonList": {
       "description": "`GET /v1/people`: everyone with an account, in the order they were added.",
       "properties": {
@@ -3124,6 +3603,245 @@
         }
       ]
     },
+    "RecomputeApplied": {
+      "description": "What applying a recomputation did.",
+      "properties": {
+        "plan": {
+          "type": "string"
+        },
+        "types": {
+          "items": {
+            "$ref": "#/$defs/AppliedType"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "plan",
+        "types"
+      ],
+      "type": "object"
+    },
+    "RecomputeReport": {
+      "description": "What the identities would be under the rules as they are now, against\nthe identities there are. Nothing was changed to find out.",
+      "properties": {
+        "plan": {
+          "description": "Names this result: applying it takes this, and refuses if what it\nfinds then is not the same.",
+          "type": "string"
+        },
+        "types": {
+          "description": "One entry per entity type, in the order the manifest declares them.",
+          "items": {
+            "$ref": "#/$defs/TypeRecompute"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "plan",
+        "types"
+      ],
+      "type": "object"
+    },
+    "RecomputeRequest": {
+      "additionalProperties": false,
+      "description": "`POST /v1/recompute`: what the identities would be under the rules as\nthey are now, against the identities there are. Nothing is changed.",
+      "properties": {
+        "entity_type": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EntityType"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "One entity type. Left out, every type the project declares."
+        },
+        "identity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IdentityId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Show whole the change that holds this identity, with each of its\nrecords and where it would go."
+        },
+        "limit": {
+          "default": null,
+          "description": "How many changes to list for each type, largest first: 10 when left\nout, at most 1,000.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "offset": {
+          "default": null,
+          "description": "How many of the largest changes to pass over first.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "RecomputeSummary": {
+      "description": "The counts of what would change for one entity type.",
+      "properties": {
+        "emptied": {
+          "description": "Identities that would be left with no records, because every one\nwould wait for review.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "gaining": {
+          "description": "Identities that would keep their ID and gain records.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "identities_after": {
+          "description": "Identities with records after.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "identities_now": {
+          "description": "Identities with records now.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "losing": {
+          "description": "Identities that would keep their ID and lose records.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "merged_away": {
+          "description": "Identities that would be merged into another: their ID would stand\nfor it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "merging": {
+          "description": "Identities after that would take records from more than one\nidentity of now.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "new_identities": {
+          "description": "Identities that would be made.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pairs_after": {
+          "description": "Pairs that would share one after.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pairs_kept": {
+          "description": "Pairs that share one now and would after.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pairs_now": {
+          "description": "Pairs of records that share an identity now.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "records": {
+          "description": "Records the recomputation placed: every record of the type that is\nnot taken back, other than those a reviewer dismissed from review\nthat have no identity.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "records_moved": {
+          "description": "Records that would be in another identity than now, by a move or a\nmerge. Records that would gain or lose an identity are not counted.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "records_placed": {
+          "description": "Records without an identity that would get one.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "records_unplaced": {
+          "description": "Records with an identity that would wait for review without one.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "records_waiting": {
+          "description": "Records that would wait for review without an identity, in all.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "review_items": {
+          "description": "The `conflict` review items those records would be left in.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "review_items_closed": {
+          "description": "Open review items whose records would all have an identity, and\nwhich would close.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "splitting": {
+          "description": "Identities whose records would go to more than one identity.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "unchanged": {
+          "description": "Identities that would keep exactly the records they have.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "records",
+        "identities_now",
+        "identities_after",
+        "unchanged",
+        "splitting",
+        "merging",
+        "gaining",
+        "losing",
+        "merged_away",
+        "emptied",
+        "new_identities",
+        "records_moved",
+        "records_placed",
+        "records_unplaced",
+        "records_waiting",
+        "review_items",
+        "review_items_closed",
+        "pairs_now",
+        "pairs_after",
+        "pairs_kept"
+      ],
+      "type": "object"
+    },
     "ReconcileRequest": {
       "additionalProperties": false,
       "description": "`POST /v1/runs/{run}/reconcile`. The body may be left out.",
@@ -3270,6 +3988,51 @@
       },
       "required": [
         "records"
+      ],
+      "type": "object"
+    },
+    "RecordMove": {
+      "properties": {
+        "from": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IdentityId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Its identity now."
+        },
+        "key": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "record": {
+          "$ref": "#/$defs/RecordId"
+        },
+        "source": {
+          "type": "string"
+        },
+        "to": {
+          "description": "Where it would go: its place in the change's `after`, from 0.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "record",
+        "source",
+        "to"
       ],
       "type": "object"
     },
@@ -3871,6 +4634,17 @@
             }
           ],
           "description": "What a load run reported when it finished. The run stored rows,\ndocuments, or the mentions an extract run found."
+        },
+        "recompute": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AppliedType"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What a match run that judged every record for a recomputation\nreported, once the recomputation was applied."
         },
         "resolution": {
           "anyOf": [
@@ -4601,6 +5375,52 @@
         "sources",
         "identities",
         "open_review_items"
+      ],
+      "type": "object"
+    },
+    "TypeRecompute": {
+      "properties": {
+        "changes": {
+          "description": "The changes that were asked for, largest first.",
+          "items": {
+            "$ref": "#/$defs/Change"
+          },
+          "type": "array"
+        },
+        "changes_total": {
+          "description": "How many changes there are in all.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "decisions": {
+          "$ref": "#/$defs/DecisionSummary",
+          "description": "The decisions of people that shaped the result or stopped it."
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ChangeDetail"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The change that holds the identity that was asked about, whole."
+        },
+        "entity_type": {
+          "$ref": "#/$defs/EntityType"
+        },
+        "summary": {
+          "$ref": "#/$defs/RecomputeSummary"
+        }
+      },
+      "required": [
+        "entity_type",
+        "summary",
+        "decisions",
+        "changes_total",
+        "changes"
       ],
       "type": "object"
     },

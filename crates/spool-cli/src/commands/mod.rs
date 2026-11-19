@@ -4,6 +4,7 @@ pub mod init;
 pub mod load;
 pub mod matching;
 pub mod project;
+pub mod recompute;
 mod remote;
 pub mod retract;
 pub mod serve;

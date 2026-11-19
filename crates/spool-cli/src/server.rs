@@ -380,6 +380,8 @@ fn router_until(engine: Arc<Engine>, options: &ServerOptions, stopping: Stopping
         .route("/documents/{document}", get(read_document))
         .route("/extractions", post(extract))
         .route("/match", post(start_match))
+        .route("/recompute", post(recompute))
+        .route("/recompute/apply", post(apply_recompute))
         .route("/runs", get(list_runs))
         .route("/runs/{run}", get(read_run))
         .route("/runs/{run}/candidates", get(candidates))
@@ -554,6 +556,7 @@ impl From<spool::Error> for ApiError {
             | Error::Draft { .. }
             | Error::Review { .. }
             | Error::Split { .. }
+            | Error::StalePlan { .. }
             | Error::Retracted(_)
             | Error::NothingToUndo(_) => {
                 Self::new(StatusCode::CONFLICT, ErrorCode::Conflict, message)
@@ -568,6 +571,7 @@ impl From<spool::Error> for ApiError {
             | Error::InvalidEntityType(_)
             | Error::UndeclaredType(_)
             | Error::SameRecord(_)
+            | Error::Recompute(_)
             | Error::UnknownStrategy { .. } => Self::invalid(message),
             Error::Strategy { .. } => Self::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -1871,6 +1875,36 @@ async fn start_match(
             .await
         }
     }
+}
+
+async fn recompute(State(app): State<App>, body: Bytes) -> ApiResult {
+    let request: api::RecomputeRequest = json_body(&body)?;
+    let request = spool::RecomputeRequest {
+        entity_type: request.entity_type,
+        identity: request.identity,
+        limit: request
+            .limit
+            .unwrap_or(spool::DEFAULT_CHANGES)
+            .clamp(1, MAX_PAGE),
+        offset: request.offset.unwrap_or(0),
+    };
+    ok(engine(&app, move |engine| engine.recompute(&request)).await?)
+}
+
+async fn apply_recompute(
+    State(app): State<App>,
+    Extension(caller): Extension<Caller>,
+    body: Bytes,
+) -> ApiResult {
+    let request: api::ApplyRecomputeRequest = json_body(&body)?;
+    ok(engine(&app, move |engine| {
+        engine.acting(caller.actor).apply_recompute(
+            request.entity_type.as_ref(),
+            &request.plan,
+            request.reason,
+        )
+    })
+    .await?)
 }
 
 #[derive(serde::Deserialize)]

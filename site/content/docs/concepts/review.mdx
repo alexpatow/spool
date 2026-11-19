@@ -444,6 +444,23 @@ Approving checks the draft like any changeset, against the identities as they ar
 
 An entity type has at most one open draft. A later match of the type replaces it. The records of a draft that is rejected, replaced or never decided are examined again by the next match, so nothing is stranded.
 
+## Recompute and what people decided
+
+[`spool recompute`](/docs/concepts/matching#recompute) works out what the identities would be if every record were matched again by the rules as they are now. What people decided counts for more than the rules, and the output says which decisions shaped or stopped the result:
+
+| Decision | What a recompute does with it |
+| --- | --- |
+| `must_link` | Its two records are in one identity, whatever the rules say. |
+| `cannot_link` | Its two records are not. Where the rules join a group through other records and a `cannot_link` is inside it, the group waits for review without an identity, under a `conflict` item, and the output names the constraint and who recorded it. |
+| Records a person or an agent placed, or identities they merged | They stay together, as the person put them, while what they joined is still whole. A rule's no_match between them is not read. |
+| A split or a move with no `cannot_link` | Nothing says the records differ, so the rules may put them back together. The output marks every change to an identity a person or an agent changed, with the log positions. |
+| A dismissed `possible_merge` or `conflict` | Its records stay without an identity. |
+| A dismissed `possible_split` | The identity's records stay together. |
+| An approved draft | It binds no more than the run that drafted it: approving accepted what the rules said then. The output marks every change that touches records an approved draft placed. |
+| A rejected draft | Nothing. Its records were examined again by the next match anyway. |
+
+Applying a recompute leaves its waiting groups as `conflict` items, closes the open items whose records it places, and replaces an open draft of the type.
+
 ## Who reviews
 
 A reviewer is anyone the server knows: a person signed in to the studio, or a program with a token. Each change is recorded under its author.

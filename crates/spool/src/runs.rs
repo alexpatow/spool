@@ -13,6 +13,7 @@ use crate::engine::{StrategyRef, TypeResolution};
 use crate::error::{Error, Result};
 use crate::load::LoadReport;
 use crate::order::{ActorNames, Key, Keyed, Sort, called, names_table};
+use crate::recompute::AppliedType;
 use crate::retract::RetractReport;
 use crate::store::parse;
 use crate::time::rfc3339;
@@ -129,6 +130,10 @@ pub struct RunEntry {
     /// What a retract run reported when it finished.
     #[serde(default)]
     pub retraction: Option<RetractReport>,
+    /// What a match run that judged every record for a recomputation
+    /// reported, once the recomputation was applied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recompute: Option<AppliedType>,
     /// The last line the run's code has written to its standard error,
     /// while a strategy or an extractor is running. Left out otherwise:
     /// a run that has ended says how in `status` and `error`.
@@ -228,6 +233,7 @@ fn entry(row: &duckdb::Row<'_>) -> Result<RunEntry> {
     };
     let result: Option<String> = row.get(9)?;
     let (mut load, mut extraction, mut resolution, mut retraction) = (None, None, None, None);
+    let mut recompute = None;
     if let Some(result) = &result {
         match kind {
             RunKind::Load => {
@@ -235,6 +241,14 @@ fn entry(row: &duckdb::Row<'_>) -> Result<RunEntry> {
             }
             RunKind::Extract => {
                 extraction = Some(serde_json::from_str(result).map_err(|_| unreadable("result"))?);
+            }
+            // A run that judged every record for a recomputation reports
+            // what applying it did.
+            RunKind::Match
+                if serde_json::from_str::<serde_json::Value>(result)
+                    .is_ok_and(|report| report.get("summary").is_some()) =>
+            {
+                recompute = Some(serde_json::from_str(result).map_err(|_| unreadable("result"))?);
             }
             RunKind::Match => {
                 let mut report: TypeResolution =
@@ -260,6 +274,7 @@ fn entry(row: &duckdb::Row<'_>) -> Result<RunEntry> {
     }
     Ok(RunEntry {
         said: None,
+        recompute,
         run,
         kind,
         status: RunStatus::from_stored(&row.get::<_, String>(2)?)?,

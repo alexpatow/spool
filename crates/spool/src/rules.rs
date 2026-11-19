@@ -74,10 +74,22 @@ pub(crate) fn generate_candidates(
     run: RunId,
     block: &[Rule],
 ) -> Result<()> {
+    generate_candidates_into(conn, entity_type, run, block, "spool.candidate")
+}
+
+/// As [`generate_candidates`], into a table with the columns of
+/// `spool.candidate`.
+pub(crate) fn generate_candidates_into(
+    conn: &Connection,
+    entity_type: &EntityType,
+    run: RunId,
+    block: &[Rule],
+    into: &str,
+) -> Result<()> {
     let table = features::table(entity_type);
     for rule in block {
         conn.execute_batch(&format!(
-            "INSERT INTO spool.candidate
+            "INSERT INTO {into}
              SELECT {run}, l.record_id, r.record_id, '{name}'
              FROM {table} l
              JOIN {table} r ON l.record_id < r.record_id AND (\n{predicate}\n)
@@ -98,9 +110,29 @@ pub(crate) fn judge_candidates(
     no_match: &[Rule],
     match_: &[Rule],
 ) -> Result<()> {
+    judge_candidates_into(
+        conn,
+        entity_type,
+        run,
+        no_match,
+        match_,
+        ("spool.candidate", "spool.judgement"),
+    )
+}
+
+/// As [`judge_candidates`], from and into tables with the columns of
+/// `spool.candidate` and `spool.judgement`.
+pub(crate) fn judge_candidates_into(
+    conn: &Connection,
+    entity_type: &EntityType,
+    run: RunId,
+    no_match: &[Rule],
+    match_: &[Rule],
+    (candidates, judgements): (&str, &str),
+) -> Result<()> {
     let table = features::table(entity_type);
     conn.execute_batch(&format!(
-        "INSERT INTO spool.judgement
+        "INSERT INTO {judgements}
          SELECT {run}, left_id, right_id,
                 CASE WHEN len(no_match) > 0 THEN 'no_match' ELSE 'match' END,
                 NULL,
@@ -111,7 +143,7 @@ pub(crate) fn judge_candidates(
                   {match_} AS \"match\"
            FROM (
              SELECT left_id, right_id, list(rule ORDER BY rule) AS block
-             FROM spool.candidate WHERE run_id = {run}
+             FROM {candidates} WHERE run_id = {run}
              GROUP BY left_id, right_id
            ) c
            JOIN {table} l ON l.record_id = c.left_id

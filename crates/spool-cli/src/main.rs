@@ -9,21 +9,22 @@ const USAGE: &str = "\
 Usage: spool <command> [options]
 
 Commands:
-  init     make a project, empty or from an example
-  info     list what a project directory declares
-  build    check a project and compile it into a manifest
-  apply    apply a manifest to a store
-  serve    run the server from a manifest and a store
-  dev      run the server on localhost and apply file changes as they are saved
-  load     send the rows of a file to a running server
-  extract  find records in documents with one of the project's extractors
-  match    match the new records on a running server and place them in identities
-  show     show what a running server holds
-  explain  say why two records share an identity, or what holds one together
-  retract  take back rows a source no longer holds
-  token    make, list and revoke the tokens of callers that are not people
-  bench    run a benchmark scenario
-  schema   print the JSON Schema of the server's API
+  init       make a project, empty or from an example
+  info       list what a project directory declares
+  build      check a project and compile it into a manifest
+  apply      apply a manifest to a store
+  serve      run the server from a manifest and a store
+  dev        run the server on localhost and apply file changes as they are saved
+  load       send the rows of a file to a running server
+  extract    find records in documents with one of the project's extractors
+  match      match the new records on a running server and place them in identities
+  recompute  show what the rules as they are now would change in the identities
+  show       show what a running server holds
+  explain    say why two records share an identity, or what holds one together
+  retract    take back rows a source no longer holds
+  token      make, list and revoke the tokens of callers that are not people
+  bench      run a benchmark scenario
+  schema     print the JSON Schema of the server's API
 
 `spool <command> --help` describes a command.
 ";
@@ -85,6 +86,7 @@ fn main() -> ExitCode {
         "load" => (commands::load::USAGE, commands::load::load),
         "extract" => (commands::extract::USAGE, commands::extract::extract),
         "match" => (commands::matching::USAGE, commands::matching::run),
+        "recompute" => (commands::recompute::USAGE, commands::recompute::run),
         "show" => (commands::show::SHOW_USAGE, commands::show::show),
         "retract" => (commands::retract::USAGE, commands::retract::retract),
         "explain" => (commands::show::EXPLAIN_USAGE, commands::show::explain),

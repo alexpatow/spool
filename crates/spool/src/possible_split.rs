@@ -80,6 +80,32 @@ fn groups(
     identities: &[IdentityId],
     concluding: Option<RunId>,
 ) -> Result<BTreeMap<IdentityId, Vec<Vec<RecordId>>>> {
+    groups_by(conn, identities, concluding, true)
+}
+
+/// The members of each of the given active identities, in the groups that
+/// what people and sources said holds together: a `must_link`, the versions
+/// of a row, and the decisions of people and agents, as for [`groups`], and
+/// no judgement of any run. A recomputation keeps each group together
+/// whatever the rules say now.
+pub(crate) fn held_together(
+    conn: &Connection,
+    identities: &[IdentityId],
+) -> Result<BTreeMap<IdentityId, Vec<Vec<RecordId>>>> {
+    groups_by(conn, identities, None, false)
+}
+
+/// Whether a draft a reviewer approved counts as their decision, as a
+/// changeset they wrote does. It does not: approving accepted what a run's
+/// rules said, and the store does not record who approved.
+pub(crate) const APPROVED_DRAFTS_DECIDE: bool = false;
+
+fn groups_by(
+    conn: &Connection,
+    identities: &[IdentityId],
+    concluding: Option<RunId>,
+    judgements: bool,
+) -> Result<BTreeMap<IdentityId, Vec<Vec<RecordId>>>> {
     let mut found = BTreeMap::new();
     if identities.is_empty() {
         return Ok(found);
@@ -113,6 +139,10 @@ fn groups(
     let mut index: BTreeMap<RecordId, usize> = BTreeMap::new();
     let mut members: Vec<(RecordId, IdentityId)> = Vec::new();
     let mut union = Union::default();
+    // What only people and sources hold together, without any run's
+    // judgement: the same edges as `union`, other than judgements, and the
+    // decisions that `union` finds whole.
+    let mut held = Union::default();
     {
         let mut statement = conn.prepare(&format!(
             "WITH {MEMBERS}
@@ -123,6 +153,7 @@ fn groups(
         while let Some(row) = rows.next()? {
             let record: RecordId = parse(&row.get::<_, String>(0)?)?;
             index.insert(record, union.node());
+            held.node();
             members.push((record, parse(&row.get::<_, String>(1)?)?));
         }
     }
@@ -130,6 +161,18 @@ fn groups(
         // A pair is stored once, the smaller ID first, in each of the three
         // places, and two members of one identity are all that is asked
         // about: a record belongs to one identity.
+        //
+        // What people put together is judged whole by any match a run
+        // concluded, not only the latest judgement of the pair: a later run
+        // under other rules, such as the one that applies a recomputation,
+        // does not take apart what the decision was about.
+        let (latest, held_by) = match judgements {
+            true => (
+                "QUALIFY j.run_id = max(j.run_id) OVER (PARTITION BY j.left_id, j.right_id)",
+                "bool_or(verdict = 'match') AND NOT bool_or(verdict = 'no_match')",
+            ),
+            false => ("", "bool_or(verdict = 'match')"),
+        };
         let mut statement = conn.prepare(&format!(
             "WITH {MEMBERS},
              judged AS (
@@ -138,18 +181,18 @@ fn groups(
                JOIN member a ON a.record_id = j.left_id
                JOIN member b ON b.record_id = j.right_id AND b.identity_id = a.identity_id
                JOIN spool.run r ON r.run_id = j.run_id AND {reconciled}
-               QUALIFY j.run_id = max(j.run_id) OVER (PARTITION BY j.left_id, j.right_id))
-             SELECT left_id::VARCHAR, right_id::VARCHAR FROM judged
+               {latest})
+             SELECT left_id::VARCHAR, right_id::VARCHAR, true FROM judged
              GROUP BY left_id, right_id
-             HAVING bool_or(verdict = 'match') AND NOT bool_or(verdict = 'no_match')
+             HAVING {held_by}
              UNION ALL
-             SELECT c.record_a::VARCHAR, c.record_b::VARCHAR
+             SELECT c.record_a::VARCHAR, c.record_b::VARCHAR, false
              FROM spool.constraint_link c
              JOIN member a ON a.record_id = c.record_a
              JOIN member b ON b.record_id = c.record_b AND b.identity_id = a.identity_id
              WHERE c.to_seq IS NULL AND c.kind = 'must_link'
              UNION ALL
-             SELECT o.record_id::VARCHAR, o.supersedes::VARCHAR
+             SELECT o.record_id::VARCHAR, o.supersedes::VARCHAR, false
              FROM spool.record o
              JOIN member a ON a.record_id = o.record_id
              JOIN member b ON b.record_id = o.supersedes AND b.identity_id = a.identity_id"
@@ -159,6 +202,9 @@ fn groups(
             let a: RecordId = parse(&row.get::<_, String>(0)?)?;
             let b: RecordId = parse(&row.get::<_, String>(1)?)?;
             union.join(index[&a], index[&b]);
+            if !row.get::<_, bool>(2)? {
+                held.join(index[&a], index[&b]);
+            }
         }
     }
     {
@@ -173,6 +219,7 @@ fn groups(
         //   puts back what was there without saying anything about it.
         // - an identity's ID: the members of an identity it merged away.
         // - `there`: the members the identity had before and kept.
+        let approved = APPROVED_DRAFTS_DECIDE;
         let mut statement = conn.prepare(&format!(
             "WITH {MEMBERS},
              stay AS (
@@ -184,7 +231,9 @@ fn groups(
              decided AS (
                SELECT op.seq, op.kind, op.identity_id, op.from_identity_id, op.record_id
                FROM spool.changeset_op op
-               JOIN spool.changeset c ON c.seq = op.seq AND c.actor <> 'engine'
+               JOIN spool.changeset c ON c.seq = op.seq AND (c.actor <> 'engine' OR (
+                 {approved} AND c.seq IN (
+                   SELECT closed_seq FROM spool.draft WHERE status = 'committed')))
                WHERE op.kind IN ('assign', 'merge', 'reinstate') AND op.identity_id IS NOT NULL)
              SELECT d.seq, d.identity_id::VARCHAR, 'placed', s.record_id::VARCHAR,
                     NOT EXISTS (
@@ -217,6 +266,7 @@ fn groups(
         let mut sides: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let mut together: BTreeSet<String> = BTreeSet::new();
         let decide = |union: &mut Union,
+                      held: &mut Union,
                       sides: &mut BTreeMap<String, Vec<usize>>,
                       together: &mut BTreeSet<String>| {
             let mut whole: Option<usize> = None;
@@ -228,10 +278,16 @@ fn groups(
                 }
                 let root = union.root(nodes[0]);
                 if nodes.iter().all(|node| union.root(*node) == root) {
+                    // The decision was about the side as it was then, so
+                    // what holds it whole is held by the decision too.
+                    for node in &nodes[1..] {
+                        held.join(nodes[0], *node);
+                    }
                     if let Some(other) = whole {
                         union.join(other, root);
+                        held.join(other, nodes[0]);
                     }
-                    whole = Some(root);
+                    whole = Some(nodes[0]);
                 }
             }
             sides.clear();
@@ -240,7 +296,7 @@ fn groups(
         while let Some(row) = rows.next()? {
             let at = (row.get::<_, i64>(0)?, row.get::<_, String>(1)?);
             if decision.as_ref() != Some(&at) {
-                decide(&mut union, &mut sides, &mut together);
+                decide(&mut union, &mut held, &mut sides, &mut together);
                 decision = Some(at);
             }
             let side: String = row.get(2)?;
@@ -250,7 +306,10 @@ fn groups(
             }
             sides.entry(side).or_default().push(index[&record]);
         }
-        decide(&mut union, &mut sides, &mut together);
+        decide(&mut union, &mut held, &mut sides, &mut together);
+    }
+    if !judgements {
+        union = held;
     }
 
     let mut grouped: BTreeMap<IdentityId, BTreeMap<usize, Vec<RecordId>>> = BTreeMap::new();

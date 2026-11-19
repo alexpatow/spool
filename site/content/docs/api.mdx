@@ -37,6 +37,8 @@ Everything Spool does is a call of this API. The command line, the studio and th
 | `GET /v1/documents/{document}` | One document with its text |
 | `POST /v1/extractions` | Runs an extractor over the documents it has not read |
 | `POST /v1/match` | Starts a [match](#runs) |
+| `POST /v1/recompute` | What the identities would be under the rules as they are now, against those there are. [Changes nothing](#recompute) |
+| `POST /v1/recompute/apply` | Applies what a recompute showed, by its `plan` |
 | `GET /v1/runs` | Lists runs |
 | `GET /v1/runs/{run}` | One run and its report |
 | `GET /v1/runs/{run}/candidates` | The candidate pairs of a run that waits for judgements |
@@ -139,6 +141,18 @@ run  kind       status     about           started by                           
 2    load       succeeded  company         user:01a1f0a3-7961-77eb-b436-a883824aafc0  2026-11-18T21:50:07Z
 1    load       succeeded  company         user:01a1f0a3-7961-77eb-b436-a883824aafc0  2026-11-18T21:50:07Z
 ```
+
+## Recompute
+
+`POST /v1/recompute` matches every record again, all at once, by the rules as they are now, and answers with what would change. It changes nothing and records nothing. [Matching](/docs/concepts/matching#recompute) shows what it prints.
+
+| Field | Meaning |
+| --- | --- |
+| `entity_type` | One type. Left out, every type |
+| `identity` | Answer with the whole change that holds this identity, record by record, in `detail` |
+| `limit`, `offset` | Which changes to list, the largest first: 10 when left out, at most 1,000 |
+
+The answer has a `plan` and, for each type, a `summary` of counts, the `decisions` of people that shaped or stopped the result, `changes_total` and the `changes` asked for. `POST /v1/recompute/apply` with `{"plan": "...", "reason": "..."}`, and the same `entity_type` as the preview, applies it. It answers `409` with the code `conflict` if what it finds now is not that plan, and changes nothing. Otherwise it answers with each type's runs, its `summary`, the changeset it `committed` and the `review` items it left.
 
 ### A run you judge yourself
 

@@ -289,6 +289,36 @@ describe("a reviewer", () => {
     expect(stale.rejections[0]).toMatchObject({ op_index: 0, reason: { reason: "stale_merge" } });
   });
 
+  test("recomputes what a split without a constraint left, and applies it", async () => {
+    const { client } = await thingsServer(10);
+    await loadThings(client, [
+      { id: "1", code: "anvil" },
+      { id: "2", code: "anvil" },
+    ]);
+    await client.match({ entity_type: "thing" });
+    const anvil = (await thing(client, "1")).identity!;
+    const second = await thing(client, "2");
+    const split = await client.split(anvil, { records: [second.id], keep_apart: false });
+
+    // Nothing says the two differ, and the rule says they are one.
+    const head = (await client.changesets()).head;
+    const preview = await client.recompute({ entity_type: "thing" });
+    expect((await client.changesets()).head).toBe(head);
+    const [things] = preview.types;
+    expect(things!.changes_total).toBe(1);
+    const [change] = things!.changes;
+    expect(change!.kind).toBe("merge");
+    expect(change!.after[0]).toMatchObject({ fate: "kept", identity: anvil, merged: [split.identity] });
+    expect(change!.shaped_by?.map((decision) => decision.seq)).toEqual([split.committed.seq]);
+
+    const stale = await failureOf(client.applyRecompute({ entity_type: "thing", plan: "0" }));
+    expect(stale.code).toBe("conflict");
+    const applied = await client.applyRecompute({ entity_type: "thing", plan: preview.plan, reason: "one anvil" });
+    expect(applied.types[0]!.committed?.seq).toBe(head + 1);
+    expect(await keys(client, anvil)).toEqual(["1", "2"]);
+    expect(await client.identity(split.identity)).toMatchObject({ current: anvil });
+  });
+
   test("refuses a split that is based on a log position the identity changed after", async () => {
     const { client } = await thingsServer(22);
     await loadThings(client, [

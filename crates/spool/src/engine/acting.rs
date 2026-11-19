@@ -10,6 +10,8 @@ use super::{
 use crate::documents::{ExtractOptions, ExtractReport, NewDocument};
 use crate::error::Result;
 use crate::load::LoadReport;
+use crate::recompute::RecomputeApplied;
+use spool_core::EntityType;
 
 /// The engine as one caller of it. Each run started through this is
 /// recorded as started by that caller, and does what the method of the same
@@ -110,5 +112,17 @@ impl Acting<'_> {
             .lock()
             .reconcile(&self.actor, run, policy, then)?;
         Ok(report)
+    }
+
+    /// As [`Engine::apply_recompute`]. The runs are started by the caller;
+    /// the changeset is the engine's, because the rules decided it.
+    pub fn apply_recompute(
+        &self,
+        entity_type: Option<&EntityType>,
+        plan: &str,
+        reason: Option<String>,
+    ) -> Result<RecomputeApplied> {
+        self.engine
+            .apply_recompute_by(&self.actor, entity_type, plan, reason)
     }
 }
