@@ -35,7 +35,7 @@ const CATALOG: &str = "spool_store";
 
 impl DuckStore {
     /// Opens the database file at `path`, or a database in memory, and
-    /// creates the schema if the database is empty.
+    /// creates or upgrades the schema.
     pub(crate) fn open(path: Option<&Path>, clock: Box<dyn Clock + Send>) -> Result<Self> {
         let mut conn = Connection::open_in_memory()?;
         if let Some(path) = path {
@@ -1194,10 +1194,8 @@ mod tests {
     }
 
     #[test]
-    fn a_store_with_another_format_version_is_refused() {
-        // One from before a reading recorded which mentions it found, and
-        // one from an engine yet to come.
-        for other in ["11", "999"] {
+    fn a_store_with_an_unsupported_format_version_is_refused() {
+        for other in ["10", "999"] {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("store.duckdb");
             {
@@ -1208,13 +1206,10 @@ mod tests {
             let error = DuckStore::open(Some(&path), Box::new(StepClock::new(0, 1)))
                 .err()
                 .unwrap();
-            assert!(matches!(error, Error::FormatVersion { .. }), "{error}");
-            assert_eq!(
-                error.to_string(),
-                format!(
-                    "the store has format version {other}, and this engine reads only version \
-                     12: it does not convert a store, so load into a new one"
-                )
+            assert!(
+                matches!(&error, Error::FormatVersion { found, expected }
+                    if found == other && expected == schema::FORMAT_VERSION),
+                "{error}"
             );
             // The store is as it was.
             let conn = duckdb::Connection::open(&path).unwrap();
@@ -1223,5 +1218,52 @@ mod tests {
                 Some(other.to_owned())
             );
         }
+    }
+
+    #[test]
+    fn a_failed_upgrade_leaves_the_store_at_its_original_format() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("store.duckdb");
+        let open = || DuckStore::open(Some(&path), Box::new(StepClock::new(0, 1)));
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(include_str!("../migrations/011_baseline.sql"))
+                .unwrap();
+            conn.execute_batch("CREATE VIEW spool.extraction_found AS SELECT 1;")
+                .unwrap();
+            schema::set_meta(&conn, "format_version", "11").unwrap();
+        }
+
+        // The view blocks creation of the new table after the column is added.
+        let Err(Error::Duckdb(error)) = open() else {
+            panic!("expected the upgrade to fail");
+        };
+        assert!(error.to_string().contains("extraction_found"), "{error}");
+        {
+            let conn = Connection::open(&path).unwrap();
+            assert_eq!(
+                schema::meta(&conn, "format_version").unwrap().as_deref(),
+                Some("11")
+            );
+            let columns: i64 = conn
+                .query_row(
+                    "SELECT count(*) FROM information_schema.columns
+                     WHERE table_schema = 'spool' AND table_name = 'extraction'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(columns, 5);
+            conn.execute_batch("DROP VIEW spool.extraction_found")
+                .unwrap();
+        }
+
+        let store = open().unwrap();
+        assert_eq!(
+            schema::meta(&store.conn, "format_version")
+                .unwrap()
+                .as_deref(),
+            Some(schema::FORMAT_VERSION)
+        );
     }
 }

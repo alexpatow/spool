@@ -323,13 +323,13 @@ pub fn dev(arguments: DevArgs) -> Result<(), Failure> {
             "one server runs on a store at a time: use the one that is running, or stop it \
              with Ctrl-C and start this one again",
         ),
-        // A store that another version of `spool` made.
+        // A store with no migration to the current format.
         spool::Error::FormatVersion { found, expected } => failed(format!(
-            "the store {} has format version {found}, and this `spool` reads only version \
-             {expected}: it does not convert a store",
+            "the store {} has format version {found}, which this version of `spool` \
+             cannot open (current format: {expected})",
             store.display(),
         ))
-        .hint("move the file away or name another with `--store`, then load the rows again"),
+        .hint("open the file with a version of `spool` that supports its format"),
         other => other.into(),
     })?;
     let engine = Arc::new(engine);
