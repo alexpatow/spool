@@ -2,6 +2,7 @@
 // list of the screens, who is signed in, and the bar that finds things.
 
 import * as stylex from "@stylexjs/stylex";
+import { useQueryClient } from "@tanstack/react-query";
 import { Outlet, useLocation, useMatches } from "@tanstack/react-router";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
@@ -47,6 +48,7 @@ import {
   TokenIcon,
 } from "../icons.tsx";
 import { Palette } from "../palette.tsx";
+import { stale } from "../queries.ts";
 import type { Place } from "../palette.tsx";
 import { NewPassword, password } from "../screens/people.tsx";
 import { colors, radius, spacing, typography } from "spool-ui/tokens.stylex";
@@ -69,6 +71,7 @@ export const AroundContext = createContext<Around | null>(null);
 function ChangePassword() {
   return (
     <Act
+      stale={stale.people}
       label="Change password"
       variant="ghost"
       size="sm"
@@ -98,7 +101,8 @@ export function Shell() {
   const around = useContext(AroundContext);
   if (around === null) throw new Error("the shell is not in the studio");
   const { url, theme, toggleTheme, signOut } = around;
-  const { me, info, refresh } = useStudio();
+  const { me, info } = useStudio();
+  const queryClient = useQueryClient();
   const [finding, setFinding] = useState(false);
   const types = info.store.entity_types;
   const groups: Array<{ label: string | null; entries: Entry[] }> = [
@@ -242,7 +246,7 @@ export function Shell() {
             <Kbd>⌘K</Kbd>
           </button>
           <div {...stylex.props(styles.barEnd)}>
-            <Button variant="ghost" size="sm" onClick={refresh}>
+            <Button variant="ghost" size="sm" onClick={() => void queryClient.invalidateQueries()}>
               <RefreshIcon /> Refresh
             </Button>
             <Button

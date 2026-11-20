@@ -36,8 +36,9 @@ import { Input } from "spool-ui/components/input";
 import { findIdentity, findRecord, found } from "../find.ts";
 import { excerpt, mentionOf, named, recordName } from "../format.ts";
 import type { Excerpt, Mention } from "../format.ts";
-import { useLabels, useLoad, usePages, useStudio, useTypes } from "../hooks.ts";
+import { useStudio, useTypes } from "../hooks.ts";
 import { RecordIcon } from "../icons.tsx";
+import { keys, stale, useIdentityLabels, useRead, useReadPages } from "../queries.ts";
 import { colors, radius, spacing, typography } from "spool-ui/tokens.stylex";
 import { tones } from "../styles/tones.stylex";
 
@@ -57,21 +58,23 @@ export function RecordsPage() {
   const narrow = useNarrow();
   const pair = usePair();
   const sorting = sortingOf(search, narrow, { by: "source", order: "asc" });
-  const pages = usePages(async (client, after) => {
-    const page = await client.records({
-      sort: sorting.by as RecordSort,
-      order: sorting.order,
-      entity_type: type,
-      source,
-      key,
-      document,
-      q,
-      unassigned,
-      after: after as string | undefined,
-    });
+  const filters = {
+    sort: sorting.by as RecordSort,
+    order: sorting.order,
+    entity_type: type,
+    source,
+    key,
+    document,
+    q,
+    unassigned,
+  };
+  const pages = useReadPages(keys.records.list(filters), async (client, after) => {
+    const page = await client.records({ ...filters, after: after as string | undefined });
     return { items: page.records, next: page.next };
   });
-  const labels = useLabels(pages.loaded.status === "ready" ? pages.loaded.data.map((record) => record.identity) : []);
+  const labels = useIdentityLabels(
+    pages.loaded.status === "ready" ? pages.loaded.data.map((record) => record.identity) : [],
+  );
   return (
     <Page
       title="Records"
@@ -139,7 +142,7 @@ interface Loaded {
 
 export function RecordPage() {
   const { id } = one.useParams();
-  const loaded = useLoad(async (client): Promise<Loaded> => {
+  const loaded = useRead(keys.records.one(id), async (client): Promise<Loaded> => {
     const [record, review] = await Promise.all([client.record(id), client.reviewItems({ record: id })]);
     const mention = mentionOf(record);
     const document = mention ? await found(client.document(mention.document)) : null;
@@ -168,7 +171,7 @@ function RecordScreen({ record, review, document }: Loaded) {
   // A `possible_split` is about the identity the record is in, not about a record that waits for one.
   const waits = open.filter((item) => item.kind !== "possible_split");
   const asks = open.filter((item) => item.kind === "possible_split");
-  const labels = useLabels([record.identity]);
+  const labels = useIdentityLabels([record.identity]);
   return (
     <>
       {record.superseded_by ? (
@@ -296,6 +299,7 @@ function Move({ record }: { record: RecordEntry }) {
       <Done>{done}</Done>
       <div>
         <Act
+          stale={stale.store}
           label={from ? "Move" : "Assign"}
           title={`${from ? "Move" : "Assign"} ${record.label ?? recordName(record)}`}
           why="Reason"

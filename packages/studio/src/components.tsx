@@ -18,7 +18,7 @@ import { Spinner } from "spool-ui/components/spinner";
 import * as ShelfTable from "spool-ui/components/table";
 import { describeOp, plain, short, tail, when } from "./format.ts";
 import type { Part } from "./format.ts";
-import type { Loaded, Pages } from "./hooks.ts";
+import type { Loaded, Pages } from "./queries.ts";
 import {
   ArrowDownIcon,
   ArrowRightIcon,

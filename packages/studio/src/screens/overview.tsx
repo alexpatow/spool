@@ -21,7 +21,7 @@ import {
 } from "../components.tsx";
 import type { Leads } from "../components.tsx";
 import { count } from "../format.ts";
-import { useLoad } from "../hooks.ts";
+import { keys, useRead } from "../queries.ts";
 import { colors, display, linen, radius, spacing, typography } from "spool-ui/tokens.stylex";
 import { tones } from "../styles/tones.stylex";
 import { useCalled, Who } from "../who.tsx";
@@ -35,7 +35,7 @@ function details(run: RunEntry): string {
 }
 
 export function Overview() {
-  const loaded = useLoad(async (client) => {
+  const loaded = useRead(keys.info.overview, async (client) => {
     const [info, runs] = await Promise.all([client.info(), client.runs({ limit: RUNS })]);
     return { info, runs };
   });

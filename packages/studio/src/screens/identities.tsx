@@ -48,8 +48,9 @@ import { facts, latest, sourcesOf } from "../facts.ts";
 import type { Fact } from "../facts.ts";
 import { findIdentity } from "../find.ts";
 import { count, identitiesOf, identityMatch, recordName, recordsOf, short, tail } from "../format.ts";
-import { useLabels, useLoad, useNames, usePages, useStudio, useTypes } from "../hooks.ts";
+import { useStudio, useTypes } from "../hooks.ts";
 import { IdentityIcon, MergeIcon, SplitIcon } from "../icons.tsx";
+import { keys, stale, useIdentityLabels, useRead, useReadPages, useRecordNames } from "../queries.ts";
 import { colors, spacing, typography } from "spool-ui/tokens.stylex";
 import { Who } from "../who.tsx";
 
@@ -69,14 +70,14 @@ export function Identities() {
   const types = useTypes();
   const narrow = useNarrow();
   const sorting = sortingOf(search, narrow, { by: searching ? "" : "label", order: "asc" });
-  const pages = usePages(async (client, after) => {
-    const page = await client.identities({
-      entity_type: type,
-      q,
-      after: after as string | undefined,
-      sort: sorting.by ? (sorting.by as IdentitySort) : undefined,
-      order: sorting.by ? sorting.order : undefined,
-    });
+  const filters = {
+    entity_type: type,
+    q,
+    sort: sorting.by ? (sorting.by as IdentitySort) : undefined,
+    order: sorting.by ? sorting.order : undefined,
+  };
+  const pages = useReadPages(keys.identities.list(filters), async (client, after) => {
+    const page = await client.identities({ ...filters, after: after as string | undefined });
     return { items: page.identities, next: page.next };
   });
   const total = info.store.entity_types
@@ -143,7 +144,7 @@ interface Loaded {
 
 export function Identity() {
   const { id } = one.useParams();
-  const identity = useLoad(async (client): Promise<Loaded> => {
+  const identity = useRead(keys.identities.one(id), async (client): Promise<Loaded> => {
     const { store } = await client.info();
     const [view, history] = await Promise.all([client.identity(id), client.identityHistory(id)]);
     // A merged identity answers with the members of the one that stands for
@@ -179,12 +180,12 @@ function IdentityScreen({ head, view, records, constraints, history }: Loaded) {
   const members = useMemo(() => new Map(records.map((record) => [record.id, recordName(record)])), [records]);
   // The constraints and the history also name records of other
   // identities, and ones that have left this one since.
-  const names = useNames(
+  const names = useRecordNames(
     [...constraints.flatMap((record) => [record.a, record.b]), ...history.flatMap((entry) => recordsOf(entry.ops))],
     members,
   );
   // Its history names the identities it was merged with or parted from.
-  const labels = useLabels(history.flatMap((entry) => identitiesOf(entry.ops)));
+  const labels = useIdentityLabels(history.flatMap((entry) => identitiesOf(entry.ops)));
   const called = useMemo(
     () => new Map([...names, ...[...labels].map(([id, label]) => [id, `${label} (…${tail(id)})`] as const)]),
     [names, labels],
@@ -456,6 +457,7 @@ function Split({ view, head, chosen }: { view: IdentityView; head: number; chose
         <Row>
           <Text>{would}</Text>
           <Act
+            stale={stale.store}
             label="Split"
             icon={<SplitIcon />}
             about={would}
@@ -569,6 +571,7 @@ function Merge({ view, head }: { view: IdentityView; head: number }) {
               {other.members.length > MOST_NAMED ? ` and ${other.members.length - MOST_NAMED} more` : ""}
             </Text>
             <Act
+              stale={stale.store}
               label="Merge"
               icon={<MergeIcon />}
               variant="default"

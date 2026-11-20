@@ -5,8 +5,9 @@ import { Act, Done, Mistake } from "../act.tsx";
 import type { ChangePersonRequest, Person } from "../api.ts";
 import { Code, Flag, Labelled, Load, Page, Table, Word } from "../components.tsx";
 import { Input } from "spool-ui/components/input";
-import { useLoad, useStudio } from "../hooks.ts";
+import { useStudio } from "../hooks.ts";
 import { UserPlusIcon } from "../icons.tsx";
+import { keys, stale, useRead } from "../queries.ts";
 
 /** The fewest characters the server takes as a password. */
 export const MIN_PASSWORD = 12;
@@ -73,7 +74,7 @@ export function password(entered: FormData, field = "password"): string {
 export function People() {
   const { me, google } = useStudio();
   const [done, setDone] = useState<ReactNode>(null);
-  const people = useLoad((client) => client.people());
+  const people = useRead(keys.people.list, (client) => client.people());
   return (
     <Page title="People" actions={me.admin ? <Add done={setDone} /> : null}>
       <Done>{done}</Done>
@@ -146,6 +147,7 @@ function Add({ done }: { done: (said: ReactNode) => void }) {
   const [admin, setAdmin] = useState(false);
   return (
     <Act
+      stale={stale.people}
       label="Add person"
       variant="default"
       icon={<UserPlusIcon />}
@@ -185,6 +187,7 @@ function Edit({ person, done }: { person: Person; done: (said: ReactNode) => voi
   const [active, setActive] = useState(person.active);
   return (
     <Act
+      stale={stale.people}
       label="Edit"
       title={`Edit ${person.name}`}
       confirm="Save"

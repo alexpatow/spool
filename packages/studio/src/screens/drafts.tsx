@@ -22,7 +22,8 @@ import {
 } from "../components.tsx";
 import { CheckIcon, DraftIcon } from "../icons.tsx";
 import { count } from "../format.ts";
-import { useLoad, useOpNames, useTypes } from "../hooks.ts";
+import { useTypes } from "../hooks.ts";
+import { keys, stale, useOpNames, useRead } from "../queries.ts";
 
 const STATUSES: DraftStatus[] = ["open", "committed", "rejected", "superseded"];
 
@@ -34,7 +35,8 @@ export function Drafts() {
   const { status, type } = search;
   const types = useTypes();
   const narrow = useNarrow();
-  const drafts = useLoad((client) => client.drafts({ status: status as DraftStatus | undefined, entity_type: type }));
+  const filters = { status: status as DraftStatus | undefined, entity_type: type };
+  const drafts = useRead(keys.drafts.list(filters), (client) => client.drafts(filters));
   return (
     <Page title="Drafts">
       <Filters
@@ -78,7 +80,7 @@ export function Drafts() {
 
 export function Draft() {
   const { id } = one.useParams();
-  const draft = useLoad((client) => client.draft(id));
+  const draft = useRead(keys.drafts.one(id), (client) => client.draft(id));
   return (
     <Page
       title="Draft"
@@ -162,6 +164,7 @@ function Decide({ draft }: { draft: DraftSummary }) {
       {open ? (
         <Row>
           <Act
+            stale={stale.store}
             label="Approve"
             icon={<CheckIcon />}
             variant="default"
@@ -177,6 +180,7 @@ function Decide({ draft }: { draft: DraftSummary }) {
             done={setDone}
           />
           <Act
+            stale={stale.store}
             label="Reject"
             about="Nothing is committed. The next run examines its records again."
             why="Reason"

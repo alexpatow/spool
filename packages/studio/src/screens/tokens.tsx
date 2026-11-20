@@ -7,8 +7,9 @@ import type { Grant, Token } from "../api.ts";
 import { Code, Labelled, Load, Notice, Page, Section, Table, When } from "../components.tsx";
 import { CopyButton } from "spool-ui/components/copy-button";
 import { Input } from "spool-ui/components/input";
-import { useLoad, useStudio } from "../hooks.ts";
+import { useStudio } from "../hooks.ts";
 import { PlusIcon } from "../icons.tsx";
+import { keys, stale, useRead } from "../queries.ts";
 import { colors, radius, spacing, typography } from "spool-ui/tokens.stylex";
 import { Who } from "../who.tsx";
 import { typed } from "./people.tsx";
@@ -29,8 +30,8 @@ export function Tokens() {
 
 function Managed() {
   const [done, setDone] = useState<ReactNode>(null);
-  const tokens = useLoad((client) => client.tokens());
-  const grants = useLoad((client) => client.grants());
+  const tokens = useRead(keys.tokens.list(), (client) => client.tokens());
+  const grants = useRead(keys.grants.list(), (client) => client.grants());
   return (
     <Page title="Tokens" about={ABOUT} actions={<Add done={setDone} />}>
       <Done>{done}</Done>
@@ -131,6 +132,7 @@ function EndGrant({ grant, done }: { grant: Grant; done: (said: ReactNode) => vo
   const name = grant.client_name ?? "the assistant";
   return (
     <Act
+      stale={stale.grants}
       label="Revoke"
       title={`Revoke ${name}`}
       variant="destructive"
@@ -148,6 +150,7 @@ function EndGrant({ grant, done }: { grant: Grant; done: (said: ReactNode) => vo
 function Add({ done }: { done: (said: ReactNode) => void }) {
   return (
     <Act
+      stale={stale.tokens}
       label="Add token"
       variant="default"
       icon={<PlusIcon />}
@@ -195,6 +198,7 @@ function Made({ name, secret }: { name: string; secret: string }) {
 function Revoke({ token, done }: { token: Token; done: (said: ReactNode) => void }) {
   return (
     <Act
+      stale={stale.tokens}
       label="Revoke"
       title={`Revoke ${token.name}`}
       variant="destructive"

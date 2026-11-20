@@ -30,7 +30,7 @@ import { colors, radius, spacing, typography } from "spool-ui/tokens.stylex";
 import { tones } from "../styles/tones.stylex";
 import { codePoints, count, mentionOf, named, readBy, segments } from "../format.ts";
 import type { Mention } from "../format.ts";
-import { useLabels, useLoad, usePages } from "../hooks.ts";
+import { keys, useIdentityLabels, useRead, useReadPages } from "../queries.ts";
 
 const list = getRouteApi("/documents/");
 const one = getRouteApi("/documents/$id");
@@ -40,15 +40,9 @@ export function Documents() {
   const { source, key, latest } = search;
   const narrow = useNarrow();
   const sorting = sortingOf(search, narrow, { by: "key", order: "asc" });
-  const pages = usePages(async (client, after) => {
-    const page = await client.documents({
-      source,
-      key,
-      latest,
-      after: after as string | undefined,
-      sort: sorting.by as DocumentSort,
-      order: sorting.order,
-    });
+  const filters = { source, key, latest, sort: sorting.by as DocumentSort, order: sorting.order };
+  const pages = useReadPages(keys.documents.list(filters), async (client, after) => {
+    const page = await client.documents({ ...filters, after: after as string | undefined });
     return { items: page.documents, next: page.next };
   });
   return (
@@ -122,7 +116,7 @@ async function mentions(client: SpoolClient, document: string): Promise<{ found:
 export function Document() {
   const { id } = one.useParams();
   const search = one.useSearch();
-  const loaded = useLoad(async (client): Promise<Loaded> => {
+  const loaded = useRead(keys.documents.one(id), async (client): Promise<Loaded> => {
     const [document, read] = await Promise.all([client.document(id), mentions(client, id)]);
     read.found.sort((a, b) => a.mention.start - b.mention.start || a.mention.end - b.mention.end);
     return { document, ...read };
@@ -144,7 +138,7 @@ export function Document() {
 }
 
 function DocumentScreen({ document, found, cut, at }: Loaded & { at: number | null }) {
-  const labels = useLabels(found.map(({ record }) => record.identity));
+  const labels = useIdentityLabels(found.map(({ record }) => record.identity));
   const pair = usePair();
   // Taken apart once: the marked text and every label of the table read it.
   const points = useMemo(() => codePoints(document.text ?? ""), [document.text]);

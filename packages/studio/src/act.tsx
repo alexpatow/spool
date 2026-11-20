@@ -3,6 +3,8 @@
 // asked for and shows what the engine answered.
 
 import * as stylex from "@stylexjs/stylex";
+import { useQueryClient } from "@tanstack/react-query";
+import type { QueryKey } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import type { ComponentProps, ReactNode } from "react";
 
@@ -14,7 +16,8 @@ import type { ButtonSize, ButtonVariant } from "spool-ui/components/button";
 import * as Dialog from "spool-ui/components/dialog";
 import { Input } from "spool-ui/components/input";
 import { describeOp } from "./format.ts";
-import { useOpNames, useStudio } from "./hooks.ts";
+import { useStudio } from "./hooks.ts";
+import { useOpNames } from "./queries.ts";
 import { colors, radius, spacing, typography } from "spool-ui/tokens.stylex";
 
 /** Something the reviewer left out, which the studio can say without asking the server. */
@@ -34,8 +37,8 @@ export type Change = (client: SpoolClient, said: Said) => Promise<ReactNode>;
  * A change the reviewer can make: the button that proposes it, and the
  * dialog that says what it would do, takes what it needs and makes it.
  * `act` makes the call and answers with what to say once it is made. What
- * is shown is then read again, which may take the button away, so the
- * screen keeps what was said and is told through `done`.
+ * the change made `stale` is then read again, which may take the button
+ * away, so the screen keeps what was said and is told through `done`.
  */
 export function Act({
   label,
@@ -50,6 +53,7 @@ export function Act({
   look,
   children,
   act,
+  stale,
   done,
 }: {
   label: string;
@@ -70,9 +74,12 @@ export function Act({
   /** The fields that are the change's own. */
   children?: ReactNode;
   act: Change;
+  /** The reads the change makes stale, by their keys: one of `stale` in `queries.ts`. */
+  stale: readonly QueryKey[];
   done: (said: ReactNode) => void;
 }) {
-  const { client, refresh } = useStudio();
+  const { client } = useStudio();
+  const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<unknown>(null);
@@ -140,7 +147,7 @@ export function Act({
             start(event.currentTarget, act, (answer) => {
               setOpen(false);
               done(answer);
-              refresh();
+              for (const queryKey of stale) void queryClient.invalidateQueries({ queryKey });
             });
           }}
         >

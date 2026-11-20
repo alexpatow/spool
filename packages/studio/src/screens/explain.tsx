@@ -37,7 +37,8 @@ import { colors, radius, spacing, typography } from "spool-ui/tokens.stylex";
 import { tones } from "../styles/tones.stylex";
 import { findRecord } from "../find.ts";
 import { recordName, plain } from "../format.ts";
-import { useLabels, useLoad, useStudio } from "../hooks.ts";
+import { useStudio } from "../hooks.ts";
+import { keys, stale, useIdentityLabels, useRead } from "../queries.ts";
 import { Who } from "../who.tsx";
 
 const route = getRouteApi("/explain");
@@ -120,7 +121,7 @@ function Ask({ a, b }: { a?: string; b?: string }) {
 }
 
 function Answer({ a, b }: { a: string; b: string }) {
-  const explanation = useLoad((client) => client.explain(a, b));
+  const explanation = useRead(keys.explain.pair(a, b), (client) => client.explain(a, b));
   return <Load state={explanation}>{(explanation) => <ExplanationView explanation={explanation} />}</Load>;
 }
 
@@ -309,6 +310,7 @@ function Constrain({ explanation }: { explanation: Explanation }) {
       <Row>
         {inForce.map((record) => (
           <Act
+            stale={stale.store}
             key={record.kind}
             label={`Remove ${record.kind}`}
             why="Reason"
@@ -328,6 +330,7 @@ function Constrain({ explanation }: { explanation: Explanation }) {
         ))}
         {inForce.length === 0 ? (
           <Act
+            stale={stale.store}
             label="Add constraint"
             why="Reason"
             act={async (client, { reason, entered }) => {
@@ -357,7 +360,7 @@ function Constrain({ explanation }: { explanation: Explanation }) {
 
 function Side({ title, letter, explained }: { title: string; letter: string; explained: Explained }) {
   const { record, placed } = explained;
-  const labels = useLabels([record.identity]);
+  const labels = useIdentityLabels([record.identity]);
   return (
     <div data-part="side" {...stylex.props(styles.side)}>
       <div>

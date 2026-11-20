@@ -21,7 +21,7 @@ import {
   useNarrow,
 } from "../components.tsx";
 import { LogIcon, UndoIcon } from "../icons.tsx";
-import { useLoad, useOpNames, usePages } from "../hooks.ts";
+import { keys, stale, useOpNames, useRead, useReadPages } from "../queries.ts";
 import { Who } from "../who.tsx";
 
 /** The changesets of one page of the log. */
@@ -32,13 +32,9 @@ const one = getRouteApi("/log/$id");
 
 export function Log() {
   const sorting = sortingOf(list.useSearch(), useNarrow(), { by: "seq", order: "desc" });
-  const pages = usePages(async (client, after) => {
-    const page = await client.changesets({
-      after: after as number | undefined,
-      limit: PAGE,
-      sort: sorting.by as LogSort,
-      order: sorting.order,
-    });
+  const filters = { limit: PAGE, sort: sorting.by as LogSort, order: sorting.order };
+  const pages = useReadPages(keys.log.list(filters), async (client, after) => {
+    const page = await client.changesets({ ...filters, after: after as number | undefined });
     // A sorted log says nothing of what is after a page, and a full page may have more.
     const last = page.changesets.at(-1);
     return { items: page.changesets, next: last !== undefined && page.changesets.length === PAGE ? last.seq : null };
@@ -112,6 +108,7 @@ function Undo({ seq }: { seq: number }) {
       <Done>{done}</Done>
       <div>
         <Act
+          stale={stale.store}
           label="Undo"
           icon={<UndoIcon />}
           title={`Undo log position ${seq}`}
@@ -148,7 +145,7 @@ function Undo({ seq }: { seq: number }) {
 export function Changeset() {
   const { id } = one.useParams();
   const seq = Number(id);
-  const entry = useLoad(async (client): Promise<LogEntry | null> => {
+  const entry = useRead(keys.log.one(id), async (client): Promise<LogEntry | null> => {
     if (!Number.isInteger(seq) || seq < 1) return null;
     const { changesets } = await client.changesets({ after: seq - 1, limit: 1 });
     return changesets[0]?.seq === seq ? changesets[0] : null;

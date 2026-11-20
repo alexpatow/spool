@@ -40,8 +40,9 @@ import { Button } from "spool-ui/components/button";
 import * as ShelfTable from "spool-ui/components/table";
 import { facts, fieldsOf, latest, same, sourcesOf, valueOf } from "../facts.ts";
 import { count, recordName, short, tail } from "../format.ts";
-import { useLoad, useNames, useStudio, useTypes } from "../hooks.ts";
+import { useStudio, useTypes } from "../hooks.ts";
 import { CheckIcon, InboxIcon, MergeIcon, PlusIcon, SplitIcon } from "../icons.tsx";
+import { keys, stale, useRead, useRecordNames } from "../queries.ts";
 import { colors, display, linen, radius, spacing, typography } from "spool-ui/tokens.stylex";
 import { tones } from "../styles/tones.stylex";
 import { foremost, tally } from "../verdicts.ts";
@@ -89,9 +90,8 @@ export function ReviewItems() {
   // An item that was decided leaves the list of those that are open, so
   // what came of it is said above the list.
   const [done, setDone] = useState<ReactNode>(null);
-  const items = useLoad((client) =>
-    client.reviewItems({ status: status === "all" ? undefined : (status as ReviewStatus), entity_type: type }),
-  );
+  const filters = { status: status === "all" ? undefined : (status as ReviewStatus), entity_type: type };
+  const items = useRead(keys.review.list(filters), (client) => client.reviewItems(filters));
   const waiting = info.store.entity_types
     .filter((entity) => type === undefined || entity.name === type)
     .reduce((sum, entity) => sum + entity.open_review_items, 0);
@@ -186,7 +186,7 @@ function Case({
 }) {
   // Where the log ended is read before the case, so that a merge decided from the card is
   // written against what the card showed, and the engine refuses it if that changed since.
-  const loaded = useLoad(async (client) => {
+  const loaded = useRead(keys.review.one(id), async (client) => {
     const { store } = await client.info();
     return { head: store.head, found: await client.reviewCase(id) };
   });
@@ -536,6 +536,7 @@ function Answers({
   const [into, ...others] = [...candidates].sort((a, b) => b.identity.members - a.identity.members);
   const dismiss = (
     <Act
+      stale={stale.store}
       label="Dismiss"
       variant="ghost"
       title={`Dismiss review item ${item.id}`}
@@ -777,7 +778,7 @@ function Compare({ found }: { found: ReviewCase }) {
   );
   const said = candidates.map((candidate) => facts(latest(candidate.members)));
   // A constraint may name a member that is not among those shown, or a record of neither.
-  const names = useNames(
+  const names = useRecordNames(
     constraints.flatMap((constraint) => [constraint.a, constraint.b]),
     named,
   );
@@ -994,7 +995,7 @@ function Judgements({ judgements, named }: { judgements: PairJudgement[]; named:
   const shown = all ? ordered : ordered.slice(0, MOST_JUDGEMENTS);
   const more = ordered.slice(shown.length);
   // One that is against a record the case does not hold is named by looking the record up.
-  const names = useNames(
+  const names = useRecordNames(
     shown.map((judgement) => judgement.other),
     named,
   );
@@ -1062,6 +1063,7 @@ function Place({
   const { item, candidates } = found;
   return (
     <Act
+      stale={stale.store}
       label={label}
       icon={icon}
       size="sm"
@@ -1142,6 +1144,7 @@ function MergeAndPlace({
   const call = namer(found.candidates);
   return (
     <Act
+      stale={stale.store}
       label="Merge identities"
       icon={<MergeIcon />}
       title={`Merge ${count(found.candidates.length, "identity")}`}
@@ -1210,7 +1213,7 @@ function SplitCard({
   const left = still.filter((group) => group.length > 0);
   const groupOf = new Map(groups.flatMap((group, index) => group.map((record) => [record.id, index] as const)));
   const named = new Map([...records, ...takenBack].map((record) => [record.id, recordName(record)]));
-  const names = useNames(
+  const names = useRecordNames(
     constraints.flatMap((constraint) => [constraint.a, constraint.b]),
     named,
   );
@@ -1392,6 +1395,7 @@ function SplitCard({
                       ]}
                       action={
                         <Act
+                          stale={stale.store}
                           label={`Split off group ${index + 1}`}
                           icon={<SplitIcon />}
                           size="sm"
@@ -1436,6 +1440,7 @@ function SplitCard({
                 ]}
                 action={
                   <Act
+                    stale={stale.store}
                     label="Keep as one"
                     icon={<CheckIcon />}
                     title="Keep as one identity"
@@ -1470,6 +1475,7 @@ function SplitCard({
               ]}
               action={
                 <Act
+                  stale={stale.store}
                   label="Dismiss"
                   variant="ghost"
                   title={`Dismiss review item ${item.id}`}

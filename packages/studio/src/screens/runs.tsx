@@ -22,7 +22,8 @@ import {
 } from "../components.tsx";
 import { RunIcon } from "../icons.tsx";
 import { count } from "../format.ts";
-import { useLabels, useLoad, useTypes } from "../hooks.ts";
+import { useTypes } from "../hooks.ts";
+import { keys, useIdentityLabels, useRead } from "../queries.ts";
 import { Who } from "../who.tsx";
 
 const KINDS: RunKind[] = ["load", "extract", "match", "reconcile", "retract"];
@@ -39,16 +40,15 @@ export function Runs() {
   const types = useTypes();
   const narrow = useNarrow();
   const sorting = sortingOf(search, narrow, { by: "run", order: "desc" });
-  const runs = useLoad((client) =>
-    client.runs({
-      kind: kind as RunKind | undefined,
-      status: status as RunStatus | undefined,
-      entity_type: type,
-      limit,
-      sort: sorting.by as RunSort,
-      order: sorting.order,
-    }),
-  );
+  const filters = {
+    kind: kind as RunKind | undefined,
+    status: status as RunStatus | undefined,
+    entity_type: type,
+    limit,
+    sort: sorting.by as RunSort,
+    order: sorting.order,
+  };
+  const runs = useRead(keys.runs.list(filters), (client) => client.runs(filters));
   return (
     <Page title="Runs">
       <Filters
@@ -101,7 +101,7 @@ export function Runs() {
 
 export function Run() {
   const { id } = one.useParams();
-  const run = useLoad((client) => client.run(Number(id)));
+  const run = useRead(keys.runs.one(id), (client) => client.run(Number(id)));
   return (
     <Page
       title={`Run ${id}`}
@@ -130,7 +130,7 @@ function leftForReview(identities: number | undefined): ReactNode {
 function RunView({ run }: { run: RunEntry }) {
   const { load, extraction, resolution, retraction } = run;
   // The identities a strategy would merge or split are named by ID.
-  const labels = useLabels([
+  const labels = useIdentityLabels([
     ...(resolution?.suggestions?.merges.flatMap((merge) => merge.identities) ?? []),
     ...(resolution?.suggestions?.splits.map((split) => split.identity) ?? []),
   ]);

@@ -6,6 +6,7 @@
 // (`app/door.tsx`) is shown until someone is signed in, and the shell
 // (`app/shell.tsx`) around every screen after.
 
+import { QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createBrowserHistory, createRouter, RouterProvider } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 
@@ -17,6 +18,7 @@ import { AroundContext } from "./app/shell.tsx";
 import { Failure, Notice, Quiet } from "./components.tsx";
 import { Button } from "spool-ui/components/button";
 import { StudioContext } from "./hooks.ts";
+import { createQueryClient, keys } from "./queries.ts";
 import { routeTree } from "./routeTree.gen.ts";
 import { applyTheme } from "./styles/themes.ts";
 import type { Theme } from "./styles/themes.ts";
@@ -84,16 +86,50 @@ function useTheme(kept: Kept): [Theme, () => void] {
   ];
 }
 
-export function App({
+const NOBODY: Person[] = [];
+
+/** The studio, with what it read kept for as long as the page is open. */
+export function App(props: AppProps) {
+  const [queryClient] = useState(createQueryClient);
+  return (
+    <QueryClientProvider client={queryClient}>
+      <Studio {...props} />
+    </QueryClientProvider>
+  );
+}
+
+/**
+ * Who is signed in, and what every screen needs once someone is: what the
+ * store holds, and who has an account. `left` is why signing out failed.
+ */
+function useConnection(client: SpoolClient, left: unknown): { connection: Connection; google: boolean } {
+  const session = useQuery({ queryKey: keys.session, queryFn: () => client.session() });
+  const signedIn = Boolean(session.data?.person);
+  const info = useQuery({ queryKey: keys.info.studio, queryFn: () => client.info(), enabled: signedIn });
+  const people = useQuery({ queryKey: keys.people.studio, queryFn: () => client.people(), enabled: signedIn });
+  const google = session.data?.google ?? false;
+  const error = left ?? session.error ?? (signedIn ? (info.error ?? people.error) : null);
+  if (error !== null) {
+    // The session ended between one call and the next.
+    const out = error instanceof SpoolError && error.code === "unauthorized";
+    return { connection: out ? { status: "out", setup: false } : { status: "failed", error }, google };
+  }
+  if (session.data === undefined) return { connection: { status: "checking" }, google };
+  const { person, setup, dev } = session.data;
+  if (!person) return { connection: { status: "out", setup }, google };
+  if (info.data === undefined || people.data === undefined) return { connection: { status: "checking" }, google };
+  return { connection: { status: "ready", me: person, dev, info: info.data, people: people.data }, google };
+}
+
+function Studio({
   url = window.location.origin,
   fetch,
   storage = window.localStorage,
   leave = (to) => window.location.assign(to),
 }: AppProps) {
-  const [version, setVersion] = useState(0);
-  const [connection, setConnection] = useState<Connection>({ status: "checking" });
-  const [google, setGoogle] = useState(false);
+  const queryClient = useQueryClient();
   const [router] = useState(createStudioRouter);
+  const [left, setLeft] = useState<unknown>(null);
   const [turnedAway] = useState(() => new URLSearchParams(window.location.search).get("google"));
   useEffect(() => {
     // It has been read. The address is the page's again, to keep or to pass on.
@@ -109,44 +145,17 @@ export function App({
         const response = await call(input, init);
         // The session ended while the studio was open: asking who is signed
         // in shows the door.
-        if (response.status === 401 && input.pathname.startsWith("/v1/")) setVersion((before) => before + 1);
+        if (response.status === 401 && input.pathname.startsWith("/v1/")) {
+          void queryClient.invalidateQueries({ queryKey: keys.session });
+        }
         return response;
       },
     });
-  }, [url, fetch]);
+  }, [url, fetch, queryClient]);
   const [theme, toggleTheme] = useTheme(storage);
-
-  useEffect(() => {
-    let current = true;
-    const read = async (): Promise<[Connection, boolean]> => {
-      const { person, setup, dev, google } = await client.session();
-      if (!person) return [{ status: "out", setup }, google];
-      const [info, people] = await Promise.all([client.info(), client.people()]);
-      return [{ status: "ready", me: person, dev, info, people }, google];
-    };
-    read().then(
-      ([read, google]) => {
-        if (!current) return;
-        setGoogle(google);
-        setConnection(read);
-      },
-      (error: unknown) => {
-        if (!current) return;
-        // The session ended between one call and the next.
-        const out = error instanceof SpoolError && error.code === "unauthorized";
-        setConnection(out ? { status: "out", setup: false } : { status: "failed", error });
-      },
-    );
-    return () => {
-      current = false;
-    };
-  }, [client, version]);
-
-  const refresh = () => setVersion((before) => before + 1);
-  const people = useMemo(
-    () => new Map(connection.status === "ready" ? connection.people.map((person) => [person.id, person]) : []),
-    [connection],
-  );
+  const { connection, google } = useConnection(client, left);
+  const everyone = connection.status === "ready" ? connection.people : NOBODY;
+  const people = useMemo(() => new Map(everyone.map((person) => [person.id, person])), [everyone]);
 
   if (connection.status === "checking") {
     return (
@@ -160,8 +169,8 @@ export function App({
       if (!state.person) return;
       // The link that made the first account has done its work.
       if (isAt("setup")) window.history.replaceState(null, "", "/");
-      setConnection({ status: "checking" });
-      refresh();
+      // Whoever is signed in now is asked for again, and nothing is kept of what anyone before them read.
+      void queryClient.resetQueries();
     };
     return (
       <Door url={url}>
@@ -180,7 +189,11 @@ export function App({
       <Door url={url}>
         <Failure error={connection.error} />
         <div>
-          <Button variant="outline" onClick={refresh}>
+          <Button
+            variant="outline"
+            // It stays as it is until everything is read again.
+            onClick={() => void queryClient.invalidateQueries().then(() => setLeft(null))}
+          >
             Try again
           </Button>
         </div>
@@ -198,14 +211,13 @@ export function App({
     ? null
     : () => {
         client.signOut().then(
-          () => setConnection({ status: "out", setup: false }),
-          (error: unknown) => setConnection({ status: "failed", error }),
+          // Nobody is signed in, which the server need not be asked.
+          () => queryClient.setQueryData<SessionState>(keys.session, (was) => was && { ...was, person: null, setup: false }),
+          (error: unknown) => setLeft(error),
         );
       };
   return (
-    <StudioContext.Provider
-      value={{ client, version, refresh, me: connection.me, people, google, info: connection.info }}
-    >
+    <StudioContext.Provider value={{ client, me: connection.me, people, google, info: connection.info }}>
       <AroundContext.Provider value={{ url, theme, toggleTheme, signOut }}>
         <RouterProvider router={router} />
       </AroundContext.Provider>
