@@ -63,6 +63,10 @@ Every step keeps behaviour as it is: the checks are `cargo fmt`, `cargo clippy
 - [ ] E7. `bench.rs` (and what only it uses) into a crate of its own,
       `spool-bench`.
 
+- [x] E8. The other source files over the budget, each into a root and its
+      parts: `store.rs`, `project.rs`, `documents.rs`, `links.rs`,
+      `spool-core`'s `conformance.rs` and `commands/extract.rs`.
+
 ## F. Server and CLI structure
 
 - [x] F1. `auth/` module: `accounts.rs`, `accounts/oauth.rs`, `google.rs`,
