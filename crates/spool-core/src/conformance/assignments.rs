@@ -1,7 +1,8 @@
 //! Cases about identities and the records assigned to them.
 
 use super::{
-    Author, assign, commit, create, gadget, obs, only_reason, records, rejections, widget,
+    Author, assign, commit, create, expect_rejections, fixture_records, gadget, obs, only_reason,
+    widget,
 };
 use crate::ids::{EntityType, RecordId, Seq};
 use crate::state::{IdentityEntry, IdentityStatus, IdentityStore, Membership};
@@ -10,7 +11,7 @@ use crate::validate::{Reason, Rejection, validate};
 pub fn creates_an_identity_and_attaches_records<S: IdentityStore>(
     make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&records());
+    let mut store = make(&fixture_records());
     let mut author = Author::new();
     let (a, b, unused) = (author.identity(), author.identity(), author.identity());
 
@@ -70,7 +71,7 @@ pub fn creates_an_identity_and_attaches_records<S: IdentityStore>(
 pub fn moves_and_detaches_keeping_history<S: IdentityStore>(
     make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&records());
+    let mut store = make(&fixture_records());
     let mut author = Author::new();
     let (a, b) = (author.identity(), author.identity());
 
@@ -123,7 +124,7 @@ pub fn moves_and_detaches_keeping_history<S: IdentityStore>(
 pub fn rejects_a_stale_precondition_and_names_the_operation<S: IdentityStore>(
     make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&records());
+    let mut store = make(&fixture_records());
     let mut author = Author::new();
     let (a, b) = (author.identity(), author.identity());
     commit(
@@ -141,7 +142,7 @@ pub fn rejects_a_stale_precondition_and_names_the_operation<S: IdentityStore>(
     );
     store.apply(validate(&store, first).unwrap()).unwrap();
 
-    let found = rejections(&store, second);
+    let found = expect_rejections(&store, second);
     assert_eq!(
         found,
         vec![Rejection {
@@ -161,7 +162,7 @@ pub fn rejects_a_stale_precondition_and_names_the_operation<S: IdentityStore>(
 pub fn rejects_a_reused_identity_id<S: IdentityStore>(
     make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&records());
+    let mut store = make(&fixture_records());
     let mut author = Author::new();
     let (a, b) = (author.identity(), author.identity());
     commit(&mut store, &mut author, vec![create(a, widget())]);
@@ -181,7 +182,7 @@ pub fn rejects_a_reused_identity_id<S: IdentityStore>(
 pub fn rejects_an_unknown_record<S: IdentityStore>(
     make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let store = make(&records());
+    let store = make(&fixture_records());
     let mut author = Author::new();
     let a = author.identity();
     let changeset = author.changeset(
@@ -197,7 +198,7 @@ pub fn rejects_an_unknown_record<S: IdentityStore>(
 pub fn rejects_an_unknown_identity<S: IdentityStore>(
     make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let store = make(&records());
+    let store = make(&fixture_records());
     let mut author = Author::new();
     let missing = author.identity();
     let changeset = author.changeset(Seq::ZERO, vec![assign(1, None, Some(missing))]);
@@ -210,7 +211,7 @@ pub fn rejects_an_unknown_identity<S: IdentityStore>(
 pub fn rejects_an_entity_type_mismatch<S: IdentityStore>(
     make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&records());
+    let mut store = make(&fixture_records());
     let mut author = Author::new();
     let a = author.identity();
     commit(&mut store, &mut author, vec![create(a, widget())]);
@@ -233,7 +234,7 @@ pub fn rejects_an_entity_type_mismatch<S: IdentityStore>(
 pub fn rejects_assigning_an_record_twice_in_one_changeset<S: IdentityStore>(
     make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let store = make(&records());
+    let store = make(&fixture_records());
     let mut author = Author::new();
     let (a, b) = (author.identity(), author.identity());
     let changeset = author.changeset(

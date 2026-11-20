@@ -1,8 +1,8 @@
 //! Cases about merging identities and reinstating a merged one.
 
 use super::{
-    Author, assert_replays, assign, cannot_link, commit, create, gadget, merge, obs, only_reason,
-    records, reinstate, status, three_widgets, widget,
+    Author, assert_replays, assign, cannot_link, commit, create, fixture_records, gadget, merge,
+    obs, only_reason, read_identity_status, reinstate, three_widgets, widget,
 };
 use crate::ids::{EntityType, RecordId, Seq};
 use crate::state::{IdentityStatus, IdentityStore, Membership, Merged};
@@ -11,7 +11,7 @@ use crate::validate::{Reason, validate};
 pub fn merges_identities_and_keeps_the_merged_id<S: IdentityStore>(
     make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&records());
+    let mut store = make(&fixture_records());
     let mut author = Author::new();
     let (a, b, c) = three_widgets(&mut store, &mut author);
 
@@ -26,7 +26,7 @@ pub fn merges_identities_and_keeps_the_merged_id<S: IdentityStore>(
         vec![(b, obs(1)), (b, obs(2)), (b, obs(3))]
     );
     assert_eq!(
-        status(&store, a),
+        read_identity_status(&store, a),
         (
             IdentityStatus::MergedInto(b),
             Some(Merged {
@@ -35,7 +35,10 @@ pub fn merges_identities_and_keeps_the_merged_id<S: IdentityStore>(
             })
         )
     );
-    assert_eq!(status(&store, b), (IdentityStatus::Active, None));
+    assert_eq!(
+        read_identity_status(&store, b),
+        (IdentityStatus::Active, None)
+    );
     assert_eq!(
         store.membership_changed(&[a, b, c]).unwrap(),
         vec![Seq(2), Seq(2), Seq(1)]
@@ -84,7 +87,7 @@ pub fn merges_identities_and_keeps_the_merged_id<S: IdentityStore>(
 pub fn a_chain_of_merges_points_at_the_active_identity<S: IdentityStore>(
     make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&records());
+    let mut store = make(&fixture_records());
     let mut author = Author::new();
     let (a, b, c) = three_widgets(&mut store, &mut author);
 
@@ -93,7 +96,7 @@ pub fn a_chain_of_merges_points_at_the_active_identity<S: IdentityStore>(
 
     // `a` was merged into `b`, and `c` is the identity that stands for it.
     assert_eq!(
-        status(&store, a),
+        read_identity_status(&store, a),
         (
             IdentityStatus::MergedInto(c),
             Some(Merged {
@@ -103,7 +106,7 @@ pub fn a_chain_of_merges_points_at_the_active_identity<S: IdentityStore>(
         )
     );
     assert_eq!(
-        status(&store, b),
+        read_identity_status(&store, b),
         (
             IdentityStatus::MergedInto(c),
             Some(Merged {
@@ -119,8 +122,14 @@ pub fn a_chain_of_merges_points_at_the_active_identity<S: IdentityStore>(
 
     // With `b` active again, `a` stands for `b` once more.
     commit(&mut store, &mut author, vec![reinstate(b)]);
-    assert_eq!(status(&store, a).0, IdentityStatus::MergedInto(b));
-    assert_eq!(status(&store, b), (IdentityStatus::Active, None));
+    assert_eq!(
+        read_identity_status(&store, a).0,
+        IdentityStatus::MergedInto(b)
+    );
+    assert_eq!(
+        read_identity_status(&store, b),
+        (IdentityStatus::Active, None)
+    );
     assert_eq!(store.merged_before(b, Seq(4)).unwrap(), Some(c));
     assert_eq!(store.merged_before(b, Seq(3)).unwrap(), None);
     assert_replays(&store);
@@ -129,7 +138,7 @@ pub fn a_chain_of_merges_points_at_the_active_identity<S: IdentityStore>(
 pub fn rejects_merges_that_cannot_be_made<S: IdentityStore>(
     make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&records());
+    let mut store = make(&fixture_records());
     let mut author = Author::new();
     let (a, b, c) = three_widgets(&mut store, &mut author);
     let (g, unknown) = (author.identity(), author.identity());
@@ -208,7 +217,7 @@ pub fn rejects_merges_that_cannot_be_made<S: IdentityStore>(
 pub fn rejects_a_merge_whose_members_changed<S: IdentityStore>(
     make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&records());
+    let mut store = make(&fixture_records());
     let mut author = Author::new();
     let (a, b, c) = three_widgets(&mut store, &mut author);
 
@@ -240,7 +249,7 @@ pub fn rejects_a_merge_whose_members_changed<S: IdentityStore>(
 pub fn rejects_moving_an_record_twice_through_a_merge<S: IdentityStore>(
     make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&records());
+    let mut store = make(&fixture_records());
     let mut author = Author::new();
     let (a, b, c) = three_widgets(&mut store, &mut author);
 
@@ -285,7 +294,7 @@ pub fn rejects_moving_an_record_twice_through_a_merge<S: IdentityStore>(
 pub fn reinstates_a_merged_identity<S: IdentityStore>(
     make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&records());
+    let mut store = make(&fixture_records());
     let mut author = Author::new();
     let (a, b, _) = three_widgets(&mut store, &mut author);
     let unknown = author.identity();
@@ -331,7 +340,10 @@ pub fn reinstates_a_merged_identity<S: IdentityStore>(
         &mut author,
         vec![reinstate(a), assign(2, Some(b), Some(a))],
     );
-    assert_eq!(status(&store, a), (IdentityStatus::Active, None));
+    assert_eq!(
+        read_identity_status(&store, a),
+        (IdentityStatus::Active, None)
+    );
     assert_eq!(
         store.members(&[a, b]).unwrap(),
         vec![(a, obs(2)), (b, obs(1)), (b, obs(3))]
@@ -342,7 +354,7 @@ pub fn reinstates_a_merged_identity<S: IdentityStore>(
 pub fn applies_mixed_operations_as_written<S: IdentityStore>(
     make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&records());
+    let mut store = make(&fixture_records());
     let mut author = Author::new();
     let (a, b, c) = three_widgets(&mut store, &mut author);
     commit(&mut store, &mut author, vec![merge(a, b)]);
@@ -375,15 +387,27 @@ pub fn applies_mixed_operations_as_written<S: IdentityStore>(
             (d, obs(5))
         ]
     );
-    assert_eq!(status(&store, a).0, IdentityStatus::MergedInto(b));
-    assert_eq!(status(&store, b).0, IdentityStatus::Active);
-    assert_eq!(status(&store, c).0, IdentityStatus::MergedInto(d));
+    assert_eq!(
+        read_identity_status(&store, a).0,
+        IdentityStatus::MergedInto(b)
+    );
+    assert_eq!(read_identity_status(&store, b).0, IdentityStatus::Active);
+    assert_eq!(
+        read_identity_status(&store, c).0,
+        IdentityStatus::MergedInto(d)
+    );
 
     // Reinstating an identity and merging into it the one that stood for it
     // turns the pair around.
     commit(&mut store, &mut author, vec![reinstate(c), merge(d, c)]);
-    assert_eq!(status(&store, c), (IdentityStatus::Active, None));
-    assert_eq!(status(&store, d).0, IdentityStatus::MergedInto(c));
+    assert_eq!(
+        read_identity_status(&store, c),
+        (IdentityStatus::Active, None)
+    );
+    assert_eq!(
+        read_identity_status(&store, d).0,
+        IdentityStatus::MergedInto(c)
+    );
     assert_eq!(
         store.members(&[c, d]).unwrap(),
         vec![(c, obs(1)), (c, obs(4)), (c, obs(5))]

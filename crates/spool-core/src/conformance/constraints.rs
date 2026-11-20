@@ -2,8 +2,8 @@
 //! they forbid.
 
 use super::{
-    Author, assert_replays, assign, cannot_link, commit, create, gadget, merge, must_link, obs,
-    only_reason, records, three_widgets, unconstrain, widget,
+    Author, assert_replays, assign, cannot_link, commit, create, fixture_records, gadget, merge,
+    must_link, obs, only_reason, three_widgets, unconstrain, widget,
 };
 use crate::changeset::ConstraintKind;
 use crate::ids::{EntityType, RecordId, Seq};
@@ -13,7 +13,7 @@ use crate::validate::Reason;
 pub fn records_and_removes_constraints<S: IdentityStore>(
     make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&records());
+    let mut store = make(&fixture_records());
     let mut author = Author::new();
     let (a, _, _) = three_widgets(&mut store, &mut author);
 
@@ -74,7 +74,7 @@ pub fn records_and_removes_constraints<S: IdentityStore>(
 pub fn rejects_constraints_that_cannot_be_recorded<S: IdentityStore>(
     make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&records());
+    let mut store = make(&fixture_records());
     let mut author = Author::new();
     three_widgets(&mut store, &mut author);
     commit(&mut store, &mut author, vec![cannot_link(1, 3)]);
@@ -158,7 +158,7 @@ pub fn rejects_constraints_that_cannot_be_recorded<S: IdentityStore>(
 pub fn rejects_a_state_that_breaks_a_constraint<S: IdentityStore>(
     make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&records());
+    let mut store = make(&fixture_records());
     let mut author = Author::new();
     let (a, b, c) = three_widgets(&mut store, &mut author);
     // 1 (in `a`) and 3 (in `b`) are different things. 4 (in `c`) and 5 (no
@@ -228,7 +228,7 @@ pub fn rejects_a_state_that_breaks_a_constraint<S: IdentityStore>(
 pub fn splits_with_a_constraint_in_one_changeset<S: IdentityStore>(
     make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&records());
+    let mut store = make(&fixture_records());
     let mut author = Author::new();
     let (a, _, _) = three_widgets(&mut store, &mut author);
 

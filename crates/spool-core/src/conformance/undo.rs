@@ -1,8 +1,9 @@
 //! Cases about undoing a committed changeset.
 
 use super::{
-    Author, assert_replays, assign, cannot_link, commit, create, merge, obs, records, reinstate,
-    rejections, status, three_widgets, unconstrain, widget,
+    Author, assert_replays, assign, cannot_link, commit, create, expect_rejections,
+    fixture_records, merge, obs, read_identity_status, reinstate, three_widgets, unconstrain,
+    widget,
 };
 use crate::changeset::{ConstraintKind, Op};
 use crate::ids::{EntityType, RecordId, Seq};
@@ -21,7 +22,7 @@ fn undo<S: IdentityStore>(store: &mut S, author: &mut Author, seq: Seq) -> Vec<O
 pub fn undoes_assignments_and_constraints<S: IdentityStore>(
     make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&records());
+    let mut store = make(&fixture_records());
     let mut author = Author::new();
     let (a, b, _) = three_widgets(&mut store, &mut author);
     commit(&mut store, &mut author, vec![cannot_link(1, 4)]);
@@ -67,7 +68,10 @@ pub fn undoes_assignments_and_constraints<S: IdentityStore>(
     };
     assert_eq!(current(&after), current(&before));
     assert_eq!(store.constraints_on(&[obs(1)]).unwrap().len(), 1);
-    assert_eq!(status(&store, d), (IdentityStatus::Active, None));
+    assert_eq!(
+        read_identity_status(&store, d),
+        (IdentityStatus::Active, None)
+    );
     assert_eq!(store.members(&[d]).unwrap(), vec![]);
 
     // An undo that no longer fits is rejected like any changeset.
@@ -75,7 +79,7 @@ pub fn undoes_assignments_and_constraints<S: IdentityStore>(
     let again = inverse(&store, &log[2]).unwrap();
     let changeset = author.changeset(store.head().unwrap(), again);
     assert!(matches!(
-        rejections(&store, changeset)[0].reason,
+        expect_rejections(&store, changeset)[0].reason,
         Reason::ConstraintExists { .. }
     ));
     assert_replays(&store);
@@ -84,7 +88,7 @@ pub fn undoes_assignments_and_constraints<S: IdentityStore>(
 pub fn undoes_a_merge_and_the_undo<S: IdentityStore>(
     make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&records());
+    let mut store = make(&fixture_records());
     let mut author = Author::new();
     let (a, b, c) = three_widgets(&mut store, &mut author);
 
@@ -110,7 +114,10 @@ pub fn undoes_a_merge_and_the_undo<S: IdentityStore>(
             assign(2, Some(c), Some(a)),
         ]
     );
-    assert_eq!(status(&store, a), (IdentityStatus::Active, None));
+    assert_eq!(
+        read_identity_status(&store, a),
+        (IdentityStatus::Active, None)
+    );
     assert_eq!(
         store.members(&[a, b, c]).unwrap(),
         vec![(a, obs(1)), (a, obs(2)), (b, obs(3)), (c, obs(4))]
@@ -127,7 +134,10 @@ pub fn undoes_a_merge_and_the_undo<S: IdentityStore>(
             merge(a, b),
         ]
     );
-    assert_eq!(status(&store, a).0, IdentityStatus::MergedInto(b));
+    assert_eq!(
+        read_identity_status(&store, a).0,
+        IdentityStatus::MergedInto(b)
+    );
     assert_eq!(
         store.members(&[a, b, c]).unwrap(),
         vec![(b, obs(1)), (b, obs(3)), (c, obs(2)), (c, obs(4))]

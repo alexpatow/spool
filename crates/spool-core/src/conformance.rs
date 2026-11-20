@@ -112,7 +112,7 @@ fn obs(n: u128) -> RecordId {
 }
 
 /// Five widgets (1 to 5) and one gadget (6).
-fn records() -> Vec<(RecordId, EntityType)> {
+fn fixture_records() -> Vec<(RecordId, EntityType)> {
     let mut all: Vec<_> = (1..=5).map(|n| (obs(n), widget())).collect();
     all.push((obs(6), gadget()));
     all
@@ -166,7 +166,7 @@ fn commit<S: IdentityStore>(store: &mut S, author: &mut Author, ops: Vec<Op>) ->
     store.apply(validated).expect("apply should succeed").seq
 }
 
-fn rejections<S: IdentityStore>(store: &S, changeset: Changeset) -> Vec<Rejection> {
+fn expect_rejections<S: IdentityStore>(store: &S, changeset: Changeset) -> Vec<Rejection> {
     match validate(store, changeset) {
         Ok(_) => panic!("the changeset should have been rejected"),
         Err(error) => error
@@ -177,7 +177,7 @@ fn rejections<S: IdentityStore>(store: &S, changeset: Changeset) -> Vec<Rejectio
 }
 
 fn only_reason<S: IdentityStore>(store: &S, changeset: Changeset) -> (Option<usize>, Reason) {
-    let mut found = rejections(store, changeset);
+    let mut found = expect_rejections(store, changeset);
     assert_eq!(found.len(), 1, "expected one rejection, found {found:?}");
     let rejection = found.remove(0);
     (rejection.op_index, rejection.reason)
@@ -215,7 +215,10 @@ fn unconstrain(kind: ConstraintKind, a: u128, b: u128) -> Op {
     }
 }
 
-fn status<S: IdentityStore>(store: &S, identity: IdentityId) -> (IdentityStatus, Option<Merged>) {
+fn read_identity_status<S: IdentityStore>(
+    store: &S,
+    identity: IdentityId,
+) -> (IdentityStatus, Option<Merged>) {
     let record = store.identities(&[identity]).unwrap().remove(0).unwrap();
     (record.status, record.merged)
 }

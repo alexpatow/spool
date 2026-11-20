@@ -2,7 +2,8 @@
 //! it, and that replaying it gives the state.
 
 use super::{
-    Author, assign, commit, create, gadget, obs, only_reason, records, rejections, widget,
+    Author, assign, commit, create, expect_rejections, fixture_records, gadget, obs, only_reason,
+    widget,
 };
 use crate::ids::{Actor, EntityType, RecordId, Seq};
 use crate::memory::MemoryState;
@@ -10,7 +11,7 @@ use crate::state::IdentityStore;
 use crate::validate::{Reason, Rejection, validate};
 
 pub fn starts_empty<S: IdentityStore>(make: impl FnOnce(&[(RecordId, EntityType)]) -> S) {
-    let store = make(&records());
+    let store = make(&fixture_records());
     assert_eq!(store.head().unwrap(), Seq::ZERO);
     assert!(store.log().unwrap().is_empty());
     let snapshot = store.snapshot().unwrap();
@@ -25,7 +26,7 @@ pub fn starts_empty<S: IdentityStore>(make: impl FnOnce(&[(RecordId, EntityType)
 pub fn rejects_an_empty_changeset<S: IdentityStore>(
     make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let store = make(&records());
+    let store = make(&fixture_records());
     let changeset = Author::new().changeset(Seq::ZERO, vec![]);
     assert_eq!(
         only_reason(&store, changeset),
@@ -36,7 +37,7 @@ pub fn rejects_an_empty_changeset<S: IdentityStore>(
 pub fn rejects_a_base_ahead_of_the_log<S: IdentityStore>(
     make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let store = make(&records());
+    let store = make(&fixture_records());
     let mut author = Author::new();
     let a = author.identity();
     let changeset = author.changeset(Seq(3), vec![create(a, widget())]);
@@ -55,7 +56,7 @@ pub fn rejects_a_base_ahead_of_the_log<S: IdentityStore>(
 pub fn rejects_a_changeset_committed_twice<S: IdentityStore>(
     make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&records());
+    let mut store = make(&fixture_records());
     let mut author = Author::new();
     let a = author.identity();
     let changeset = author.changeset(Seq::ZERO, vec![create(a, widget())]);
@@ -63,7 +64,7 @@ pub fn rejects_a_changeset_committed_twice<S: IdentityStore>(
         .apply(validate(&store, changeset.clone()).unwrap())
         .unwrap();
 
-    let found = rejections(&store, changeset);
+    let found = expect_rejections(&store, changeset);
     assert!(
         found.contains(&Rejection {
             op_index: None,
@@ -77,7 +78,7 @@ pub fn rejects_a_changeset_committed_twice<S: IdentityStore>(
 pub fn accepts_a_stale_base_when_preconditions_hold<S: IdentityStore>(
     make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&records());
+    let mut store = make(&fixture_records());
     let mut author = Author::new();
     let (a, b) = (author.identity(), author.identity());
 
@@ -104,7 +105,7 @@ pub fn accepts_a_stale_base_when_preconditions_hold<S: IdentityStore>(
 pub fn a_rejected_changeset_changes_nothing<S: IdentityStore>(
     make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&records());
+    let mut store = make(&fixture_records());
     let mut author = Author::new();
     let (a, b) = (author.identity(), author.identity());
     commit(
@@ -124,7 +125,7 @@ pub fn a_rejected_changeset_changes_nothing<S: IdentityStore>(
             assign(1, None, Some(b)),
         ],
     );
-    assert_eq!(rejections(&store, changeset).len(), 1);
+    assert_eq!(expect_rejections(&store, changeset).len(), 1);
     assert_eq!(store.snapshot().unwrap(), before);
     assert_eq!(store.log().unwrap(), log_before);
 }
@@ -132,7 +133,7 @@ pub fn a_rejected_changeset_changes_nothing<S: IdentityStore>(
 pub fn replaying_the_log_reproduces_the_state<S: IdentityStore>(
     make: impl FnOnce(&[(RecordId, EntityType)]) -> S,
 ) {
-    let mut store = make(&records());
+    let mut store = make(&fixture_records());
     let mut author = Author::new();
     let (a, b, c) = (author.identity(), author.identity(), author.identity());
     commit(
