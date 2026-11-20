@@ -90,6 +90,9 @@ tempfile = "3"
 # Snapshots of the `spool` command's help and usage errors, in its tests.
 snapbox = "1.2"
 thiserror = "2"
+# Instants as RFC 3339 text. The session cookie brought it into the build
+# already.
+time = { version = "0.3", features = ["formatting", "macros"] }
 toml = "1"
 # The commands that read from a running server. The build of the `duckdb`
 # crate already depends on it, to download the DuckDB library.
