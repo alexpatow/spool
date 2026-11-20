@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::changeset::{Changeset, Op};
+use crate::disjoint::DisjointSets;
 use crate::generate::IdGenerator;
 use crate::ids::{Actor, EntityType, IdentityId, RecordId};
 use crate::state::{IdentityState, IdentityStatus, Result};
@@ -171,7 +172,7 @@ pub fn reconcile<S: IdentityState + ?Sized>(
         .map(|record| record.id)
         .collect();
 
-    let mut groups = Groups::new(new.keys().copied());
+    let mut groups = DisjointSets::new(new.keys().copied());
     for pair in &evidence.pairs {
         if pair.verdict == Verdict::Match && new.contains_key(&pair.a) && new.contains_key(&pair.b)
         {
@@ -203,7 +204,7 @@ pub fn reconcile<S: IdentityState + ?Sized>(
         .collect();
 
     // What each group would do if it were the only one.
-    let members = groups.members();
+    let members = groups.sets();
     let none = BTreeSet::new();
     let mut decisions: BTreeMap<RecordId, Decision> = BTreeMap::new();
     for (root, group) in &members {
@@ -235,7 +236,7 @@ pub fn reconcile<S: IdentityState + ?Sized>(
     // would be inside a group. Groups it connects are left for review
     // together. Groups that become new identities stay apart, so a
     // `no_match` between those contradicts nothing.
-    let mut clashes = Groups::new(members.keys().copied());
+    let mut clashes = DisjointSets::new(members.keys().copied());
     let mut clashing = BTreeSet::new();
     for pair in &evidence.pairs {
         if pair.verdict != Verdict::NoMatch
@@ -255,7 +256,7 @@ pub fn reconcile<S: IdentityState + ?Sized>(
             clashing.extend([a, b]);
         }
     }
-    let mut clash_members = clashes.members();
+    let mut clash_members = clashes.sets();
 
     let mut ops = Vec::new();
     let mut review = Vec::new();
@@ -319,50 +320,6 @@ enum Decision {
     Review(ReviewItem),
     Join(IdentityId),
     Create,
-}
-
-/// Connected components over the new records.
-struct Groups {
-    parent: BTreeMap<RecordId, RecordId>,
-}
-
-impl Groups {
-    fn new(records: impl Iterator<Item = RecordId>) -> Self {
-        Self {
-            parent: records.map(|id| (id, id)).collect(),
-        }
-    }
-
-    fn root(&self, mut id: RecordId) -> RecordId {
-        while self.parent[&id] != id {
-            id = self.parent[&id];
-        }
-        id
-    }
-
-    /// The smaller root wins, so a group's root is its smallest member.
-    fn join(&mut self, a: RecordId, b: RecordId) {
-        let (a, b) = (self.root(a), self.root(b));
-        let (keep, drop) = if a <= b { (a, b) } else { (b, a) };
-        self.parent.insert(drop, keep);
-    }
-
-    /// Each group's root with its members, both in ascending order.
-    fn members(&self) -> BTreeMap<RecordId, Vec<RecordId>> {
-        let mut members: BTreeMap<RecordId, Vec<RecordId>> = BTreeMap::new();
-        for id in self.parent.keys() {
-            members.entry(self.root(*id)).or_default().push(*id);
-        }
-        members
-    }
-
-    /// The members of the group with this root.
-    fn members_of(&self, root: RecordId) -> impl Iterator<Item = RecordId> + '_ {
-        self.parent
-            .keys()
-            .copied()
-            .filter(move |id| self.root(*id) == root)
-    }
 }
 
 #[cfg(test)]

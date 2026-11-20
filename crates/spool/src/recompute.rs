@@ -41,9 +41,9 @@ use duckdb::Connection;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use spool_core::{
-    Actor, ChangesetId, Committed, ConstraintKind, EntityType, EvidenceSummary, IdGenerator,
-    IdentityId, MemoryState, NewPair, NewRecord, Op, Policy, RecordId, ReviewItem, RunId,
-    SeededIds, Seq, Verdict, reconcile,
+    Actor, ChangesetId, Committed, ConstraintKind, DisjointSets, EntityType, EvidenceSummary,
+    IdGenerator, IdentityId, MemoryState, NewPair, NewRecord, Op, Policy, RecordId, ReviewItem,
+    RunId, SeededIds, Seq, Verdict, reconcile,
 };
 
 use crate::error::{Error, Result};
@@ -579,7 +579,7 @@ pub(crate) fn compute(
     }
 
     // What people put together stays together.
-    let mut held = Union::new(&records);
+    let mut held = DisjointSets::new(records.iter().copied());
     let mut held_together = 0;
     for groups in possible_split::held_together(conn, &identities)?.into_values() {
         for group in groups.into_iter().filter(|group| group.len() > 1) {
@@ -621,8 +621,8 @@ pub(crate) fn compute(
         dismissed_splits += u64::from(counted);
     }
     verdicts
-        .retain(|(a, b), verdict| *verdict != Verdict::NoMatch || held.root(*a) != held.root(*b));
-    for (root, members) in held.groups() {
+        .retain(|(a, b), verdict| *verdict != Verdict::NoMatch || held.find(*a) != held.find(*b));
+    for (root, members) in joined(&held) {
         for record in members.into_iter().filter(|record| *record != root) {
             verdicts.insert(ordered(root, record), Verdict::Match);
         }
@@ -740,7 +740,7 @@ pub(crate) fn compute(
     // The records of a group that is kept out are what the rest contradicts
     // itself about, so the item they wait in names its identity.
     let mut kept_out: Vec<Option<RecordId>> = vec![None; waiting.len()];
-    for set in held.groups().into_values() {
+    for set in joined(&held).into_values() {
         let Some(at) = waiting
             .iter()
             .position(|group| group.binary_search(&set[0]).is_ok())
@@ -970,60 +970,12 @@ fn approved_placements(conn: &Connection) -> Result<BTreeMap<RecordId, (Changese
     Ok(found)
 }
 
-/// Disjoint sets of records.
-struct Union {
-    index: HashMap<RecordId, usize>,
-    records: Vec<RecordId>,
-    parent: Vec<usize>,
-}
-
-impl Union {
-    fn new(records: &[RecordId]) -> Self {
-        Self {
-            index: records
-                .iter()
-                .enumerate()
-                .map(|(at, record)| (*record, at))
-                .collect(),
-            records: records.to_vec(),
-            parent: (0..records.len()).collect(),
-        }
-    }
-
-    fn find(&mut self, mut node: usize) -> usize {
-        while self.parent[node] != node {
-            self.parent[node] = self.parent[self.parent[node]];
-            node = self.parent[node];
-        }
-        node
-    }
-
-    /// A record outside the set is its own root.
-    fn root(&mut self, record: RecordId) -> Option<usize> {
-        let node = *self.index.get(&record)?;
-        Some(self.find(node))
-    }
-
-    fn join(&mut self, a: RecordId, b: RecordId) {
-        if let (Some(a), Some(b)) = (self.root(a), self.root(b)) {
-            self.parent[a.max(b)] = a.min(b);
-        }
-    }
-
-    /// Each set of more than one record, by its first record, with its
-    /// records in order.
-    fn groups(&mut self) -> BTreeMap<RecordId, Vec<RecordId>> {
-        let mut by_root: BTreeMap<usize, Vec<RecordId>> = BTreeMap::new();
-        for node in 0..self.records.len() {
-            let root = self.find(node);
-            by_root.entry(root).or_default().push(self.records[node]);
-        }
-        by_root
-            .into_values()
-            .filter(|group| group.len() > 1)
-            .map(|group| (group[0], group))
-            .collect()
-    }
+/// Each set of more than one record, by its first record, with its records
+/// in order.
+fn joined(held: &DisjointSets<RecordId>) -> BTreeMap<RecordId, Vec<RecordId>> {
+    let mut sets = held.sets();
+    sets.retain(|_, members| members.len() > 1);
+    sets
 }
 
 /// A node of the graph whose connected parts are the changes.

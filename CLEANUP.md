@@ -42,7 +42,7 @@ Every step keeps behaviour as it is: the checks are `cargo fmt`, `cargo clippy
 
 ## D. One copy of each helper
 
-- [ ] D1. Union-find: one in `spool-core`, used by `reconcile.rs`,
+- [x] D1. Union-find: one in `spool-core`, used by `reconcile.rs`,
       `recompute.rs` and `possible_split.rs`.
 - [ ] D2. `spool-cli/src/text.rs`: `listed`, `plural`/`count`, `share`, which
       are written two to four times across the commands and the server.

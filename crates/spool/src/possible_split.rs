@@ -62,7 +62,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use duckdb::vtab::arrow::ArrowBatchRegistration;
 use duckdb::{Connection, params};
-use spool_core::{EntityType, IdentityId, RecordId, RunId, Seq, StateError};
+use spool_core::{DisjointSets, EntityType, IdentityId, RecordId, RunId, Seq, StateError};
 
 use crate::batch::{Column, batch};
 use crate::error::Result;
@@ -137,13 +137,12 @@ fn groups_by(
           WHERE m.to_seq IS NULL
             AND m.identity_id IN (SELECT DISTINCT identity_id::UUID FROM arrow(?)))";
 
-    let mut index: BTreeMap<RecordId, usize> = BTreeMap::new();
     let mut members: Vec<(RecordId, IdentityId)> = Vec::new();
-    let mut union = Union::default();
+    let mut union: DisjointSets<RecordId> = DisjointSets::default();
     // What only people and sources hold together, without any run's
     // judgement: the same edges as `union`, other than judgements, and the
     // decisions that `union` finds whole.
-    let mut held = Union::default();
+    let mut held: DisjointSets<RecordId> = DisjointSets::default();
     {
         let mut statement = conn.prepare(&format!(
             "WITH {MEMBERS}
@@ -153,8 +152,8 @@ fn groups_by(
         let mut rows = statement.query([&asked()?])?;
         while let Some(row) = rows.next()? {
             let record: RecordId = parse(&row.get::<_, String>(0)?)?;
-            index.insert(record, union.node());
-            held.node();
+            union.insert(record);
+            held.insert(record);
             members.push((record, parse(&row.get::<_, String>(1)?)?));
         }
     }
@@ -202,9 +201,9 @@ fn groups_by(
         while let Some(row) = rows.next()? {
             let a: RecordId = parse(&row.get::<_, String>(0)?)?;
             let b: RecordId = parse(&row.get::<_, String>(1)?)?;
-            union.join(index[&a], index[&b]);
+            union.join(a, b);
             if !row.get::<_, bool>(2)? {
-                held.join(index[&a], index[&b]);
+                held.join(a, b);
             }
         }
     }
@@ -264,13 +263,13 @@ fn groups_by(
         // One decision at a time: a changeset and an identity it placed
         // records in or merged others into.
         let mut decision: Option<(i64, String)> = None;
-        let mut sides: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        let mut sides: BTreeMap<String, Vec<RecordId>> = BTreeMap::new();
         let mut together: BTreeSet<String> = BTreeSet::new();
-        let decide = |union: &mut Union,
-                      held: &mut Union,
-                      sides: &mut BTreeMap<String, Vec<usize>>,
+        let decide = |union: &mut DisjointSets<RecordId>,
+                      held: &mut DisjointSets<RecordId>,
+                      sides: &mut BTreeMap<String, Vec<RecordId>>,
                       together: &mut BTreeSet<String>| {
-            let mut whole: Option<usize> = None;
+            let mut whole: Option<RecordId> = None;
             for (side, nodes) in sides.iter() {
                 if together.contains(side) {
                     for node in &nodes[1..] {
@@ -305,7 +304,7 @@ fn groups_by(
             if row.get::<_, bool>(4)? {
                 together.insert(side.clone());
             }
-            sides.entry(side).or_default().push(index[&record]);
+            sides.entry(side).or_default().push(record);
         }
         decide(&mut union, &mut held, &mut sides, &mut together);
     }
@@ -313,13 +312,13 @@ fn groups_by(
         union = held;
     }
 
-    let mut grouped: BTreeMap<IdentityId, BTreeMap<usize, Vec<RecordId>>> = BTreeMap::new();
+    let mut grouped: BTreeMap<IdentityId, BTreeMap<RecordId, Vec<RecordId>>> = BTreeMap::new();
     for (record, identity) in members {
         // Members come ordered by record, so each group is in order.
         grouped
             .entry(identity)
             .or_default()
-            .entry(union.root(index[&record]))
+            .entry(union.root(record))
             .or_default()
             .push(record);
     }
@@ -329,34 +328,6 @@ fn groups_by(
         found.insert(identity, groups);
     }
     Ok(found)
-}
-
-/// Disjoint sets of nodes.
-#[derive(Default)]
-struct Union {
-    parent: Vec<usize>,
-}
-
-impl Union {
-    fn node(&mut self) -> usize {
-        self.parent.push(self.parent.len());
-        self.parent.len() - 1
-    }
-
-    fn root(&mut self, mut node: usize) -> usize {
-        while self.parent[node] != node {
-            self.parent[node] = self.parent[self.parent[node]];
-            node = self.parent[node];
-        }
-        node
-    }
-
-    fn join(&mut self, a: usize, b: usize) {
-        let (a, b) = (self.root(a), self.root(b));
-        // The smaller root stands for both, so the outcome does not depend
-        // on the order the pairs were read in.
-        self.parent[a.max(b)] = a.min(b);
-    }
 }
 
 /// An open `possible_split` item, reduced to what deciding about it takes.
