@@ -81,7 +81,7 @@ Every step keeps behaviour as it is: the checks are `cargo fmt`, `cargo clippy
       name, words argument errors and unknown tools its own way, and adds
       fields to `tools/list`, each of which a client would see. Each tool
       is declared once with a `declare(...)` of the server's own instead.
-- [ ] F7. Greppable names: verb-and-noun names for the private helpers whose
+- [~] F7. Greppable names: verb-and-noun names for the private helpers whose
       one-word names collide (`named`, `listed`, `list`, `text`, ...).
 
 ## G. Tests

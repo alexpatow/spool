@@ -89,11 +89,18 @@ git checkout-index --all --ignore-skip-worktree-bits --prefix="$snapshot/"
 
 # Keep the Rust dependency cache across checks. Resolve relative overrides
 # before entering the snapshot, where the workspace sources are temporary.
+#
+# The cache is a directory of its own inside the target directory, and not
+# the target directory itself. Cargo knows a crate of the workspace by its
+# place in the workspace, so what is built from the snapshot would pass for
+# what is built from the working tree, with the snapshot's path, which is
+# gone by then, compiled into it wherever a test asks where its crate is.
 export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$root/target}
 case "$CARGO_TARGET_DIR" in
     /*) ;;
     *) CARGO_TARGET_DIR=$root/$CARGO_TARGET_DIR ;;
 esac
+CARGO_TARGET_DIR=$CARGO_TARGET_DIR/check-generated
 cd "$snapshot"
 
 failed=0
