@@ -60,7 +60,7 @@ Every step keeps behaviour as it is: the checks are `cargo fmt`, `cargo clippy
 - [x] E4. `explain.rs` into `explain/{pair, identity, prose}.rs`.
 - [x] E5. `recompute.rs` into `recompute/{types, compute, outcome}.rs`.
 - [x] E6. `usercode.rs` into `usercode/{mod, env, task}.rs`.
-- [ ] E7. `bench.rs` (and what only it uses) into a crate of its own,
+- [x] E7. `bench.rs` (and what only it uses) into a crate of its own,
       `spool-bench`.
 
 - [x] E8. The other source files over the budget, each into a root and its
@@ -86,11 +86,11 @@ Every step keeps behaviour as it is: the checks are `cargo fmt`, `cargo clippy
 
 ## G. Tests
 
-- [ ] G1. One integration-test binary per crate (`tests/it/`), with the shared
+- [x] G1. One integration-test binary per crate (`tests/it/`), with the shared
       helpers as a module of it and not a `#[path]` into another crate.
-- [ ] G2. CI: the test jobs divide one binary with nextest partitions; the
+- [x] G2. CI: the test jobs divide one binary with nextest partitions; the
       "every test file is in one job" check goes.
-- [ ] G3. `milestone_1.rs` and `milestone_3.rs` named for what they test.
+- [x] G3. `milestone_1.rs` and `milestone_3.rs` named for what they test.
 
 ## H. JavaScript
 

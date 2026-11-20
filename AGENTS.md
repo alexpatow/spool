@@ -26,6 +26,7 @@ and stage what changed.
 | `crates/spool-core` | What an identity is and which changes to it are valid. No database, few dependencies |
 | `crates/spool` | The engine: DuckDB store, project files, load, match, review, explain |
 | `crates/spool-bench` | Benchmark scenarios and the metrics they score |
+| `crates/spool-testing` | What the crates' integration tests share. Not published |
 | `crates/spool-cli` | The `spool` command, the HTTP server, MCP, sign-in |
 | `crates/*/assets` | Files compiled into a binary: built bundles, templates, helpers. Not edited by hand when generated |
 | `packages/client` | The typed TypeScript client. `src/types.ts` is generated |
@@ -84,7 +85,9 @@ in each layer it reaches, and an existing one is extended where it already is.
 
 8. **Tests say what they check.** A test is named for the behaviour, not for
    a milestone or a ticket. Each crate has one integration-test binary,
-   `tests/it/`, and a new test file is a module of it.
+   `tests/it/`, and a new test file is a module of it. (`spool-cli` also
+   has `tests/stress.rs` and `tests/studio.rs`, each one long test that
+   runs a TypeScript package's tests and that CI runs in jobs of its own.)
 
 ## The studio
 
