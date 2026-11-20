@@ -53,28 +53,28 @@ pub struct UpdateSkillsArgs {
 pub const SKILLS: [(&str, &str); 5] = [
     (
         "spool-project",
-        include_str!("../agents/skills/spool-project/SKILL.md"),
+        include_str!("../../assets/agents/skills/spool-project/SKILL.md"),
     ),
     (
         "spool-rules",
-        include_str!("../agents/skills/spool-rules/SKILL.md"),
+        include_str!("../../assets/agents/skills/spool-rules/SKILL.md"),
     ),
     (
         "spool-extractor",
-        include_str!("../agents/skills/spool-extractor/SKILL.md"),
+        include_str!("../../assets/agents/skills/spool-extractor/SKILL.md"),
     ),
     (
         "spool-data",
-        include_str!("../agents/skills/spool-data/SKILL.md"),
+        include_str!("../../assets/agents/skills/spool-data/SKILL.md"),
     ),
     (
         "spool-api",
-        include_str!("../agents/skills/spool-api/SKILL.md"),
+        include_str!("../../assets/agents/skills/spool-api/SKILL.md"),
     ),
 ];
 
 /// What Spool says in AGENTS.md, between the two marker lines.
-pub const AGENTS: &str = include_str!("../agents/AGENTS.md");
+pub const AGENTS: &str = include_str!("../../assets/agents/AGENTS.md");
 
 const AGENTS_FILE: &str = "AGENTS.md";
 const CLAUDE_FILE: &str = "CLAUDE.md";

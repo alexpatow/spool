@@ -184,7 +184,7 @@ fn a_client_connects_and_is_told_the_tools() {
         .expect("embedded PNG");
     assert_eq!(
         STANDARD.decode(encoded).unwrap(),
-        include_bytes!("../src/server/mcp-icon.png")
+        include_bytes!("../assets/mcp-icon.png")
     );
     assert!(hello["capabilities"]["tools"].is_object(), "{hello}");
     for named in [

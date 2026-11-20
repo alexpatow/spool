@@ -88,7 +88,7 @@ const MAX_RUN_WAIT_MS: u64 = 60_000;
 /// The 48×48 PNG from `site/src/app/favicon.ico`, embedded so clients can
 /// display it as soon as they discover the server.
 static SERVER_ICON: LazyLock<Icon> = LazyLock::new(|| {
-    let png = STANDARD.encode(include_bytes!("mcp-icon.png"));
+    let png = STANDARD.encode(include_bytes!("../../assets/mcp-icon.png"));
     Icon::new(format!("data:image/png;base64,{png}"))
         .with_mime_type("image/png")
         .with_sizes(vec!["48x48".to_owned()])

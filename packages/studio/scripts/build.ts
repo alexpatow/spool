@@ -14,7 +14,7 @@ import { build } from "vite";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
-const outputDir = join(root, "../../crates/spool-cli/src/studio");
+const outputDir = join(root, "../../crates/spool-cli/assets/studio");
 const site = join(root, "../../site/src");
 
 /**

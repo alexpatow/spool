@@ -34,38 +34,46 @@ const FONT: &str = "font/woff2";
 /// Each file of the studio, with the path it is served at. The page names
 /// the others from the root.
 const SOURCES: [(&str, &str, &[u8]); 9] = [
-    ("/", HTML, include_bytes!("studio/index.html")),
-    ("/studio.js", SCRIPT, include_bytes!("studio/studio.js")),
-    ("/studio.css", STYLE, include_bytes!("studio/studio.css")),
+    ("/", HTML, include_bytes!("../assets/studio/index.html")),
+    (
+        "/studio.js",
+        SCRIPT,
+        include_bytes!("../assets/studio/studio.js"),
+    ),
+    (
+        "/studio.css",
+        STYLE,
+        include_bytes!("../assets/studio/studio.css"),
+    ),
     (
         "/hanken-grotesk-latin-wght-normal.woff2",
         FONT,
-        include_bytes!("studio/hanken-grotesk-latin-wght-normal.woff2"),
+        include_bytes!("../assets/studio/hanken-grotesk-latin-wght-normal.woff2"),
     ),
     (
         "/hanken-grotesk-latin-ext-wght-normal.woff2",
         FONT,
-        include_bytes!("studio/hanken-grotesk-latin-ext-wght-normal.woff2"),
+        include_bytes!("../assets/studio/hanken-grotesk-latin-ext-wght-normal.woff2"),
     ),
     (
         "/newsreader-latin-opsz-normal.woff2",
         FONT,
-        include_bytes!("studio/newsreader-latin-opsz-normal.woff2"),
+        include_bytes!("../assets/studio/newsreader-latin-opsz-normal.woff2"),
     ),
     (
         "/newsreader-latin-ext-opsz-normal.woff2",
         FONT,
-        include_bytes!("studio/newsreader-latin-ext-opsz-normal.woff2"),
+        include_bytes!("../assets/studio/newsreader-latin-ext-opsz-normal.woff2"),
     ),
     (
         "/commit-mono-latin-400-normal.woff2",
         FONT,
-        include_bytes!("studio/commit-mono-latin-400-normal.woff2"),
+        include_bytes!("../assets/studio/commit-mono-latin-400-normal.woff2"),
     ),
     (
         "/commit-mono-latin-700-normal.woff2",
         FONT,
-        include_bytes!("studio/commit-mono-latin-700-normal.woff2"),
+        include_bytes!("../assets/studio/commit-mono-latin-700-normal.woff2"),
     ),
 ];
 

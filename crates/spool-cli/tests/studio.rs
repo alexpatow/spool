@@ -49,7 +49,12 @@ const FILES: [(&str, &str, &str); 9] = [
 ];
 
 fn built(file: &str) -> Vec<u8> {
-    std::fs::read(repository().join("crates/spool-cli/src/studio").join(file)).unwrap()
+    std::fs::read(
+        repository()
+            .join("crates/spool-cli/assets/studio")
+            .join(file),
+    )
+    .unwrap()
 }
 
 fn serve_things(dir: &Path, more: &[&str]) -> Server {

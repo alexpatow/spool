@@ -50,7 +50,7 @@ studio=0 schema=0 types=0 help=0 strategy=0
 if changed packages/studio/src packages/studio/public packages/studio/index.html \
     packages/studio/vite.config.ts packages/studio/tsconfig.json packages/studio/package.json \
     packages/studio/bun.lock packages/studio/bunfig.toml \
-    packages/studio/scripts/build.ts crates/spool-cli/src/studio \
+    packages/studio/scripts/build.ts crates/spool-cli/assets/studio \
     packages/client/src packages/client/package.json packages/client/tsconfig.json \
     site/src/styles/shelf site/src/components/brand.tsx site/src/app/icon.svg; then
     studio=1
@@ -72,7 +72,7 @@ if changed "${rust_config[@]}" crates/spool-cli/src/main.rs crates/spool-cli/src
 fi
 if changed packages/strategy/src packages/strategy/scripts/build.ts packages/strategy/package.json \
     packages/strategy/bun.lock packages/strategy/bunfig.toml packages/strategy/tsconfig.json \
-    crates/spool/src/usercode/spool.js; then
+    crates/spool/assets/usercode/spool.js; then
     strategy=1
 fi
 

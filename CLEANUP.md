@@ -9,23 +9,23 @@ Every step keeps behaviour as it is: the checks are `cargo fmt`, `cargo clippy
 
 ## A. Conventions and guardrails
 
-- [ ] A1. `AGENTS.md` at the root, with `CLAUDE.md` a symlink to it: where code
+- [x] A1. `AGENTS.md` at the root, with `CLAUDE.md` a symlink to it: where code
       goes, where shared helpers live, what is never hand-rolled, naming.
-- [ ] A2. `justfile`: `check`, `fmt`, `lint`, `test`, `regen`, one entry point
+- [x] A2. `justfile`: `check`, `fmt`, `lint`, `test`, `regen`, one entry point
       for what `scripts/check-generated.sh` and CI spell out by hand.
 - [ ] A3. `[workspace.lints]`: `unsafe_code = "deny"` with an `allow` at each
       of the three places that need it; `clippy::too_many_lines` with the
       functions that are over it today marked, so new ones fail.
-- [ ] A4. `scripts/check-file-size.sh`: a line budget for source files with an
+- [x] A4. `scripts/check-file-size.sh`: a line budget for source files with an
       allowlist of today's offenders that may only shrink. Run in CI.
 
 ## B. Files out of `src/`
 
-- [ ] B1. `crates/spool-cli/src/studio/*` (built bundle, fonts) to
+- [x] B1. `crates/spool-cli/src/studio/*` (built bundle, fonts) to
       `crates/spool-cli/assets/studio/`.
-- [ ] B2. `crates/spool-cli/src/agents/` and `src/examples/` (embedded
+- [x] B2. `crates/spool-cli/src/agents/` and `src/examples/` (embedded
       templates) to `crates/spool-cli/assets/`.
-- [ ] B3. `crates/spool/src/usercode/spool.{js,py}` to
+- [x] B3. `crates/spool/src/usercode/spool.{js,py}` to
       `crates/spool/assets/usercode/`.
 
 ## C. Crates in place of hand-rolled code

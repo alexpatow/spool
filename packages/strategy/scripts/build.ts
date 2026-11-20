@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
-const outputPath = join(root, "../../crates/spool/src/usercode/spool.js");
+const outputPath = join(root, "../../crates/spool/assets/usercode/spool.js");
 
 // The two packages are MIT-licensed, and the licence asks that its text
 // travels with copies of the code.

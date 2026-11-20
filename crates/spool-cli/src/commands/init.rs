@@ -110,7 +110,7 @@ struct Example {
 
 macro_rules! example_files {
     ($example:literal: $($file:literal),+ $(,)?) => {
-        &[$(($file, include_str!(concat!("../examples/", $example, "/", $file)))),+]
+        &[$(($file, include_str!(concat!("../../assets/examples/", $example, "/", $file)))),+]
     };
 }
 

@@ -60,8 +60,8 @@ pub(crate) const PROTOCOL: u32 = 1;
 /// token of the API, and the secret of the server's client at Google.
 const WITHHELD: [&str; 2] = ["SPOOL_TOKEN", "SPOOL_GOOGLE_CLIENT_SECRET"];
 
-const PYTHON_HELPER: &str = include_str!("usercode/spool.py");
-const TYPESCRIPT_HELPER: &str = include_str!("usercode/spool.js");
+const PYTHON_HELPER: &str = include_str!("../assets/usercode/spool.py");
+const TYPESCRIPT_HELPER: &str = include_str!("../assets/usercode/spool.js");
 
 pub(crate) const CANDIDATES: &str = "candidates.parquet";
 pub(crate) const FEATURES: &str = "features.parquet";
