@@ -1,39 +1,71 @@
 #!/usr/bin/env bash
-# SessionStart hook: install dependencies in a fresh checkout (typically a new
-# worktree). Idempotent: packages that already have node_modules are skipped,
-# and `cargo fetch` is a no-op when the registry cache is warm.
+# SessionStart hook: prepare a fresh checkout (typically a new worktree).
 #
-# Install output goes to stderr; only failures are printed to stdout, which
+# 1. In a linked worktree whose branch has no commits of its own, fast-forward
+#    to the latest origin/main. The desktop app cuts worktrees from the cached
+#    origin/main without fetching, so new sessions can start behind.
+# 2. Install dependencies. Packages that already have node_modules are
+#    skipped, and `cargo fetch` is a no-op when the registry cache is warm.
+#
+# Command output goes to stderr; only problems are printed to stdout, which
 # Claude Code adds to the session's context.
+#
+# Everything runs inside main(), called on the last line, so bash has parsed
+# the whole file before the fast-forward can rewrite it.
 set -u
 
-input=$(cat)
-dir=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)
-dir=${dir:-${CLAUDE_PROJECT_DIR:-$PWD}}
-root=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) || exit 0
-cd "$root" || exit 0
+sync_main() {
+    # Only linked worktrees; never move the main checkout's branch.
+    [ "$(git rev-parse --git-dir)" != "$(git rev-parse --git-common-dir)" ] || return 0
 
-failures=()
+    if ! git fetch --quiet origin main >&2; then
+        notes+=("git fetch origin main failed; the worktree may be behind main")
+        return 0
+    fi
+    # Skip when the branch already has its own commits or is up to date.
+    git merge-base --is-ancestor HEAD origin/main || return 0
+    [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ] || return 0
 
-if command -v cargo >/dev/null 2>&1; then
-    cargo fetch --locked >&2 || failures+=("cargo fetch --locked")
-else
-    failures+=("cargo not found on PATH")
-fi
+    git merge --ff-only --quiet origin/main >&2 ||
+        notes+=("could not fast-forward to origin/main (local changes in the way?)")
+}
 
-if command -v bun >/dev/null 2>&1; then
-    for package in packages/client packages/strategy packages/stress packages/studio site; do
-        [ -f "$package/package.json" ] || continue
-        [ -d "$package/node_modules" ] && continue
-        (cd "$package" && bun install --frozen-lockfile >&2) ||
-            failures+=("bun install --frozen-lockfile in $package")
-    done
-else
-    failures+=("bun not found on PATH")
-fi
+install_deps() {
+    if command -v cargo >/dev/null 2>&1; then
+        cargo fetch --locked >&2 || notes+=("cargo fetch --locked failed")
+    else
+        notes+=("cargo not found on PATH")
+    fi
 
-if [ ${#failures[@]} -gt 0 ]; then
-    echo "Worktree setup in $root did not finish. Failed steps:"
-    printf -- '- %s\n' "${failures[@]}"
-fi
-exit 0
+    if command -v bun >/dev/null 2>&1; then
+        for package in packages/client packages/strategy packages/stress packages/studio site; do
+            [ -f "$package/package.json" ] || continue
+            [ -d "$package/node_modules" ] && continue
+            (cd "$package" && bun install --frozen-lockfile >&2) ||
+                notes+=("bun install --frozen-lockfile failed in $package")
+        done
+    else
+        notes+=("bun not found on PATH")
+    fi
+}
+
+main() {
+    local input dir root
+    input=$(cat)
+    dir=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)
+    dir=${dir:-${CLAUDE_PROJECT_DIR:-$PWD}}
+    root=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) || exit 0
+    cd "$root" || exit 0
+
+    notes=()
+    sync_main
+    install_deps
+
+    if [ ${#notes[@]} -gt 0 ]; then
+        echo "Worktree setup in $root hit problems:"
+        printf -- '- %s\n' "${notes[@]}"
+    fi
+    exit 0
+}
+
+main "$@"
