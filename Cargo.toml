@@ -39,6 +39,7 @@ url = "2.5"
 # The MCP endpoint: the official Rust SDK of the Model Context Protocol, for
 # the protocol and its Streamable HTTP transport. Only spool-cli depends on it.
 rmcp = { version = "3.11", default-features = false, features = ["server", "transport-streamable-http-server"] }
+base64 = "0.22"
 
 # The `spool` command's arguments, help and usage errors. Only spool-cli
 # depends on it.

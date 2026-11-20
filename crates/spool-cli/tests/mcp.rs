@@ -5,6 +5,7 @@ mod support;
 
 use std::path::{Path, PathBuf};
 
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
 use spool::Rows;
 use support::*;
@@ -163,14 +164,28 @@ fn a_client_connects_and_is_told_the_tools() {
 
     // The handshake of the revisions before 2026-07-28.
     let client = json!({
-        "protocolVersion": "2025-06-18",
+        "protocolVersion": "2025-11-25",
         "capabilities": {},
         "clientInfo": { "name": "test", "version": "0" },
     });
     let hello = ask(&server, "initialize", client);
-    assert_eq!(hello["protocolVersion"], "2025-06-18");
-    assert_eq!(hello["serverInfo"]["name"], "spool");
-    assert_eq!(hello["serverInfo"]["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(hello["protocolVersion"], "2025-11-25");
+    let info = &hello["serverInfo"];
+    assert_eq!(info["name"], "spool");
+    assert_eq!(info["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(info["title"], "Spool");
+    assert!(text(&info["description"]).contains("persistent identities"));
+    assert_eq!(info["websiteUrl"], "https://spool.alexpatow.com");
+    let icon = &info["icons"][0];
+    assert_eq!(icon["mimeType"], "image/png");
+    assert_eq!(icon["sizes"], json!(["48x48"]));
+    let encoded = text(&icon["src"])
+        .strip_prefix("data:image/png;base64,")
+        .expect("embedded PNG");
+    assert_eq!(
+        STANDARD.decode(encoded).unwrap(),
+        include_bytes!("../src/server/mcp-icon.png")
+    );
     assert!(hello["capabilities"]["tools"].is_object(), "{hello}");
     for named in [
         "describe_store",
@@ -269,6 +284,10 @@ fn a_client_connects_and_is_told_the_tools() {
     let discovered = modern("server/discover", json!({}));
     let versions = discovered["supportedVersions"].as_array().unwrap();
     assert!(versions.contains(&json!("2026-07-28")), "{discovered}");
+    assert_eq!(
+        &discovered["_meta"]["io.modelcontextprotocol/serverInfo"],
+        info
+    );
     assert_eq!(modern("tools/list", json!({}))["tools"], listed["tools"]);
     let described = modern(
         "tools/call",

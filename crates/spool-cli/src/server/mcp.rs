@@ -23,9 +23,10 @@ use axum::http::header::{ALLOW, CONTENT_TYPE};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use rmcp::handler::server::tool::schema_for_input;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
+    CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Icon, Implementation,
     JsonObject, ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool,
     ToolAnnotations,
 };
@@ -83,6 +84,15 @@ const MAX_MINTED: u32 = 100;
 /// The longest `get_run` waits for a run that is still in progress. A
 /// client gives up on a call that takes much longer.
 const MAX_RUN_WAIT_MS: u64 = 60_000;
+
+/// The 48×48 PNG from `site/src/app/favicon.ico`, embedded so clients can
+/// display it as soon as they discover the server.
+static SERVER_ICON: LazyLock<Icon> = LazyLock::new(|| {
+    let png = STANDARD.encode(include_bytes!("mcp-icon.png"));
+    Icon::new(format!("data:image/png;base64,{png}"))
+        .with_mime_type("image/png")
+        .with_sizes(vec!["48x48".to_owned()])
+});
 
 /// What a client is told about the server when it connects. A client may
 /// show the model only the beginning, so the first paragraph stands alone.
@@ -192,13 +202,14 @@ pub(super) struct Tools {
 
 impl ServerHandler for Tools {
     fn get_info(&self) -> ServerConfig {
-        let mut server = Implementation::new("spool", env!("CARGO_PKG_VERSION"));
-        server.title = Some("Spool".to_owned());
-        server.description = Some(
-            "Entity resolution with persistent identity: records, the identities they \
-             belong to, and the changes made to them."
-                .to_owned(),
-        );
+        let server = Implementation::new("spool", env!("CARGO_PKG_VERSION"))
+            .with_title("Spool")
+            .with_description(
+                "Resolve records from multiple sources into persistent identities, look up the \
+                 records behind them, and review or correct matches.",
+            )
+            .with_website_url("https://spool.alexpatow.com")
+            .with_icons(vec![SERVER_ICON.clone()]);
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(server)
             .with_instructions(INSTRUCTIONS)
