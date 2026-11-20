@@ -11,8 +11,7 @@
 import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import type { SpoolClient } from "../../client/src/index.ts";
-import type { RunEntry } from "../../client/src/types.ts";
+import type { RunEntry, SpoolClient } from "spool-client";
 
 import { generate, records } from "./generate.ts";
 import type { Row } from "./generate.ts";

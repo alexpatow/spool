@@ -88,7 +88,7 @@ pub struct DerivedFeature {
 /// The records that stand, and each of their attributes as text. A
 /// mention found in a version of a document that was replaced does not. A JSON
 /// `null` is no value, and a value that is not text is its JSON.
-fn cells() -> String {
+fn build_cells_cte() -> String {
     format!(
         "
     WITH standing AS (
@@ -117,7 +117,8 @@ fn cells() -> String {
 
 type Group = (String, String);
 
-pub(crate) fn attributes(
+#[expect(clippy::too_many_lines)]
+pub(crate) fn summarize_attributes(
     conn: &Connection,
     manifest: Option<&Manifest>,
     filter: &AttributeFilter,
@@ -140,7 +141,7 @@ pub(crate) fn attributes(
         let mut statement = conn.prepare(&format!(
             "{}
              SELECT entity_type, source_id, count(*) FROM standing GROUP BY ALL",
-            cells()
+            build_cells_cte()
         ))?;
         let mut rows = statement.query(params![entity_type, source])?;
         while let Some(row) = rows.next()? {
@@ -155,7 +156,7 @@ pub(crate) fn attributes(
              SELECT entity_type, source_id, attribute,
                     count(nullif(value, '')), count(DISTINCT nullif(value, ''))
              FROM cells GROUP BY ALL",
-            cells()
+            build_cells_cte()
         ))?;
         let mut rows = statement.query(params![entity_type, source])?;
         while let Some(row) = rows.next()? {
@@ -181,7 +182,7 @@ pub(crate) fn attributes(
                GROUP BY entity_type, source_id, attribute, value)
              WHERE nth <= {COMMON_VALUES}
              ORDER BY entity_type, source_id, attribute, nth",
-            cells()
+            build_cells_cte()
         ))?;
         let mut rows = statement.query(params![entity_type, source])?;
         while let Some(row) = rows.next()? {

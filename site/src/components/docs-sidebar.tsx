@@ -15,12 +15,12 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   useSidebar,
-} from "@/components/ui/sidebar";
-import { Wordmark } from "@/components/brand";
+} from "spool-ui/components/sidebar";
+import { Wordmark } from "spool-ui/brand";
 import { explainer } from "@/lib/explainer";
 import type { NavGroup } from "@/lib/nav";
 import { layout } from "@/styles/layout.stylex";
-import { colors, linen, spacing, typography } from "@/styles/shelf/tokens.stylex";
+import { colors, linen, spacing, typography } from "spool-ui/tokens.stylex";
 
 /** The page tree, on the left. Below 48rem Shelf turns it into a drawer. */
 export function DocsSidebar({ groups }: { groups: NavGroup[] }) {

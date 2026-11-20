@@ -19,7 +19,7 @@ use clap::Args;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use super::project::{failed, write};
+use super::project::write_file;
 use crate::Failure;
 use crate::output::{Output, OutputArgs, hint};
 use crate::style::{self, paint};
@@ -53,28 +53,28 @@ pub struct UpdateSkillsArgs {
 pub const SKILLS: [(&str, &str); 5] = [
     (
         "spool-project",
-        include_str!("../agents/skills/spool-project/SKILL.md"),
+        include_str!("../../assets/agents/skills/spool-project/SKILL.md"),
     ),
     (
         "spool-rules",
-        include_str!("../agents/skills/spool-rules/SKILL.md"),
+        include_str!("../../assets/agents/skills/spool-rules/SKILL.md"),
     ),
     (
         "spool-extractor",
-        include_str!("../agents/skills/spool-extractor/SKILL.md"),
+        include_str!("../../assets/agents/skills/spool-extractor/SKILL.md"),
     ),
     (
         "spool-data",
-        include_str!("../agents/skills/spool-data/SKILL.md"),
+        include_str!("../../assets/agents/skills/spool-data/SKILL.md"),
     ),
     (
         "spool-api",
-        include_str!("../agents/skills/spool-api/SKILL.md"),
+        include_str!("../../assets/agents/skills/spool-api/SKILL.md"),
     ),
 ];
 
 /// What Spool says in AGENTS.md, between the two marker lines.
-pub const AGENTS: &str = include_str!("../agents/AGENTS.md");
+pub const AGENTS: &str = include_str!("../../assets/agents/AGENTS.md");
 
 const AGENTS_FILE: &str = "AGENTS.md";
 const CLAUDE_FILE: &str = "CLAUDE.md";
@@ -123,7 +123,7 @@ pub struct Change {
     pub note: Option<String>,
 }
 
-fn change(path: impl Into<String>, status: Status) -> Change {
+fn new_change(path: impl Into<String>, status: Status) -> Change {
     Change {
         path: path.into(),
         status,
@@ -131,7 +131,7 @@ fn change(path: impl Into<String>, status: Status) -> Change {
     }
 }
 
-fn kept(path: impl Into<String>, note: impl Into<String>) -> Change {
+fn kept_change(path: impl Into<String>, note: impl Into<String>) -> Change {
     Change {
         path: path.into(),
         status: Status::Kept,
@@ -155,7 +155,7 @@ pub fn update_skills(arguments: UpdateSkillsArgs) -> Result<(), Failure> {
             true => dir.display().to_string(),
             false => "this folder".to_owned(),
         };
-        return Err(failed(format!(
+        return Err(Failure::failed(format!(
             "{which} is not a Spool project: it has no entities/ folder"
         ))
         .hint("`spool init` makes a project, with these files in it"));
@@ -196,11 +196,11 @@ pub fn write_agent_files(dir: &Path, force: bool) -> Result<Vec<Change>, Failure
     for (name, source) in SKILLS {
         let path = format!("{SKILLS_DIR}/{name}/SKILL.md");
         if is_link(&dir.join(SKILLS_DIR).join(name)) {
-            changes.push(kept(path, LINKED));
+            changes.push(kept_change(path, LINKED));
         } else {
             changes.push(owned_file(dir, &path, &stamp_skill(source), force)?);
         }
-        changes.push(link(dir, name, force)?);
+        changes.push(link_skill(dir, name, force)?);
     }
     changes.extend(remove_old_skills(dir)?);
     Ok(changes)
@@ -209,9 +209,9 @@ pub fn write_agent_files(dir: &Path, force: bool) -> Result<Vec<Change>, Failure
 fn agents_md(dir: &Path, force: bool) -> Result<Change, Failure> {
     let path = dir.join(AGENTS_FILE);
     let section = agents_section();
-    let Some(held) = read(&path)? else {
-        write(&path, &format!("{section}\n"))?;
-        return Ok(change(AGENTS_FILE, Status::Added));
+    let Some(held) = read_if_exists(&path)? else {
+        write_file(&path, &format!("{section}\n"))?;
+        return Ok(new_change(AGENTS_FILE, Status::Added));
     };
     let Some((start, end)) = find_section(&held) else {
         let mut appended = held.clone();
@@ -223,7 +223,7 @@ fn agents_md(dir: &Path, force: bool) -> Result<Change, Failure> {
         }
         appended.push_str(&section);
         appended.push('\n');
-        write(&path, &appended)?;
+        write_file(&path, &appended)?;
         return Ok(Change {
             path: AGENTS_FILE.to_owned(),
             status: Status::Updated,
@@ -232,32 +232,32 @@ fn agents_md(dir: &Path, force: bool) -> Result<Change, Failure> {
     };
     let current = &held[start..end];
     if current == section {
-        return Ok(change(AGENTS_FILE, Status::Unchanged));
+        return Ok(new_change(AGENTS_FILE, Status::Unchanged));
     }
-    if !force && !unedited(current) {
-        return Ok(kept(
+    if !force && !is_unedited(current) {
+        return Ok(kept_change(
             AGENTS_FILE,
             "Spool's part was edited since Spool wrote it: --force replaces that part",
         ));
     }
-    write(
+    write_file(
         &path,
         &format!("{}{section}{}", &held[..start], &held[end..]),
     )?;
-    Ok(change(AGENTS_FILE, Status::Updated))
+    Ok(new_change(AGENTS_FILE, Status::Updated))
 }
 
 fn claude_md(dir: &Path) -> Result<Change, Failure> {
     let path = dir.join(CLAUDE_FILE);
-    match read(&path)? {
+    match read_if_exists(&path)? {
         None => {
-            write(&path, &format!("{CLAUDE_IMPORT}\n"))?;
-            Ok(change(CLAUDE_FILE, Status::Added))
+            write_file(&path, &format!("{CLAUDE_IMPORT}\n"))?;
+            Ok(new_change(CLAUDE_FILE, Status::Added))
         }
         Some(held) if held.lines().any(|line| line.trim() == CLAUDE_IMPORT) => {
-            Ok(change(CLAUDE_FILE, Status::Unchanged))
+            Ok(new_change(CLAUDE_FILE, Status::Unchanged))
         }
-        Some(_) => Ok(kept(
+        Some(_) => Ok(kept_change(
             CLAUDE_FILE,
             "it does not import AGENTS.md: add a line `@AGENTS.md` for Claude Code to read it",
         )),
@@ -268,32 +268,32 @@ fn claude_md(dir: &Path) -> Result<Change, Failure> {
 /// if nobody edited it, and kept if somebody did.
 fn owned_file(dir: &Path, path: &str, contents: &str, force: bool) -> Result<Change, Failure> {
     let full = dir.join(path);
-    let status = match read(&full)? {
+    let status = match read_if_exists(&full)? {
         None => Status::Added,
-        Some(held) if held == contents => return Ok(change(path, Status::Unchanged)),
-        Some(held) if force || unedited(&held) => Status::Updated,
-        Some(_) => return Ok(kept(path, EDITED)),
+        Some(held) if held == contents => return Ok(new_change(path, Status::Unchanged)),
+        Some(held) if force || is_unedited(&held) => Status::Updated,
+        Some(_) => return Ok(kept_change(path, EDITED)),
     };
-    write(&full, contents)?;
-    Ok(change(path, status))
+    write_file(&full, contents)?;
+    Ok(new_change(path, status))
 }
 
 /// The link from `.claude/skills/<name>` to the skill's folder.
-fn link(dir: &Path, name: &str, force: bool) -> Result<Change, Failure> {
+fn link_skill(dir: &Path, name: &str, force: bool) -> Result<Change, Failure> {
     let path = format!("{LINKS_DIR}/{name}");
     let full = dir.join(&path);
     let target = PathBuf::from(format!("../../{SKILLS_DIR}/{name}"));
     let status = match std::fs::symlink_metadata(&full) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Status::Added,
-        Err(error) => return Err(failed(format!("{}: {error}", full.display()))),
+        Err(error) => return Err(Failure::failed(format!("{}: {error}", full.display()))),
         Ok(found) if found.file_type().is_symlink() => {
             let points = std::fs::read_link(&full)
-                .map_err(|error| failed(format!("{}: {error}", full.display())))?;
+                .map_err(|error| Failure::failed(format!("{}: {error}", full.display())))?;
             if points == target {
-                return Ok(change(path, Status::Unchanged));
+                return Ok(new_change(path, Status::Unchanged));
             }
             if !force {
-                return Ok(kept(
+                return Ok(kept_change(
                     path,
                     format!(
                         "a link to {}, not to {SKILLS_DIR}/{name}: --force replaces it",
@@ -301,11 +301,11 @@ fn link(dir: &Path, name: &str, force: bool) -> Result<Change, Failure> {
                     ),
                 ));
             }
-            remove(&full, false)?;
+            remove_path(&full, false)?;
             Status::Updated
         }
         Ok(_) => {
-            return Ok(kept(
+            return Ok(kept_change(
                 path,
                 format!("not a link to {SKILLS_DIR}/{name}: remove it, and run this again"),
             ));
@@ -313,21 +313,21 @@ fn link(dir: &Path, name: &str, force: bool) -> Result<Change, Failure> {
     };
     if let Some(parent) = full.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|error| failed(format!("{}: {error}", parent.display())))?;
+            .map_err(|error| Failure::failed(format!("{}: {error}", parent.display())))?;
     }
     symlink(&target, &full)?;
-    Ok(change(path, status))
+    Ok(new_change(path, status))
 }
 
 #[cfg(unix)]
 fn symlink(target: &Path, at: &Path) -> Result<(), Failure> {
     std::os::unix::fs::symlink(target, at)
-        .map_err(|error| failed(format!("{}: {error}", at.display())))
+        .map_err(|error| Failure::failed(format!("{}: {error}", at.display())))
 }
 
 #[cfg(not(unix))]
 fn symlink(_: &Path, at: &Path) -> Result<(), Failure> {
-    Err(failed(format!(
+    Err(Failure::failed(format!(
         "{}: links are made on Linux and macOS only",
         at.display()
     )))
@@ -351,7 +351,7 @@ fn remove_old_skills(dir: &Path) -> Result<Vec<Change>, Failure> {
         let path = format!("{SKILLS_DIR}/{name}/SKILL.md");
         let folder = skills.join(&name);
         if is_link(&folder) {
-            changes.push(kept(path, LINKED));
+            changes.push(kept_change(path, LINKED));
             continue;
         }
         let only_the_skill = std::fs::read_dir(&folder)
@@ -361,20 +361,20 @@ fn remove_old_skills(dir: &Path) -> Result<Vec<Change>, Failure> {
                     .all(|entry| entry.file_name() == "SKILL.md")
             })
             .unwrap_or(false);
-        match read(&folder.join("SKILL.md"))? {
-            Some(held) if only_the_skill && unedited(&held) => {
-                remove(&folder.join("SKILL.md"), false)?;
-                remove(&folder, true)?;
-                changes.push(change(path, Status::Removed));
+        match read_if_exists(&folder.join("SKILL.md"))? {
+            Some(held) if only_the_skill && is_unedited(&held) => {
+                remove_path(&folder.join("SKILL.md"), false)?;
+                remove_path(&folder, true)?;
+                changes.push(new_change(path, Status::Removed));
                 let link = dir.join(LINKS_DIR).join(&name);
                 let ours = std::fs::read_link(&link)
                     .is_ok_and(|points| points == Path::new(&format!("../../{SKILLS_DIR}/{name}")));
                 if ours {
-                    remove(&link, false)?;
-                    changes.push(change(format!("{LINKS_DIR}/{name}"), Status::Removed));
+                    remove_path(&link, false)?;
+                    changes.push(new_change(format!("{LINKS_DIR}/{name}"), Status::Removed));
                 }
             }
-            Some(_) => changes.push(kept(
+            Some(_) => changes.push(kept_change(
                 path,
                 "this version of Spool has no such skill, and it was edited: remove it if it is \
                  no longer wanted",
@@ -385,20 +385,20 @@ fn remove_old_skills(dir: &Path) -> Result<Vec<Change>, Failure> {
     Ok(changes)
 }
 
-fn read(path: &Path) -> Result<Option<String>, Failure> {
+fn read_if_exists(path: &Path) -> Result<Option<String>, Failure> {
     match std::fs::read_to_string(path) {
         Ok(text) => Ok(Some(text)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(failed(format!("{}: {error}", path.display()))),
+        Err(error) => Err(Failure::failed(format!("{}: {error}", path.display()))),
     }
 }
 
-fn remove(path: &Path, folder: bool) -> Result<(), Failure> {
+fn remove_path(path: &Path, folder: bool) -> Result<(), Failure> {
     let removed = match folder {
         true => std::fs::remove_dir(path),
         false => std::fs::remove_file(path),
     };
-    removed.map_err(|error| failed(format!("{}: {error}", path.display())))
+    removed.map_err(|error| Failure::failed(format!("{}: {error}", path.display())))
 }
 
 /// A skill as it is written: with the hash of itself in its frontmatter.
@@ -412,7 +412,7 @@ pub fn stamp_skill(source: &str) -> String {
             .expect("a skill's frontmatter ends");
         format!("---\n{front}\nmetadata:\n  {STAMP}{hash}\"\n---\n{rest}")
     };
-    with(&digest(&with("")))
+    with(&digest_text(&with("")))
 }
 
 /// Spool's part of AGENTS.md, with its marker lines and the hash of itself.
@@ -423,7 +423,7 @@ pub fn agents_section() -> String {
             AGENTS.trim_end().to_owned() + "\n"
         )
     };
-    with(&digest(&with("")))
+    with(&digest_text(&with("")))
 }
 
 /// Where Spool's part of AGENTS.md is in `text`: from the start of its first
@@ -435,7 +435,7 @@ fn find_section(text: &str) -> Option<(usize, usize)> {
 }
 
 /// Whether `text` is as Spool wrote it: the hash it carries is its own.
-fn unedited(text: &str) -> bool {
+fn is_unedited(text: &str) -> bool {
     let Some(at) = text.find(STAMP) else {
         return false;
     };
@@ -445,17 +445,13 @@ fn unedited(text: &str) -> bool {
     };
     let hash = &text[from..from + length];
     let blank = format!("{}{}", &text[..from], &text[from + length..]);
-    !hash.is_empty() && digest(&blank) == hash
+    !hash.is_empty() && digest_text(&blank) == hash
 }
 
 /// The first 16 hexadecimal digits of the SHA-256 of `text`: enough to tell
 /// an edit, which is all it is for.
-fn digest(text: &str) -> String {
-    Sha256::digest(text.as_bytes())
-        .iter()
-        .take(8)
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+fn digest_text(text: &str) -> String {
+    hex::encode(&Sha256::digest(text.as_bytes())[..8])
 }
 
 #[cfg(test)]
@@ -466,24 +462,24 @@ mod tests {
     fn a_stamped_file_is_unedited_and_an_edit_shows() {
         for (_, source) in SKILLS {
             let stamped = stamp_skill(source);
-            assert!(unedited(&stamped));
-            assert!(!unedited(&stamped.replace("spool", "Spool")));
-            assert!(!unedited(source));
+            assert!(is_unedited(&stamped));
+            assert!(!is_unedited(&stamped.replace("spool", "Spool")));
+            assert!(!is_unedited(source));
         }
         let section = agents_section();
-        assert!(unedited(&section));
-        assert!(!unedited(&section.replace("Spool", "spool")));
+        assert!(is_unedited(&section));
+        assert!(!is_unedited(&section.replace("Spool", "spool")));
         assert_eq!(
             find_section(&format!("mine\n\n{section}\nmore")).map(|(s, e)| e - s),
             Some(section.len())
         );
     }
 
-    fn written(dir: &Path, force: bool) -> Vec<Change> {
+    fn write_files_or_panic(dir: &Path, force: bool) -> Vec<Change> {
         write_agent_files(dir, force).unwrap_or_else(|failure| panic!("{}", failure.message()))
     }
 
-    fn statuses(changes: &[Change]) -> Vec<(String, Status)> {
+    fn collect_statuses(changes: &[Change]) -> Vec<(String, Status)> {
         changes
             .iter()
             .map(|change| (change.path.clone(), change.status))
@@ -501,7 +497,7 @@ mod tests {
     #[test]
     fn a_project_gets_every_file_and_a_second_time_changes_nothing() {
         let dir = tempfile::tempdir().unwrap();
-        let first = written(dir.path(), false);
+        let first = write_files_or_panic(dir.path(), false);
         assert!(
             first.iter().all(|change| change.status == Status::Added),
             "{first:?}"
@@ -518,7 +514,7 @@ mod tests {
             std::fs::read_to_string(dir.path().join(CLAUDE_FILE)).unwrap(),
             "@AGENTS.md\n"
         );
-        let second = written(dir.path(), false);
+        let second = write_files_or_panic(dir.path(), false);
         assert!(
             second
                 .iter()
@@ -530,7 +526,7 @@ mod tests {
     #[test]
     fn what_an_older_version_wrote_is_replaced_and_an_edit_is_kept() {
         let dir = tempfile::tempdir().unwrap();
-        written(dir.path(), false);
+        write_files_or_panic(dir.path(), false);
         let skill = |name: &str| dir.path().join(SKILLS_DIR).join(name).join("SKILL.md");
 
         // As an older version wrote it: another text, with its own hash.
@@ -563,7 +559,7 @@ mod tests {
         std::fs::create_dir_all(&theirs).unwrap();
         std::fs::write(theirs.join("SKILL.md"), "theirs").unwrap();
 
-        let changes = written(dir.path(), false);
+        let changes = write_files_or_panic(dir.path(), false);
         assert_eq!(
             status_of(&changes, ".agents/skills/spool-rules/SKILL.md"),
             Status::Updated
@@ -601,7 +597,7 @@ mod tests {
             "theirs"
         );
 
-        let forced = written(dir.path(), true);
+        let forced = write_files_or_panic(dir.path(), true);
         assert_eq!(
             status_of(&forced, ".agents/skills/spool-extractor/SKILL.md"),
             Status::Updated
@@ -620,7 +616,7 @@ mod tests {
         // A file of somebody's own gets Spool's part after what it says.
         std::fs::write(&file, "# Our project\n\nRun the tests with `make test`.").unwrap();
         std::fs::write(dir.path().join(CLAUDE_FILE), "Be brief.\n").unwrap();
-        let changes = written(dir.path(), false);
+        let changes = write_files_or_panic(dir.path(), false);
         assert_eq!(status_of(&changes, AGENTS_FILE), Status::Updated);
         assert_eq!(
             std::fs::read_to_string(&file).unwrap(),
@@ -637,9 +633,9 @@ mod tests {
 
         // An older version's part is replaced, and what is around it stays.
         let with = |hash: &str| format!("{BEGIN}{STAMP}{hash}\" -->\nOlder words.\n{END}");
-        let older = with(&digest(&with("")));
+        let older = with(&digest_text(&with("")));
         std::fs::write(&file, format!("Before.\n\n{older}\n\nAfter.\n")).unwrap();
-        let changes = written(dir.path(), false);
+        let changes = write_files_or_panic(dir.path(), false);
         assert_eq!(status_of(&changes, AGENTS_FILE), Status::Updated);
         assert_eq!(
             std::fs::read_to_string(&file).unwrap(),
@@ -652,10 +648,10 @@ mod tests {
             agents_section().replace("## Working here", "## Working here\n\n- Use port 7800.")
         );
         std::fs::write(&file, &edited).unwrap();
-        let changes = written(dir.path(), false);
+        let changes = write_files_or_panic(dir.path(), false);
         assert_eq!(status_of(&changes, AGENTS_FILE), Status::Kept);
         assert_eq!(std::fs::read_to_string(&file).unwrap(), edited);
-        written(dir.path(), true);
+        write_files_or_panic(dir.path(), true);
         assert_eq!(
             std::fs::read_to_string(&file).unwrap(),
             format!("Before.\n\n{}\n\nAfter.\n", agents_section())
@@ -680,7 +676,7 @@ mod tests {
         }
 
         for force in [false, true] {
-            let changes = written(dir.path(), force);
+            let changes = write_files_or_panic(dir.path(), force);
             for name in ["spool-gone", "spool-rules"] {
                 let path = format!(".agents/skills/{name}/SKILL.md");
                 assert_eq!(status_of(&changes, &path), Status::Kept, "{name}");
@@ -701,7 +697,7 @@ mod tests {
         std::fs::write(links.join("spool-data/SKILL.md"), "a copy").unwrap();
         std::os::unix::fs::symlink(Path::new("/somewhere/else"), links.join("spool-api")).unwrap();
 
-        let changes = written(dir.path(), false);
+        let changes = write_files_or_panic(dir.path(), false);
         assert_eq!(
             status_of(&changes, ".claude/skills/spool-data"),
             Status::Kept
@@ -710,7 +706,7 @@ mod tests {
             status_of(&changes, ".claude/skills/spool-api"),
             Status::Kept
         );
-        let forced = statuses(&written(dir.path(), true));
+        let forced = collect_statuses(&write_files_or_panic(dir.path(), true));
         assert!(forced.contains(&(".claude/skills/spool-api".to_owned(), Status::Updated)));
         assert!(forced.contains(&(".claude/skills/spool-data".to_owned(), Status::Kept)));
         assert_eq!(

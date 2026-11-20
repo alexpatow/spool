@@ -43,7 +43,7 @@ impl RecordId {
     /// 128 bits of a SHA-256 over this ID and the ID of the version it
     /// follows. The input begins with eight bytes that no other ID's does.
     pub fn held_again(self, follows: Self) -> Self {
-        Self(u128::from_be_bytes(again(
+        Self(u128::from_be_bytes(hash_held_again(
             [0xfe; 8],
             self.0.to_be_bytes(),
             follows.0.to_be_bytes(),
@@ -59,7 +59,7 @@ impl RecordId {
     }
 }
 
-fn again(marker: [u8; 8], content: [u8; 16], follows: [u8; 16]) -> [u8; 16] {
+fn hash_held_again(marker: [u8; 8], content: [u8; 16], follows: [u8; 16]) -> [u8; 16] {
     let mut hasher = Sha256::new();
     hasher.update(marker);
     hasher.update(content);
@@ -186,7 +186,7 @@ impl DocumentId {
     /// when a version with that text exists already. As
     /// [`RecordId::held_again`], with eight bytes of its own in front.
     pub fn held_again(self, follows: Self) -> Self {
-        Self(Uuid::from_bytes(again(
+        Self(Uuid::from_bytes(hash_held_again(
             [0xfd; 8],
             self.0.into_bytes(),
             follows.0.into_bytes(),

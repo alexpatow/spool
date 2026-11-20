@@ -3,9 +3,9 @@
 //! JSON Schema that describes them, the studio the server answers a
 //! browser with, and the reader of CSV that the server and `spool load` share.
 
-pub mod accounts;
 pub mod api;
+pub mod auth;
 pub mod delimited;
-pub mod google;
 pub mod server;
 pub mod studio;
+pub mod text;

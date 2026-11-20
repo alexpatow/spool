@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import stylex from "@stylexjs/unplugin/vite";
+import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import type { Plugin } from "vite";
@@ -31,7 +32,8 @@ function styleSheet(fileName: string): Plugin {
       delete bundle[was];
       this.emitFile({ type: "asset", fileName, source: sheet.source });
       for (const file of Object.values(bundle)) {
-        if (file.type === "asset" && typeof file.source === "string") file.source = file.source.replaceAll(was, fileName);
+        if (file.type === "asset" && typeof file.source === "string")
+          file.source = file.source.replaceAll(was, fileName);
       }
     },
   };
@@ -51,9 +53,26 @@ function siteIcon(): Plugin {
 }
 
 export default defineConfig({
-  // The styles of the components are written beside them and compiled into
-  // the one style sheet, so the page needs no style of its own at run time.
-  plugins: [stylex({ useCSSLayers: true }), react(), siteIcon(), styleSheet("studio.css")],
+  plugins: [
+    // A screen is a file under `src/routes`, and this writes the tree of
+    // them, which is committed: `tsc` and the tests read it, and neither
+    // runs this. The server serves one script, so no route is split from it.
+    tanstackRouter({
+      target: "react",
+      routesDirectory: "./src/routes",
+      generatedRouteTree: "./src/routeTree.gen.ts",
+      autoCodeSplitting: false,
+      addExtensions: true,
+      quoteStyle: "double",
+      semicolons: true,
+    }),
+    // The styles of the components are written beside them and compiled into
+    // the one style sheet, so the page needs no style of its own at run time.
+    stylex({ useCSSLayers: true }),
+    react(),
+    siteIcon(),
+    styleSheet("studio.css"),
+  ],
   // A screen's address is a path, so the page names its files from the root.
   base: "/",
   server: {

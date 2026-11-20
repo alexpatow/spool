@@ -261,19 +261,19 @@ impl http_body::Body for Shared {
         self: Pin<&mut Self>,
         context: &mut Context<'_>,
     ) -> Poll<Option<Result<http_body::Frame<Bytes>, axum::Error>>> {
-        Pin::new(&mut *lock(&self.0)).poll_frame(context)
+        Pin::new(&mut *lock_body(&self.0)).poll_frame(context)
     }
 
     fn is_end_stream(&self) -> bool {
-        lock(&self.0).is_end_stream()
+        lock_body(&self.0).is_end_stream()
     }
 
     fn size_hint(&self) -> http_body::SizeHint {
-        lock(&self.0).size_hint()
+        lock_body(&self.0).size_hint()
     }
 }
 
-fn lock(body: &Mutex<Body>) -> MutexGuard<'_, Body> {
+fn lock_body(body: &Mutex<Body>) -> MutexGuard<'_, Body> {
     body.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
@@ -286,7 +286,7 @@ async fn read_out(body: &Mutex<Body>) -> bool {
         let mut read = 0;
         loop {
             {
-                let body = lock(body);
+                let body = lock_body(body);
                 if body.is_end_stream() {
                     return true;
                 }
@@ -295,7 +295,7 @@ async fn read_out(body: &Mutex<Body>) -> bool {
                 }
             }
             let frame =
-                std::future::poll_fn(|context| Pin::new(&mut *lock(body)).poll_frame(context));
+                std::future::poll_fn(|context| Pin::new(&mut *lock_body(body)).poll_frame(context));
             match frame.await {
                 None => return true,
                 Some(Err(_)) => return false,

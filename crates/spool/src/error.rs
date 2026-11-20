@@ -215,9 +215,6 @@ pub enum Error {
 
     #[error("query rejected: {0}")]
     Query(String),
-
-    #[error("{0}")]
-    Scenario(String),
 }
 
 impl From<ValidationError> for Error {

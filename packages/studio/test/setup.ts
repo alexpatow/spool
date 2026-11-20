@@ -25,7 +25,8 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 plugin({
   name: "stylex",
   setup(build) {
-    build.onLoad({ filter: /\/packages\/studio\/src\/.*\.tsx?$/ }, ({ path }) => {
+    // The components and the tokens are those of `packages/ui`.
+    build.onLoad({ filter: /\/packages\/(studio|ui)\/src\/.*\.tsx?$/ }, ({ path }) => {
       const source = readFileSync(path, "utf8");
       const loader = path.endsWith("x") ? "tsx" : "ts";
       if (!source.includes("@stylexjs/stylex")) return { contents: source, loader };

@@ -290,7 +290,9 @@ describe("a review item", () => {
     expect(parts("constraint")).toEqual([]);
     // Before it is made, the answer says what the merge does to each identity and its ID.
     const merge = document.querySelector("[data-answer=merge]")!.textContent!;
-    expect(merge).toContain(`${other.label} is merged into ${into.label}, which has the most records and keeps its ID.`);
+    expect(merge).toContain(
+      `${other.label} is merged into ${into.label}, which has the most records and keeps its ID.`,
+    );
     expect(merge).toContain(`${into.label} then has ${into.members + other.members + 1} records.`);
     expect(merge).toContain("No constraint is recorded.");
 
@@ -601,7 +603,9 @@ describe("a review item that asks whether an identity is still one thing", () =>
       ],
     });
     await server.client.match({ entity_type: "company" });
-    const [wren, tarn, bridge] = await Promise.all(["c-301", "c-302", "c-303"].map((key) => row(server.client, "crm", key)));
+    const [wren, tarn, bridge] = await Promise.all(
+      ["c-301", "c-302", "c-303"].map((key) => row(server.client, "crm", key)),
+    );
     expect(wren!.identity).toBeTruthy();
     expect([tarn!.identity, bridge!.identity]).toEqual([wren!.identity, wren!.identity]);
     const taken = await server.client.retract({ source: "crm", entity_type: "company", keys: ["c-303"] });
@@ -609,7 +613,15 @@ describe("a review item that asks whether an identity is still one thing", () =>
     const raised = (await server.client.reviewItems({ status: "open" })).find((item) => item.kind === "possible_split");
     if (raised === undefined) throw new Error("the retraction raised no item");
     calls.length = 0;
-    return { wren: wren!, tarn: tarn!, bridge: bridge!, identity: wren!.identity!, raised, taken, before: await head() };
+    return {
+      wren: wren!,
+      tarn: tarn!,
+      bridge: bridge!,
+      identity: wren!.identity!,
+      raised,
+      taken,
+      before: await head(),
+    };
   }
 
   /** The item's screen, once it shows what the item is decided from. */

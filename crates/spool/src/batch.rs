@@ -19,7 +19,7 @@ pub(crate) enum Column {
 }
 
 /// Builds a batch from named columns of equal length.
-pub(crate) fn batch(columns: Vec<(&str, Column)>) -> Result<RecordBatch> {
+pub(crate) fn build_batch(columns: Vec<(&str, Column)>) -> Result<RecordBatch> {
     let mut fields = Vec::with_capacity(columns.len());
     let mut arrays: Vec<ArrayRef> = Vec::with_capacity(columns.len());
     for (name, column) in columns {
@@ -40,7 +40,7 @@ pub(crate) fn batch(columns: Vec<(&str, Column)>) -> Result<RecordBatch> {
 /// A batch with columns `ord` and `id`, for looking up a list of IDs and
 /// getting the answers back in the order asked.
 pub(crate) fn id_list<T: ToString>(ids: &[T]) -> Result<ArrowBatchRegistration> {
-    let batch = batch(vec![
+    let batch = build_batch(vec![
         ("ord", Column::Integer((0..ids.len() as i64).collect())),
         (
             "id",

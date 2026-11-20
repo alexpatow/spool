@@ -23,8 +23,8 @@ use serde::{Deserialize, Serialize};
 use spool_core::{Changeset, ChangesetId, EntityType, Op, RunId, Seq, StateError};
 
 use crate::error::Result;
-use crate::store::{OpRow, op_from_row, op_rows, parse};
-use crate::time::rfc3339;
+use crate::store::{OpRow, op_from_row, op_rows, parse_stored};
+use crate::time::format_rfc3339;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -169,7 +169,7 @@ pub(crate) fn supersede(conn: &Connection, entity_type: &EntityType, run: RunId)
 /// Records that the changeset at `seq` was an open draft, if it was one: the
 /// draft is committed and its match run has succeeded. Runs inside the
 /// transaction that commits the changeset.
-pub(crate) fn committed(conn: &Connection, id: ChangesetId, seq: Seq, at: i64) -> Result<()> {
+pub(crate) fn mark_committed(conn: &Connection, id: ChangesetId, seq: Seq, at: i64) -> Result<()> {
     let id = id.to_string();
     conn.execute(
         "UPDATE spool.run SET status = 'succeeded', finished_at = make_timestamptz(?)
@@ -212,11 +212,11 @@ const SUMMARY: &str = "
            d.actor, d.reason
     FROM spool.draft d";
 
-fn summary(row: &duckdb::Row<'_>) -> Result<(DraftSummary, String, Option<String>)> {
+fn draft_summary_from_row(row: &duckdb::Row<'_>) -> Result<(DraftSummary, String, Option<String>)> {
     let seq = |value: Option<i64>| value.map(|seq| Seq(seq as u64));
     let run = |value: Option<i64>| value.map(|run| RunId(run as u64));
     let summary = DraftSummary {
-        id: parse(&row.get::<_, String>(0)?)?,
+        id: parse_stored(&row.get::<_, String>(0)?)?,
         entity_type: EntityType::new(row.get::<_, String>(1)?).map_err(StateError::new)?,
         match_run: RunId(row.get::<_, i64>(2)? as u64),
         reconcile_run: RunId(row.get::<_, i64>(3)? as u64),
@@ -227,7 +227,7 @@ fn summary(row: &duckdb::Row<'_>) -> Result<(DraftSummary, String, Option<String
         records_assigned: row.get::<_, i64>(8)? as u64,
         committed_seq: seq(row.get(9)?),
         superseded_by: run(row.get(10)?),
-        rejected_at: row.get::<_, Option<i64>>(11)?.map(rfc3339),
+        rejected_at: row.get::<_, Option<i64>>(11)?.map(format_rfc3339),
         rejected_reason: row.get(12)?,
     };
     Ok((summary, row.get(13)?, row.get(14)?))
@@ -247,7 +247,7 @@ pub(crate) fn list(conn: &Connection, filter: &DraftFilter) -> Result<Vec<DraftS
     ])?;
     let mut drafts = Vec::new();
     while let Some(row) = rows.next()? {
-        drafts.push(summary(row)?.0);
+        drafts.push(draft_summary_from_row(row)?.0);
     }
     Ok(drafts)
 }
@@ -258,7 +258,7 @@ pub(crate) fn get(conn: &Connection, id: ChangesetId) -> Result<Option<DraftEntr
         let mut statement = conn.prepare(&format!("{SUMMARY} WHERE d.changeset_id = ?::UUID"))?;
         let mut rows = statement.query([id.to_string()])?;
         match rows.next()? {
-            Some(row) => Some(summary(row)?),
+            Some(row) => Some(draft_summary_from_row(row)?),
             None => None,
         }
     };
@@ -288,7 +288,7 @@ pub(crate) fn get(conn: &Connection, id: ChangesetId) -> Result<Option<DraftEntr
     let changeset = Changeset {
         id: draft.id,
         base: draft.base,
-        actor: parse(&actor)?,
+        actor: parse_stored(&actor)?,
         reason,
         run: Some(draft.reconcile_run),
         ops,

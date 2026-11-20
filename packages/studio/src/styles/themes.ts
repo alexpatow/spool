@@ -2,7 +2,7 @@
 
 import * as stylex from "@stylexjs/stylex";
 
-import { darkLinen, darkTheme } from "./shelf/themes";
+import { darkLinen, darkTheme } from "spool-ui/themes";
 import { tones } from "./tones.stylex";
 
 const darkTones = stylex.createTheme(tones, {

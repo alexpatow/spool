@@ -1,52 +1,45 @@
+import { getRouteApi } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 
 import type { RunEntry, RunKind, RunSort, RunStatus } from "../api.ts";
-import {
-  Code,
-  Fields,
-  Filters,
-  Identity,
-  Lines,
-  Load,
-  Notice,
-  Onward,
-  Page,
-  Ref,
-  Section,
-  Table,
-  useSorting,
-  When,
-  Word,
-} from "../components.tsx";
+import { Code, Fields, Lines, Load, Notice, Page, Section } from "../components/layout.tsx";
+import { Table } from "../components/table.tsx";
+import { Identity, Onward, Ref, When, Word } from "../components/refs.tsx";
+import { Filters, sortingOf, useNarrow } from "../components/filters.tsx";
 import { RunIcon } from "../icons.tsx";
 import { count } from "../format.ts";
-import { useLabels, useLoad } from "../hooks.ts";
-import type { Route } from "../router.ts";
+import { useTypes } from "../hooks.ts";
+import { keys, useIdentityLabels, useRead } from "../queries.ts";
 import { Who } from "../who.tsx";
 
 const KINDS: RunKind[] = ["load", "extract", "match", "reconcile", "retract"];
 const STATUSES: RunStatus[] = ["running", "open", "drafted", "succeeded", "failed"];
 const STEP = 100;
 
-export function Runs({ route, types }: { route: Route; types: string[] }) {
-  const { kind, status, type } = route.query;
-  const limit = Number(route.query.limit) || STEP;
-  const sorting = useSorting(route, { by: "run", order: "desc" });
-  const runs = useLoad((client) =>
-    client.runs({
-      kind: kind as RunKind | undefined,
-      status: status as RunStatus | undefined,
-      entity_type: type,
-      limit,
-      sort: sorting.by as RunSort,
-      order: sorting.order,
-    }),
-  );
+const list = getRouteApi("/runs/");
+const one = getRouteApi("/runs/$id");
+
+export function Runs() {
+  const search = list.useSearch();
+  const { kind, status, type } = search;
+  const limit = search.limit || STEP;
+  const types = useTypes();
+  const narrow = useNarrow();
+  const sorting = sortingOf(search, narrow, { by: "run", order: "desc" });
+  const filters = {
+    kind: kind as RunKind | undefined,
+    status: status as RunStatus | undefined,
+    entity_type: type,
+    limit,
+    sort: sorting.by as RunSort,
+    order: sorting.order,
+  };
+  const runs = useRead(keys.runs.list(filters), (client) => client.runs(filters));
   return (
     <Page title="Runs">
       <Filters
-        path={["runs"]}
-        query={route.query}
+        query={search}
+        narrow={narrow}
         selects={[
           { name: "kind", label: "Kind", choices: KINDS.map((value) => ({ value })) },
           { name: "status", label: "Status", choices: STATUSES.map((value) => ({ value })) },
@@ -81,7 +74,7 @@ export function Runs({ route, types }: { route: Route; types: string[] }) {
               empty="No runs."
             />
             {runs.length >= limit && limit < 1000 ? (
-              <Onward path={["runs"]} query={{ ...route.query, limit: Math.min(1000, limit + STEP) }}>
+              <Onward to="/runs" search={{ ...search, limit: Math.min(1000, limit + STEP) }}>
                 Show more
               </Onward>
             ) : null}
@@ -92,8 +85,9 @@ export function Runs({ route, types }: { route: Route; types: string[] }) {
   );
 }
 
-export function Run({ id }: { id: string }) {
-  const run = useLoad((client) => client.run(Number(id)));
+export function Run() {
+  const { id } = one.useParams();
+  const run = useRead(keys.runs.one(id), (client) => client.run(Number(id)));
   return (
     <Page
       title={`Run ${id}`}
@@ -113,8 +107,7 @@ function leftForReview(identities: number | undefined): ReactNode {
   if (!identities) return null;
   return (
     <>
-      {count(identities, "identity")} with records that nothing holds together now.{" "}
-      <Onward path={["review"]}>review</Onward>
+      {count(identities, "identity")} with records that nothing holds together now. <Onward to="/review">review</Onward>
     </>
   );
 }
@@ -122,7 +115,7 @@ function leftForReview(identities: number | undefined): ReactNode {
 function RunView({ run }: { run: RunEntry }) {
   const { load, extraction, resolution, retraction } = run;
   // The identities a strategy would merge or split are named by ID.
-  const labels = useLabels([
+  const labels = useIdentityLabels([
     ...(resolution?.suggestions?.merges.flatMap((merge) => merge.identities) ?? []),
     ...(resolution?.suggestions?.splits.map((split) => split.identity) ?? []),
   ]);
@@ -198,11 +191,7 @@ function RunView({ run }: { run: RunEntry }) {
               [
                 "Committed",
                 retraction.committed ? (
-                  <Ref
-                    kind="log"
-                    id={retraction.committed.seq}
-                    label={`log position ${retraction.committed.seq}`}
-                  />
+                  <Ref kind="log" id={retraction.committed.seq} label={`log position ${retraction.committed.seq}`} />
                 ) : null,
               ],
             ]}

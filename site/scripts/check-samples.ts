@@ -65,7 +65,14 @@
 import { type Subprocess, spawn, spawnSync } from "bun";
 import { spawn as spawnChild } from "node:child_process";
 import {
-  existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { createServer } from "node:net";
@@ -92,9 +99,7 @@ const option = (name: string) => {
 };
 
 const update = flag("--update");
-const spoolBin = resolve(
-  option("--spool") ?? process.env["SPOOL_BIN"] ?? join(siteDir, "../target/release/spool"),
-);
+const spoolBin = resolve(option("--spool") ?? process.env["SPOOL_BIN"] ?? join(siteDir, "../target/release/spool"));
 
 /** The pages, in the order `meta.json` gives them. */
 function pagesInOrder(dir: string = docsDir): string[] {
@@ -202,9 +207,7 @@ async function main() {
     SPOOL_TOKEN: "",
     SPOOL_STORE: "",
   };
-  const ownVariables = new Set(
-    shellVariables(spawnSync(["sh", "-c", "set"], { env }).stdout.toString()).keys(),
-  );
+  const ownVariables = new Set(shellVariables(spawnSync(["sh", "-c", "set"], { env }).stdout.toString()).keys());
 
   const startSession = (): Session => {
     sessions++;
@@ -261,7 +264,10 @@ async function main() {
   // A check that is stopped leaves no server behind: neither the block that
   // is running, which a signal from the terminal does not reach in its own
   // process group, nor the servers of the session.
-  for (const [signal, code] of [["SIGINT", 130], ["SIGTERM", 143]] as const) {
+  for (const [signal, code] of [
+    ["SIGINT", 130],
+    ["SIGTERM", 143],
+  ] as const) {
     process.on(signal, () => {
       if (running !== undefined) stopGroup(running);
       for (const entry of session.background) entry.process.kill();
@@ -362,7 +368,9 @@ async function main() {
   async function nameIdentities() {
     if (!update || session.background.length === 0) return;
     try {
-      const answer = (await (await fetch(`http://127.0.0.1:${port}/v1/records?limit=1000`, { headers: { connection: "close" } })).json()) as {
+      const answer = (await (
+        await fetch(`http://127.0.0.1:${port}/v1/records?limit=1000`, { headers: { connection: "close" } })
+      ).json()) as {
         records?: {
           source: string;
           key: string;
@@ -476,7 +484,10 @@ async function main() {
             ran++;
             const answer = result.stdout + result.stderr;
             if (result.stopped) {
-              fail(where, `did not end in ${limit / 1000} seconds, and was stopped with what it had started:\n${block.body}\n${answer}`);
+              fail(
+                where,
+                `did not end in ${limit / 1000} seconds, and was stopped with what it had started:\n${block.body}\n${answer}`,
+              );
               return { output: unaddress(answer), background: false };
             }
             const worked = result.ok && !answer.trimStart().startsWith('{"error"');
@@ -548,7 +559,9 @@ async function main() {
         if (block.title && block.title !== "Output") {
           const target = join(session.cwd, block.title);
           if (directives.has("existing")) {
-            const found = existsSync(target) ? (sampleExtractors.get(realpathSync(target)) ?? readFileSync(target, "utf8")) : undefined;
+            const found = existsSync(target)
+              ? (sampleExtractors.get(realpathSync(target)) ?? readFileSync(target, "utf8"))
+              : undefined;
             compared++;
             if (found === undefined) {
               fail(where, `${block.title} does not exist`);

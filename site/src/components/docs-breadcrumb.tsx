@@ -4,11 +4,11 @@ import * as stylex from "@stylexjs/stylex";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-import * as Breadcrumb from "@/components/ui/breadcrumb";
+import * as Breadcrumb from "spool-ui/components/breadcrumb";
 import type { NavGroup } from "@/lib/nav";
 import { layout, breakpoints } from "@/styles/layout.stylex";
-import { media } from "@/styles/shelf/conditions.stylex";
-import { colors } from "@/styles/shelf/tokens.stylex";
+import { media } from "spool-ui/conditions.stylex";
+import { colors } from "spool-ui/tokens.stylex";
 
 /** The group a page is in, then the page. */
 export function DocsBreadcrumb({ groups }: { groups: NavGroup[] }) {

@@ -4,7 +4,7 @@ The sample extractor finds names with a small model, and its first run
 fetches about 330 MB. This one finds what ends in a legal form, which in the
 sample note is what the model finds, and has nothing to fetch but what every
 Python file needs. It is the stand-in of
-`crates/spool-cli/tests/first_extraction.rs`.
+`crates/spool-cli/tests/it/first_extraction.rs`.
 """
 
 import re

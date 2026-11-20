@@ -84,22 +84,22 @@ impl Op {
     }
 
     fn encode(&self, out: &mut Sha256) {
-        fn identity(out: &mut Sha256, id: IdentityId) {
+        fn put_identity(out: &mut Sha256, id: IdentityId) {
             out.update(id.as_uuid().as_bytes());
         }
-        fn record(out: &mut Sha256, id: RecordId) {
+        fn put_record(out: &mut Sha256, id: RecordId) {
             out.update(id.as_u128().to_be_bytes());
         }
-        fn optional(out: &mut Sha256, id: Option<IdentityId>) {
+        fn put_optional_identity(out: &mut Sha256, id: Option<IdentityId>) {
             match id {
                 Some(id) => {
                     out.update([1]);
-                    identity(out, id);
+                    put_identity(out, id);
                 }
                 None => out.update([0]),
             }
         }
-        fn constraint(out: &mut Sha256, kind: ConstraintKind) {
+        fn put_constraint_kind(out: &mut Sha256, kind: ConstraintKind) {
             out.update([match kind {
                 ConstraintKind::MustLink => 1,
                 ConstraintKind::CannotLink => 2,
@@ -111,7 +111,7 @@ impl Op {
                 entity_type,
             } => {
                 out.update([1]);
-                identity(out, *id);
+                put_identity(out, *id);
                 out.update((entity_type.as_str().len() as u64).to_le_bytes());
                 out.update(entity_type.as_str().as_bytes());
             }
@@ -121,30 +121,30 @@ impl Op {
                 to,
             } => {
                 out.update([2]);
-                record(out, *obs);
-                optional(out, *from);
-                optional(out, *to);
+                put_record(out, *obs);
+                put_optional_identity(out, *from);
+                put_optional_identity(out, *to);
             }
             Op::Merge { from, into } => {
                 out.update([3]);
-                identity(out, *from);
-                identity(out, *into);
+                put_identity(out, *from);
+                put_identity(out, *into);
             }
             Op::Constrain { kind, a, b } => {
                 out.update([4]);
-                constraint(out, *kind);
-                record(out, *a);
-                record(out, *b);
+                put_constraint_kind(out, *kind);
+                put_record(out, *a);
+                put_record(out, *b);
             }
             Op::Unconstrain { kind, a, b } => {
                 out.update([5]);
-                constraint(out, *kind);
-                record(out, *a);
-                record(out, *b);
+                put_constraint_kind(out, *kind);
+                put_record(out, *a);
+                put_record(out, *b);
             }
             Op::Reinstate { identity: id } => {
                 out.update([6]);
-                identity(out, *id);
+                put_identity(out, *id);
             }
         }
     }
@@ -186,12 +186,7 @@ impl ContentHash {
         for op in ops {
             op.encode(&mut hasher);
         }
-        let hex = hasher
-            .finalize()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
-        Self(hex)
+        Self(hex::encode(hasher.finalize()))
     }
 
     /// Wraps a hash read back from a store.

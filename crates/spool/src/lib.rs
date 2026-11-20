@@ -27,7 +27,6 @@
 
 mod attributes;
 mod batch;
-mod bench;
 mod documents;
 mod drafts;
 mod engine;
@@ -63,10 +62,6 @@ pub use spool_core as core;
 pub use attributes::{
     AttributeFilter, AttributeGroup, AttributeSummary, COMMON_VALUES, DerivedFeature, ValueCount,
 };
-pub use bench::{
-    BenchReport, CorrectionSummary, DocumentsSummary, ExtractSummary, IngestSummary,
-    PossibleSplits, RetractSummary, Scenario, StepReport,
-};
 pub use documents::{
     AddDocumentReport, DocumentEntry, DocumentExtraction, DocumentFilter, DocumentReading,
     DocumentRecord, DocumentSort, ExtractOptions, ExtractReport, ExtractorRef, FailedDocument,
@@ -89,10 +84,7 @@ pub use lookup::{
     IdentitySnapshot, IdentitySort, IdentitySummary, IdentityView, LogSort, LoggedChangeset,
     Member, RecordEntry, RecordFilter, RecordSort, SourceCount, SourceInfo, StoreInfo, TypeInfo,
 };
-pub use metrics::{
-    BCubed, Churn, EndToEndMetrics, ExtractionMetrics, IdStability, Metrics, OrderSensitivity,
-    OverridePersistence, PairMetrics, Rebuild, SplitRecovery, UpgradeStability,
-};
+pub use metrics::{BCubed, Churn, IdStability, Metrics, PairMetrics};
 pub use order::{ActorNames, Direction, Sort};
 pub use project::{
     Declaration, EntityTypeManifest, EntityTypeSource, Extractor, FeatureColumn, Manifest, Mapped,
@@ -105,7 +97,7 @@ pub use recompute::{
     RecomputeApplied, RecomputeReport, RecomputeRequest, RecomputeSummary, RecordMove,
     TypeRecompute,
 };
-pub use retract::RetractReport;
+pub use retract::{NOT_RETRACTED, RetractReport};
 pub use review::{
     CASE_MEMBERS, Candidate, CaseConstraint, Dismissal, PairJudgement, ReviewCase, ReviewEntry,
     ReviewFilter, ReviewKind, ReviewStatus,

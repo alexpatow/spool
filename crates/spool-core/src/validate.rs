@@ -279,6 +279,7 @@ impl Pending<'_> {
 /// - a changeset moves a record at most once, and merges or reinstates
 ///   an identity at most once, because history has one position per
 ///   changeset.
+#[expect(clippy::too_many_lines)]
 pub fn validate<S: IdentityState + ?Sized>(
     state: &S,
     changeset: Changeset,

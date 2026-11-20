@@ -20,8 +20,7 @@
 import { cpSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
-import type { SpoolClient } from "../../client/src/index.ts";
-import type { RunEntry } from "../../client/src/types.ts";
+import type { RunEntry, SpoolClient } from "spool-client";
 
 import { finished } from "./scale.ts";
 import { binary, scratch, serve, storeSize, timed, verify } from "./server.ts";
@@ -143,7 +142,8 @@ function compare(reference: Map<string, string>, replayed: Map<string, string>, 
   for (const [name, group] of reference) {
     const other = replayed.get(name);
     if (other === undefined) say(`${name} is in the store of spool bench, and not in the server's`);
-    else if (other !== group) say(`${name} is with ${group} in the store of spool bench, and with ${other} in the server's`);
+    else if (other !== group)
+      say(`${name} is with ${group} in the store of spool bench, and with ${other} in the server's`);
   }
   for (const name of replayed.keys()) {
     if (!reference.has(name)) say(`${name} is in the server's store, and not in that of spool bench`);
@@ -233,7 +233,13 @@ export async function replay(
       const [read, seconds] = await timed(() => everything(first.client, true));
       reference = read;
       runs = (await first.client.runs({ limit: PAGE })).sort((a, b) => a.run - b.run);
-      record("read the store of spool bench", seconds, first.memory(), referenceStore, `${read.state.placed.size} records`);
+      record(
+        "read the store of spool bench",
+        seconds,
+        first.memory(),
+        referenceStore,
+        `${read.state.placed.size} records`,
+      );
       if ((await first.stop()) !== 0) throw new Error(`the server stopped badly:\n${first.complaints()}`);
     } finally {
       if (first.alive()) await first.kill();
@@ -336,7 +342,8 @@ if (import.meta.main) {
   const args = process.argv.slice(2);
   const out = args.includes("--out") ? args[args.indexOf("--out") + 1] : undefined;
   const scenarios = args.filter((arg, index) => !arg.startsWith("--") && args[index - 1] !== "--out");
-  if (scenarios.length === 0) throw new Error("name a scenario file, as in `bun src/replay.ts ../../benchmarks/resolution/music/20k.toml`");
+  if (scenarios.length === 0)
+    throw new Error("name a scenario file, as in `bun src/replay.ts ../../benchmarks/resolution/music/20k.toml`");
   const results: ReplayResult[] = [];
   let failed = false;
   for (const scenario of scenarios) {

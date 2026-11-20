@@ -7,10 +7,11 @@ name: CI
 # them must take it off both lists, which are the same. `README.md` here is
 # the one at the root: a crate's or a package's is not on the lists.
 #
-# The studio is built from the site's tokens, themes and mark, and its test
-# checks that its copies of them are the site's: those files start the jobs.
-# So does the command reference, which a test of `spool` checks is what the
-# commands' help says.
+# The studio's page shows the site's icon, which its build reads from the
+# site: that file starts the jobs. So does the command reference, which a
+# test of `spool` checks is what the commands' help says. The tokens, themes,
+# components and mark the two share are in `packages/ui`, which is on
+# neither list.
 # A later pattern wins over an earlier one, and files whose names begin
 # with a dot, such as this one, are named on their own.
 on:
@@ -22,8 +23,6 @@ on:
       - "!docs/**"
       - "!site/**"
       - "site/content/docs/cli-reference.mdx"
-      - "site/src/styles/shelf/**"
-      - "site/src/components/brand.tsx"
       - "site/src/app/icon.svg"
       - "!.github/workflows/site.yml"
       - "!README.md"
@@ -37,8 +36,6 @@ on:
       - "!docs/**"
       - "!site/**"
       - "site/content/docs/cli-reference.mdx"
-      - "site/src/styles/shelf/**"
-      - "site/src/components/brand.tsx"
       - "site/src/app/icon.svg"
       - "!.github/workflows/site.yml"
       - "!README.md"
@@ -58,6 +55,8 @@ env:
   RUST_TOOLCHAIN: "1.98.1"
   NEXTEST_VERSION: "0.9.152"
   NEXTEST_LINUX_X64_SHA256: d039b43c3e0958441b6ad0a39c8884d018b3d2e8fb9928f209074b1100b5e17a
+  MACHETE_VERSION: "0.10.1"
+  MACHETE_LINUX_X64_SHA256: 785d381985140ffa172246d82089adeb7f2eb9c774d961c48f77a4494023afb5
   # Each test binary carries the debug information of everything it links,
   # and with all of it they fill the runner's disk. Line numbers are kept,
   # for a backtrace, and only those of this workspace: see `Configure Cargo`.
@@ -88,68 +87,22 @@ jobs:
       - name: Format
         run: cargo fmt --all -- --check
 
-      # The `test` jobs divide the test files of the engine among them by
-      # name, and those of the server. This reads the patterns they use and
-      # fails unless every test file matches exactly one job of its kind,
-      # and exactly one job of each kind takes the tests inside the crates.
-      # It prints the job each file is in.
-      - name: Every test file is in one job
+      # A source file over the budget fails unless it was over it when the
+      # check was added, and those may only get shorter.
+      - name: Line budget
+        run: bash scripts/check-file-size.sh
+
+      # A dependency a crate names and does not use. What is named for
+      # another reason is listed in that crate's Cargo.toml.
+      - name: Dependencies nothing uses
         run: |
-          export LC_ALL=C
-          workflow=.github/workflows/ci.yml
-          # A line for each job that names its files: its kind, its part
-          # and its `targets`.
-          rows=$(awk '/^ +- name: /{kind=$3; part=$4} /^ +targets: /{sub(/^ +targets: /, ""); print kind "\t" part "\t" $0}' "$workflow")
-          failed=0
-          for kind in engine server; do
-            mine=$(awk -F'\t' -v kind="$kind" '$1 == kind' <<< "$rows")
-            files=$(cargo metadata --no-deps --format-version 1 |
-              jq -r --arg kind "$kind" --arg root "$PWD/" '.packages[]
-                | select((.name == "spool-cli") == ($kind == "server"))
-                | .targets[] | select(.kind == ["test"])
-                | "\(.name) \(.src_path | ltrimstr($root))"')
-            if [ -z "$files" ] || [ -z "$mine" ]; then
-              echo "::error file=$workflow::no $kind job names its test files, or there are none to name"
-              failed=1
-              continue
-            fi
-            while read -r file path; do
-              jobs=0
-              found=
-              while IFS=$'\t' read -r _ part targets; do
-                pattern=$(sed -nE "s/.*--test '([^']+)'.*/\1/p" <<< "$targets")
-                # shellcheck disable=SC2053
-                if [[ -n $pattern && $file == $pattern ]]; then
-                  jobs=$((jobs + 1))
-                  found="$found $kind $part"
-                fi
-              done <<< "$mine"
-              echo "$path:${found:- no job}"
-              if [ "$jobs" -ne 1 ]; then
-                echo "::error file=$workflow::$path is in $jobs of the $kind jobs, and must be in exactly one"
-                failed=1
-              fi
-            done <<< "$files"
-            inside=$(grep -cE -- "--lib --bins( |$)" <<< "$mine" || true)
-            if [ "$inside" -ne 1 ]; then
-              echo "::error file=$workflow::the tests inside the crates are in $inside of the $kind jobs, and must be in exactly one"
-              failed=1
-            fi
-          done
-          if [ "$failed" -ne 0 ]; then
-            echo
-            echo "How the test files are divided, and how to mend this:"
-            echo "  In $workflow, each 'engine' and 'server' job has a 'targets' line that"
-            echo "  names its test files by their first letter, as in --test '[elu]*'. One job"
-            echo "  of each kind takes every letter the others do not, as in --test '[!eilnsu]*',"
-            echo "  and the tests inside the crates, with --lib --bins."
-            echo "  - A new test file needs no change: it is in the job that has its first letter."
-            echo "  - The pattern that begins with '!' must list exactly the letters that the"
-            echo "    other jobs of its kind name, each once."
-            echo "  - To move the files of a letter to another job, change that letter in the"
-            echo "    patterns of both jobs, and keep the '!' pattern as above."
-          fi
-          exit "$failed"
+          archive=$(mktemp)
+          trap 'rm -f "$archive"' EXIT
+          name="cargo-machete-v$MACHETE_VERSION-x86_64-unknown-linux-musl"
+          curl -fsSL "https://github.com/bnjbvr/cargo-machete/releases/download/v$MACHETE_VERSION/$name.tar.gz" -o "$archive"
+          printf '%s  %s\n' "$MACHETE_LINUX_X64_SHA256" "$archive" | sha256sum --check --strict
+          tar -xzf "$archive" -C "${CARGO_HOME:-$HOME/.cargo}/bin" --strip-components 1 "$name/cargo-machete"
+          cargo machete
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
@@ -157,6 +110,34 @@ jobs:
 
       - name: Lint
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+  typescript:
+    name: Format, lint and type-check the TypeScript
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.4"
+
+      # The packages and the site are one workspace, with one lockfile.
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Format
+        run: bun run fmt:check
+
+      - name: Lint
+        run: bun run lint
+
+      # The site is type-checked by its own workflow, with what it builds.
+      - name: Type check
+        run: |
+          for package in packages/*/; do
+            (cd "$package" && bun run typecheck)
+          done
 
   test:
     name: Test (${{ matrix.name }})
@@ -167,20 +148,24 @@ jobs:
       fail-fast: false
       matrix:
         # `packages` is what a job builds, and `tests` is which of its tests
-        # it runs. The first two groups are named by what they leave out, so
-        # that a new crate or a new test file is in one of them without
-        # being added here. `spool` is built with the feature the server
-        # turns on, as it is when the whole workspace is built.
+        # it runs. The engine's group is named by what it leaves out, so
+        # that a new crate is in it without being added here. `spool` is
+        # built with the feature the server turns on, as it is when the
+        # whole workspace is built.
         #
-        # The tests of the engine are divided by test file, and so are the
-        # server's, so that each job builds only the files it runs: `targets`
-        # names them by their first letter, and one job of each kind takes
-        # every letter the others do not, with the tests inside the crates
-        # themselves. The jobs of a kind are of about the same length in
-        # time, by the times of the tests when they were divided. The
-        # engine's longest test by far is inside the crate, and its job has
-        # the files with no long test of their own. The lint job checks that
-        # every test file is in exactly one job.
+        # A crate has one binary of integration tests, `tests/it`, and a new
+        # test file is a module of it. Three jobs divide the tests of the
+        # engine's crates, and three the server's: `partition` is the part
+        # of them a job runs. nextest puts a test in a part by a hash of its
+        # name, so every test is in exactly one part, and a new one is in a
+        # part without being added here. A new test moves no other test
+        # either, so a job goes on running the tests it ran: it has the
+        # datasets they read, and takes about as long as it did.
+        #
+        # `inside` is the tests inside the crates themselves, with the
+        # binaries and the examples. A partition divides every test of a
+        # run, and these are not divided: one job of each kind builds them
+        # and runs them all, in a step of their own.
         #
         # The stress tests and the studio's are each one Rust test that runs
         # the test files of a TypeScript package, and the longest in the
@@ -199,32 +184,37 @@ jobs:
             save: true
             documentation: true
             packages: --workspace --exclude spool-cli --features spool/schema
-            targets: --lib --bins --examples --test '[!eilnsu]*'
+            inside: --lib --bins --examples
+            targets: --test '*'
+            partition: --partition hash:1/3
           - name: engine 2/3
             cache: engine
             packages: --workspace --exclude spool-cli --features spool/schema
-            targets: --test '[elu]*'
+            targets: --test '*'
+            partition: --partition hash:2/3
           - name: engine 3/3
             cache: engine
             packages: --workspace --exclude spool-cli --features spool/schema
-            targets: --test '[ins]*'
+            targets: --test '*'
+            partition: --partition hash:3/3
           - name: server 1/3
             cache: server
             save: true
             documentation: true
             packages: -p spool-cli
-            targets: --lib --bins --examples --test '[!c-ls]*'
-            tests: -E 'not (binary_id(spool-cli::stress) | binary_id(spool-cli::studio))'
+            inside: --lib --bins --examples
+            targets: --test it
+            partition: --partition hash:1/3
           - name: server 2/3
             cache: server
             packages: -p spool-cli
-            targets: --test '[c-l]*'
-            tests: -E 'not (binary_id(spool-cli::stress) | binary_id(spool-cli::studio))'
+            targets: --test it
+            partition: --partition hash:2/3
           - name: server 3/3
             cache: server
             packages: -p spool-cli
-            targets: --test 's*'
-            tests: -E 'not (binary_id(spool-cli::stress) | binary_id(spool-cli::studio))'
+            targets: --test it
+            partition: --partition hash:3/3
           - name: stress 1/2
             cache: server
             packages: -p spool-cli --test stress
@@ -305,13 +295,20 @@ jobs:
           restore-keys: datasets-${{ matrix.name }}-${{ hashFiles('benchmarks/datasets.toml') }}-
 
       - name: Build
-        run: cargo nextest run --locked --no-run ${{ matrix.packages }} ${{ matrix.targets }}
+        id: build
+        run: cargo nextest run --locked --no-run ${{ matrix.packages }} ${{ matrix.inside }} ${{ matrix.targets }}
 
       - name: Test
         env:
           SPOOL_STRESS_SHARD: ${{ matrix.stress }}
           SPOOL_STUDIO_SHARD: ${{ matrix.studio }}
-        run: cargo nextest run --locked --run-ignored all --no-fail-fast ${{ matrix.packages }} ${{ matrix.targets }} ${{ matrix.tests }}
+        run: cargo nextest run --locked --run-ignored all --no-fail-fast ${{ matrix.packages }} ${{ matrix.targets }} ${{ matrix.tests }} ${{ matrix.partition }}
+
+      # The tests no partition divides. They run whether or not a test of
+      # the step before failed: a failure there says nothing about these.
+      - name: Test inside the crates
+        if: ${{ !cancelled() && matrix.inside && steps.build.outcome == 'success' }}
+        run: cargo nextest run --locked --run-ignored all --no-fail-fast ${{ matrix.packages }} ${{ matrix.inside }}
 
       # nextest does not run the examples in documentation.
       - name: Test the documentation

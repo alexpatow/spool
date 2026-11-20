@@ -132,6 +132,8 @@ function all(token: string): Case[] {
   load("evidence column named in the call", 400, { ...ok, evidence: "ev", rows: [{ id: "ev3" }] });
   load("wait_ms negative", 400, { ...ok, wait_ms: -1, rows: [{ id: "w1" }] });
   load("wait_ms huge", 400, { ...ok, wait_ms: 1e30, rows: [{ id: "w2" }] });
+  // The largest number the server's type holds, which JSON here cannot write exactly: what is sent is the nearest.
+  // oxlint-disable-next-line no-loss-of-precision
   load("wait_ms u64 max", 400, { ...ok, wait_ms: 18446744073709551615, rows: [{ id: "w3" }] });
   cases.push({
     name: "load: not json",
@@ -534,7 +536,7 @@ export async function hostile(log: (line: string) => void = () => {}): Promise<H
   const faults: string[] = [];
   try {
     for (const item of cases) {
-      const headers: Record<string, string> = { ...(item.headers ?? {}) };
+      const headers: Record<string, string> = { ...item.headers };
       if (item.token !== null && headers.authorization === undefined) {
         headers.authorization = `Bearer ${item.token ?? server.token}`;
       }

@@ -84,7 +84,7 @@ impl MemoryState {
     }
 
     /// The active identity that stands for `id`.
-    fn survivor(&self, id: IdentityId) -> IdentityId {
+    fn find_survivor(&self, id: IdentityId) -> IdentityId {
         let mut current = id;
         while let Some(Merged { into, .. }) = self
             .identities
@@ -96,15 +96,15 @@ impl MemoryState {
         current
     }
 
-    fn resolved(&self, entry: &IdentityEntry) -> IdentityEntry {
+    fn resolve_entry_status(&self, entry: &IdentityEntry) -> IdentityEntry {
         let mut entry = entry.clone();
         if entry.merged.is_some() {
-            entry.status = IdentityStatus::MergedInto(self.survivor(entry.id));
+            entry.status = IdentityStatus::MergedInto(self.find_survivor(entry.id));
         }
         entry
     }
 
-    fn active(&self, identity: &IdentityId) -> Result<(), String> {
+    fn check_identity_active(&self, identity: &IdentityId) -> Result<(), String> {
         match self.identities.get(identity) {
             Some(record) if record.merged.is_none() => Ok(()),
             Some(_) => Err(format!("identity {identity} is not active")),
@@ -177,7 +177,7 @@ impl MemoryState {
                     ));
                 }
                 if let Some(target) = to {
-                    self.active(target)?;
+                    self.check_identity_active(target)?;
                 }
                 self.move_record(seq, *record, *from, *to)?;
             }
@@ -185,8 +185,8 @@ impl MemoryState {
                 if from == into {
                     return Err(format!("identity {from} cannot be merged into itself"));
                 }
-                self.active(from)?;
-                self.active(into)?;
+                self.check_identity_active(from)?;
+                self.check_identity_active(into)?;
                 let members: Vec<RecordId> = self
                     .current
                     .iter()
@@ -260,7 +260,11 @@ impl IdentityState for MemoryState {
     fn identities(&self, ids: &[IdentityId]) -> Result<Vec<Option<IdentityEntry>>> {
         Ok(ids
             .iter()
-            .map(|id| self.identities.get(id).map(|record| self.resolved(record)))
+            .map(|id| {
+                self.identities
+                    .get(id)
+                    .map(|record| self.resolve_entry_status(record))
+            })
             .collect())
     }
 
@@ -391,7 +395,7 @@ impl IdentityStore for MemoryState {
             identities: self
                 .identities
                 .values()
-                .map(|record| self.resolved(record))
+                .map(|record| self.resolve_entry_status(record))
                 .collect(),
             memberships,
             constraints,

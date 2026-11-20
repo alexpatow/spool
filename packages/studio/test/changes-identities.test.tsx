@@ -20,7 +20,7 @@ import {
   server,
 } from "./changing.tsx";
 import { author, counted, field, heading, idle, open, rowsOf, texts } from "./harness.tsx";
-import { companies, row } from "./seed.ts";
+import { row } from "./seed.ts";
 
 aStoreForEachTest();
 

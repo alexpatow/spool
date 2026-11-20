@@ -1,10 +1,14 @@
 // Writes the files the `spool` binary serves as the studio: the page, its
-// script, its style sheet and its fonts, built from this package. First it
-// writes what the studio takes from the site, so that the two look alike
-// from one set of values.
+// script, its style sheet and its fonts, built from this package. Its
+// colours, typefaces, spacing, themes, components and mark are those of
+// `packages/ui`, which the site is built from too, so the two look alike.
 //
 //   bun scripts/build.ts           writes the files
 //   bun scripts/build.ts --check   fails if a file is out of date
+//
+// The build also writes `src/routeTree.gen.ts`, the list of the screens'
+// routes that the router's plugin makes of the files under `src/routes`. It
+// is committed, and `--check` fails if it is not what those files make.
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -14,35 +18,8 @@ import { build } from "vite";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
-const outputDir = join(root, "../../crates/spool-cli/src/studio");
-const site = join(root, "../../site/src");
-
-/**
- * What the studio takes from the site, as `[site, studio]`: its colours,
- * typefaces, spacing and themes, and its mark. They are copied rather than
- * imported. StyleX names a variable after the file that defines it, and
- * Shelf's components name the tokens by a path inside their own package, so
- * the studio's tokens have to be defined in the studio. And the site's
- * packages are not installed where the studio is built.
- */
-const SHARED: Array<[string, string]> = [
-  ["styles/shelf/tokens.stylex.ts", "src/styles/shelf/tokens.stylex.ts"],
-  ["styles/shelf/themes.ts", "src/styles/shelf/themes.ts"],
-  ["styles/shelf/conditions.stylex.ts", "src/styles/shelf/conditions.stylex.ts"],
-  ["styles/shelf/fonts.css", "src/styles/shelf/fonts.css"],
-  ["components/brand.tsx", "src/brand.tsx"],
-];
-
-function copied(from: string): string {
-  const text = readFileSync(join(site, from), "utf8");
-  const said = [
-    `Copied from site/src/${from} by packages/studio/scripts/build.ts.`,
-    "Do not edit: change the site's file and run `bun run build` in packages/studio.",
-  ];
-  return from.endsWith(".css")
-    ? `/* ${said.join("\n * ")} */\n\n${text}`
-    : `${said.map((line) => `// ${line}`).join("\n")}\n\n${text}`;
-}
+const outputDir = join(root, "../../crates/spool-cli/assets/studio");
+const routeTree = join(root, "src/routeTree.gen.ts");
 
 /** The files the server has a route for. A build that makes another is a mistake. */
 const FILES = [
@@ -116,8 +93,9 @@ function packageOf(module: string): string | null {
 function scriptBanner(modules: string[]): string {
   const packages = [...new Set(modules.map(packageOf).filter((directory) => directory !== null))];
   const notices = packages.map(notice).sort();
-  // The components of the page are Shelf's, copied into src/components/ui.
-  const shelf = `Shelf UI components\n\n${readFileSync(join(root, "node_modules/@shelfui/cli/LICENSE"), "utf8").trim()}`;
+  // The components of the page are Shelf's, copied into packages/ui, which
+  // is where the tool that copies them is installed.
+  const shelf = `Shelf UI components\n\n${readFileSync(join(root, "../ui/node_modules/@shelfui/cli/LICENSE"), "utf8").trim()}`;
   const lines = [
     ...GENERATED,
     "This file contains code of the following.",
@@ -162,29 +140,21 @@ async function generate(): Promise<Map<string, Buffer>> {
   return files;
 }
 
-const checking = process.argv.includes("--check");
-const shared = SHARED.filter(([from, to]) => {
-  const path = join(root, to);
-  const text = copied(from);
-  if (existsSync(path) && readFileSync(path, "utf8") === text) return false;
-  if (!checking) {
-    writeFileSync(path, text);
-    console.log(`wrote ${path}`);
-  }
-  return true;
-});
+const read = (path: string) => (existsSync(path) ? readFileSync(path) : null);
 
+// The build writes the route tree where the source reads it.
+const committedTree = read(routeTree);
 const generated = await generate();
-if (checking) {
-  const stale = [
-    ...shared.map(([, to]) => join(root, to)),
-    ...[...generated]
-      .filter(([name, contents]) => {
-        const path = join(outputDir, name);
-        return !existsSync(path) || !readFileSync(path).equals(contents);
-      })
-      .map(([name]) => join(outputDir, name)),
-  ];
+if (process.argv.includes("--check")) {
+  const stale = [...generated]
+    .filter(([name, contents]) => !read(join(outputDir, name))?.equals(contents))
+    .map(([name]) => join(outputDir, name));
+  const builtTree = read(routeTree);
+  if (committedTree === null || builtTree === null || !builtTree.equals(committedTree)) {
+    stale.push(routeTree);
+    // A check changes nothing: the tree is left as it was found.
+    if (committedTree !== null) writeFileSync(routeTree, committedTree);
+  }
   if (stale.length > 0) {
     for (const path of stale) console.error(`${path} is out of date`);
     console.error("run `bun run build` in packages/studio");

@@ -16,10 +16,14 @@
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 
-import { binary, spool } from "../../client/test/server.ts";
+import { makeHarness } from "spool-testing";
+
 import { SpoolClient } from "../src/api.ts";
 import { companies, copyProject, news, seedCompanies, seedNews } from "../test/seed.ts";
 import { standInForGoogle } from "./google-stand-in.ts";
+
+// The debug build of this checkout, unless `SPOOL_BIN` names a binary.
+const { binary, spool } = makeHarness("debug");
 
 const args = process.argv.slice(2);
 const option = (name: string, otherwise: string) => (args.includes(name) && args[args.indexOf(name) + 1]) || otherwise;

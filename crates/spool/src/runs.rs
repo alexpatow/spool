@@ -12,11 +12,11 @@ use crate::documents::{ExtractReport, ExtractorRef};
 use crate::engine::{StrategyRef, TypeResolution};
 use crate::error::{Error, Result};
 use crate::load::LoadReport;
-use crate::order::{ActorNames, Key, Keyed, Sort, called, names_table};
+use crate::order::{ActorNames, Key, Keyed, Sort, actor_names_cte, names_table};
 use crate::recompute::AppliedType;
 use crate::retract::RetractReport;
-use crate::store::parse;
-use crate::time::rfc3339;
+use crate::store::parse_stored;
+use crate::time::format_rfc3339;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -217,7 +217,7 @@ const RECORD: &str = "
     LEFT JOIN spool.draft d ON d.match_run = r.run_id AND d.status = 'committed'
     LEFT JOIN spool.changeset c ON c.seq = d.closed_seq";
 
-fn entry(row: &duckdb::Row<'_>) -> Result<RunEntry> {
+fn run_entry_from_row(row: &duckdb::Row<'_>) -> Result<RunEntry> {
     let run = RunId(row.get::<_, i64>(0)? as u64);
     let unreadable = |what: &str| Error::Run {
         run,
@@ -260,7 +260,7 @@ fn entry(row: &duckdb::Row<'_>) -> Result<RunEntry> {
                 {
                     report.committed = Some(Committed {
                         seq: Seq(seq as u64),
-                        changeset: parse(&row.get::<_, String>(11)?)?,
+                        changeset: parse_stored(&row.get::<_, String>(11)?)?,
                         content_hash: ContentHash::from_stored(row.get(12)?),
                     });
                 }
@@ -278,7 +278,7 @@ fn entry(row: &duckdb::Row<'_>) -> Result<RunEntry> {
         run,
         kind,
         status: RunStatus::from_stored(&row.get::<_, String>(2)?)?,
-        started_by: parse::<Actor>(&row.get::<_, String>(15)?)?,
+        started_by: parse_stored::<Actor>(&row.get::<_, String>(15)?)?,
         strategy: row.get::<_, Option<String>>(3)?.map(|name| StrategyRef {
             name,
             version: row.get(4).unwrap_or(None),
@@ -294,8 +294,8 @@ fn entry(row: &duckdb::Row<'_>) -> Result<RunEntry> {
             }),
             None => None,
         },
-        started_at: rfc3339(row.get(6)?),
-        finished_at: row.get::<_, Option<i64>>(7)?.map(rfc3339),
+        started_at: format_rfc3339(row.get(6)?),
+        finished_at: row.get::<_, Option<i64>>(7)?.map(format_rfc3339),
         error: row.get(8)?,
         load,
         extraction,
@@ -309,7 +309,7 @@ pub(crate) fn get(conn: &Connection, run: RunId) -> Result<Option<RunEntry>> {
     let mut statement = conn.prepare(&format!("{RECORD} WHERE r.run_id = ?"))?;
     let mut rows = statement.query([run.0 as i64])?;
     match rows.next()? {
-        Some(row) => Ok(Some(entry(row)?)),
+        Some(row) => Ok(Some(run_entry_from_row(row)?)),
         None => Ok(None),
     }
 }
@@ -330,7 +330,7 @@ pub(crate) fn list(conn: &Connection, filter: &RunFilter) -> Result<Vec<RunEntry
         Some(sort) => {
             let named = sort.by == RunSort::StartedBy;
             let keyed = Keyed {
-                before: named.then(|| called("$5")),
+                before: named.then(|| actor_names_cte("$5")),
                 from: if named {
                     "spool.run r LEFT JOIN called ON called.actor = r.started_by"
                 } else {
@@ -371,7 +371,7 @@ pub(crate) fn list(conn: &Connection, filter: &RunFilter) -> Result<Vec<RunEntry
     let mut rows = statement.query(values.as_slice())?;
     let mut runs = Vec::new();
     while let Some(row) = rows.next()? {
-        runs.push(entry(row)?);
+        runs.push(run_entry_from_row(row)?);
     }
     Ok(runs)
 }

@@ -3,10 +3,10 @@
 import * as stylex from "@stylexjs/stylex";
 import { Fragment, useState } from "react";
 
-import { Mark } from "@/components/brand";
+import { Mark } from "spool-ui/brand";
 import { identities, matchRuns, note, records } from "@/lib/sample";
 import { breakpoints } from "@/styles/layout.stylex";
-import { colors, display, linen, spacing, typography } from "@/styles/shelf/tokens.stylex";
+import { colors, display, linen, spacing, typography } from "spool-ui/tokens.stylex";
 
 /** The heights the threads are drawn against, in pixels: a column's heading, and one row. */
 const HEAD = 36;

@@ -45,7 +45,15 @@ export function sharing({ title, description, path, image, imageAlt, type, video
   const images = [{ url: image, ...cardSize, alt: imageAlt, type: "image/png" }];
   // Next makes an image's address absolute on `metadataBase`, but not a video's, so these are made absolute here.
   const videos = video
-    ? [{ url: absoluteUrl(siteVideo.path), secureUrl: absoluteUrl(siteVideo.path), type: siteVideo.type, width: siteVideo.width, height: siteVideo.height }]
+    ? [
+        {
+          url: absoluteUrl(siteVideo.path),
+          secureUrl: absoluteUrl(siteVideo.path),
+          type: siteVideo.type,
+          width: siteVideo.width,
+          height: siteVideo.height,
+        },
+      ]
     : undefined;
   return {
     alternates: { canonical: path },

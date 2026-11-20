@@ -129,7 +129,7 @@ spool init
 error: this folder is a project already: it has an entities/ folder
 ```
 
-The project's `.env` sets environment variables for its extractors and strategies, such as a hosted model's API key. Spool rereads it each time it starts one and never prints a value. Variables already set in Spool's environment win. Each line is `NAME=value`, optionally prefixed with `export ` and optionally quoted. Lines starting with `#` are comments.
+The project's `.env` sets environment variables for its extractors and strategies, such as a hosted model's API key. Spool rereads it each time it starts one and never prints a value. Variables already set in Spool's environment win. Each line is `NAME=value`, optionally prefixed with `export `. Lines starting with `#` are comments. Quote a value that contains a space. `$NAME` in a value is replaced by a variable the file set earlier, so put a value that contains a `$` of its own in single quotes.
 
 ## spool info
 

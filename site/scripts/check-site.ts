@@ -89,8 +89,7 @@ function checkSource(): Page[] {
     if (!inMeta.has(file)) fail(name, "not listed in a meta.json, so it is in no sidebar");
 
     const front = /^---\n([\s\S]*?)\n---\n/.exec(text);
-    const field = (key: string) =>
-      new RegExp(`^${key}:\\s*(.+)$`, "m").exec(front?.[1] ?? "")?.[1]?.trim() ?? "";
+    const field = (key: string) => new RegExp(`^${key}:\\s*(.+)$`, "m").exec(front?.[1] ?? "")?.[1]?.trim() ?? "";
     const title = field("title");
     if (!title) fail(name, "no title in its front matter");
     if (!field("description")) fail(name, "no description in its front matter");
@@ -156,9 +155,7 @@ function metaOf(html: string): Map<string, string> {
 }
 
 function linksOf(html: string): string[] {
-  return [...html.matchAll(/<a\s[^>]*?href="([^"]+)"/g)].map((match) =>
-    (match[1] ?? "").replaceAll("&amp;", "&"),
-  );
+  return [...html.matchAll(/<a\s[^>]*?href="([^"]+)"/g)].map((match) => (match[1] ?? "").replaceAll("&amp;", "&"));
 }
 
 /** The pages that are not in the docs: the front page and the explainer. */
@@ -172,7 +169,8 @@ async function checkVideo(origin: string, from: string, meta: Map<string, string
     return;
   }
   if (meta.get("og:video:secure_url") !== video) fail(from, "og:video:secure_url is not its og:video");
-  if (meta.get("og:video:type") !== "video/mp4") fail(from, `og:video:type is ${meta.get("og:video:type") ?? "missing"}`);
+  if (meta.get("og:video:type") !== "video/mp4")
+    fail(from, `og:video:type is ${meta.get("og:video:type") ?? "missing"}`);
   for (const key of ["og:video:width", "og:video:height"]) {
     if (!/^\d+$/.test(meta.get(key) ?? "")) fail(from, `${key} is ${meta.get(key) ?? "missing"}`);
   }
@@ -216,10 +214,7 @@ async function checkBuilt(pages: Page[]) {
       await Bun.sleep(200);
     }
 
-    const cache = new Map<
-      string,
-      Promise<{ status: number; type: string; vary: string; body: string }>
-    >();
+    const cache = new Map<string, Promise<{ status: number; type: string; vary: string; body: string }>>();
     const get = (path: string, headers?: Record<string, string>) => {
       const key = `${path} ${JSON.stringify(headers ?? {})}`;
       let answer = cache.get(key);
@@ -251,9 +246,7 @@ async function checkBuilt(pages: Page[]) {
 
     // The addresses in these files are absolute, on the origin the site was built for.
     const pathOf = (address: string) => address.replace(/^https?:\/\/[^/]+/, "");
-    const inIndex = new Set(
-      [...llms.body.matchAll(/\]\((\S+?)\)/g)].map((match) => pathOf(match[1] ?? "")),
-    );
+    const inIndex = new Set([...llms.body.matchAll(/\]\((\S+?)\)/g)].map((match) => pathOf(match[1] ?? "")));
     const inSitemap = new Set(
       [...sitemap.body.matchAll(/<loc>([^<]+)<\/loc>/g)].map((match) => pathOf(match[1] ?? "")),
     );
@@ -268,12 +261,12 @@ async function checkBuilt(pages: Page[]) {
         continue;
       }
       if (!html.body.includes(`type="text/markdown"`)) {
-        fail(page.url, "does not name its Markdown in a <link rel=\"alternate\">");
+        fail(page.url, 'does not name its Markdown in a <link rel="alternate">');
       }
       // The stylesheet scrolls smoothly. Without this on <html>, Next's scroll
       // to the top of a new page is cut short and the title ends up under the header.
       if (!/<html[^>]*\sdata-scroll-behavior="smooth"/.test(html.body)) {
-        fail(page.url, "<html> has no data-scroll-behavior=\"smooth\", so a new page does not start at its top");
+        fail(page.url, '<html> has no data-scroll-behavior="smooth", so a new page does not start at its top');
       }
 
       const markdown = await get(`${page.url}.md`);
@@ -346,8 +339,14 @@ async function checkBuilt(pages: Page[]) {
       if (!self(canonical)) fail(from, `its canonical link is ${canonical ?? "missing"}`);
       if (!self(meta.get("og:url"))) fail(from, `its og:url is ${meta.get("og:url") ?? "missing"}`);
       for (const key of [
-        "description", "og:title", "og:description", "og:site_name", "og:type",
-        "og:image:alt", "twitter:title", "twitter:description",
+        "description",
+        "og:title",
+        "og:description",
+        "og:site_name",
+        "og:type",
+        "og:image:alt",
+        "twitter:title",
+        "twitter:description",
       ]) {
         if (!meta.get(key)) fail(from, `no ${key}`);
       }
@@ -389,7 +388,5 @@ if (failures.length > 0) {
   process.exit(1);
 }
 console.log(
-  sourceOnly
-    ? `${pages.length} pages checked as written`
-    : `${pages.length} pages checked as written and as built`,
+  sourceOnly ? `${pages.length} pages checked as written` : `${pages.length} pages checked as written and as built`,
 );

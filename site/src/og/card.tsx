@@ -3,13 +3,13 @@ import { join } from "node:path";
 
 import { ImageResponse } from "next/og";
 
-import { Wordmark } from "@/components/brand";
+import { Wordmark } from "spool-ui/brand";
 import { cardSize } from "@/lib/sharing";
 import { siteOrigin } from "@/lib/site";
 
 /**
- * The light theme's colours, from `styles/shelf/tokens.stylex.ts`. A card is
- * drawn when the site is built, outside the page, so it cannot read them.
+ * The light theme's colours, from `tokens.stylex.ts` in `packages/ui`. A card
+ * is drawn when the site is built, outside the page, so it cannot read them.
  */
 const colors = {
   background: "#fbfaf8",

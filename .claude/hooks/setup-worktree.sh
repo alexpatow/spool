@@ -4,8 +4,10 @@
 # 1. In a linked worktree whose branch has no commits of its own, fast-forward
 #    to the latest origin/main. The desktop app cuts worktrees from the cached
 #    origin/main without fetching, so new sessions can start behind.
-# 2. Install dependencies. Packages that already have node_modules are
-#    skipped, and `cargo fetch` is a no-op when the registry cache is warm.
+# 2. Install dependencies. The TypeScript packages and the site are one bun
+#    workspace, installed from the root; a checkout that already has
+#    node_modules is skipped, and `cargo fetch` is a no-op when the registry
+#    cache is warm.
 #
 # Command output goes to stderr; only problems are printed to stdout, which
 # Claude Code adds to the session's context.
@@ -38,12 +40,10 @@ install_deps() {
     fi
 
     if command -v bun >/dev/null 2>&1; then
-        for package in packages/client packages/strategy packages/stress packages/studio site; do
-            [ -f "$package/package.json" ] || continue
-            [ -d "$package/node_modules" ] && continue
-            (cd "$package" && bun install --frozen-lockfile >&2) ||
-                notes+=("bun install --frozen-lockfile failed in $package")
-        done
+        if [ -f package.json ] && [ ! -d node_modules ]; then
+            bun install --frozen-lockfile >&2 ||
+                notes+=("bun install --frozen-lockfile failed")
+        fi
     else
         notes+=("bun not found on PATH")
     fi

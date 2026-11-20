@@ -16,6 +16,7 @@
 
 mod changeset;
 pub mod conformance;
+mod disjoint;
 mod generate;
 mod ids;
 mod memory;
@@ -25,6 +26,7 @@ mod undo;
 mod validate;
 
 pub use changeset::{Changeset, ConstraintKind, ContentHash, Op};
+pub use disjoint::DisjointSets;
 pub use generate::{Clock, IdGenerator, RandomIds, SeededIds, StepClock, SystemClock};
 pub use ids::{
     Actor, ChangesetId, DocumentId, EntityType, IdentityId, InvalidActor, InvalidEntityType,

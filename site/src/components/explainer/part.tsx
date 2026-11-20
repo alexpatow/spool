@@ -1,7 +1,7 @@
 import * as stylex from "@stylexjs/stylex";
 import type { CSSProperties, ReactNode } from "react";
 
-import { colors, linen, typography } from "@/styles/shelf/tokens.stylex";
+import { colors, linen, typography } from "spool-ui/tokens.stylex";
 
 /** Custom properties for an element's inline style. */
 export function vars(values: Record<string, string | number>): CSSProperties {

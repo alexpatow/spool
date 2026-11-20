@@ -3,9 +3,9 @@
 import * as stylex from "@stylexjs/stylex";
 import { useEffect, useRef, useState } from "react";
 
-import { Button } from "@/components/ui/button";
-import { CheckIcon, CopyIcon, FileTextIcon } from "@/components/ui/icons";
-import { spacing } from "@/styles/shelf/tokens.stylex";
+import { Button } from "spool-ui/components/button";
+import { CheckIcon, CopyIcon, FileTextIcon } from "spool-ui/components/icons";
+import { spacing } from "spool-ui/tokens.stylex";
 
 /**
  * For handing a page to an assistant: copy it as Markdown, or open the

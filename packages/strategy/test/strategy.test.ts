@@ -96,7 +96,13 @@ describe("a task", () => {
       const [pair] = await task.candidates();
       expect(pair).toEqual({ left_id: "a", right_id: "b", left_name: "anvil", right_name: "Anvil" });
       return [
-        { left_id: pair!.left_id, right_id: pair!.right_id, verdict: "match", score: 0.75, detail: { why: ["name"], n: 2n } },
+        {
+          left_id: pair!.left_id,
+          right_id: pair!.right_id,
+          verdict: "match",
+          score: 0.75,
+          detail: { why: ["name"], n: 2n },
+        },
         { left_id: "a", right_id: "c", verdict: "unsure" },
         { left_id: "a", right_id: "d", verdict: "no_match", score: null, detail: '{"given":"as text"}' },
       ];

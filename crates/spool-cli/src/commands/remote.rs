@@ -56,16 +56,6 @@ pub fn named_after<'a>(file: &str, sources: &[&'a str]) -> Option<&'a str> {
         .copied()
 }
 
-/// Names in a sentence: `a`, `a` and `b`, or `a`, `b` and `c`.
-pub fn listed(names: &[&str]) -> String {
-    let quoted: Vec<String> = names.iter().map(|name| format!("`{name}`")).collect();
-    match quoted.as_slice() {
-        [] => String::new(),
-        [only] => only.clone(),
-        [first @ .., last] => format!("{} and {last}", first.join(", ")),
-    }
-}
-
 pub struct Remote {
     agent: ureq::Agent,
     pub url: String,
@@ -112,7 +102,7 @@ impl Remote {
         for (name, value) in query {
             request = request.query(*name, value);
         }
-        self.answer(request.call())
+        self.read_answer(request.call())
     }
 
     /// `POST <path>` under `/v1` with a JSON body, and the JSON it answers.
@@ -124,12 +114,13 @@ impl Remote {
         if let Some(token) = &self.token {
             request = request.header("Authorization", format!("Bearer {token}"));
         }
-        self.answer(request.send(body.to_string()))?.ok_or_else(|| {
-            Failure::failed(format!(
-                "{} has no `/v1{path}`; is it a Spool server of this version?",
-                self.url
-            ))
-        })
+        self.read_answer(request.send(body.to_string()))?
+            .ok_or_else(|| {
+                Failure::failed(format!(
+                    "{} has no `/v1{path}`; is it a Spool server of this version?",
+                    self.url
+                ))
+            })
     }
 
     /// `POST <path>` under `/v1` with a body that is not JSON, and the JSON
@@ -151,7 +142,7 @@ impl Remote {
         for (name, value) in query {
             request = request.query(*name, value);
         }
-        self.answer(request.send(body))?.ok_or_else(|| {
+        self.read_answer(request.send(body))?.ok_or_else(|| {
             Failure::failed(format!(
                 "{} has no `/v1{path}`; is it a Spool server of this version?",
                 self.url
@@ -185,7 +176,7 @@ impl Remote {
 
     /// What the server answered, as JSON. `Ok(None)` when it has no such
     /// thing.
-    fn answer(
+    fn read_answer(
         &self,
         sent: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
     ) -> Result<Option<Value>, Failure> {
@@ -327,12 +318,5 @@ mod tests {
         });
         assert_eq!(remote.url, "http://spool.example.com");
         assert_eq!(remote.token.as_deref(), Some("secret"));
-    }
-
-    #[test]
-    fn names_are_listed_as_a_sentence_lists_them() {
-        assert_eq!(listed(&["crm"]), "`crm`");
-        assert_eq!(listed(&["crm", "notes"]), "`crm` and `notes`");
-        assert_eq!(listed(&["a", "b", "c"]), "`a`, `b` and `c`");
     }
 }

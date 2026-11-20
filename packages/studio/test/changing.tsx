@@ -4,8 +4,8 @@
 import { afterEach, beforeEach, expect } from "bun:test";
 
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import type { Server } from "spool-testing";
 
-import type { Server } from "../../client/test/server.ts";
 import { SEEDING, STOPPING, calls, idle, start, stopAll } from "./harness.tsx";
 import { companies, seedCompanies } from "./seed.ts";
 
@@ -92,4 +92,5 @@ export const changes = () => calls.filter((call) => !call.startsWith("GET "));
 
 export const head = async () => (await server.client.info()).store.head;
 
-export const entry = async (seq: number) => (await server.client.changesets({ after: seq - 1, limit: 1 })).changesets[0]!;
+export const entry = async (seq: number) =>
+  (await server.client.changesets({ after: seq - 1, limit: 1 })).changesets[0]!;

@@ -14,9 +14,8 @@
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 
-import { SpoolError } from "../../client/src/index.ts";
-import type { SpoolClient } from "../../client/src/index.ts";
-import type { Op } from "../../client/src/types.ts";
+import { SpoolError } from "spool-client";
+import type { Op, SpoolClient } from "spool-client";
 
 import { generate, random } from "./generate.ts";
 import type { Row } from "./generate.ts";

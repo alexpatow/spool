@@ -1,14 +1,13 @@
 // Who made a change. The log names a person by the ID of their account,
 // which does not change when their name does.
 
-import { Code } from "./components.tsx";
+import { Code } from "./components/layout.tsx";
 import { useStudio } from "./hooks.ts";
 
 /** What an actor is called where `Who` shows it, for sorting by it. */
 export function useCalled(): (actor: string) => string {
   const { people } = useStudio();
-  return (actor) =>
-    (actor.startsWith("user:") ? people.get(actor.slice("user:".length))?.name : undefined) ?? actor;
+  return (actor) => (actor.startsWith("user:") ? people.get(actor.slice("user:".length))?.name : undefined) ?? actor;
 }
 
 export function Who({ actor }: { actor: string }) {

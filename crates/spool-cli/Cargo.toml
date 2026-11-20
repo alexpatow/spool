@@ -28,6 +28,7 @@ comfy-table.workspace = true
 indicatif.workspace = true
 csv.workspace = true
 getrandom.workspace = true
+hex.workspace = true
 http-body.workspace = true
 libduckdb-sys.workspace = true
 openidconnect.workspace = true
@@ -41,6 +42,8 @@ serde_json.workspace = true
 serde_urlencoded.workspace = true
 sha2.workspace = true
 spool = { workspace = true, features = ["schema"] }
+spool-bench.workspace = true
+subtle.workspace = true
 tokio.workspace = true
 tower-sessions.workspace = true
 ureq.workspace = true
@@ -49,7 +52,17 @@ uuid.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
+signal-hook.workspace = true
 
 [dev-dependencies]
 snapbox.workspace = true
+spool-testing.workspace = true
 tempfile.workspace = true
+
+[lints]
+workspace = true
+
+# Named so that this crate's build script runs after the one that downloads
+# the DuckDB library, and used by no code: see the workspace's Cargo.toml.
+[package.metadata.cargo-machete]
+ignored = ["libduckdb-sys"]

@@ -3,7 +3,6 @@
 
 import { SpoolError } from "./api.ts";
 import type { IdentityView, RecordEntry, SpoolClient } from "./api.ts";
-import { href } from "./router.ts";
 
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -75,12 +74,18 @@ export async function findIdentity(client: SpoolClient, reference: string): Prom
   return view.current === view.id ? view : client.identity(view.current);
 }
 
+/** A thing that has a screen of its own: which kind of thing, and its ID. */
+export interface Found {
+  kind: "record" | "identity" | "document" | "draft";
+  id: string;
+}
+
 /**
- * The screen that shows what a reference names, or `null` if nothing has
- * that name. An ID is looked for among the records, the identities,
- * the documents and the drafts.
+ * What a reference names that has a screen, or `null` if nothing has that
+ * name. An ID is looked for among the records, the identities, the
+ * documents and the drafts.
  */
-export async function findScreen(client: SpoolClient, reference: string): Promise<string | null> {
+export async function findScreen(client: SpoolClient, reference: string): Promise<Found | null> {
   const text = reference.trim();
   if (text === "") return null;
   if (isId(text)) {
@@ -90,14 +95,14 @@ export async function findScreen(client: SpoolClient, reference: string): Promis
       found(client.document(text)),
       found(client.draft(text)),
     ]);
-    if (record) return href(["records", text]);
-    if (identity) return href(["identities", text]);
-    if (document) return href(["documents", text]);
-    if (draft) return href(["drafts", text]);
+    if (record) return { kind: "record", id: text };
+    if (identity) return { kind: "identity", id: text };
+    if (document) return { kind: "document", id: text };
+    if (draft) return { kind: "draft", id: text };
     return null;
   }
   const record = await findRecord(client, text);
-  if (record) return href(["records", record.id]);
+  if (record) return { kind: "record", id: record.id };
   const colon = text.indexOf(":");
   if (colon < 1) return null;
   const { documents } = await client.documents({
@@ -106,5 +111,5 @@ export async function findScreen(client: SpoolClient, reference: string): Promis
     latest: true,
     limit: 1,
   });
-  return documents[0] ? href(["documents", documents[0].id]) : null;
+  return documents[0] ? { kind: "document", id: documents[0].id } : null;
 }

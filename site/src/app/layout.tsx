@@ -7,7 +7,7 @@ import type { ReactNode } from "react";
 import { sharing, siteCardPath } from "@/lib/sharing";
 import { site, siteOrigin } from "@/lib/site";
 import { themeScript } from "@/lib/theme";
-import { colors, typography } from "@/styles/shelf/tokens.stylex";
+import { colors, typography } from "spool-ui/tokens.stylex";
 
 import "./globals.css";
 

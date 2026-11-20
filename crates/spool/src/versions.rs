@@ -25,7 +25,7 @@ use duckdb::arrow::datatypes::Int64Type;
 use duckdb::arrow::record_batch::RecordBatch;
 
 use crate::error::Result;
-use crate::store::parse;
+use crate::store::parse_stored;
 
 /// What the store holds that bears on one thing a source sent.
 pub(crate) struct Held<Id> {
@@ -135,13 +135,13 @@ where
     Id: Copy + Eq + Hash + FromStr,
     Id::Err: std::error::Error + Send + Sync + 'static,
 {
-    let ords = column(staged, "ord").as_primitive::<Int64Type>();
+    let ords = expect_column(staged, "ord").as_primitive::<Int64Type>();
     let at: HashMap<i64, usize> = ords.values().iter().copied().zip(0..).collect();
     let mut found = HashMap::new();
     while let Some(row) = held.next()? {
         let read = |index: usize| -> Result<Option<Id>> {
             row.get::<_, Option<String>>(index)?
-                .map(|id| parse(&id))
+                .map(|id| parse_stored(&id))
                 .transpose()
         };
         let latest = match read(2)? {
@@ -160,10 +160,10 @@ where
         );
     }
 
-    let keys = column(staged, "source_key").as_string::<i32>();
+    let keys = expect_column(staged, "source_key").as_string::<i32>();
     let mut contents = Vec::with_capacity(staged.num_rows());
-    for id in column(staged, id).as_string::<i32>().iter() {
-        contents.push(parse::<Id>(id.unwrap_or_default())?);
+    for id in expect_column(staged, id).as_string::<i32>().iter() {
+        contents.push(parse_stored::<Id>(id.unwrap_or_default())?);
     }
     Ok(place(keys.iter().zip(contents), &found, again))
 }
@@ -189,7 +189,7 @@ pub(crate) fn to_store<Id: Copy + ToString>(
         ("supersedes", text(|version| version.supersedes)),
     ];
     for name in kept {
-        columns.push((name, take(column(staged, name), &chosen, None)?));
+        columns.push((name, take(expect_column(staged, name), &chosen, None)?));
     }
     Ok(RecordBatch::try_from_iter_with_nullable(
         columns
@@ -198,7 +198,7 @@ pub(crate) fn to_store<Id: Copy + ToString>(
     )?)
 }
 
-fn column<'a>(staged: &'a RecordBatch, name: &str) -> &'a ArrayRef {
+fn expect_column<'a>(staged: &'a RecordBatch, name: &str) -> &'a ArrayRef {
     staged
         .column_by_name(name)
         .unwrap_or_else(|| panic!("a staged batch has a column `{name}`"))

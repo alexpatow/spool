@@ -5,7 +5,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 
 import { vars } from "@/components/explainer/part";
 import { breakpoints } from "@/styles/layout.stylex";
-import { colors, display, linen, spacing, typography } from "@/styles/shelf/tokens.stylex";
+import { colors, display, linen, spacing, typography } from "spool-ui/tokens.stylex";
 
 /** The size every scene's picture is drawn at, in pixels, before it is scaled to fit. */
 export const WIDTH = 420;
@@ -228,8 +228,7 @@ const styles = stylex.create({
     marginTop: 0,
     gridArea: "1 / 1",
     opacity: "clamp(0, calc(1 - max(var(--step) - var(--k), var(--k) - var(--step))), 1)",
-    transform:
-      "translateY(calc(clamp(-1, calc(var(--k) - var(--step)), 1) * 0.75rem))",
+    transform: "translateY(calc(clamp(-1, calc(var(--k) - var(--step)), 1) * 0.75rem))",
     transitionDuration: "calc(var(--motion, 0) * 450ms)",
     transitionProperty: "opacity, transform",
     transitionTimingFunction: "cubic-bezier(0.22, 1, 0.36, 1)",

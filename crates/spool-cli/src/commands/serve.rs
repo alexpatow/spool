@@ -9,8 +9,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use spool::{ApplyReport, Engine, Manifest, Options};
-use spool_cli::accounts;
-use spool_cli::google::{self, Google};
+use spool_cli::auth;
+use spool_cli::auth::google::{self, Google};
 use spool_cli::server::{self, ServerOptions};
 
 use clap::Args;
@@ -157,12 +157,8 @@ macro_rules! say {
 
 const DEFAULT_PORT: u16 = 7765;
 
-fn failed(message: impl Into<String>) -> Failure {
-    Failure::failed(message.into())
-}
-
 /// IDs and the clock: the system's, or reproducible ones for tests.
-fn options(seed: Option<u64>) -> Options {
+fn build_engine_options(seed: Option<u64>) -> Options {
     match seed {
         Some(seed) => Options::seeded(seed),
         None => Options::default(),
@@ -188,7 +184,7 @@ pub fn serve(arguments: ServeArgs) -> Result<(), Failure> {
     let project = super::project_dir(&arguments.project);
     let user_code = super::user_code(Some(&arguments.user_code), &project);
 
-    let engine = Engine::open(&store, options(arguments.seed))?;
+    let engine = Engine::open(&store, build_engine_options(arguments.seed))?;
     engine.set_user_code(user_code);
     match engine.applied_manifest_hash()? {
         None => {
@@ -197,7 +193,7 @@ pub fn serve(arguments: ServeArgs) -> Result<(), Failure> {
         }
         Some(applied) if applied == manifest.hash => engine.adopt(&manifest)?,
         Some(applied) => {
-            return Err(failed(format!(
+            return Err(Failure::failed(format!(
                 "the store at {} was applied with manifest {applied}, and this server runs on \
                  manifest {}",
                 store.display(),
@@ -216,12 +212,12 @@ pub fn serve(arguments: ServeArgs) -> Result<(), Failure> {
     say!("accounts  {}", super::accounts_path(&store).display());
     let empty = accounts
         .needs_setup()
-        .map_err(|refused| failed(refused.to_string()))?;
+        .map_err(|refused| Failure::failed(refused.to_string()))?;
     let mut options = ServerOptions::new(accounts);
-    options.setup = empty.then(accounts::code);
+    options.setup = empty.then(auth::code);
     options.https = !(arguments.plain_http || listen.ip().is_loopback());
     options.studio = !arguments.no_studio;
-    run(Arc::new(engine), listen, options, reached)
+    run_server(Arc::new(engine), listen, options, reached)
 }
 
 /// How people reach a server, apart from the address it listens on.
@@ -264,7 +260,7 @@ impl GoogleClient {
                 } else {
                     (SECRET, ID)
                 };
-                Err(failed(format!(
+                Err(Failure::failed(format!(
                     "sign-in with Google needs both {ID} and {SECRET}: {has} is set and {lacks} is not"
                 )))
             }
@@ -301,37 +297,40 @@ pub fn dev(arguments: DevArgs) -> Result<(), Failure> {
         .store
         .clone()
         .unwrap_or_else(|| dir.join(".spool").join("dev.duckdb"));
-    let seen = fingerprint(&dir);
+    let seen = fingerprint_project(&dir);
     let manifest = Manifest::load(&dir)?;
     if let Some(parent) = store
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
     {
         std::fs::create_dir_all(parent)
-            .map_err(|error| failed(format!("{}: {error}", parent.display())))?;
+            .map_err(|error| Failure::failed(format!("{}: {error}", parent.display())))?;
     }
     let user_code = super::user_code(Some(&arguments.user_code), &dir);
-    let engine = Engine::open(&store, options(arguments.seed)).map_err(|error| match error {
-        // The usual cause by far, and what to do about it.
-        spool::Error::StoreInUse { path, holder } => failed(format!(
-            "the store {} is open in another process{}, most likely a `spool dev` that is \
+    let engine =
+        Engine::open(&store, build_engine_options(arguments.seed)).map_err(
+            |error| match error {
+                // The usual cause by far, and what to do about it.
+                spool::Error::StoreInUse { path, holder } => Failure::failed(format!(
+                    "the store {} is open in another process{}, most likely a `spool dev` that is \
              already running on this project",
-            path.display(),
-            holder.map_or_else(String::new, |pid| format!(" (PID {pid})")),
-        ))
-        .hint(
-            "one server runs on a store at a time: use the one that is running, or stop it \
+                    path.display(),
+                    holder.map_or_else(String::new, |pid| format!(" (PID {pid})")),
+                ))
+                .hint(
+                    "one server runs on a store at a time: use the one that is running, or stop it \
              with Ctrl-C and start this one again",
-        ),
-        // A store with no migration to the current format.
-        spool::Error::FormatVersion { found, expected } => failed(format!(
-            "the store {} has format version {found}, which this version of `spool` \
+                ),
+                // A store with no migration to the current format.
+                spool::Error::FormatVersion { found, expected } => Failure::failed(format!(
+                    "the store {} has format version {found}, which this version of `spool` \
              cannot open (current format: {expected})",
-            store.display(),
-        ))
-        .hint("open the file with a version of `spool` that supports its format"),
-        other => other.into(),
-    })?;
+                    store.display(),
+                ))
+                .hint("open the file with a version of `spool` that supports its format"),
+                other => other.into(),
+            },
+        )?;
     let engine = Arc::new(engine);
     engine.set_user_code(user_code);
     let report = engine.apply(&manifest)?;
@@ -345,8 +344,8 @@ pub fn dev(arguments: DevArgs) -> Result<(), Failure> {
     options.https = false;
 
     let watched = Arc::clone(&engine);
-    std::thread::spawn(move || watch(&dir, &watched, seen));
-    run(engine, listen, options, Reached::default())
+    std::thread::spawn(move || watch_project(&dir, &watched, seen));
+    run_server(engine, listen, options, Reached::default())
 }
 
 fn print_applied(manifest: &Manifest, report: &ApplyReport) {
@@ -372,10 +371,10 @@ fn print_applied(manifest: &Manifest, report: &ApplyReport) {
 
 /// Applies the project again whenever its files change. A project that does
 /// not compile is reported, and the engine keeps the last one that did.
-fn watch(dir: &Path, engine: &Engine, mut seen: u64) {
+fn watch_project(dir: &Path, engine: &Engine, mut seen: u64) {
     loop {
         std::thread::sleep(Duration::from_millis(300));
-        let now = fingerprint(dir);
+        let now = fingerprint_project(dir);
         if now == seen {
             continue;
         }
@@ -406,8 +405,8 @@ fn watch(dir: &Path, engine: &Engine, mut seen: u64) {
 /// A number that changes when one of the project's files is added, removed
 /// or edited. Contents are read, not timestamps: projects are small, and two
 /// saves within a timestamp's resolution must both be seen.
-fn fingerprint(dir: &Path) -> u64 {
-    fn visit(path: &Path, hasher: &mut impl Hasher) {
+fn fingerprint_project(dir: &Path) -> u64 {
+    fn hash_files_under(path: &Path, hasher: &mut impl Hasher) {
         let Ok(entries) = std::fs::read_dir(path) else {
             return;
         };
@@ -418,7 +417,7 @@ fn fingerprint(dir: &Path) -> u64 {
         for entry in entries {
             entry.hash(hasher);
             if entry.is_dir() {
-                visit(&entry, hasher);
+                hash_files_under(&entry, hasher);
             } else if let Ok(contents) = std::fs::read(&entry) {
                 contents.hash(hasher);
             }
@@ -426,12 +425,12 @@ fn fingerprint(dir: &Path) -> u64 {
     }
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     for part in ["sources", "transforms", "entities", "extractors"] {
-        visit(&dir.join(part), &mut hasher);
+        hash_files_under(&dir.join(part), &mut hasher);
     }
     hasher.finish()
 }
 
-fn run(
+fn run_server(
     engine: Arc<Engine>,
     listen: SocketAddr,
     mut options: ServerOptions,
@@ -440,14 +439,14 @@ fn run(
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-        .map_err(|error| failed(format!("the server could not start: {error}")))?;
+        .map_err(|error| Failure::failed(format!("the server could not start: {error}")))?;
     runtime.block_on(async {
         let listener = tokio::net::TcpListener::bind(listen)
             .await
             .map_err(|error| cannot_listen(listen, &error, options.dev))?;
         let address = listener
             .local_addr()
-            .map_err(|error| failed(error.to_string()))?;
+            .map_err(|error| Failure::failed(error.to_string()))?;
         // Tests listen on port 0 and read the port from this line.
         say!("listening on http://{address}");
         let given = reached.at.is_some();
@@ -458,7 +457,7 @@ fn run(
         if let Some(client) = reached.google {
             let google =
                 Google::new(&client.issuer, &client.id, &client.secret, &at).map_err(|error| {
-                    failed(format!("sign-in with Google cannot be set up: {error}"))
+                    Failure::failed(format!("sign-in with Google cannot be set up: {error}"))
                 })?;
             say!("google    {}", google.redirect());
             say!(
@@ -498,9 +497,9 @@ fn run(
             }
             None => {}
         }
-        server::serve(listener, engine, &options, shutdown())
+        server::serve(listener, engine, &options, wait_for_shutdown())
             .await
-            .map_err(|error| failed(format!("the server stopped: {error}")))
+            .map_err(|error| Failure::failed(format!("the server stopped: {error}")))
     })?;
     // This ends the connections that were not done in time, and waits for
     // the work the engine was given: a run is not cut off half way.
@@ -513,7 +512,7 @@ fn run(
 /// said in words, with another port to try: the next one up.
 fn cannot_listen(listen: SocketAddr, error: &std::io::Error, dev: bool) -> Failure {
     if error.kind() != std::io::ErrorKind::AddrInUse {
-        return failed(format!("cannot listen on {listen}: {error}"));
+        return Failure::failed(format!("cannot listen on {listen}: {error}"));
     }
     let mut other = listen;
     other.set_port(match listen.port() {
@@ -521,7 +520,7 @@ fn cannot_listen(listen: SocketAddr, error: &std::io::Error, dev: bool) -> Failu
         port => port + 1,
     });
     if dev {
-        failed(format!(
+        Failure::failed(format!(
             "cannot listen on {listen}: something else is listening there, perhaps a \
              `spool dev` on another project"
         ))
@@ -530,7 +529,7 @@ fn cannot_listen(listen: SocketAddr, error: &std::io::Error, dev: bool) -> Failu
              the commands that call it there with SPOOL_URL=http://{other}"
         ))
     } else {
-        failed(format!(
+        Failure::failed(format!(
             "cannot listen on {listen}: something else is listening there"
         ))
         .hint(format!(
@@ -541,7 +540,7 @@ fn cannot_listen(listen: SocketAddr, error: &std::io::Error, dev: bool) -> Failu
 
 /// Completes when the process is asked to stop: Ctrl-C, or SIGTERM from
 /// whatever runs the container.
-async fn shutdown() {
+async fn wait_for_shutdown() {
     let interrupt = async {
         let _ = tokio::signal::ctrl_c().await;
     };

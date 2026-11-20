@@ -10,8 +10,9 @@ use spool::{
     TypeRecompute,
 };
 
+use spool_cli::text::count;
+
 use super::remote::{Remote, RemoteArgs, typed};
-use super::show::count;
 use crate::Failure;
 use crate::output::{Output, OutputArgs, aligned, fields, hint, table};
 use crate::progress;
@@ -182,6 +183,7 @@ fn print_report(report: &RecomputeReport, entity_type: Option<&str>) -> Result<(
     Ok(())
 }
 
+#[expect(clippy::too_many_lines)]
 fn print_type(recomputed: &TypeRecompute) {
     let summary = &recomputed.summary;
     println!(
@@ -362,7 +364,7 @@ fn print_type(recomputed: &TypeRecompute) {
     if !rows.is_empty() {
         println!();
         println!("decisions");
-        indent(&rows);
+        print_indented_pairs(&rows);
     }
 
     println!();
@@ -401,7 +403,7 @@ fn print_type(recomputed: &TypeRecompute) {
     hint("`--identity <id>` shows a change record by record");
 }
 
-fn indent(rows: &[(&str, String)]) {
+fn print_indented_pairs(rows: &[(&str, String)]) {
     let width = rows.iter().map(|(label, _)| label.len()).max().unwrap_or(0);
     for (label, text) in rows {
         println!("  {label:width$}  {text}");
@@ -418,17 +420,17 @@ fn change_row(change: &Change) -> Vec<String> {
         .iter()
         .find_map(|before| before.identity)
         .map_or_else(|| "-".to_owned(), |identity| identity.to_string());
-    let now = listed(
+    let now = join_first_three(
         change
             .before
             .iter()
             .map(|before| match before.identity {
-                Some(_) => format!("{} ({})", name(&before.label), before.records),
+                Some(_) => format!("{} ({})", label_or_unnamed(&before.label), before.records),
                 None => format!("{} without an identity", before.records),
             })
             .collect(),
     );
-    let mut after = listed(change.after.iter().map(after_cell).collect());
+    let mut after = join_first_three(change.after.iter().map(after_cell).collect());
     let mut notes = Vec::new();
     if let Some(contradiction) = change.blocked_by.first() {
         notes.push(format!("blocked by {}", contradiction_text(contradiction)));
@@ -439,7 +441,7 @@ fn change_row(change: &Change) -> Vec<String> {
             .iter()
             .map(|decision| format!("{} at {}", decision.actor, decision.seq))
             .collect();
-        notes.push(format!("shaped by {}", listed(seqs)));
+        notes.push(format!("shaped by {}", join_first_three(seqs)));
     }
     if change.approved_drafts > 0 {
         notes.push(format!(
@@ -460,7 +462,7 @@ fn change_row(change: &Change) -> Vec<String> {
     ]
 }
 
-fn name(label: &Option<String>) -> String {
+fn label_or_unnamed(label: &Option<String>) -> String {
     match label {
         Some(label) => label.clone(),
         None => "unnamed".to_owned(),
@@ -470,21 +472,29 @@ fn name(label: &Option<String>) -> String {
 fn after_cell(after: &After) -> String {
     match after.fate {
         Fate::Kept if after.merged.is_empty() => {
-            format!("{} ({}, keeps its ID)", name(&after.label), after.records)
+            format!(
+                "{} ({}, keeps its ID)",
+                label_or_unnamed(&after.label),
+                after.records
+            )
         }
         Fate::Kept => format!(
             "{} ({}, keeps its ID, {} merged in)",
-            name(&after.label),
+            label_or_unnamed(&after.label),
             after.records,
             count(after.merged.len() as u64, "identity")
         ),
-        Fate::New => format!("{} ({}, new)", name(&after.label), after.records),
+        Fate::New => format!(
+            "{} ({}, new)",
+            label_or_unnamed(&after.label),
+            after.records
+        ),
         Fate::Waiting => format!("{} waiting for review", after.records),
     }
 }
 
 /// At most three items, then how many more.
-fn listed(items: Vec<String>) -> String {
+fn join_first_three(items: Vec<String>) -> String {
     const SHOWN: usize = 3;
     if items.len() <= SHOWN {
         return items.join(", ");
@@ -538,6 +548,7 @@ fn print_detail(
     Ok(())
 }
 
+#[expect(clippy::too_many_lines)]
 fn print_change(recomputed: &TypeRecompute, detail: &ChangeDetail) {
     let change = &detail.change;
     fields(&[
@@ -562,7 +573,7 @@ fn print_change(recomputed: &TypeRecompute, detail: &ChangeDetail) {
         .map(|before| match before.identity {
             Some(identity) => vec![
                 identity.to_string(),
-                name(&before.label),
+                label_or_unnamed(&before.label),
                 count(before.records, "record"),
             ],
             None => vec![format!(
@@ -584,7 +595,7 @@ fn print_change(recomputed: &TypeRecompute, detail: &ChangeDetail) {
         rows.push(vec![
             (at + 1).to_string(),
             what,
-            name(&after.label),
+            label_or_unnamed(&after.label),
             count(after.records, "record"),
         ]);
     }
@@ -644,7 +655,7 @@ fn print_change(recomputed: &TypeRecompute, detail: &ChangeDetail) {
                 note.records[1],
                 note.decision.actor,
                 note.decision.seq,
-                reason(&note.decision.reason)
+                format_reason(&note.decision.reason)
             );
         }
     }
@@ -656,7 +667,7 @@ fn print_change(recomputed: &TypeRecompute, detail: &ChangeDetail) {
                 "  log position {} by {}{}",
                 decision.seq,
                 decision.actor,
-                reason(&decision.reason)
+                format_reason(&decision.reason)
             );
         }
     }
@@ -672,7 +683,7 @@ fn print_change(recomputed: &TypeRecompute, detail: &ChangeDetail) {
     }
 }
 
-fn reason(reason: &Option<String>) -> String {
+fn format_reason(reason: &Option<String>) -> String {
     match reason {
         Some(reason) => format!(" (\"{reason}\")"),
         None => String::new(),

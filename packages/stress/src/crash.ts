@@ -12,7 +12,7 @@
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 
-import type { SpoolClient } from "../../client/src/index.ts";
+import type { SpoolClient } from "spool-client";
 
 import { generate, random } from "./generate.ts";
 import type { Generated, Row } from "./generate.ts";

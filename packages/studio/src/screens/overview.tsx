@@ -2,26 +2,13 @@ import * as stylex from "@stylexjs/stylex";
 import type { ReactNode } from "react";
 
 import type { Info, RunEntry, TypeInfo } from "../api.ts";
-import {
-  Code,
-  Fields,
-  LinkTo,
-  Load,
-  Notice,
-  Onward,
-  Page,
-  Quiet,
-  Ref,
-  Section,
-  Source,
-  Table,
-  When,
-  Word,
-} from "../components.tsx";
+import { Code, Fields, Load, Notice, Page, Quiet, Section } from "../components/layout.tsx";
+import { Table } from "../components/table.tsx";
+import { LinkTo, Onward, Ref, ScreenLink, Source, When, Word } from "../components/refs.tsx";
+import type { Leads } from "../components/refs.tsx";
 import { count } from "../format.ts";
-import { useLoad } from "../hooks.ts";
-import { href } from "../router.ts";
-import { colors, display, linen, radius, spacing, typography } from "../styles/shelf/tokens.stylex";
+import { keys, useRead } from "../queries.ts";
+import { colors, display, linen, radius, spacing } from "spool-ui/tokens.stylex";
 import { tones } from "../styles/tones.stylex";
 import { useCalled, Who } from "../who.tsx";
 
@@ -34,7 +21,7 @@ function details(run: RunEntry): string {
 }
 
 export function Overview() {
-  const loaded = useLoad(async (client) => {
+  const loaded = useRead(keys.info.overview, async (client) => {
     const [info, runs] = await Promise.all([client.info(), client.runs({ limit: RUNS })]);
     return { info, runs };
   });
@@ -58,23 +45,23 @@ function Store({ info, runs }: { info: Info; runs: RunEntry[] }) {
             <Stat
               number={type.identities}
               label={type.identities === 1 ? "identity" : "identities"}
-              address={href(["identities"], { type: type.name })}
+              leads={{ to: "/identities", search: { type: type.name } }}
             />
             <Stat
               number={type.records}
               label={type.records === 1 ? "record" : "records"}
-              address={href(["records"], { type: type.name })}
+              leads={{ to: "/records", search: { type: type.name } }}
             />
             <Stat
               number={type.unassigned}
               label="unassigned"
-              address={href(["records"], { type: type.name, unassigned: true })}
+              leads={{ to: "/records", search: { type: type.name, unassigned: true } }}
               waits={type.unassigned > 0}
             />
             <Stat
               number={type.open_review_items}
               label={type.open_review_items === 1 ? "open review item" : "open review items"}
-              address={href(["review"], { type: type.name })}
+              leads={{ to: "/review", search: { type: type.name } }}
               waits={type.open_review_items > 0}
             />
           </div>
@@ -85,12 +72,13 @@ function Store({ info, runs }: { info: Info; runs: RunEntry[] }) {
                 title: "Source",
                 value: (source) => source.source,
                 cell: (source) => (
-                  <a
-                    href={href(["records"], { type: type.name, source: source.source })}
+                  <ScreenLink
+                    to="/records"
+                    search={{ type: type.name, source: source.source }}
                     {...stylex.props(styles.plain)}
                   >
                     <Source name={source.source} />
-                  </a>
+                  </ScreenLink>
                 ),
               },
               { title: "Records", value: (source) => source.records, cell: (source) => source.records, number: true },
@@ -99,7 +87,7 @@ function Store({ info, runs }: { info: Info; runs: RunEntry[] }) {
                 value: (source) => source.unassigned,
                 cell: (source) =>
                   source.unassigned > 0 ? (
-                    <LinkTo path={["records"]} query={{ type: type.name, source: source.source, unassigned: true }}>
+                    <LinkTo to="/records" search={{ type: type.name, source: source.source, unassigned: true }}>
                       {source.unassigned}
                     </LinkTo>
                   ) : (
@@ -149,7 +137,7 @@ function Store({ info, runs }: { info: Info; runs: RunEntry[] }) {
           />
         </Section>
       ))}
-      <Section title="Latest runs" actions={<Onward path={["runs"]}>All runs</Onward>}>
+      <Section title="Latest runs" actions={<Onward to="/runs">All runs</Onward>}>
         <Table
           label="Latest runs"
           columns={[
@@ -210,8 +198,8 @@ function Store({ info, runs }: { info: Info; runs: RunEntry[] }) {
           rows={[
             ["API", `${info.api}, engine ${store.engine_version}, store format ${store.format_version}`],
             ["Manifest", store.manifest_hash ? <Code>{store.manifest_hash}</Code> : "none applied"],
-            ["Head", <LinkTo path={["log"]}>log position {store.head}</LinkTo>],
-            ["Documents", <LinkTo path={["documents"]}>{store.documents ?? 0}</LinkTo>],
+            ["Head", <LinkTo to="/log">log position {store.head}</LinkTo>],
+            ["Documents", <LinkTo to="/documents">{store.documents ?? 0}</LinkTo>],
           ]}
         />
       </Section>
@@ -227,7 +215,7 @@ function Waiting({ types }: { types: TypeInfo[] }) {
       lines.push(
         <span key={`${type.name}-review`}>
           {count(type.open_review_items, "open review item")} ({type.name}){" "}
-          <Onward path={["review"]} query={{ type: types.length > 1 ? type.name : undefined }}>
+          <Onward to="/review" search={{ type: types.length > 1 ? type.name : undefined }}>
             Review
           </Onward>
         </span>,
@@ -236,7 +224,10 @@ function Waiting({ types }: { types: TypeInfo[] }) {
     if (type.open_draft) {
       lines.push(
         <span key={`${type.name}-draft`}>
-          1 draft to approve ({type.name}) <Onward path={["drafts", type.open_draft]}>Open</Onward>
+          1 draft to approve ({type.name}){" "}
+          <Onward to="/drafts/$id" params={{ id: type.open_draft }}>
+            Open
+          </Onward>
         </span>,
       );
     }
@@ -250,19 +241,20 @@ function Waiting({ types }: { types: TypeInfo[] }) {
 function Stat({
   number,
   label,
-  address,
+  leads,
   waits = false,
 }: {
   number: number;
   label: string;
-  address: string;
+  /** The list the number counts. */
+  leads: Leads;
   waits?: boolean;
 }) {
   return (
-    <a href={address} data-part="stat" data-waits={waits ? "" : undefined} {...stylex.props(styles.stat)}>
+    <ScreenLink {...leads} data-part="stat" data-waits={waits ? "" : undefined} {...stylex.props(styles.stat)}>
       <strong {...stylex.props(styles.number, waits && styles.waits)}>{number.toLocaleString("en-GB")}</strong>
       <span {...stylex.props(styles.aside)}>{label}</span>
-    </a>
+    </ScreenLink>
   );
 }
 

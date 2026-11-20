@@ -19,7 +19,8 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use http_body::{Body as _, Frame, SizeHint};
 
-use super::{ApiError, MCP_PATH};
+use super::MCP_PATH;
+use super::error::ApiError;
 
 /// Ends a JSON answer with a newline.
 ///
@@ -175,7 +176,7 @@ mod tests {
         }
     }
 
-    fn pieces(data: &[&'static str], trailers: bool) -> Body {
+    fn body_of_pieces(data: &[&'static str], trailers: bool) -> Body {
         let mut frames: VecDeque<Frame<Bytes>> = data
             .iter()
             .map(|piece| Frame::data(Bytes::from_static(piece.as_bytes())))
@@ -187,7 +188,7 @@ mod tests {
     }
 
     /// The pieces `body` gives, with `None` for what is not data.
-    async fn given(mut body: Ended) -> Vec<Option<Bytes>> {
+    async fn collect_pieces(mut body: Ended) -> Vec<Option<Bytes>> {
         let mut given = Vec::new();
         while let Some(frame) = poll_fn(|context| Pin::new(&mut body).poll_frame(context)).await {
             given.push(frame.unwrap().into_data().ok());
@@ -197,7 +198,7 @@ mod tests {
         given
     }
 
-    fn text(pieces: &[Option<Bytes>]) -> Vec<Option<&str>> {
+    fn pieces_as_text(pieces: &[Option<Bytes>]) -> Vec<Option<&str>> {
         pieces
             .iter()
             .map(|piece| {
@@ -216,7 +217,7 @@ mod tests {
         // The server sends a length when the body knows its own.
         assert_eq!(ended.size_hint().exact(), Some(length as u64 + 1));
         assert!(!ended.is_end_stream());
-        let given = given(ended).await;
+        let given = collect_pieces(ended).await;
         assert_eq!(given.len(), 2);
         // The first piece is the answer where it was, not a copy of it.
         let first = given[0].as_ref().unwrap();
@@ -228,34 +229,34 @@ mod tests {
     async fn an_answer_that_ends_a_line_or_is_empty_gets_nothing() {
         let ended = Ended::after(Body::from("{}\n")).await.unwrap().unwrap();
         assert_eq!(ended.size_hint().exact(), Some(3));
-        assert_eq!(text(&given(ended).await), [Some("{}\n")]);
+        assert_eq!(pieces_as_text(&collect_pieces(ended).await), [Some("{}\n")]);
         assert!(Ended::after(Body::empty()).await.unwrap().is_none());
     }
 
     #[tokio::test]
     async fn an_answer_in_pieces_is_ended_after_the_last_of_them() {
-        let ended = Ended::after(pieces(&["{\"a\":", "1", "}"], false));
+        let ended = Ended::after(body_of_pieces(&["{\"a\":", "1", "}"], false));
         let ended = ended.await.unwrap().unwrap();
         // How long it will be is not known until it has all come.
         assert_eq!(ended.size_hint().exact(), None);
         assert_eq!(
-            text(&given(ended).await),
+            pieces_as_text(&collect_pieces(ended).await),
             [Some("{\"a\":"), Some("1"), Some("}"), Some("\n")]
         );
 
         // A newline in the middle is not the end, and one at the end is.
-        let ended = Ended::after(pieces(&["{\n", "}\n", ""], false));
+        let ended = Ended::after(body_of_pieces(&["{\n", "}\n", ""], false));
         let ended = ended.await.unwrap().unwrap();
         assert_eq!(
-            text(&given(ended).await),
+            pieces_as_text(&collect_pieces(ended).await),
             [Some("{\n"), Some("}\n"), Some("")]
         );
 
         // What follows the data follows the newline.
-        let ended = Ended::after(pieces(&["{", "}"], true));
+        let ended = Ended::after(body_of_pieces(&["{", "}"], true));
         let ended = ended.await.unwrap().unwrap();
         assert_eq!(
-            text(&given(ended).await),
+            pieces_as_text(&collect_pieces(ended).await),
             [Some("{"), Some("}"), Some("\n"), None]
         );
     }

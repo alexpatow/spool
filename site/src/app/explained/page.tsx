@@ -5,13 +5,13 @@ import Link from "next/link";
 import { Hero } from "@/components/explainer/hero";
 import { Explainer } from "@/components/explainer/scenes";
 import { SiteHeader } from "@/components/site-header";
-import { Button } from "@/components/ui/button";
-import * as Typography from "@/components/ui/typography";
+import { Button } from "spool-ui/components/button";
+import * as Typography from "spool-ui/components/typography";
 import { explainer } from "@/lib/explainer";
 import { sharing } from "@/lib/sharing";
 import { site } from "@/lib/site";
 import { layout, breakpoints } from "@/styles/layout.stylex";
-import { colors, display, linen, spacing, typography } from "@/styles/shelf/tokens.stylex";
+import { colors, display, linen, spacing, typography } from "spool-ui/tokens.stylex";
 
 export const metadata: Metadata = {
   ...sharing({
@@ -44,9 +44,9 @@ export default function Explained() {
           <p {...stylex.props(styles.eyebrow)}>Explained</p>
           <Typography.H1 style={styles.title}>{explainer.title}</Typography.H1>
           <Typography.P style={styles.lead}>
-            Your data names the same companies in different ways. Spool finds them in text, works out
-            which records are the same company, and gives each one an ID that stays. Scroll, and
-            watch it happen to the sample data in Getting started.
+            Your data names the same companies in different ways. Spool finds them in text, works out which records are
+            the same company, and gives each one an ID that stays. Scroll, and watch it happen to the sample data in
+            Getting started.
           </Typography.P>
           <Hero />
           <div {...stylex.props(styles.cue)} aria-hidden="true">
@@ -61,8 +61,7 @@ export default function Explained() {
             Now run it
           </h2>
           <Typography.P style={styles.endLead}>
-            Getting started does all of this on your machine, with the same files, in about five
-            minutes.
+            Getting started does all of this on your machine, with the same files, in about five minutes.
           </Typography.P>
           <dl {...stylex.props(styles.terms)}>
             {terms.map(({ term, says }) => (

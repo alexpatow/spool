@@ -39,7 +39,7 @@ const fonts = {
 
 /** The mark and the wordmark, as `brand.tsx` draws them. */
 function brand() {
-  const source = readFileSync(join(here, "../src/components/brand.tsx"), "utf8");
+  const source = readFileSync(join(here, "../../packages/ui/src/brand.tsx"), "utf8");
   const constant = (name: string) => {
     const found = source.match(new RegExp(`const ${name} =\\s*((?:"[^"]*"\\s*\\+?\\s*)+);`));
     if (!found?.[1]) throw new Error(`brand.tsx: no ${name}`);
@@ -58,7 +58,10 @@ function data(): string {
     ["Commit Mono", "commit-mono-400.woff2", "400"],
     ["Commit Mono", "commit-mono-700.woff2", "700"],
   ]
-    .map(([family, file, weight]) => `@font-face{font-family:"${family}";src:url(/fonts/${file}) format("woff2");font-weight:${weight};font-display:block}`)
+    .map(
+      ([family, file, weight]) =>
+        `@font-face{font-family:"${family}";src:url(/fonts/${file}) format("woff2");font-weight:${weight};font-display:block}`,
+    )
     .join("");
   return (
     `window.SPOOL = ${JSON.stringify(spool)};\n` +
@@ -163,7 +166,12 @@ async function browser() {
   const page = (method: string, params: object = {}) => send(method, params, sessionId);
   await page("Page.enable");
   await page("Runtime.enable");
-  await page("Emulation.setDeviceMetricsOverride", { width: WIDTH, height: HEIGHT, deviceScaleFactor: 1, mobile: false });
+  await page("Emulation.setDeviceMetricsOverride", {
+    width: WIDTH,
+    height: HEIGHT,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
   listeners.push((method, params) => {
     if (method === "Runtime.exceptionThrown") console.error(params.exceptionDetails?.exception?.description ?? params);
   });
@@ -172,15 +180,23 @@ async function browser() {
     async open(url: string) {
       await page("Page.navigate", { url });
       for (let tries = 0; tries < 200; tries++) {
-        const { result } = await page("Runtime.evaluate", { expression: "JSON.stringify(window.timeline ?? null)", returnByValue: true });
-        if (result.value && result.value !== "null") return JSON.parse(result.value) as { duration: number; fps: number };
+        const { result } = await page("Runtime.evaluate", {
+          expression: "JSON.stringify(window.timeline ?? null)",
+          returnByValue: true,
+        });
+        if (result.value && result.value !== "null")
+          return JSON.parse(result.value) as { duration: number; fps: number };
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
       throw new Error("The composition never got ready.");
     },
     async frame(t: number): Promise<Buffer> {
       await page("Runtime.evaluate", { expression: `seek(${t})`, awaitPromise: true });
-      const { data } = await page("Page.captureScreenshot", { format: "png", fromSurface: true, optimizeForSpeed: true });
+      const { data } = await page("Page.captureScreenshot", {
+        format: "png",
+        fromSurface: true,
+        optimizeForSpeed: true,
+      });
       return Buffer.from(data, "base64");
     },
     async close() {
@@ -222,12 +238,36 @@ if (args.includes("--serve")) {
       console.log(`${path}: ${at}s`);
     }
     if (out) {
-      const ffmpeg = spawn("ffmpeg", [
-        "-y", "-loglevel", "error",
-        "-f", "image2pipe", "-framerate", String(fps), "-c:v", "png", "-i", "-",
-        "-c:v", "libx264", "-preset", "veryslow", "-tune", "animation", "-crf", "28",
-        "-pix_fmt", "yuv420p", "-movflags", "+faststart", out,
-      ], { stdio: ["pipe", "inherit", "inherit"] });
+      const ffmpeg = spawn(
+        "ffmpeg",
+        [
+          "-y",
+          "-loglevel",
+          "error",
+          "-f",
+          "image2pipe",
+          "-framerate",
+          String(fps),
+          "-c:v",
+          "png",
+          "-i",
+          "-",
+          "-c:v",
+          "libx264",
+          "-preset",
+          "veryslow",
+          "-tune",
+          "animation",
+          "-crf",
+          "28",
+          "-pix_fmt",
+          "yuv420p",
+          "-movflags",
+          "+faststart",
+          out,
+        ],
+        { stdio: ["pipe", "inherit", "inherit"] },
+      );
       const done = new Promise<void>((resolve, reject) =>
         ffmpeg.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`ffmpeg exited ${code}`)))),
       );

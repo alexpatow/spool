@@ -1,24 +1,35 @@
+import { getRouteApi } from "@tanstack/react-router";
 import { useState } from "react";
 import type { ReactNode } from "react";
 
 import { Act, At, Done } from "../act.tsx";
 import type { DraftEntry, DraftStatus, DraftSummary } from "../api.ts";
-import { Fields, Filters, Id, Load, Ops, Page, Reason, Ref, Row, Section, Table, When, Word } from "../components.tsx";
+import { Fields, Load, Page, Reason, Row, Section } from "../components/layout.tsx";
+import { Table } from "../components/table.tsx";
+import { Id, Ops, Ref, When, Word } from "../components/refs.tsx";
+import { Filters, useNarrow } from "../components/filters.tsx";
 import { CheckIcon, DraftIcon } from "../icons.tsx";
 import { count } from "../format.ts";
-import { useLoad, useOpNames } from "../hooks.ts";
-import type { Route } from "../router.ts";
+import { useTypes } from "../hooks.ts";
+import { keys, stale, useOpNames, useRead } from "../queries.ts";
 
 const STATUSES: DraftStatus[] = ["open", "committed", "rejected", "superseded"];
 
-export function Drafts({ route, types }: { route: Route; types: string[] }) {
-  const { status, type } = route.query;
-  const drafts = useLoad((client) => client.drafts({ status: status as DraftStatus | undefined, entity_type: type }));
+const list = getRouteApi("/drafts/");
+const one = getRouteApi("/drafts/$id");
+
+export function Drafts() {
+  const search = list.useSearch();
+  const { status, type } = search;
+  const types = useTypes();
+  const narrow = useNarrow();
+  const filters = { status: status as DraftStatus | undefined, entity_type: type };
+  const drafts = useRead(keys.drafts.list(filters), (client) => client.drafts(filters));
   return (
     <Page title="Drafts">
       <Filters
-        path={["drafts"]}
-        query={route.query}
+        query={search}
+        narrow={narrow}
         selects={[
           { name: "status", label: "Status", choices: STATUSES.map((value) => ({ value })) },
           { name: "type", label: "Entity type", choices: types.map((value) => ({ value })) },
@@ -55,8 +66,9 @@ export function Drafts({ route, types }: { route: Route; types: string[] }) {
   );
 }
 
-export function Draft({ id }: { id: string }) {
-  const draft = useLoad((client) => client.draft(id));
+export function Draft() {
+  const { id } = one.useParams();
+  const draft = useRead(keys.drafts.one(id), (client) => client.draft(id));
   return (
     <Page
       title="Draft"
@@ -140,6 +152,7 @@ function Decide({ draft }: { draft: DraftSummary }) {
       {open ? (
         <Row>
           <Act
+            stale={stale.store}
             label="Approve"
             icon={<CheckIcon />}
             variant="default"
@@ -155,6 +168,7 @@ function Decide({ draft }: { draft: DraftSummary }) {
             done={setDone}
           />
           <Act
+            stale={stale.store}
             label="Reject"
             about="Nothing is committed. The next run examines its records again."
             why="Reason"

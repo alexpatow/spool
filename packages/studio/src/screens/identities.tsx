@@ -1,4 +1,5 @@
 import * as stylex from "@stylexjs/stylex";
+import { getRouteApi } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
@@ -11,45 +12,22 @@ import type {
   IdentityView,
   RecordEntry,
 } from "../api.ts";
-import {
-  Code,
-  ExplainTicked,
-  Filters,
-  Flag,
-  Id,
-  Labelled,
-  Load,
-  Notice,
-  Ops,
-  Page,
-  PagedTable,
-  Panel,
-  Quiet,
-  Reason,
-  Ref,
-  Row,
-  Section,
-  Source,
-  Sources,
-  Table,
-  Text,
-  When,
-  Word,
-  message,
-  useSorting,
-  useTicks,
-} from "../components.tsx";
-import { Button } from "../components/ui/button";
-import { Input } from "../components/ui/input";
-import * as ShelfTable from "../components/ui/table";
+import { Code, Load, Notice, Page, Panel, Quiet, Reason, Row, Section, Text, message } from "../components/layout.tsx";
+import { PagedTable, Table } from "../components/table.tsx";
+import { Id, Ops, Ref, Source, Sources, When, Word } from "../components/refs.tsx";
+import { Flag, Labelled } from "../components/forms.tsx";
+import { ExplainTicked, Filters, sortingOf, useNarrow, useTicks } from "../components/filters.tsx";
+import { Button } from "spool-ui/components/button";
+import { Input } from "spool-ui/components/input";
+import * as ShelfTable from "spool-ui/components/table";
 import { facts, latest, sourcesOf } from "../facts.ts";
 import type { Fact } from "../facts.ts";
 import { findIdentity } from "../find.ts";
 import { count, identitiesOf, identityMatch, recordName, recordsOf, short, tail } from "../format.ts";
-import { useLabels, useLoad, useNames, usePages, useStudio } from "../hooks.ts";
+import { useStudio, useTypes } from "../hooks.ts";
 import { IdentityIcon, MergeIcon, SplitIcon } from "../icons.tsx";
-import type { Route } from "../router.ts";
-import { colors, spacing, typography } from "../styles/shelf/tokens.stylex";
+import { keys, stale, useIdentityLabels, useRead, useReadPages, useRecordNames } from "../queries.ts";
+import { colors, spacing, typography } from "spool-ui/tokens.stylex";
 import { Who } from "../who.tsx";
 
 /** What to call an identity: what most of its records call it, or its ID when none of them says. */
@@ -57,19 +35,25 @@ export function identityName(identity: Pick<IdentitySummary, "id" | "label">): s
   return identity.label ?? short(identity.id);
 }
 
-export function Identities({ route, types }: { route: Route; types: string[] }) {
-  const { type, q } = route.query;
+const list = getRouteApi("/identities/");
+const one = getRouteApi("/identities/$id");
+
+export function Identities() {
+  const search = list.useSearch();
+  const { type, q } = search;
   const searching = Boolean(q?.trim());
   const { info } = useStudio();
-  const sorting = useSorting(route, { by: searching ? "" : "label", order: "asc" });
-  const pages = usePages(async (client, after) => {
-    const page = await client.identities({
-      entity_type: type,
-      q,
-      after: after as string | undefined,
-      sort: sorting.by ? (sorting.by as IdentitySort) : undefined,
-      order: sorting.by ? sorting.order : undefined,
-    });
+  const types = useTypes();
+  const narrow = useNarrow();
+  const sorting = sortingOf(search, narrow, { by: searching ? "" : "label", order: "asc" });
+  const filters = {
+    entity_type: type,
+    q,
+    sort: sorting.by ? (sorting.by as IdentitySort) : undefined,
+    order: sorting.by ? sorting.order : undefined,
+  };
+  const pages = useReadPages(keys.identities.list(filters), async (client, after) => {
+    const page = await client.identities({ ...filters, after: after as string | undefined });
     return { items: page.identities, next: page.next };
   });
   const total = info.store.entity_types
@@ -78,8 +62,8 @@ export function Identities({ route, types }: { route: Route; types: string[] }) 
   return (
     <Page title="Identities" about={q ? undefined : count(total, "identity")}>
       <Filters
-        path={["identities"]}
-        query={route.query}
+        query={search}
+        narrow={narrow}
         search={{ name: "q", label: "Search", placeholder: "Name, alias or record value" }}
         selects={[{ name: "type", label: "Entity type", choices: types.map((value) => ({ value })) }]}
       />
@@ -134,8 +118,9 @@ interface Loaded {
   history: HistoryEntry[];
 }
 
-export function Identity({ id }: { id: string }) {
-  const identity = useLoad(async (client): Promise<Loaded> => {
+export function Identity() {
+  const { id } = one.useParams();
+  const identity = useRead(keys.identities.one(id), async (client): Promise<Loaded> => {
     const { store } = await client.info();
     const [view, history] = await Promise.all([client.identity(id), client.identityHistory(id)]);
     // A merged identity answers with the members of the one that stands for
@@ -171,12 +156,12 @@ function IdentityScreen({ head, view, records, constraints, history }: Loaded) {
   const members = useMemo(() => new Map(records.map((record) => [record.id, recordName(record)])), [records]);
   // The constraints and the history also name records of other
   // identities, and ones that have left this one since.
-  const names = useNames(
+  const names = useRecordNames(
     [...constraints.flatMap((record) => [record.a, record.b]), ...history.flatMap((entry) => recordsOf(entry.ops))],
     members,
   );
   // Its history names the identities it was merged with or parted from.
-  const labels = useLabels(history.flatMap((entry) => identitiesOf(entry.ops)));
+  const labels = useIdentityLabels(history.flatMap((entry) => identitiesOf(entry.ops)));
   const called = useMemo(
     () => new Map([...names, ...[...labels].map(([id, label]) => [id, `${label} (…${tail(id)})`] as const)]),
     [names, labels],
@@ -294,7 +279,8 @@ function IdentityScreen({ head, view, records, constraints, history }: Loaded) {
               {
                 title: "And",
                 value: (record) => names.get(record.b) ?? record.b,
-                cell: (record) => <Ref kind="record" id={record.b} label={names.get(record.b)} /> },
+                cell: (record) => <Ref kind="record" id={record.b} label={names.get(record.b)} />,
+              },
               {
                 title: "Since",
                 value: (record) => record.from,
@@ -448,6 +434,7 @@ function Split({ view, head, chosen }: { view: IdentityView; head: number; chose
         <Row>
           <Text>{would}</Text>
           <Act
+            stale={stale.store}
             label="Split"
             icon={<SplitIcon />}
             about={would}
@@ -561,6 +548,7 @@ function Merge({ view, head }: { view: IdentityView; head: number }) {
               {other.members.length > MOST_NAMED ? ` and ${other.members.length - MOST_NAMED} more` : ""}
             </Text>
             <Act
+              stale={stale.store}
               label="Merge"
               icon={<MergeIcon />}
               variant="default"

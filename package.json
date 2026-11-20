@@ -1,0 +1,20 @@
+{
+  "name": "spool",
+  "description": "The TypeScript packages of Spool and its website, as one workspace.",
+  "license": "MIT",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "site"
+  ],
+  "scripts": {
+    "fmt": "bun fmt --no-script 'packages/**/*.{ts,tsx}' 'site/**/*.{ts,tsx,mjs,js}'",
+    "fmt:check": "bun fmt --no-script --check 'packages/**/*.{ts,tsx}' 'site/**/*.{ts,tsx,mjs,js}'",
+    "lint": "oxlint",
+    "unused": "knip"
+  },
+  "devDependencies": {
+    "knip": "6.47.0",
+    "oxlint": "1.94.0"
+  }
+}

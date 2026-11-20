@@ -44,8 +44,8 @@ use crate::error::{Error, Result};
 use crate::lookup::{self, IdentitySummary, RecordEntry};
 use crate::possible_split;
 use crate::retract;
-use crate::store::{self, parse};
-use crate::time::rfc3339;
+use crate::store::{self, parse_stored};
+use crate::time::format_rfc3339;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -310,13 +310,13 @@ pub(crate) fn list(conn: &Connection, filter: &ReviewFilter) -> Result<Vec<Revie
                 "possible_split" => ReviewKind::PossibleSplit,
                 other => return Err(unknown("kind", other).into()),
             },
-            records: split(row.get(4)?)
+            records: split_id_list(row.get(4)?)
                 .iter()
-                .map(|id| parse(id))
+                .map(|id| parse_stored(id))
                 .collect::<Result<_>>()?,
-            identities: split(row.get(5)?)
+            identities: split_id_list(row.get(5)?)
                 .iter()
-                .map(|id| parse(id))
+                .map(|id| parse_stored(id))
                 .collect::<Result<_>>()?,
             groups: match row.get::<_, Option<String>>(12)? {
                 Some(groups) => serde_json::from_str(&groups).map_err(StateError::new)?,
@@ -333,8 +333,8 @@ pub(crate) fn list(conn: &Connection, filter: &ReviewFilter) -> Result<Vec<Revie
             superseded_by: row.get::<_, Option<i64>>(8)?.map(|run| RunId(run as u64)),
             dismissed: match row.get::<_, Option<String>>(9)? {
                 Some(by) => Some(Dismissal {
-                    by: parse(&by)?,
-                    at: rfc3339(row.get::<_, Option<i64>>(10)?.unwrap_or_default()),
+                    by: parse_stored(&by)?,
+                    at: format_rfc3339(row.get::<_, Option<i64>>(10)?.unwrap_or_default()),
                     reason: row.get(11)?,
                 }),
                 None => None,
@@ -372,27 +372,20 @@ impl Shape {
         };
         Self {
             kind,
-            records: sorted(records.iter().map(ToString::to_string).collect()),
-            identities: sorted(identities),
+            records: sort_unique_ids(records.iter().map(ToString::to_string).collect()),
+            identities: sort_unique_ids(identities),
         }
     }
 }
 
-fn sorted(mut ids: Vec<String>) -> Vec<String> {
+fn sort_unique_ids(mut ids: Vec<String>) -> Vec<String> {
     ids.sort();
     ids.dedup();
     ids
 }
 
-/// A list of IDs as a SQL value. The IDs are UUIDs the engine printed, so
-/// they are safe to splice.
-fn uuid_list(ids: &[String]) -> String {
-    let quoted: Vec<String> = ids.iter().map(|id| format!("'{id}'")).collect();
-    format!("[{}]::UUID[]", quoted.join(", "))
-}
-
-fn split(joined: Option<String>) -> Vec<String> {
-    sorted(
+fn split_id_list(joined: Option<String>) -> Vec<String> {
+    sort_unique_ids(
         joined
             .unwrap_or_default()
             .split(',')
@@ -403,6 +396,7 @@ fn split(joined: Option<String>) -> Vec<String> {
 }
 
 /// A review item with the records it is about.
+#[expect(clippy::too_many_lines)]
 pub(crate) fn case(conn: &Connection, id: u64) -> Result<ReviewCase> {
     let only = ReviewFilter {
         id: Some(id),
@@ -468,11 +462,11 @@ pub(crate) fn case(conn: &Connection, id: u64) -> Result<ReviewCase> {
         let mut rows = statement.query([])?;
         while let Some(row) = rows.next()? {
             judgements.push(PairJudgement {
-                record: parse(&row.get::<_, String>(0)?)?,
-                other: parse(&row.get::<_, String>(1)?)?,
+                record: parse_stored(&row.get::<_, String>(0)?)?,
+                other: parse_stored(&row.get::<_, String>(1)?)?,
                 identity: row
                     .get::<_, Option<String>>(6)?
-                    .map(|identity| parse(&identity))
+                    .map(|identity| parse_stored(&identity))
                     .transpose()?,
                 run: RunId(row.get::<_, i64>(2)? as u64),
                 verdict: row
@@ -513,12 +507,12 @@ pub(crate) fn case(conn: &Connection, id: u64) -> Result<ReviewCase> {
         while let Some(row) = rows.next()? {
             let place = |column: usize| -> Result<Option<IdentityId>> {
                 row.get::<_, Option<String>>(column)?
-                    .map(|id| parse(&id))
+                    .map(|id| parse_stored(&id))
                     .transpose()
             };
-            let constraint = store::constraint(row, 0)?;
+            let constraint = store::constraint_from_row(row, 0)?;
             // A constraint names the smaller ID first, however it is stored.
-            let stored_first: RecordId = parse(&row.get::<_, String>(0)?)?;
+            let stored_first: RecordId = parse_stored(&row.get::<_, String>(0)?)?;
             let identities = if constraint.a == stored_first {
                 [place(4)?, place(5)?]
             } else {
@@ -621,8 +615,8 @@ pub(crate) fn record(
                 row.get(0)?,
                 Shape {
                     kind,
-                    records: split(row.get(2)?),
-                    identities: split(row.get(3)?),
+                    records: split_id_list(row.get(2)?),
+                    identities: split_id_list(row.get(3)?),
                 },
             ));
         }
@@ -652,8 +646,8 @@ pub(crate) fn record(
             &format!(
                 "INSERT INTO spool.review_item
                  VALUES (?, ?, ?, ?, {}, {}, 'open', NULL, NULL, NULL, NULL, NULL, NULL)",
-                uuid_list(&shape.records),
-                uuid_list(&shape.identities)
+                lookup::uuid_list(&shape.records),
+                lookup::uuid_list(&shape.identities)
             ),
             params![next_id, run.0 as i64, entity_type.as_str(), shape.kind],
         )?;

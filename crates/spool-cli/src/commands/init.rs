@@ -8,7 +8,7 @@ use clap::Args;
 use clap::builder::PossibleValue;
 use spool::{Manifest, Runtime};
 
-use super::project::{failed, write};
+use super::project::write_file;
 use crate::Failure;
 use crate::output::{Output, OutputArgs, hint};
 
@@ -41,14 +41,14 @@ pub struct InitArgs {
     /// The folder to make the project in, made if it is not there [default: the current folder]
     dir: Option<PathBuf>,
     /// Fill the project with an example
-    #[arg(long, value_name = "NAME", value_parser = examples())]
+    #[arg(long, value_name = "NAME", value_parser = example_values())]
     example: Option<String>,
     #[command(flatten)]
     output: OutputArgs,
 }
 
 /// The names of the examples, each with what it holds.
-fn examples() -> Vec<PossibleValue> {
+fn example_values() -> Vec<PossibleValue> {
     EXAMPLES
         .iter()
         .map(|example| PossibleValue::new(example.name).help(example.about))
@@ -85,7 +85,8 @@ const ENV_EXAMPLE: &str = "\
 # strategies. Copy this file to .env, which Git does not keep, and set each
 # one there as NAME=value. Spool hands them to that code each time it runs
 # it, and never prints them. A variable that is set already where Spool runs
-# keeps its value.
+# keeps its value. A value with a space or a `$` in it goes between single
+# quotes.
 #
 # OPENAI_API_KEY=sk-...
 ";
@@ -110,7 +111,7 @@ struct Example {
 
 macro_rules! example_files {
     ($example:literal: $($file:literal),+ $(,)?) => {
-        &[$(($file, include_str!(concat!("../examples/", $example, "/", $file)))),+]
+        &[$(($file, include_str!(concat!("../../assets/examples/", $example, "/", $file)))),+]
     };
 }
 
@@ -230,7 +231,7 @@ pub fn init(arguments: InitArgs) -> Result<(), Failure> {
     files.push((".gitignore".to_owned(), GITIGNORE));
     files.push((".env.example".to_owned(), ENV_EXAMPLE));
     for (file, contents) in &files {
-        write(&dir.join(file), contents)?;
+        write_file(&dir.join(file), contents)?;
     }
     super::update_skills::write_agent_files(&dir, false)?;
 
@@ -275,7 +276,7 @@ pub fn init(arguments: InitArgs) -> Result<(), Failure> {
                 .iter()
                 .map(|(command, does)| serde_json::json!({ "command": command, "does": does }))
                 .collect::<Vec<_>>(),
-            "not_installed": missing.iter().map(|runtime| program(*runtime)).collect::<Vec<_>>(),
+            "not_installed": missing.iter().map(|runtime| runtime_program(*runtime)).collect::<Vec<_>>(),
         }));
         return Ok(());
     }
@@ -304,7 +305,7 @@ pub fn init(arguments: InitArgs) -> Result<(), Failure> {
             for runtime in missing {
                 hint(format!(
                     "`{}` is not installed here. Before `spool extract`, install it:\n\n  {}",
-                    program(runtime),
+                    runtime_program(runtime),
                     runtime.install_command()
                 ));
             }
@@ -319,7 +320,7 @@ pub fn init(arguments: InitArgs) -> Result<(), Failure> {
 }
 
 /// What runs code of a runtime.
-fn program(runtime: Runtime) -> &'static str {
+fn runtime_program(runtime: Runtime) -> &'static str {
     match runtime {
         Runtime::Python => "uv",
         Runtime::Typescript => "bun",
@@ -344,7 +345,7 @@ fn init_git(dir: &Path) -> Result<(), Failure> {
         .env_remove("GIT_OBJECT_DIRECTORY")
         .output()
         .map_err(|error| {
-            let failure = failed(format!(
+            let failure = Failure::failed(format!(
                 "could not run git init in {}: {error}",
                 dir.display()
             ));
@@ -358,7 +359,7 @@ fn init_git(dir: &Path) -> Result<(), Failure> {
         return Ok(());
     }
     let detail = String::from_utf8_lossy(&output.stderr);
-    Err(failed(format!(
+    Err(Failure::failed(format!(
         "git init in {} failed ({}): {}",
         dir.display(),
         output.status,
@@ -373,16 +374,17 @@ fn refuse_unless_empty(dir: &Path, named: bool) -> Result<(), Failure> {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(_) if dir.exists() && !dir.is_dir() => {
-            return Err(failed(format!(
+            return Err(Failure::failed(format!(
                 "{} is a file, and a project is a folder",
                 dir.display()
             )));
         }
-        Err(error) => return Err(failed(format!("{}: {error}", dir.display()))),
+        Err(error) => return Err(Failure::failed(format!("{}: {error}", dir.display()))),
     };
     let mut held = Vec::new();
     for entry in entries {
-        let entry = entry.map_err(|error| failed(format!("{}: {error}", dir.display())))?;
+        let entry =
+            entry.map_err(|error| Failure::failed(format!("{}: {error}", dir.display())))?;
         let name = entry.file_name().to_string_lossy().into_owned();
         if !MAY_HOLD.contains(&name.as_str()) {
             held.push(name);
@@ -396,7 +398,7 @@ fn refuse_unless_empty(dir: &Path, named: bool) -> Result<(), Failure> {
             true => dir.display().to_string(),
             false => "this folder".to_owned(),
         };
-        return Err(failed(format!(
+        return Err(Failure::failed(format!(
             "{which} is a project already: it has an entities/ folder"
         )));
     }
@@ -412,7 +414,7 @@ fn refuse_unless_empty(dir: &Path, named: bool) -> Result<(), Failure> {
     if held.len() > SHOWN {
         listed.push_str(&format!(" and {} more", held.len() - SHOWN));
     }
-    Err(failed(if named {
+    Err(Failure::failed(if named {
         format!(
             "{} already holds files ({listed}). `spool init` makes a project only in a new \
              or empty folder: give it another name",

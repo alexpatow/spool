@@ -1,4 +1,5 @@
 import * as stylex from "@stylexjs/stylex";
+import { getRouteApi } from "@tanstack/react-router";
 import { useState } from "react";
 import type { ReactNode } from "react";
 
@@ -7,8 +8,6 @@ import type { Comparison, ConstraintKind, Explained, Explanation, Link, RuleRead
 import {
   Code,
   Fields,
-  Placed,
-  Labelled,
   Lines,
   Load,
   message,
@@ -16,33 +15,31 @@ import {
   Page,
   Panel,
   Reason,
-  Ref,
   Row,
   Section,
-  Select,
   Sentence,
-  Source,
-  Table,
   Text,
-  When,
-  Word,
-} from "../components.tsx";
-import type { Tone } from "../components.tsx";
-import { Button } from "../components/ui/button";
-import { Input } from "../components/ui/input";
-import * as ShelfTable from "../components/ui/table";
+} from "../components/layout.tsx";
+import { Table } from "../components/table.tsx";
+import { Placed, Ref, Source, When, Word } from "../components/refs.tsx";
+import { Labelled, Select } from "../components/forms.tsx";
+import type { Tone } from "../components/layout.tsx";
+import { Button } from "spool-ui/components/button";
+import { Input } from "spool-ui/components/input";
+import * as ShelfTable from "spool-ui/components/table";
 import { CheckIcon } from "../icons.tsx";
-import { colors, radius, spacing, typography } from "../styles/shelf/tokens.stylex";
+import { colors, radius, spacing, typography } from "spool-ui/tokens.stylex";
 import { tones } from "../styles/tones.stylex";
 import { findRecord } from "../find.ts";
 import { recordName, plain } from "../format.ts";
-import { useLabels, useLoad, useStudio } from "../hooks.ts";
-import { href, navigate } from "../router.ts";
-import type { Route } from "../router.ts";
+import { useStudio } from "../hooks.ts";
+import { keys, stale, useIdentityLabels, useRead } from "../queries.ts";
 import { Who } from "../who.tsx";
 
-export function Explain({ route }: { route: Route }) {
-  const { a, b } = route.query;
+const route = getRouteApi("/explain");
+
+export function Explain() {
+  const { a, b } = route.useSearch();
   return (
     <Page title="Explain">
       <Ask a={a} b={b} />
@@ -54,6 +51,7 @@ export function Explain({ route }: { route: Route }) {
 /** Takes the two records, by ID or as `source:key`, and goes to their explanation. */
 function Ask({ a, b }: { a?: string; b?: string }) {
   const { client } = useStudio();
+  const navigate = route.useNavigate();
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   return (
@@ -75,7 +73,7 @@ function Ask({ a, b }: { a?: string; b?: string }) {
               setBusy(false);
               const missing = references.find((_, index) => found[index] === null);
               if (missing !== undefined) setProblem(`No record found for ${missing}.`);
-              else navigate(href(["explain"], { a: found[0]!.id, b: found[1]!.id }));
+              else void navigate({ search: { a: found[0]!.id, b: found[1]!.id } });
             },
             (error: unknown) => {
               setBusy(false);
@@ -118,7 +116,7 @@ function Ask({ a, b }: { a?: string; b?: string }) {
 }
 
 function Answer({ a, b }: { a: string; b: string }) {
-  const explanation = useLoad((client) => client.explain(a, b));
+  const explanation = useRead(keys.explain.pair(a, b), (client) => client.explain(a, b));
   return <Load state={explanation}>{(explanation) => <ExplanationView explanation={explanation} />}</Load>;
 }
 
@@ -307,6 +305,7 @@ function Constrain({ explanation }: { explanation: Explanation }) {
       <Row>
         {inForce.map((record) => (
           <Act
+            stale={stale.store}
             key={record.kind}
             label={`Remove ${record.kind}`}
             why="Reason"
@@ -326,6 +325,7 @@ function Constrain({ explanation }: { explanation: Explanation }) {
         ))}
         {inForce.length === 0 ? (
           <Act
+            stale={stale.store}
             label="Add constraint"
             why="Reason"
             act={async (client, { reason, entered }) => {
@@ -355,7 +355,7 @@ function Constrain({ explanation }: { explanation: Explanation }) {
 
 function Side({ title, letter, explained }: { title: string; letter: string; explained: Explained }) {
   const { record, placed } = explained;
-  const labels = useLabels([record.identity]);
+  const labels = useIdentityLabels([record.identity]);
   return (
     <div data-part="side" {...stylex.props(styles.side)}>
       <div>
@@ -370,10 +370,7 @@ function Side({ title, letter, explained }: { title: string; letter: string; exp
           ["Source", <Source name={record.source} />],
           ["ID", <Ref kind="record" id={record.id} />],
           ["Entity type", record.entity_type],
-          [
-            "Identity",
-            <Placed record={record} labels={labels} />,
-          ],
+          ["Identity", <Placed record={record} labels={labels} />],
           [
             "Assigned",
             placed ? (

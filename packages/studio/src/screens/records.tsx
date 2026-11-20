@@ -1,43 +1,24 @@
 import * as stylex from "@stylexjs/stylex";
+import { getRouteApi, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import type { ReactNode } from "react";
 
 import { Act, At, Done, Mistake } from "../act.tsx";
 import type { DocumentEntry, RecordEntry, RecordSort, Op, ReviewEntry } from "../api.ts";
-import {
-  Code,
-  Fields,
-  Filters,
-  Id,
-  Placed,
-  Json,
-  Labelled,
-  Load,
-  message,
-  Notice,
-  Page,
-  PagedTable,
-  Ref,
-  Row,
-  Section,
-  Select,
-  Source,
-  Text,
-  usePair,
-  useSorting,
-  When,
-  Word,
-} from "../components.tsx";
-import { Button } from "../components/ui/button";
-import { Input } from "../components/ui/input";
+import { Code, Fields, Json, Load, message, Notice, Page, Row, Section, Text } from "../components/layout.tsx";
+import { PagedTable } from "../components/table.tsx";
+import { Id, Placed, Ref, ScreenLink, Source, When, Word } from "../components/refs.tsx";
+import { Labelled, Select } from "../components/forms.tsx";
+import { Filters, sortingOf, useNarrow, usePair } from "../components/filters.tsx";
+import { Button } from "spool-ui/components/button";
+import { Input } from "spool-ui/components/input";
 import { findIdentity, findRecord, found } from "../find.ts";
 import { excerpt, mentionOf, named, recordName } from "../format.ts";
 import type { Excerpt, Mention } from "../format.ts";
-import { useLabels, useLoad, usePages, useStudio } from "../hooks.ts";
+import { useStudio, useTypes } from "../hooks.ts";
 import { RecordIcon } from "../icons.tsx";
-import { href, navigate } from "../router.ts";
-import type { Route } from "../router.ts";
-import { colors, radius, spacing, typography } from "../styles/shelf/tokens.stylex";
+import { keys, stale, useIdentityLabels, useRead, useReadPages } from "../queries.ts";
+import { colors, radius, spacing, typography } from "spool-ui/tokens.stylex";
 import { tones } from "../styles/tones.stylex";
 
 /** What a record is known by in its source: its key, or where in a document it was found. */
@@ -46,25 +27,33 @@ function keyOf(record: RecordEntry): string {
   return name.startsWith(`${record.source}:`) ? name.slice(record.source.length + 1) : name;
 }
 
-export function RecordsPage({ route, types }: { route: Route; types: string[] }) {
-  const { type, source, key, document, unassigned, q } = route.query;
+const list = getRouteApi("/records/");
+const one = getRouteApi("/records/$id");
+
+export function RecordsPage() {
+  const search = list.useSearch();
+  const { type, source, key, document, unassigned, q } = search;
+  const types = useTypes();
+  const narrow = useNarrow();
   const pair = usePair();
-  const sorting = useSorting(route, { by: "source", order: "asc" });
-  const pages = usePages(async (client, after) => {
-    const page = await client.records({
-      sort: sorting.by as RecordSort,
-      order: sorting.order,
-      entity_type: type,
-      source,
-      key,
-      document,
-      q,
-      unassigned: unassigned === "true" ? true : undefined,
-      after: after as string | undefined,
-    });
+  const sorting = sortingOf(search, narrow, { by: "source", order: "asc" });
+  const filters = {
+    sort: sorting.by as RecordSort,
+    order: sorting.order,
+    entity_type: type,
+    source,
+    key,
+    document,
+    q,
+    unassigned,
+  };
+  const pages = useReadPages(keys.records.list(filters), async (client, after) => {
+    const page = await client.records({ ...filters, after: after as string | undefined });
     return { items: page.records, next: page.next };
   });
-  const labels = useLabels(pages.loaded.status === "ready" ? pages.loaded.data.map((record) => record.identity) : []);
+  const labels = useIdentityLabels(
+    pages.loaded.status === "ready" ? pages.loaded.data.map((record) => record.identity) : [],
+  );
   return (
     <Page
       title="Records"
@@ -77,8 +66,8 @@ export function RecordsPage({ route, types }: { route: Route; types: string[] })
       }
     >
       <Filters
-        path={["records"]}
-        query={route.query}
+        query={search}
+        narrow={narrow}
         search={{ name: "q", label: "Search", placeholder: "Value, source or key" }}
         selects={[{ name: "type", label: "Entity type", choices: types.map((value) => ({ value })) }]}
         texts={[
@@ -110,8 +99,7 @@ export function RecordsPage({ route, types }: { route: Route; types: string[] })
           {
             title: "Identity",
             sort: "identity",
-            cell: (record) =>
-              <Placed record={record} labels={labels} />,
+            cell: (record) => <Placed record={record} labels={labels} />,
           },
           { title: "ID", cell: (record) => <Ref kind="record" id={record.id} />, sort: "id" },
         ]}
@@ -130,8 +118,9 @@ interface Loaded {
   document: DocumentEntry | null;
 }
 
-export function RecordPage({ id }: { id: string }) {
-  const loaded = useLoad(async (client): Promise<Loaded> => {
+export function RecordPage() {
+  const { id } = one.useParams();
+  const loaded = useRead(keys.records.one(id), async (client): Promise<Loaded> => {
     const [record, review] = await Promise.all([client.record(id), client.reviewItems({ record: id })]);
     const mention = mentionOf(record);
     const document = mention ? await found(client.document(mention.document)) : null;
@@ -160,7 +149,7 @@ function RecordScreen({ record, review, document }: Loaded) {
   // A `possible_split` is about the identity the record is in, not about a record that waits for one.
   const waits = open.filter((item) => item.kind !== "possible_split");
   const asks = open.filter((item) => item.kind === "possible_split");
-  const labels = useLabels([record.identity]);
+  const labels = useIdentityLabels([record.identity]);
   return (
     <>
       {record.superseded_by ? (
@@ -180,9 +169,8 @@ function RecordScreen({ record, review, document }: Loaded) {
       ) : record.retracted != null ? (
         <Notice tone="waits">
           <span>
-            Taken back by its source in{" "}
-            <Ref kind="run" id={record.retracted} label={`run ${record.retracted}`} />. It has no identity, and no run
-            examines it, until the source sends the row again.
+            Taken back by its source in <Ref kind="run" id={record.retracted} label={`run ${record.retracted}`} />. It
+            has no identity, and no run examines it, until the source sends the row again.
           </span>
         </Notice>
       ) : null}
@@ -222,8 +210,7 @@ function RecordScreen({ record, review, document }: Loaded) {
           [
             "Loaded",
             <>
-              <When at={record.loaded_at} /> by{" "}
-              <Ref kind="run" id={record.load_run} label={`run ${record.load_run}`} />
+              <When at={record.loaded_at} /> by <Ref kind="run" id={record.load_run} label={`run ${record.load_run}`} />
             </>,
           ],
           [
@@ -238,10 +225,7 @@ function RecordScreen({ record, review, document }: Loaded) {
                   </span>
                 )),
           ],
-          [
-            "Identity",
-            <Placed record={record} labels={labels} />,
-          ],
+          ["Identity", <Placed record={record} labels={labels} />],
           ["Supersedes", record.supersedes ? <Ref kind="record" id={record.supersedes} /> : null],
           ["Superseded by", record.superseded_by ? <Ref kind="record" id={record.superseded_by} /> : null],
           [
@@ -288,6 +272,7 @@ function Move({ record }: { record: RecordEntry }) {
       <Done>{done}</Done>
       <div>
         <Act
+          stale={stale.store}
           label={from ? "Move" : "Assign"}
           title={`${from ? "Move" : "Assign"} ${record.label ?? recordName(record)}`}
           why="Reason"
@@ -348,9 +333,14 @@ function Found({ mention, document, excerpt }: { mention: Mention; document: Doc
     <Section title="Mention">
       <Text>
         In document{" "}
-        <a href={href(["documents", document.id], { at: mention.start })} {...stylex.props(styles.link)}>
+        <ScreenLink
+          to="/documents/$id"
+          params={{ id: document.id }}
+          search={{ at: mention.start }}
+          {...stylex.props(styles.link)}
+        >
           {named(document.source, document.key)}
-        </a>
+        </ScreenLink>
         , characters {mention.start} to {mention.end}.
       </Text>
       {excerpt ? (
@@ -369,6 +359,7 @@ function Found({ mention, document, excerpt }: { mention: Mention; document: Doc
 /** Asks for the other record of a pair, and goes to the explanation of the two. */
 function ExplainWith({ record }: { record: RecordEntry }) {
   const { client } = useStudio();
+  const navigate = useNavigate();
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   return (
@@ -385,7 +376,7 @@ function ExplainWith({ record }: { record: RecordEntry }) {
             (other) => {
               setBusy(false);
               if (other === null) setProblem(`No record found for ${reference}.`);
-              else navigate(href(["explain"], { a: record.id, b: other.id }));
+              else void navigate({ to: "/explain", search: { a: record.id, b: other.id } });
             },
             (error: unknown) => {
               setBusy(false);

@@ -1,6 +1,12 @@
 [workspace]
 resolver = "3"
-members = ["crates/spool-core", "crates/spool", "crates/spool-cli"]
+members = [
+    "crates/spool-core",
+    "crates/spool",
+    "crates/spool-bench",
+    "crates/spool-cli",
+    "crates/spool-testing",
+]
 
 [workspace.package]
 version = "0.4.0"
@@ -12,6 +18,9 @@ repository = "https://github.com/alexpatow/spool"
 [workspace.dependencies]
 spool-core = { path = "crates/spool-core", version = "0.4.0" }
 spool = { path = "crates/spool", version = "0.4.0" }
+spool-bench = { path = "crates/spool-bench", version = "0.4.0" }
+# What the crates' integration tests share. It is not published.
+spool-testing = { path = "crates/spool-testing" }
 
 # The server's HTTP stack. Only spool-cli depends on it. http-body is the
 # trait of a request's body, which the server wraps to read what was left of one.
@@ -40,6 +49,11 @@ url = "2.5"
 # the protocol and its Streamable HTTP transport. Only spool-cli depends on it.
 rmcp = { version = "3.11", default-features = false, features = ["server", "transport-streamable-http-server"] }
 base64 = "0.22"
+# Bytes as hexadecimal, wherever a hash is written as text.
+hex = "0.4"
+# Comparing secrets in time that says nothing about them. Only spool-cli
+# depends on it.
+subtle = "2"
 
 # The `spool` command's arguments, help and usage errors. Only spool-cli
 # depends on it.
@@ -62,6 +76,8 @@ comfy-table = { version = "8", default-features = false, features = ["custom_sty
 # spool-cli names arrow itself for the IPC and JSON forms the server speaks.
 arrow = { version = "60.1", default-features = false, features = ["ipc", "json"] }
 duckdb = { version = "~1.20000.2", features = ["appender-arrow", "vtab-arrow"] }
+# The `.env` of a project, whose variables its code is run with.
+dotenvy = "0.15"
 # The CSV that `spool load` and the server read rows from. Only spool-cli
 # depends on it: it says which line of a file is wrong, which a new user needs.
 csv = "1.3"
@@ -72,6 +88,9 @@ libduckdb-sys = "~1.20000.2"
 # quietly when the pipe closes. spool: a strategy that runs out of time is
 # stopped with the processes it started.
 libc = "0.2"
+# The first Ctrl-C of `spool extract` is caught and the second is not. Its
+# registry of handlers was in the build already, for tokio.
+signal-hook = { version = "0.3", default-features = false }
 # Feature `schema` of the crates below: the JSON Schema of the API's types.
 schemars = "1"
 proptest = { version = "1.12", default-features = false, features = ["std"] }
@@ -85,6 +104,9 @@ tempfile = "3"
 # Snapshots of the `spool` command's help and usage errors, in its tests.
 snapbox = "1.2"
 thiserror = "2"
+# Instants as RFC 3339 text. The session cookie brought it into the build
+# already.
+time = { version = "0.3", features = ["formatting", "macros"] }
 toml = "1"
 # The commands that read from a running server. The build of the `duckdb`
 # crate already depends on it, to download the DuckDB library.
@@ -99,3 +121,14 @@ opt-level = 3
 
 [profile.dev.package.blake2]
 opt-level = 3
+
+# Lints for every crate of the workspace: each has `[lints] workspace = true`.
+[workspace.lints.rust]
+# The few places that need `unsafe` allow it where they use it, with the
+# reason beside it.
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+# A function over the length in clippy.toml. Those that were over it when the
+# lint was turned on are marked `#[expect]`: a new one fails.
+too_many_lines = "warn"

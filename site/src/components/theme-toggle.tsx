@@ -2,10 +2,10 @@
 
 import { useSyncExternalStore } from "react";
 
-import { Button } from "@/components/ui/button";
-import { DarkModeIcon, LightModeIcon } from "@/components/ui/icons";
+import { Button } from "spool-ui/components/button";
+import { DarkModeIcon, LightModeIcon } from "spool-ui/components/icons";
 import { THEME_STORAGE_KEY } from "@/lib/theme";
-import { type Theme, applyTheme } from "@/styles/shelf/themes";
+import { type Theme, applyTheme } from "spool-ui/themes";
 
 function subscribe(onChange: () => void): () => void {
   const observer = new MutationObserver(onChange);

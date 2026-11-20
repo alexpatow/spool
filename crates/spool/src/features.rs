@@ -12,7 +12,7 @@ use crate::retract::{self, NOT_RETRACTED};
 
 /// The feature table of an entity type. The name is safe to splice into SQL
 /// because [`EntityType`] allows only lowercase letters, digits and `_`.
-pub(crate) fn table(entity_type: &EntityType) -> String {
+pub(crate) fn table_name(entity_type: &EntityType) -> String {
     format!("spool.features_{entity_type}")
 }
 
@@ -20,7 +20,7 @@ pub(crate) fn table(entity_type: &EntityType) -> String {
 /// Inside the query, `record` is the engine's view of the type's
 /// records. A record its source took back is not among them: it has no
 /// feature row.
-fn select(query: &str, scope: &str) -> String {
+fn build_features_query(query: &str, scope: &str) -> String {
     format!(
         "WITH record AS (SELECT * FROM spool.record WHERE ({scope}) AND {NOT_RETRACTED})
          SELECT * FROM (\n{query}\n) AS features"
@@ -35,7 +35,7 @@ pub(crate) fn transform_function(name: &str) -> String {
 
 /// Makes the transforms functions of this connection. A features query
 /// calls them, so they are defined before one is prepared or run.
-fn define(conn: &Connection, transforms: &[Transform]) -> Result<()> {
+fn define_transforms(conn: &Connection, transforms: &[Transform]) -> Result<()> {
     for transform in transforms {
         conn.execute_batch(&format!(
             "CREATE OR REPLACE TEMP MACRO {}({}) AS (\n{}\n)",
@@ -50,7 +50,7 @@ fn define(conn: &Connection, transforms: &[Transform]) -> Result<()> {
 /// Defines a transform and prepares a call of it with text for every
 /// argument, which fails if its expression is not one over its arguments.
 pub(crate) fn check_transform(conn: &Connection, transform: &Transform) -> Result<()> {
-    define(conn, std::slice::from_ref(transform))?;
+    define_transforms(conn, std::slice::from_ref(transform))?;
     let arguments = vec!["NULL::VARCHAR"; transform.parameters.len()].join(", ");
     conn.prepare(&format!(
         "SELECT {}({arguments})",
@@ -65,8 +65,11 @@ pub(crate) fn describe(
     transforms: &[Transform],
     query: &str,
 ) -> Result<Vec<FeatureColumn>> {
-    define(conn, transforms)?;
-    let mut statement = conn.prepare(&format!("DESCRIBE {}", select(query, "false")))?;
+    define_transforms(conn, transforms)?;
+    let mut statement = conn.prepare(&format!(
+        "DESCRIBE {}",
+        build_features_query(query, "false")
+    ))?;
     let mut rows = statement.query([])?;
     let mut columns = Vec::new();
     while let Some(row) = rows.next()? {
@@ -85,8 +88,8 @@ pub(crate) fn create_table(
     declaration: &Declaration,
     version: u32,
 ) -> Result<()> {
-    let table = table(entity_type);
-    define(conn, &declaration.transforms)?;
+    let table = table_name(entity_type);
+    define_transforms(conn, &declaration.transforms)?;
     conn.execute_batch(&format!(
         "CREATE TABLE {table} AS
          SELECT features.*, {version}::INTEGER AS declaration_version
@@ -96,7 +99,7 @@ pub(crate) fn create_table(
          SELECT m.identity_id, f.* EXCLUDE (declaration_version)
          FROM spool.membership_current m
          JOIN {table} f ON f.record_id = m.record_id;",
-        select(&declaration.features, "false")
+        build_features_query(&declaration.features, "false")
     ))?;
     Ok(())
 }
@@ -113,7 +116,7 @@ pub(crate) fn label_view<'a>(
             let label = declaration.label.as_deref()?;
             Some(format!(
                 "SELECT record_id, nullif(trim({label}::VARCHAR), '') AS label FROM {}",
-                table(entity_type)
+                table_name(entity_type)
             ))
         })
         .collect();
@@ -140,7 +143,7 @@ pub(crate) fn snapshot_labels(
     label: &str,
     records: &[RecordId],
 ) -> Result<Vec<String>> {
-    define(conn, &declaration.transforms)?;
+    define_transforms(conn, &declaration.transforms)?;
     let mut statement = conn.prepare(&format!(
         "WITH picked AS (SELECT id::UUID AS record_id, ord FROM arrow(?)),
               record AS (SELECT r.* FROM spool.record r JOIN picked USING (record_id))
@@ -164,7 +167,7 @@ pub(crate) fn drop_table(conn: &Connection, entity_type: &EntityType) -> Result<
     conn.execute_batch(&format!(
         "DROP VIEW IF EXISTS spool.entity_{entity_type};
          DROP TABLE IF EXISTS {};",
-        table(entity_type)
+        table_name(entity_type)
     ))?;
     Ok(())
 }
@@ -196,12 +199,12 @@ pub(crate) fn fill(
     version: u32,
     scope: &str,
 ) -> Result<Option<String>> {
-    define(conn, &declaration.transforms)?;
+    define_transforms(conn, &declaration.transforms)?;
     conn.execute_batch(&format!(
         "CREATE OR REPLACE TEMP TABLE spool_new_features AS
          SELECT features.*, {version}::INTEGER AS declaration_version
          FROM ({}) AS features",
-        select(&declaration.features, scope)
+        build_features_query(&declaration.features, scope)
     ))?;
 
     let (stray, repeated): (i64, i64) = conn.query_row(
@@ -239,7 +242,7 @@ pub(crate) fn fill(
     conn.execute_batch(&format!(
         "INSERT INTO {} SELECT * FROM spool_new_features;
          DROP TABLE spool_new_features;",
-        table(entity_type)
+        table_name(entity_type)
     ))?;
     Ok(None)
 }

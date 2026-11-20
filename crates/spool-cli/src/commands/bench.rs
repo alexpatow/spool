@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use anstream::println;
 use spool::arrow::array::{Array, AsArray};
 use spool::core::ReviewItem;
-use spool::{BenchReport, Engine, Options, Scenario, StepReport, StrategyRef, UserCode};
+use spool::{Engine, Options, StrategyRef, UserCode};
+use spool_bench::{BenchReport, Scenario, StepReport};
 
 use super::UserCodeArgs;
 use crate::Failure;
@@ -49,6 +50,12 @@ pub struct BenchArgs {
     output: OutputArgs,
 }
 
+impl From<spool_bench::Error> for Failure {
+    fn from(error: spool_bench::Error) -> Self {
+        Failure::failed(error.to_string())
+    }
+}
+
 pub fn bench(arguments: BenchArgs) -> Result<(), Failure> {
     let out = Output::report(&arguments.output, "`spool bench`")?;
     let mut scenario = Scenario::load(&arguments.scenario)?;
@@ -56,15 +63,15 @@ pub fn bench(arguments: BenchArgs) -> Result<(), Failure> {
         scenario = scenario.with_strategy(strategy);
     }
     let user_code = super::user_code(Some(&arguments.user_code), &scenario.project_dir());
-    Ok(run(&arguments, scenario, user_code, out)?)
+    Ok(run_scenario(&arguments, scenario, user_code, out)?)
 }
 
-fn run(
+fn run_scenario(
     arguments: &BenchArgs,
     scenario: Scenario,
     user_code: UserCode,
     out: Output,
-) -> spool::Result<()> {
+) -> spool_bench::Result<()> {
     let db = match &arguments.db {
         Some(db) => db.clone(),
         None => scenario.project_dir().join(".spool").join("bench.duckdb"),
@@ -83,7 +90,9 @@ fn run(
     }
     println!("scenario  {}", scenario.name);
     println!("database  {}", db.display());
-    let report = scenario.run(&engine, |step| print_step(&engine, step, arguments.list))?;
+    let report = scenario.run(&engine, |step| {
+        Ok(print_step(&engine, step, arguments.list)?)
+    })?;
 
     if let Some(order) = &report.order_sensitivity {
         let taken = report.steps.iter().any(|step| !step.retract.is_empty());
@@ -99,13 +108,13 @@ fn run(
             "  same group    {} of {} records ({})",
             order.same_group,
             order.records,
-            share(order.agreement)
+            format_share(order.agreement)
         );
         println!(
             "  same pairs    {} of {} ({})",
             order.pairs_in_both,
             order.pairs_in_either,
-            share(order.pair_agreement)
+            format_share(order.pair_agreement)
         );
     }
 
@@ -146,6 +155,7 @@ fn write_results(out: &Path, report: &BenchReport) -> spool::Result<()> {
     })
 }
 
+#[expect(clippy::too_many_lines)]
 fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<()> {
     println!("\n== {} ==", step.name);
     for ingest in &step.ingest {
@@ -352,9 +362,9 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
         );
         println!(
             "  spans         precision {}  recall {}  (F1 {})",
-            share(extraction.precision),
-            share(extraction.recall),
-            share(extraction.f1)
+            format_share(extraction.precision),
+            format_share(extraction.recall),
+            format_share(extraction.f1)
         );
     }
 
@@ -366,34 +376,34 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
     );
     println!(
         "  pairs         precision {}  recall {}  (F1 {})",
-        share(metrics.pairs.precision),
-        share(metrics.pairs.recall),
-        share(metrics.pairs.f1)
+        format_share(metrics.pairs.precision),
+        format_share(metrics.pairs.recall),
+        format_share(metrics.pairs.f1)
     );
     println!(
         "  B-cubed       precision {}  recall {}",
-        share(metrics.b_cubed.precision),
-        share(metrics.b_cubed.recall)
+        format_share(metrics.b_cubed.precision),
+        format_share(metrics.b_cubed.recall)
     );
     println!("  false merges  {}", metrics.false_merges);
     println!("  false splits  {}", metrics.false_splits);
     println!(
         "  unassigned    {} ({})",
         metrics.unassigned,
-        share(metrics.unassigned_share)
+        format_share(metrics.unassigned_share)
     );
     let stability = &step.id_stability;
     println!(
         "  ID stability  {} of {} records kept their identity ({})",
         stability.unchanged,
         stability.records,
-        share(stability.strict)
+        format_share(stability.strict)
     );
     if stability.unchanged_following_redirects != stability.unchanged {
         println!(
             "                {} once merged IDs are followed ({})",
             stability.unchanged_following_redirects,
-            share(stability.following_redirects)
+            format_share(stability.following_redirects)
         );
     }
     let churn = &step.churn;
@@ -410,7 +420,7 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
             "  splits        {} of {} still apart ({})",
             splits.kept_apart,
             splits.splits,
-            share(splits.share)
+            format_share(splits.share)
         );
     }
     let overrides = &step.override_persistence;
@@ -419,7 +429,7 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
             "  constraints   {} of {} still honoured ({})",
             overrides.honoured,
             overrides.constraints,
-            share(overrides.share)
+            format_share(overrides.share)
         );
     }
     if let Some(asked) = &step.possible_splits {
@@ -439,7 +449,7 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
             upgrade.strategy,
             upgrade.retained,
             upgrade.records,
-            share(upgrade.share),
+            format_share(upgrade.share),
             upgrade.suggested_merges,
             upgrade.suggested_splits,
             upgrade.applied_changes
@@ -456,14 +466,14 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
         );
         println!(
             "  pairs         precision {}  recall {}  (F1 {})",
-            share(whole.pairs.precision),
-            share(whole.pairs.recall),
-            share(whole.pairs.f1)
+            format_share(whole.pairs.precision),
+            format_share(whole.pairs.recall),
+            format_share(whole.pairs.f1)
         );
         println!(
             "  B-cubed       precision {}  recall {}",
-            share(whole.b_cubed.precision),
-            share(whole.b_cubed.recall)
+            format_share(whole.b_cubed.precision),
+            format_share(whole.b_cubed.recall)
         );
     }
     if let Some(rebuild) = &step.rebuild {
@@ -475,14 +485,14 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
             "  same group    {} of {} records ({})",
             rebuild.same_group,
             rebuild.records,
-            share(rebuild.agreement)
+            format_share(rebuild.agreement)
         );
         println!(
             "  same pairs    {} in both, {} only here, {} only there ({})",
             rebuild.pairs_in_both,
             rebuild.pairs_only_kept,
             rebuild.pairs_only_rebuilt,
-            share(rebuild.pair_agreement)
+            format_share(rebuild.pair_agreement)
         );
         if step.possible_splits.is_some() {
             println!(
@@ -494,9 +504,9 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
         println!(
             "  there         {} identities; pairs precision {}  recall {}  (F1 {}); {} false merges, {} false splits",
             there.identities,
-            share(there.pairs.precision),
-            share(there.pairs.recall),
-            share(there.pairs.f1),
+            format_share(there.pairs.precision),
+            format_share(there.pairs.recall),
+            format_share(there.pairs.f1),
             there.false_merges,
             there.false_splits
         );
@@ -504,14 +514,18 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
     Ok(())
 }
 
-fn share(value: Option<f64>) -> String {
+fn format_share(value: Option<f64>) -> String {
     match value {
         Some(value) => format!("{value:.4}"),
         None => "n/a".to_owned(),
     }
 }
 
-fn text(batch: &spool::arrow::record_batch::RecordBatch, column: usize, row: usize) -> String {
+fn read_text_cell(
+    batch: &spool::arrow::record_batch::RecordBatch,
+    column: usize,
+    row: usize,
+) -> String {
     let values = batch.column(column).as_string::<i32>();
     if values.is_null(row) {
         String::new()
@@ -538,7 +552,7 @@ fn record_keys(engine: &Engine) -> spool::Result<std::collections::HashMap<Strin
     let mut keys = std::collections::HashMap::new();
     for batch in &batches {
         for row in 0..batch.num_rows() {
-            keys.insert(text(batch, 0, row), text(batch, 1, row));
+            keys.insert(read_text_cell(batch, 0, row), read_text_cell(batch, 1, row));
         }
     }
     Ok(keys)
@@ -548,7 +562,7 @@ fn print_identities(engine: &Engine, list: usize) -> spool::Result<()> {
     let count = engine.query("SELECT count(*)::VARCHAR FROM spool.identity_current")?;
     let total: usize = count
         .first()
-        .and_then(|batch| text(batch, 0, 0).parse().ok())
+        .and_then(|batch| read_text_cell(batch, 0, 0).parse().ok())
         .unwrap_or(0);
     println!("\nidentities ({total}):");
 
@@ -567,10 +581,10 @@ fn print_identities(engine: &Engine, list: usize) -> spool::Result<()> {
         for row in 0..batch.num_rows() {
             println!(
                 "  {}  {}  {}  {}",
-                text(batch, 0, row),
-                text(batch, 1, row),
-                text(batch, 2, row),
-                text(batch, 3, row)
+                read_text_cell(batch, 0, row),
+                read_text_cell(batch, 1, row),
+                read_text_cell(batch, 2, row),
+                read_text_cell(batch, 3, row)
             );
             printed += 1;
         }

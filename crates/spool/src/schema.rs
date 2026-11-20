@@ -28,7 +28,7 @@ pub(crate) fn ensure(conn: &mut Connection) -> Result<()> {
         |row| row.get(0),
     )?;
     let found = if exists {
-        meta(&tx, "format_version")?.unwrap_or_else(|| "none".to_owned())
+        read_meta(&tx, "format_version")?.unwrap_or_else(|| "none".to_owned())
     } else {
         tx.execute_batch(BASE_SCHEMA)?;
         BASE_VERSION.to_owned()
@@ -57,7 +57,7 @@ pub(crate) fn ensure(conn: &mut Connection) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn meta(conn: &Connection, key: &str) -> Result<Option<String>> {
+pub(crate) fn read_meta(conn: &Connection, key: &str) -> Result<Option<String>> {
     let mut statement = conn.prepare("SELECT value FROM spool.meta WHERE key = ?")?;
     let mut rows = statement.query([key])?;
     Ok(match rows.next()? {

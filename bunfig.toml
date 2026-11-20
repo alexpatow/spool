@@ -1,0 +1,3 @@
+# How `bun fmt` writes the TypeScript of the packages and the site.
+[fmt]
+printWidth = 120

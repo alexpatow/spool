@@ -16,13 +16,13 @@ use crate::output::quiet;
 use crate::style::{self, paint};
 
 /// Whether progress is drawn.
-fn drawn() -> bool {
+fn is_progress_drawn() -> bool {
     !quiet() && std::io::stderr().is_terminal()
 }
 
 /// A spinner that says what is being waited for, and for how long.
 pub fn spinner(message: impl Into<Cow<'static, str>>) -> ProgressBar {
-    if !drawn() {
+    if !is_progress_drawn() {
         return ProgressBar::hidden();
     }
     let bar = ProgressBar::new_spinner()
@@ -41,7 +41,7 @@ pub fn spinner(message: impl Into<Cow<'static, str>>) -> ProgressBar {
 /// as cargo says `Compiling`, and `of` and `message` after the count:
 /// `32/40 documents, 96 records`.
 pub fn bar(verb: &str, length: u64, of: &str, done: u64, message: String) -> ProgressBar {
-    if !drawn() {
+    if !is_progress_drawn() {
         return ProgressBar::hidden();
     }
     let template = format!(
@@ -64,7 +64,7 @@ pub fn bar(verb: &str, length: u64, of: &str, done: u64, message: String) -> Pro
 
 /// A bar of bytes, for a file that is read as it is sent.
 pub fn bytes(verb: &str, length: u64) -> ProgressBar {
-    let bar = match drawn() {
+    let bar = match is_progress_drawn() {
         true => ProgressBar::new(length).with_finish(ProgressFinish::AndClear),
         false => return ProgressBar::hidden(),
     };

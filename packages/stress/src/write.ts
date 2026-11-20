@@ -6,12 +6,13 @@
 // records as CSV files, their truth, and a scenario of one step per batch.
 
 import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+
+import { repository } from "spool-testing";
 
 import { crmCsv, generate, records, registryCsv, truthCsv } from "./generate.ts";
 import type { Generated } from "./generate.ts";
 
-export const repository = resolve(import.meta.dir, "../../..");
 export const companiesProject = join(repository, "benchmarks/identity/companies-small");
 
 /** Writes the project and returns how many records it holds. */

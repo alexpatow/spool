@@ -223,13 +223,13 @@ Ctrl-C stops the server. Data stays in `.spool/dev.duckdb`. Delete `.spool/` to 
 - [docs/mcp.md](docs/mcp.md): connecting Claude Code, Claude Desktop, Codex and other MCP clients.
 - [docs/sign-in.md](docs/sign-in.md): running a server other people sign in to.
 - [benchmarks/README.md](benchmarks/README.md): larger projects on public data, benchmarked up to 5,000,000 records. `benchmarks/extraction/company-news` has extractors in Python and TypeScript.
-- [docs/architecture-proposal.md](docs/architecture-proposal.md): the design, covering records, judgements, identities, constraints, changesets and strategies.
+- [docs/design/architecture-proposal.md](docs/design/architecture-proposal.md): the design, covering records, judgements, identities, constraints, changesets and strategies.
 - [Credits](https://spool.alexpatow.com/docs/credits) lists the projects that shaped Spool's design.
 - Bugs and questions: [open an issue](https://github.com/alexpatow/spool/issues).
 
 ## Check generated files before committing
 
-After staging your changes, run `./scripts/check-generated.sh`. It checks the staged versions of the affected generated files, including the Studio bundle and shared assets, HTTP schema and client types, CLI help and command reference, and TypeScript strategy helper. It uses Bun for TypeScript and Cargo for Rust as needed.
+After staging your changes, run `./scripts/check-generated.sh`. It checks the staged versions of the affected generated files, including the Studio bundle, HTTP schema and client types, CLI help and command reference, and TypeScript strategy helper. It uses Bun for TypeScript and Cargo for Rust as needed.
 
 With Git 2.54 or newer, run `./scripts/check-generated.sh --install-hook` once per clone. The hook runs alongside existing hooks in current and future linked worktrees that contain the script. To remove it, run `git config --local --remove-section hook.spool-check-generated`. With older Git, you can call `./scripts/check-generated.sh` from your `pre-commit` hook.
 

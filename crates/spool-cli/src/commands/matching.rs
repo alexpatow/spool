@@ -8,10 +8,11 @@ use spool::core::EntityType;
 use spool::{RunEntry, RunStatus, StrategyRef, TypeInfo};
 
 use super::remote::{Remote, RemoteArgs, WAIT_MS, unsuccessful};
-use super::show::{count, placed};
+use super::show::runs::format_placed_records;
 use crate::Failure;
 use crate::output::{Output, OutputArgs, fields, hint};
 use crate::progress;
+use spool_cli::text::count;
 
 /// Match new records and place them in identities
 ///
@@ -52,6 +53,7 @@ pub struct MatchArgs {
     remote: RemoteArgs,
 }
 
+#[expect(clippy::too_many_lines)]
 pub fn run(arguments: MatchArgs) -> Result<(), Failure> {
     let out = Output::report(&arguments.output, "`spool match`")?;
     let remote = Remote::new(&arguments.remote);
@@ -73,7 +75,7 @@ pub fn run(arguments: MatchArgs) -> Result<(), Failure> {
                 .ok_or_else(|| {
                     Failure::failed(format!(
                         "the project has no entity type `{name}`. It has {}.",
-                        declared(types)
+                        quote_type_names(types)
                     ))
                 })?,
         ],
@@ -89,7 +91,7 @@ pub fn run(arguments: MatchArgs) -> Result<(), Failure> {
             return Err(Failure::failed(format!(
                 "a strategy judges one entity type: say which `{strategy}` is for with \
                  `--type`. The project has {}.",
-                declared(types)
+                quote_type_names(types)
             )));
         };
         if !entity_type
@@ -170,7 +172,7 @@ pub fn run(arguments: MatchArgs) -> Result<(), Failure> {
         let Some((_, run)) = ended else {
             if !as_json {
                 part(false);
-                let (said, hint) = nothing(entity_type, rematch);
+                let (said, hint) = explain_nothing_to_match(entity_type, rematch);
                 println!("nothing to match: {said}");
                 if !hints.contains(&hint) {
                     hints.push(hint);
@@ -192,7 +194,7 @@ pub fn run(arguments: MatchArgs) -> Result<(), Failure> {
         }
         if !as_json {
             part(true);
-            report(&run, name, rematch)?;
+            print_match_report(&run, name, rematch)?;
         }
     }
     if as_json && named.is_none() {
@@ -215,7 +217,7 @@ pub fn run(arguments: MatchArgs) -> Result<(), Failure> {
 }
 
 /// The entity types a project declares, in a sentence.
-fn declared(types: &[TypeInfo]) -> String {
+fn quote_type_names(types: &[TypeInfo]) -> String {
     types
         .iter()
         .map(|declared| format!("`{}`", declared.name))
@@ -224,7 +226,7 @@ fn declared(types: &[TypeInfo]) -> String {
 }
 
 /// Why a type had nothing to match, and what would give it something.
-fn nothing(entity_type: &TypeInfo, rematch: bool) -> (String, &'static str) {
+fn explain_nothing_to_match(entity_type: &TypeInfo, rematch: bool) -> (String, &'static str) {
     let name = &entity_type.name;
     if entity_type.records == 0 {
         (
@@ -243,7 +245,7 @@ fn nothing(entity_type: &TypeInfo, rematch: bool) -> (String, &'static str) {
 }
 
 /// Prints the report of a match run that succeeded.
-fn report(run: &RunEntry, name: &EntityType, rematch: bool) -> Result<(), Failure> {
+fn print_match_report(run: &RunEntry, name: &EntityType, rematch: bool) -> Result<(), Failure> {
     let report = run.resolution.as_ref().ok_or_else(|| {
         Failure::failed(format!(
             "run {} succeeded and reported no match; is the server of this version?",
@@ -286,7 +288,7 @@ fn report(run: &RunEntry, name: &EntityType, rematch: bool) -> Result<(), Failur
             format!("{examined}, {}", count(report.candidates, "candidate pair")),
         ),
         ("judgements", judgements),
-        ("placed", placed(report)),
+        ("placed", format_placed_records(report)),
     ];
     if report.records_unassigned > 0 || !report.review.is_empty() {
         rows.push((

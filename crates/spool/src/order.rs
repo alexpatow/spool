@@ -11,7 +11,7 @@ use duckdb::vtab::arrow::ArrowBatchRegistration;
 use serde::{Deserialize, Serialize};
 use spool_core::Actor;
 
-use crate::batch::{Column, batch};
+use crate::batch::{Column, build_batch};
 use crate::error::Result;
 
 /// Which way a list runs.
@@ -176,11 +176,11 @@ pub type ActorNames = Vec<(Actor, String)>;
 
 /// A common table expression `called`, of `actor` and `name`, read from the
 /// table that the parameter `param` is bound to with [`names_table`].
-pub(crate) fn called(param: &str) -> String {
+pub(crate) fn actor_names_cte(param: &str) -> String {
     format!("called AS (SELECT actor, name FROM arrow({param}))")
 }
 
-/// The names as a table to bind to the parameter of [`called`]. With none,
+/// The names as a table to bind to the parameter of [`actor_names_cte`]. With none,
 /// it is a row of nulls, which names nobody.
 pub(crate) fn names_table(names: &[(Actor, String)]) -> Result<ArrowBatchRegistration> {
     let (actors, called): (Vec<Option<String>>, Vec<Option<String>>) = if names.is_empty() {
@@ -191,7 +191,7 @@ pub(crate) fn names_table(names: &[(Actor, String)]) -> Result<ArrowBatchRegistr
             .map(|(actor, name)| (Some(actor.to_string()), Some(name.clone())))
             .unzip()
     };
-    Ok(ArrowBatchRegistration::new(batch(vec![
+    Ok(ArrowBatchRegistration::new(build_batch(vec![
         ("actor", Column::Text(actors)),
         ("name", Column::Text(called)),
     ])?))

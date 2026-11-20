@@ -103,7 +103,7 @@ pub(crate) fn generate_record_candidates(
     record: RecordId,
     block: &[Rule],
 ) -> Result<()> {
-    let table = features::table(entity_type);
+    let table = features::table_name(entity_type);
     for rule in block {
         let pairs = |new: &str, existing: &str| {
             format!(
@@ -145,7 +145,7 @@ pub(crate) fn generate_candidates_into(
     block: &[Rule],
     into: &str,
 ) -> Result<()> {
-    let table = features::table(entity_type);
+    let table = features::table_name(entity_type);
     for rule in block {
         conn.execute_batch(&format!(
             "INSERT INTO {into}
@@ -189,7 +189,7 @@ pub(crate) fn judge_candidates_into(
     match_: &[Rule],
     (candidates, judgements): (&str, &str),
 ) -> Result<()> {
-    let table = features::table(entity_type);
+    let table = features::table_name(entity_type);
     conn.execute_batch(&format!(
         "INSERT INTO {judgements}
          SELECT {run}, left_id, right_id,
