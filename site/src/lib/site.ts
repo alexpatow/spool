@@ -12,7 +12,7 @@ export const site = {
   description: summary,
   // What `spool --version` prints. The samples check compares the two on the
   // Getting started page.
-  version: "0.3.0",
+  version: "0.4.0",
   licence: "MIT",
   repository: "https://github.com/alexpatow/spool",
   /** The X account a shared page names as its site and its author. Spool has none of its own. */
