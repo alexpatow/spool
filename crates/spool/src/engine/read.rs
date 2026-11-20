@@ -132,7 +132,7 @@ impl Engine {
     /// what every run that looked at the pair concluded, and what the
     /// project's rules say about it now.
     pub fn explain(&self, a: RecordId, b: RecordId) -> Result<Explanation> {
-        self.with_rules(|conn, manifest| explain::explain(conn, manifest, a, b))
+        self.with_rules(|conn, manifest| explain::explain_pair(conn, manifest, a, b))
     }
 
     /// What holds an identity together: how many of its pairs of records
@@ -212,7 +212,9 @@ impl Engine {
     /// started the run it came from. The log is what was changed and who
     /// decided it; this adds who asked.
     pub fn logged_after(&self, after: Seq, limit: u64) -> Result<Vec<LoggedChangeset>> {
-        self.read(|conn| lookup::logged(conn, store::read_log_after(conn, after, limit)?))
+        self.read(|conn| {
+            lookup::logged_changesets(conn, store::read_log_after(conn, after, limit)?)
+        })
     }
 
     /// The log head and up to `limit` summaries of changesets after
@@ -245,7 +247,9 @@ impl Engine {
         limit: u64,
         names: &[(Actor, String)],
     ) -> Result<Vec<LoggedChangeset>> {
-        self.read(|conn| lookup::logged(conn, lookup::changesets(conn, sort, after, limit, names)?))
+        self.read(|conn| {
+            lookup::logged_changesets(conn, lookup::changesets(conn, sort, after, limit, names)?)
+        })
     }
 
     /// All of identity state, read from the projection tables.

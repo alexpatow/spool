@@ -15,7 +15,7 @@ use crate::review::{ReviewKind, ReviewStatus};
 use crate::runs::RunStatus;
 
 /// A record in a sentence: its label and its name, or its name alone.
-fn called(named: &Named) -> String {
+fn format_record_name(named: &Named) -> String {
     match &named.label {
         Some(label) => format!("`{label}` ({})", named.name),
         None => format!("`{}`", named.name),
@@ -34,7 +34,7 @@ pub fn how_linked(link: &Link) -> String {
         how.push_str(&format!(
             ", {} {}",
             rule_or_rules(&link.rules.iter().map(String::as_str).collect::<Vec<_>>()),
-            listed(link.rules.iter().map(String::as_str))
+            join_quoted_names(link.rules.iter().map(String::as_str))
         ));
     } else if let Some(score) = link.score {
         how.push_str(&format!(", score {score}"));
@@ -77,7 +77,7 @@ fn names_said(side: &Side) -> String {
 }
 
 /// A number of things, as a sentence says it: `1 link`, `2 links`.
-fn count(number: u64, what: &str) -> String {
+fn format_count(number: u64, what: &str) -> String {
     match number {
         1 => format!("1 {what}"),
         number => format!("{number} {what}s"),
@@ -99,7 +99,7 @@ pub(super) fn identity_summary(explanation: &IdentityExplanation) -> Vec<String>
     said.push(format!(
         "{called} is a `{}` identity of {} with {} different {}.",
         explanation.entity_type,
-        count(explanation.records, "record"),
+        format_count(explanation.records, "record"),
         explanation.names,
         if explanation.names == 1 {
             "name"
@@ -141,7 +141,7 @@ pub(super) fn identity_summary(explanation: &IdentityExplanation) -> Vec<String>
         };
         said.push(format!(
             "Without the {} only rule `{}` made, it would fall into {} pieces: {}{more}.",
-            count(hold.alone, "link"),
+            format_count(hold.alone, "link"),
             hold.rule,
             hold.pieces,
             pieces.join(", "),
@@ -159,8 +159,8 @@ pub(super) fn identity_summary(explanation: &IdentityExplanation) -> Vec<String>
                 };
                 said.push(format!(
                     "Removing {} would part {}{} from the other {}{}.",
-                    count(split.links.len() as u64, "link"),
-                    count(small.records, "record"),
+                    format_count(split.links.len() as u64, "link"),
+                    format_count(small.records, "record"),
                     names_said(small),
                     large.records,
                     names_said(large),
@@ -171,7 +171,7 @@ pub(super) fn identity_summary(explanation: &IdentityExplanation) -> Vec<String>
     said
 }
 
-fn listed<'a>(names: impl IntoIterator<Item = &'a str>) -> String {
+fn join_quoted_names<'a>(names: impl IntoIterator<Item = &'a str>) -> String {
     names
         .into_iter()
         .map(|name| format!("`{name}`"))
@@ -179,7 +179,7 @@ fn listed<'a>(names: impl IntoIterator<Item = &'a str>) -> String {
         .join(", ")
 }
 
-fn holding(results: &[RuleResult]) -> Vec<&str> {
+fn find_holding_rules(results: &[RuleResult]) -> Vec<&str> {
     results
         .iter()
         .filter(|result| result.holds == Some(true))
@@ -192,7 +192,7 @@ fn rule_or_rules(names: &[&str]) -> &'static str {
 }
 
 #[expect(clippy::too_many_lines)]
-pub(super) fn summary(explanation: &Explanation) -> Vec<String> {
+pub(super) fn pair_summary(explanation: &Explanation) -> Vec<String> {
     let (left, right) = (&explanation.left.record, &explanation.right.record);
     // Two versions of one row have the same source and key.
     let (l, r) = match (left.name(), right.name()) {
@@ -271,7 +271,7 @@ pub(super) fn summary(explanation: &Explanation) -> Vec<String> {
         }
         None => {}
         Some((latest, earlier)) => {
-            said.push(compared(latest));
+            said.push(describe_comparison(latest));
             match earlier.len() {
                 0 => {}
                 1 => said.push("One earlier run compared them as well.".to_owned()),
@@ -292,7 +292,7 @@ pub(super) fn summary(explanation: &Explanation) -> Vec<String> {
                 for link in chain {
                     let to = match link.to {
                         id if id == right.id => format!("`{r}`"),
-                        _ => called(&link.to_record),
+                        _ => format_record_name(&link.to_record),
                     };
                     steps.push_str(&format!(" → {to} ({})", how_linked(link)));
                 }
@@ -320,10 +320,10 @@ pub(super) fn summary(explanation: &Explanation) -> Vec<String> {
                 if let [with_left, with_right] = &cut.sides[..] {
                     said.push(format!(
                         "Removing {} would part them, leaving {} with `{l}`{} and {} with `{r}`{}.",
-                        count(cut.links.len() as u64, "link"),
-                        count(with_left.records, "record"),
+                        format_count(cut.links.len() as u64, "link"),
+                        format_count(with_left.records, "record"),
                         names_said(with_left),
-                        count(with_right.records, "record"),
+                        format_count(with_right.records, "record"),
                         names_said(with_right),
                     ));
                 }
@@ -336,12 +336,15 @@ pub(super) fn summary(explanation: &Explanation) -> Vec<String> {
 
     match (&explanation.left.placed, &explanation.right.placed) {
         (Some(one), Some(other)) if one.seq == other.seq => {
-            said.push(format!("Both were placed {}.", placed(one)));
+            said.push(format!("Both were placed {}.", describe_placement(one)));
         }
         (one, other) => {
             for (name, placement) in [(&l, one), (&r, other)] {
                 if let Some(placement) = placement {
-                    said.push(format!("`{name}` was placed {}.", placed(placement)));
+                    said.push(format!(
+                        "`{name}` was placed {}.",
+                        describe_placement(placement)
+                    ));
                 }
             }
         }
@@ -353,7 +356,7 @@ pub(super) fn summary(explanation: &Explanation) -> Vec<String> {
             .filter(|id| item.records.contains(id))
             .map(|id| name_of(id).as_str())
             .collect();
-        let named = listed(named);
+        let named = join_quoted_names(named);
         let kind = item.kind.as_str();
         // In a `possible_split`, whether the two are in different groups:
         // then the item asks about this very pair.
@@ -394,7 +397,7 @@ pub(super) fn summary(explanation: &Explanation) -> Vec<String> {
     }
 
     if let Some(rules) = &explanation.rules {
-        said.push(read(rules));
+        said.push(describe_rule_reading(rules));
         if let Some(run) = read_otherwise(&explanation.comparisons, rules) {
             said.push(format!(
                 "That is not what run {run} recorded, so the rules or the features have changed since."
@@ -415,7 +418,7 @@ pub(super) fn summary(explanation: &Explanation) -> Vec<String> {
     said
 }
 
-fn placed(placement: &Placement) -> String {
+fn describe_placement(placement: &Placement) -> String {
     let mut details = Vec::new();
     if let Some(run) = placement.run {
         details.push(format!("reconcile run {run}"));
@@ -433,7 +436,7 @@ fn placed(placement: &Placement) -> String {
     )
 }
 
-fn compared(comparison: &Comparison) -> String {
+fn describe_comparison(comparison: &Comparison) -> String {
     let strategy = match &comparison.strategy {
         Some(strategy) => format!(" (strategy `{}`)", strategy.name),
         None => String::new(),
@@ -449,7 +452,7 @@ fn compared(comparison: &Comparison) -> String {
                     .map(String::as_str)
                     .collect::<Vec<_>>()
             ),
-            listed(comparison.blocked_by.iter().map(String::as_str)),
+            join_quoted_names(comparison.blocked_by.iter().map(String::as_str)),
         ),
         judgements => {
             let verdicts: Vec<String> = judgements
@@ -480,7 +483,7 @@ fn compared(comparison: &Comparison) -> String {
                         verdict.push_str(&format!(
                             " ({group} {} {} held)",
                             rule_or_rules(&names),
-                            listed(names.iter().copied())
+                            join_quoted_names(names.iter().copied())
                         ));
                     }
                     verdict
@@ -525,8 +528,8 @@ fn read_otherwise(comparisons: &[Comparison], rules: &RuleReading) -> Option<Run
     (!rules.candidate || judged != rules.verdict).then_some(recorded.run)
 }
 
-fn read(rules: &RuleReading) -> String {
-    let block = holding(&rules.block);
+fn describe_rule_reading(rules: &RuleReading) -> String {
+    let block = find_holding_rules(&rules.block);
     if rules.block.is_empty() {
         return "The entity type has no block rule, so a run of the rules would not compare them."
             .to_owned();
@@ -545,7 +548,7 @@ fn read(rules: &RuleReading) -> String {
             text.push_str(&format!(
                 " Block {} {} cannot be decided, because a feature it reads is null.",
                 rule_or_rules(&undecided),
-                listed(undecided.iter().copied())
+                join_quoted_names(undecided.iter().copied())
             ));
         }
         return text;
@@ -553,15 +556,15 @@ fn read(rules: &RuleReading) -> String {
     let found = format!(
         "By the rules as they are now, block {} {} {} them a candidate pair",
         rule_or_rules(&block),
-        listed(block.iter().copied()),
+        join_quoted_names(block.iter().copied()),
         if block.len() == 1 { "makes" } else { "make" }
     );
     let decided = |group: &str, results: &[RuleResult]| {
-        let names = holding(results);
+        let names = find_holding_rules(results);
         format!(
             "{found} and {group} {} {} {}, so they would be judged `{group}`.",
             rule_or_rules(&names),
-            listed(names.iter().copied()),
+            join_quoted_names(names.iter().copied()),
             if names.len() == 1 { "holds" } else { "hold" }
         )
     };

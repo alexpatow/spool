@@ -7,8 +7,8 @@ use duckdb::{Connection, params};
 use serde::{Deserialize, Serialize};
 use spool_core::{Actor, ChangesetId, ConstraintEntry, RecordId, RunId, Seq, StateError, Verdict};
 
-use super::identity::{Describe, Link, Split, labels};
-use super::prose::summary;
+use super::identity::{Describe, Link, Split, read_member_labels};
+use super::prose::pair_summary;
 use super::{feature_row, has_table};
 use crate::drafts::DraftStatus;
 use crate::engine::StrategyRef;
@@ -171,7 +171,7 @@ pub struct RecordedJudgement {
     pub detail: Option<serde_json::Value>,
 }
 
-pub(crate) fn explain(
+pub(crate) fn explain_pair(
     conn: &Connection,
     manifest: Option<&Manifest>,
     a: RecordId,
@@ -207,7 +207,7 @@ pub(crate) fn explain(
                     // Between the records named as each of the two is, so
                     // that the cut parts two groups rather than one record
                     // from its own.
-                    let labels = labels(conn, identity, &graph)?;
+                    let labels = read_member_labels(conn, identity, &graph)?;
                     let named_as = |member: u32| -> Vec<u32> {
                         let Some(label) = &labels[member as usize] else {
                             return vec![member];
@@ -256,11 +256,11 @@ pub(crate) fn explain(
     review_items.sort_by_key(|item| item.id);
     review_items.dedup_by_key(|item| item.id);
 
-    let comparisons = comparisons(conn, left.id, right.id)?;
-    let constraints = constraints(conn, left.id, right.id)?;
+    let comparisons = read_comparisons(conn, left.id, right.id)?;
+    let constraints = read_pair_constraints(conn, left.id, right.id)?;
     let declared = manifest.and_then(|manifest| manifest.entity_type(left.entity_type.as_str()));
     let table = features::table(&left.entity_type);
-    let (left, right) = (explained(conn, left)?, explained(conn, right)?);
+    let (left, right) = (explain_record(conn, left)?, explain_record(conn, right)?);
     // Last, because a rule SQL refuses ends the read: see `read_rules`.
     let rules = match declared {
         Some(declared) if same_type => read_rules(
@@ -286,11 +286,11 @@ pub(crate) fn explain(
         cut,
         held_by,
     };
-    explanation.summary = summary(&explanation);
+    explanation.summary = pair_summary(&explanation);
     Ok(explanation)
 }
 
-fn explained(conn: &Connection, record: RecordEntry) -> Result<Explained> {
+fn explain_record(conn: &Connection, record: RecordEntry) -> Result<Explained> {
     let features = feature_row(conn, &features::table(&record.entity_type), record.id)?;
 
     let mut statement = conn.prepare(
@@ -407,7 +407,7 @@ fn read_rules(
     }))
 }
 
-fn comparisons(conn: &Connection, left: RecordId, right: RecordId) -> Result<Vec<Comparison>> {
+fn read_comparisons(conn: &Connection, left: RecordId, right: RecordId) -> Result<Vec<Comparison>> {
     let pair = params![left.to_string(), right.to_string()];
     let mut found: BTreeMap<RunId, Comparison> = BTreeMap::new();
 
@@ -481,7 +481,11 @@ fn comparisons(conn: &Connection, left: RecordId, right: RecordId) -> Result<Vec
     Ok(found.into_values().collect())
 }
 
-fn constraints(conn: &Connection, left: RecordId, right: RecordId) -> Result<Vec<ConstraintEntry>> {
+fn read_pair_constraints(
+    conn: &Connection,
+    left: RecordId,
+    right: RecordId,
+) -> Result<Vec<ConstraintEntry>> {
     let mut statement = conn.prepare(
         "SELECT record_a::VARCHAR, record_b::VARCHAR, kind, from_seq, to_seq
          FROM spool.constraint_link

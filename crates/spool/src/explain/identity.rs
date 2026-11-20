@@ -230,7 +230,7 @@ impl<'a> Describe<'a> {
         }
     }
 
-    fn named(&mut self, id: RecordId) -> Result<Named> {
+    fn name_record(&mut self, id: RecordId) -> Result<Named> {
         if let Some(named) = self.named.get(&id) {
             return Ok(named.clone());
         }
@@ -243,7 +243,10 @@ impl<'a> Describe<'a> {
         Ok(named)
     }
 
-    fn row(&mut self, id: RecordId) -> Result<Option<serde_json::Map<String, serde_json::Value>>> {
+    fn load_feature_row(
+        &mut self,
+        id: RecordId,
+    ) -> Result<Option<serde_json::Map<String, serde_json::Value>>> {
         if !self.rows.contains_key(&id) {
             let row = feature_row(self.conn, &self.table, id)?;
             self.rows.insert(id, row);
@@ -262,8 +265,8 @@ impl<'a> Describe<'a> {
         let mut link = Link {
             from,
             to,
-            from_record: self.named(from)?,
-            to_record: self.named(to)?,
+            from_record: self.name_record(from)?,
+            to_record: self.name_record(to)?,
             kind: found.kind,
             run: found.run,
             strategy: None,
@@ -315,7 +318,7 @@ impl<'a> Describe<'a> {
             }
         }
         if !read.is_empty() {
-            let (one, other) = (self.row(from)?, self.row(to)?);
+            let (one, other) = (self.load_feature_row(from)?, self.load_feature_row(to)?);
             if let (Some(one), Some(other)) = (one, other) {
                 for feature in read {
                     if let (Some(from), Some(to)) = (one.get(&feature), other.get(&feature)) {
@@ -347,7 +350,10 @@ impl<'a> Describe<'a> {
         }
         Ok(Split {
             links,
-            sides: vec![side(&parting.one, labels), side(&parting.other, labels)],
+            sides: vec![
+                build_side(&parting.one, labels),
+                build_side(&parting.other, labels),
+            ],
         })
     }
 }
@@ -394,7 +400,7 @@ pub(crate) fn features_read(predicate: &str) -> Vec<String> {
 }
 
 /// The label of each member of an identity, by its number in the graph.
-pub(super) fn labels(
+pub(super) fn read_member_labels(
     conn: &Connection,
     identity: IdentityId,
     graph: &Graph,
@@ -478,7 +484,10 @@ fn rule_holds(graph: &Graph, labels: &[Option<String>]) -> Vec<RuleHold> {
             links,
             alone,
             pieces: count,
-            largest: pieces.iter().map(|piece| side(piece, labels)).collect(),
+            largest: pieces
+                .iter()
+                .map(|piece| build_side(piece, labels))
+                .collect(),
         });
     }
     holds.sort_by(|one, other| {
@@ -507,7 +516,7 @@ fn name_groups(labels: &[Option<String>]) -> Vec<Vec<u32>> {
     groups
 }
 
-fn side(members: &[u32], labels: &[Option<String>]) -> Side {
+fn build_side(members: &[u32], labels: &[Option<String>]) -> Side {
     Side {
         records: members.len() as u64,
         names: common_names(members, labels, TOP_NAMES).1,
@@ -521,7 +530,7 @@ pub(crate) fn explain_identity(
 ) -> Result<IdentityExplanation> {
     let view = lookup::identity(conn, id)?.ok_or(Error::UnknownIdentity(id))?;
     let graph = Graph::read(conn, view.current)?;
-    let labels = labels(conn, view.current, &graph)?;
+    let labels = read_member_labels(conn, view.current, &graph)?;
     let everyone: Vec<u32> = (0..graph.len() as u32).collect();
     let (names, top_names) = common_names(&everyone, &labels, TOP_NAMES);
     let records = graph.len() as u64;

@@ -7,7 +7,7 @@ use duckdb::{Connection, params};
 use serde::{Deserialize, Serialize};
 use spool_core::{Actor, ChangesetId, ContentHash, IdentityId, LogEntry, Op, RunId, Seq};
 
-use super::limit;
+use super::clamp_limit;
 use crate::error::Result;
 use crate::order::{Key, Keyed, Sort, called, names_table};
 use crate::store::{OpRow, log_entry, op_from_row, parse};
@@ -172,7 +172,7 @@ pub(crate) fn changesets(
         keyed.order_by(),
     ))?;
     let after = after.and_then(|seq| i64::try_from(seq.0).ok());
-    let most = self::limit(most);
+    let most = self::clamp_limit(most);
     let table = names_table(names)?;
     let table = &table;
     let mut values: Vec<&dyn duckdb::ToSql> = vec![&after, &most];
@@ -206,7 +206,10 @@ pub(crate) fn changesets(
 }
 
 /// The changesets with who started the run each came from, in the order given.
-pub(crate) fn logged(conn: &Connection, entries: Vec<LogEntry>) -> Result<Vec<LoggedChangeset>> {
+pub(crate) fn logged_changesets(
+    conn: &Connection,
+    entries: Vec<LogEntry>,
+) -> Result<Vec<LoggedChangeset>> {
     let (Some(first), Some(last)) = (
         entries.iter().map(|entry| entry.seq).min(),
         entries.iter().map(|entry| entry.seq).max(),
@@ -240,7 +243,7 @@ pub(crate) fn changeset_summaries(
                 c.content_hash, (SELECT count(*) FROM spool.changeset_op o WHERE o.seq = c.seq)
          FROM page c ORDER BY c.seq",
     )?;
-    let mut rows = statement.query(params![after.0 as i64, head.0 as i64, limit(most)])?;
+    let mut rows = statement.query(params![after.0 as i64, head.0 as i64, clamp_limit(most)])?;
     let mut summaries = Vec::new();
     while let Some(row) = rows.next()? {
         let entry = log_entry(row)?;

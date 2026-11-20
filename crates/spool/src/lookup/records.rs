@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use spool_core::{DocumentId, EntityType, IdentityId, RecordId, RunId, StateError};
 
 use super::identities::identity_label;
-use super::{entity_type, limit, uuid_list, words};
+use super::{clamp_limit, encode_search_words, entity_type, uuid_list};
 use crate::error::Result;
 use crate::order::{Key, Keyed, Sort};
 use crate::store::parse;
@@ -154,7 +154,7 @@ impl RecordFilter {
     }
 }
 
-fn json(text: String) -> Result<serde_json::Value> {
+fn parse_json(text: String) -> Result<serde_json::Value> {
     Ok(serde_json::from_str(&text).map_err(StateError::new)?)
 }
 
@@ -174,7 +174,7 @@ const RECORD: &str = "
       ON taken.record_id = o.record_id AND taken.restored_run IS NULL";
 
 fn record_from_row(row: &duckdb::Row<'_>) -> Result<RecordEntry> {
-    fn id<T>(row: &duckdb::Row<'_>, at: usize) -> Result<Option<T>>
+    fn parse_optional_id<T>(row: &duckdb::Row<'_>, at: usize) -> Result<Option<T>>
     where
         T: std::str::FromStr,
         T::Err: std::error::Error + Send + Sync + 'static,
@@ -190,13 +190,16 @@ fn record_from_row(row: &duckdb::Row<'_>) -> Result<RecordEntry> {
         source: row.get(2)?,
         key: row.get(3)?,
         label: row.get(11)?,
-        payload: json(row.get(4)?)?,
-        evidence: row.get::<_, Option<String>>(5)?.map(json).transpose()?,
+        payload: parse_json(row.get(4)?)?,
+        evidence: row
+            .get::<_, Option<String>>(5)?
+            .map(parse_json)
+            .transpose()?,
         loaded_at: rfc3339(row.get(6)?),
         load_run: RunId(row.get::<_, i64>(7)? as u64),
-        identity: id(row, 8)?,
-        supersedes: id(row, 9)?,
-        superseded_by: id(row, 10)?,
+        identity: parse_optional_id(row, 8)?,
+        supersedes: parse_optional_id(row, 9)?,
+        superseded_by: parse_optional_id(row, 10)?,
         retracted: row.get::<_, Option<i64>>(12)?.map(|run| RunId(run as u64)),
         found_by: match row.get::<_, Option<String>>(13)? {
             Some(found) => serde_json::from_str(&found).map_err(StateError::new)?,
@@ -405,10 +408,10 @@ pub(crate) fn records(conn: &Connection, filter: &RecordFilter) -> Result<Vec<Re
         filter.key,
         filter.after.map(|id| id.to_string()),
         filter.unassigned,
-        limit(filter.limit),
+        clamp_limit(filter.limit),
         filter.document.map(|id| id.to_string()),
         filter.identity.map(|id| id.to_string()),
-        words(filter.q.as_deref()),
+        encode_search_words(filter.q.as_deref()),
         filter.latest,
     ])?;
     let mut found = Vec::new();
@@ -453,7 +456,7 @@ pub(crate) fn members(
          LIMIT $2",
         uuid_list(first)
     ))?;
-    let mut rows = statement.query(params![identity.to_string(), limit(most)])?;
+    let mut rows = statement.query(params![identity.to_string(), clamp_limit(most)])?;
     let mut found = Vec::new();
     while let Some(row) = rows.next()? {
         found.push(record_from_row(row)?);

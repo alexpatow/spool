@@ -23,7 +23,7 @@ mod prose;
 
 pub(crate) use identity::explain_identity;
 pub use identity::{IdentityExplanation, Link, LinkKind, LinkValue, NameCount, Named, Side, Split};
-pub(crate) use pair::explain;
+pub(crate) use pair::explain_pair;
 pub use pair::{
     Comparison, Explained, Explanation, Outcome, Placement, RecordedJudgement, RuleReading,
     RuleResult,

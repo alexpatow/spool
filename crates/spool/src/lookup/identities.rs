@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use spool_core::{EntityType, IdentityId, RecordId, Seq, StateError};
 
 use super::records::{RECORD_SEARCH_TEXT, contains_words};
-use super::{entity_type, limit, uuid_list, words};
+use super::{clamp_limit, encode_search_words, entity_type, uuid_list};
 use crate::error::{Error, Result};
 use crate::features;
 use crate::order::{Key, Keyed, Sort};
@@ -223,7 +223,7 @@ impl Default for IdentityFilter {
     }
 }
 
-/// What the label of each identity is, as [`labels`] finds it, as a common
+/// What the label of each identity is, as [`read_identity_labels`] finds it, as a common
 /// table expression `identity_label` of `identity_id` and `label`. Only
 /// an identity that has one is in it.
 pub(super) fn identity_label(filter_members: &str) -> String {
@@ -270,7 +270,7 @@ pub(crate) fn identity(conn: &Connection, id: IdentityId) -> Result<Option<Ident
         id,
         current,
         entity_type: entity_type(entity_type_name)?,
-        label: labels(conn, &[current])?.remove(&current),
+        label: read_identity_labels(conn, &[current])?.remove(&current),
         created: Seq(created as u64),
         members: identity_members(conn, current, None)?,
     }))
@@ -419,7 +419,10 @@ fn label_at(
 /// What to call each of the identities: the label most of its members
 /// have, judged from the members that were loaded first. An identity
 /// whose members name nothing is left out.
-fn labels(conn: &Connection, ids: &[IdentityId]) -> Result<BTreeMap<IdentityId, String>> {
+fn read_identity_labels(
+    conn: &Connection,
+    ids: &[IdentityId],
+) -> Result<BTreeMap<IdentityId, String>> {
     let mut labels: BTreeMap<IdentityId, Vec<String>> = BTreeMap::new();
     if ids.is_empty() {
         return Ok(BTreeMap::new());
@@ -453,12 +456,12 @@ fn labels(conn: &Connection, ids: &[IdentityId]) -> Result<BTreeMap<IdentityId, 
 
 /// Fills in what a list of identities says of each beyond its row: its
 /// label and the sources of its members.
-fn describe(conn: &Connection, identities: &mut [IdentitySummary]) -> Result<()> {
+fn describe_identities(conn: &Connection, identities: &mut [IdentitySummary]) -> Result<()> {
     if identities.is_empty() {
         return Ok(());
     }
     let ids: Vec<IdentityId> = identities.iter().map(|identity| identity.id).collect();
-    let mut labels = labels(conn, &ids)?;
+    let mut labels = read_identity_labels(conn, &ids)?;
     let mut sources: BTreeMap<IdentityId, Vec<SourceCount>> = BTreeMap::new();
     let mut statement = conn.prepare(&format!(
         "SELECT m.identity_id::VARCHAR, o.source_id, count(*) AS records
@@ -576,7 +579,7 @@ pub(crate) fn identities_by_id(
     while let Some(row) = rows.next()? {
         found.push(identity_summary(row)?);
     }
-    describe(conn, &mut found)?;
+    describe_identities(conn, &mut found)?;
     Ok(found)
 }
 
@@ -584,7 +587,7 @@ pub(crate) fn identities(
     conn: &Connection,
     filter: &IdentityFilter,
 ) -> Result<Vec<IdentitySummary>> {
-    let search = words(filter.q.as_deref());
+    let search = encode_search_words(filter.q.as_deref());
     let filters = format!(
         "i.merged_into IS NULL
            AND ($1::VARCHAR IS NULL OR i.entity_type = $1::VARCHAR)
@@ -651,7 +654,7 @@ pub(crate) fn identities(
     let mut statement = conn.prepare(&sql)?;
     let entity_type = filter.entity_type.as_ref().map(EntityType::as_str);
     let after = filter.after.map(|id| id.to_string());
-    let most = limit(filter.limit);
+    let most = clamp_limit(filter.limit);
     let mut rows = match &search {
         Some(search) => statement.query(params![entity_type, after, most, search])?,
         None => statement.query(params![entity_type, after, most])?,
@@ -678,7 +681,7 @@ pub(crate) fn identities(
     if let Some(search) = search {
         describe_record_matches(conn, &mut found, &search)?;
     }
-    describe(conn, &mut found)?;
+    describe_identities(conn, &mut found)?;
     Ok(found)
 }
 
