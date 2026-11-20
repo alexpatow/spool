@@ -1,3 +1,4 @@
+import { getRouteApi } from "@tanstack/react-router";
 import { useState } from "react";
 import type { ReactNode } from "react";
 
@@ -16,18 +17,21 @@ import {
   Ref,
   Section,
   Text,
-  useSorting,
+  sortingOf,
+  useNarrow,
 } from "../components.tsx";
 import { LogIcon, UndoIcon } from "../icons.tsx";
 import { useLoad, useOpNames, usePages } from "../hooks.ts";
-import type { Route } from "../router.ts";
 import { Who } from "../who.tsx";
 
 /** The changesets of one page of the log. */
 const PAGE = 100;
 
-export function Log({ route }: { route: Route }) {
-  const sorting = useSorting(route, { by: "seq", order: "desc" });
+const list = getRouteApi("/log/");
+const one = getRouteApi("/log/$id");
+
+export function Log() {
+  const sorting = sortingOf(list.useSearch(), useNarrow(), { by: "seq", order: "desc" });
   const pages = usePages(async (client, after) => {
     const page = await client.changesets({
       after: after as number | undefined,
@@ -141,7 +145,8 @@ function Undo({ seq }: { seq: number }) {
   );
 }
 
-export function Changeset({ id }: { id: string }) {
+export function Changeset() {
+  const { id } = one.useParams();
   const seq = Number(id);
   const entry = useLoad(async (client): Promise<LogEntry | null> => {
     if (!Number.isInteger(seq) || seq < 1) return null;

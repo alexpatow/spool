@@ -1,24 +1,45 @@
+import { getRouteApi } from "@tanstack/react-router";
 import { useState } from "react";
 import type { ReactNode } from "react";
 
 import { Act, At, Done } from "../act.tsx";
 import type { DraftEntry, DraftStatus, DraftSummary } from "../api.ts";
-import { Fields, Filters, Id, Load, Ops, Page, Reason, Ref, Row, Section, Table, When, Word } from "../components.tsx";
+import {
+  Fields,
+  Filters,
+  Id,
+  Load,
+  Ops,
+  Page,
+  Reason,
+  Ref,
+  Row,
+  Section,
+  Table,
+  When,
+  Word,
+  useNarrow,
+} from "../components.tsx";
 import { CheckIcon, DraftIcon } from "../icons.tsx";
 import { count } from "../format.ts";
-import { useLoad, useOpNames } from "../hooks.ts";
-import type { Route } from "../router.ts";
+import { useLoad, useOpNames, useTypes } from "../hooks.ts";
 
 const STATUSES: DraftStatus[] = ["open", "committed", "rejected", "superseded"];
 
-export function Drafts({ route, types }: { route: Route; types: string[] }) {
-  const { status, type } = route.query;
+const list = getRouteApi("/drafts/");
+const one = getRouteApi("/drafts/$id");
+
+export function Drafts() {
+  const search = list.useSearch();
+  const { status, type } = search;
+  const types = useTypes();
+  const narrow = useNarrow();
   const drafts = useLoad((client) => client.drafts({ status: status as DraftStatus | undefined, entity_type: type }));
   return (
     <Page title="Drafts">
       <Filters
-        path={["drafts"]}
-        query={route.query}
+        query={search}
+        narrow={narrow}
         selects={[
           { name: "status", label: "Status", choices: STATUSES.map((value) => ({ value })) },
           { name: "type", label: "Entity type", choices: types.map((value) => ({ value })) },
@@ -55,7 +76,8 @@ export function Drafts({ route, types }: { route: Route; types: string[] }) {
   );
 }
 
-export function Draft({ id }: { id: string }) {
+export function Draft() {
+  const { id } = one.useParams();
   const draft = useLoad((client) => client.draft(id));
   return (
     <Page

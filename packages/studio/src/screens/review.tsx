@@ -1,4 +1,5 @@
 import * as stylex from "@stylexjs/stylex";
+import { getRouteApi } from "@tanstack/react-router";
 import { useState } from "react";
 import type { ReactNode } from "react";
 
@@ -31,6 +32,7 @@ import {
   Source,
   Sources,
   sortRows,
+  useNarrow,
   When,
   Word,
 } from "../components.tsx";
@@ -38,10 +40,8 @@ import { Button } from "spool-ui/components/button";
 import * as ShelfTable from "spool-ui/components/table";
 import { facts, fieldsOf, latest, same, sourcesOf, valueOf } from "../facts.ts";
 import { count, recordName, short, tail } from "../format.ts";
-import { useLoad, useNames, useStudio } from "../hooks.ts";
+import { useLoad, useNames, useStudio, useTypes } from "../hooks.ts";
 import { CheckIcon, InboxIcon, MergeIcon, PlusIcon, SplitIcon } from "../icons.tsx";
-import { href, navigate } from "../router.ts";
-import type { Route } from "../router.ts";
 import { colors, display, linen, radius, spacing, typography } from "spool-ui/tokens.stylex";
 import { tones } from "../styles/tones.stylex";
 import { foremost, tally } from "../verdicts.ts";
@@ -74,11 +74,17 @@ function ordered(items: ReviewEntry[], order: string): ReviewEntry[] {
   }
 }
 
-export function ReviewItems({ route, types }: { route: Route; types: string[] }) {
-  const { type } = route.query;
-  const status = route.query.status ?? "open";
-  const order = route.query.sort ?? "oldest";
+const list = getRouteApi("/review/");
+const one = getRouteApi("/review/$id");
+
+export function ReviewItems() {
+  const search = list.useSearch();
+  const { type } = search;
+  const status = search.status ?? "open";
+  const order = search.sort ?? "oldest";
   const { info } = useStudio();
+  const types = useTypes();
+  const narrow = useNarrow();
   const [shown, setShown] = useState(AT_ONCE);
   // An item that was decided leaves the list of those that are open, so
   // what came of it is said above the list.
@@ -96,7 +102,7 @@ export function ReviewItems({ route, types }: { route: Route; types: string[] })
           label="Status"
           choices={[...STATUSES, "all"].map((value) => ({
             label: value === "open" ? "Open" : value[0]!.toUpperCase() + value.slice(1),
-            address: href(["review"], { ...route.query, status: value === "open" ? undefined : value }),
+            leads: { to: "/review", search: { ...search, status: value === "open" ? undefined : value } },
             current: status === value,
             count: value === "open" ? waiting : undefined,
           }))}
@@ -104,17 +110,15 @@ export function ReviewItems({ route, types }: { route: Route; types: string[] })
         <div {...stylex.props(styles.listing)}>
           {types.length > 1 ? (
             <Filters
-              path={["review"]}
-              query={route.query}
+              query={search}
+              narrow={narrow}
               selects={[{ name: "type", label: "Entity type", choices: types.map((value) => ({ value })) }]}
             />
           ) : null}
           <Labelled label="Order">
             <Select
               value={order}
-              onChange={(value) =>
-                navigate(href(["review"], { ...route.query, sort: value === "oldest" ? undefined : value }))
-              }
+              onChange={(value) => narrow({ sort: value === "oldest" ? undefined : value })}
               choices={ORDERS}
             />
           </Labelled>
@@ -150,7 +154,8 @@ export function ReviewItems({ route, types }: { route: Route; types: string[] })
   );
 }
 
-export function ReviewItem({ id }: { id: string }) {
+export function ReviewItem() {
+  const { id } = one.useParams();
   const [done, setDone] = useState<ReactNode>(null);
   return (
     <Page
@@ -957,7 +962,7 @@ function Constraints({ constraints, names }: { constraints: CaseConstraint[]; na
             <Ref kind="record" id={constraint.b} label={names.get(constraint.b)} />, since{" "}
             <Ref kind="log" id={constraint.from} label={`log position ${constraint.from}`} />
           </span>
-          <Onward path={["explain"]} query={{ a: constraint.a, b: constraint.b }}>
+          <Onward to="/explain" search={{ a: constraint.a, b: constraint.b }}>
             explain
           </Onward>
         </span>
@@ -1010,7 +1015,7 @@ function Judgements({ judgements, named }: { judgements: PairJudgement[]; named:
               {by.length > 0 ? ` by ${by.join(", ")}` : ""}
               {judgement.score !== null && judgement.score !== undefined ? `, score ${judgement.score}` : ""}
             </span>
-            <Onward path={["explain"]} query={{ a: judgement.record, b: judgement.other }}>
+            <Onward to="/explain" search={{ a: judgement.record, b: judgement.other }}>
               explain
             </Onward>
           </span>

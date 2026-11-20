@@ -1,4 +1,5 @@
 import * as stylex from "@stylexjs/stylex";
+import { getRouteApi } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef } from "react";
 
 import type { DocumentEntry, DocumentSort, RecordEntry, SpoolClient } from "../api.ts";
@@ -14,11 +15,13 @@ import {
   PagedTable,
   Quiet,
   Ref,
+  ScreenLink,
   Section,
+  sortingOf,
   Source,
   Table,
+  useNarrow,
   usePair,
-  useSorting,
   When,
   Word,
 } from "../components.tsx";
@@ -28,17 +31,20 @@ import { tones } from "../styles/tones.stylex";
 import { codePoints, count, mentionOf, named, readBy, segments } from "../format.ts";
 import type { Mention } from "../format.ts";
 import { useLabels, useLoad, usePages } from "../hooks.ts";
-import { href } from "../router.ts";
-import type { Route } from "../router.ts";
 
-export function Documents({ route }: { route: Route }) {
-  const { source, key, latest } = route.query;
-  const sorting = useSorting(route, { by: "key", order: "asc" });
+const list = getRouteApi("/documents/");
+const one = getRouteApi("/documents/$id");
+
+export function Documents() {
+  const search = list.useSearch();
+  const { source, key, latest } = search;
+  const narrow = useNarrow();
+  const sorting = sortingOf(search, narrow, { by: "key", order: "asc" });
   const pages = usePages(async (client, after) => {
     const page = await client.documents({
       source,
       key,
-      latest: latest === "true" ? true : undefined,
+      latest,
       after: after as string | undefined,
       sort: sorting.by as DocumentSort,
       order: sorting.order,
@@ -48,8 +54,8 @@ export function Documents({ route }: { route: Route }) {
   return (
     <Page title="Documents">
       <Filters
-        path={["documents"]}
-        query={route.query}
+        query={search}
+        narrow={narrow}
         texts={[
           { name: "source", label: "Source" },
           { name: "key", label: "Key" },
@@ -113,13 +119,15 @@ async function mentions(client: SpoolClient, document: string): Promise<{ found:
   }
 }
 
-export function Document({ id, route }: { id: string; route: Route }) {
+export function Document() {
+  const { id } = one.useParams();
+  const search = one.useSearch();
   const loaded = useLoad(async (client): Promise<Loaded> => {
     const [document, read] = await Promise.all([client.document(id), mentions(client, id)]);
     read.found.sort((a, b) => a.mention.start - b.mention.start || a.mention.end - b.mention.end);
     return { document, ...read };
   });
-  const at = route.query.at === undefined ? null : Number(route.query.at);
+  const at = search.at ?? null;
   return (
     <Page
       title={loaded.status === "ready" ? named(loaded.data.document.source, loaded.data.document.key) : "Document"}
@@ -188,7 +196,7 @@ function DocumentScreen({ document, found, cut, at }: Loaded & { at: number | nu
         {cut ? (
           <Quiet>
             First {found.length} mentions marked.{" "}
-            <LinkTo path={["records"]} query={{ document: document.id }}>
+            <LinkTo to="/records" search={{ document: document.id }}>
               All mentions
             </LinkTo>
           </Quiet>
@@ -202,9 +210,9 @@ function DocumentScreen({ document, found, cut, at }: Loaded & { at: number | nu
               title: "Mention",
               value: ({ mention }) => points.slice(mention.start, mention.end).join(""),
               cell: ({ record, mention }) => (
-                <a href={href(["records", record.id])} {...stylex.props(styles.link)}>
+                <ScreenLink to="/records/$id" params={{ id: record.id }} {...stylex.props(styles.link)}>
                   {points.slice(mention.start, mention.end).join("")}
-                </a>
+                </ScreenLink>
               ),
             },
             {
@@ -261,17 +269,18 @@ function Marked({ points, found, at }: { points: string[]; found: Found[]; at: n
         if (first === undefined) return <span key={piece.start}>{piece.text}</span>;
         const here = at !== null && piece.covered.some(({ mention }) => mention.start === at);
         return (
-          <a
+          <ScreenLink
             key={piece.start}
             ref={here ? target : undefined}
             data-part="mention"
             data-here={here ? "" : undefined}
             {...stylex.props(styles.mention, here && styles.here)}
-            href={href(["records", first.record.id])}
+            to="/records/$id"
+            params={{ id: first.record.id }}
             title={piece.covered.map(({ record }) => `${record.entity_type} ${record.id}`).join("\n")}
           >
             {piece.text}
-          </a>
+          </ScreenLink>
         );
       })}
     </pre>

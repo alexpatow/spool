@@ -3,21 +3,23 @@
 // screen, and what it finds is one press away.
 
 import * as stylex from "@stylexjs/stylex";
+import { useNavigate } from "@tanstack/react-router";
+import type { LinkProps } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import type { IdentitySummary, RecordEntry } from "./api.ts";
-import { Source, Sources, message } from "./components.tsx";
+import { SCREENS, Source, Sources, message } from "./components.tsx";
 import * as Command from "spool-ui/components/command";
 import { findScreen, isReference } from "./find.ts";
 import { count, identityMatch, recordName, short } from "./format.ts";
 import { useStudio } from "./hooks.ts";
 import { ArrowRightIcon, IdentityIcon, RecordIcon, SearchIcon } from "./icons.tsx";
-import { href, navigate } from "./router.ts";
 import { colors, spacing, typography } from "spool-ui/tokens.stylex";
 
+/** A screen that is not of one thing: the overview, or a list. */
 export interface Place {
-  path: string;
+  to: "/" | "/review" | "/drafts" | "/identities" | "/records" | "/documents" | "/explain" | "/runs" | "/log" | "/people" | "/tokens";
   label: string;
   icon: ReactNode;
 }
@@ -58,6 +60,7 @@ export function Palette({
   places: Place[];
 }) {
   const { client } = useStudio();
+  const navigate = useNavigate();
   const [typed, setTyped] = useState("");
   const [results, setResults] = useState<Results | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -101,8 +104,8 @@ export function Palette({
   }, [client, words]);
 
   const groups = useMemo((): Group[] => {
-    const go = (address: string) => () => {
-      navigate(address);
+    const go = (leads: LinkProps) => () => {
+      void navigate(leads);
       onOpenChange(false);
     };
     const list: Group[] = [];
@@ -124,10 +127,10 @@ export function Palette({
             go: () => {
               setBusy(true);
               findScreen(client, words).then(
-                (screen) => {
+                (found) => {
                   setBusy(false);
-                  if (screen === null) setProblem(`${words} not found.`);
-                  else go(screen)();
+                  if (found === null) setProblem(`${words} not found.`);
+                  else go({ to: SCREENS[found.kind], params: { id: found.id } })();
                 },
                 (error: unknown) => {
                   setBusy(false);
@@ -159,7 +162,7 @@ export function Palette({
                   <Sources sources={identity.sources} />
                 </>
               ),
-              go: go(href(["identities", identity.id])),
+              go: go({ to: "/identities/$id", params: { id: identity.id } }),
             })),
             ...(results.identities.length === MOST
               ? [
@@ -172,7 +175,7 @@ export function Palette({
                         <span>All identities matching “{words}”</span>
                       </>
                     ),
-                    go: go(href(["identities"], { q: words })),
+                    go: go({ to: "/identities", search: { q: words } }),
                   },
                 ]
               : []),
@@ -194,7 +197,7 @@ export function Palette({
                   <Source name={record.source} />
                 </>
               ),
-              go: go(href(["records", record.id])),
+              go: go({ to: "/records/$id", params: { id: record.id } }),
             })),
             ...(results.records.length === MOST
               ? [
@@ -207,7 +210,7 @@ export function Palette({
                         <span>All records matching “{words}”</span>
                       </>
                     ),
-                    go: go(href(["records"], { q: words })),
+                    go: go({ to: "/records", search: { q: words } }),
                   },
                 ]
               : []),
@@ -220,7 +223,7 @@ export function Palette({
       list.push({
         value: "Screens",
         items: screens.map((place) => ({
-          value: `screen:${place.path}`,
+          value: `screen:${place.to}`,
           label: words,
           line: (
             <>
@@ -228,12 +231,12 @@ export function Palette({
               <span>{place.label}</span>
             </>
           ),
-          go: go(href(place.path === "" ? [] : [place.path])),
+          go: go({ to: place.to }),
         })),
       });
     }
     return list;
-  }, [client, onOpenChange, places, results, words]);
+  }, [client, navigate, onOpenChange, places, results, words]);
 
   const waiting = busy || (words !== "" && results?.words !== words);
 

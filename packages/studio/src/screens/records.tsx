@@ -1,4 +1,5 @@
 import * as stylex from "@stylexjs/stylex";
+import { getRouteApi, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import type { ReactNode } from "react";
 
@@ -19,12 +20,14 @@ import {
   PagedTable,
   Ref,
   Row,
+  ScreenLink,
   Section,
   Select,
+  sortingOf,
   Source,
   Text,
+  useNarrow,
   usePair,
-  useSorting,
   When,
   Word,
 } from "../components.tsx";
@@ -33,10 +36,8 @@ import { Input } from "spool-ui/components/input";
 import { findIdentity, findRecord, found } from "../find.ts";
 import { excerpt, mentionOf, named, recordName } from "../format.ts";
 import type { Excerpt, Mention } from "../format.ts";
-import { useLabels, useLoad, usePages, useStudio } from "../hooks.ts";
+import { useLabels, useLoad, usePages, useStudio, useTypes } from "../hooks.ts";
 import { RecordIcon } from "../icons.tsx";
-import { href, navigate } from "../router.ts";
-import type { Route } from "../router.ts";
 import { colors, radius, spacing, typography } from "spool-ui/tokens.stylex";
 import { tones } from "../styles/tones.stylex";
 
@@ -46,10 +47,16 @@ function keyOf(record: RecordEntry): string {
   return name.startsWith(`${record.source}:`) ? name.slice(record.source.length + 1) : name;
 }
 
-export function RecordsPage({ route, types }: { route: Route; types: string[] }) {
-  const { type, source, key, document, unassigned, q } = route.query;
+const list = getRouteApi("/records/");
+const one = getRouteApi("/records/$id");
+
+export function RecordsPage() {
+  const search = list.useSearch();
+  const { type, source, key, document, unassigned, q } = search;
+  const types = useTypes();
+  const narrow = useNarrow();
   const pair = usePair();
-  const sorting = useSorting(route, { by: "source", order: "asc" });
+  const sorting = sortingOf(search, narrow, { by: "source", order: "asc" });
   const pages = usePages(async (client, after) => {
     const page = await client.records({
       sort: sorting.by as RecordSort,
@@ -59,7 +66,7 @@ export function RecordsPage({ route, types }: { route: Route; types: string[] })
       key,
       document,
       q,
-      unassigned: unassigned === "true" ? true : undefined,
+      unassigned,
       after: after as string | undefined,
     });
     return { items: page.records, next: page.next };
@@ -77,8 +84,8 @@ export function RecordsPage({ route, types }: { route: Route; types: string[] })
       }
     >
       <Filters
-        path={["records"]}
-        query={route.query}
+        query={search}
+        narrow={narrow}
         search={{ name: "q", label: "Search", placeholder: "Value, source or key" }}
         selects={[{ name: "type", label: "Entity type", choices: types.map((value) => ({ value })) }]}
         texts={[
@@ -130,7 +137,8 @@ interface Loaded {
   document: DocumentEntry | null;
 }
 
-export function RecordPage({ id }: { id: string }) {
+export function RecordPage() {
+  const { id } = one.useParams();
   const loaded = useLoad(async (client): Promise<Loaded> => {
     const [record, review] = await Promise.all([client.record(id), client.reviewItems({ record: id })]);
     const mention = mentionOf(record);
@@ -348,9 +356,14 @@ function Found({ mention, document, excerpt }: { mention: Mention; document: Doc
     <Section title="Mention">
       <Text>
         In document{" "}
-        <a href={href(["documents", document.id], { at: mention.start })} {...stylex.props(styles.link)}>
+        <ScreenLink
+          to="/documents/$id"
+          params={{ id: document.id }}
+          search={{ at: mention.start }}
+          {...stylex.props(styles.link)}
+        >
           {named(document.source, document.key)}
-        </a>
+        </ScreenLink>
         , characters {mention.start} to {mention.end}.
       </Text>
       {excerpt ? (
@@ -369,6 +382,7 @@ function Found({ mention, document, excerpt }: { mention: Mention; document: Doc
 /** Asks for the other record of a pair, and goes to the explanation of the two. */
 function ExplainWith({ record }: { record: RecordEntry }) {
   const { client } = useStudio();
+  const navigate = useNavigate();
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   return (
@@ -385,7 +399,7 @@ function ExplainWith({ record }: { record: RecordEntry }) {
             (other) => {
               setBusy(false);
               if (other === null) setProblem(`No record found for ${reference}.`);
-              else navigate(href(["explain"], { a: record.id, b: other.id }));
+              else void navigate({ to: "/explain", search: { a: record.id, b: other.id } });
             },
             (error: unknown) => {
               setBusy(false);

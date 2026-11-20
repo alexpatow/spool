@@ -1,4 +1,5 @@
 import * as stylex from "@stylexjs/stylex";
+import { getRouteApi } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
@@ -36,7 +37,8 @@ import {
   When,
   Word,
   message,
-  useSorting,
+  sortingOf,
+  useNarrow,
   useTicks,
 } from "../components.tsx";
 import { Button } from "spool-ui/components/button";
@@ -46,9 +48,8 @@ import { facts, latest, sourcesOf } from "../facts.ts";
 import type { Fact } from "../facts.ts";
 import { findIdentity } from "../find.ts";
 import { count, identitiesOf, identityMatch, recordName, recordsOf, short, tail } from "../format.ts";
-import { useLabels, useLoad, useNames, usePages, useStudio } from "../hooks.ts";
+import { useLabels, useLoad, useNames, usePages, useStudio, useTypes } from "../hooks.ts";
 import { IdentityIcon, MergeIcon, SplitIcon } from "../icons.tsx";
-import type { Route } from "../router.ts";
 import { colors, spacing, typography } from "spool-ui/tokens.stylex";
 import { Who } from "../who.tsx";
 
@@ -57,11 +58,17 @@ export function identityName(identity: Pick<IdentitySummary, "id" | "label">): s
   return identity.label ?? short(identity.id);
 }
 
-export function Identities({ route, types }: { route: Route; types: string[] }) {
-  const { type, q } = route.query;
+const list = getRouteApi("/identities/");
+const one = getRouteApi("/identities/$id");
+
+export function Identities() {
+  const search = list.useSearch();
+  const { type, q } = search;
   const searching = Boolean(q?.trim());
   const { info } = useStudio();
-  const sorting = useSorting(route, { by: searching ? "" : "label", order: "asc" });
+  const types = useTypes();
+  const narrow = useNarrow();
+  const sorting = sortingOf(search, narrow, { by: searching ? "" : "label", order: "asc" });
   const pages = usePages(async (client, after) => {
     const page = await client.identities({
       entity_type: type,
@@ -78,8 +85,8 @@ export function Identities({ route, types }: { route: Route; types: string[] }) 
   return (
     <Page title="Identities" about={q ? undefined : count(total, "identity")}>
       <Filters
-        path={["identities"]}
-        query={route.query}
+        query={search}
+        narrow={narrow}
         search={{ name: "q", label: "Search", placeholder: "Name, alias or record value" }}
         selects={[{ name: "type", label: "Entity type", choices: types.map((value) => ({ value })) }]}
       />
@@ -134,7 +141,8 @@ interface Loaded {
   history: HistoryEntry[];
 }
 
-export function Identity({ id }: { id: string }) {
+export function Identity() {
+  const { id } = one.useParams();
   const identity = useLoad(async (client): Promise<Loaded> => {
     const { store } = await client.info();
     const [view, history] = await Promise.all([client.identity(id), client.identityHistory(id)]);

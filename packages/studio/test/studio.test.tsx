@@ -11,7 +11,6 @@ import { standInForGoogle } from "../scripts/google-stand-in.ts";
 import { SpoolClient } from "../src/api.ts";
 import type { Fetch } from "../src/api.ts";
 import { App, THEME_KEY } from "../src/app.tsx";
-import { here } from "../src/router.ts";
 import {
   SEEDING,
   STOPPING,
@@ -20,6 +19,7 @@ import {
   field,
   follow,
   heading,
+  here,
   idle,
   memory,
   open,

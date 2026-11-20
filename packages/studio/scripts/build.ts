@@ -5,6 +5,10 @@
 //
 //   bun scripts/build.ts           writes the files
 //   bun scripts/build.ts --check   fails if a file is out of date
+//
+// The build also writes `src/routeTree.gen.ts`, the list of the screens'
+// routes that the router's plugin makes of the files under `src/routes`. It
+// is committed, and `--check` fails if it is not what those files make.
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -15,6 +19,7 @@ import { build } from "vite";
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
 const outputDir = join(root, "../../crates/spool-cli/assets/studio");
+const routeTree = join(root, "src/routeTree.gen.ts");
 
 /** The files the server has a route for. A build that makes another is a mistake. */
 const FILES = [
@@ -135,14 +140,21 @@ async function generate(): Promise<Map<string, Buffer>> {
   return files;
 }
 
+const read = (path: string) => (existsSync(path) ? readFileSync(path) : null);
+
+// The build writes the route tree where the source reads it.
+const committedTree = read(routeTree);
 const generated = await generate();
 if (process.argv.includes("--check")) {
   const stale = [...generated]
-    .filter(([name, contents]) => {
-      const path = join(outputDir, name);
-      return !existsSync(path) || !readFileSync(path).equals(contents);
-    })
+    .filter(([name, contents]) => !read(join(outputDir, name))?.equals(contents))
     .map(([name]) => join(outputDir, name));
+  const builtTree = read(routeTree);
+  if (committedTree === null || builtTree === null || !builtTree.equals(committedTree)) {
+    stale.push(routeTree);
+    // A check changes nothing: the tree is left as it was found.
+    if (committedTree !== null) writeFileSync(routeTree, committedTree);
+  }
   if (stale.length > 0) {
     for (const path of stale) console.error(`${path} is out of date`);
     console.error("run `bun run build` in packages/studio");

@@ -1,4 +1,5 @@
 import * as stylex from "@stylexjs/stylex";
+import { getRouteApi } from "@tanstack/react-router";
 import { useState } from "react";
 import type { ReactNode } from "react";
 
@@ -37,12 +38,12 @@ import { tones } from "../styles/tones.stylex";
 import { findRecord } from "../find.ts";
 import { recordName, plain } from "../format.ts";
 import { useLabels, useLoad, useStudio } from "../hooks.ts";
-import { href, navigate } from "../router.ts";
-import type { Route } from "../router.ts";
 import { Who } from "../who.tsx";
 
-export function Explain({ route }: { route: Route }) {
-  const { a, b } = route.query;
+const route = getRouteApi("/explain");
+
+export function Explain() {
+  const { a, b } = route.useSearch();
   return (
     <Page title="Explain">
       <Ask a={a} b={b} />
@@ -54,6 +55,7 @@ export function Explain({ route }: { route: Route }) {
 /** Takes the two records, by ID or as `source:key`, and goes to their explanation. */
 function Ask({ a, b }: { a?: string; b?: string }) {
   const { client } = useStudio();
+  const navigate = route.useNavigate();
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   return (
@@ -75,7 +77,7 @@ function Ask({ a, b }: { a?: string; b?: string }) {
               setBusy(false);
               const missing = references.find((_, index) => found[index] === null);
               if (missing !== undefined) setProblem(`No record found for ${missing}.`);
-              else navigate(href(["explain"], { a: found[0]!.id, b: found[1]!.id }));
+              else void navigate({ search: { a: found[0]!.id, b: found[1]!.id } });
             },
             (error: unknown) => {
               setBusy(false);

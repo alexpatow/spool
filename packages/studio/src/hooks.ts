@@ -1,12 +1,10 @@
-// What every screen has: the client, a way to read with it, and the address.
+// What every screen has: the client, and a way to read with it.
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import type { Info, Op, Person, SpoolClient } from "./api.ts";
 import { found } from "./find.ts";
 import { identitiesOf, recordName, recordsOf, tail } from "./format.ts";
-import { here, onMove, ownLink, navigate, parseAddress } from "./router.ts";
-import type { Route } from "./router.ts";
 
 export interface Studio {
   client: SpoolClient;
@@ -32,24 +30,10 @@ export function useStudio(): Studio {
   return studio;
 }
 
-export function useRoute(): Route {
-  const [route, setRoute] = useState(() => parseAddress(here()));
-  useEffect(() => {
-    // A link to a screen changes the address without loading the page again.
-    const clicked = (event: MouseEvent) => {
-      const address = ownLink(event);
-      if (address === null) return;
-      event.preventDefault();
-      navigate(address);
-    };
-    document.addEventListener("click", clicked);
-    const stop = onMove(() => setRoute(parseAddress(here())));
-    return () => {
-      document.removeEventListener("click", clicked);
-      stop();
-    };
-  }, []);
-  return route;
+/** The names of the entity types the store has, which lists are narrowed by. */
+export function useTypes(): string[] {
+  const { info } = useStudio();
+  return useMemo(() => info.store.entity_types.map((type) => type.name), [info]);
 }
 
 export type Loaded<T> = { status: "loading" } | { status: "failed"; error: unknown } | { status: "ready"; data: T };

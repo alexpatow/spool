@@ -1,9 +1,12 @@
 // The pieces the screens are made of.
 
 import * as stylex from "@stylexjs/stylex";
-import { useEffect, useState } from "react";
-import type { ReactNode } from "react";
+import { createLink, useNavigate } from "@tanstack/react-router";
+import type { LinkComponent, LinkProps } from "@tanstack/react-router";
+import { forwardRef, useEffect, useState } from "react";
+import type { ComponentProps, ReactNode } from "react";
 
+import type { Order, QueryValue } from "./address.ts";
 import { SpoolError } from "./api.ts";
 import type { Op } from "./api.ts";
 import { Button } from "spool-ui/components/button";
@@ -25,8 +28,6 @@ import {
   CircleCheckIcon,
   InfoIcon,
 } from "./icons.tsx";
-import { href, navigate } from "./router.ts";
-import type { QueryValue, Route } from "./router.ts";
 import { colors, display, linen, radius, spacing, typography } from "spool-ui/tokens.stylex";
 import { tones } from "./styles/tones.stylex";
 
@@ -180,9 +181,12 @@ export function Section({
   );
 }
 
+/** Where a link leads: a screen, what it names, and its filters. */
+export type Leads = Pick<LinkProps, "to" | "params" | "search">;
+
 export interface Choosing {
   label: string;
-  address: string;
+  leads: Leads;
   current: boolean;
   /** How many there are of it, when the screen knows. */
   count?: number;
@@ -194,9 +198,9 @@ export function Choose({ label, choices }: { label: string; choices: Choosing[] 
     <ul aria-label={label} {...stylex.props(styles.choose)}>
       {choices.map((choice) => (
         <li key={choice.label} {...stylex.props(styles.choiceItem)}>
-          <a
-            href={choice.address}
-            aria-current={choice.current ? "true" : undefined}
+          <ScreenLink
+            {...choice.leads}
+            current={choice.current ? "true" : undefined}
             {...stylex.props(styles.choice, choice.current && styles.choiceCurrent)}
           >
             {choice.label}
@@ -205,7 +209,7 @@ export function Choose({ label, choices }: { label: string; choices: Choosing[] 
                 {choice.count}
               </span>
             ) : null}
-          </a>
+          </ScreenLink>
         </li>
       ))}
     </ul>
@@ -243,7 +247,7 @@ export function Fields({ rows }: { rows: Array<[string, ReactNode]> }) {
   );
 }
 
-export type Order = "asc" | "desc";
+export type { Order };
 
 /** What a value of a row is sorted as. What is missing comes last, whichever way. */
 export type Sortable = string | number | null | undefined;
@@ -423,23 +427,29 @@ export function More({ pages }: { pages: Pick<Pages<unknown>, "more" | "reading"
   );
 }
 
+/** Goes to the screen that is shown, with some of its filters changed. */
+export type Narrow = (filters: Record<string, QueryValue>) => void;
+
+/**
+ * The way to change the filters of the screen that is shown. The others
+ * stay as the address has them, and what is changed comes after them.
+ */
+export function useNarrow(): Narrow {
+  const navigate = useNavigate();
+  // Which filters a screen has is its route's to say: the route reads them out of the address again.
+  return (filters) => void navigate({ to: ".", search: (before) => ({ ...before, ...filters }) as never });
+}
+
 /**
  * The order of a list read in pages, kept in the address as `sort` and
  * `order` so that a sorted list can be linked to. `own` is the order it has
  * when the address names none.
  */
-export function useSorting(route: Route, own: Sorted): Sorting {
-  const by = route.query.sort ?? own.by;
-  const order: Order =
-    route.query.order === "asc" || route.query.order === "desc"
-      ? route.query.order
-      : route.query.sort === undefined
-        ? own.order
-        : "asc";
+export function sortingOf(search: { sort?: string; order?: Order }, narrow: Narrow, own: Sorted): Sorting {
   return {
-    by,
-    order,
-    choose: ({ by, order }) => navigate(href(route.path, { ...route.query, sort: by, order })),
+    by: search.sort ?? own.by,
+    order: search.order ?? (search.sort === undefined ? own.order : "asc"),
+    choose: ({ by, order }) => narrow({ sort: by, order }),
   };
 }
 
@@ -536,23 +546,47 @@ export function Sources({ sources }: { sources: Array<{ source: string; records:
 
 export type Kind = "record" | "identity" | "document" | "draft" | "run" | "review" | "log";
 
-const SCREENS: Record<Kind, string> = {
-  record: "records",
-  identity: "identities",
-  document: "documents",
-  draft: "drafts",
-  run: "runs",
-  review: "review",
-  log: "log",
-};
+/** The screen of one thing of each kind. */
+export const SCREENS = {
+  record: "/records/$id",
+  identity: "/identities/$id",
+  document: "/documents/$id",
+  draft: "/drafts/$id",
+  run: "/runs/$id",
+  review: "/review/$id",
+  log: "/log/$id",
+} as const satisfies Record<Kind, string>;
+
+/**
+ * The anchor of a link to a screen. The router marks every link to where the
+ * reader is as the current one. The studio says which is current only where
+ * a list has one, the screens and the choices, so the router's mark is left
+ * out and the list's own is `current`.
+ */
+const Anchor = forwardRef<HTMLAnchorElement, ComponentProps<"a"> & { current?: "page" | "true" }>(
+  function Anchor({ current, "aria-current": _routers, ...props }, ref) {
+    const { "data-status": _status, disabled: _disabled, ...anchor } = props as typeof props & Record<string, unknown>;
+    return <a ref={ref} {...anchor} aria-current={current} />;
+  },
+);
+
+const RouterLink = createLink(Anchor);
+const NOT_MARKED = {};
+
+/**
+ * A link to a screen of the studio, which goes there without loading the
+ * page again: the router's link, with nothing added to how it looks.
+ */
+export const ScreenLink: LinkComponent<typeof Anchor> = (props) => <RouterLink activeProps={NOT_MARKED} {...props} />;
 
 /** A link to the screen of one thing. A long ID is shortened and shown whole on hover. */
 export function Ref({ kind, id, label }: { kind: Kind; id: string | number; label?: ReactNode }) {
   const text = String(id);
   const bare = label === undefined || label === null;
   return (
-    <a
-      href={href([SCREENS[kind], text])}
+    <ScreenLink
+      to={SCREENS[kind]}
+      params={{ id: text }}
       title={text}
       data-kind={kind}
       {...stylex.props(
@@ -562,7 +596,7 @@ export function Ref({ kind, id, label }: { kind: Kind; id: string | number; labe
       )}
     >
       {bare ? short(text) : label}
-    </a>
+    </ScreenLink>
   );
 }
 
@@ -596,21 +630,8 @@ export function Id({ value }: { value: string }) {
   );
 }
 
-export function LinkTo({
-  path,
-  query,
-  children,
-}: {
-  path: Array<string | number>;
-  query?: Record<string, QueryValue>;
-  children: ReactNode;
-}) {
-  return (
-    <a href={href(path, query)} {...stylex.props(styles.link)}>
-      {children}
-    </a>
-  );
-}
+/** A link to a screen, in the words of the page. */
+export const LinkTo: LinkComponent<typeof Anchor> = (props) => <ScreenLink {...props} {...stylex.props(styles.link)} />;
 
 /**
  * An identity where a screen holds only its ID: what it is called, when
@@ -644,23 +665,24 @@ export function Identity({ id, labels }: { id: string; labels: Map<string, strin
   );
 }
 
-/** A link that reads as the next thing to do. */
-export function Onward({
-  path,
-  query,
-  children,
-}: {
-  path: Array<string | number>;
-  query?: Record<string, QueryValue>;
-  children: ReactNode;
-}) {
+const ArrowAnchor = forwardRef<HTMLAnchorElement, ComponentProps<typeof Anchor>>(function ArrowAnchor(
+  { children, ...props },
+  ref,
+) {
   return (
-    <a href={href(path, query)} {...stylex.props(styles.link, styles.onward)}>
+    <Anchor ref={ref} {...props}>
       {children}
       <ArrowRightIcon />
-    </a>
+    </Anchor>
   );
-}
+});
+
+const ArrowLink = createLink(ArrowAnchor);
+
+/** A link that reads as the next thing to do. */
+export const Onward: LinkComponent<typeof ArrowAnchor> = (props) => (
+  <ArrowLink activeProps={NOT_MARKED} {...props} {...stylex.props(styles.link, styles.onward)} />
+);
 
 /** A sentence with links in it. `names` gives records a name to show in place of their ID. */
 export function Parts({ parts, names }: { parts: Part[]; names?: Map<string, string> }) {
@@ -783,24 +805,23 @@ export function Select({
  * as it was narrowed can be linked to.
  */
 export function Filters({
-  path,
   query,
+  narrow,
   search,
   selects = [],
   texts = [],
   flags = [],
 }: {
-  path: string[];
-  query: Record<string, string>;
+  /** The filters as the address has them. */
+  query: Record<string, QueryValue>;
+  narrow: Narrow;
   /** A box for words to look for, which is the first thing in the row. */
   search?: { name: string; label: string; placeholder: string };
   selects?: Array<{ name: string; label: string; choices: Choice[] }>;
   texts?: Array<{ name: string; label: string }>;
   flags?: Array<{ name: string; label: string }>;
 }) {
-  const go = (name: string, value: QueryValue) => {
-    navigate(href(path, { ...query, [name]: value }));
-  };
+  const said = (name: string) => String(query[name] ?? "");
   const typed = [...(search ? [search] : []), ...texts];
   return (
     <form
@@ -811,7 +832,7 @@ export function Filters({
         const entered = new FormData(event.currentTarget);
         const values: Record<string, QueryValue> = {};
         for (const { name } of typed) values[name] = String(entered.get(name) ?? "").trim();
-        navigate(href(path, { ...query, ...values }));
+        narrow(values);
       }}
     >
       {search ? (
@@ -819,7 +840,7 @@ export function Filters({
           <Input
             name={search.name}
             type="search"
-            defaultValue={query[search.name] ?? ""}
+            defaultValue={said(search.name)}
             placeholder={search.placeholder}
             spellCheck={false}
             autoComplete="off"
@@ -829,16 +850,21 @@ export function Filters({
       ) : null}
       {selects.map(({ name, label, choices }) => (
         <Labelled key={name} label={label}>
-          <Select value={query[name] ?? ""} onChange={(value) => go(name, value)} choices={choices} any="any" />
+          <Select value={said(name)} onChange={(value) => narrow({ [name]: value })} choices={choices} any="any" />
         </Labelled>
       ))}
       {texts.map(({ name, label }) => (
         <Labelled key={name} label={label}>
-          <Input name={name} defaultValue={query[name] ?? ""} spellCheck={false} autoComplete="off" />
+          <Input name={name} defaultValue={said(name)} spellCheck={false} autoComplete="off" />
         </Labelled>
       ))}
       {flags.map(({ name, label }) => (
-        <Flag key={name} label={label} checked={query[name] === "true"} onChange={(checked) => go(name, checked)} />
+        <Flag
+          key={name}
+          label={label}
+          checked={query[name] === true}
+          onChange={(checked) => narrow({ [name]: checked })}
+        />
       ))}
       {typed.length > 0 ? (
         <Button type="submit" variant="outline">
@@ -875,7 +901,7 @@ export function useTicks(most?: number): {
 /** The link that explains two ticked records, or what to tick to get it. */
 export function ExplainTicked({ chosen }: { chosen: string[] }) {
   return chosen.length === 2 ? (
-    <Onward path={["explain"]} query={{ a: chosen[0], b: chosen[1] }}>
+    <Onward to="/explain" search={{ a: chosen[0], b: chosen[1] }}>
       Explain selected
     </Onward>
   ) : (

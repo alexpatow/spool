@@ -1,3 +1,4 @@
+import { getRouteApi } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 
 import type { RunEntry, RunKind, RunSort, RunStatus } from "../api.ts";
@@ -14,24 +15,30 @@ import {
   Ref,
   Section,
   Table,
-  useSorting,
+  sortingOf,
+  useNarrow,
   When,
   Word,
 } from "../components.tsx";
 import { RunIcon } from "../icons.tsx";
 import { count } from "../format.ts";
-import { useLabels, useLoad } from "../hooks.ts";
-import type { Route } from "../router.ts";
+import { useLabels, useLoad, useTypes } from "../hooks.ts";
 import { Who } from "../who.tsx";
 
 const KINDS: RunKind[] = ["load", "extract", "match", "reconcile", "retract"];
 const STATUSES: RunStatus[] = ["running", "open", "drafted", "succeeded", "failed"];
 const STEP = 100;
 
-export function Runs({ route, types }: { route: Route; types: string[] }) {
-  const { kind, status, type } = route.query;
-  const limit = Number(route.query.limit) || STEP;
-  const sorting = useSorting(route, { by: "run", order: "desc" });
+const list = getRouteApi("/runs/");
+const one = getRouteApi("/runs/$id");
+
+export function Runs() {
+  const search = list.useSearch();
+  const { kind, status, type } = search;
+  const limit = search.limit || STEP;
+  const types = useTypes();
+  const narrow = useNarrow();
+  const sorting = sortingOf(search, narrow, { by: "run", order: "desc" });
   const runs = useLoad((client) =>
     client.runs({
       kind: kind as RunKind | undefined,
@@ -45,8 +52,8 @@ export function Runs({ route, types }: { route: Route; types: string[] }) {
   return (
     <Page title="Runs">
       <Filters
-        path={["runs"]}
-        query={route.query}
+        query={search}
+        narrow={narrow}
         selects={[
           { name: "kind", label: "Kind", choices: KINDS.map((value) => ({ value })) },
           { name: "status", label: "Status", choices: STATUSES.map((value) => ({ value })) },
@@ -81,7 +88,7 @@ export function Runs({ route, types }: { route: Route; types: string[] }) {
               empty="No runs."
             />
             {runs.length >= limit && limit < 1000 ? (
-              <Onward path={["runs"]} query={{ ...route.query, limit: Math.min(1000, limit + STEP) }}>
+              <Onward to="/runs" search={{ ...search, limit: Math.min(1000, limit + STEP) }}>
                 Show more
               </Onward>
             ) : null}
@@ -92,7 +99,8 @@ export function Runs({ route, types }: { route: Route; types: string[] }) {
   );
 }
 
-export function Run({ id }: { id: string }) {
+export function Run() {
+  const { id } = one.useParams();
   const run = useLoad((client) => client.run(Number(id)));
   return (
     <Page
@@ -114,7 +122,7 @@ function leftForReview(identities: number | undefined): ReactNode {
   return (
     <>
       {count(identities, "identity")} with records that nothing holds together now.{" "}
-      <Onward path={["review"]}>review</Onward>
+      <Onward to="/review">review</Onward>
     </>
   );
 }

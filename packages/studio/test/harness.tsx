@@ -8,7 +8,7 @@ import { firstPerson, makeHarness } from "spool-testing";
 import type { Browser, Server } from "spool-testing";
 
 import type { Person } from "../src/api.ts";
-import { App } from "../src/app.tsx";
+import { App, addresses } from "../src/app.tsx";
 import { copyProject } from "./seed.ts";
 
 // The screens are tested for what they show and not for how fast, so the
@@ -101,6 +101,16 @@ export function open(server: Server, address: string, storage = memory()) {
   window.history.replaceState(null, "", address === "" ? "/" : address);
   render(<App url={server.url} fetch={recording} storage={storage} />);
   return storage;
+}
+
+/**
+ * The address the studio is at: its path and its query. The router writes
+ * an address a moment after it goes there, so what it has yet to write is
+ * written first.
+ */
+export function here(): string {
+  addresses.flush();
+  return window.location.pathname + window.location.search;
 }
 
 /** Follows a link of the studio, as a click in a browser would. */
