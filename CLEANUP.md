@@ -56,10 +56,10 @@ Every step keeps behaviour as it is: the checks are `cargo fmt`, `cargo clippy
       changes, recompute}.rs`.
 - [ ] E2. One path for "who started this run": no more `Engine::x`,
       `Engine::x_by` and `Acting::x` for the same call.
-- [ ] E3. `lookup.rs` into `lookup/{records, identities, log, info}.rs`.
-- [ ] E4. `explain.rs` into `explain/{pair, identity, prose}.rs`.
-- [ ] E5. `recompute.rs` into `recompute/{types, compute, outcome}.rs`.
-- [ ] E6. `usercode.rs` into `usercode/{mod, env, task}.rs`.
+- [x] E3. `lookup.rs` into `lookup/{records, identities, log, info}.rs`.
+- [x] E4. `explain.rs` into `explain/{pair, identity, prose}.rs`.
+- [x] E5. `recompute.rs` into `recompute/{types, compute, outcome}.rs`.
+- [x] E6. `usercode.rs` into `usercode/{mod, env, task}.rs`.
 - [ ] E7. `bench.rs` (and what only it uses) into a crate of its own,
       `spool-bench`.
 
