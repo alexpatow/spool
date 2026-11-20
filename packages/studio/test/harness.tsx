@@ -4,12 +4,16 @@
 import { rmSync } from "node:fs";
 
 import { configure, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { firstPerson, makeHarness } from "spool-testing";
+import type { Browser, Server } from "spool-testing";
 
-import { firstPerson, serve } from "../../client/test/server.ts";
-import type { Browser, Server } from "../../client/test/server.ts";
 import type { Person } from "../src/api.ts";
 import { App } from "../src/app.tsx";
 import { copyProject } from "./seed.ts";
+
+// The screens are tested for what they show and not for how fast, so the
+// server is the debug build of this checkout, unless `SPOOL_BIN` names one.
+const { serve } = makeHarness("debug");
 
 export const SEEDING = 120_000;
 

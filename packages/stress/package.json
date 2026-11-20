@@ -14,7 +14,8 @@
     "test": "bun test"
   },
   "dependencies": {
-    "spool-client": "workspace:*"
+    "spool-client": "workspace:*",
+    "spool-testing": "workspace:*"
   },
   "devDependencies": {
     "@types/bun": "^1.2.0",

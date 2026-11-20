@@ -2,11 +2,11 @@
 // screen of the studio has something to show. The tests and `bun run demo`
 // both use it.
 
-import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { readCsv, repository } from "../../client/test/server.ts";
+import { copyProject as copyProjectTo, readCsv, repository } from "spool-testing";
+
 import type { RecordEntry, SpoolClient } from "../src/api.ts";
 
 export const companies = join(repository, "benchmarks/identity/companies-small");
@@ -14,11 +14,7 @@ export const news = join(repository, "benchmarks/extraction/company-news");
 
 /** Copies what a project is made of, so that building it leaves the original alone. */
 export function copyProject(from: string): string {
-  const to = mkdtempSync(join(tmpdir(), "spool-studio-"));
-  for (const part of ["sources", "transforms", "entities", "extractors"]) {
-    if (existsSync(join(from, part))) cpSync(join(from, part), join(to, part), { recursive: true });
-  }
-  return to;
+  return copyProjectTo(from, "spool-studio");
 }
 
 async function load(client: SpoolClient, file: string, source: string): Promise<void> {

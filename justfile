@@ -3,7 +3,7 @@
 # CI runs the same checks, spelled out in .github/workflows/ci.yml, where
 # each job installs only what it needs.
 
-packages := "packages/client packages/strategy packages/stress packages/studio packages/ui"
+packages := "packages/client packages/strategy packages/stress packages/studio packages/testing packages/ui"
 
 # Lists the commands.
 default:

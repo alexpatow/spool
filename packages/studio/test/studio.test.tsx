@@ -4,9 +4,9 @@
 import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test";
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { PASSWORD, cookies, firstPerson } from "spool-testing";
+import type { Server } from "spool-testing";
 
-import { PASSWORD, cookies, firstPerson } from "../../client/test/server.ts";
-import type { Server } from "../../client/test/server.ts";
 import { standInForGoogle } from "../scripts/google-stand-in.ts";
 import { SpoolClient } from "../src/api.ts";
 import type { Fetch } from "../src/api.ts";

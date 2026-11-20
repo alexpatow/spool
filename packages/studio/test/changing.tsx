@@ -4,8 +4,8 @@
 import { afterEach, beforeEach, expect } from "bun:test";
 
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import type { Server } from "spool-testing";
 
-import type { Server } from "../../client/test/server.ts";
 import { SEEDING, STOPPING, calls, idle, start, stopAll } from "./harness.tsx";
 import { companies, seedCompanies } from "./seed.ts";
 

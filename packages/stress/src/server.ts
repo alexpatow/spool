@@ -1,38 +1,22 @@
 // Starts, stops and kills a real `spool serve`, and measures it from outside.
+// `packages/testing` finds the binary and starts the server.
 
-import { existsSync, mkdirSync, mkdtempSync, statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
 import { SpoolClient } from "spool-client";
+import { makeHarness, makeScratchDirectory, repository } from "spool-testing";
 
-export const repository = resolve(import.meta.dir, "../../..");
+export { repository };
 
-/**
- * The binary under test: `SPOOL_BIN`, or the release build of this checkout.
- * A debug build is several times slower, which is not what is measured here.
- */
-export function binary(): string {
-  const path = process.env.SPOOL_BIN ?? join(repository, "target/release/spool");
-  if (!existsSync(path)) {
-    throw new Error(
-      `there is no spool binary at ${path}: run \`cargo build --release -p spool-cli\`, or set SPOOL_BIN`,
-    );
-  }
-  return path;
-}
-
-/** Runs a `spool` command that has to succeed and returns what it printed. */
-export function spool(...args: string[]): string {
-  const result = Bun.spawnSync([binary(), ...args], { stdout: "pipe", stderr: "pipe" });
-  if (result.exitCode !== 0) throw new Error(`spool ${args.join(" ")} failed:\n${result.stdout}${result.stderr}`);
-  return result.stdout.toString();
-}
+// A debug build is several times slower, which is not what is measured
+// here: the binary is the release build, unless `SPOOL_BIN` names one.
+const harness = makeHarness("release");
+export const { binary, spool } = harness;
 
 export function scratch(name: string): string {
-  const root = process.env.SPOOL_STRESS_DIR ?? join(tmpdir(), "spool-stress");
-  mkdirSync(root, { recursive: true });
-  return mkdtempSync(join(root, `${name}-`));
+  return makeScratchDirectory(name, process.env.SPOOL_STRESS_DIR ?? join(tmpdir(), "spool-stress"));
 }
 
 export interface Running {
@@ -81,54 +65,14 @@ export function storeSize(store: string): number {
 
 export async function serve({ project, store, seed, args = [], build = true }: ServeOptions): Promise<Running> {
   if (build) spool("build", project);
-  const child = Bun.spawn(
-    [
-      binary(),
-      "serve",
-      "--manifest",
-      join(project, ".spool/manifest.json"),
-      "--project",
-      project,
-      "--tasks",
-      join(project, ".spool/tasks"),
-      "--store",
-      store,
-      "--listen",
-      "127.0.0.1:0",
-      ...(seed === undefined ? [] : ["--seed", String(seed)]),
-      ...args,
-    ],
-    { stdout: "pipe", stderr: "pipe" },
-  );
-
-  let complaints = "";
-  void (async () => {
-    const decoder = new TextDecoder();
-    const errors = child.stderr.getReader();
-    for (;;) {
-      const { value, done } = await errors.read();
-      if (done) return;
-      complaints += decoder.decode(value, { stream: true });
-    }
-  })();
-
-  // The server prints the address it listens on.
-  const reader = child.stdout.getReader();
-  const decoder = new TextDecoder();
-  let printed = "";
-  let url: string | undefined;
-  while (url === undefined) {
-    const { value, done } = await reader.read();
-    if (done) {
-      await child.exited;
-      throw new Error(`the server stopped before it listened:\n${printed}${complaints}`);
-    }
-    printed += decoder.decode(value, { stream: true });
-    url = /listening on (http:\/\/\S+)/.exec(printed)?.[1];
-  }
-  void (async () => {
-    for (;;) if ((await reader.read()).done) return;
-  })();
+  const server = await harness.startServer({
+    project,
+    store,
+    tasks: join(project, ".spool/tasks"),
+    seed,
+    args,
+    errors: "kept",
+  });
 
   // A token is shown once, so a server started again on the same store gets
   // a new one in place of the last.
@@ -138,27 +82,21 @@ export async function serve({ project, store, seed, args = [], build = true }: S
     token = spool("token", "add", "stress", "--store", store).trim();
   } catch (error) {
     // Nobody was given the server, so nobody would stop it.
-    child.kill("SIGKILL");
+    await server.kill();
     throw error;
   }
 
   return {
-    url,
+    url: server.url,
     token,
-    client: new SpoolClient({ url, token }),
-    pid: child.pid,
+    client: new SpoolClient({ url: server.url, token }),
+    pid: server.pid,
     store,
-    complaints: () => complaints,
-    memory: () => memoryOf(child.pid),
-    alive: () => child.exitCode === null && child.signalCode === null,
-    async stop() {
-      child.kill("SIGTERM");
-      return await child.exited;
-    },
-    async kill() {
-      child.kill("SIGKILL");
-      await child.exited;
-    },
+    complaints: server.complaints,
+    memory: () => memoryOf(server.pid),
+    alive: server.alive,
+    stop: server.stop,
+    kill: server.kill,
   };
 }
 
