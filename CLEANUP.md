@@ -38,7 +38,7 @@ Every step keeps behaviour as it is: the checks are `cargo fmt`, `cargo clippy
 - [x] C4. `time` for the calendar arithmetic in `spool/src/time.rs`.
 - [x] C5. `dotenvy` for `parse_env`. Errors still name a line by its number
       alone.
-- [ ] C6. `signal-hook` for the `unsafe` `sigaction` in `commands/extract.rs`.
+- [x] C6. `signal-hook` for the `unsafe` `sigaction` in `commands/extract.rs`.
 
 ## D. One copy of each helper
 

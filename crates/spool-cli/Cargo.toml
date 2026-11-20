@@ -51,6 +51,7 @@ uuid.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
+signal-hook.workspace = true
 
 [dev-dependencies]
 snapbox.workspace = true

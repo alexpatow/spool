@@ -79,6 +79,9 @@ libduckdb-sys = "~1.20000.2"
 # quietly when the pipe closes. spool: a strategy that runs out of time is
 # stopped with the processes it started.
 libc = "0.2"
+# The first Ctrl-C of `spool extract` is caught and the second is not. Its
+# registry of handlers was in the build already, for tokio.
+signal-hook = { version = "0.3", default-features = false }
 # Feature `schema` of the crates below: the JSON Schema of the API's types.
 schemars = "1"
 proptest = { version = "1.12", default-features = false, features = ["std"] }

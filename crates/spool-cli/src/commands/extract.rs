@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
 use anstream::println;
@@ -111,25 +112,20 @@ const LONGEST_BATCH: Duration = Duration::from_secs(120);
 /// Whether Ctrl-C was pressed. The first press is caught, and the command
 /// cancels the batch in progress and says what is kept; the second ends
 /// the command at once.
-static INTERRUPTED: AtomicBool = AtomicBool::new(false);
-
-extern "C" fn interrupted(_: libc::c_int) {
-    INTERRUPTED.store(true, Ordering::SeqCst);
-}
+static INTERRUPTED: LazyLock<Arc<AtomicBool>> = LazyLock::new(|| Arc::new(AtomicBool::new(false)));
 
 /// Catches the first Ctrl-C. A request in flight is not cut short by it, so
 /// the command notices within the second it asks the server again.
-#[allow(unsafe_code)]
 fn catch_ctrl_c() {
     #[cfg(unix)]
-    // SAFETY: the handler only stores to an atomic, which is safe in a
-    // signal handler, and `SA_RESETHAND` gives the next Ctrl-C its default.
-    unsafe {
-        let mut action: libc::sigaction = std::mem::zeroed();
-        action.sa_sigaction = interrupted as extern "C" fn(libc::c_int) as libc::sighandler_t;
-        action.sa_flags = libc::SA_RESTART | libc::SA_RESETHAND;
-        libc::sigemptyset(&mut action.sa_mask);
-        libc::sigaction(libc::SIGINT, &action, std::ptr::null_mut());
+    {
+        use signal_hook::consts::SIGINT;
+        use signal_hook::flag;
+        // The two are run in this order on each press. The first does what
+        // an uncaught Ctrl-C does once the flag is set, which the second
+        // does: so the first press sets it, and the next ends the command.
+        let _ = flag::register_conditional_default(SIGINT, Arc::clone(&INTERRUPTED));
+        let _ = flag::register(SIGINT, Arc::clone(&INTERRUPTED));
     }
 }
 
