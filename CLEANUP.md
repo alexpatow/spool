@@ -75,10 +75,12 @@ Every step keeps behaviour as it is: the checks are `cargo fmt`, `cargo clippy
       handlers/*}.rs`, handlers named after the engine module they call.
 - [x] F3. `commands/show.rs` (2,600 lines) into `commands/show/*.rs`, one per
       subcommand, and `commands/explain.rs`.
-- [ ] F4. `server/mcp.rs` into `server/mcp/{mod, tools, limits}.rs`.
-- [ ] F5. MCP tools call typed functions, not handlers through strings.
-- [ ] F6. Try rmcp's `macros` feature for the tool table and dispatch; keep
-      the table if the macros cannot carry the annotations and size limits.
+- [x] F4. `server/mcp.rs` into `server/mcp/{mod, tools, limits}.rs`.
+- [x] F5. MCP tools call typed functions, not handlers through strings.
+- [x] F6. rmcp's `macros` feature was read and not used: it lists tools by
+      name, words argument errors and unknown tools its own way, and adds
+      fields to `tools/list`, each of which a client would see. Each tool
+      is declared once with a `declare(...)` of the server's own instead.
 - [ ] F7. Greppable names: verb-and-noun names for the private helpers whose
       one-word names collide (`named`, `listed`, `list`, `text`, ...).
 
