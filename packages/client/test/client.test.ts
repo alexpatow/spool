@@ -282,9 +282,7 @@ describe("a reviewer", () => {
 
     expect((await failureOf(client.undo(99, {}))).code).toBe("not_found");
     // A merge written before the undo is stale, and says so.
-    const stale = await failureOf(
-      client.commit({ base: 1, ops: [{ op: "merge", from: anvil, into: hammer }] }),
-    );
+    const stale = await failureOf(client.commit({ base: 1, ops: [{ op: "merge", from: anvil, into: hammer }] }));
     expect(stale.code).toBe("rejected");
     expect(stale.rejections[0]).toMatchObject({ op_index: 0, reason: { reason: "stale_merge" } });
   });
@@ -371,9 +369,7 @@ describe("a reviewer", () => {
     expect(await client.constraints({ identity: split.identity })).toEqual(constraints);
 
     // Merging the sides again would break the constraint.
-    const merge = await failureOf(
-      client.commit({ ops: [{ op: "merge", from: split.identity, into: anvils }] }),
-    );
+    const merge = await failureOf(client.commit({ ops: [{ op: "merge", from: split.identity, into: anvils }] }));
     expect(merge.rejections[0]).toMatchObject({ reason: { reason: "constraint_violated" } });
 
     // A fourth anvil matches both sides, and is left for the reviewer, who

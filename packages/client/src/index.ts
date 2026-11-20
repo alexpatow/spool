@@ -608,11 +608,9 @@ export class SpoolClient {
    * record that has none or is not known.
    */
   async identitiesOf(records: RecordId[]): Promise<Array<IdentityId | null>> {
-    const { identities } = await this.json<{ identities: Array<IdentityId | null> }>(
-      "POST",
-      "/v1/records/identities",
-      { json: { records } },
-    );
+    const { identities } = await this.json<{ identities: Array<IdentityId | null> }>("POST", "/v1/records/identities", {
+      json: { records },
+    });
     return identities;
   }
 
@@ -813,7 +811,8 @@ async function failure(response: Response): Promise<SpoolError> {
     return new SpoolError(response.status, error.code, error.message, error.rejections ?? []);
   } catch {
     // Not the server's own error: something between here and it answered.
-    const code: ErrorCode = response.status === 401 ? "unauthorized" : response.status === 404 ? "not_found" : "internal";
+    const code: ErrorCode =
+      response.status === 401 ? "unauthorized" : response.status === 404 ? "not_found" : "internal";
     return new SpoolError(response.status, code, text.trim() || `the server answered ${response.status}`);
   }
 }

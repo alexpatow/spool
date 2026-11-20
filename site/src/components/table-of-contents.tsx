@@ -32,11 +32,7 @@ function Items({ items }: { items: TOCItemType[] }) {
         <li key={item.url}>
           <TOCItem
             href={item.url}
-            {...stylex.props(
-              styles.item,
-              item.depth > 2 && styles.nested,
-              item.url === `#${active}` && styles.active,
-            )}
+            {...stylex.props(styles.item, item.depth > 2 && styles.nested, item.url === `#${active}` && styles.active)}
           >
             {item.title}
           </TOCItem>

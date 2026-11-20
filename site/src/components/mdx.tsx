@@ -141,11 +141,7 @@ export const mdxComponents: MDXComponents = {
   // A page's image is a file under `public/`. The build reads its size, so the
   // page does not move when it loads.
   img: (props) => (
-    <Image
-      {...(props as ImageProps)}
-      sizes="(width < 48rem) 100vw, 46rem"
-      {...stylex.props(styles.image)}
-    />
+    <Image {...(props as ImageProps)} sizes="(width < 48rem) 100vw, 46rem" {...stylex.props(styles.image)} />
   ),
   hr: () => <hr {...stylex.props(styles.rule)} />,
   strong: ({ children }) => <strong {...stylex.props(styles.strong)}>{children}</strong>,

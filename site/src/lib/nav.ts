@@ -19,9 +19,7 @@ export interface NavGroup {
  * `llms.txt` are all this one list.
  */
 export function navGroups(): NavGroup[] {
-  const descriptions = new Map(
-    source.getPages().map((page) => [page.url, page.data.description ?? ""]),
-  );
+  const descriptions = new Map(source.getPages().map((page) => [page.url, page.data.description ?? ""]));
   const groups: NavGroup[] = [];
   let current: NavGroup | undefined;
 

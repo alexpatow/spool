@@ -1,0 +1,11 @@
+# What `bun fmt` leaves as it is. It reads this file and .gitignore.
+
+# Written by a build or a generator: see .gitattributes.
+crates/
+packages/client/src/types.ts
+packages/studio/src/routeTree.gen.ts
+
+# Shelf's files, which `shelf check` compares with the registry's.
+packages/ui/src/components/ui/
+packages/ui/src/lib/shelf/
+packages/ui/src/styles/shelf/

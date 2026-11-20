@@ -528,11 +528,17 @@ function checkMention(row: Mention, index: number): void {
   }
   for (const name of ["start", "end"] as const) {
     if (!Number.isInteger(row[name])) {
-      throw new TypeError(`\`${name}\` is a position in the document's text, and mention ${index} has ${describe(row[name])}`);
+      throw new TypeError(
+        `\`${name}\` is a position in the document's text, and mention ${index} has ${describe(row[name])}`,
+      );
     }
   }
   const attributes = row.attributes;
-  if (attributes !== undefined && attributes !== null && (typeof attributes !== "object" || Array.isArray(attributes))) {
+  if (
+    attributes !== undefined &&
+    attributes !== null &&
+    (typeof attributes !== "object" || Array.isArray(attributes))
+  ) {
     throw new TypeError(`\`attributes\` is an object, and mention ${index} has ${describe(attributes)}`);
   }
 }

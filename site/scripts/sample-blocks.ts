@@ -43,9 +43,7 @@ export function blocksOf(lines: string[]): Block[] {
   return blocks;
 }
 
-const DIRECTIVES = [
-  "new session", "stop servers", "background", "existing", "after", "not built", "skip", "fails",
-];
+const DIRECTIVES = ["new session", "stop servers", "background", "existing", "after", "not built", "skip", "fails"];
 
 /**
  * The directives of a block, each with what follows its name: the reason of a
@@ -58,7 +56,9 @@ export function directivesOf(block: Block): Map<string, string> {
   for (const part of (block.directive ?? "").split(";")) {
     const text = part.trim();
     if (text === "") continue;
-    const name = DIRECTIVES.find((known) => text === known || text.startsWith(`${known} `) || text.startsWith(`${known}:`));
+    const name = DIRECTIVES.find(
+      (known) => text === known || text.startsWith(`${known} `) || text.startsWith(`${known}:`),
+    );
     if (!name) throw new Error(`line ${block.line}: \`sample: ${text}\` is not a directive`);
     found.set(name, text.slice(name.length).replace(/^:?\s*/, ""));
   }

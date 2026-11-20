@@ -55,8 +55,8 @@ export function Explainer() {
         name="Messy input"
         captions={[
           <>
-            Start with what you have. A CRM exports rows, and each row names a company. Spool keeps
-            every row exactly as it arrived, and calls it a <strong {...strong}>record</strong>.
+            Start with what you have. A CRM exports rows, and each row names a company. Spool keeps every row exactly as
+            it arrived, and calls it a <strong {...strong}>record</strong>.
           </>,
           <>
             A second export arrives. Somebody typed &ldquo;Acorn Tool&rdquo;. Somebody else typed
@@ -64,8 +64,8 @@ export function Explainer() {
           </>,
           <>Some of what you know is not in rows at all. It is a note from a call, in sentences.</>,
           <>
-            Acorn Tools turns up five times, spelt four ways, in two kinds of data. Is that one
-            company or five? And is Halden Group in GB the same as Halden Group in the US?
+            Acorn Tools turns up five times, spelt four ways, in two kinds of data. Is that one company or five? And is
+            Halden Group in GB the same as Halden Group in the US?
           </>,
         ]}
       >
@@ -79,18 +79,16 @@ export function Explainer() {
         captions={[
           <>Text names things too, just not in columns. Here is that note.</>,
           <>
-            An <strong {...strong}>extractor</strong> reads it and marks each place that names a
-            company. Each place is a <strong {...strong}>mention</strong>: where it starts, where it
-            ends, and the name.
+            An <strong {...strong}>extractor</strong> reads it and marks each place that names a company. Each place is
+            a <strong {...strong}>mention</strong>: where it starts, where it ends, and the name.
           </>,
           <>
             Each mention becomes a record, like a row. Its key is where it was found: characters{" "}
             {mentions[0]?.key.replace(/^.*\[(\d+)-(\d+)\]$/, "$1 to $2")} of notes-1.txt.
           </>,
           <>
-            Dana Reyes is a person, and this project only knows companies, so she stays in the
-            text. An extractor is code of yours in Python or TypeScript. The one a new project has
-            asks a small model on your machine.
+            Dana Reyes is a person, and this project only knows companies, so she stays in the text. An extractor is
+            code of yours in Python or TypeScript. The one a new project has asks a small model on your machine.
           </>,
         ]}
       >
@@ -103,22 +101,20 @@ export function Explainer() {
         name="Resolution"
         captions={[
           <>
-            Now there are twelve records: nine rows and three mentions. Which of them are the same
-            company? Answering that is entity resolution.
+            Now there are twelve records: nine rows and three mentions. Which of them are the same company? Answering
+            that is entity resolution.
           </>,
           <>
-            Spool compares pairs of records with rules you write in SQL. Two names that are close
-            enough are a match. Each answer is kept as a <strong {...strong}>judgement</strong>.
+            Spool compares pairs of records with rules you write in SQL. Two names that are close enough are a match.
+            Each answer is kept as a <strong {...strong}>judgement</strong>.
           </>,
           <>
-            The two Halden Groups have the same name, so the match rule holds. But a no_match rule
-            holds too, because their countries differ, and no_match always wins. A wrong match,
-            turned down.
+            The two Halden Groups have the same name, so the match rule holds. But a no_match rule holds too, because
+            their countries differ, and no_match always wins. A wrong match, turned down.
           </>,
           <>
-            The judgements become <strong {...strong}>identities</strong>: one for each real
-            company, each with an ID, and every record placed in one. Twelve records, six
-            companies.
+            The judgements become <strong {...strong}>identities</strong>: one for each real company, each with an ID,
+            and every record placed in one. Twelve records, six companies.
           </>,
         ]}
       >
@@ -131,22 +127,22 @@ export function Explainer() {
         name="Persistent identity"
         captions={[
           <>
-            Other systems store that ID, so it has to stay put. After the first file, Acorn Tools
-            is three records and one ID.
+            Other systems store that ID, so it has to stay put. After the first file, Acorn Tools is three records and
+            one ID.
           </>,
           <>A new file brings &ldquo;Acorn Tool&rdquo;. It joins. The ID does not change.</>,
           <>
-            The mention from the note joins too. Still the same ID. A match places new records, and
-            never moves the ones it placed before.
+            The mention from the note joins too. Still the same ID. A match places new records, and never moves the ones
+            it placed before.
           </>,
           <>
-            Then another file brings &ldquo;Acorn Tooling&rdquo;. The name is close enough for the
-            rule, so it joins. But it is a different company.
+            Then another file brings &ldquo;Acorn Tooling&rdquo;. The name is close enough for the rule, so it joins.
+            But it is a different company.
           </>,
           <>
-            A person corrects it with a split. That is a <strong {...strong}>changeset</strong>,
-            kept in a log with an author and a reason, and it can be undone. Acorn Tooling gets an
-            ID of its own. Acorn Tools keeps the one it had all along.
+            A person corrects it with a split. That is a <strong {...strong}>changeset</strong>, kept in a log with an
+            author and a reason, and it can be undone. Acorn Tooling gets an ID of its own. Acorn Tools keeps the one it
+            had all along.
           </>,
         ]}
       >
@@ -170,30 +166,14 @@ function Input() {
           <CsvRow key={record.key} record={record} />
         ))}
       </Part>
-      <Part
-        x={136}
-        y={212}
-        width={276}
-        rotate={2.5}
-        at={1}
-        from={{ x: 90, rotate: 8 }}
-        style={[parts.card, s.file]}
-      >
+      <Part x={136} y={212} width={276} rotate={2.5} at={1} from={{ x: 90, rotate: 8 }} style={[parts.card, s.file]}>
         <div {...stylex.props(s.fileHead)}>samples/crm-2.csv</div>
         <div {...stylex.props(s.csv, s.csvHead)}>id,name,country</div>
         {second.map((record) => (
           <CsvRow key={record.key} record={record} />
         ))}
       </Part>
-      <Part
-        x={4}
-        y={364}
-        width={412}
-        rotate={-1}
-        at={2}
-        from={{ y: 80, rotate: -4 }}
-        style={[parts.card, s.file]}
-      >
+      <Part x={4} y={364} width={412} rotate={-1} at={2} from={{ y: 80, rotate: -4 }} style={[parts.card, s.file]}>
         <div {...stylex.props(s.fileHead)}>{note.file}</div>
         <p {...stylex.props(s.noteSmall)}>
           {pieces().map((piece, index) =>
@@ -279,11 +259,7 @@ function Extraction() {
                 {piece.text}
               </mark>
             ) : piece.person ? (
-              <span
-                key={index}
-                {...stylex.props(s.person, s.transition)}
-                style={timing({ lit: { at: 3 } })}
-              >
+              <span key={index} {...stylex.props(s.person, s.transition)} style={timing({ lit: { at: 3 } })}>
                 {piece.text}
               </span>
             ) : (
@@ -327,10 +303,7 @@ function Extraction() {
           <span {...stylex.props(s.foundName)}>{record.name}</span>
           <span {...stylex.props(s.foundType)}>company</span>
           <span {...stylex.props(s.foundKey)}>{named(record)}</span>
-          <span
-            {...stylex.props(parts.part, s.badge)}
-            style={timing({ at: 3, from: { x: -8 }, delay: 120 * index })}
-          >
+          <span {...stylex.props(parts.part, s.badge)} style={timing({ at: 3, from: { x: -8 }, delay: 120 * index })}>
             record
           </span>
         </div>
@@ -409,9 +382,7 @@ function Resolution() {
               pathLength={1}
               {...stylex.props(parts.stroke, pair.match ? s.match : s.noMatch)}
               style={timing(
-                pair.match
-                  ? { at: 1, until: 3, delay: 70 * order, duration: 700 }
-                  : { at: 2, until: 3, duration: 900 },
+                pair.match ? { at: 1, until: 3, delay: 70 * order, duration: 700 } : { at: 2, until: 3, duration: 900 },
               )}
             />
           );

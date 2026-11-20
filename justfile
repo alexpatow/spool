@@ -12,13 +12,15 @@ default:
 # Everything CI checks that needs no test run.
 check: fmt-check lint typecheck sizes generated
 
-# Formats the Rust code.
+# Formats the Rust code and the TypeScript.
 fmt:
     cargo fmt --all
+    bun run fmt
 
-# Fails if the Rust code is not formatted.
+# Fails if the Rust code or the TypeScript is not formatted.
 fmt-check:
     cargo fmt --all -- --check
+    bun run fmt:check
 
 # Clippy, with warnings as errors, as CI runs it.
 lint:

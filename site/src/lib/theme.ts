@@ -10,8 +10,6 @@ export const THEME_STORAGE_KEY = "spool-theme";
  * `applyTheme` does, without the transition guard a first paint does not need.
  */
 export function themeScript(): string {
-  const classes = JSON.stringify(
-    (stylex.props(darkTheme, darkLinen).className ?? "").split(" ").filter(Boolean),
-  );
+  const classes = JSON.stringify((stylex.props(darkTheme, darkLinen).className ?? "").split(" ").filter(Boolean));
   return `(function(){var t;try{t=localStorage.getItem(${JSON.stringify(THEME_STORAGE_KEY)})}catch(e){}if(t!=="light"&&t!=="dark"){t=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"}var r=document.documentElement;if(t==="dark"){r.classList.add.apply(r.classList,${classes})}r.dataset.theme=t;r.style.colorScheme=t})()`;
 }

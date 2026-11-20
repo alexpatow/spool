@@ -48,7 +48,10 @@ export function Hero() {
 }
 
 const gather = stylex.keyframes({
-  "0%": { opacity: 0, transform: "translate(calc(var(--x) * var(--spread)), calc(var(--y) + 14px)) rotate(var(--turn))" },
+  "0%": {
+    opacity: 0,
+    transform: "translate(calc(var(--x) * var(--spread)), calc(var(--y) + 14px)) rotate(var(--turn))",
+  },
   "18%": { opacity: 1, transform: "translate(calc(var(--x) * var(--spread)), var(--y)) rotate(var(--turn))" },
   "52%": { opacity: 1, transform: "translate(calc(var(--x) * var(--spread)), var(--y)) rotate(var(--turn))" },
   "82%": { opacity: 1, transform: "translate(0, 0) rotate(0deg) scale(0.92)" },

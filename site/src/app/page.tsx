@@ -72,12 +72,7 @@ export default function Home() {
             <Button size="lg" nativeButton={false} render={<Link href="/docs/getting-started" />}>
               Get started
             </Button>
-            <Button
-              variant="outline"
-              size="lg"
-              nativeButton={false}
-              render={<Link href="/docs" />}
-            >
+            <Button variant="outline" size="lg" nativeButton={false} render={<Link href="/docs" />}>
               Read the docs
             </Button>
           </div>
@@ -97,14 +92,13 @@ export default function Home() {
             A shared identity for everything your agents encounter.
           </Typography.H2>
           <Typography.P style={styles.sectionLead}>
-            Agents discover information across documents, databases, APIs, and other tools. But
-            without a shared identity, each agent has to independently figure out whether it's
-            encountered the same thing before.
+            Agents discover information across documents, databases, APIs, and other tools. But without a shared
+            identity, each agent has to independently figure out whether it's encountered the same thing before.
           </Typography.P>
           <Typography.P style={styles.sectionLead}>
-            Spool gives agents a common reference to the people, places, organizations, and other
-            entities they discover. As new information arrives, it becomes part of an existing
-            identity rather than another disconnected record.
+            Spool gives agents a common reference to the people, places, organizations, and other entities they
+            discover. As new information arrives, it becomes part of an existing identity rather than another
+            disconnected record.
           </Typography.P>
           <Typography.P>One identity, shared across agents and applications.</Typography.P>
           <Button
@@ -131,9 +125,7 @@ export default function Home() {
             <Typography.H2 id="start" style={styles.heading}>
               Run it
             </Typography.H2>
-            <Typography.P>
-              Install it, make the sample project and start the server on your machine.
-            </Typography.P>
+            <Typography.P>Install it, make the sample project and start the server on your machine.</Typography.P>
             <CodeBlock wrap>{server}</CodeBlock>
             <Typography.Muted>
               Linux or macOS on Apple silicon. Version {site.version}, {site.licence} licence.
@@ -142,8 +134,7 @@ export default function Home() {
           <div {...stylex.props(styles.terminal)}>
             <Typography.H2 style={styles.heading}>Then, in a second terminal</Typography.H2>
             <Typography.P>
-              Load the rows, match, and extract the companies from the note to reproduce the
-              Acorn Tools demo.
+              Load the rows, match, and extract the companies from the note to reproduce the Acorn Tools demo.
             </Typography.P>
             <CodeBlock wrap>{commands}</CodeBlock>
             <Typography.Muted>

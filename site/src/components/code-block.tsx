@@ -26,9 +26,7 @@ export function CodeBlock({
 }: ComponentProps<"pre"> & { copy?: boolean; wrap?: boolean }) {
   // MDX wraps the lines in a `code` element; render its lines in ours, so the
   // inline-code style does not apply.
-  const lines = isValidElement<{ children?: ReactNode }>(children)
-    ? children.props.children
-    : children;
+  const lines = isValidElement<{ children?: ReactNode }>(children) ? children.props.children : children;
   const text = textOf(lines).replace(/\n$/, "");
 
   return (
