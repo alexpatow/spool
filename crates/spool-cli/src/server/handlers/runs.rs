@@ -12,7 +12,7 @@ use axum::extract::{Extension, Path, Query, State};
 use axum::http::HeaderMap;
 use axum::http::header::{ACCEPT, CONTENT_TYPE};
 use axum::response::{IntoResponse, Response};
-use spool::core::{EntityType, Policy};
+use spool::core::{EntityType, Policy, RunId};
 use spool::{
     Direction, Disposition, ResolveOptions, Rows, RunFilter, RunKind, RunSort, RunStatus, Scope,
     StrategyRef,
@@ -28,72 +28,110 @@ use crate::server::error::{ApiError, ApiResult};
 use crate::server::request::{
     arrow_rows, is_arrow, json_body, media_type, optional_json_body, page, query, run_id, sorted,
 };
-use crate::server::work::{engine, job, ok};
+use crate::server::work::{Started, engine, job, ok};
+
+impl App {
+    /// Starts a match run of one entity type and waits for it.
+    pub(in crate::server) async fn start_match(
+        &self,
+        caller: Caller,
+        request: MatchRequest,
+    ) -> ApiResult<Started> {
+        let entity_type = request.entity_type;
+        let rematch = request.rematch.unwrap_or(false);
+        // A name is the project's strategy if the manifest the server was built
+        // with has one by that name. Nothing a caller sends is ever run.
+        let built_in = |strategy: &StrategyRef| -> ApiResult<bool> {
+            if strategy.name == StrategyRef::RULES {
+                return Ok(true);
+            }
+            let manifest = self.engine.manifest();
+            let found = manifest
+                .as_deref()
+                .and_then(|manifest| manifest.entity_type(entity_type.as_str()))
+                .and_then(|entry| entry.strategy(&strategy.name));
+            match (found, &strategy.version) {
+                (Some(found), Some(version)) if *version != found.hash => {
+                    Err(ApiError::invalid(format!(
+                        "the project's strategy `{}` is version {}, not {version}",
+                        found.name, found.hash
+                    )))
+                }
+                (found, _) => Ok(found.is_some()),
+            }
+        };
+        match request.strategy {
+            Some(strategy) if !built_in(&strategy)? => {
+                if request.commit.is_some() {
+                    return Err(ApiError::invalid(
+                        "`commit` goes with a strategy the server runs; a run that waits for judgements is told when it is reconciled",
+                    ));
+                }
+                job(self, request.wait_ms, move |engine| {
+                    engine
+                        .acting(caller.actor)
+                        .begin_run(
+                            &strategy,
+                            &Scope {
+                                entity_type,
+                                rematch,
+                            },
+                        )
+                        .map(Some)
+                })
+                .await
+            }
+            strategy => {
+                let options = ResolveOptions {
+                    entity_type: Some(entity_type),
+                    leave_for_review: !request.commit.unwrap_or(true),
+                    strategy: strategy.map(|strategy| strategy.name),
+                    rematch,
+                };
+                job(self, request.wait_ms, move |engine| {
+                    let report = engine.acting(caller.actor).resolve(&options)?;
+                    Ok(report.resolved.first().map(|resolved| resolved.match_run))
+                })
+                .await
+            }
+        }
+    }
+
+    /// Reads a run. With `wait_ms`, answers when the engine has stopped
+    /// working on the run or the time is up, whichever is first.
+    pub(in crate::server) async fn read_run(
+        &self,
+        run: RunId,
+        wait_ms: Option<u64>,
+    ) -> ApiResult<RunResponse> {
+        let wait = Duration::from_millis(wait_ms.unwrap_or(0));
+        let deadline = Instant::now() + wait;
+        let mut pause = Duration::from_millis(20);
+        let stopping = self.stopping.told();
+        tokio::pin!(stopping);
+        let mut told = false;
+        loop {
+            let record = engine(self, move |engine| engine.run(run)).await?;
+            let left = deadline.saturating_duration_since(Instant::now());
+            // A server that is stopping waits for nobody.
+            if record.status != RunStatus::Running || left.is_zero() || told {
+                return Ok(RunResponse { run: Some(record) });
+            }
+            tokio::select! {
+                () = tokio::time::sleep(pause.min(left)) => {}
+                () = &mut stopping => told = true,
+            }
+            pause = (pause * 2).min(Duration::from_millis(500));
+        }
+    }
+}
 
 pub(in crate::server) async fn start_match(
     State(app): State<App>,
     Extension(caller): Extension<Caller>,
     body: Bytes,
-) -> ApiResult {
-    let request: MatchRequest = json_body(&body)?;
-    let entity_type = request.entity_type;
-    let rematch = request.rematch.unwrap_or(false);
-    // A name is the project's strategy if the manifest the server was built
-    // with has one by that name. Nothing a caller sends is ever run.
-    let built_in = |strategy: &StrategyRef| -> ApiResult<bool> {
-        if strategy.name == StrategyRef::RULES {
-            return Ok(true);
-        }
-        let manifest = app.engine.manifest();
-        let found = manifest
-            .as_deref()
-            .and_then(|manifest| manifest.entity_type(entity_type.as_str()))
-            .and_then(|entry| entry.strategy(&strategy.name));
-        match (found, &strategy.version) {
-            (Some(found), Some(version)) if *version != found.hash => {
-                Err(ApiError::invalid(format!(
-                    "the project's strategy `{}` is version {}, not {version}",
-                    found.name, found.hash
-                )))
-            }
-            (found, _) => Ok(found.is_some()),
-        }
-    };
-    match request.strategy {
-        Some(strategy) if !built_in(&strategy)? => {
-            if request.commit.is_some() {
-                return Err(ApiError::invalid(
-                    "`commit` goes with a strategy the server runs; a run that waits for judgements is told when it is reconciled",
-                ));
-            }
-            job(&app, request.wait_ms, move |engine| {
-                engine
-                    .acting(caller.actor)
-                    .begin_run(
-                        &strategy,
-                        &Scope {
-                            entity_type,
-                            rematch,
-                        },
-                    )
-                    .map(Some)
-            })
-            .await
-        }
-        strategy => {
-            let options = ResolveOptions {
-                entity_type: Some(entity_type),
-                leave_for_review: !request.commit.unwrap_or(true),
-                strategy: strategy.map(|strategy| strategy.name),
-                rematch,
-            };
-            job(&app, request.wait_ms, move |engine| {
-                let report = engine.acting(caller.actor).resolve(&options)?;
-                Ok(report.resolved.first().map(|resolved| resolved.match_run))
-            })
-            .await
-        }
-    }
+) -> ApiResult<Started> {
+    app.start_match(caller, json_body(&body)?).await
 }
 
 #[derive(serde::Deserialize)]
@@ -132,36 +170,17 @@ pub(in crate::server) async fn list_runs(
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(in crate::server) struct WaitQuery {
-    pub(in crate::server) wait_ms: Option<u64>,
+    wait_ms: Option<u64>,
 }
 
-/// Reads a run. With `wait_ms`, answers when the engine has stopped working
-/// on the run or the time is up, whichever is first.
 pub(in crate::server) async fn read_run(
     State(app): State<App>,
     Path(run): Path<String>,
     params: Result<Query<WaitQuery>, QueryRejection>,
 ) -> ApiResult {
     let run = run_id(&run)?;
-    let wait = Duration::from_millis(query(params)?.wait_ms.unwrap_or(0));
-    let deadline = Instant::now() + wait;
-    let mut pause = Duration::from_millis(20);
-    let stopping = app.stopping.told();
-    tokio::pin!(stopping);
-    let mut told = false;
-    loop {
-        let record = engine(&app, move |engine| engine.run(run)).await?;
-        let left = deadline.saturating_duration_since(Instant::now());
-        // A server that is stopping waits for nobody.
-        if record.status != RunStatus::Running || left.is_zero() || told {
-            return ok(RunResponse { run: Some(record) });
-        }
-        tokio::select! {
-            () = tokio::time::sleep(pause.min(left)) => {}
-            () = &mut stopping => told = true,
-        }
-        pause = (pause * 2).min(Duration::from_millis(500));
-    }
+    let wait_ms = query(params)?.wait_ms;
+    ok(app.read_run(run, wait_ms).await?)
 }
 
 pub(in crate::server) async fn candidates(

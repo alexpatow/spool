@@ -3,6 +3,7 @@
 
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
+use spool::Explanation;
 
 use super::records::named_record;
 use crate::server::App;
@@ -21,22 +22,28 @@ pub(in crate::server) async fn explain_identity(
     ok(engine(&app, move |engine| engine.explain_identity(identity)).await?)
 }
 
+impl App {
+    /// Why two records share an identity, or do not. The order in which
+    /// the two are named does not matter. Each is named as [`named_record`]
+    /// reads it.
+    pub(in crate::server) async fn explain_pair(&self, a: &str, b: &str) -> ApiResult<Explanation> {
+        let a = named_record(self, a).await?;
+        let b = named_record(self, b).await?;
+        engine(self, move |engine| engine.explain(a, b)).await
+    }
+}
+
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(in crate::server) struct ExplainQuery {
-    pub(in crate::server) a: String,
-    pub(in crate::server) b: String,
+    a: String,
+    b: String,
 }
 
-/// Why two records share an identity, or do not. The order in which
-/// the two are named does not matter. Each is named as [`named_record`]
-/// reads it.
 pub(in crate::server) async fn explain(
     State(app): State<App>,
     params: Result<Query<ExplainQuery>, QueryRejection>,
 ) -> ApiResult {
     let params = query(params)?;
-    let a = named_record(&app, &params.a).await?;
-    let b = named_record(&app, &params.b).await?;
-    ok(engine(&app, move |engine| engine.explain(a, b)).await?)
+    ok(app.explain_pair(&params.a, &params.b).await?)
 }

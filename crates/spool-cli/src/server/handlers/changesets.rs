@@ -4,8 +4,8 @@
 use axum::body::Bytes;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Extension, Path, Query, State};
-use spool::core::{Changeset, Seq};
-use spool::{ConstraintFilter, Direction, LogSort};
+use spool::core::{Changeset, Committed, IdentityId, Seq};
+use spool::{Authored, ConstraintFilter, Direction, LogSort, MintedIds, SplitReport};
 
 use crate::api::{
     ChangesetList, CommitRequest, ConstraintList, MintRequest, SplitRequest, UndoRequest,
@@ -19,31 +19,97 @@ use crate::server::work::{engine, ok};
 /// The most IDs minted in one call.
 const MAX_MINTED: u32 = 10_000;
 
+impl App {
+    pub(in crate::server) async fn commit_changeset(
+        &self,
+        caller: Caller,
+        request: CommitRequest,
+    ) -> ApiResult<Committed> {
+        engine(self, move |engine| {
+            let id = match request.id {
+                Some(id) => id,
+                None => engine.mint_ids(0, 1).changesets[0],
+            };
+            let base = match request.base {
+                Some(base) => base,
+                None => engine.head()?,
+            };
+            engine.commit_with_versions(Changeset {
+                id,
+                base,
+                actor: caller.actor,
+                reason: request.reason,
+                run: request.run,
+                ops: request.ops,
+            })
+        })
+        .await
+    }
+
+    pub(in crate::server) async fn undo_changeset(
+        &self,
+        caller: Caller,
+        seq: Seq,
+        request: UndoRequest,
+    ) -> ApiResult<Authored> {
+        engine(self, move |engine| {
+            engine.undo(
+                seq,
+                caller.actor,
+                request.reason,
+                request.commit.unwrap_or(true),
+            )
+        })
+        .await
+    }
+
+    pub(in crate::server) async fn split_identity(
+        &self,
+        caller: Caller,
+        identity: IdentityId,
+        request: SplitRequest,
+    ) -> ApiResult<SplitReport> {
+        engine(self, move |engine| {
+            engine.split(
+                identity,
+                &request.records,
+                request.keep_apart.unwrap_or(true),
+                request.base,
+                caller.actor,
+                request.reason,
+            )
+        })
+        .await
+    }
+
+    pub(in crate::server) async fn list_constraints(
+        &self,
+        filter: ConstraintFilter,
+    ) -> ApiResult<ConstraintList> {
+        let constraints = engine(self, move |engine| engine.constraints(&filter)).await?;
+        Ok(ConstraintList { constraints })
+    }
+
+    /// New IDs for a caller that writes its own changeset.
+    pub(in crate::server) async fn mint_ids(&self, request: MintRequest) -> ApiResult<MintedIds> {
+        if request.identities > MAX_MINTED || request.changesets > MAX_MINTED {
+            return Err(ApiError::invalid(format!(
+                "at most {MAX_MINTED} IDs of a kind are minted in one call"
+            )));
+        }
+        engine(self, move |engine| {
+            Ok(engine.mint_ids(request.identities as usize, request.changesets as usize))
+        })
+        .await
+    }
+}
+
 pub(in crate::server) async fn commit(
     State(app): State<App>,
     Extension(caller): Extension<Caller>,
     body: Bytes,
 ) -> ApiResult {
-    let request: CommitRequest = json_body(&body)?;
-    ok(engine(&app, move |engine| {
-        let id = match request.id {
-            Some(id) => id,
-            None => engine.mint_ids(0, 1).changesets[0],
-        };
-        let base = match request.base {
-            Some(base) => base,
-            None => engine.head()?,
-        };
-        engine.commit_with_versions(Changeset {
-            id,
-            base,
-            actor: caller.actor,
-            reason: request.reason,
-            run: request.run,
-            ops: request.ops,
-        })
-    })
-    .await?)
+    ok(app.commit_changeset(caller, json_body(&body)?).await?)
 }
 
 pub(in crate::server) async fn undo(
@@ -53,16 +119,7 @@ pub(in crate::server) async fn undo(
     body: Bytes,
 ) -> ApiResult {
     let seq = Seq(id(&seq, "a log position")?);
-    let request: UndoRequest = json_body(&body)?;
-    ok(engine(&app, move |engine| {
-        engine.undo(
-            seq,
-            caller.actor,
-            request.reason,
-            request.commit.unwrap_or(true),
-        )
-    })
-    .await?)
+    ok(app.undo_changeset(caller, seq, json_body(&body)?).await?)
 }
 
 pub(in crate::server) async fn split(
@@ -72,26 +129,16 @@ pub(in crate::server) async fn split(
     body: Bytes,
 ) -> ApiResult {
     let identity = id(&identity, "an identity ID")?;
-    let request: SplitRequest = json_body(&body)?;
-    ok(engine(&app, move |engine| {
-        engine.split(
-            identity,
-            &request.records,
-            request.keep_apart.unwrap_or(true),
-            request.base,
-            caller.actor,
-            request.reason,
-        )
-    })
-    .await?)
+    let request = json_body(&body)?;
+    ok(app.split_identity(caller, identity, request).await?)
 }
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(in crate::server) struct ConstraintsQuery {
-    pub(in crate::server) record: Option<String>,
-    pub(in crate::server) identity: Option<String>,
-    pub(in crate::server) removed: Option<bool>,
+    record: Option<String>,
+    identity: Option<String>,
+    removed: Option<bool>,
 }
 
 pub(in crate::server) async fn list_constraints(
@@ -112,8 +159,7 @@ pub(in crate::server) async fn list_constraints(
             .transpose()?,
         include_removed: params.removed.unwrap_or(false),
     };
-    let constraints = engine(&app, move |engine| engine.constraints(&filter)).await?;
-    ok(ConstraintList { constraints })
+    ok(app.list_constraints(filter).await?)
 }
 
 #[derive(serde::Deserialize)]
@@ -152,14 +198,5 @@ pub(in crate::server) async fn list_changesets(
 }
 
 pub(in crate::server) async fn mint_ids(State(app): State<App>, body: Bytes) -> ApiResult {
-    let request: MintRequest = optional_json_body(&body)?;
-    if request.identities > MAX_MINTED || request.changesets > MAX_MINTED {
-        return Err(ApiError::invalid(format!(
-            "at most {MAX_MINTED} IDs of a kind are minted in one call"
-        )));
-    }
-    ok(engine(&app, move |engine| {
-        Ok(engine.mint_ids(request.identities as usize, request.changesets as usize))
-    })
-    .await?)
+    ok(app.mint_ids(optional_json_body(&body)?).await?)
 }

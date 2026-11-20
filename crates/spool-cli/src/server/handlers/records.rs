@@ -7,7 +7,9 @@ use axum::body::Bytes;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
 use spool::core::{EntityType, RecordId};
-use spool::{AttributeFilter, Direction, DocumentFilter, Engine, RecordFilter, RecordSort};
+use spool::{
+    AttributeFilter, Direction, DocumentFilter, Engine, RecordEntry, RecordFilter, RecordSort,
+};
 
 use crate::api::{AttributeList, IdentitiesOfRequest, IdentitiesOfResponse, RecordList};
 use crate::server::App;
@@ -15,21 +17,44 @@ use crate::server::error::{ApiError, ApiResult};
 use crate::server::request::{MAX_PAGE, id, json_body, page, query, sorted};
 use crate::server::work::{engine, ok};
 
+impl App {
+    /// A page of the records a filter finds, `filter.limit` of them at
+    /// most, and where the next page starts.
+    pub(in crate::server) async fn list_records(
+        &self,
+        filter: RecordFilter,
+    ) -> ApiResult<RecordList> {
+        let limit = filter.limit;
+        let records = engine(self, move |engine| engine.records(&filter)).await?;
+        let next = (records.len() as u64 == limit)
+            .then(|| records.last().map(|record| record.id))
+            .flatten();
+        Ok(RecordList { records, next })
+    }
+
+    pub(in crate::server) async fn read_record(&self, record: RecordId) -> ApiResult<RecordEntry> {
+        match engine(self, move |engine| engine.record(record)).await? {
+            Some(record) => Ok(record),
+            None => Err(spool::Error::UnknownRecord(record).into()),
+        }
+    }
+}
+
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(in crate::server) struct RecordsQuery {
-    pub(in crate::server) entity_type: Option<EntityType>,
-    pub(in crate::server) source: Option<String>,
-    pub(in crate::server) key: Option<String>,
-    pub(in crate::server) document: Option<String>,
-    pub(in crate::server) identity: Option<String>,
-    pub(in crate::server) q: Option<String>,
-    pub(in crate::server) unassigned: Option<bool>,
-    pub(in crate::server) latest: Option<bool>,
-    pub(in crate::server) after: Option<String>,
-    pub(in crate::server) limit: Option<u64>,
-    pub(in crate::server) sort: Option<RecordSort>,
-    pub(in crate::server) order: Option<Direction>,
+    entity_type: Option<EntityType>,
+    source: Option<String>,
+    key: Option<String>,
+    document: Option<String>,
+    identity: Option<String>,
+    q: Option<String>,
+    unassigned: Option<bool>,
+    latest: Option<bool>,
+    after: Option<String>,
+    limit: Option<u64>,
+    sort: Option<RecordSort>,
+    order: Option<Direction>,
 }
 
 pub(in crate::server) async fn list_records(
@@ -37,7 +62,6 @@ pub(in crate::server) async fn list_records(
     params: Result<Query<RecordsQuery>, QueryRejection>,
 ) -> ApiResult {
     let params = query(params)?;
-    let limit = page(params.limit);
     let filter = RecordFilter {
         entity_type: params.entity_type,
         source: params.source,
@@ -60,14 +84,10 @@ pub(in crate::server) async fn list_records(
             .as_deref()
             .map(|after| id(after, "a record ID"))
             .transpose()?,
-        limit,
+        limit: page(params.limit),
         sort: sorted(params.sort, params.order, RecordSort::Source),
     };
-    let records = engine(&app, move |engine| engine.records(&filter)).await?;
-    let next = (records.len() as u64 == limit)
-        .then(|| records.last().map(|record| record.id))
-        .flatten();
-    ok(RecordList { records, next })
+    ok(app.list_records(filter).await?)
 }
 
 #[derive(serde::Deserialize)]
@@ -97,10 +117,7 @@ pub(in crate::server) async fn read_record(
     Path(record): Path<String>,
 ) -> ApiResult {
     let record = id(&record, "a record ID")?;
-    match engine(&app, move |engine| engine.record(record)).await? {
-        Some(record) => ok(record),
-        None => Err(spool::Error::UnknownRecord(record).into()),
-    }
+    ok(app.read_record(record).await?)
 }
 
 /// The record a caller names: by its ID, or as `<source>:<key>`, which

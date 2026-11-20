@@ -5,7 +5,7 @@ use axum::body::Bytes;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Extension, Path, Query, State};
 use spool::core::EntityType;
-use spool::{ReviewFilter, ReviewStatus};
+use spool::{ReviewCase, ReviewEntry, ReviewFilter, ReviewStatus};
 
 use crate::api::{DismissRequest, ReviewList};
 use crate::server::App;
@@ -14,15 +14,48 @@ use crate::server::error::ApiResult;
 use crate::server::request::{id, json_body, page, query};
 use crate::server::work::{engine, ok};
 
+impl App {
+    /// The review items a filter finds: all of them, or with `filter.limit`
+    /// a page of them and where the next page starts.
+    pub(in crate::server) async fn list_review(
+        &self,
+        filter: ReviewFilter,
+    ) -> ApiResult<ReviewList> {
+        let limit = filter.limit;
+        let items = engine(self, move |engine| engine.review_items(&filter)).await?;
+        let next = limit
+            .filter(|limit| items.len() as u64 == *limit)
+            .and_then(|_| items.last().map(|item| item.id));
+        Ok(ReviewList { items, next })
+    }
+
+    /// A review item with the records a reviewer reads to decide it.
+    pub(in crate::server) async fn review_case(&self, item: u64) -> ApiResult<ReviewCase> {
+        engine(self, move |engine| engine.review_case(item)).await
+    }
+
+    pub(in crate::server) async fn dismiss_review(
+        &self,
+        caller: Caller,
+        item: u64,
+        request: DismissRequest,
+    ) -> ApiResult<ReviewEntry> {
+        engine(self, move |engine| {
+            engine.dismiss_review(item, &caller.actor, request.reason.as_deref())
+        })
+        .await
+    }
+}
+
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(in crate::server) struct ReviewQuery {
-    pub(in crate::server) status: Option<ReviewStatus>,
-    pub(in crate::server) entity_type: Option<EntityType>,
-    pub(in crate::server) record: Option<String>,
-    pub(in crate::server) after: Option<u64>,
+    status: Option<ReviewStatus>,
+    entity_type: Option<EntityType>,
+    record: Option<String>,
+    after: Option<u64>,
     /// Without it, every item: the review screen lists them all.
-    pub(in crate::server) limit: Option<u64>,
+    limit: Option<u64>,
 }
 
 pub(in crate::server) async fn list_review(
@@ -42,12 +75,7 @@ pub(in crate::server) async fn list_review(
         after: params.after,
         limit: params.limit.map(|limit| page(Some(limit))),
     };
-    let limit = filter.limit;
-    let items = engine(&app, move |engine| engine.review_items(&filter)).await?;
-    let next = limit
-        .filter(|limit| items.len() as u64 == *limit)
-        .and_then(|_| items.last().map(|item| item.id));
-    ok(ReviewList { items, next })
+    ok(app.list_review(filter).await?)
 }
 
 pub(in crate::server) async fn read_review(
@@ -68,13 +96,12 @@ pub(in crate::server) async fn read_review(
     }
 }
 
-/// A review item with the records a reviewer reads to decide it.
 pub(in crate::server) async fn review_case(
     State(app): State<App>,
     Path(item): Path<String>,
 ) -> ApiResult {
     let item: u64 = id(&item, "a review item ID")?;
-    ok(engine(&app, move |engine| engine.review_case(item)).await?)
+    ok(app.review_case(item).await?)
 }
 
 pub(in crate::server) async fn dismiss_review(
@@ -84,9 +111,5 @@ pub(in crate::server) async fn dismiss_review(
     body: Bytes,
 ) -> ApiResult {
     let item: u64 = id(&item, "a review item ID")?;
-    let request: DismissRequest = json_body(&body)?;
-    ok(engine(&app, move |engine| {
-        engine.dismiss_review(item, &caller.actor, request.reason.as_deref())
-    })
-    .await?)
+    ok(app.dismiss_review(caller, item, json_body(&body)?).await?)
 }

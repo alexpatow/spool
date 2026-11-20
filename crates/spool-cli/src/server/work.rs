@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use axum::Json;
 use axum::http::StatusCode;
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 use spool::core::RunId;
 use spool::{Engine, watch_runs};
@@ -30,6 +30,20 @@ pub(super) async fn engine<T: Send + 'static>(
     }
 }
 
+/// What a call that starts work answers: the run that stands for the work,
+/// and whether the work was done when the call stopped waiting for it.
+pub(super) struct Started {
+    /// `200` with the finished run, `202` with the run in progress.
+    pub(super) status: StatusCode,
+    pub(super) run: RunResponse,
+}
+
+impl IntoResponse for Started {
+    fn into_response(self) -> Response {
+        (self.status, Json(self.run)).into_response()
+    }
+}
+
 /// Starts work that is recorded as a run and waits for it for `wait_ms`.
 /// `work` returns the run that stands for the work, or `None` if there was
 /// nothing to do.
@@ -37,7 +51,7 @@ pub(super) async fn job(
     app: &App,
     wait_ms: Option<u64>,
     work: impl FnOnce(&Engine) -> spool::Result<Option<RunId>> + Send + 'static,
-) -> ApiResult {
+) -> ApiResult<Started> {
     let (announce, mut announced) = mpsc::unbounded_channel();
     let engine = Arc::clone(&app.engine);
     let mut working = tokio::task::spawn_blocking(move || {
@@ -66,22 +80,25 @@ pub(super) async fn job(
             tokio::select! {
                 finished = &mut working => finished,
                 Some(run) = announced.recv() => {
-                    return run_response(app, StatusCode::ACCEPTED, Some(run)).await;
+                    return started(app, StatusCode::ACCEPTED, Some(run)).await;
                 }
             }
         }
     };
     let run =
         finished.map_err(|_| ApiError::internal("the engine stopped while it was working"))??;
-    run_response(app, StatusCode::OK, run).await
+    started(app, StatusCode::OK, run).await
 }
 
-async fn run_response(app: &App, status: StatusCode, run: Option<RunId>) -> ApiResult {
+async fn started(app: &App, status: StatusCode, run: Option<RunId>) -> ApiResult<Started> {
     let run = match run {
         Some(run) => Some(engine(app, move |engine| engine.run(run)).await?),
         None => None,
     };
-    Ok((status, Json(RunResponse { run })).into_response())
+    Ok(Started {
+        status,
+        run: RunResponse { run },
+    })
 }
 
 pub(super) fn ok<T: Serialize>(value: T) -> ApiResult {

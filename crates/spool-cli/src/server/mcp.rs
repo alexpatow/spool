@@ -6,8 +6,8 @@
 //! protocol and its transport are the `rmcp` crate's. What is here is the
 //! list of tools and what each one does.
 //!
-//! Tools run as the caller the request came from, and use the same handlers
-//! as the paths under `/v1` where they have one. What a tool changes is
+//! Tools run as the caller the request came from, and call the same
+//! operations as the paths under `/v1` where they have one. What a tool changes is
 //! recorded under the agent whose token the client sends or the person
 //! signed in. Nothing in a tool's arguments says who is calling.
 //!
@@ -17,11 +17,10 @@
 
 use std::sync::{Arc, LazyLock};
 
-use axum::body::{Bytes, to_bytes};
-use axum::extract::{Extension, Path, Query, State};
+use axum::body::to_bytes;
+use axum::http::StatusCode;
 use axum::http::header::{ALLOW, CONTENT_TYPE};
 use axum::http::request::Parts;
-use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use rmcp::handler::server::tool::schema_for_input;
@@ -38,17 +37,21 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
-use spool::core::{EntityType, IdentityId, Op, RecordId, Seq};
-use spool::{NewDocument, ReviewStatus, StrategyRef};
+use spool::core::{EntityType, IdentityId, Op, RecordId, RunId, Seq};
+use spool::{
+    ConstraintFilter, IdentityFilter, NewDocument, RecordFilter, ReviewFilter, ReviewStatus,
+    StrategyRef,
+};
 
 use super::auth::Caller;
 use super::error::{ApiError, ApiResult};
-use super::handlers::identities::IdentityAtQuery;
-use super::{App, ServerOptions, handlers};
+use super::request::page;
+use super::work::{engine, ok};
+use super::{App, ServerOptions};
 use crate::api::{
     AddDocumentRequest, AddRecordRequest, CommitRequest, DismissRequest, DocumentsRequest,
-    ErrorBody, ErrorCode, ErrorResponse, ExtractRequest, LoadParams, LoadRequest, MatchRequest,
-    MintRequest, RetractRequest, SplitRequest, UndoRequest,
+    ErrorBody, ErrorCode, ErrorResponse, ExtractRequest, LoadRequest, MatchRequest, MintRequest,
+    RetractRequest, SplitRequest, UndoRequest,
 };
 
 /// The largest request the endpoint reads. A request is a tool call, and the
@@ -416,17 +419,6 @@ fn arguments<T: DeserializeOwned>(tool: &str, arguments: JsonObject) -> ApiResul
             "the arguments are not what `{tool}` takes: {error}"
         ))
     })
-}
-
-/// A request body, as the handler of a path reads it.
-fn body<T: serde::Serialize>(request: &T) -> ApiResult<Bytes> {
-    serde_json::to_vec(request)
-        .map(Bytes::from)
-        .map_err(|error| ApiError::internal(format!("the request could not be written: {error}")))
-}
-
-fn text<T: ToString>(id: Option<T>) -> Option<String> {
-    id.map(|id| id.to_string())
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -1147,8 +1139,8 @@ static TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
 impl Tools {
     async fn list_changesets(&self, asked: Log) -> ApiResult {
         let after = asked.after.unwrap_or(Seq::ZERO);
-        let limit = super::request::page(Some(asked.limit.unwrap_or(DEFAULT_LIMIT)));
-        let (head, summaries) = super::work::engine(&self.app, move |engine| {
+        let limit = page(Some(asked.limit.unwrap_or(DEFAULT_LIMIT)));
+        let (head, summaries) = engine(&self.app, move |engine| {
             engine.changeset_summaries(after, limit)
         })
         .await?;
@@ -1185,14 +1177,14 @@ impl Tools {
             next = (summary.seq < head).then_some(summary.seq);
             changesets.push(entry);
         }
-        super::work::ok(json!({ "changesets": changesets, "head": head, "next": next }))
+        ok(json!({ "changesets": changesets, "head": head, "next": next }))
     }
 
     async fn list_changeset_ops(&self, asked: LogOps) -> ApiResult {
         let seq = asked.seq;
         let offset = asked.offset.unwrap_or(0);
         let limit = asked.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LOG_OPS);
-        let mut ops = super::work::engine(&self.app, move |engine| {
+        let mut ops = engine(&self.app, move |engine| {
             engine.changeset_ops(seq, offset, limit + 1)
         })
         .await?;
@@ -1202,7 +1194,7 @@ impl Tools {
         } else {
             None
         };
-        super::work::ok(json!({ "seq": seq, "offset": offset, "ops": ops, "next": next }))
+        ok(json!({ "seq": seq, "offset": offset, "ops": ops, "next": next }))
     }
 
     /// The strategy a match run is asked for by name, which has to be one
@@ -1251,114 +1243,93 @@ impl Tools {
         )))
     }
 
-    /// Runs a tool: reads its arguments and calls the handler of the path
+    /// Runs a tool: reads its arguments and calls the operation of the API
     /// that does the same.
     #[expect(clippy::too_many_lines)]
     async fn call(&self, tool: &str, given: JsonObject, caller: Caller) -> ApiResult {
-        let app = State(self.app.clone());
-        let caller = Extension(caller);
-        let limit = |limit: Option<u64>| Some(limit.unwrap_or(DEFAULT_LIMIT));
+        let app = &self.app;
+        let limit = |limit: Option<u64>| page(Some(limit.unwrap_or(DEFAULT_LIMIT)));
         match tool {
             "describe_store" => {
                 let Nothing {} = arguments(tool, given)?;
-                handlers::info::info(app).await
+                ok(app.describe_store().await?)
             }
             "search_identities" => {
                 let asked: SearchIdentities = arguments(tool, given)?;
-                let ids = asked.ids.map(|ids| {
-                    let ids: Vec<String> = ids.iter().map(ToString::to_string).collect();
-                    ids.join(",")
-                });
-                let query = handlers::identities::IdentitiesQuery {
+                let filter = IdentityFilter {
                     entity_type: asked.entity_type,
                     q: asked.q,
-                    ids,
-                    after: text(asked.after),
+                    ids: asked.ids,
+                    after: asked.after,
                     limit: limit(asked.limit),
                     sort: None,
-                    order: None,
                 };
-                handlers::identities::list_identities(app, Ok(Query(query))).await
+                ok(app.list_identities(filter).await?)
             }
             "get_identity" => {
                 let asked: OneIdentity = arguments(tool, given)?;
-                handlers::identities::read_identity(app, Path(asked.identity.to_string())).await
+                ok(app.read_identity(asked.identity).await?)
             }
             "get_identity_history" => {
                 let asked: OneIdentity = arguments(tool, given)?;
-                handlers::identities::identity_history(app, Path(asked.identity.to_string())).await
+                ok(app.identity_history(asked.identity).await?)
             }
             "get_identity_at" => {
                 let asked: IdentityAt = arguments(tool, given)?;
-                handlers::identities::identity_at(
-                    app,
-                    Path(asked.identity.to_string()),
-                    Ok(Query(IdentityAtQuery { seq: asked.seq })),
-                )
-                .await
+                ok(app.identity_at(asked.identity, asked.seq).await?)
             }
             "search_records" => {
                 let asked: SearchRecords = arguments(tool, given)?;
-                let query = handlers::records::RecordsQuery {
+                let filter = RecordFilter {
                     entity_type: asked.entity_type,
                     source: asked.source,
                     key: asked.key,
-                    document: None,
-                    identity: text(asked.identity),
+                    identity: asked.identity,
                     q: asked.q,
-                    unassigned: asked.unassigned,
-                    latest: None,
-                    after: text(asked.after),
+                    unassigned: asked.unassigned.unwrap_or(false),
+                    after: asked.after,
                     limit: limit(asked.limit),
-                    sort: None,
-                    order: None,
+                    ..RecordFilter::default()
                 };
-                handlers::records::list_records(app, Ok(Query(query))).await
+                ok(app.list_records(filter).await?)
             }
             "get_record" => {
                 let asked: OneRecord = arguments(tool, given)?;
-                handlers::records::read_record(app, Path(asked.record.to_string())).await
+                ok(app.read_record(asked.record).await?)
             }
             "explain_pair" => {
                 let asked: Pair = arguments(tool, given)?;
-                let query = handlers::explain::ExplainQuery {
-                    a: asked.a,
-                    b: asked.b,
-                };
-                handlers::explain::explain(app, Ok(Query(query))).await
+                ok(app.explain_pair(&asked.a, &asked.b).await?)
             }
             "list_review_items" => {
                 let asked: ReviewItems = arguments(tool, given)?;
-                let query = handlers::review::ReviewQuery {
+                let filter = ReviewFilter {
                     status: Some(asked.status.unwrap_or(ReviewStatus::Open)),
                     entity_type: asked.entity_type,
-                    record: text(asked.record),
-                    after: None,
-                    limit: None,
+                    record: asked.record,
+                    ..ReviewFilter::default()
                 };
-                handlers::review::list_review(app, Ok(Query(query))).await
+                ok(app.list_review(filter).await?)
             }
             "get_review_case" => {
                 let asked: OneReviewItem = arguments(tool, given)?;
-                handlers::review::review_case(app, Path(asked.item.to_string())).await
+                ok(app.review_case(asked.item).await?)
             }
             "list_constraints" => {
                 let asked: Constraints = arguments(tool, given)?;
-                let query = handlers::changesets::ConstraintsQuery {
-                    record: text(asked.record),
-                    identity: text(asked.identity),
-                    removed: None,
+                let filter = ConstraintFilter {
+                    record: asked.record,
+                    identity: asked.identity,
+                    include_removed: false,
                 };
-                handlers::changesets::list_constraints(app, Ok(Query(query))).await
+                ok(app.list_constraints(filter).await?)
             }
             "list_changesets" => self.list_changesets(arguments(tool, given)?).await,
             "list_changeset_ops" => self.list_changeset_ops(arguments(tool, given)?).await,
             "get_run" => {
                 let asked: OneRun = arguments(tool, given)?;
-                let query = handlers::runs::WaitQuery {
-                    wait_ms: asked.wait_ms.map(|wait| wait.min(MAX_RUN_WAIT_MS)),
-                };
-                handlers::runs::read_run(app, Path(asked.run.to_string()), Ok(Query(query))).await
+                let wait_ms = asked.wait_ms.map(|wait| wait.min(MAX_RUN_WAIT_MS));
+                ok(app.read_run(RunId(asked.run), wait_ms).await?)
             }
             "mint_identity_ids" => {
                 let asked: MintIdentityIds = arguments(tool, given)?;
@@ -1372,27 +1343,19 @@ impl Tools {
                     identities: count,
                     changesets: 0,
                 };
-                handlers::changesets::mint_ids(app, body(&request)?).await
+                ok(app.mint_ids(request).await?)
             }
             "add_record" => {
                 let mut request: AddRecordRequest = arguments(tool, given)?;
                 empty_fields(&mut request.row);
-                handlers::load::add_record(app, caller, body(&request)?).await
+                ok(app.add_record(caller, request).await?)
             }
             "add_document" => {
                 let request: AddDocumentRequest = arguments(tool, given)?;
-                handlers::documents::add_document(app, caller, body(&request)?).await
+                ok(app.add_document(caller, request).await?)
             }
             "load_rows" => {
                 let asked: LoadRows = arguments(tool, given)?;
-                // The path takes its rows as JSON or as Arrow, and reads
-                // these parameters only beside Arrow.
-                let beside = LoadParams {
-                    source: asked.source.clone(),
-                    entity_type: asked.entity_type.clone(),
-                    replace: None,
-                    wait_ms: None,
-                };
                 // An empty field of a file reaches a tool as `""`. It is a
                 // value the row does not have, as it is when the file is
                 // sent as CSV. Kept as text it would be a value like any
@@ -1412,8 +1375,7 @@ impl Tools {
                     replace: Some(asked.replace.unwrap_or(false)),
                     wait_ms: None,
                 };
-                let rows = body(&request)?;
-                handlers::load::load(app, caller, Ok(Query(beside)), HeaderMap::new(), rows).await
+                Ok(app.load_rows(caller, request).await?.into_response())
             }
             "load_documents" => {
                 let asked: LoadDocuments = arguments(tool, given)?;
@@ -1428,7 +1390,7 @@ impl Tools {
                     documents: documents.collect(),
                     wait_ms: None,
                 };
-                handlers::documents::add_documents(app, caller, body(&request)?).await
+                Ok(app.add_documents(caller, request).await?.into_response())
             }
             "run_extraction" => {
                 let asked: RunExtraction = arguments(tool, given)?;
@@ -1440,7 +1402,7 @@ impl Tools {
                     limit: asked.limit,
                     wait_ms: None,
                 };
-                handlers::documents::extract(app, caller, body(&request)?).await
+                Ok(app.run_extraction(caller, request).await?.into_response())
             }
             "run_match" => {
                 let asked: RunMatch = arguments(tool, given)?;
@@ -1456,7 +1418,7 @@ impl Tools {
                     rematch: asked.rematch,
                     wait_ms: None,
                 };
-                handlers::runs::start_match(app, caller, body(&request)?).await
+                Ok(app.start_match(caller, request).await?.into_response())
             }
             "retract_rows" => {
                 let asked: RetractRows = arguments(tool, given)?;
@@ -1467,7 +1429,7 @@ impl Tools {
                     reason: Some(asked.reason),
                     wait_ms: None,
                 };
-                handlers::load::retract(app, caller, body(&request)?).await
+                Ok(app.retract_rows(caller, request).await?.into_response())
             }
             "commit_changeset" => {
                 let asked: CommitChangeset = arguments(tool, given)?;
@@ -1478,7 +1440,7 @@ impl Tools {
                     run: None,
                     ops: asked.ops,
                 };
-                handlers::changesets::commit(app, caller, body(&request)?).await
+                ok(app.commit_changeset(caller, request).await?)
             }
             "split_identity" => {
                 let asked: SplitIdentity = arguments(tool, given)?;
@@ -1488,8 +1450,7 @@ impl Tools {
                     base: asked.base,
                     reason: Some(asked.reason),
                 };
-                let identity = Path(asked.identity.to_string());
-                handlers::changesets::split(app, caller, identity, body(&request)?).await
+                ok(app.split_identity(caller, asked.identity, request).await?)
             }
             "undo_changeset" => {
                 let asked: UndoChangeset = arguments(tool, given)?;
@@ -1497,16 +1458,14 @@ impl Tools {
                     reason: Some(asked.reason),
                     commit: asked.commit,
                 };
-                let seq = Path(asked.seq.0.to_string());
-                handlers::changesets::undo(app, caller, seq, body(&request)?).await
+                ok(app.undo_changeset(caller, asked.seq, request).await?)
             }
             "dismiss_review_item" => {
                 let asked: DismissReviewItem = arguments(tool, given)?;
                 let request = DismissRequest {
                     reason: Some(asked.reason),
                 };
-                let item = Path(asked.item.to_string());
-                handlers::review::dismiss_review(app, caller, item, body(&request)?).await
+                ok(app.dismiss_review(caller, asked.item, request).await?)
             }
             other => Err(ApiError::not_found(format!(
                 "there is no tool called `{other}`"
