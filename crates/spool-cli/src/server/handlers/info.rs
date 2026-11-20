@@ -7,7 +7,7 @@ use spool::Engine;
 use crate::api::{self, Info};
 use crate::server::App;
 use crate::server::error::ApiResult;
-use crate::server::work::{engine, ok};
+use crate::server::work::{ok_json, run_engine_work};
 
 pub(in crate::server) async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "status": "ok" }))
@@ -16,7 +16,7 @@ pub(in crate::server) async fn health() -> Json<serde_json::Value> {
 impl App {
     /// What the store holds, and the API this server speaks.
     pub(in crate::server) async fn describe_store(&self) -> ApiResult<Info> {
-        let store = engine(self, Engine::info).await?;
+        let store = run_engine_work(self, Engine::info).await?;
         Ok(Info {
             api: api::VERSION.to_owned(),
             store,
@@ -29,5 +29,5 @@ impl App {
 }
 
 pub(in crate::server) async fn info(State(app): State<App>) -> ApiResult {
-    ok(app.describe_store().await?)
+    ok_json(app.describe_store().await?)
 }

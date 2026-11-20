@@ -5,11 +5,11 @@ use serde::Deserialize;
 use spool::StrategyRef;
 use spool::core::{EntityType, RunId};
 
-use super::{Declared, Effect, declare};
+use super::{Declared, Effect, declare_tool};
 use crate::api::MatchRequest;
 use crate::server::App;
 use crate::server::error::{ApiError, ApiResult};
-use crate::server::mcp::limits::beginning;
+use crate::server::mcp::limits::truncate_to_field;
 
 /// The longest `get_run` waits for a run that is still in progress. A
 /// client gives up on a call that takes much longer.
@@ -27,7 +27,7 @@ struct OneRun {
 }
 
 pub(super) fn get_run() -> Declared {
-    declare(
+    declare_tool(
         "get_run",
         "Get a run",
         Effect::Reads,
@@ -66,7 +66,7 @@ struct RunMatch {
 }
 
 pub(super) fn run_match() -> Declared {
-    declare(
+    declare_tool(
         "run_match",
         "Run a match",
         Effect::Changes,
@@ -115,7 +115,7 @@ fn project_strategy(app: &App, entity_type: &EntityType, name: String) -> ApiRes
         false => Err(ApiError::invalid(format!(
             "the project has no strategy `{}` for `{entity_type}`: `describe_store` lists \
              the strategies of each entity type, and `rules` is always one",
-            beginning(&name)
+            truncate_to_field(&name)
         ))),
     }
 }

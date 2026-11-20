@@ -36,7 +36,7 @@ use rmcp::transport::streamable_http_server::session::never::NeverSessionManager
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::{ErrorData, ServerHandler};
 
-use self::limits::beginning;
+use self::limits::truncate_to_field;
 use super::auth::Caller;
 use super::error::ApiError;
 use super::{App, ServerOptions};
@@ -106,7 +106,7 @@ changeset changes nothing; its `rejections` say which operation broke \
 which rule.";
 
 /// Serves the endpoint.
-pub(super) fn service(
+pub(super) fn build_mcp_service(
     app: App,
     options: &ServerOptions,
 ) -> StreamableHttpService<Tools, NeverSessionManager> {
@@ -198,7 +198,10 @@ impl ServerHandler for Tools {
     ) -> Result<CallToolResponse, ErrorData> {
         let Some(tool) = tools::find_tool(&request.name) else {
             return Err(ErrorData::invalid_params(
-                format!("there is no tool called `{}`", beginning(&request.name)),
+                format!(
+                    "there is no tool called `{}`",
+                    truncate_to_field(&request.name)
+                ),
                 None,
             ));
         };

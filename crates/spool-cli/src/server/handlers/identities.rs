@@ -9,8 +9,8 @@ use spool::{Direction, IdentityFilter, IdentitySnapshot, IdentitySort, IdentityV
 use crate::api::{History, IdentityList};
 use crate::server::App;
 use crate::server::error::{ApiError, ApiResult};
-use crate::server::request::{MAX_PAGE, id, page, query, sorted};
-use crate::server::work::{engine, ok};
+use crate::server::request::{MAX_PAGE, build_sort, clamp_page_size, parse_id, parse_query};
+use crate::server::work::{ok_json, run_engine_work};
 
 impl App {
     /// A page of the identities a filter finds, `filter.limit` of them at
@@ -23,7 +23,7 @@ impl App {
             refuse_more_ids_than_a_page(ids.len())?;
         }
         let limit = filter.limit;
-        let identities = engine(self, move |engine| engine.identities(&filter)).await?;
+        let identities = run_engine_work(self, move |engine| engine.identities(&filter)).await?;
         let next = (identities.len() as u64 == limit)
             .then(|| identities.last().map(|identity| identity.id))
             .flatten();
@@ -34,7 +34,7 @@ impl App {
         &self,
         identity: IdentityId,
     ) -> ApiResult<IdentityView> {
-        engine(self, move |engine| engine.identity(identity)).await
+        run_engine_work(self, move |engine| engine.identity(identity)).await
     }
 
     /// What an identity held just after the changeset at `seq`.
@@ -43,14 +43,14 @@ impl App {
         identity: IdentityId,
         seq: Seq,
     ) -> ApiResult<IdentitySnapshot> {
-        engine(self, move |engine| engine.identity_at(identity, seq)).await
+        run_engine_work(self, move |engine| engine.identity_at(identity, seq)).await
     }
 
     pub(in crate::server) async fn identity_history(
         &self,
         identity: IdentityId,
     ) -> ApiResult<History> {
-        let history = engine(self, move |engine| engine.history(identity)).await?;
+        let history = run_engine_work(self, move |engine| engine.history(identity)).await?;
         Ok(History { history })
     }
 }
@@ -82,7 +82,7 @@ pub(in crate::server) async fn list_identities(
     State(app): State<App>,
     params: Result<Query<IdentitiesQuery>, QueryRejection>,
 ) -> ApiResult {
-    let params = query(params)?;
+    let params = parse_query(params)?;
     let ids = params
         .ids
         .as_deref()
@@ -91,7 +91,7 @@ pub(in crate::server) async fn list_identities(
             // Too many are refused before any of them is read.
             refuse_more_ids_than_a_page(ids.len())?;
             ids.into_iter()
-                .map(|identity| id(identity, "an identity ID"))
+                .map(|identity| parse_id(identity, "an identity ID"))
                 .collect::<ApiResult<Vec<_>>>()
         })
         .transpose()?;
@@ -102,20 +102,20 @@ pub(in crate::server) async fn list_identities(
         after: params
             .after
             .as_deref()
-            .map(|after| id(after, "an identity ID"))
+            .map(|after| parse_id(after, "an identity ID"))
             .transpose()?,
-        limit: page(params.limit),
-        sort: sorted(params.sort, params.order, IdentitySort::Id),
+        limit: clamp_page_size(params.limit),
+        sort: build_sort(params.sort, params.order, IdentitySort::Id),
     };
-    ok(app.list_identities(filter).await?)
+    ok_json(app.list_identities(filter).await?)
 }
 
 pub(in crate::server) async fn read_identity(
     State(app): State<App>,
     Path(identity): Path<String>,
 ) -> ApiResult {
-    let identity = id(&identity, "an identity ID")?;
-    ok(app.read_identity(identity).await?)
+    let identity = parse_id(&identity, "an identity ID")?;
+    ok_json(app.read_identity(identity).await?)
 }
 
 #[derive(serde::Deserialize)]
@@ -129,15 +129,15 @@ pub(in crate::server) async fn identity_at(
     Path(identity): Path<String>,
     params: Result<Query<IdentityAtQuery>, QueryRejection>,
 ) -> ApiResult {
-    let identity = id(&identity, "an identity ID")?;
-    let seq = query(params)?.seq;
-    ok(app.identity_at(identity, seq).await?)
+    let identity = parse_id(&identity, "an identity ID")?;
+    let seq = parse_query(params)?.seq;
+    ok_json(app.identity_at(identity, seq).await?)
 }
 
 pub(in crate::server) async fn identity_history(
     State(app): State<App>,
     Path(identity): Path<String>,
 ) -> ApiResult {
-    let identity = id(&identity, "an identity ID")?;
-    ok(app.identity_history(identity).await?)
+    let identity = parse_id(&identity, "an identity ID")?;
+    ok_json(app.identity_history(identity).await?)
 }

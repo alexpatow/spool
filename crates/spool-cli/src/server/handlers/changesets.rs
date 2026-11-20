@@ -13,8 +13,10 @@ use crate::api::{
 use crate::server::App;
 use crate::server::auth::{Caller, list_actor_names};
 use crate::server::error::{ApiError, ApiResult};
-use crate::server::request::{id, json_body, optional_json_body, page, query, sorted};
-use crate::server::work::{engine, ok};
+use crate::server::request::{
+    build_sort, clamp_page_size, json_body, optional_json_body, parse_id, parse_query,
+};
+use crate::server::work::{ok_json, run_engine_work};
 
 /// The most IDs minted in one call.
 const MAX_MINTED: u32 = 10_000;
@@ -25,7 +27,7 @@ impl App {
         caller: Caller,
         request: CommitRequest,
     ) -> ApiResult<Committed> {
-        engine(self, move |engine| {
+        run_engine_work(self, move |engine| {
             let id = match request.id {
                 Some(id) => id,
                 None => engine.mint_ids(0, 1).changesets[0],
@@ -52,7 +54,7 @@ impl App {
         seq: Seq,
         request: UndoRequest,
     ) -> ApiResult<Authored> {
-        engine(self, move |engine| {
+        run_engine_work(self, move |engine| {
             engine.undo(
                 seq,
                 caller.actor,
@@ -69,7 +71,7 @@ impl App {
         identity: IdentityId,
         request: SplitRequest,
     ) -> ApiResult<SplitReport> {
-        engine(self, move |engine| {
+        run_engine_work(self, move |engine| {
             engine.split(
                 identity,
                 &request.records,
@@ -86,7 +88,7 @@ impl App {
         &self,
         filter: ConstraintFilter,
     ) -> ApiResult<ConstraintList> {
-        let constraints = engine(self, move |engine| engine.constraints(&filter)).await?;
+        let constraints = run_engine_work(self, move |engine| engine.constraints(&filter)).await?;
         Ok(ConstraintList { constraints })
     }
 
@@ -97,7 +99,7 @@ impl App {
                 "at most {MAX_MINTED} IDs of a kind are minted in one call"
             )));
         }
-        engine(self, move |engine| {
+        run_engine_work(self, move |engine| {
             Ok(engine.mint_ids(request.identities as usize, request.changesets as usize))
         })
         .await
@@ -109,7 +111,7 @@ pub(in crate::server) async fn commit(
     Extension(caller): Extension<Caller>,
     body: Bytes,
 ) -> ApiResult {
-    ok(app.commit_changeset(caller, json_body(&body)?).await?)
+    ok_json(app.commit_changeset(caller, json_body(&body)?).await?)
 }
 
 pub(in crate::server) async fn undo(
@@ -118,8 +120,8 @@ pub(in crate::server) async fn undo(
     Path(seq): Path<String>,
     body: Bytes,
 ) -> ApiResult {
-    let seq = Seq(id(&seq, "a log position")?);
-    ok(app.undo_changeset(caller, seq, json_body(&body)?).await?)
+    let seq = Seq(parse_id(&seq, "a log position")?);
+    ok_json(app.undo_changeset(caller, seq, json_body(&body)?).await?)
 }
 
 pub(in crate::server) async fn split(
@@ -128,9 +130,9 @@ pub(in crate::server) async fn split(
     Path(identity): Path<String>,
     body: Bytes,
 ) -> ApiResult {
-    let identity = id(&identity, "an identity ID")?;
+    let identity = parse_id(&identity, "an identity ID")?;
     let request = json_body(&body)?;
-    ok(app.split_identity(caller, identity, request).await?)
+    ok_json(app.split_identity(caller, identity, request).await?)
 }
 
 #[derive(serde::Deserialize)]
@@ -145,21 +147,21 @@ pub(in crate::server) async fn list_constraints(
     State(app): State<App>,
     params: Result<Query<ConstraintsQuery>, QueryRejection>,
 ) -> ApiResult {
-    let params = query(params)?;
+    let params = parse_query(params)?;
     let filter = ConstraintFilter {
         record: params
             .record
             .as_deref()
-            .map(|record| id(record, "a record ID"))
+            .map(|record| parse_id(record, "a record ID"))
             .transpose()?,
         identity: params
             .identity
             .as_deref()
-            .map(|identity| id(identity, "an identity ID"))
+            .map(|identity| parse_id(identity, "an identity ID"))
             .transpose()?,
         include_removed: params.removed.unwrap_or(false),
     };
-    ok(app.list_constraints(filter).await?)
+    ok_json(app.list_constraints(filter).await?)
 }
 
 #[derive(serde::Deserialize)]
@@ -175,28 +177,30 @@ pub(in crate::server) async fn list_changesets(
     State(app): State<App>,
     params: Result<Query<LogQuery>, QueryRejection>,
 ) -> ApiResult {
-    let params = query(params)?;
-    let limit = page(params.limit);
-    let sort = sorted(params.sort, params.order, LogSort::Seq);
+    let params = parse_query(params)?;
+    let limit = clamp_page_size(params.limit);
+    let sort = build_sort(params.sort, params.order, LogSort::Seq);
     let names = match sort {
         Some(sort) if sort.by == LogSort::Actor => list_actor_names(&app).await?,
         _ => Vec::new(),
     };
-    ok(engine(&app, move |engine| {
-        // Sorted, a page continues after the changeset at `after`,
-        // wherever that stands in the order.
-        let changesets = match sort {
-            None => engine.logged_after(Seq(params.after.unwrap_or(0)), limit)?,
-            Some(sort) => engine.logged_sorted(sort, params.after.map(Seq), limit, &names)?,
-        };
-        Ok(ChangesetList {
-            changesets,
-            head: engine.head()?,
+    ok_json(
+        run_engine_work(&app, move |engine| {
+            // Sorted, a page continues after the changeset at `after`,
+            // wherever that stands in the order.
+            let changesets = match sort {
+                None => engine.logged_after(Seq(params.after.unwrap_or(0)), limit)?,
+                Some(sort) => engine.logged_sorted(sort, params.after.map(Seq), limit, &names)?,
+            };
+            Ok(ChangesetList {
+                changesets,
+                head: engine.head()?,
+            })
         })
-    })
-    .await?)
+        .await?,
+    )
 }
 
 pub(in crate::server) async fn mint_ids(State(app): State<App>, body: Bytes) -> ApiResult {
-    ok(app.mint_ids(optional_json_body(&body)?).await?)
+    ok_json(app.mint_ids(optional_json_body(&body)?).await?)
 }

@@ -6,11 +6,11 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::{Declared, Effect, declare};
+use super::{Declared, Effect, declare_tool};
 use crate::api::{AddRecordRequest, LoadRequest, RetractRequest};
 
 pub(super) fn add_record() -> Declared {
-    declare(
+    declare_tool(
         "add_record",
         "Add a record and find its identity",
         Effect::Changes,
@@ -52,7 +52,7 @@ struct LoadRows {
 }
 
 pub(super) fn load_rows() -> Declared {
-    declare(
+    declare_tool(
         "load_rows",
         "Load rows",
         Effect::Changes,
@@ -126,7 +126,7 @@ struct RetractRows {
 }
 
 pub(super) fn retract_rows() -> Declared {
-    declare(
+    declare_tool(
         "retract_rows",
         "Take rows back",
         Effect::Changes,

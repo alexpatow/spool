@@ -6,7 +6,7 @@ use serde::Deserialize;
 use spool::core::{EntityType, RecordId};
 use spool::{ReviewFilter, ReviewStatus};
 
-use super::{Declared, Effect, declare};
+use super::{Declared, Effect, declare_tool};
 use crate::api::DismissRequest;
 
 #[derive(Deserialize, JsonSchema)]
@@ -24,7 +24,7 @@ struct ReviewItems {
 }
 
 pub(super) fn list_review_items() -> Declared {
-    declare(
+    declare_tool(
         "list_review_items",
         "List review items",
         Effect::Reads,
@@ -54,7 +54,7 @@ struct OneReviewItem {
 }
 
 pub(super) fn get_review_case() -> Declared {
-    declare(
+    declare_tool(
         "get_review_case",
         "Get a review case",
         Effect::Reads,
@@ -85,7 +85,7 @@ struct DismissReviewItem {
 }
 
 pub(super) fn dismiss_review_item() -> Declared {
-    declare(
+    declare_tool(
         "dismiss_review_item",
         "Dismiss a review item",
         Effect::Changes,

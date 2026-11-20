@@ -6,7 +6,7 @@ use serde::Deserialize;
 use spool::IdentityFilter;
 use spool::core::{EntityType, IdentityId, Seq};
 
-use super::{Declared, Effect, declare, limit_or_default};
+use super::{Declared, Effect, declare_tool, limit_or_default};
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -31,7 +31,7 @@ struct SearchIdentities {
 }
 
 pub(super) fn search_identities() -> Declared {
-    declare(
+    declare_tool(
         "search_identities",
         "Search identities",
         Effect::Reads,
@@ -61,7 +61,7 @@ struct OneIdentity {
 }
 
 pub(super) fn get_identity() -> Declared {
-    declare(
+    declare_tool(
         "get_identity",
         "Get an identity",
         Effect::Reads,
@@ -74,7 +74,7 @@ pub(super) fn get_identity() -> Declared {
 }
 
 pub(super) fn get_identity_history() -> Declared {
-    declare(
+    declare_tool(
         "get_identity_history",
         "Get an identity's history",
         Effect::Reads,
@@ -94,7 +94,7 @@ struct IdentityAt {
 }
 
 pub(super) fn get_identity_at() -> Declared {
-    declare(
+    declare_tool(
         "get_identity_at",
         "Get an identity at a changeset",
         Effect::Reads,

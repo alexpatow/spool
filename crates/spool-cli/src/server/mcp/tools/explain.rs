@@ -3,7 +3,7 @@
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::{Declared, Effect, declare};
+use super::{Declared, Effect, declare_tool};
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -19,7 +19,7 @@ struct Pair {
 }
 
 pub(super) fn explain_pair() -> Declared {
-    declare(
+    declare_tool(
         "explain_pair",
         "Explain two records",
         Effect::Reads,

@@ -12,8 +12,10 @@ use crate::api::{AddRecordRequest, LoadParams, LoadRequest, RetractRequest};
 use crate::server::App;
 use crate::server::auth::Caller;
 use crate::server::error::ApiResult;
-use crate::server::request::{arrow_rows, delimited_rows, delimiter, is_arrow, json_body, query};
-use crate::server::work::{Started, engine, job, ok};
+use crate::server::request::{
+    arrow_rows, delimited_rows, detect_delimiter, is_arrow, json_body, parse_query,
+};
+use crate::server::work::{Started, ok_json, run_engine_work, start_job};
 
 impl App {
     /// Loads rows that came as JSON.
@@ -37,7 +39,7 @@ impl App {
         caller: Caller,
         request: AddRecordRequest,
     ) -> ApiResult<AddRecordReport> {
-        engine(self, move |engine| {
+        run_engine_work(self, move |engine| {
             engine.acting(caller.actor).add_record(
                 &request.source,
                 &request.entity_type,
@@ -53,7 +55,7 @@ impl App {
         caller: Caller,
         request: RetractRequest,
     ) -> ApiResult<Started> {
-        job(self, request.wait_ms, move |engine| {
+        start_job(self, request.wait_ms, move |engine| {
             let report = engine.retract(
                 &request.source,
                 &request.entity_type,
@@ -75,7 +77,7 @@ async fn store_rows(
     params: LoadParams,
     rows: impl RecordBatchReader + Send + 'static,
 ) -> ApiResult<Started> {
-    job(app, params.wait_ms, move |engine| {
+    start_job(app, params.wait_ms, move |engine| {
         let engine = engine.acting(caller.actor);
         let report = match params.replace {
             Some(false) => engine.load_without_replacing(&params.source, &params.entity_type, rows),
@@ -96,12 +98,12 @@ pub(in crate::server) async fn load(
     body: Bytes,
 ) -> ApiResult<Started> {
     if is_arrow(&headers) {
-        let params = query(params)?;
+        let params = parse_query(params)?;
         let rows = arrow_rows(body)?;
         return store_rows(&app, caller, params, rows).await;
     }
-    if let Some(delimiter) = delimiter(&headers) {
-        let params = query(params)?;
+    if let Some(delimiter) = detect_delimiter(&headers) {
+        let params = parse_query(params)?;
         let rows = delimited_rows(&app.reading, body, delimiter).await?;
         return store_rows(&app, caller, params, rows).await;
     }
@@ -113,7 +115,7 @@ pub(in crate::server) async fn add_record(
     Extension(caller): Extension<Caller>,
     body: Bytes,
 ) -> ApiResult {
-    ok(app.add_record(caller, json_body(&body)?).await?)
+    ok_json(app.add_record(caller, json_body(&body)?).await?)
 }
 
 pub(in crate::server) async fn retract(

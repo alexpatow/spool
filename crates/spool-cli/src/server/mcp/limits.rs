@@ -24,15 +24,15 @@ const MAX_REJECTIONS_BYTES: usize = MAX_RESULT_BYTES - 8 * MAX_FIELD_BYTES;
 /// The result of a tool: the JSON the API answers with, as text. A failure
 /// is a result too, with the API's error in it, so that the model reads why
 /// and can put it right.
-pub(super) fn answer(result: ApiResult<String>, in_parts: bool) -> CallToolResult {
+pub(super) fn build_tool_result(result: ApiResult<String>, in_parts: bool) -> CallToolResult {
     let body = match result {
         Ok(body) => body,
-        Err(error) => return refused(error),
+        Err(error) => return build_error_result(error),
     };
     let body = match body.len() > MAX_RESULT_BYTES {
         false => body,
         true if in_parts => {
-            return refused(ApiError::new(
+            return build_error_result(ApiError::new(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 ErrorCode::TooLarge,
                 format!(
@@ -45,7 +45,7 @@ pub(super) fn answer(result: ApiResult<String>, in_parts: bool) -> CallToolResul
         // What a tool changed is changed, and saying that the call failed
         // would be untrue. The answer is returned without its large parts,
         // and so is a run, which cannot be asked for in parts.
-        true => shortened(&body),
+        true => shorten_result(&body),
     };
     CallToolResult::success(vec![ContentBlock::text(body)])
 }
@@ -53,23 +53,23 @@ pub(super) fn answer(result: ApiResult<String>, in_parts: bool) -> CallToolResul
 /// An answer too large to return, without the parts that make it so: the
 /// receipt of a change is small and the changeset it committed is not, and a
 /// run's counts are small and the list of what it left for review is not.
-fn shortened(body: &str) -> String {
+fn shorten_result(body: &str) -> String {
     let whole = match serde_json::from_str(body) {
         Ok(Value::Object(answer)) => answer,
         _ => JsonObject::new(),
     };
     let mut left_out = Vec::new();
     let mut answer = whole.clone();
-    prune(&mut answer, "", true, &mut left_out);
+    prune_large_fields(&mut answer, "", true, &mut left_out);
     // An object can be large by the number of its fields. Then nothing of
     // a large field is kept.
     let room = MAX_RESULT_BYTES - 2 * MAX_FIELD_BYTES;
-    if size(&answer) + size(&left_out) > room {
+    if count_json_bytes(&answer) + count_json_bytes(&left_out) > room {
         left_out.clear();
         answer = whole;
-        prune(&mut answer, "", false, &mut left_out);
+        prune_large_fields(&mut answer, "", false, &mut left_out);
     }
-    if size(&answer) + size(&left_out) > room {
+    if count_json_bytes(&answer) + count_json_bytes(&left_out) > room {
         answer.clear();
         left_out = vec![Value::String("every field".to_owned())];
     }
@@ -89,15 +89,20 @@ fn shortened(body: &str) -> String {
 /// Takes the large fields out of an object and names each in `left_out` by
 /// its path. With `within`, a large object is kept, without its own large
 /// fields.
-pub(super) fn prune(object: &mut JsonObject, path: &str, within: bool, left_out: &mut Vec<Value>) {
+pub(super) fn prune_large_fields(
+    object: &mut JsonObject,
+    path: &str,
+    within: bool,
+    left_out: &mut Vec<Value>,
+) {
     object.retain(|name, field| {
-        if size(field) <= MAX_FIELD_BYTES {
+        if count_json_bytes(field) <= MAX_FIELD_BYTES {
             return true;
         }
         let at = format!("{path}{name}");
         match field {
             Value::Object(inner) if within => {
-                prune(inner, &format!("{at}."), within, left_out);
+                prune_large_fields(inner, &format!("{at}."), within, left_out);
                 true
             }
             _ => {
@@ -108,9 +113,9 @@ pub(super) fn prune(object: &mut JsonObject, path: &str, within: bool, left_out:
     });
 }
 
-fn refused(error: ApiError) -> CallToolResult {
+fn build_error_result(error: ApiError) -> CallToolResult {
     let mut error = ErrorResponse { error: error.body };
-    if size(&error) > MAX_RESULT_BYTES {
+    if count_json_bytes(&error) > MAX_RESULT_BYTES {
         error.error = shortened_error(error.error);
     }
     let body = serde_json::to_string(&error).unwrap_or_else(|_| "the call failed".to_owned());
@@ -129,7 +134,7 @@ fn shortened_error(mut error: ErrorBody) -> ErrorBody {
             .iter()
             .take_while(|rejection| {
                 // One more for the comma between two of them.
-                let takes = size(rejection).saturating_add(1);
+                let takes = count_json_bytes(rejection).saturating_add(1);
                 let fits = takes <= room;
                 room = room.saturating_sub(takes);
                 fits
@@ -142,13 +147,13 @@ fn shortened_error(mut error: ErrorBody) -> ErrorBody {
              fewer operations at a time, to see the rest."
         );
     }
-    let kept = beginning(&error.message).len();
+    let kept = truncate_to_field(&error.message).len();
     error.message.truncate(kept);
     error
 }
 
 /// As much of the beginning of a text as a field holds.
-pub(super) fn beginning(text: &str) -> &str {
+pub(super) fn truncate_to_field(text: &str) -> &str {
     let end = (0..=text.len().min(MAX_FIELD_BYTES))
         .rev()
         .find(|&end| text.is_char_boundary(end))
@@ -157,6 +162,6 @@ pub(super) fn beginning(text: &str) -> &str {
 }
 
 /// How many bytes a value is as JSON.
-pub(super) fn size(value: &impl serde::Serialize) -> usize {
+pub(super) fn count_json_bytes(value: &impl serde::Serialize) -> usize {
     serde_json::to_vec(value).map_or(usize::MAX, |json| json.len())
 }

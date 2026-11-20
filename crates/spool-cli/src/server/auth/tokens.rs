@@ -10,14 +10,14 @@ use crate::auth::Accounts;
 use crate::server::App;
 use crate::server::error::ApiResult;
 use crate::server::request::json_body;
-use crate::server::work::ok;
+use crate::server::work::ok_json;
 
 pub(in crate::server) async fn list_tokens(
     State(app): State<App>,
     Extension(caller): Extension<Caller>,
 ) -> ApiResult {
     caller.admin()?;
-    ok(TokenList {
+    ok_json(TokenList {
         tokens: run_accounts_work(&app, Accounts::tokens).await?,
     })
 }
@@ -33,7 +33,7 @@ pub(in crate::server) async fn add_token(
         accounts.add_token(&request.name, Some(&by))
     })
     .await?;
-    ok(AddedToken { token, secret })
+    ok_json(AddedToken { token, secret })
 }
 
 pub(in crate::server) async fn revoke_token(
@@ -42,5 +42,5 @@ pub(in crate::server) async fn revoke_token(
     Path(token): Path<String>,
 ) -> ApiResult {
     caller.admin()?;
-    ok(run_accounts_work(&app, move |accounts| accounts.revoke_token(&token)).await?)
+    ok_json(run_accounts_work(&app, move |accounts| accounts.revoke_token(&token)).await?)
 }

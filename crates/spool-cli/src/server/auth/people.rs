@@ -10,10 +10,10 @@ use crate::auth::{Accounts, Change, New};
 use crate::server::App;
 use crate::server::error::ApiResult;
 use crate::server::request::json_body;
-use crate::server::work::ok;
+use crate::server::work::ok_json;
 
 pub(in crate::server) async fn list_people(State(app): State<App>) -> ApiResult {
-    ok(PersonList {
+    ok_json(PersonList {
         people: run_accounts_work(&app, Accounts::list).await?,
     })
 }
@@ -35,7 +35,7 @@ pub(in crate::server) async fn add_person(
             admin: request.admin.unwrap_or(false),
         })
     };
-    ok(match sets_password {
+    ok_json(match sets_password {
         true => run_hashing_work(&app, acquire_hashing_permit(&app).await?, add).await?,
         false => run_accounts_work(&app, add).await?,
     })
@@ -58,7 +58,7 @@ pub(in crate::server) async fn change_person(
     };
     let sets_password = change.password.is_some();
     let changed = move |accounts: &Accounts| accounts.change(&person, change);
-    ok(match sets_password {
+    ok_json(match sets_password {
         true => run_hashing_work(&app, acquire_hashing_permit(&app).await?, changed).await?,
         false => run_accounts_work(&app, changed).await?,
     })

@@ -3,14 +3,14 @@
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::{Declared, Effect, declare};
+use super::{Declared, Effect, declare_tool};
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct Nothing {}
 
 pub(super) fn describe_store() -> Declared {
-    declare(
+    declare_tool(
         "describe_store",
         "Describe the store",
         Effect::Reads,

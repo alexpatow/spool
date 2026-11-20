@@ -25,7 +25,7 @@ use crate::auth::GOOGLE;
 use crate::auth::google::{Failed, Provider, Started};
 use crate::server::App;
 use crate::server::error::{ApiError, ApiResult, not_found};
-use crate::server::request::query;
+use crate::server::request::parse_query;
 
 /// The name of the cookie that keeps a sign-in with Google while the
 /// browser is at Google.
@@ -245,7 +245,7 @@ pub(in crate::server) async fn google_start(
     let Some(provider) = &app.google else {
         return Err(not_found().await);
     };
-    let start = query(start)?;
+    let start = parse_query(start)?;
     let next = return_page(start.next.as_deref());
     // Sending a browser there asks Google nothing once the server knows
     // where its sign-in is. Until then, it is one of the questions the
@@ -302,7 +302,7 @@ pub(in crate::server) async fn google_callback(
     let Some(provider) = &app.google else {
         return Err(not_found().await);
     };
-    let back = query(back)?;
+    let back = parse_query(back)?;
     // The browser that comes back is the one that was sent: it kept what
     // Google repeats.
     let kept = Kept::read(&app, &headers).filter(|kept| {

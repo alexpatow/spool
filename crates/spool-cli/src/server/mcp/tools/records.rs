@@ -5,7 +5,7 @@ use serde::Deserialize;
 use spool::RecordFilter;
 use spool::core::{EntityType, IdentityId, RecordId};
 
-use super::{Declared, Effect, declare, limit_or_default};
+use super::{Declared, Effect, declare_tool, limit_or_default};
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -40,7 +40,7 @@ struct SearchRecords {
 }
 
 pub(super) fn search_records() -> Declared {
-    declare(
+    declare_tool(
         "search_records",
         "Search records",
         Effect::Reads,
@@ -73,7 +73,7 @@ struct OneRecord {
 }
 
 pub(super) fn get_record() -> Declared {
-    declare(
+    declare_tool(
         "get_record",
         "Get a record",
         Effect::Reads,

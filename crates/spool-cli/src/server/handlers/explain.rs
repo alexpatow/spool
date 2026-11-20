@@ -8,8 +8,8 @@ use spool::Explanation;
 use super::records::named_record;
 use crate::server::App;
 use crate::server::error::ApiResult;
-use crate::server::request::{id, query};
-use crate::server::work::{engine, ok};
+use crate::server::request::{parse_id, parse_query};
+use crate::server::work::{ok_json, run_engine_work};
 
 /// What holds an identity together, and the fewest links that would part
 /// it. An identity that was merged away is explained as the one it was
@@ -18,8 +18,8 @@ pub(in crate::server) async fn explain_identity(
     State(app): State<App>,
     Path(identity): Path<String>,
 ) -> ApiResult {
-    let identity = id(&identity, "an identity ID")?;
-    ok(engine(&app, move |engine| engine.explain_identity(identity)).await?)
+    let identity = parse_id(&identity, "an identity ID")?;
+    ok_json(run_engine_work(&app, move |engine| engine.explain_identity(identity)).await?)
 }
 
 impl App {
@@ -29,7 +29,7 @@ impl App {
     pub(in crate::server) async fn explain_pair(&self, a: &str, b: &str) -> ApiResult<Explanation> {
         let a = named_record(self, a).await?;
         let b = named_record(self, b).await?;
-        engine(self, move |engine| engine.explain(a, b)).await
+        run_engine_work(self, move |engine| engine.explain(a, b)).await
     }
 }
 
@@ -44,6 +44,6 @@ pub(in crate::server) async fn explain(
     State(app): State<App>,
     params: Result<Query<ExplainQuery>, QueryRejection>,
 ) -> ApiResult {
-    let params = query(params)?;
-    ok(app.explain_pair(&params.a, &params.b).await?)
+    let params = parse_query(params)?;
+    ok_json(app.explain_pair(&params.a, &params.b).await?)
 }

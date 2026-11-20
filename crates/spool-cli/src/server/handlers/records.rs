@@ -14,8 +14,10 @@ use spool::{
 use crate::api::{AttributeList, IdentitiesOfRequest, IdentitiesOfResponse, RecordList};
 use crate::server::App;
 use crate::server::error::{ApiError, ApiResult};
-use crate::server::request::{MAX_PAGE, id, json_body, page, query, sorted};
-use crate::server::work::{engine, ok};
+use crate::server::request::{
+    MAX_PAGE, build_sort, clamp_page_size, json_body, parse_id, parse_query,
+};
+use crate::server::work::{ok_json, run_engine_work};
 
 impl App {
     /// A page of the records a filter finds, `filter.limit` of them at
@@ -25,7 +27,7 @@ impl App {
         filter: RecordFilter,
     ) -> ApiResult<RecordList> {
         let limit = filter.limit;
-        let records = engine(self, move |engine| engine.records(&filter)).await?;
+        let records = run_engine_work(self, move |engine| engine.records(&filter)).await?;
         let next = (records.len() as u64 == limit)
             .then(|| records.last().map(|record| record.id))
             .flatten();
@@ -33,7 +35,7 @@ impl App {
     }
 
     pub(in crate::server) async fn read_record(&self, record: RecordId) -> ApiResult<RecordEntry> {
-        match engine(self, move |engine| engine.record(record)).await? {
+        match run_engine_work(self, move |engine| engine.record(record)).await? {
             Some(record) => Ok(record),
             None => Err(spool::Error::UnknownRecord(record).into()),
         }
@@ -61,7 +63,7 @@ pub(in crate::server) async fn list_records(
     State(app): State<App>,
     params: Result<Query<RecordsQuery>, QueryRejection>,
 ) -> ApiResult {
-    let params = query(params)?;
+    let params = parse_query(params)?;
     let filter = RecordFilter {
         entity_type: params.entity_type,
         source: params.source,
@@ -69,12 +71,12 @@ pub(in crate::server) async fn list_records(
         document: params
             .document
             .as_deref()
-            .map(|document| id(document, "a document ID"))
+            .map(|document| parse_id(document, "a document ID"))
             .transpose()?,
         identity: params
             .identity
             .as_deref()
-            .map(|identity| id(identity, "an identity ID"))
+            .map(|identity| parse_id(identity, "an identity ID"))
             .transpose()?,
         q: params.q,
         unassigned: params.unassigned.unwrap_or(false),
@@ -82,12 +84,12 @@ pub(in crate::server) async fn list_records(
         after: params
             .after
             .as_deref()
-            .map(|after| id(after, "a record ID"))
+            .map(|after| parse_id(after, "a record ID"))
             .transpose()?,
-        limit: page(params.limit),
-        sort: sorted(params.sort, params.order, RecordSort::Source),
+        limit: clamp_page_size(params.limit),
+        sort: build_sort(params.sort, params.order, RecordSort::Source),
     };
-    ok(app.list_records(filter).await?)
+    ok_json(app.list_records(filter).await?)
 }
 
 #[derive(serde::Deserialize)]
@@ -103,21 +105,21 @@ pub(in crate::server) async fn list_attributes(
     State(app): State<App>,
     params: Result<Query<AttributesQuery>, QueryRejection>,
 ) -> ApiResult {
-    let params = query(params)?;
+    let params = parse_query(params)?;
     let filter = AttributeFilter {
         entity_type: params.entity_type,
         source: params.source,
     };
-    let groups = engine(&app, move |engine| engine.attributes(&filter)).await?;
-    ok(AttributeList { groups })
+    let groups = run_engine_work(&app, move |engine| engine.attributes(&filter)).await?;
+    ok_json(AttributeList { groups })
 }
 
 pub(in crate::server) async fn read_record(
     State(app): State<App>,
     Path(record): Path<String>,
 ) -> ApiResult {
-    let record = id(&record, "a record ID")?;
-    ok(app.read_record(record).await?)
+    let record = parse_id(&record, "a record ID")?;
+    ok_json(app.read_record(record).await?)
 }
 
 /// The record a caller names: by its ID, or as `<source>:<key>`, which
@@ -135,12 +137,12 @@ pub(super) async fn named_record(app: &App, name: &str) -> ApiResult<RecordId> {
         )));
     };
     let (source, key) = (source.to_owned(), key.to_owned());
-    let found = engine(app, {
+    let found = run_engine_work(app, {
         let (name, source, key) = (name.to_owned(), source.clone(), key.clone());
         move |engine| {
             let rows = current_versions(engine, &source, &key)?;
             match rows.is_empty() {
-                true => mentions(engine, &name, &source, &key),
+                true => find_mentions(engine, &name, &source, &key),
                 false => Ok(rows),
             }
         }
@@ -216,7 +218,7 @@ fn current_versions(
 /// document, they are those of the latest that has such a record. A
 /// mention found again with other values is a version of the same record
 /// at the same place, and only the one no other replaced is named.
-fn mentions(
+fn find_mentions(
     engine: &Engine,
     name: &str,
     source: &str,
@@ -288,6 +290,7 @@ fn mentions(
 
 pub(in crate::server) async fn identities_of(State(app): State<App>, body: Bytes) -> ApiResult {
     let request: IdentitiesOfRequest = json_body(&body)?;
-    let identities = engine(&app, move |engine| engine.identities_of(&request.records)).await?;
-    ok(IdentitiesOfResponse { identities })
+    let identities =
+        run_engine_work(&app, move |engine| engine.identities_of(&request.records)).await?;
+    ok_json(IdentitiesOfResponse { identities })
 }

@@ -7,13 +7,13 @@ use serde_json::{Value, json};
 use spool::ConstraintFilter;
 use spool::core::{IdentityId, Op, RecordId, Seq};
 
-use super::{DEFAULT_LIMIT, Declared, Effect, declare, limit_or_default};
+use super::{DEFAULT_LIMIT, Declared, Effect, declare_tool, limit_or_default};
 use crate::api::{CommitRequest, MintRequest, SplitRequest, UndoRequest};
 use crate::server::App;
 use crate::server::auth::Caller;
 use crate::server::error::{ApiError, ApiResult};
-use crate::server::mcp::limits::{MAX_RESULT_BYTES, prune, size};
-use crate::server::work::engine;
+use crate::server::mcp::limits::{MAX_RESULT_BYTES, count_json_bytes, prune_large_fields};
+use crate::server::work::run_engine_work;
 
 /// An operation has at most three UUIDs and no free text, so a thousand
 /// fit in a tool result even when every operation uses all three.
@@ -34,7 +34,7 @@ struct Constraints {
 }
 
 pub(super) fn list_constraints() -> Declared {
-    declare(
+    declare_tool(
         "list_constraints",
         "List constraints",
         Effect::Reads,
@@ -64,7 +64,7 @@ struct Log {
 }
 
 pub(super) fn list_changesets() -> Declared {
-    declare(
+    declare_tool(
         "list_changesets",
         "List changes",
         Effect::Reads,
@@ -80,10 +80,10 @@ async fn read_changeset_summaries(app: App, _: Caller, asked: Log) -> ApiResult<
     let after = asked.after.unwrap_or(Seq::ZERO);
     let limit = limit_or_default(asked.limit);
     let (head, summaries) =
-        engine(&app, move |engine| engine.changeset_summaries(after, limit)).await?;
+        run_engine_work(&app, move |engine| engine.changeset_summaries(after, limit)).await?;
     // Reserve space for the envelope and the longest possible cursor.
-    let mut room =
-        MAX_RESULT_BYTES - size(&json!({ "changesets": [], "head": head, "next": u64::MAX }));
+    let mut room = MAX_RESULT_BYTES
+        - count_json_bytes(&json!({ "changesets": [], "head": head, "next": u64::MAX }));
     let mut changesets = Vec::new();
     let mut next = None;
     for summary in summaries {
@@ -101,12 +101,12 @@ async fn read_changeset_summaries(app: App, _: Caller, asked: Log) -> ApiResult<
             "operation_count": summary.operation_count,
         });
         let mut left_out = Vec::new();
-        prune(entry.as_object_mut().unwrap(), "", true, &mut left_out);
+        prune_large_fields(entry.as_object_mut().unwrap(), "", true, &mut left_out);
         if !left_out.is_empty() {
             entry["left_out"] = json!(left_out);
         }
         // Also allow a byte for the comma that separates entries.
-        let takes = size(&entry) + 1;
+        let takes = count_json_bytes(&entry) + 1;
         if takes > room {
             break;
         }
@@ -131,7 +131,7 @@ struct LogOps {
 }
 
 pub(super) fn list_changeset_ops() -> Declared {
-    declare(
+    declare_tool(
         "list_changeset_ops",
         "List changeset operations",
         Effect::Reads,
@@ -145,7 +145,7 @@ async fn read_changeset_ops(app: App, _: Caller, asked: LogOps) -> ApiResult<Val
     let seq = asked.seq;
     let offset = asked.offset.unwrap_or(0);
     let limit = asked.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LOG_OPS);
-    let mut ops = engine(&app, move |engine| {
+    let mut ops = run_engine_work(&app, move |engine| {
         engine.changeset_ops(seq, offset, limit + 1)
     })
     .await?;
@@ -167,7 +167,7 @@ struct MintIdentityIds {
 }
 
 pub(super) fn mint_identity_ids() -> Declared {
-    declare(
+    declare_tool(
         "mint_identity_ids",
         "Mint identity IDs",
         Effect::Reads,
@@ -223,7 +223,7 @@ struct CommitChangeset {
 }
 
 pub(super) fn commit_changeset() -> Declared {
-    declare(
+    declare_tool(
         "commit_changeset",
         "Change identities",
         Effect::Changes,
@@ -271,7 +271,7 @@ struct SplitIdentity {
 }
 
 pub(super) fn split_identity() -> Declared {
-    declare(
+    declare_tool(
         "split_identity",
         "Split an identity",
         Effect::Changes,
@@ -305,7 +305,7 @@ struct UndoChangeset {
 }
 
 pub(super) fn undo_changeset() -> Declared {
-    declare(
+    declare_tool(
         "undo_changeset",
         "Undo a change",
         Effect::Changes,

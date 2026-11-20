@@ -26,9 +26,10 @@ use crate::server::App;
 use crate::server::auth::{Caller, list_actor_names};
 use crate::server::error::{ApiError, ApiResult};
 use crate::server::request::{
-    arrow_rows, is_arrow, json_body, media_type, optional_json_body, page, query, run_id, sorted,
+    arrow_rows, build_sort, clamp_page_size, is_arrow, json_body, media_type, optional_json_body,
+    parse_query, run_id,
 };
-use crate::server::work::{Started, engine, job, ok};
+use crate::server::work::{Started, ok_json, run_engine_work, start_job};
 
 impl App {
     /// Starts a match run of one entity type and waits for it.
@@ -67,7 +68,7 @@ impl App {
                         "`commit` goes with a strategy the server runs; a run that waits for judgements is told when it is reconciled",
                     ));
                 }
-                job(self, request.wait_ms, move |engine| {
+                start_job(self, request.wait_ms, move |engine| {
                     engine
                         .acting(caller.actor)
                         .begin_run(
@@ -88,7 +89,7 @@ impl App {
                     strategy: strategy.map(|strategy| strategy.name),
                     rematch,
                 };
-                job(self, request.wait_ms, move |engine| {
+                start_job(self, request.wait_ms, move |engine| {
                     let report = engine.acting(caller.actor).resolve(&options)?;
                     Ok(report.resolved.first().map(|resolved| resolved.match_run))
                 })
@@ -111,7 +112,7 @@ impl App {
         tokio::pin!(stopping);
         let mut told = false;
         loop {
-            let record = engine(self, move |engine| engine.run(run)).await?;
+            let record = run_engine_work(self, move |engine| engine.run(run)).await?;
             let left = deadline.saturating_duration_since(Instant::now());
             // A server that is stopping waits for nobody.
             if record.status != RunStatus::Running || left.is_zero() || told {
@@ -149,8 +150,8 @@ pub(in crate::server) async fn list_runs(
     State(app): State<App>,
     params: Result<Query<RunsQuery>, QueryRejection>,
 ) -> ApiResult {
-    let params = query(params)?;
-    let sort = sorted(params.sort, params.order, RunSort::Run);
+    let params = parse_query(params)?;
+    let sort = build_sort(params.sort, params.order, RunSort::Run);
     let names = match sort {
         Some(sort) if sort.by == RunSort::StartedBy => list_actor_names(&app).await?,
         _ => Vec::new(),
@@ -159,12 +160,12 @@ pub(in crate::server) async fn list_runs(
         kind: params.kind,
         status: params.status,
         entity_type: params.entity_type,
-        limit: page(params.limit),
+        limit: clamp_page_size(params.limit),
         sort,
         names,
     };
-    let runs = engine(&app, move |engine| engine.runs(&filter)).await?;
-    ok(RunList { runs })
+    let runs = run_engine_work(&app, move |engine| engine.runs(&filter)).await?;
+    ok_json(RunList { runs })
 }
 
 #[derive(serde::Deserialize)]
@@ -179,8 +180,8 @@ pub(in crate::server) async fn read_run(
     params: Result<Query<WaitQuery>, QueryRejection>,
 ) -> ApiResult {
     let run = run_id(&run)?;
-    let wait_ms = query(params)?.wait_ms;
-    ok(app.read_run(run, wait_ms).await?)
+    let wait_ms = parse_query(params)?.wait_ms;
+    ok_json(app.read_run(run, wait_ms).await?)
 }
 
 pub(in crate::server) async fn candidates(
@@ -189,7 +190,7 @@ pub(in crate::server) async fn candidates(
     headers: HeaderMap,
 ) -> ApiResult {
     let run = run_id(&run)?;
-    let rows = engine(&app, move |engine| engine.candidate_rows(run)).await?;
+    let rows = run_engine_work(&app, move |engine| engine.candidate_rows(run)).await?;
     let as_json = media_type(&headers, ACCEPT).is_some_and(|accept| accept.contains("json"));
     let encoded = tokio::task::spawn_blocking(move || {
         if as_json {
@@ -240,7 +241,7 @@ pub(in crate::server) async fn submit_judgements(
     let run = run_id(&run)?;
     let stored = if is_arrow(&headers) {
         let rows = arrow_rows(body)?;
-        engine(&app, move |engine| engine.submit_judgements(run, rows)).await?
+        run_engine_work(&app, move |engine| engine.submit_judgements(run, rows)).await?
     } else {
         let request: JudgementsRequest = json_body(&body)?;
         let rows: Vec<serde_json::Map<String, serde_json::Value>> = request
@@ -266,9 +267,9 @@ pub(in crate::server) async fn submit_judgements(
         } else {
             Rows::from_json(&rows)?
         };
-        engine(&app, move |engine| engine.submit_judgements(run, rows)).await?
+        run_engine_work(&app, move |engine| engine.submit_judgements(run, rows)).await?
     };
-    ok(JudgementsResponse { stored })
+    ok_json(JudgementsResponse { stored })
 }
 
 pub(in crate::server) async fn reconcile(
@@ -284,13 +285,13 @@ pub(in crate::server) async fn reconcile(
     } else {
         Disposition::LeaveForReview
     };
-    let report = engine(&app, move |engine| {
+    let report = run_engine_work(&app, move |engine| {
         engine
             .acting(caller.actor)
             .reconcile_with(run, &Policy::default(), then)
     })
     .await?;
-    ok(report)
+    ok_json(report)
 }
 
 pub(in crate::server) async fn cancel_run(
@@ -298,10 +299,10 @@ pub(in crate::server) async fn cancel_run(
     Path(run): Path<String>,
 ) -> ApiResult {
     let run = run_id(&run)?;
-    let record = engine(&app, move |engine| {
+    let record = run_engine_work(&app, move |engine| {
         engine.cancel_run(run)?;
         engine.run(run)
     })
     .await?;
-    ok(RunResponse { run: Some(record) })
+    ok_json(RunResponse { run: Some(record) })
 }

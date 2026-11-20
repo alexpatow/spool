@@ -13,9 +13,10 @@ use crate::server::App;
 use crate::server::auth::Caller;
 use crate::server::error::{ApiError, ApiResult};
 use crate::server::request::{
-    id, is_json, is_text, json_body, optional_json_body, page, query, sorted,
+    build_sort, clamp_page_size, is_json, is_text, json_body, optional_json_body, parse_id,
+    parse_query,
 };
-use crate::server::work::{Started, engine, job, ok};
+use crate::server::work::{Started, ok_json, run_engine_work, start_job};
 use crate::text::listed;
 
 impl App {
@@ -25,7 +26,7 @@ impl App {
         caller: Caller,
         request: DocumentsRequest,
     ) -> ApiResult<Started> {
-        job(self, request.wait_ms, move |engine| {
+        start_job(self, request.wait_ms, move |engine| {
             let report = engine
                 .acting(caller.actor)
                 .add_documents(&request.source, &request.documents)?;
@@ -41,7 +42,7 @@ impl App {
         caller: Caller,
         request: AddDocumentRequest,
     ) -> ApiResult<AddDocumentReport> {
-        engine(self, move |engine| {
+        run_engine_work(self, move |engine| {
             engine.acting(caller.actor).add_document(
                 &request.source,
                 &request.document,
@@ -98,7 +99,7 @@ impl App {
             since: request.since,
             limit: request.limit,
         };
-        job(self, request.wait_ms, move |engine| {
+        start_job(self, request.wait_ms, move |engine| {
             let extracted = engine.acting(caller.actor).extract(&options);
             print_extracted(&options.extractor, &extracted);
             Ok(Some(extracted?.run))
@@ -149,7 +150,7 @@ pub(in crate::server) async fn post_documents(
             });
     }
     // Nothing has to be put into JSON: the body is the file.
-    let params = query(params).map_err(|refused| {
+    let params = parse_query(params).map_err(|refused| {
         ApiError::invalid(format!(
             "a document sent as text is named {NAMED}: {}",
             refused.body.message
@@ -186,7 +187,7 @@ pub(in crate::server) async fn add_document(
     Extension(caller): Extension<Caller>,
     body: Bytes,
 ) -> ApiResult {
-    ok(app.add_document(caller, json_body(&body)?).await?)
+    ok_json(app.add_document(caller, json_body(&body)?).await?)
 }
 
 #[derive(serde::Deserialize)]
@@ -205,8 +206,8 @@ pub(in crate::server) async fn list_documents(
     State(app): State<App>,
     params: Result<Query<DocumentsQuery>, QueryRejection>,
 ) -> ApiResult {
-    let params = query(params)?;
-    let limit = page(params.limit);
+    let params = parse_query(params)?;
+    let limit = clamp_page_size(params.limit);
     let filter = DocumentFilter {
         source: params.source,
         key: params.key,
@@ -214,24 +215,24 @@ pub(in crate::server) async fn list_documents(
         after: params
             .after
             .as_deref()
-            .map(|after| id(after, "a document ID"))
+            .map(|after| parse_id(after, "a document ID"))
             .transpose()?,
         limit,
-        sort: sorted(params.sort, params.order, DocumentSort::Id),
+        sort: build_sort(params.sort, params.order, DocumentSort::Id),
     };
-    let documents = engine(&app, move |engine| engine.documents(&filter)).await?;
+    let documents = run_engine_work(&app, move |engine| engine.documents(&filter)).await?;
     let next = (documents.len() as u64 == limit)
         .then(|| documents.last().map(|document| document.id))
         .flatten();
-    ok(DocumentList { documents, next })
+    ok_json(DocumentList { documents, next })
 }
 
 pub(in crate::server) async fn read_document(
     State(app): State<App>,
     Path(document): Path<String>,
 ) -> ApiResult {
-    let document: DocumentId = id(&document, "a document ID")?;
-    ok(engine(&app, move |engine| engine.document(document)).await?)
+    let document: DocumentId = parse_id(&document, "a document ID")?;
+    ok_json(run_engine_work(&app, move |engine| engine.document(document)).await?)
 }
 
 pub(in crate::server) async fn extract(

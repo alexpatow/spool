@@ -338,7 +338,7 @@ fn router_until(engine: Arc<Engine>, options: &ServerOptions, stopping: Stopping
         .fallback(not_found)
         .layer(middleware::from_fn_with_state(app.clone(), authorize));
     let mcp = Router::new()
-        .route_service(MCP_PATH, mcp::service(app.clone(), options))
+        .route_service(MCP_PATH, mcp::build_mcp_service(app.clone(), options))
         .layer(middleware::map_response(mcp::describe_refusal))
         .layer(middleware::from_fn_with_state(app.clone(), authorize_mcp));
     // Clients send these, and anyone may: what they read is a few fields.

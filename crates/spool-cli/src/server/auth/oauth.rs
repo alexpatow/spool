@@ -40,7 +40,7 @@ use crate::auth::{
 };
 use crate::server::error::{ApiError, ApiResult};
 use crate::server::request::json_body;
-use crate::server::work::ok;
+use crate::server::work::ok_json;
 use crate::server::{App, MCP_PATH};
 use crate::studio;
 
@@ -134,7 +134,7 @@ pub(super) async fn find_access_token_caller(app: &App, token: &str) -> ApiResul
 
 pub(in crate::server) async fn resource_metadata(State(app): State<App>) -> ApiResult {
     let issuer = require_issuer(&app)?;
-    ok(json!({
+    ok_json(json!({
         "resource": format_resource_url(issuer),
         "authorization_servers": [issuer],
         "scopes_supported": [SCOPE],
@@ -145,7 +145,7 @@ pub(in crate::server) async fn resource_metadata(State(app): State<App>) -> ApiR
 
 pub(in crate::server) async fn server_metadata(State(app): State<App>) -> ApiResult {
     let issuer = require_issuer(&app)?;
-    ok(json!({
+    ok_json(json!({
         "issuer": issuer,
         "authorization_endpoint": format!("{issuer}{AUTHORIZE}"),
         "token_endpoint": format!("{issuer}{TOKEN}"),
@@ -434,7 +434,7 @@ pub(in crate::server) async fn describe(
     match check_authorize_request(&app, query.as_deref().unwrap_or_default()).await? {
         Ok(asked) => {
             let url = Url::parse(&asked.redirect_uri).expect("checked when registered");
-            ok(OAuthRequest {
+            ok_json(OAuthRequest {
                 client_name: asked.client.name,
                 host: url.host_str().unwrap_or_default().to_owned(),
                 loopback: url.host().is_some_and(|host| is_loopback(&host)),
@@ -466,7 +466,7 @@ pub(in crate::server) async fn decide(
         Err(Wrong::Shown(why)) => return Err(ApiError::invalid(why)),
         Err(wrong) => {
             let to = sent_back(&issuer, &wrong).expect("one that is sent has somewhere to go");
-            return ok(OAuthDecided { to });
+            return ok_json(OAuthDecided { to });
         }
     };
     let state = asked.state.as_deref();
@@ -475,7 +475,7 @@ pub(in crate::server) async fn decide(
             ("error", "access_denied"),
             ("error_description", "the person turned the assistant away"),
         ];
-        return ok(OAuthDecided {
+        return ok_json(OAuthDecided {
             to: build_answer_url(&issuer, &asked.redirect_uri, state, &said),
         });
     }
@@ -494,7 +494,7 @@ pub(in crate::server) async fn decide(
         accounts.approve(&approval, current_unix_time())
     })
     .await?;
-    ok(OAuthDecided {
+    ok_json(OAuthDecided {
         to: build_answer_url(&issuer, &asked.redirect_uri, state, &[("code", &code)]),
     })
 }
@@ -691,7 +691,7 @@ pub(in crate::server) async fn list_grants(
 ) -> ApiResult {
     caller.admin()?;
     let grants = run_accounts_work(&app, Accounts::grants).await?;
-    ok(GrantList { grants })
+    ok_json(GrantList { grants })
 }
 
 pub(in crate::server) async fn end_grant(
@@ -700,7 +700,7 @@ pub(in crate::server) async fn end_grant(
     Path(grant): Path<String>,
 ) -> ApiResult {
     caller.admin()?;
-    ok(run_accounts_work(&app, move |accounts| accounts.end_grant(&grant)).await?)
+    ok_json(run_accounts_work(&app, move |accounts| accounts.end_grant(&grant)).await?)
 }
 
 impl From<Refused> for OAuthError {

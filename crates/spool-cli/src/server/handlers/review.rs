@@ -11,8 +11,8 @@ use crate::api::{DismissRequest, ReviewList};
 use crate::server::App;
 use crate::server::auth::Caller;
 use crate::server::error::ApiResult;
-use crate::server::request::{id, json_body, page, query};
-use crate::server::work::{engine, ok};
+use crate::server::request::{clamp_page_size, json_body, parse_id, parse_query};
+use crate::server::work::{ok_json, run_engine_work};
 
 impl App {
     /// The review items a filter finds: all of them, or with `filter.limit`
@@ -22,7 +22,7 @@ impl App {
         filter: ReviewFilter,
     ) -> ApiResult<ReviewList> {
         let limit = filter.limit;
-        let items = engine(self, move |engine| engine.review_items(&filter)).await?;
+        let items = run_engine_work(self, move |engine| engine.review_items(&filter)).await?;
         let next = limit
             .filter(|limit| items.len() as u64 == *limit)
             .and_then(|_| items.last().map(|item| item.id));
@@ -31,7 +31,7 @@ impl App {
 
     /// A review item with the records a reviewer reads to decide it.
     pub(in crate::server) async fn review_case(&self, item: u64) -> ApiResult<ReviewCase> {
-        engine(self, move |engine| engine.review_case(item)).await
+        run_engine_work(self, move |engine| engine.review_case(item)).await
     }
 
     pub(in crate::server) async fn dismiss_review(
@@ -40,7 +40,7 @@ impl App {
         item: u64,
         request: DismissRequest,
     ) -> ApiResult<ReviewEntry> {
-        engine(self, move |engine| {
+        run_engine_work(self, move |engine| {
             engine.dismiss_review(item, &caller.actor, request.reason.as_deref())
         })
         .await
@@ -62,7 +62,7 @@ pub(in crate::server) async fn list_review(
     State(app): State<App>,
     params: Result<Query<ReviewQuery>, QueryRejection>,
 ) -> ApiResult {
-    let params = query(params)?;
+    let params = parse_query(params)?;
     let filter = ReviewFilter {
         status: params.status,
         entity_type: params.entity_type,
@@ -70,28 +70,28 @@ pub(in crate::server) async fn list_review(
         record: params
             .record
             .as_deref()
-            .map(|record| id(record, "a record ID"))
+            .map(|record| parse_id(record, "a record ID"))
             .transpose()?,
         after: params.after,
-        limit: params.limit.map(|limit| page(Some(limit))),
+        limit: params.limit.map(|limit| clamp_page_size(Some(limit))),
     };
-    ok(app.list_review(filter).await?)
+    ok_json(app.list_review(filter).await?)
 }
 
 pub(in crate::server) async fn read_review(
     State(app): State<App>,
     Path(item): Path<String>,
 ) -> ApiResult {
-    let item: u64 = id(&item, "a review item ID")?;
+    let item: u64 = parse_id(&item, "a review item ID")?;
     let filter = ReviewFilter {
         id: Some(item),
         ..ReviewFilter::default()
     };
-    match engine(&app, move |engine| engine.review_items(&filter))
+    match run_engine_work(&app, move |engine| engine.review_items(&filter))
         .await?
         .pop()
     {
-        Some(record) => ok(record),
+        Some(record) => ok_json(record),
         None => Err(spool::Error::UnknownReviewItem(item).into()),
     }
 }
@@ -100,8 +100,8 @@ pub(in crate::server) async fn review_case(
     State(app): State<App>,
     Path(item): Path<String>,
 ) -> ApiResult {
-    let item: u64 = id(&item, "a review item ID")?;
-    ok(app.review_case(item).await?)
+    let item: u64 = parse_id(&item, "a review item ID")?;
+    ok_json(app.review_case(item).await?)
 }
 
 pub(in crate::server) async fn dismiss_review(
@@ -110,6 +110,6 @@ pub(in crate::server) async fn dismiss_review(
     Path(item): Path<String>,
     body: Bytes,
 ) -> ApiResult {
-    let item: u64 = id(&item, "a review item ID")?;
-    ok(app.dismiss_review(caller, item, json_body(&body)?).await?)
+    let item: u64 = parse_id(&item, "a review item ID")?;
+    ok_json(app.dismiss_review(caller, item, json_body(&body)?).await?)
 }

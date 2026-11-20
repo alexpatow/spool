@@ -17,7 +17,7 @@ use super::{App, DEFAULT_WAIT_MS};
 use crate::api::RunResponse;
 
 /// Runs engine work on a blocking thread.
-pub(super) async fn engine<T: Send + 'static>(
+pub(super) async fn run_engine_work<T: Send + 'static>(
     app: &App,
     work: impl FnOnce(&Engine) -> spool::Result<T> + Send + 'static,
 ) -> ApiResult<T> {
@@ -47,7 +47,7 @@ impl IntoResponse for Started {
 /// Starts work that is recorded as a run and waits for it for `wait_ms`.
 /// `work` returns the run that stands for the work, or `None` if there was
 /// nothing to do.
-pub(super) async fn job(
+pub(super) async fn start_job(
     app: &App,
     wait_ms: Option<u64>,
     work: impl FnOnce(&Engine) -> spool::Result<Option<RunId>> + Send + 'static,
@@ -80,19 +80,19 @@ pub(super) async fn job(
             tokio::select! {
                 finished = &mut working => finished,
                 Some(run) = announced.recv() => {
-                    return started(app, StatusCode::ACCEPTED, Some(run)).await;
+                    return load_started_run(app, StatusCode::ACCEPTED, Some(run)).await;
                 }
             }
         }
     };
     let run =
         finished.map_err(|_| ApiError::internal("the engine stopped while it was working"))??;
-    started(app, StatusCode::OK, run).await
+    load_started_run(app, StatusCode::OK, run).await
 }
 
-async fn started(app: &App, status: StatusCode, run: Option<RunId>) -> ApiResult<Started> {
+async fn load_started_run(app: &App, status: StatusCode, run: Option<RunId>) -> ApiResult<Started> {
     let run = match run {
-        Some(run) => Some(engine(app, move |engine| engine.run(run)).await?),
+        Some(run) => Some(run_engine_work(app, move |engine| engine.run(run)).await?),
         None => None,
     };
     Ok(Started {
@@ -101,6 +101,6 @@ async fn started(app: &App, status: StatusCode, run: Option<RunId>) -> ApiResult
     })
 }
 
-pub(super) fn ok<T: Serialize>(value: T) -> ApiResult {
+pub(super) fn ok_json<T: Serialize>(value: T) -> ApiResult {
     Ok(Json(value).into_response())
 }

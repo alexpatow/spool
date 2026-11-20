@@ -22,11 +22,11 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use super::limits::answer;
+use super::limits::build_tool_result;
 use crate::server::App;
 use crate::server::auth::Caller;
 use crate::server::error::{ApiError, ApiResult};
-use crate::server::request::page;
+use crate::server::request::clamp_page_size;
 
 /// How many entries a list returns when the call does not say.
 const DEFAULT_LIMIT: u64 = 20;
@@ -34,7 +34,7 @@ const DEFAULT_LIMIT: u64 = 20;
 /// How many entries a list returns: as many as the call says, and no more
 /// than a page of the API.
 fn limit_or_default(limit: Option<u64>) -> u64 {
-    page(Some(limit.unwrap_or(DEFAULT_LIMIT)))
+    clamp_page_size(Some(limit.unwrap_or(DEFAULT_LIMIT)))
 }
 
 /// What a client is told a tool does to the store, which it may use to
@@ -69,14 +69,14 @@ impl Declared {
 
     /// Calls the tool for a caller, with the arguments a client gave.
     pub(super) async fn call(&self, app: App, caller: Caller, given: JsonObject) -> CallToolResult {
-        answer((self.run)(app, caller, given).await, self.in_parts)
+        build_tool_result((self.run)(app, caller, given).await, self.in_parts)
     }
 }
 
 /// Declares a tool: its name, what a client is told about it, and what it
 /// does. Its arguments are read as `Asked`, whose schema is what the client
 /// is told they are, and what it answers with is returned as JSON.
-fn declare<Asked, Answer, Run, Fut>(
+fn declare_tool<Asked, Answer, Run, Fut>(
     name: &'static str,
     title: &'static str,
     effect: Effect,
@@ -102,7 +102,7 @@ where
         .with_title(title)
         .with_annotations(annotations);
     let run = move |app: App, caller: Caller, given: JsonObject| -> Running {
-        match arguments(name, given) {
+        match parse_arguments(name, given) {
             Ok(asked) => {
                 let answer = run(app, caller, asked);
                 Box::pin(async move { write_answer(&answer.await?) })
@@ -120,7 +120,7 @@ where
 
 /// Reads a tool's arguments. What does not fit is the model's to correct,
 /// so it is an answer and not a failure of the protocol.
-fn arguments<T: DeserializeOwned>(tool: &str, arguments: JsonObject) -> ApiResult<T> {
+fn parse_arguments<T: DeserializeOwned>(tool: &str, arguments: JsonObject) -> ApiResult<T> {
     serde_json::from_value(Value::Object(arguments)).map_err(|error| {
         ApiError::invalid(format!(
             "the arguments are not what `{tool}` takes: {error}"

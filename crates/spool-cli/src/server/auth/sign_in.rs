@@ -19,7 +19,7 @@ use crate::auth::{Accounts, Entered, GOOGLE, MARK, MAX_USERNAME, PERSON};
 use crate::server::App;
 use crate::server::error::{ApiError, ApiResult};
 use crate::server::request::json_body;
-use crate::server::work::ok;
+use crate::server::work::ok_json;
 
 /// How many wrong passwords one username may have within [`ATTEMPT_WINDOW`]
 /// before sign-in for it is refused until the window has passed.
@@ -94,7 +94,7 @@ pub(in crate::server) async fn session_state(
         person = Some(run_accounts_work(&app, Accounts::dev).await?);
     }
     let setup = person.is_none() && run_accounts_work(&app, Accounts::needs_setup).await?;
-    ok(SessionState {
+    ok_json(SessionState {
         person,
         setup,
         dev: app.dev,
@@ -104,7 +104,7 @@ pub(in crate::server) async fn session_state(
 
 /// What a call that signs someone in or out answers with.
 fn respond_session_state(app: &App, person: Option<Person>) -> ApiResult {
-    ok(SessionState {
+    ok_json(SessionState {
         person,
         setup: false,
         dev: app.dev,

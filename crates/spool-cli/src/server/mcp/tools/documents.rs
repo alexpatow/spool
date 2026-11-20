@@ -5,14 +5,14 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use spool::NewDocument;
 
-use super::{Declared, Effect, declare};
+use super::{Declared, Effect, declare_tool};
 use crate::api::{AddDocumentRequest, DocumentsRequest, ExtractRequest};
 use crate::server::App;
 use crate::server::error::{ApiError, ApiResult};
-use crate::server::mcp::limits::beginning;
+use crate::server::mcp::limits::truncate_to_field;
 
 pub(super) fn add_document() -> Declared {
-    declare(
+    declare_tool(
         "add_document",
         "Add a document and find its identities",
         Effect::Changes,
@@ -54,7 +54,7 @@ struct Document {
 }
 
 pub(super) fn load_documents() -> Declared {
-    declare(
+    declare_tool(
         "load_documents",
         "Load documents",
         Effect::Changes,
@@ -103,7 +103,7 @@ fn refuse_undeclared_source(app: &App, source: &str) -> ApiResult<()> {
         .collect();
     Err(ApiError::invalid(format!(
         "source `{}` is not declared: the project's sources are {}",
-        beginning(source),
+        truncate_to_field(source),
         sources.join(", ")
     )))
 }
@@ -130,7 +130,7 @@ struct RunExtraction {
 }
 
 pub(super) fn run_extraction() -> Declared {
-    declare(
+    declare_tool(
         "run_extraction",
         "Run an extractor",
         Effect::Changes,

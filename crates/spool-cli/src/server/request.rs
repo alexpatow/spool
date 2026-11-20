@@ -36,7 +36,7 @@ pub(super) fn optional_json_body<T: DeserializeOwned + Default>(body: &Bytes) ->
     json_body(body)
 }
 
-pub(super) fn query<T>(query: Result<Query<T>, QueryRejection>) -> ApiResult<T> {
+pub(super) fn parse_query<T>(query: Result<Query<T>, QueryRejection>) -> ApiResult<T> {
     match query {
         Ok(Query(value)) => Ok(value),
         Err(rejection) => Err(ApiError::invalid(format!(
@@ -46,7 +46,7 @@ pub(super) fn query<T>(query: Result<Query<T>, QueryRejection>) -> ApiResult<T> 
     }
 }
 
-pub(super) fn id<T>(text: &str, what: &str) -> ApiResult<T>
+pub(super) fn parse_id<T>(text: &str, what: &str) -> ApiResult<T>
 where
     T: std::str::FromStr,
 {
@@ -55,7 +55,7 @@ where
 }
 
 pub(super) fn run_id(text: &str) -> ApiResult<RunId> {
-    Ok(RunId(id(text, "a run ID")?))
+    Ok(RunId(parse_id(text, "a run ID")?))
 }
 
 pub(super) fn is_text(headers: &HeaderMap) -> bool {
@@ -83,7 +83,7 @@ pub(super) fn media_type(headers: &HeaderMap, name: axum::http::HeaderName) -> O
 
 /// The character between the fields of a body of delimited text, if the
 /// body is one.
-pub(super) fn delimiter(headers: &HeaderMap) -> Option<u8> {
+pub(super) fn detect_delimiter(headers: &HeaderMap) -> Option<u8> {
     let sent = media_type(headers, CONTENT_TYPE)?;
     if sent.starts_with(api::CSV) {
         Some(b',')
@@ -138,14 +138,18 @@ pub(super) fn arrow_rows(body: Bytes) -> ApiResult<StreamReader<Cursor<Bytes>>> 
         .map_err(|error| ApiError::invalid(format!("the body is not an Arrow IPC stream: {error}")))
 }
 
-pub(super) fn page(limit: Option<u64>) -> u64 {
+pub(super) fn clamp_page_size(limit: Option<u64>) -> u64 {
     limit.unwrap_or(DEFAULT_PAGE).clamp(1, MAX_PAGE)
 }
 
 /// The order a list was asked for: `sort` names what it is sorted by, and
 /// `order` is `asc` or `desc`. `order` alone turns the list's own order,
 /// which is by `own`. Neither leaves the list in its own order.
-pub(super) fn sorted<By>(sort: Option<By>, order: Option<Direction>, own: By) -> Option<Sort<By>> {
+pub(super) fn build_sort<By>(
+    sort: Option<By>,
+    order: Option<Direction>,
+    own: By,
+) -> Option<Sort<By>> {
     match (sort, order) {
         (None, None) => None,
         (by, direction) => Some(Sort {
