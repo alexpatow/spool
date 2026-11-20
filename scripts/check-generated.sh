@@ -64,10 +64,9 @@ if changed "$schema_path" packages/client/scripts/generate-types.ts packages/cli
     packages/client/package.json packages/client/bunfig.toml; then
     types=1
 fi
-if changed "${rust_config[@]}" crates/spool-cli/src/main.rs crates/spool-cli/src/commands \
-    crates/spool-cli/src/output.rs crates/spool-cli/src/reference.rs \
+if changed "${rust_config[@]}" ':(glob)crates/spool-cli/src/**/*.rs' \
     crates/spool-cli/tests/snapshots/help site/content/docs/cli-reference.mdx \
-    crates/spool/src/engine.rs crates/spool/src/lib.rs; then
+    ':(glob)crates/spool/src/**/*.rs' ':(glob)crates/spool-core/src/**/*.rs'; then
     help=1
 fi
 if changed packages/strategy/src packages/strategy/scripts/build.ts packages/strategy/package.json \
