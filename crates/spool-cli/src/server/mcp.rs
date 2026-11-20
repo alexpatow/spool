@@ -41,10 +41,10 @@ use serde_json::{Value, json};
 use spool::core::{EntityType, IdentityId, Op, RecordId, Seq};
 use spool::{NewDocument, ReviewStatus, StrategyRef};
 
-use super::{
-    ApiError, ApiResult, App, Caller, ConstraintsQuery, ExplainQuery, IdentitiesQuery,
-    IdentityAtQuery, RecordsQuery, ReviewQuery, ServerOptions, WaitQuery,
-};
+use super::auth::Caller;
+use super::error::{ApiError, ApiResult};
+use super::handlers::identities::IdentityAtQuery;
+use super::{App, ServerOptions, handlers};
 use crate::api::{
     AddDocumentRequest, AddRecordRequest, CommitRequest, DismissRequest, DocumentsRequest,
     ErrorBody, ErrorCode, ErrorResponse, ExtractRequest, LoadParams, LoadRequest, MatchRequest,
@@ -1147,8 +1147,8 @@ static TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
 impl Tools {
     async fn list_changesets(&self, asked: Log) -> ApiResult {
         let after = asked.after.unwrap_or(Seq::ZERO);
-        let limit = super::page(Some(asked.limit.unwrap_or(DEFAULT_LIMIT)));
-        let (head, summaries) = super::engine(&self.app, move |engine| {
+        let limit = super::request::page(Some(asked.limit.unwrap_or(DEFAULT_LIMIT)));
+        let (head, summaries) = super::work::engine(&self.app, move |engine| {
             engine.changeset_summaries(after, limit)
         })
         .await?;
@@ -1185,14 +1185,14 @@ impl Tools {
             next = (summary.seq < head).then_some(summary.seq);
             changesets.push(entry);
         }
-        super::ok(json!({ "changesets": changesets, "head": head, "next": next }))
+        super::work::ok(json!({ "changesets": changesets, "head": head, "next": next }))
     }
 
     async fn list_changeset_ops(&self, asked: LogOps) -> ApiResult {
         let seq = asked.seq;
         let offset = asked.offset.unwrap_or(0);
         let limit = asked.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LOG_OPS);
-        let mut ops = super::engine(&self.app, move |engine| {
+        let mut ops = super::work::engine(&self.app, move |engine| {
             engine.changeset_ops(seq, offset, limit + 1)
         })
         .await?;
@@ -1202,7 +1202,7 @@ impl Tools {
         } else {
             None
         };
-        super::ok(json!({ "seq": seq, "offset": offset, "ops": ops, "next": next }))
+        super::work::ok(json!({ "seq": seq, "offset": offset, "ops": ops, "next": next }))
     }
 
     /// The strategy a match run is asked for by name, which has to be one
@@ -1261,7 +1261,7 @@ impl Tools {
         match tool {
             "describe_store" => {
                 let Nothing {} = arguments(tool, given)?;
-                super::info(app).await
+                handlers::info::info(app).await
             }
             "search_identities" => {
                 let asked: SearchIdentities = arguments(tool, given)?;
@@ -1269,7 +1269,7 @@ impl Tools {
                     let ids: Vec<String> = ids.iter().map(ToString::to_string).collect();
                     ids.join(",")
                 });
-                let query = IdentitiesQuery {
+                let query = handlers::identities::IdentitiesQuery {
                     entity_type: asked.entity_type,
                     q: asked.q,
                     ids,
@@ -1278,19 +1278,19 @@ impl Tools {
                     sort: None,
                     order: None,
                 };
-                super::list_identities(app, Ok(Query(query))).await
+                handlers::identities::list_identities(app, Ok(Query(query))).await
             }
             "get_identity" => {
                 let asked: OneIdentity = arguments(tool, given)?;
-                super::read_identity(app, Path(asked.identity.to_string())).await
+                handlers::identities::read_identity(app, Path(asked.identity.to_string())).await
             }
             "get_identity_history" => {
                 let asked: OneIdentity = arguments(tool, given)?;
-                super::identity_history(app, Path(asked.identity.to_string())).await
+                handlers::identities::identity_history(app, Path(asked.identity.to_string())).await
             }
             "get_identity_at" => {
                 let asked: IdentityAt = arguments(tool, given)?;
-                super::identity_at(
+                handlers::identities::identity_at(
                     app,
                     Path(asked.identity.to_string()),
                     Ok(Query(IdentityAtQuery { seq: asked.seq })),
@@ -1299,7 +1299,7 @@ impl Tools {
             }
             "search_records" => {
                 let asked: SearchRecords = arguments(tool, given)?;
-                let query = RecordsQuery {
+                let query = handlers::records::RecordsQuery {
                     entity_type: asked.entity_type,
                     source: asked.source,
                     key: asked.key,
@@ -1313,52 +1313,52 @@ impl Tools {
                     sort: None,
                     order: None,
                 };
-                super::list_records(app, Ok(Query(query))).await
+                handlers::records::list_records(app, Ok(Query(query))).await
             }
             "get_record" => {
                 let asked: OneRecord = arguments(tool, given)?;
-                super::read_record(app, Path(asked.record.to_string())).await
+                handlers::records::read_record(app, Path(asked.record.to_string())).await
             }
             "explain_pair" => {
                 let asked: Pair = arguments(tool, given)?;
-                let query = ExplainQuery {
+                let query = handlers::explain::ExplainQuery {
                     a: asked.a,
                     b: asked.b,
                 };
-                super::explain(app, Ok(Query(query))).await
+                handlers::explain::explain(app, Ok(Query(query))).await
             }
             "list_review_items" => {
                 let asked: ReviewItems = arguments(tool, given)?;
-                let query = ReviewQuery {
+                let query = handlers::review::ReviewQuery {
                     status: Some(asked.status.unwrap_or(ReviewStatus::Open)),
                     entity_type: asked.entity_type,
                     record: text(asked.record),
                     after: None,
                     limit: None,
                 };
-                super::list_review(app, Ok(Query(query))).await
+                handlers::review::list_review(app, Ok(Query(query))).await
             }
             "get_review_case" => {
                 let asked: OneReviewItem = arguments(tool, given)?;
-                super::review_case(app, Path(asked.item.to_string())).await
+                handlers::review::review_case(app, Path(asked.item.to_string())).await
             }
             "list_constraints" => {
                 let asked: Constraints = arguments(tool, given)?;
-                let query = ConstraintsQuery {
+                let query = handlers::changesets::ConstraintsQuery {
                     record: text(asked.record),
                     identity: text(asked.identity),
                     removed: None,
                 };
-                super::list_constraints(app, Ok(Query(query))).await
+                handlers::changesets::list_constraints(app, Ok(Query(query))).await
             }
             "list_changesets" => self.list_changesets(arguments(tool, given)?).await,
             "list_changeset_ops" => self.list_changeset_ops(arguments(tool, given)?).await,
             "get_run" => {
                 let asked: OneRun = arguments(tool, given)?;
-                let query = WaitQuery {
+                let query = handlers::runs::WaitQuery {
                     wait_ms: asked.wait_ms.map(|wait| wait.min(MAX_RUN_WAIT_MS)),
                 };
-                super::read_run(app, Path(asked.run.to_string()), Ok(Query(query))).await
+                handlers::runs::read_run(app, Path(asked.run.to_string()), Ok(Query(query))).await
             }
             "mint_identity_ids" => {
                 let asked: MintIdentityIds = arguments(tool, given)?;
@@ -1372,16 +1372,16 @@ impl Tools {
                     identities: count,
                     changesets: 0,
                 };
-                super::mint_ids(app, body(&request)?).await
+                handlers::changesets::mint_ids(app, body(&request)?).await
             }
             "add_record" => {
                 let mut request: AddRecordRequest = arguments(tool, given)?;
                 empty_fields(&mut request.row);
-                super::add_record(app, caller, body(&request)?).await
+                handlers::load::add_record(app, caller, body(&request)?).await
             }
             "add_document" => {
                 let request: AddDocumentRequest = arguments(tool, given)?;
-                super::add_document(app, caller, body(&request)?).await
+                handlers::documents::add_document(app, caller, body(&request)?).await
             }
             "load_rows" => {
                 let asked: LoadRows = arguments(tool, given)?;
@@ -1413,7 +1413,7 @@ impl Tools {
                     wait_ms: None,
                 };
                 let rows = body(&request)?;
-                super::load(app, caller, Ok(Query(beside)), HeaderMap::new(), rows).await
+                handlers::load::load(app, caller, Ok(Query(beside)), HeaderMap::new(), rows).await
             }
             "load_documents" => {
                 let asked: LoadDocuments = arguments(tool, given)?;
@@ -1428,7 +1428,7 @@ impl Tools {
                     documents: documents.collect(),
                     wait_ms: None,
                 };
-                super::add_documents(app, caller, body(&request)?).await
+                handlers::documents::add_documents(app, caller, body(&request)?).await
             }
             "run_extraction" => {
                 let asked: RunExtraction = arguments(tool, given)?;
@@ -1440,7 +1440,7 @@ impl Tools {
                     limit: asked.limit,
                     wait_ms: None,
                 };
-                super::extract(app, caller, body(&request)?).await
+                handlers::documents::extract(app, caller, body(&request)?).await
             }
             "run_match" => {
                 let asked: RunMatch = arguments(tool, given)?;
@@ -1456,7 +1456,7 @@ impl Tools {
                     rematch: asked.rematch,
                     wait_ms: None,
                 };
-                super::start_match(app, caller, body(&request)?).await
+                handlers::runs::start_match(app, caller, body(&request)?).await
             }
             "retract_rows" => {
                 let asked: RetractRows = arguments(tool, given)?;
@@ -1467,7 +1467,7 @@ impl Tools {
                     reason: Some(asked.reason),
                     wait_ms: None,
                 };
-                super::retract(app, caller, body(&request)?).await
+                handlers::load::retract(app, caller, body(&request)?).await
             }
             "commit_changeset" => {
                 let asked: CommitChangeset = arguments(tool, given)?;
@@ -1478,7 +1478,7 @@ impl Tools {
                     run: None,
                     ops: asked.ops,
                 };
-                super::commit(app, caller, body(&request)?).await
+                handlers::changesets::commit(app, caller, body(&request)?).await
             }
             "split_identity" => {
                 let asked: SplitIdentity = arguments(tool, given)?;
@@ -1489,7 +1489,7 @@ impl Tools {
                     reason: Some(asked.reason),
                 };
                 let identity = Path(asked.identity.to_string());
-                super::split(app, caller, identity, body(&request)?).await
+                handlers::changesets::split(app, caller, identity, body(&request)?).await
             }
             "undo_changeset" => {
                 let asked: UndoChangeset = arguments(tool, given)?;
@@ -1498,7 +1498,7 @@ impl Tools {
                     commit: asked.commit,
                 };
                 let seq = Path(asked.seq.0.to_string());
-                super::undo(app, caller, seq, body(&request)?).await
+                handlers::changesets::undo(app, caller, seq, body(&request)?).await
             }
             "dismiss_review_item" => {
                 let asked: DismissReviewItem = arguments(tool, given)?;
@@ -1506,7 +1506,7 @@ impl Tools {
                     reason: Some(asked.reason),
                 };
                 let item = Path(asked.item.to_string());
-                super::dismiss_review(app, caller, item, body(&request)?).await
+                handlers::review::dismiss_review(app, caller, item, body(&request)?).await
             }
             other => Err(ApiError::not_found(format!(
                 "there is no tool called `{other}`"

@@ -19,7 +19,8 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use http_body::{Body as _, Frame, SizeHint};
 
-use super::{ApiError, MCP_PATH};
+use super::MCP_PATH;
+use super::error::ApiError;
 
 /// Ends a JSON answer with a newline.
 ///

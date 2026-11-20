@@ -15,7 +15,7 @@ use axum::http::header::HOST;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 
-use super::ApiError;
+use super::error::ApiError;
 use crate::api::ErrorCode;
 
 /// Refuses a request that was sent to a name other than this machine's.

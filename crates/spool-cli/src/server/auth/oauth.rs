@@ -27,38 +27,39 @@ use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde::Serialize;
+use serde_json::json;
 use tower_sessions::Session;
 use url::{Host, Url};
 
-use super::{
-    ApiError, ApiResult, App, Caller, MCP_PATH, ok, people, session_failed, signed_in, unauthorized,
-};
+use super::accounts::people;
+use super::caller::{Caller, session_failed, signed_in, unauthorized};
 use crate::api::{GrantList, OAuthDecided, OAuthDecision, OAuthRequest};
 use crate::auth::{
     ACCESS_SECONDS, Accounts, Approval, Client, GOOGLE, Issued, MARK, Refused, SCOPE,
 };
+use crate::server::error::{ApiError, ApiResult};
+use crate::server::request::json_body;
+use crate::server::work::ok;
+use crate::server::{App, MCP_PATH};
 use crate::studio;
+
+mod clients;
+
+pub(in crate::server) use clients::register;
+use clients::same_redirect;
 
 /// Where the metadata of `/mcp` as a protected resource is (RFC 9728). The
 /// path with the resource's own after it is the one clients try first.
-pub(super) const RESOURCE_METADATA: &str = "/.well-known/oauth-protected-resource";
+pub(in crate::server) const RESOURCE_METADATA: &str = "/.well-known/oauth-protected-resource";
 
 /// Where the metadata of the authorization server is (RFC 8414).
-pub(super) const SERVER_METADATA: &str = "/.well-known/oauth-authorization-server";
+pub(in crate::server) const SERVER_METADATA: &str = "/.well-known/oauth-authorization-server";
 
-pub(super) const AUTHORIZE: &str = "/oauth/authorize";
-pub(super) const TOKEN: &str = "/oauth/token";
-pub(super) const REGISTER: &str = "/oauth/register";
-pub(super) const REVOKE: &str = "/oauth/revoke";
-
-/// The most redirect URIs a client registers, and the longest each is.
-const MAX_REDIRECTS: usize = 10;
-const MAX_URI_BYTES: usize = 2048;
-
-/// The longest name a client gives itself that is kept.
-const MAX_CLIENT_NAME: usize = 200;
+pub(in crate::server) const AUTHORIZE: &str = "/oauth/authorize";
+pub(in crate::server) const TOKEN: &str = "/oauth/token";
+pub(in crate::server) const REGISTER: &str = "/oauth/register";
+pub(in crate::server) const REVOKE: &str = "/oauth/revoke";
 
 /// The address a server is reached by, as the issuer of its tokens: HTTPS,
 /// or HTTP on this machine. `None` with why, for one that cannot be.
@@ -127,7 +128,7 @@ pub(super) async fn bearer(app: &App, token: &str) -> ApiResult<Caller> {
 
 // Metadata
 
-pub(super) async fn resource_metadata(State(app): State<App>) -> ApiResult {
+pub(in crate::server) async fn resource_metadata(State(app): State<App>) -> ApiResult {
     let issuer = issuer(&app)?;
     ok(json!({
         "resource": resource(issuer),
@@ -138,7 +139,7 @@ pub(super) async fn resource_metadata(State(app): State<App>) -> ApiResult {
     }))
 }
 
-pub(super) async fn server_metadata(State(app): State<App>) -> ApiResult {
+pub(in crate::server) async fn server_metadata(State(app): State<App>) -> ApiResult {
     let issuer = issuer(&app)?;
     ok(json!({
         "issuer": issuer,
@@ -224,112 +225,6 @@ fn fields(encoded: &str) -> Result<HashMap<String, String>, String> {
         }
     }
     Ok(fields)
-}
-
-// Registration
-
-#[derive(Deserialize)]
-struct Registration {
-    #[serde(default)]
-    redirect_uris: Vec<String>,
-    client_name: Option<String>,
-}
-
-/// Registers a client (RFC 7591). Anyone may: a client is only a name and
-/// where its approvals may be sent, and nothing is approved until a person
-/// who can sign in does it. Every client is a public one, which proves
-/// itself with PKCE rather than a secret, whatever it asked to be.
-pub(super) async fn register(State(app): State<App>, body: Bytes) -> Response {
-    match registered(&app, &body).await {
-        Ok(response) => response,
-        Err(error) => error.into_response(),
-    }
-}
-
-async fn registered(app: &App, body: &Bytes) -> Result<Response, OAuthError> {
-    issuer(app)?;
-    let asked: Registration = serde_json::from_slice(body).map_err(|error| {
-        OAuthError::new(
-            "invalid_client_metadata",
-            format!("the registration is not JSON this server reads: {error}"),
-        )
-    })?;
-    if asked.redirect_uris.is_empty() || asked.redirect_uris.len() > MAX_REDIRECTS {
-        return Err(OAuthError::new(
-            "invalid_redirect_uri",
-            format!("a client registers 1 to {MAX_REDIRECTS} `redirect_uris`"),
-        ));
-    }
-    for uri in &asked.redirect_uris {
-        redirect_of(uri).map_err(|why| OAuthError::new("invalid_redirect_uri", why))?;
-    }
-    let name = asked
-        .client_name
-        .map(|name| {
-            name.trim()
-                .chars()
-                .take(MAX_CLIENT_NAME)
-                .collect::<String>()
-        })
-        .filter(|name| !name.is_empty());
-    let uris = asked.redirect_uris.clone();
-    let client = people(app, move |accounts| {
-        accounts.register_client(name.as_deref(), &uris, now())
-    })
-    .await?;
-    let mut answer = json!({
-        "client_id": client.id,
-        "client_id_issued_at": now(),
-        "redirect_uris": client.redirect_uris,
-        "token_endpoint_auth_method": "none",
-        "grant_types": ["authorization_code", "refresh_token"],
-        "response_types": ["code"],
-        "scope": SCOPE,
-    });
-    if let Some(name) = client.name {
-        answer["client_name"] = Value::String(name);
-    }
-    Ok(no_store(
-        (StatusCode::CREATED, Json(answer)).into_response(),
-    ))
-}
-
-/// A redirect URI a client may register: HTTPS, or HTTP to a program on the
-/// person's own machine, and no fragment.
-fn redirect_of(uri: &str) -> Result<Url, String> {
-    if uri.len() > MAX_URI_BYTES {
-        return Err(format!("a redirect URI is at most {MAX_URI_BYTES} bytes"));
-    }
-    let url = Url::parse(uri).map_err(|error| format!("`{uri}` is not a URL: {error}"))?;
-    let local = url.host().is_some_and(|host| loopback(&host));
-    match url.scheme() {
-        _ if url.fragment().is_some() => Err(format!("`{uri}` has a fragment")),
-        "https" => Ok(url),
-        "http" if local => Ok(url),
-        _ => Err(format!(
-            "`{uri}` is neither HTTPS nor HTTP to localhost or a loopback address"
-        )),
-    }
-}
-
-/// Whether `asked` is the redirect URI `registered`, or the same one on
-/// another port when both are to a program on this machine: such a program
-/// listens on whatever port is free (RFC 8252, section 7.3).
-fn same_redirect(registered: &str, asked: &str) -> bool {
-    if registered == asked {
-        return true;
-    }
-    let (Ok(registered), Ok(asked)) = (Url::parse(registered), Url::parse(asked)) else {
-        return false;
-    };
-    let local =
-        registered.scheme() == "http" && registered.host().is_some_and(|host| loopback(&host));
-    local
-        && asked.scheme() == "http"
-        && registered.host() == asked.host()
-        && registered.path() == asked.path()
-        && registered.query() == asked.query()
-        && asked.fragment().is_none()
 }
 
 // Approval
@@ -493,7 +388,7 @@ fn sent_back(issuer: &str, wrong: &Wrong) -> Option<String> {
 /// Where a client sends the person. A request that can be answered to the
 /// client is checked here and sent back if it is wrong; otherwise the
 /// studio shows it, to sign in if need be and to approve or turn it away.
-pub(super) async fn authorize(
+pub(in crate::server) async fn authorize(
     State(app): State<App>,
     RawQuery(query): RawQuery,
     headers: HeaderMap,
@@ -519,7 +414,10 @@ fn see_other(to: &str) -> Response {
 }
 
 /// What the studio shows before someone approves a client.
-pub(super) async fn describe(State(app): State<App>, RawQuery(query): RawQuery) -> ApiResult {
+pub(in crate::server) async fn describe(
+    State(app): State<App>,
+    RawQuery(query): RawQuery,
+) -> ApiResult {
     match asked(&app, query.as_deref().unwrap_or_default()).await? {
         Ok(asked) => {
             let url = Url::parse(&asked.redirect_uri).expect("checked when registered");
@@ -537,8 +435,12 @@ pub(super) async fn describe(State(app): State<App>, RawQuery(query): RawQuery) 
 
 /// The person signed in approves a client, or turns it away, and the
 /// studio sends the browser where this says.
-pub(super) async fn decide(State(app): State<App>, session: Session, body: Bytes) -> ApiResult {
-    let decision: OAuthDecision = super::json_body(&body)?;
+pub(in crate::server) async fn decide(
+    State(app): State<App>,
+    session: Session,
+    body: Bytes,
+) -> ApiResult {
+    let decision: OAuthDecision = json_body(&body)?;
     let issuer = issuer(&app)?.to_owned();
     let Some(person) = signed_in(&app, &session).await? else {
         return Err(unauthorized("sign in first"));
@@ -619,7 +521,11 @@ impl From<Issued> for Tokens {
 }
 
 /// Exchanges a code, or a refresh token, for tokens.
-pub(super) async fn token(State(app): State<App>, headers: HeaderMap, body: Bytes) -> Response {
+pub(in crate::server) async fn token(
+    State(app): State<App>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
     match tokens(&app, &headers, &body).await {
         Ok(tokens) => no_store(Json(tokens).into_response()),
         Err(error) => error.into_response(),
@@ -716,7 +622,11 @@ fn client_of(field: Option<&str>, headers: &HeaderMap) -> Result<String, OAuthEr
 
 /// Takes back a token a client was given (RFC 7009). The answer is the same
 /// whether or not there was such a token.
-pub(super) async fn revoke(State(app): State<App>, headers: HeaderMap, body: Bytes) -> Response {
+pub(in crate::server) async fn revoke(
+    State(app): State<App>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
     let revoked = async {
         issuer(&app)?;
         let form = std::str::from_utf8(&body)
@@ -745,7 +655,7 @@ pub(super) async fn revoke(State(app): State<App>, headers: HeaderMap, body: Byt
 
 // What an admin sees
 
-pub(super) async fn list_grants(
+pub(in crate::server) async fn list_grants(
     State(app): State<App>,
     Extension(caller): Extension<Caller>,
 ) -> ApiResult {
@@ -754,7 +664,7 @@ pub(super) async fn list_grants(
     ok(GrantList { grants })
 }
 
-pub(super) async fn end_grant(
+pub(in crate::server) async fn end_grant(
     State(app): State<App>,
     Extension(caller): Extension<Caller>,
     Path(grant): Path<String>,
@@ -789,51 +699,6 @@ mod tests {
         }
         assert!(issuer_of("http://spool.example.com").is_err());
         assert!(issuer_of("http://0.0.0.0:7765").is_err());
-    }
-
-    #[test]
-    fn a_redirect_uri_is_https_or_to_this_machine() {
-        for good in [
-            "https://claude.ai/api/mcp/auth_callback",
-            "https://chatgpt.com/connector_platform_oauth_redirect",
-            "http://localhost:3118/callback",
-            "http://127.0.0.1/callback",
-        ] {
-            assert!(redirect_of(good).is_ok(), "{good}");
-        }
-        for bad in [
-            "http://claude.ai/callback",
-            "https://claude.ai/callback#here",
-            "javascript:alert(1)",
-            "claude://callback",
-            "callback",
-        ] {
-            assert!(redirect_of(bad).is_err(), "{bad}");
-        }
-    }
-
-    #[test]
-    fn a_loopback_redirect_is_the_same_on_any_port() {
-        assert!(same_redirect(
-            "http://localhost/callback",
-            "http://localhost:3118/callback"
-        ));
-        assert!(same_redirect(
-            "http://127.0.0.1:1/callback",
-            "http://127.0.0.1:2/callback"
-        ));
-        assert!(!same_redirect(
-            "http://localhost/callback",
-            "http://127.0.0.1:3118/callback"
-        ));
-        assert!(!same_redirect(
-            "http://localhost/callback",
-            "http://localhost:3118/other"
-        ));
-        assert!(!same_redirect(
-            "https://claude.ai/api/mcp/auth_callback",
-            "https://claude.ai:8443/api/mcp/auth_callback"
-        ));
     }
 
     #[test]

@@ -3,6 +3,7 @@
 //! assistant do with OAuth, and sign-in with Google.
 //!
 //! All but the last is kept in one SQLite file, which [`Accounts`] is.
+//! What the server does with them over HTTP is `server/auth.rs`.
 
 mod accounts;
 mod clients;
