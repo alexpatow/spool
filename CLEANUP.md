@@ -88,11 +88,11 @@ Every step keeps behaviour as it is: the checks are `cargo fmt`, `cargo clippy
 
 ## H. JavaScript
 
-- [ ] H1. One bun workspace at the root: one lockfile, packages import each
+- [x] H1. One bun workspace at the root: one lockfile, packages import each
       other by name.
-- [ ] H2. `packages/ui`: the Shelf tokens, themes, components and the mark,
+- [x] H2. `packages/ui`: the Shelf tokens, themes, components and the mark,
       used by the site and the studio. The studio's copy step goes.
-- [ ] H3. One harness that starts a real `spool` for the client's tests, the
+- [x] H3. One harness that starts a real `spool` for the client's tests, the
       studio's and the stress tests.
 - [ ] H4. Studio on TanStack Router: file routes, typed search params;
       `router.ts` goes.
