@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { SpoolClient } from "../../client/src/index.ts";
+import { SpoolClient } from "spool-client";
 
 export const repository = resolve(import.meta.dir, "../../..");
 

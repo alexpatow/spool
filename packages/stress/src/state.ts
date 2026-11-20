@@ -1,7 +1,7 @@
 // What a reader can learn over HTTP about who is who, and whether the
 // answers of the different calls agree with each other.
 
-import type { SpoolClient } from "../../client/src/index.ts";
+import type { SpoolClient } from "spool-client";
 
 export interface State {
   head: number;

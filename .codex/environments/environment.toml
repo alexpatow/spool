@@ -9,7 +9,5 @@ set -eu
 git pull --ff-only --no-rebase origin main
 
 cargo fetch --locked
-for package in packages/client packages/strategy packages/stress packages/studio site; do
-    (cd "$package" && bun install --frozen-lockfile)
-done
+bun install --frozen-lockfile
 '''

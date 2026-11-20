@@ -24,8 +24,13 @@ fmt-check:
 lint:
     cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
+# Installs what the TypeScript packages and the site depend on. They are one
+# bun workspace, with one lockfile at the root.
+install:
+    bun install --frozen-lockfile
+
 # Type-checks every TypeScript package.
-typecheck:
+typecheck: install
     for package in {{ packages }}; do (cd "$package" && bun run typecheck) || exit 1; done
 
 # Fails if a source file is over the line budget and not on the list.
@@ -53,16 +58,16 @@ regen-schema:
     schema=$(cargo run --locked --quiet -p spool-cli -- schema) && printf '%s\n' "$schema" > schema/spool-api.v1.schema.json
 
 # The client's TypeScript types, from the schema.
-regen-types: regen-schema
+regen-types: regen-schema install
     cd packages/client && bun run generate
 
 # The studio the binary serves, from packages/studio.
-regen-studio:
-    cd packages/studio && bun install --frozen-lockfile && bun run build
+regen-studio: install
+    cd packages/studio && bun run build
 
 # The helper a TypeScript strategy imports, from packages/strategy.
-regen-strategy:
-    cd packages/strategy && bun install --frozen-lockfile && bun run build
+regen-strategy: install
+    cd packages/strategy && bun run build
 
 # The help snapshots and the command reference of the documentation.
 regen-help:

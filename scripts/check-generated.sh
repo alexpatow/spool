@@ -49,7 +49,7 @@ schema_path=schema/spool-api.v1.schema.json
 studio=0 schema=0 types=0 help=0 strategy=0
 if changed packages/studio/src packages/studio/public packages/studio/index.html \
     packages/studio/vite.config.ts packages/studio/tsconfig.json packages/studio/package.json \
-    packages/studio/bun.lock packages/studio/bunfig.toml \
+    package.json bun.lock packages/studio/bunfig.toml \
     packages/studio/scripts/build.ts crates/spool-cli/assets/studio \
     packages/client/src packages/client/package.json packages/client/tsconfig.json \
     site/src/styles/shelf site/src/components/brand.tsx site/src/app/icon.svg; then
@@ -71,7 +71,7 @@ if changed "${rust_config[@]}" crates/spool-cli/src/main.rs crates/spool-cli/src
     help=1
 fi
 if changed packages/strategy/src packages/strategy/scripts/build.ts packages/strategy/package.json \
-    packages/strategy/bun.lock packages/strategy/bunfig.toml packages/strategy/tsconfig.json \
+    package.json bun.lock packages/strategy/bunfig.toml packages/strategy/tsconfig.json \
     crates/spool/assets/usercode/spool.js; then
     strategy=1
 fi
@@ -107,8 +107,9 @@ check() {
     fi
 }
 
+# The packages are one workspace: an install anywhere in it installs it all.
 check_build() (
-    cd "$1" && bun install --frozen-lockfile && bun run check-build
+    bun install --frozen-lockfile && cd "$1" && bun run check-build
 )
 
 if ((schema)); then
@@ -122,7 +123,7 @@ if ((types)); then
         bun run --cwd packages/client check-types
 fi
 if ((studio)); then
-    check 'Studio bundle and shared assets' '(cd packages/studio && bun install --frozen-lockfile && bun run build)' \
+    check 'Studio bundle and shared assets' 'bun install --frozen-lockfile && (cd packages/studio && bun run build)' \
         check_build packages/studio
 fi
 if ((help)); then
@@ -132,7 +133,7 @@ if ((help)); then
         env SNAPSHOTS=verify "${help_test[@]}"
 fi
 if ((strategy)); then
-    check 'TypeScript strategy helper' '(cd packages/strategy && bun install --frozen-lockfile && bun run build)' \
+    check 'TypeScript strategy helper' 'bun install --frozen-lockfile && (cd packages/strategy && bun run build)' \
         check_build packages/strategy
 fi
 

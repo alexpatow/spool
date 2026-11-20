@@ -2,3 +2,4 @@
 .spool/
 /benchmarks/.cache/
 /dist/
+node_modules/

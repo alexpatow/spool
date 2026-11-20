@@ -4,15 +4,22 @@ name: Site
 # so a change to the site alone starts this workflow and no other, except a
 # change to the tokens, themes, mark or icon the studio is built from, which
 # starts ci.yml as well.
+#
+# The site is one package of the bun workspace at the root, which has the
+# one lockfile: a change to what any package depends on starts this too.
 on:
   pull_request:
     paths:
       - "site/**"
+      - "package.json"
+      - "bun.lock"
       - ".github/workflows/site.yml"
   push:
     branches: [main]
     paths:
       - "site/**"
+      - "package.json"
+      - "bun.lock"
       - ".github/workflows/site.yml"
   # Started by hand, it also runs the commands in the pages against a binary
   # built from this commit. That builds the engine, which takes minutes, so
@@ -60,6 +67,7 @@ jobs:
         with:
           bun-version: "1.4.4"
 
+      # Run in `site`, this installs the whole workspace the site is a package of.
       - name: Install
         run: bun install --frozen-lockfile
 

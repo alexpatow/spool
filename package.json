@@ -1,0 +1,10 @@
+{
+  "name": "spool",
+  "description": "The TypeScript packages of Spool and its website, as one workspace.",
+  "license": "MIT",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "site"
+  ]
+}

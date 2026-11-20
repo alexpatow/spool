@@ -20,8 +20,7 @@
 import { cpSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
-import type { SpoolClient } from "../../client/src/index.ts";
-import type { RunEntry } from "../../client/src/types.ts";
+import type { RunEntry, SpoolClient } from "spool-client";
 
 import { finished } from "./scale.ts";
 import { binary, scratch, serve, storeSize, timed, verify } from "./server.ts";

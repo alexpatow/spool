@@ -21,7 +21,8 @@
     "@stylexjs/stylex": "0.19.2",
     "lucide-react": "1.74.0",
     "react": "19.3.1",
-    "react-dom": "19.3.1"
+    "react-dom": "19.3.1",
+    "spool-client": "workspace:*"
   },
   "devDependencies": {
     "@babel/core": "8.1.2",
