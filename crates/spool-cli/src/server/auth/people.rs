@@ -3,7 +3,7 @@
 use axum::body::Bytes;
 use axum::extract::{Extension, Path, State};
 
-use super::accounts::{hashing, people, turn};
+use super::accounts::{acquire_hashing_permit, run_accounts_work, run_hashing_work};
 use super::caller::Caller;
 use crate::api::{AddPersonRequest, ChangePersonRequest, PersonList};
 use crate::auth::{Accounts, Change, New};
@@ -14,7 +14,7 @@ use crate::server::work::ok;
 
 pub(in crate::server) async fn list_people(State(app): State<App>) -> ApiResult {
     ok(PersonList {
-        people: people(&app, Accounts::list).await?,
+        people: run_accounts_work(&app, Accounts::list).await?,
     })
 }
 
@@ -36,8 +36,8 @@ pub(in crate::server) async fn add_person(
         })
     };
     ok(match sets_password {
-        true => hashing(&app, turn(&app).await?, add).await?,
-        false => people(&app, add).await?,
+        true => run_hashing_work(&app, acquire_hashing_permit(&app).await?, add).await?,
+        false => run_accounts_work(&app, add).await?,
     })
 }
 
@@ -59,7 +59,7 @@ pub(in crate::server) async fn change_person(
     let sets_password = change.password.is_some();
     let changed = move |accounts: &Accounts| accounts.change(&person, change);
     ok(match sets_password {
-        true => hashing(&app, turn(&app).await?, changed).await?,
-        false => people(&app, changed).await?,
+        true => run_hashing_work(&app, acquire_hashing_permit(&app).await?, changed).await?,
+        false => run_accounts_work(&app, changed).await?,
     })
 }

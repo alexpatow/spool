@@ -32,8 +32,8 @@ use serde_json::json;
 use tower_sessions::Session;
 use url::{Host, Url};
 
-use super::accounts::people;
-use super::caller::{Caller, session_failed, signed_in, unauthorized};
+use super::accounts::run_accounts_work;
+use super::caller::{Caller, session_failed, signed_in, unauthorized_error};
 use crate::api::{GrantList, OAuthDecided, OAuthDecision, OAuthRequest};
 use crate::auth::{
     ACCESS_SECONDS, Accounts, Approval, Client, GOOGLE, Issued, MARK, Refused, SCOPE,
@@ -66,7 +66,7 @@ pub(in crate::server) const REVOKE: &str = "/oauth/revoke";
 pub fn issuer_of(address: &str) -> Result<String, String> {
     let address = address.trim_end_matches('/');
     let url = Url::parse(address).map_err(|error| format!("`{address}` is not a URL: {error}"))?;
-    let local = url.host().is_some_and(|host| loopback(&host));
+    let local = url.host().is_some_and(|host| is_loopback(&host));
     match url.scheme() {
         "https" => Ok(address.to_owned()),
         "http" if local => Ok(address.to_owned()),
@@ -76,7 +76,7 @@ pub fn issuer_of(address: &str) -> Result<String, String> {
     }
 }
 
-fn loopback(host: &Host<&str>) -> bool {
+fn is_loopback(host: &Host<&str>) -> bool {
     match host {
         Host::Domain(name) => name.eq_ignore_ascii_case("localhost"),
         Host::Ipv4(address) => address.is_loopback(),
@@ -85,19 +85,19 @@ fn loopback(host: &Host<&str>) -> bool {
 }
 
 /// The issuer, or `404` on a server that has none.
-fn issuer(app: &App) -> ApiResult<&str> {
+fn require_issuer(app: &App) -> ApiResult<&str> {
     app.issuer
         .as_deref()
         .ok_or_else(|| ApiError::not_found("there is nothing at this path"))
 }
 
-fn resource(issuer: &str) -> String {
+fn format_resource_url(issuer: &str) -> String {
     format!("{issuer}{MCP_PATH}")
 }
 
 /// What `WWW-Authenticate` says when `/mcp` is refused: where to read how
 /// to sign in, and whether the token that was sent is no good.
-pub(super) fn challenge(issuer: &str, sent: bool) -> HeaderValue {
+pub(super) fn build_bearer_challenge(issuer: &str, sent: bool) -> HeaderValue {
     let invalid = match sent {
         true => ", error=\"invalid_token\"",
         false => "",
@@ -108,18 +108,22 @@ pub(super) fn challenge(issuer: &str, sent: bool) -> HeaderValue {
     .expect("an address is a header value")
 }
 
-fn now() -> i64 {
+fn current_unix_time() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| since.as_secs() as i64)
 }
 
 /// The caller an access token acts as, at `/mcp`.
-pub(super) async fn bearer(app: &App, token: &str) -> ApiResult<Caller> {
+pub(super) async fn find_access_token_caller(app: &App, token: &str) -> ApiResult<Caller> {
     let token = token.to_owned();
-    match people(app, move |accounts| accounts.bearer(&token, now())).await? {
+    match run_accounts_work(app, move |accounts| {
+        accounts.bearer(&token, current_unix_time())
+    })
+    .await?
+    {
         Some(person) => Ok(Caller::of(person)),
-        None => Err(unauthorized(
+        None => Err(unauthorized_error(
             "that access token has expired or was revoked: the assistant refreshes it or \
              signs in again",
         )),
@@ -129,9 +133,9 @@ pub(super) async fn bearer(app: &App, token: &str) -> ApiResult<Caller> {
 // Metadata
 
 pub(in crate::server) async fn resource_metadata(State(app): State<App>) -> ApiResult {
-    let issuer = issuer(&app)?;
+    let issuer = require_issuer(&app)?;
     ok(json!({
-        "resource": resource(issuer),
+        "resource": format_resource_url(issuer),
         "authorization_servers": [issuer],
         "scopes_supported": [SCOPE],
         "bearer_methods_supported": ["header"],
@@ -140,7 +144,7 @@ pub(in crate::server) async fn resource_metadata(State(app): State<App>) -> ApiR
 }
 
 pub(in crate::server) async fn server_metadata(State(app): State<App>) -> ApiResult {
-    let issuer = issuer(&app)?;
+    let issuer = require_issuer(&app)?;
     ok(json!({
         "issuer": issuer,
         "authorization_endpoint": format!("{issuer}{AUTHORIZE}"),
@@ -178,7 +182,7 @@ impl OAuthError {
         }
     }
 
-    fn client(description: impl Into<String>) -> Self {
+    fn invalid_client(description: impl Into<String>) -> Self {
         Self {
             status: StatusCode::UNAUTHORIZED,
             ..Self::new("invalid_client", description)
@@ -215,7 +219,7 @@ fn no_store(mut response: Response) -> Response {
 
 /// The fields of a form or a query, each once. OAuth refuses a request that
 /// gives one twice.
-fn fields(encoded: &str) -> Result<HashMap<String, String>, String> {
+fn parse_form_fields(encoded: &str) -> Result<HashMap<String, String>, String> {
     let pairs: Vec<(String, String)> = serde_urlencoded::from_str(encoded)
         .map_err(|error| format!("the request could not be read: {error}"))?;
     let mut fields = HashMap::new();
@@ -251,9 +255,9 @@ enum Wrong {
     },
 }
 
-async fn asked(app: &App, query: &str) -> ApiResult<Result<Asked, Wrong>> {
-    let issuer = issuer(app)?.to_owned();
-    let fields = match fields(query) {
+async fn check_authorize_request(app: &App, query: &str) -> ApiResult<Result<Asked, Wrong>> {
+    let issuer = require_issuer(app)?.to_owned();
+    let fields = match parse_form_fields(query) {
         Ok(fields) => fields,
         Err(why) => return Ok(Err(Wrong::Shown(why))),
     };
@@ -268,7 +272,8 @@ async fn asked(app: &App, query: &str) -> ApiResult<Result<Asked, Wrong>> {
             "the address the assistant sent has no `client_id`".to_owned(),
         )));
     };
-    let Some(client) = people(app, move |accounts| accounts.client(&client_id)).await? else {
+    let Some(client) = run_accounts_work(app, move |accounts| accounts.client(&client_id)).await?
+    else {
         return Ok(Err(Wrong::Shown(
             "the assistant is not registered with this server: remove it and add it again"
                 .to_owned(),
@@ -321,11 +326,14 @@ async fn asked(app: &App, query: &str) -> ApiResult<Result<Asked, Wrong>> {
         );
     }
     if let Some(asked) = field("resource")
-        && !ours(&issuer, asked)
+        && !is_own_resource(&issuer, asked)
     {
         return sent(
             "invalid_target",
-            &format!("this server gives tokens for {} only", resource(&issuer)),
+            &format!(
+                "this server gives tokens for {} only",
+                format_resource_url(&issuer)
+            ),
         );
     }
     Ok(Ok(Asked {
@@ -338,7 +346,7 @@ async fn asked(app: &App, query: &str) -> ApiResult<Result<Asked, Wrong>> {
 
 /// Whether a `resource` a client names is `/mcp` of this server: as the
 /// metadata says it, without the path, or with a slash after either.
-fn ours(issuer: &str, asked: &str) -> bool {
+fn is_own_resource(issuer: &str, asked: &str) -> bool {
     let asked = asked.trim_end_matches('/');
     let lowered = |text: &str| match text.split_once("://") {
         Some((scheme, rest)) => {
@@ -348,12 +356,17 @@ fn ours(issuer: &str, asked: &str) -> bool {
         None => text.to_owned(),
     };
     let asked = lowered(asked);
-    asked == lowered(issuer) || asked == lowered(&resource(issuer))
+    asked == lowered(issuer) || asked == lowered(&format_resource_url(issuer))
 }
 
 /// The address to send the browser to with the answer: the client's, with
 /// what it is told, `state` as it sent it, and who answers.
-fn answer(issuer: &str, redirect_uri: &str, state: Option<&str>, said: &[(&str, &str)]) -> String {
+fn build_answer_url(
+    issuer: &str,
+    redirect_uri: &str,
+    state: Option<&str>,
+    said: &[(&str, &str)],
+) -> String {
     let mut url = Url::parse(redirect_uri).expect("a redirect URI was checked when registered");
     {
         let mut query = url.query_pairs_mut();
@@ -376,7 +389,7 @@ fn sent_back(issuer: &str, wrong: &Wrong) -> Option<String> {
             state,
             error,
             description,
-        } => Some(answer(
+        } => Some(build_answer_url(
             issuer,
             redirect_uri,
             state.as_deref(),
@@ -393,8 +406,8 @@ pub(in crate::server) async fn authorize(
     RawQuery(query): RawQuery,
     headers: HeaderMap,
 ) -> ApiResult {
-    let issuer = issuer(&app)?.to_owned();
-    if let Err(wrong) = asked(&app, query.as_deref().unwrap_or_default()).await?
+    let issuer = require_issuer(&app)?.to_owned();
+    if let Err(wrong) = check_authorize_request(&app, query.as_deref().unwrap_or_default()).await?
         && let Some(to) = sent_back(&issuer, &wrong)
     {
         return Ok(see_other(&to));
@@ -418,13 +431,13 @@ pub(in crate::server) async fn describe(
     State(app): State<App>,
     RawQuery(query): RawQuery,
 ) -> ApiResult {
-    match asked(&app, query.as_deref().unwrap_or_default()).await? {
+    match check_authorize_request(&app, query.as_deref().unwrap_or_default()).await? {
         Ok(asked) => {
             let url = Url::parse(&asked.redirect_uri).expect("checked when registered");
             ok(OAuthRequest {
                 client_name: asked.client.name,
                 host: url.host_str().unwrap_or_default().to_owned(),
-                loopback: url.host().is_some_and(|host| loopback(&host)),
+                loopback: url.host().is_some_and(|host| is_loopback(&host)),
                 redirect_uri: asked.redirect_uri,
             })
         }
@@ -441,14 +454,14 @@ pub(in crate::server) async fn decide(
     body: Bytes,
 ) -> ApiResult {
     let decision: OAuthDecision = json_body(&body)?;
-    let issuer = issuer(&app)?.to_owned();
+    let issuer = require_issuer(&app)?.to_owned();
     let Some(person) = signed_in(&app, &session).await? else {
-        return Err(unauthorized("sign in first"));
+        return Err(unauthorized_error("sign in first"));
     };
     let began_with = began_with(&session)
         .await?
-        .ok_or_else(|| unauthorized("sign in first"))?;
-    let asked = match asked(&app, &decision.request).await? {
+        .ok_or_else(|| unauthorized_error("sign in first"))?;
+    let asked = match check_authorize_request(&app, &decision.request).await? {
         Ok(asked) => asked,
         Err(Wrong::Shown(why)) => return Err(ApiError::invalid(why)),
         Err(wrong) => {
@@ -463,14 +476,14 @@ pub(in crate::server) async fn decide(
             ("error_description", "the person turned the assistant away"),
         ];
         return ok(OAuthDecided {
-            to: answer(&issuer, &asked.redirect_uri, state, &said),
+            to: build_answer_url(&issuer, &asked.redirect_uri, state, &said),
         });
     }
     let (key, mark) = began_with;
     let client = asked.client.id.clone();
     let redirect_uri = asked.redirect_uri.clone();
     let challenge = asked.challenge.clone();
-    let code = people(&app, move |accounts| {
+    let code = run_accounts_work(&app, move |accounts| {
         let approval = Approval {
             client: &client,
             person: &person.id,
@@ -478,11 +491,11 @@ pub(in crate::server) async fn decide(
             redirect_uri: &redirect_uri,
             challenge: &challenge,
         };
-        accounts.approve(&approval, now())
+        accounts.approve(&approval, current_unix_time())
     })
     .await?;
     ok(OAuthDecided {
-        to: answer(&issuer, &asked.redirect_uri, state, &[("code", &code)]),
+        to: build_answer_url(&issuer, &asked.redirect_uri, state, &[("code", &code)]),
     })
 }
 
@@ -526,17 +539,23 @@ pub(in crate::server) async fn token(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    match tokens(&app, &headers, &body).await {
+    match exchange_for_tokens(&app, &headers, &body).await {
         Ok(tokens) => no_store(Json(tokens).into_response()),
         Err(error) => error.into_response(),
     }
 }
 
-async fn tokens(app: &App, headers: &HeaderMap, body: &Bytes) -> Result<Tokens, OAuthError> {
-    let issuer = issuer(app)?.to_owned();
+async fn exchange_for_tokens(
+    app: &App,
+    headers: &HeaderMap,
+    body: &Bytes,
+) -> Result<Tokens, OAuthError> {
+    let issuer = require_issuer(app)?.to_owned();
     let form = std::str::from_utf8(body)
         .map_err(|_| OAuthError::new("invalid_request", "the form is not UTF-8"))
-        .and_then(|form| fields(form).map_err(|why| OAuthError::new("invalid_request", why)))?;
+        .and_then(|form| {
+            parse_form_fields(form).map_err(|why| OAuthError::new("invalid_request", why))
+        })?;
     let field = |name: &str| {
         form.get(name)
             .map(String::as_str)
@@ -549,19 +568,22 @@ async fn tokens(app: &App, headers: &HeaderMap, body: &Bytes) -> Result<Tokens, 
     let client = client_of(field("client_id"), headers)?;
     let known = {
         let client = client.clone();
-        people(app, move |accounts| accounts.client(&client)).await?
+        run_accounts_work(app, move |accounts| accounts.client(&client)).await?
     };
     if known.is_none() {
-        return Err(OAuthError::client(
+        return Err(OAuthError::invalid_client(
             "the client is not registered with this server: register again",
         ));
     }
     if let Some(asked) = field("resource")
-        && !ours(&issuer, asked)
+        && !is_own_resource(&issuer, asked)
     {
         return Err(OAuthError::new(
             "invalid_target",
-            format!("this server gives tokens for {} only", resource(&issuer)),
+            format!(
+                "this server gives tokens for {} only",
+                format_resource_url(&issuer)
+            ),
         ));
     }
     let given = match needed("grant_type")? {
@@ -569,15 +591,21 @@ async fn tokens(app: &App, headers: &HeaderMap, body: &Bytes) -> Result<Tokens, 
             let code = needed("code")?.to_owned();
             let verifier = needed("code_verifier")?.to_owned();
             let redirect_uri = field("redirect_uri").map(str::to_owned);
-            people(app, move |accounts| {
-                accounts.exchange(&code, &client, redirect_uri.as_deref(), &verifier, now())
+            run_accounts_work(app, move |accounts| {
+                accounts.exchange(
+                    &code,
+                    &client,
+                    redirect_uri.as_deref(),
+                    &verifier,
+                    current_unix_time(),
+                )
             })
             .await?
         }
         "refresh_token" => {
             let refresh = needed("refresh_token")?.to_owned();
-            people(app, move |accounts| {
-                accounts.refresh(&refresh, &client, now())
+            run_accounts_work(app, move |accounts| {
+                accounts.refresh(&refresh, &client, current_unix_time())
             })
             .await?
         }
@@ -617,7 +645,7 @@ fn client_of(field: Option<&str>, headers: &HeaderMap) -> Result<String, OAuthEr
         })
         .and_then(|mut pairs| pairs.pop().map(|(_, user)| user))
         .filter(|user| !user.is_empty());
-    basic.ok_or_else(|| OAuthError::client("`client_id` is missing"))
+    basic.ok_or_else(|| OAuthError::invalid_client("`client_id` is missing"))
 }
 
 /// Takes back a token a client was given (RFC 7009). The answer is the same
@@ -628,10 +656,12 @@ pub(in crate::server) async fn revoke(
     body: Bytes,
 ) -> Response {
     let revoked = async {
-        issuer(&app)?;
+        require_issuer(&app)?;
         let form = std::str::from_utf8(&body)
             .map_err(|_| OAuthError::new("invalid_request", "the form is not UTF-8"))
-            .and_then(|form| fields(form).map_err(|why| OAuthError::new("invalid_request", why)))?;
+            .and_then(|form| {
+                parse_form_fields(form).map_err(|why| OAuthError::new("invalid_request", why))
+            })?;
         let field = |name: &str| {
             form.get(name)
                 .map(String::as_str)
@@ -641,7 +671,7 @@ pub(in crate::server) async fn revoke(
         let token = field("token")
             .ok_or_else(|| OAuthError::new("invalid_request", "`token` is missing"))?
             .to_owned();
-        people(&app, move |accounts| {
+        run_accounts_work(&app, move |accounts| {
             accounts.revoke_issued(&token, &client)
         })
         .await?;
@@ -660,7 +690,7 @@ pub(in crate::server) async fn list_grants(
     Extension(caller): Extension<Caller>,
 ) -> ApiResult {
     caller.admin()?;
-    let grants = people(&app, Accounts::grants).await?;
+    let grants = run_accounts_work(&app, Accounts::grants).await?;
     ok(GrantList { grants })
 }
 
@@ -670,7 +700,7 @@ pub(in crate::server) async fn end_grant(
     Path(grant): Path<String>,
 ) -> ApiResult {
     caller.admin()?;
-    ok(people(&app, move |accounts| accounts.end_grant(&grant)).await?)
+    ok(run_accounts_work(&app, move |accounts| accounts.end_grant(&grant)).await?)
 }
 
 impl From<Refused> for OAuthError {
@@ -710,20 +740,20 @@ mod tests {
             "HTTPS://Spool.Example.com/mcp",
             "https://spool.example.com",
         ] {
-            assert!(ours(issuer, good), "{good}");
+            assert!(is_own_resource(issuer, good), "{good}");
         }
         for bad in [
             "https://spool.example.com/v1",
             "https://other.example.com/mcp",
             "https://spool.example.com/MCP",
         ] {
-            assert!(!ours(issuer, bad), "{bad}");
+            assert!(!is_own_resource(issuer, bad), "{bad}");
         }
     }
 
     #[test]
     fn the_answer_says_who_answers() {
-        let to = answer(
+        let to = build_answer_url(
             "https://spool.example.com",
             "https://claude.ai/api/mcp/auth_callback?keep=1",
             Some("a b"),

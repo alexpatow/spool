@@ -23,7 +23,7 @@ use crate::api::{
     ReconcileRequest, RunList, RunResponse,
 };
 use crate::server::App;
-use crate::server::auth::{Caller, names};
+use crate::server::auth::{Caller, list_actor_names};
 use crate::server::error::{ApiError, ApiResult};
 use crate::server::request::{
     arrow_rows, is_arrow, json_body, media_type, optional_json_body, page, query, run_id, sorted,
@@ -152,7 +152,7 @@ pub(in crate::server) async fn list_runs(
     let params = query(params)?;
     let sort = sorted(params.sort, params.order, RunSort::Run);
     let names = match sort {
-        Some(sort) if sort.by == RunSort::StartedBy => names(&app).await?,
+        Some(sort) if sort.by == RunSort::StartedBy => list_actor_names(&app).await?,
         _ => Vec::new(),
     };
     let filter = RunFilter {

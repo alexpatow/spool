@@ -11,7 +11,7 @@ use crate::api::{
     ChangesetList, CommitRequest, ConstraintList, MintRequest, SplitRequest, UndoRequest,
 };
 use crate::server::App;
-use crate::server::auth::{Caller, names};
+use crate::server::auth::{Caller, list_actor_names};
 use crate::server::error::{ApiError, ApiResult};
 use crate::server::request::{id, json_body, optional_json_body, page, query, sorted};
 use crate::server::work::{engine, ok};
@@ -179,7 +179,7 @@ pub(in crate::server) async fn list_changesets(
     let limit = page(params.limit);
     let sort = sorted(params.sort, params.order, LogSort::Seq);
     let names = match sort {
-        Some(sort) if sort.by == LogSort::Actor => names(&app).await?,
+        Some(sort) if sort.by == LogSort::Actor => list_actor_names(&app).await?,
         _ => Vec::new(),
     };
     ok(engine(&app, move |engine| {

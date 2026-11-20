@@ -10,10 +10,10 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use url::Url;
 
-use super::{OAuthError, issuer, loopback, no_store, now};
+use super::{OAuthError, current_unix_time, is_loopback, no_store, require_issuer};
 use crate::auth::SCOPE;
 use crate::server::App;
-use crate::server::auth::accounts::people;
+use crate::server::auth::accounts::run_accounts_work;
 
 /// The most redirect URIs a client registers, and the longest each is.
 const MAX_REDIRECTS: usize = 10;
@@ -34,14 +34,14 @@ struct Registration {
 /// who can sign in does it. Every client is a public one, which proves
 /// itself with PKCE rather than a secret, whatever it asked to be.
 pub(in crate::server) async fn register(State(app): State<App>, body: Bytes) -> Response {
-    match registered(&app, &body).await {
+    match check_and_register_client(&app, &body).await {
         Ok(response) => response,
         Err(error) => error.into_response(),
     }
 }
 
-async fn registered(app: &App, body: &Bytes) -> Result<Response, OAuthError> {
-    issuer(app)?;
+async fn check_and_register_client(app: &App, body: &Bytes) -> Result<Response, OAuthError> {
+    require_issuer(app)?;
     let asked: Registration = serde_json::from_slice(body).map_err(|error| {
         OAuthError::new(
             "invalid_client_metadata",
@@ -67,13 +67,13 @@ async fn registered(app: &App, body: &Bytes) -> Result<Response, OAuthError> {
         })
         .filter(|name| !name.is_empty());
     let uris = asked.redirect_uris.clone();
-    let client = people(app, move |accounts| {
-        accounts.register_client(name.as_deref(), &uris, now())
+    let client = run_accounts_work(app, move |accounts| {
+        accounts.register_client(name.as_deref(), &uris, current_unix_time())
     })
     .await?;
     let mut answer = json!({
         "client_id": client.id,
-        "client_id_issued_at": now(),
+        "client_id_issued_at": current_unix_time(),
         "redirect_uris": client.redirect_uris,
         "token_endpoint_auth_method": "none",
         "grant_types": ["authorization_code", "refresh_token"],
@@ -95,7 +95,7 @@ fn redirect_of(uri: &str) -> Result<Url, String> {
         return Err(format!("a redirect URI is at most {MAX_URI_BYTES} bytes"));
     }
     let url = Url::parse(uri).map_err(|error| format!("`{uri}` is not a URL: {error}"))?;
-    let local = url.host().is_some_and(|host| loopback(&host));
+    let local = url.host().is_some_and(|host| is_loopback(&host));
     match url.scheme() {
         _ if url.fragment().is_some() => Err(format!("`{uri}` has a fragment")),
         "https" => Ok(url),
@@ -117,7 +117,7 @@ pub(super) fn same_redirect(registered: &str, asked: &str) -> bool {
         return false;
     };
     let local =
-        registered.scheme() == "http" && registered.host().is_some_and(|host| loopback(&host));
+        registered.scheme() == "http" && registered.host().is_some_and(|host| is_loopback(&host));
     local
         && asked.scheme() == "http"
         && registered.host() == asked.host()

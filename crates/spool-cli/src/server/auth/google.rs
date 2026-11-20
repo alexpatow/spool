@@ -18,9 +18,9 @@ use tower_sessions::Session;
 use tower_sessions::cookie::time::Duration as SessionLength;
 use tower_sessions::cookie::{Cookie, SameSite};
 
-use super::accounts::people;
+use super::accounts::run_accounts_work;
 use super::oauth;
-use super::sign_in::begin;
+use super::sign_in::begin_session;
 use crate::auth::GOOGLE;
 use crate::auth::google::{Failed, Provider, Started};
 use crate::server::App;
@@ -55,7 +55,7 @@ fn google_cookie(app: &App) -> String {
 
 /// The header that has the browser keep `value` for a sign-in at Google, or
 /// with none, forget it.
-fn keep(app: &App, value: Option<&str>) -> HeaderValue {
+fn build_google_cookie_header(app: &App, value: Option<&str>) -> HeaderValue {
     let minutes = value.map_or(0, |_| GOOGLE_MINUTES);
     let cookie = Cookie::build((google_cookie(app), value.unwrap_or("").to_owned()))
         .path("/")
@@ -75,13 +75,13 @@ fn send_to(app: &App, to: &str, kept: Option<&str>) -> Response {
     let mut response = StatusCode::SEE_OTHER.into_response();
     let headers = response.headers_mut();
     headers.insert(LOCATION, to);
-    headers.insert(SET_COOKIE, keep(app, kept));
+    headers.insert(SET_COOKIE, build_google_cookie_header(app, kept));
     headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
     response
 }
 
 /// An address of this server's own pages: one path, with no way out of it.
-fn own(next: &str) -> bool {
+fn is_own_path(next: &str) -> bool {
     next.starts_with('/')
         && !next[1..].starts_with(['/', '\\'])
         && !next.contains(|c: char| c.is_control() || c == '\\')
@@ -90,7 +90,7 @@ fn own(next: &str) -> bool {
 /// An address of this server's own pages to go back to: `next` if it is
 /// one, and the first page if it could lead anywhere else.
 fn own_page(next: Option<&str>) -> &str {
-    next.filter(|next| next.len() <= MAX_NEXT_BYTES && own(next))
+    next.filter(|next| next.len() <= MAX_NEXT_BYTES && is_own_path(next))
         .unwrap_or("/")
 }
 
@@ -100,7 +100,9 @@ fn own_page(next: Option<&str>) -> &str {
 /// in the cookie, or that could lead off this server, is the first page.
 fn return_page(next: Option<&str>) -> String {
     match next {
-        Some(next) if authorization(next) && own(next) && next.len() <= MAX_HELD_BYTES => {
+        Some(next)
+            if is_authorize_page(next) && is_own_path(next) && next.len() <= MAX_HELD_BYTES =>
+        {
             next.to_owned()
         }
         other => own_page(other).to_owned(),
@@ -109,7 +111,7 @@ fn return_page(next: Option<&str>) -> String {
 
 /// Whether `next` is the studio page where an assistant is approved. The
 /// query is the request, and it is what has to survive the sign-in.
-fn authorization(next: &str) -> bool {
+fn is_authorize_page(next: &str) -> bool {
     let path = next
         .split_once(['?', '#'])
         .map(|(path, _)| path)
@@ -171,7 +173,7 @@ struct Kept {
 }
 
 impl Kept {
-    fn written(started: &Started, next: &str) -> String {
+    fn write_value(started: &Started, next: &str) -> String {
         // The first three are base64 without a `.` in it.
         format!(
             "{}.{}.{}.{}",
@@ -207,7 +209,7 @@ impl Kept {
 /// Says on the server's own output why a sign-in with Google failed: the
 /// person at the browser is told that it did, and whoever runs the server
 /// can do something about it.
-fn complain(failed: &Failed) {
+fn report_google_failure(failed: &Failed) {
     use std::io::Write;
     let _ = writeln!(
         std::io::stderr(),
@@ -215,7 +217,7 @@ fn complain(failed: &Failed) {
     );
 }
 
-async fn asked<T: Send + 'static>(
+async fn ask_google<T: Send + 'static>(
     provider: &Arc<Provider>,
     ask: impl FnOnce(&Provider) -> Result<T, Failed> + Send + 'static,
 ) -> Result<T, Failed> {
@@ -259,7 +261,7 @@ pub(in crate::server) async fn google_start(
         let _held = asking;
         provider.start()
     };
-    Ok(match asked(provider, start).await {
+    Ok(match ask_google(provider, start).await {
         Ok(started) => {
             // The cookie has room for a short address. A long authorization
             // stays on the server, and the cookie carries only its reference.
@@ -268,10 +270,14 @@ pub(in crate::server) async fn google_start(
             } else {
                 app.held.keep(&next)
             };
-            send_to(&app, &started.url, Some(&Kept::written(&started, &kept)))
+            send_to(
+                &app,
+                &started.url,
+                Some(&Kept::write_value(&started, &kept)),
+            )
         }
         Err(failed) => {
-            complain(&failed);
+            report_google_failure(&failed);
             turned_away(&app, &next, "unreachable")
         }
     })
@@ -309,7 +315,9 @@ pub(in crate::server) async fn google_callback(
     };
     let next = match app.held.take(&kept.next) {
         Some(address)
-            if authorization(&address) && own(&address) && address.len() <= MAX_HELD_BYTES =>
+            if is_authorize_page(&address)
+                && is_own_path(&address)
+                && address.len() <= MAX_HELD_BYTES =>
         {
             address
         }
@@ -328,7 +336,7 @@ pub(in crate::server) async fn google_callback(
         nonce, verifier, ..
     } = &kept;
     let (nonce, verifier) = (nonce.clone(), verifier.clone());
-    let identity = asked(provider, move |provider| {
+    let identity = ask_google(provider, move |provider| {
         let _held = permit;
         provider.finish(&code, &nonce, &verifier)
     })
@@ -336,7 +344,7 @@ pub(in crate::server) async fn google_callback(
     let identity = match identity {
         Ok(identity) => identity,
         Err(failed) => {
-            complain(&failed);
+            report_google_failure(&failed);
             let why = match failed {
                 Failed::Unverified => "unverified",
                 Failed::Unreachable(_) => "unreachable",
@@ -350,13 +358,13 @@ pub(in crate::server) async fn google_callback(
         Some(_) => "unknown",
         None => "unvouched",
     };
-    let entered = people(&app, move |accounts| {
+    let entered = run_accounts_work(&app, move |accounts| {
         accounts.enter_with_google(&identity.subject, identity.email.as_deref())
     })
     .await?;
     let Some((person, bound)) = entered else {
         return Ok(turned_away(&app, &next, why));
     };
-    begin(&session, &person.id, (GOOGLE, &bound)).await?;
+    begin_session(&session, &person.id, (GOOGLE, &bound)).await?;
     Ok(send_to(&app, &next, None))
 }

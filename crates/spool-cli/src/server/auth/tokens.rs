@@ -3,7 +3,7 @@
 use axum::body::Bytes;
 use axum::extract::{Extension, Path, State};
 
-use super::accounts::people;
+use super::accounts::run_accounts_work;
 use super::caller::Caller;
 use crate::api::{AddTokenRequest, AddedToken, TokenList};
 use crate::auth::Accounts;
@@ -18,7 +18,7 @@ pub(in crate::server) async fn list_tokens(
 ) -> ApiResult {
     caller.admin()?;
     ok(TokenList {
-        tokens: people(&app, Accounts::tokens).await?,
+        tokens: run_accounts_work(&app, Accounts::tokens).await?,
     })
 }
 
@@ -29,7 +29,7 @@ pub(in crate::server) async fn add_token(
 ) -> ApiResult {
     let by = caller.admin()?.id.clone();
     let request: AddTokenRequest = json_body(&body)?;
-    let (token, secret) = people(&app, move |accounts| {
+    let (token, secret) = run_accounts_work(&app, move |accounts| {
         accounts.add_token(&request.name, Some(&by))
     })
     .await?;
@@ -42,5 +42,5 @@ pub(in crate::server) async fn revoke_token(
     Path(token): Path<String>,
 ) -> ApiResult {
     caller.admin()?;
-    ok(people(&app, move |accounts| accounts.revoke_token(&token)).await?)
+    ok(run_accounts_work(&app, move |accounts| accounts.revoke_token(&token)).await?)
 }

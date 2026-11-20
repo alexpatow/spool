@@ -9,7 +9,7 @@ use axum::response::{IntoResponse, Response};
 use spool::core::Actor;
 use tower_sessions::Session;
 
-use super::accounts::people;
+use super::accounts::run_accounts_work;
 use super::oauth;
 use crate::api::{ErrorCode, Person};
 use crate::auth::{ACCESS_PREFIX, Accounts, GOOGLE, MARK, PERSON};
@@ -61,7 +61,7 @@ impl Caller {
 /// write comes from, and may send this server's cookie with it wherever that
 /// is; a caller that is not a browser says nothing and is let through.
 pub(in crate::server) async fn own_pages_only(request: Request, next: Next) -> Response {
-    if !elsewhere(request.method(), request.headers()) {
+    if !is_cross_site_write(request.method(), request.headers()) {
         return next.run(request).await;
     }
     ApiError::new(
@@ -78,7 +78,7 @@ pub(in crate::server) async fn own_pages_only(request: Request, next: Next) -> R
 /// that holds whatever stands between it and this server. An older one names
 /// the page's origin, which is compared with the host the request was sent
 /// to.
-fn elsewhere(method: &Method, headers: &HeaderMap) -> bool {
+fn is_cross_site_write(method: &Method, headers: &HeaderMap) -> bool {
     if [Method::GET, Method::HEAD, Method::OPTIONS].contains(method) {
         return false;
     }
@@ -99,7 +99,7 @@ pub(in crate::server) async fn authorize(
     mut request: Request,
     next: Next,
 ) -> Response {
-    match caller(&app, &session, request.headers(), false).await {
+    match identify_caller(&app, &session, request.headers(), false).await {
         Ok(caller) => {
             request.extensions_mut().insert(caller);
             next.run(request).await
@@ -117,7 +117,7 @@ pub(in crate::server) async fn authorize_mcp(
     mut request: Request,
     next: Next,
 ) -> Response {
-    match caller(&app, &session, request.headers(), true).await {
+    match identify_caller(&app, &session, request.headers(), true).await {
         Ok(caller) => {
             request.extensions_mut().insert(caller);
             next.run(request).await
@@ -128,23 +128,24 @@ pub(in crate::server) async fn authorize_mcp(
                 && response.status() == StatusCode::UNAUTHORIZED
             {
                 let sent = request.headers().contains_key(AUTHORIZATION);
-                response
-                    .headers_mut()
-                    .insert(WWW_AUTHENTICATE, oauth::challenge(issuer, sent));
+                response.headers_mut().insert(
+                    WWW_AUTHENTICATE,
+                    oauth::build_bearer_challenge(issuer, sent),
+                );
             }
             response
         }
     }
 }
 
-pub(super) fn unauthorized(message: &str) -> ApiError {
+pub(super) fn unauthorized_error(message: &str) -> ApiError {
     ApiError::new(StatusCode::UNAUTHORIZED, ErrorCode::Unauthorized, message)
 }
 
 /// The caller a request is from: the agent whose token it carries, the
 /// person its session belongs to, or, at `/mcp`, the person who approved
 /// the assistant whose access token it carries.
-async fn caller(
+async fn identify_caller(
     app: &App,
     session: &Session,
     headers: &HeaderMap,
@@ -159,11 +160,11 @@ async fn caller(
         });
     if let Some(presented) = presented.filter(|token| token.starts_with(ACCESS_PREFIX)) {
         return match (at_mcp, app.issuer.is_some()) {
-            (true, true) => oauth::bearer(app, presented).await,
-            (false, true) => Err(unauthorized(
+            (true, true) => oauth::find_access_token_caller(app, presented).await,
+            (false, true) => Err(unauthorized_error(
                 "an assistant's access token works at /mcp and nowhere else",
             )),
-            (_, false) => Err(unauthorized(
+            (_, false) => Err(unauthorized_error(
                 "this server does not sign assistants in with OAuth: it needs the address it \
                  is reached by, with `--public-url`",
             )),
@@ -171,12 +172,12 @@ async fn caller(
     }
     if let Some(presented) = presented {
         let presented = presented.to_owned();
-        return match people(app, move |accounts| accounts.agent(&presented)).await? {
+        return match run_accounts_work(app, move |accounts| accounts.agent(&presented)).await? {
             Some(name) => Ok(Caller {
                 actor: Actor::Agent(name),
                 person: None,
             }),
-            None => Err(unauthorized(
+            None => Err(unauthorized_error(
                 "that is not one of this server's tokens: an admin makes one on the studio's \
                  Tokens page, and `spool token add` makes one on the server's machine",
             )),
@@ -186,9 +187,9 @@ async fn caller(
         return Ok(Caller::of(person));
     }
     if app.dev {
-        return Ok(Caller::of(people(app, Accounts::dev).await?));
+        return Ok(Caller::of(run_accounts_work(app, Accounts::dev).await?));
     }
-    Err(unauthorized(
+    Err(unauthorized_error(
         "sign in, or send a token: `Authorization: Bearer <token>`",
     ))
 }
@@ -201,13 +202,13 @@ pub(super) async fn signed_in(app: &App, session: &Session) -> ApiResult<Option<
         return Ok(None);
     };
     if let Some(mark) = kept(MARK).await? {
-        return people(app, move |accounts| accounts.holder(&id, &mark)).await;
+        return run_accounts_work(app, move |accounts| accounts.holder(&id, &mark)).await;
     }
     match kept(GOOGLE).await? {
         // A server that no longer signs people in with Google has nobody
         // signed in with it.
         Some(bound) if app.google.is_some() => {
-            people(app, move |accounts| {
+            run_accounts_work(app, move |accounts| {
                 accounts.holder_with_google(&id, &bound)
             })
             .await

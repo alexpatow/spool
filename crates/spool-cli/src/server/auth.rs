@@ -10,7 +10,7 @@ pub(super) mod people;
 pub(super) mod sign_in;
 pub(super) mod tokens;
 
-pub(super) use accounts::names;
+pub(super) use accounts::list_actor_names;
 pub(super) use caller::{Caller, authorize, authorize_mcp, own_pages_only};
 pub(super) use google::Held;
 pub(super) use sign_in::Attempts;
