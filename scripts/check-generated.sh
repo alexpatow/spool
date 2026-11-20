@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 # Check what a commit would contain, including partially staged files.
+#
+#   scripts/check-generated.sh                 checks what the staged changes affect
+#   scripts/check-generated.sh --all           checks every generated file
+#   scripts/check-generated.sh --install-hook  runs the first before each commit
 set -eu
 
 root=$(git rev-parse --show-toplevel)
@@ -19,12 +23,18 @@ if [[ ${1:-} == --install-hook && $# == 1 ]]; then
     echo 'Installed the generated-file pre-commit check for this repository and its worktrees.'
     exit 0
 fi
-if (($#)); then
-    echo 'Usage: check-generated.sh [--install-hook]' >&2
+all=0
+if [[ ${1:-} == --all && $# == 1 ]]; then
+    all=1
+elif (($#)); then
+    echo 'Usage: check-generated.sh [--all | --install-hook]' >&2
     exit 2
 fi
 
 changed() {
+    if ((all)); then
+        return 0
+    fi
     local status=0
     # Treat a rename as both a deletion and an addition for path matching.
     git diff --cached --quiet --no-ext-diff --no-renames -- "$@" || status=$?
