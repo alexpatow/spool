@@ -173,16 +173,16 @@ struct Control {
 }
 
 impl Running {
-    fn held(&self) -> std::sync::MutexGuard<'_, HashMap<RunId, PathBuf>> {
+    fn lock_said(&self) -> std::sync::MutexGuard<'_, HashMap<RunId, PathBuf>> {
         self.said.lock().unwrap_or_else(|held| held.into_inner())
     }
 
-    fn control(&self) -> std::sync::MutexGuard<'_, Control> {
+    fn lock_control(&self) -> std::sync::MutexGuard<'_, Control> {
         self.control.lock().unwrap_or_else(|held| held.into_inner())
     }
 
     fn is_cancelled(&self, run: RunId) -> bool {
-        self.control().cancelled.contains(&run)
+        self.lock_control().cancelled.contains(&run)
     }
 
     /// Asks for the code of a run to be stopped, with every process it
@@ -191,7 +191,7 @@ impl Running {
     /// stored. The run then fails. `false` when the run has begun to store
     /// what its code found, which is then too late.
     pub fn cancel(&self, run: RunId) -> bool {
-        let mut control = self.control();
+        let mut control = self.lock_control();
         if control.storing.contains(&run) {
             return false;
         }
@@ -203,7 +203,7 @@ impl Running {
     /// longer be cancelled. `false` when it was cancelled first, and is to
     /// store nothing.
     pub fn begin_storing(&self, run: RunId) -> bool {
-        let mut control = self.control();
+        let mut control = self.lock_control();
         if control.cancelled.contains(&run) {
             return false;
         }
@@ -213,7 +213,7 @@ impl Running {
 
     /// Forgets a run's cancellation and storing, once it has ended.
     pub fn forget(&self, run: RunId) {
-        let mut control = self.control();
+        let mut control = self.lock_control();
         control.cancelled.remove(&run);
         control.storing.remove(&run);
     }
@@ -227,7 +227,7 @@ impl Running {
     /// and what was said before it stands. Only the end of what was written
     /// is read.
     pub fn said(&self, run: RunId) -> Option<String> {
-        let log = self.held().get(&run).cloned()?;
+        let log = self.lock_said().get(&run).cloned()?;
         last_line(&String::from_utf8_lossy(&end_of(&log).ok()?))
     }
 }
@@ -651,7 +651,7 @@ mod tests {
         let log = dir.path().join("stderr.log");
         let running = Running::default();
         assert_eq!(running.said(RunId(7)), None);
-        running.held().insert(RunId(7), log.clone());
+        running.lock_said().insert(RunId(7), log.clone());
         // Its log may not be there yet, or be empty.
         assert_eq!(running.said(RunId(7)), None);
         std::fs::write(&log, "Downloading pyarrow (52.5MiB)\n Downloaded pyarrow\n").unwrap();
@@ -669,7 +669,7 @@ mod tests {
             user_code.clone().running.said(RunId(7)).as_deref(),
             Some("Downloaded pyarrow")
         );
-        running.held().remove(&RunId(7));
+        running.lock_said().remove(&RunId(7));
         assert_eq!(user_code.running.said(RunId(7)), None);
     }
 }

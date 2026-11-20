@@ -9,9 +9,9 @@ use spool_core::{Actor, ChangesetId, ContentHash, IdentityId, LogEntry, Op, RunI
 
 use super::clamp_limit;
 use crate::error::Result;
-use crate::order::{Key, Keyed, Sort, called, names_table};
+use crate::order::{Key, Keyed, Sort, actor_names_cte, names_table};
 use crate::store::{OpRow, log_entry, op_from_row, parse};
-use crate::time::rfc3339;
+use crate::time::format_rfc3339;
 
 /// A committed changeset as far as it concerns one identity.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -96,7 +96,7 @@ pub(crate) fn history(conn: &Connection, id: IdentityId) -> Result<Vec<HistoryEn
                 actor: parse(&row.get::<_, String>(2)?)?,
                 reason: row.get(3)?,
                 run: row.get::<_, Option<i64>>(4)?.map(|run| RunId(run as u64)),
-                committed_at: rfc3339(row.get(5)?),
+                committed_at: format_rfc3339(row.get(5)?),
                 ops: vec![op],
             }),
         }
@@ -150,7 +150,7 @@ pub(crate) fn changesets(
 ) -> Result<Vec<LogEntry>> {
     let named = sort.by == LogSort::Actor;
     let keyed = Keyed {
-        before: named.then(|| called("$3")),
+        before: named.then(|| actor_names_cte("$3")),
         from: if named {
             "spool.changeset c LEFT JOIN called ON called.actor = c.actor"
         } else {

@@ -14,7 +14,7 @@ use spool_core::{
 use super::{Engine, Inner, lock_ignoring_poison};
 use crate::drafts::{self, DraftEntry, DraftFilter, DraftStatus, DraftSummary};
 use crate::error::{Error, Result};
-use crate::following::following;
+use crate::following::build_following_moves;
 use crate::retract;
 use crate::review::{self, ReviewEntry};
 use crate::store;
@@ -204,7 +204,7 @@ fn list_constraints(conn: &Connection, filter: &ConstraintFilter) -> Result<Vec<
     let mut found = Vec::new();
     while let Some(row) = rows.next()? {
         found.push(ConstraintEntry {
-            constraint: store::constraint(row, 0)?,
+            constraint: store::constraint_from_row(row, 0)?,
             from: Seq(row.get::<_, i64>(3)? as u64),
             to: row.get::<_, Option<i64>>(4)?.map(|seq| Seq(seq as u64)),
         });
@@ -223,7 +223,7 @@ impl Inner {
     /// most.
     pub(super) fn versions_along(&self, changeset: &Changeset) -> Result<Vec<Op>> {
         let own = changeset.ops.len();
-        let mut along = following(&self.store.conn, &changeset.ops)?;
+        let mut along = build_following_moves(&self.store.conn, &changeset.ops)?;
         let mut rounds = 0;
         while !along.is_empty() {
             if rounds == 2 {

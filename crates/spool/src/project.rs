@@ -124,9 +124,9 @@ impl YamlFile {
     }
 }
 
-/// A name that can stand in SQL without quotes: lowercase letters, digits
+/// Whether a name can stand in SQL without quotes: lowercase letters, digits
 /// and `_`, not starting with a digit.
-fn identifier(name: &str) -> bool {
+fn is_sql_identifier(name: &str) -> bool {
     name.chars()
         .next()
         .is_some_and(|first| first.is_ascii_lowercase() || first == '_')
@@ -146,7 +146,7 @@ fn valid_name(name: &str) -> bool {
 }
 
 /// A path below the project directory, with `/` between its parts.
-fn relative(root: &Path, path: &Path) -> String {
+fn format_relative_path(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .unwrap_or(path)
         .components()
@@ -157,7 +157,7 @@ fn relative(root: &Path, path: &Path) -> String {
 
 /// Trims whitespace and trailing semicolons, so a file can end the way SQL
 /// files usually do.
-fn strip(sql: &str) -> String {
+fn trim_sql(sql: &str) -> String {
     sql.trim().trim_end_matches(';').trim_end().to_owned()
 }
 
@@ -168,7 +168,7 @@ fn file_name(path: &Path) -> String {
 }
 
 /// The entries of a directory in name order, without hidden files.
-fn list(dir: &Path) -> Result<Vec<PathBuf>> {
+fn list_dir_entries(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut entries = Vec::new();
     for entry in std::fs::read_dir(dir).map_err(Error::io(dir))? {
         let path = entry.map_err(Error::io(dir))?.path();

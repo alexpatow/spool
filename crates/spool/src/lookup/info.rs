@@ -10,7 +10,7 @@ use crate::error::Result;
 use crate::project::{Extractor, FeatureColumn, Manifest, Strategy};
 use crate::schema;
 use crate::store::parse;
-use crate::time::rfc3339;
+use crate::time::format_rfc3339;
 
 /// What a store holds.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -201,14 +201,14 @@ pub(crate) fn info(conn: &Connection, manifest: Option<&Manifest>) -> Result<Sto
                 records: row.get::<_, i64>(2)? as u64,
                 unassigned: row.get::<_, i64>(3)? as u64,
                 retracted: row.get::<_, i64>(5)? as u64,
-                last_loaded_at: rfc3339(row.get(4)?),
+                last_loaded_at: format_rfc3339(row.get(4)?),
             });
         }
     }
     Ok(StoreInfo {
         engine_version: env!("CARGO_PKG_VERSION").to_owned(),
         format_version: schema::FORMAT_VERSION.to_owned(),
-        manifest_hash: schema::meta(conn, "manifest_hash")?,
+        manifest_hash: schema::read_meta(conn, "manifest_hash")?,
         head: crate::store::read_head(conn)?,
         entity_types,
         sources: manifest.map(declared_sources).unwrap_or_default(),

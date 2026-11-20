@@ -30,7 +30,7 @@ pub(crate) use log::{
 };
 pub(crate) use ops::{OpRow, op_from_row, op_rows};
 pub(crate) use projection::{
-    constraint, read_assignments, read_constraints_of_members, read_constraints_on,
+    constraint_from_row, read_assignments, read_constraints_of_members, read_constraints_on,
     read_identities, read_left_at, read_members, read_membership_changed, read_record_types,
     read_snapshot,
 };
@@ -79,7 +79,7 @@ impl DuckStore {
     /// Another connection to the same database, for reading while this one
     /// writes. It sees what has been committed.
     pub(crate) fn reader(&self) -> Result<Connection> {
-        reader(&self.conn, self.attached)
+        open_reader(&self.conn, self.attached)
     }
 }
 
@@ -131,7 +131,7 @@ fn lock_holder(message: &str) -> Option<Option<u32>> {
 
 /// A new connection to the database of `conn`, set up like the one a store
 /// opens.
-pub(crate) fn reader(conn: &Connection, attached: bool) -> Result<Connection> {
+pub(crate) fn open_reader(conn: &Connection, attached: bool) -> Result<Connection> {
     let reader = conn.try_clone()?;
     if attached {
         reader.execute_batch(&format!("USE {CATALOG}"))?;
@@ -377,7 +377,7 @@ mod tests {
             // The store is as it was.
             let conn = duckdb::Connection::open(&path).unwrap();
             assert_eq!(
-                schema::meta(&conn, "format_version").unwrap(),
+                schema::read_meta(&conn, "format_version").unwrap(),
                 Some(other.to_owned())
             );
         }
@@ -405,7 +405,9 @@ mod tests {
         {
             let conn = Connection::open(&path).unwrap();
             assert_eq!(
-                schema::meta(&conn, "format_version").unwrap().as_deref(),
+                schema::read_meta(&conn, "format_version")
+                    .unwrap()
+                    .as_deref(),
                 Some("11")
             );
             let columns: i64 = conn
@@ -423,7 +425,7 @@ mod tests {
 
         let store = open().unwrap();
         assert_eq!(
-            schema::meta(&store.conn, "format_version")
+            schema::read_meta(&store.conn, "format_version")
                 .unwrap()
                 .as_deref(),
             Some(schema::FORMAT_VERSION)

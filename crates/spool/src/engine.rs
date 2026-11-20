@@ -120,7 +120,7 @@ impl Readers {
         let idle = lock_ignoring_poison(&self.idle).pop();
         let conn = match idle {
             Some(conn) => conn,
-            None => store::reader(&lock_ignoring_poison(&self.source), self.attached)?,
+            None => store::open_reader(&lock_ignoring_poison(&self.source), self.attached)?,
         };
         // One transaction, so a read made of several queries sees one
         // committed state however many changesets commit while it runs.
@@ -281,7 +281,7 @@ impl Engine {
 
     /// The hash of the manifest the store was last applied with.
     pub fn applied_manifest_hash(&self) -> Result<Option<String>> {
-        self.read(|conn| schema::meta(conn, "manifest_hash"))
+        self.read(|conn| schema::read_meta(conn, "manifest_hash"))
     }
 }
 

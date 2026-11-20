@@ -45,7 +45,7 @@ use crate::lookup::{self, IdentitySummary, RecordEntry};
 use crate::possible_split;
 use crate::retract;
 use crate::store::{self, parse};
-use crate::time::rfc3339;
+use crate::time::format_rfc3339;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -334,7 +334,7 @@ pub(crate) fn list(conn: &Connection, filter: &ReviewFilter) -> Result<Vec<Revie
             dismissed: match row.get::<_, Option<String>>(9)? {
                 Some(by) => Some(Dismissal {
                     by: parse(&by)?,
-                    at: rfc3339(row.get::<_, Option<i64>>(10)?.unwrap_or_default()),
+                    at: format_rfc3339(row.get::<_, Option<i64>>(10)?.unwrap_or_default()),
                     reason: row.get(11)?,
                 }),
                 None => None,
@@ -510,7 +510,7 @@ pub(crate) fn case(conn: &Connection, id: u64) -> Result<ReviewCase> {
                     .map(|id| parse(&id))
                     .transpose()
             };
-            let constraint = store::constraint(row, 0)?;
+            let constraint = store::constraint_from_row(row, 0)?;
             // A constraint names the smaller ID first, however it is stored.
             let stored_first: RecordId = parse(&row.get::<_, String>(0)?)?;
             let identities = if constraint.a == stored_first {

@@ -285,7 +285,7 @@ pub(crate) fn insert(
 /// the keys under which it stored a new version of a row that an earlier
 /// run stored. A key sent twice in one call with other content replaces
 /// nothing the store held, and is not among them.
-pub(crate) fn replacing(conn: &Connection, run: RunId) -> Result<Option<String>> {
+pub(crate) fn find_replaced_rows(conn: &Connection, run: RunId) -> Result<Option<String>> {
     /// As many keys as a message names.
     const NAMED: usize = 20;
     let mut statement = conn.prepare(

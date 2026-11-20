@@ -1,13 +1,13 @@
 //! A transform's file: the lambda it is written as, and the words of
 //! its SQL.
 
-use super::{SqlFile, Transform, identifier, strip};
+use super::{SqlFile, Transform, is_sql_identifier, trim_sql};
 
 /// A transform's file: `lambda` and the names of its arguments, a colon, and
 /// an expression over them, as DuckDB writes a lambda.
 pub(super) fn transform_of(file: &SqlFile) -> Result<Transform, String> {
     const FORM: &str = "a transform is `lambda`, the names of its arguments, `:` and an expression, as in `lambda name: lower(trim(name))`";
-    if !identifier(&file.name) {
+    if !is_sql_identifier(&file.name) {
         return Err(
             "a transform's file name may contain only lowercase letters, digits and `_`".to_owned(),
         );
@@ -20,7 +20,7 @@ pub(super) fn transform_of(file: &SqlFile) -> Result<Transform, String> {
     let (header, body) = rest.split_once(':').ok_or(FORM)?;
     let mut parameters: Vec<String> = Vec::new();
     for parameter in header.split(',').map(str::trim) {
-        if !identifier(parameter) {
+        if !is_sql_identifier(parameter) {
             return Err(format!(
                 "`{parameter}` cannot name an argument: use lowercase letters, digits and `_`"
             ));
@@ -30,11 +30,11 @@ pub(super) fn transform_of(file: &SqlFile) -> Result<Transform, String> {
         }
         parameters.push(parameter.to_owned());
     }
-    let body = strip(body);
+    let body = trim_sql(body);
     if body.is_empty() {
         return Err(FORM.to_owned());
     }
-    if words(&body).any(|word| word.eq_ignore_ascii_case("select")) {
+    if scan_sql_words(&body).any(|word| word.eq_ignore_ascii_case("select")) {
         return Err(
             "a transform works on the values it is given from one record, and cannot `select` from anything"
                 .to_owned(),
@@ -64,7 +64,7 @@ fn after_comments(sql: &str) -> &str {
 
 /// The words of SQL text that are not inside a string, a quoted name or a
 /// comment.
-fn words(sql: &str) -> impl Iterator<Item = &str> {
+fn scan_sql_words(sql: &str) -> impl Iterator<Item = &str> {
     // Every byte of a character outside ASCII counts as part of a word, so
     // the scan only ever stops between characters.
     let in_word = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_' || !byte.is_ascii();
@@ -75,13 +75,13 @@ fn words(sql: &str) -> impl Iterator<Item = &str> {
             let byte = bytes[at];
             let rest = &bytes[at..];
             if byte == b'\'' || byte == b'"' {
-                at = past(bytes, at + 1, &[byte]);
+                at = skip_past(bytes, at + 1, &[byte]);
             } else if rest.starts_with(b"--") {
-                at = past(bytes, at, b"\n");
+                at = skip_past(bytes, at, b"\n");
             } else if rest.starts_with(b"/*") {
-                at = past(bytes, at + 2, b"*/");
+                at = skip_past(bytes, at + 2, b"*/");
             } else if let Some(quote) = dollar_quote(rest) {
-                at = past(bytes, at + quote.len(), quote);
+                at = skip_past(bytes, at + quote.len(), quote);
             } else if in_word(byte) && !byte.is_ascii_digit() {
                 let start = at;
                 while at < bytes.len() && in_word(bytes[at]) {
@@ -97,7 +97,7 @@ fn words(sql: &str) -> impl Iterator<Item = &str> {
 }
 
 /// Where the first `needle` at or after `from` ends, or the end of the text.
-fn past(bytes: &[u8], from: usize, needle: &[u8]) -> usize {
+fn skip_past(bytes: &[u8], from: usize, needle: &[u8]) -> usize {
     bytes
         .get(from..)
         .and_then(|rest| {

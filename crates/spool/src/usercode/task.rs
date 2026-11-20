@@ -191,10 +191,12 @@ impl Task {
         let program = self.command.get_program().to_string_lossy().into_owned();
         // While the code runs, what it says can be asked for.
         let running = self.user_code.running.clone();
-        running.held().insert(self.run, self.dir.join("stderr.log"));
+        running
+            .lock_said()
+            .insert(self.run, self.dir.join("stderr.log"));
         let this = self.run;
-        let finished = run(&mut self.command, timeout, &|| running.is_cancelled(this));
-        running.held().remove(&self.run);
+        let finished = run_command(&mut self.command, timeout, &|| running.is_cancelled(this));
+        running.lock_said().remove(&self.run);
         let finished = finished.map_err(|error| {
             self.fail(format!(
                 "`{program}`, which runs {} {}, could not be started: {error}",
@@ -217,11 +219,11 @@ impl Task {
                     "it was stopped after {} without finishing. That is the longest a strategy \
                      or an extractor may run here, and `--task-timeout <seconds>` sets it, on \
                      `spool dev`, `spool serve` or `spool bench`{said}",
-                    seconds(timeout)
+                    format_seconds(timeout)
                 )))
             }
             Finished::Exited(status) if !status.success() => {
-                let said = tail(&self.dir.join("stderr.log"));
+                let said = read_log_tail(&self.dir.join("stderr.log"));
                 let said = match said.is_empty() {
                     true => String::new(),
                     false => format!(":\n{said}\n"),
@@ -295,7 +297,7 @@ impl Task {
     }
 }
 
-fn seconds(duration: Duration) -> String {
+fn format_seconds(duration: Duration) -> String {
     match duration.as_secs_f64() {
         whole if whole.fract() == 0.0 => format!("{whole} seconds"),
         other => format!("{other:.1} seconds"),
@@ -319,7 +321,7 @@ fn last_bytes(path: &Path, bytes: u64) -> std::io::Result<Vec<u8>> {
 
 /// The last lines of a log, for an error message. Only the end of the file
 /// is read: user code can write as much as the disk holds before it fails.
-fn tail(path: &Path) -> String {
+fn read_log_tail(path: &Path) -> String {
     const LINES: usize = 20;
     let Ok(end) = end_of(path) else {
         return String::new();
@@ -338,7 +340,7 @@ pub(crate) enum Finished {
 /// Starts a command and waits for it, for at most `timeout` and until
 /// `cancelled` says to stop. A command that runs out of time or is
 /// cancelled is killed together with every process it started.
-pub(crate) fn run(
+pub(crate) fn run_command(
     command: &mut Command,
     timeout: Duration,
     cancelled: &dyn Fn() -> bool,
@@ -392,14 +394,14 @@ mod tests {
     #[test]
     fn a_command_that_finishes_reports_its_exit_status() {
         let Finished::Exited(status) =
-            run(&mut shell("exit 0"), Duration::from_secs(30), &|| false).unwrap()
+            run_command(&mut shell("exit 0"), Duration::from_secs(30), &|| false).unwrap()
         else {
             panic!("the command had time to finish");
         };
         assert!(status.success());
 
         let Finished::Exited(status) =
-            run(&mut shell("exit 3"), Duration::from_secs(30), &|| false).unwrap()
+            run_command(&mut shell("exit 3"), Duration::from_secs(30), &|| false).unwrap()
         else {
             panic!("the command had time to finish");
         };
@@ -414,7 +416,8 @@ mod tests {
         // long after the timeout if it were left running.
         let script = format!("(sleep 2; touch '{}') & sleep 60", marker.display());
         let started = Instant::now();
-        let finished = run(&mut shell(&script), Duration::from_millis(200), &|| false).unwrap();
+        let finished =
+            run_command(&mut shell(&script), Duration::from_millis(200), &|| false).unwrap();
         assert!(matches!(finished, Finished::TimedOut));
         assert!(started.elapsed() < Duration::from_secs(2));
 
@@ -429,7 +432,7 @@ mod tests {
         let script = format!("(sleep 2; touch '{}') & sleep 60", marker.display());
         let started = Instant::now();
         let asked = || started.elapsed() >= Duration::from_millis(200);
-        let finished = run(&mut shell(&script), Duration::from_secs(30), &asked).unwrap();
+        let finished = run_command(&mut shell(&script), Duration::from_secs(30), &asked).unwrap();
         assert!(matches!(finished, Finished::Cancelled));
         assert!(started.elapsed() < Duration::from_secs(2));
 
@@ -437,7 +440,7 @@ mod tests {
         assert!(!marker.exists(), "the process it started outlived it");
 
         // A command that was cancelled before it started is not started.
-        let finished = run(
+        let finished = run_command(
             &mut shell(&format!("touch '{}'", marker.display())),
             Duration::from_secs(30),
             &|| true,
@@ -450,7 +453,7 @@ mod tests {
     #[test]
     fn a_command_that_does_not_exist_is_an_error() {
         let mut command = Command::new("spool-no-such-command");
-        assert!(run(&mut command, Duration::from_secs(1), &|| false).is_err());
+        assert!(run_command(&mut command, Duration::from_secs(1), &|| false).is_err());
     }
 
     #[test]
@@ -459,19 +462,19 @@ mod tests {
         let path = dir.path().join("stderr.log");
         let lines: Vec<String> = (1..=50).map(|line| format!("line {line}")).collect();
         std::fs::write(&path, lines.join("\n") + "\n").unwrap();
-        let tail = tail(&path);
+        let tail = read_log_tail(&path);
         assert!(tail.starts_with("line 31\n"));
         assert!(tail.ends_with("line 50"));
-        assert_eq!(super::tail(&dir.path().join("missing")), "");
+        assert_eq!(super::read_log_tail(&dir.path().join("missing")), "");
 
         // A long log is read from its end, and cut where the read begins.
         let lines: Vec<String> = (1..=100_000).map(|line| format!("line {line}")).collect();
         std::fs::write(&path, lines.join("\n") + "\n").unwrap();
-        let tail = super::tail(&path);
+        let tail = super::read_log_tail(&path);
         assert_eq!(tail.lines().count(), 20);
         assert!(tail.starts_with("line 99981\n"));
         assert!(tail.ends_with("line 100000"));
         std::fs::write(&path, "é".repeat(5000)).unwrap();
-        assert!(super::tail(&path).len() <= 4096 + 4);
+        assert!(super::read_log_tail(&path).len() <= 4096 + 4);
     }
 }

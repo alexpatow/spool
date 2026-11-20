@@ -68,7 +68,7 @@ fn op_to_row(op: &Op) -> OpRow {
 }
 
 pub(crate) fn op_from_row(row: OpRow) -> Result<Op> {
-    fn required<T>(value: Option<String>, column: &str) -> Result<T>
+    fn parse_required<T>(value: Option<String>, column: &str) -> Result<T>
     where
         T: FromStr,
         T::Err: std::error::Error + Send + Sync + 'static,
@@ -78,7 +78,7 @@ pub(crate) fn op_from_row(row: OpRow) -> Result<Op> {
         })?;
         parse(&value)
     }
-    fn optional<T>(value: Option<String>) -> Result<Option<T>>
+    fn parse_optional<T>(value: Option<String>) -> Result<Option<T>>
     where
         T: FromStr,
         T::Err: std::error::Error + Send + Sync + 'static,
@@ -89,31 +89,31 @@ pub(crate) fn op_from_row(row: OpRow) -> Result<Op> {
 
     Ok(match row.kind.as_str() {
         "create_identity" => Op::CreateIdentity {
-            identity: required(row.identity, "identity_id")?,
+            identity: parse_required(row.identity, "identity_id")?,
             entity_type: EntityType::new(row.entity_type.unwrap_or_default())
                 .map_err(StateError::new)?,
         },
         "assign" => Op::Assign {
-            record: required(row.record, "record_id")?,
-            from: optional(row.from_identity)?,
-            to: optional(row.identity)?,
+            record: parse_required(row.record, "record_id")?,
+            from: parse_optional(row.from_identity)?,
+            to: parse_optional(row.identity)?,
         },
         "merge" => Op::Merge {
-            from: required(row.from_identity, "from_identity_id")?,
-            into: required(row.identity, "identity_id")?,
+            from: parse_required(row.from_identity, "from_identity_id")?,
+            into: parse_required(row.identity, "identity_id")?,
         },
         "constrain" => Op::Constrain {
             kind: constraint_kind(row.constraint_kind)?,
-            a: required(row.record, "record_id")?,
-            b: required(row.other_record, "other_record_id")?,
+            a: parse_required(row.record, "record_id")?,
+            b: parse_required(row.other_record, "other_record_id")?,
         },
         "unconstrain" => Op::Unconstrain {
             kind: constraint_kind(row.constraint_kind)?,
-            a: required(row.record, "record_id")?,
-            b: required(row.other_record, "other_record_id")?,
+            a: parse_required(row.record, "record_id")?,
+            b: parse_required(row.other_record, "other_record_id")?,
         },
         "reinstate" => Op::Reinstate {
-            identity: required(row.identity, "identity_id")?,
+            identity: parse_required(row.identity, "identity_id")?,
         },
         other => {
             return Err(

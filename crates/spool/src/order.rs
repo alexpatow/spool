@@ -176,11 +176,11 @@ pub type ActorNames = Vec<(Actor, String)>;
 
 /// A common table expression `called`, of `actor` and `name`, read from the
 /// table that the parameter `param` is bound to with [`names_table`].
-pub(crate) fn called(param: &str) -> String {
+pub(crate) fn actor_names_cte(param: &str) -> String {
     format!("called AS (SELECT actor, name FROM arrow({param}))")
 }
 
-/// The names as a table to bind to the parameter of [`called`]. With none,
+/// The names as a table to bind to the parameter of [`actor_names_cte`]. With none,
 /// it is a row of nulls, which names nobody.
 pub(crate) fn names_table(names: &[(Actor, String)]) -> Result<ArrowBatchRegistration> {
     let (actors, called): (Vec<Option<String>>, Vec<Option<String>>) = if names.is_empty() {

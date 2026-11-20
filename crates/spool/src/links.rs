@@ -204,7 +204,7 @@ impl Graph {
     /// `rule` made, the largest first.
     pub(crate) fn pieces_without(&self, rule: u32) -> Vec<Vec<u32>> {
         let mut parent: Vec<u32> = (0..self.len() as u32).collect();
-        fn root(parent: &mut [u32], mut at: u32) -> u32 {
+        fn find_root(parent: &mut [u32], mut at: u32) -> u32 {
             while parent[at as usize] != at {
                 let up = parent[parent[at as usize] as usize];
                 parent[at as usize] = up;
@@ -216,14 +216,17 @@ impl Graph {
             if self.rule_sets[edge.rules as usize] == [rule] {
                 continue;
             }
-            let (one, other) = (root(&mut parent, edge.a), root(&mut parent, edge.b));
+            let (one, other) = (
+                find_root(&mut parent, edge.a),
+                find_root(&mut parent, edge.b),
+            );
             if one != other {
                 parent[one.max(other) as usize] = one.min(other);
             }
         }
         let mut pieces: HashMap<u32, Vec<u32>> = HashMap::new();
         for at in 0..self.len() as u32 {
-            let top = root(&mut parent, at);
+            let top = find_root(&mut parent, at);
             pieces.entry(top).or_default().push(at);
         }
         let mut pieces: Vec<Vec<u32>> = pieces.into_values().collect();

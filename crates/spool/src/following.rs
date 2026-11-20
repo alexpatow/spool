@@ -29,7 +29,7 @@ use crate::store::parse;
 /// None when `ops` moves a record more than once. Validation refuses such
 /// a changeset, and what it costs to look up stays with the records it
 /// names, however often it names them.
-pub(crate) fn following(conn: &Connection, ops: &[Op]) -> Result<Vec<Op>> {
+pub(crate) fn build_following_moves(conn: &Connection, ops: &[Op]) -> Result<Vec<Op>> {
     let mut placed = Vec::new();
     let mut moved = HashSet::new();
     let mut decided = HashSet::new();

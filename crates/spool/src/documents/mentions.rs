@@ -116,7 +116,7 @@ pub(crate) fn stage_mentions(
             )));
         }
 
-        let payload = canonical(mention.attributes.as_deref()).map_err(fail)?;
+        let payload = canonicalize_attributes(mention.attributes.as_deref()).map_err(fail)?;
         let key = locator(id, entity_type, start as u64, end as u64);
         let mut evidence = json!({
             "document": id,
@@ -146,7 +146,7 @@ pub(crate) fn stage_mentions(
 /// A mention's attributes in the form a row's payload has: an object of
 /// text, booleans and numbers, ordered by name, without the attributes that
 /// have no value. A whole number is an integer however it was written.
-fn canonical(attributes: Option<&str>) -> Result<String, String> {
+fn canonicalize_attributes(attributes: Option<&str>) -> Result<String, String> {
     let parsed: Value = match attributes {
         None => Value::Null,
         Some(text) => serde_json::from_str(text)

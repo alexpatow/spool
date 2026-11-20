@@ -30,7 +30,7 @@ impl Engine {
     pub fn recompute(&self, request: &RecomputeRequest) -> Result<RecomputeReport> {
         let manifest = self.manifest().ok_or(Error::NoManifest)?;
         self.read(|conn| {
-            let applied = schema::meta(conn, "manifest_hash")?;
+            let applied = schema::read_meta(conn, "manifest_hash")?;
             if applied.as_deref() != Some(manifest.hash.as_str()) {
                 return Err(Error::ManifestMismatch {
                     applied,

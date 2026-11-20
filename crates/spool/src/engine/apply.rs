@@ -51,7 +51,7 @@ impl Engine {
     /// another declaration.
     pub fn adopt(&self, manifest: &Manifest) -> Result<()> {
         let mut inner = self.lock();
-        let applied = schema::meta(&inner.store.conn, "manifest_hash")?;
+        let applied = schema::read_meta(&inner.store.conn, "manifest_hash")?;
         if applied.as_deref() != Some(manifest.hash.as_str()) {
             return Err(Error::ManifestMismatch {
                 applied,

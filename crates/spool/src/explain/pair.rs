@@ -20,7 +20,7 @@ use crate::project::{Manifest, Rule, RuleSet};
 use crate::review::{self, ReviewEntry, ReviewFilter};
 use crate::runs::RunStatus;
 use crate::store::{self, parse};
-use crate::time::rfc3339;
+use crate::time::format_rfc3339;
 
 /// What the store knows about a pair of records, and what follows
 /// from it.
@@ -308,7 +308,7 @@ fn explain_record(conn: &Connection, record: RecordEntry) -> Result<Explained> {
             actor: parse(&row.get::<_, String>(2)?)?,
             reason: row.get(3)?,
             run: row.get::<_, Option<i64>>(4)?.map(|run| RunId(run as u64)),
-            committed_at: rfc3339(row.get(5)?),
+            committed_at: format_rfc3339(row.get(5)?),
         }),
         None => None,
     };
@@ -433,7 +433,7 @@ fn read_comparisons(conn: &Connection, left: RecordId, right: RecordId) -> Resul
                     name,
                     version: row.get(3).unwrap_or(None),
                 }),
-                started_at: rfc3339(row.get(4)?),
+                started_at: format_rfc3339(row.get(4)?),
                 blocked_by: Vec::new(),
                 judgements: Vec::new(),
                 draft: row
@@ -496,7 +496,7 @@ fn read_pair_constraints(
     let mut found = Vec::new();
     while let Some(row) = rows.next()? {
         found.push(ConstraintEntry {
-            constraint: store::constraint(row, 0)?,
+            constraint: store::constraint_from_row(row, 0)?,
             from: Seq(row.get::<_, i64>(3)? as u64),
             to: row.get::<_, Option<i64>>(4)?.map(|seq| Seq(seq as u64)),
         });

@@ -20,11 +20,11 @@ impl DuckStore {
         let identities = batch(vec![
             (
                 "identity_id",
-                text(snapshot.identities.iter().map(|record| Some(record.id))),
+                to_text_column(snapshot.identities.iter().map(|record| Some(record.id))),
             ),
             (
                 "entity_type",
-                text(
+                to_text_column(
                     snapshot
                         .identities
                         .iter()
@@ -43,7 +43,7 @@ impl DuckStore {
             ),
             (
                 "merged_into",
-                text(
+                to_text_column(
                     snapshot
                         .identities
                         .iter()
@@ -55,7 +55,7 @@ impl DuckStore {
             ),
             (
                 "merged_seq",
-                text(
+                to_text_column(
                     snapshot
                         .identities
                         .iter()
@@ -64,7 +64,7 @@ impl DuckStore {
             ),
             (
                 "merge_target",
-                text(
+                to_text_column(
                     snapshot
                         .identities
                         .iter()
@@ -75,11 +75,11 @@ impl DuckStore {
         let memberships = batch(vec![
             (
                 "record_id",
-                text(snapshot.memberships.iter().map(|row| Some(row.record))),
+                to_text_column(snapshot.memberships.iter().map(|row| Some(row.record))),
             ),
             (
                 "identity_id",
-                text(snapshot.memberships.iter().map(|row| Some(row.identity))),
+                to_text_column(snapshot.memberships.iter().map(|row| Some(row.identity))),
             ),
             (
                 "from_seq",
@@ -93,7 +93,7 @@ impl DuckStore {
             ),
             (
                 "to_seq",
-                text(
+                to_text_column(
                     snapshot
                         .memberships
                         .iter()
@@ -105,15 +105,15 @@ impl DuckStore {
         let constraints = batch(vec![
             (
                 "record_a",
-                text(links.iter().map(|row| Some(row.constraint.a))),
+                to_text_column(links.iter().map(|row| Some(row.constraint.a))),
             ),
             (
                 "record_b",
-                text(links.iter().map(|row| Some(row.constraint.b))),
+                to_text_column(links.iter().map(|row| Some(row.constraint.b))),
             ),
             (
                 "kind",
-                text(links.iter().map(|row| Some(row.constraint.kind.as_str()))),
+                to_text_column(links.iter().map(|row| Some(row.constraint.kind.as_str()))),
             ),
             (
                 "from_seq",
@@ -121,7 +121,7 @@ impl DuckStore {
             ),
             (
                 "to_seq",
-                text(links.iter().map(|row| row.to.map(|seq| seq.0))),
+                to_text_column(links.iter().map(|row| row.to.map(|seq| seq.0))),
             ),
         ])?;
 
@@ -306,13 +306,13 @@ impl DuckStore {
         review::resolve_assigned(&tx, Seq(seq as u64))?;
         possible_split::resolve_answered(&tx, Seq(seq as u64))?;
         // Nor is a draft, and committing one is what ends its match run.
-        drafts::committed(&tx, changeset.id, Seq(seq as u64), committed_at)?;
+        drafts::mark_committed(&tx, changeset.id, Seq(seq as u64), committed_at)?;
         tx.commit()?;
         Ok(Seq(seq as u64))
     }
 }
 
-fn text<T: ToString>(values: impl Iterator<Item = Option<T>>) -> Column {
+fn to_text_column<T: ToString>(values: impl Iterator<Item = Option<T>>) -> Column {
     Column::Text(
         values
             .map(|value| value.map(|value| value.to_string()))

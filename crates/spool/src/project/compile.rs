@@ -13,7 +13,7 @@ use super::source::source_of;
 use super::transform::transform_of;
 use super::{
     BUILT_IN, Declaration, EntityTypeManifest, Extractor, Manifest, Project, Rule, RuleSet, Source,
-    SqlFile, Strategy, Transform, strip, valid_name,
+    SqlFile, Strategy, Transform, trim_sql, valid_name,
 };
 use crate::error::{Error, Result};
 use crate::features;
@@ -101,7 +101,7 @@ impl Project {
                             file.name
                         )));
                     }
-                    let predicate = strip(&file.sql);
+                    let predicate = trim_sql(&file.sql);
                     if predicate.is_empty() {
                         return Err(in_file(file)("the rule is empty".to_owned()));
                     }

@@ -125,7 +125,7 @@ impl Engine {
     /// entity type and source the filter takes: see [`AttributeGroup`].
     pub fn attributes(&self, filter: &AttributeFilter) -> Result<Vec<AttributeGroup>> {
         let manifest = self.manifest();
-        self.read(|conn| crate::attributes::attributes(conn, manifest.as_deref(), filter))
+        self.read(|conn| crate::attributes::summarize_attributes(conn, manifest.as_deref(), filter))
     }
 
     /// Why two records share an identity, or do not: where each is,
@@ -157,7 +157,7 @@ impl Engine {
             let manifest = self.manifest();
             let done = self.read(|conn| {
                 if let Some(manifest) = &manifest {
-                    let applied = schema::meta(conn, "manifest_hash")?;
+                    let applied = schema::read_meta(conn, "manifest_hash")?;
                     if applied.as_deref() != Some(manifest.hash.as_str()) {
                         return Ok(None);
                     }

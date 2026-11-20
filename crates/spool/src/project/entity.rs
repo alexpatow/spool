@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Deserialize;
 
-use super::{Mapped, Source, Transform, YamlFile, identifier};
+use super::{Mapped, Source, Transform, YamlFile, is_sql_identifier};
 use crate::features;
 
 /// An entity type's file, as written.
@@ -71,7 +71,7 @@ pub(super) fn entity_of(
     }
     let mut features = BTreeSet::new();
     for feature in &written.features {
-        if !identifier(feature) {
+        if !is_sql_identifier(feature) {
             return Err(format!(
                 "`{feature}` cannot name a feature: use lowercase letters, digits and `_`"
             ));
@@ -161,7 +161,7 @@ pub(super) fn entity_of(
                             features::transform_function(name)
                         }
                         // A function DuckDB has, such as `upper`.
-                        None if identifier(name) => name.to_owned(),
+                        None if is_sql_identifier(name) => name.to_owned(),
                         None => {
                             return Err(format!(
                                 "{at}: `{name}` is not a file in transforms/ and cannot name a function"

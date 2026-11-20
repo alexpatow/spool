@@ -5,7 +5,7 @@ use std::path::Path;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use super::{file_name, list, relative};
+use super::{file_name, format_relative_path, list_dir_entries};
 use crate::error::{Error, Result};
 
 /// SHA-256 of a strategy: its file, and every file in the directory beside
@@ -13,7 +13,7 @@ use crate::error::{Error, Result};
 /// it. What tools leave behind (`__pycache__`, `node_modules`, hidden files)
 /// is not part of it.
 pub(crate) fn strategy_hash(file: &Path) -> Result<String> {
-    fn add(hasher: &mut Sha256, name: &str, path: &Path) -> Result<()> {
+    fn hash_file(hasher: &mut Sha256, name: &str, path: &Path) -> Result<()> {
         let contents = std::fs::read(path).map_err(Error::io(path))?;
         hasher.update((name.len() as u64).to_le_bytes());
         hasher.update(name.as_bytes());
@@ -21,24 +21,24 @@ pub(crate) fn strategy_hash(file: &Path) -> Result<String> {
         hasher.update(&contents);
         Ok(())
     }
-    fn walk(hasher: &mut Sha256, root: &Path, dir: &Path) -> Result<()> {
-        for entry in list(dir)? {
+    fn hash_dir(hasher: &mut Sha256, root: &Path, dir: &Path) -> Result<()> {
+        for entry in list_dir_entries(dir)? {
             let name = file_name(&entry);
             if entry.is_dir() {
                 if name != "__pycache__" && name != "node_modules" {
-                    walk(hasher, root, &entry)?;
+                    hash_dir(hasher, root, &entry)?;
                 }
             } else {
-                add(hasher, &relative(root, &entry), &entry)?;
+                hash_file(hasher, &format_relative_path(root, &entry), &entry)?;
             }
         }
         Ok(())
     }
     let mut hasher = Sha256::new();
-    add(&mut hasher, &file_name(file), file)?;
+    hash_file(&mut hasher, &file_name(file), file)?;
     let owned = file.with_extension("");
     if owned.is_dir() {
-        walk(&mut hasher, &owned, &owned)?;
+        hash_dir(&mut hasher, &owned, &owned)?;
     }
     Ok(hex::encode(hasher.finalize()))
 }

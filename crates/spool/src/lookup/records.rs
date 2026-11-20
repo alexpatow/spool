@@ -12,7 +12,7 @@ use super::{clamp_limit, encode_search_words, entity_type, uuid_list};
 use crate::error::Result;
 use crate::order::{Key, Keyed, Sort};
 use crate::store::parse;
-use crate::time::rfc3339;
+use crate::time::format_rfc3339;
 
 /// A record as it was loaded, and the identity it belongs to now.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -195,7 +195,7 @@ fn record_from_row(row: &duckdb::Row<'_>) -> Result<RecordEntry> {
             .get::<_, Option<String>>(5)?
             .map(parse_json)
             .transpose()?,
-        loaded_at: rfc3339(row.get(6)?),
+        loaded_at: format_rfc3339(row.get(6)?),
         load_run: RunId(row.get::<_, i64>(7)? as u64),
         identity: parse_optional_id(row, 8)?,
         supersedes: parse_optional_id(row, 9)?,

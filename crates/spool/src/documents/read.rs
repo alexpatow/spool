@@ -10,7 +10,7 @@ use crate::batch::id_list;
 use crate::error::Result;
 use crate::order::{Key, Keyed, Sort};
 use crate::store::parse;
-use crate::time::rfc3339;
+use crate::time::format_rfc3339;
 
 /// Which documents to list. Results are ordered by ID, or as `sort` says.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -86,7 +86,7 @@ const DOCUMENT: &str = "
     FROM spool.document d
     LEFT JOIN spool.document later ON later.supersedes = d.document_id";
 
-fn entry(row: &duckdb::Row<'_>) -> Result<DocumentEntry> {
+fn document_entry_from_row(row: &duckdb::Row<'_>) -> Result<DocumentEntry> {
     let id = |at: usize| -> Result<Option<DocumentId>> {
         row.get::<_, Option<String>>(at)?
             .as_deref()
@@ -100,7 +100,7 @@ fn entry(row: &duckdb::Row<'_>) -> Result<DocumentEntry> {
         uri: row.get(3)?,
         length: row.get::<_, i64>(4)? as u64,
         text: None,
-        loaded_at: rfc3339(row.get(5)?),
+        loaded_at: format_rfc3339(row.get(5)?),
         load_run: RunId(row.get::<_, i64>(6)? as u64),
         supersedes: id(7)?,
         superseded_by: id(8)?,
@@ -141,7 +141,7 @@ pub(crate) fn get(conn: &Connection, id: DocumentId) -> Result<Option<DocumentEn
         let mut statement = conn.prepare(&format!("{DOCUMENT} WHERE d.document_id = ?::UUID"))?;
         let mut rows = statement.query([id.to_string()])?;
         match rows.next()? {
-            Some(row) => entry(row)?,
+            Some(row) => document_entry_from_row(row)?,
             None => return Ok(None),
         }
     };
@@ -200,7 +200,7 @@ pub(crate) fn list(conn: &Connection, filter: &DocumentFilter) -> Result<Vec<Doc
             filter.limit.min(i64::MAX as u64) as i64,
         ])?;
         while let Some(row) = rows.next()? {
-            found.push(entry(row)?);
+            found.push(document_entry_from_row(row)?);
         }
     }
     add_extractions(conn, &mut found)?;

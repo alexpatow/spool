@@ -7,8 +7,8 @@ use spool_core::EntityType;
 
 use super::hash::strategy_hash;
 use super::{
-    EntityTypeSource, Project, Runtime, SqlFile, StrategySource, YamlFile, file_name, list,
-    relative,
+    EntityTypeSource, Project, Runtime, SqlFile, StrategySource, YamlFile, file_name,
+    format_relative_path, list_dir_entries,
 };
 use crate::error::{Error, Result};
 
@@ -30,7 +30,7 @@ impl Project {
         let mut project = Project::default();
         let sources = root.join("sources");
         if sources.is_dir() {
-            for file in list(&sources)? {
+            for file in list_dir_entries(&sources)? {
                 if file.is_file() && file.extension().is_some_and(|ext| ext == "yaml") {
                     project.sources.push(read_yaml(&file)?);
                 } else {
@@ -40,7 +40,7 @@ impl Project {
         }
         let transforms = root.join("transforms");
         if transforms.is_dir() {
-            for file in list(&transforms)? {
+            for file in list_dir_entries(&transforms)? {
                 if file.is_file() && file.extension().is_some_and(|ext| ext == "sql") {
                     project.transforms.push(read_sql(&file)?);
                 } else {
@@ -48,7 +48,7 @@ impl Project {
                 }
             }
         }
-        for entry in list(&entities)? {
+        for entry in list_dir_entries(&entities)? {
             if !entry.is_dir() {
                 project.ignored.push(entry);
                 continue;
@@ -74,7 +74,7 @@ impl Project {
                 strategies: Vec::new(),
                 extract: None,
             };
-            for child in list(&entry)? {
+            for child in list_dir_entries(&entry)? {
                 match file_name(&child).as_str() {
                     "entity.yaml" => {}
                     "extract.md" if child.is_file() => {
@@ -82,7 +82,7 @@ impl Project {
                             Some(std::fs::read_to_string(&child).map_err(Error::io(&child))?);
                     }
                     "rules" if child.is_dir() => {
-                        for group in list(&child)? {
+                        for group in list_dir_entries(&child)? {
                             let rules = match file_name(&group).as_str() {
                                 "block" if group.is_dir() => &mut source.block,
                                 "no_match" if group.is_dir() => &mut source.no_match,
@@ -92,7 +92,7 @@ impl Project {
                                     continue;
                                 }
                             };
-                            for file in list(&group)? {
+                            for file in list_dir_entries(&group)? {
                                 if file.is_file()
                                     && file.extension().is_some_and(|ext| ext == "sql")
                                 {
@@ -123,7 +123,7 @@ impl Project {
 /// with the directory of the same name if there is one. Anything else in the
 /// directory is not used.
 fn user_code(root: &Path, dir: &Path, ignored: &mut Vec<PathBuf>) -> Result<Vec<StrategySource>> {
-    let files = list(dir)?;
+    let files = list_dir_entries(dir)?;
     let mut found = Vec::new();
     for file in &files {
         let runtime = Runtime::of(file).filter(|_| file.is_file());
@@ -145,7 +145,7 @@ fn user_code(root: &Path, dir: &Path, ignored: &mut Vec<PathBuf>) -> Result<Vec<
             .unwrap_or_default();
         found.push(StrategySource {
             hash: strategy_hash(file)?,
-            file: relative(root, file),
+            file: format_relative_path(root, file),
             name,
             runtime,
             path: file.clone(),

@@ -52,7 +52,7 @@ pub(crate) fn read_snapshot(conn: &Connection) -> Result<Snapshot> {
     let mut rows = statement.query([])?;
     while let Some(row) = rows.next()? {
         constraints.push(ConstraintEntry {
-            constraint: constraint(row, 0)?,
+            constraint: constraint_from_row(row, 0)?,
             from: Seq(row.get::<_, i64>(3)? as u64),
             to: row.get::<_, Option<i64>>(4)?.map(|seq| Seq(seq as u64)),
         });
@@ -187,7 +187,7 @@ pub(crate) fn read_constraints_on(
     if records.is_empty() {
         return Ok(Vec::new());
     }
-    constraints(
+    query_constraints(
         conn,
         "SELECT DISTINCT c.record_a::VARCHAR, c.record_b::VARCHAR, c.kind
          FROM spool.constraint_link c
@@ -206,7 +206,7 @@ pub(crate) fn read_constraints_of_members(
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    constraints(
+    query_constraints(
         conn,
         "SELECT DISTINCT c.record_a::VARCHAR, c.record_b::VARCHAR, c.kind
          FROM spool.constraint_link c
@@ -218,19 +218,23 @@ pub(crate) fn read_constraints_of_members(
     )
 }
 
-fn constraints<T: ToString>(conn: &Connection, sql: &str, ids: &[T]) -> Result<Vec<Constraint>> {
+fn query_constraints<T: ToString>(
+    conn: &Connection,
+    sql: &str,
+    ids: &[T],
+) -> Result<Vec<Constraint>> {
     let mut statement = conn.prepare(sql)?;
     let mut rows = statement.query([&id_list(ids)?])?;
     let mut found = Vec::new();
     while let Some(row) = rows.next()? {
-        found.push(constraint(row, 0)?);
+        found.push(constraint_from_row(row, 0)?);
     }
     found.sort_unstable();
     Ok(found)
 }
 
 /// Reads a constraint from three columns: the two records and the kind.
-pub(crate) fn constraint(row: &duckdb::Row<'_>, at: usize) -> Result<Constraint> {
+pub(crate) fn constraint_from_row(row: &duckdb::Row<'_>, at: usize) -> Result<Constraint> {
     Ok(Constraint::new(
         constraint_kind(row.get::<_, Option<String>>(at + 2)?.as_deref())?,
         parse(&row.get::<_, String>(at)?)?,

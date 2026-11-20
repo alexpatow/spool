@@ -193,7 +193,7 @@ impl Inner {
                     record = Some(load::stored_record(&tx, &source.name, name.as_str(), &submitted)?);
                 }
             }
-            if !replace && let Some(refusal) = load::replacing(&tx, run)? {
+            if !replace && let Some(refusal) = load::find_replaced_rows(&tx, run)? {
                 return Err(Error::Load(refusal));
             }
 

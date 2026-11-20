@@ -42,7 +42,7 @@ impl UserCode {
             Runtime::Python => (&self.uv, &[".local/bin", ".cargo/bin"]),
             Runtime::Typescript => (&self.bun, &[".bun/bin"]),
         };
-        if found(named) {
+        if command_exists(named) {
             return named.clone();
         }
         let home = std::env::var_os("HOME").filter(|home| !home.is_empty());
@@ -54,14 +54,14 @@ impl UserCode {
                 installed
                     .iter()
                     .map(|dir| Path::new(&home).join(dir).join(named))
-                    .find(|path| executable(path))
+                    .find(|path| is_executable(path))
             })
             .map_or_else(|| named.clone(), PathBuf::into_os_string)
     }
 
     /// Whether what runs files of a runtime is installed here.
     pub fn installed(&self, runtime: Runtime) -> bool {
-        found(&self.program(runtime))
+        command_exists(&self.program(runtime))
     }
 
     /// Why nothing here can run the code, if nothing can: what runs its
@@ -92,7 +92,7 @@ impl UserCode {
 }
 
 /// Whether a file is there and may be executed.
-fn executable(path: &Path) -> bool {
+fn is_executable(path: &Path) -> bool {
     let Ok(metadata) = std::fs::metadata(path) else {
         return false;
     };
@@ -105,13 +105,14 @@ fn executable(path: &Path) -> bool {
 
 /// Whether a command can be started: a path names an executable file, and a
 /// plain name is one that a directory of the search path has.
-fn found(program: &OsString) -> bool {
+fn command_exists(program: &OsString) -> bool {
     let path = Path::new(program);
     if path.components().count() != 1 {
-        return executable(path);
+        return is_executable(path);
     }
-    std::env::var_os("PATH")
-        .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| executable(&dir.join(path))))
+    std::env::var_os("PATH").is_some_and(|paths| {
+        std::env::split_paths(&paths).any(|dir| is_executable(&dir.join(path)))
+    })
 }
 
 /// The file of a project that sets variables for its code.
