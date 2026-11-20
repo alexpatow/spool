@@ -332,7 +332,7 @@ fn small_bodied_server_until(
         .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
         .unwrap();
     let address = listener.local_addr().unwrap().to_string();
-    let accounts = spool_cli::accounts::Accounts::in_memory();
+    let accounts = spool_cli::auth::Accounts::in_memory();
     let (_, token) = accounts.add_token("api", None).unwrap();
     let options = ServerOptions {
         max_body_bytes: 1_000,

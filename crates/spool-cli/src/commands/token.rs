@@ -8,8 +8,8 @@ use std::path::PathBuf;
 
 use anstream::println;
 use clap::{Args, Subcommand};
-use spool_cli::accounts::Accounts;
 use spool_cli::api::{AddedToken, TokenList};
+use spool_cli::auth::Accounts;
 
 use crate::Failure;
 use crate::output::{Output, OutputArgs, Table, hint};
@@ -91,7 +91,7 @@ fn accounts(arguments: &TokenArgs) -> Result<(Accounts, PathBuf), Failure> {
     Ok((super::open_accounts(&store)?, super::accounts_path(&store)))
 }
 
-fn refused(refused: spool_cli::accounts::Refused) -> Failure {
+fn refused(refused: spool_cli::auth::Refused) -> Failure {
     Failure::failed(refused.to_string())
 }
 

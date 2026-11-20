@@ -9,8 +9,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use spool::{ApplyReport, Engine, Manifest, Options};
-use spool_cli::accounts;
-use spool_cli::google::{self, Google};
+use spool_cli::auth;
+use spool_cli::auth::google::{self, Google};
 use spool_cli::server::{self, ServerOptions};
 
 use clap::Args;
@@ -218,7 +218,7 @@ pub fn serve(arguments: ServeArgs) -> Result<(), Failure> {
         .needs_setup()
         .map_err(|refused| failed(refused.to_string()))?;
     let mut options = ServerOptions::new(accounts);
-    options.setup = empty.then(accounts::code);
+    options.setup = empty.then(auth::code);
     options.https = !(arguments.plain_http || listen.ip().is_loopback());
     options.studio = !arguments.no_studio;
     run(Arc::new(engine), listen, options, reached)

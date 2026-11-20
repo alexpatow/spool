@@ -6,7 +6,7 @@
 //! Google signed, which names the account and its address. The exchange and
 //! the checks of the token are `openidconnect`'s. Whether that account may
 //! use this server is not Google's to say: see
-//! [`Accounts::enter_with_google`](crate::accounts::Accounts::enter_with_google).
+//! [`Accounts::enter_with_google`](crate::auth::Accounts::enter_with_google).
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};

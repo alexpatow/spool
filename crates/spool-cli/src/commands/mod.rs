@@ -22,7 +22,7 @@ use std::time::Duration;
 use anstream::println;
 use clap::Args;
 use spool::UserCode;
-use spool_cli::accounts::Accounts;
+use spool_cli::auth::Accounts;
 
 use crate::Failure;
 

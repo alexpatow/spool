@@ -35,10 +35,10 @@ use url::{Host, Url};
 use super::{
     ApiError, ApiResult, App, Caller, MCP_PATH, ok, people, session_failed, signed_in, unauthorized,
 };
-use crate::accounts::{
+use crate::api::{GrantList, OAuthDecided, OAuthDecision, OAuthRequest};
+use crate::auth::{
     ACCESS_SECONDS, Accounts, Approval, Client, GOOGLE, Issued, MARK, Refused, SCOPE,
 };
-use crate::api::{GrantList, OAuthDecided, OAuthDecision, OAuthRequest};
 use crate::studio;
 
 /// Where the metadata of `/mcp` as a protected resource is (RFC 9728). The

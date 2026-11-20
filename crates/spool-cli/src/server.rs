@@ -101,9 +101,6 @@ use tower_sessions::cookie::time::Duration as SessionLength;
 use tower_sessions::cookie::{Cookie, SameSite};
 use tower_sessions::{Expiry, Session, SessionManagerLayer};
 
-use crate::accounts::{
-    ACCESS_PREFIX, Accounts, Change, Entered, GOOGLE, MARK, MAX_USERNAME, New, PERSON, Refused,
-};
 use crate::api::{
     self, ARROW_STREAM, AddDocumentRequest, AddPersonRequest, AddRecordRequest, AddTokenRequest,
     AddedToken, AttributeList, CandidateList, ChangePersonRequest, ChangesetList, CommitRequest,
@@ -114,8 +111,11 @@ use crate::api::{
     RejectDraftRequest, RetractRequest, ReviewList, RunList, RunResponse, SessionState,
     SetupRequest, SignInRequest, SplitRequest, TokenList, UndoRequest,
 };
+use crate::auth::google::{Failed, Google, Provider, Started};
+use crate::auth::{
+    ACCESS_PREFIX, Accounts, Change, Entered, GOOGLE, MARK, MAX_USERNAME, New, PERSON, Refused,
+};
 use crate::delimited::{self, Malformed};
-use crate::google::{Failed, Google, Provider, Started};
 use crate::studio;
 use crate::text::listed;
 
@@ -1130,7 +1130,7 @@ impl Held {
         if held.len() >= MAX_HELD {
             held.remove(0);
         }
-        let id = crate::accounts::code();
+        let id = crate::auth::code();
         held.push((id.clone(), next.to_owned(), now));
         format!("held:{id}")
     }
