@@ -52,9 +52,9 @@ Every step keeps behaviour as it is: the checks are `cargo fmt`, `cargo clippy
 
 ## E. Engine crate structure
 
-- [ ] E1. `engine.rs` (3,435 lines) into `engine/{mod, read, load, matching,
+- [x] E1. `engine.rs` (3,435 lines) into `engine/{mod, read, load, matching,
       changes, recompute}.rs`.
-- [ ] E2. One path for "who started this run": no more `Engine::x`,
+- [x] E2. One path for "who started this run": no more `Engine::x`,
       `Engine::x_by` and `Acting::x` for the same call.
 - [x] E3. `lookup.rs` into `lookup/{records, identities, log, info}.rs`.
 - [x] E4. `explain.rs` into `explain/{pair, identity, prose}.rs`.
