@@ -283,7 +283,7 @@ impl Provider {
                         Failed::Unreachable(format!(
                             "{} did not say how to sign in with it: {}",
                             self.google.issuer.as_str(),
-                            chain(&error)
+                            describe_error_chain(&error)
                         ))
                     },
                 )?;
@@ -350,7 +350,7 @@ impl Provider {
                 }
                 other => Failed::Unreachable(format!(
                     "Google did not exchange the code: {}",
-                    chain(&other)
+                    describe_error_chain(&other)
                 )),
             })?;
         let token = answer
@@ -380,7 +380,7 @@ impl Provider {
 }
 
 /// An error and what caused it, on one line.
-fn chain(error: &dyn std::error::Error) -> String {
+fn describe_error_chain(error: &dyn std::error::Error) -> String {
     let mut said = error.to_string();
     let mut source = error.source();
     while let Some(cause) = source {

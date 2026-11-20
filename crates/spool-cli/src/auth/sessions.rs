@@ -36,7 +36,7 @@ fn stored_id(id: &Id) -> String {
     hex::encode(Sha256::digest(id.0.to_le_bytes()))
 }
 
-fn backend(error: impl std::fmt::Display) -> session_store::Error {
+fn to_backend_error(error: impl std::fmt::Display) -> session_store::Error {
     session_store::Error::Backend(error.to_string())
 }
 
@@ -52,7 +52,7 @@ impl SessionStore for Accounts {
                     "INSERT INTO session (id, data, expires) VALUES (?, ?, ?) ON CONFLICT (id) DO NOTHING",
                     params![stored_id(&record.id), data, record.expiry_date.unix_timestamp()],
                 )
-                .map_err(backend)?;
+                .map_err(to_backend_error)?;
             if inserted == 1 {
                 return Ok(());
             }
@@ -73,7 +73,7 @@ impl SessionStore for Accounts {
                     record.expiry_date.unix_timestamp()
                 ],
             )
-            .map_err(backend)?;
+            .map_err(to_backend_error)?;
         Ok(())
     }
 
@@ -82,7 +82,7 @@ impl SessionStore for Accounts {
         let connection = self.connection();
         connection
             .execute("DELETE FROM session WHERE expires <= ?", [now])
-            .map_err(backend)?;
+            .map_err(to_backend_error)?;
         let found: Option<(String, i64)> = connection
             .query_row(
                 "SELECT data, expires FROM session WHERE id = ?",
@@ -90,7 +90,7 @@ impl SessionStore for Accounts {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()
-            .map_err(backend)?;
+            .map_err(to_backend_error)?;
         let Some((data, expires)) = found else {
             return Ok(None);
         };
@@ -106,7 +106,7 @@ impl SessionStore for Accounts {
     async fn delete(&self, id: &Id) -> session_store::Result<()> {
         self.connection()
             .execute("DELETE FROM session WHERE id = ?", [stored_id(id)])
-            .map_err(backend)?;
+            .map_err(to_backend_error)?;
         Ok(())
     }
 }

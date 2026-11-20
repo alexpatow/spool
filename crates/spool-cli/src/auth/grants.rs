@@ -21,10 +21,10 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use super::accounts::{Accounts, MINUTE_AGO, NOW, Refused, code};
-use super::people::{BOUND, PASSWORD, PEOPLE, person};
+use super::people::{BOUND, PASSWORD, PEOPLE, read_person_row};
 use super::sessions::{GOOGLE, MARK};
-use super::sign_in::mark;
-use super::tokens::sealed;
+use super::sign_in::compute_password_mark;
+use super::tokens::hash_token;
 use crate::api::{Grant, Person};
 
 /// What the second version of the accounts file adds.
@@ -122,7 +122,7 @@ impl Accounts {
             "INSERT INTO oauth_code (secret, client, person, began_with, redirect, challenge, expires)
              VALUES (?, ?, ?, ?, ?, ?, ?)",
             params![
-                sealed(&code),
+                hash_token(&code),
                 approval.client,
                 approval.person,
                 format!("{}:{}", approval.began_with.0, approval.began_with.1),
@@ -154,7 +154,7 @@ impl Accounts {
             .query_row(
                 "SELECT client, person, began_with, redirect, challenge, grant_id
                  FROM oauth_code WHERE secret = ?",
-                [sealed(code)],
+                [hash_token(code)],
                 |row| {
                     Ok((
                         row.get(0)?,
@@ -185,12 +185,12 @@ impl Accounts {
         if redirect_uri.is_some_and(|given| given != redirect) {
             return Ok(Err("`redirect_uri` is not the one the code was sent to"));
         }
-        if challenged(verifier).as_deref() != Some(challenge.as_str()) {
+        if pkce_challenge(verifier).as_deref() != Some(challenge.as_str()) {
             return Ok(Err(
                 "`code_verifier` is not what the code's `code_challenge` was made from",
             ));
         }
-        let Some(person) = self.still(&transaction, &person, &began_with)? else {
+        let Some(person) = self.find_approver(&transaction, &person, &began_with)? else {
             return Ok(Err(
                 "the account that approved this can no longer sign in the way it did",
             ));
@@ -203,9 +203,9 @@ impl Accounts {
         )?;
         transaction.execute(
             "UPDATE oauth_code SET grant_id = ? WHERE secret = ?",
-            params![grant, sealed(code)],
+            params![grant, hash_token(code)],
         )?;
-        let issued = issue(&transaction, &grant, person, now)?;
+        let issued = issue_tokens(&transaction, &grant, person, now)?;
         transaction.commit()?;
         Ok(Ok(issued))
     }
@@ -226,7 +226,7 @@ impl Accounts {
                 "SELECT g.id, g.client, g.person, g.began_with, t.spent
                  FROM oauth_token t JOIN oauth_grant g ON g.id = t.grant_id
                  WHERE t.secret = ? AND t.refresh AND t.expires > ?",
-                params![sealed(token), now],
+                params![hash_token(token), now],
                 |row| {
                     Ok((
                         row.get(0)?,
@@ -246,7 +246,10 @@ impl Accounts {
         if given_to != client {
             return Ok(Err("that refresh token was given to another client"));
         }
-        let person = match (spent, self.still(&transaction, &person, &began_with)?) {
+        let person = match (
+            spent,
+            self.find_approver(&transaction, &person, &began_with)?,
+        ) {
             (false, Some(person)) => person,
             (spent, _) => {
                 end_grant(&transaction, &grant)?;
@@ -261,9 +264,9 @@ impl Accounts {
         };
         transaction.execute(
             "UPDATE oauth_token SET spent = 1 WHERE secret = ?",
-            [sealed(token)],
+            [hash_token(token)],
         )?;
-        let issued = issue(&transaction, &grant, person, now)?;
+        let issued = issue_tokens(&transaction, &grant, person, now)?;
         transaction.commit()?;
         Ok(Ok(issued))
     }
@@ -281,14 +284,14 @@ impl Accounts {
                      FROM oauth_token t JOIN oauth_grant g ON g.id = t.grant_id
                      WHERE t.secret = ? AND NOT t.refresh AND t.expires > ?"
                 ),
-                params![sealed(token), now],
+                params![hash_token(token), now],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .optional()?;
         let Some((grant, person, began_with, stale)) = kept else {
             return Ok(None);
         };
-        let Some(person) = self.still(&transaction, &person, &began_with)? else {
+        let Some(person) = self.find_approver(&transaction, &person, &began_with)? else {
             end_grant(&transaction, &grant)?;
             transaction.commit()?;
             return Ok(None);
@@ -313,14 +316,17 @@ impl Accounts {
             .query_row(
                 "SELECT g.id, t.refresh FROM oauth_token t JOIN oauth_grant g ON g.id = t.grant_id
                  WHERE t.secret = ? AND g.client = ?",
-                params![sealed(token), client],
+                params![hash_token(token), client],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()?;
         match kept {
             Some((grant, true)) => end_grant(&transaction, &grant)?,
             Some((_, false)) => {
-                transaction.execute("DELETE FROM oauth_token WHERE secret = ?", [sealed(token)])?;
+                transaction.execute(
+                    "DELETE FROM oauth_token WHERE secret = ?",
+                    [hash_token(token)],
+                )?;
             }
             None => {}
         }
@@ -333,7 +339,7 @@ impl Accounts {
         let connection = self.connection();
         let mut statement = connection.prepare(&format!("{GRANTS} ORDER BY g.created_at, g.id"))?;
         let grants = statement
-            .query_map([], grant)?
+            .query_map([], read_grant_row)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(grants)
     }
@@ -343,7 +349,7 @@ impl Accounts {
         let mut connection = self.connection();
         let transaction = connection.transaction()?;
         let found = transaction
-            .query_row(&format!("{GRANTS} WHERE g.id = ?"), [id], grant)
+            .query_row(&format!("{GRANTS} WHERE g.id = ?"), [id], read_grant_row)
             .optional()?
             .ok_or(Refused::UnknownGrant)?;
         end_grant(&transaction, id)?;
@@ -353,7 +359,7 @@ impl Accounts {
 
     /// The person an approval acts as, if it stands: their account is on,
     /// and still signs in the way the session it was given in began.
-    fn still(
+    fn find_approver(
         &self,
         connection: &Connection,
         id: &str,
@@ -364,14 +370,14 @@ impl Accounts {
         };
         let found: Option<(Person, Option<String>, Option<String>)> = connection
             .query_row(&format!("{PEOPLE} WHERE id = ?"), [id], |row| {
-                Ok((person(row)?, row.get(PASSWORD)?, row.get(BOUND)?))
+                Ok((read_person_row(row)?, row.get(PASSWORD)?, row.get(BOUND)?))
             })
             .optional()?;
         let Some((person, hash, bound)) = found else {
             return Ok(None);
         };
         let same = match key {
-            MARK => hash.is_some_and(|hash| mark(&hash) == began),
+            MARK => hash.is_some_and(|hash| compute_password_mark(&hash) == began),
             // A server that no longer signs people in with Google has nobody
             // signed in with it.
             GOOGLE => self.google && bound.as_deref() == Some(began),
@@ -384,7 +390,7 @@ impl Accounts {
 const GRANTS: &str = "SELECT g.id, g.person, c.name, g.redirect, g.created_at, g.last_used_at
      FROM oauth_grant g JOIN oauth_client c ON c.id = g.client";
 
-fn grant(row: &rusqlite::Row<'_>) -> rusqlite::Result<Grant> {
+fn read_grant_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Grant> {
     Ok(Grant {
         id: row.get(0)?,
         person: row.get(1)?,
@@ -397,7 +403,7 @@ fn grant(row: &rusqlite::Row<'_>) -> rusqlite::Result<Grant> {
 
 /// Gives an approval an access token and a refresh token, and forgets the
 /// tokens that have expired and the approvals left with none.
-fn issue(
+fn issue_tokens(
     transaction: &Transaction<'_>,
     grant: &str,
     person: Person,
@@ -416,7 +422,7 @@ fn issue(
     ] {
         transaction.execute(
             "INSERT INTO oauth_token (secret, grant_id, refresh, expires) VALUES (?, ?, ?, ?)",
-            params![sealed(token), grant, is_refresh, now + lasts],
+            params![hash_token(token), grant, is_refresh, now + lasts],
         )?;
     }
     Ok(Issued {
@@ -458,7 +464,7 @@ fn end_grant(connection: &Connection, grant: &str) -> Result<(), Refused> {
 /// The S256 challenge of a PKCE verifier: the SHA-256 of it in base64url,
 /// unpadded. `None` if it is not a verifier: 43 to 128 of the characters
 /// RFC 7636 allows.
-fn challenged(verifier: &str) -> Option<String> {
+fn pkce_challenge(verifier: &str) -> Option<String> {
     let allowed = |c: char| c.is_ascii_alphanumeric() || "-._~".contains(c);
     if !(43..=128).contains(&verifier.len()) || !verifier.chars().all(allowed) {
         return None;
@@ -476,12 +482,12 @@ mod tests {
     const BACK: &str = "https://claude.ai/api/mcp/auth_callback";
     const NOW: i64 = 1_800_000_000;
 
-    fn challenge() -> String {
-        challenged(VERIFIER).unwrap()
+    fn verifier_challenge() -> String {
+        pkce_challenge(VERIFIER).unwrap()
     }
 
     /// An account file with Ada, who signed in with a password, and a client.
-    fn ready() -> (Accounts, Person, String, Client) {
+    fn set_up_accounts() -> (Accounts, Person, String, Client) {
         let accounts = Accounts::in_memory();
         let entered = accounts.first("ada", "Ada", PASSWORD).unwrap();
         let client = accounts
@@ -490,8 +496,8 @@ mod tests {
         (accounts, entered.person, entered.mark, client)
     }
 
-    fn approved(accounts: &Accounts, ada: &Person, mark: &str, client: &Client) -> String {
-        let challenge = challenge();
+    fn approve_client(accounts: &Accounts, ada: &Person, mark: &str, client: &Client) -> String {
+        let challenge = verifier_challenge();
         let approval = Approval {
             client: &client.id,
             person: &ada.id,
@@ -502,7 +508,7 @@ mod tests {
         accounts.approve(&approval, NOW).unwrap()
     }
 
-    fn exchanged(
+    fn exchange_code(
         accounts: &Accounts,
         code: &str,
         client: &Client,
@@ -518,22 +524,22 @@ mod tests {
         // The example of RFC 7636, appendix B.
         let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
         assert_eq!(
-            challenged(verifier).as_deref(),
+            pkce_challenge(verifier).as_deref(),
             Some("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM")
         );
-        assert_eq!(challenged(&verifier[1..]), None);
-        assert!(challenged(&"a".repeat(128)).is_some());
-        assert_eq!(challenged(&"a".repeat(129)), None);
-        assert_eq!(challenged(&format!("{}+", "a".repeat(43))), None);
+        assert_eq!(pkce_challenge(&verifier[1..]), None);
+        assert!(pkce_challenge(&"a".repeat(128)).is_some());
+        assert_eq!(pkce_challenge(&"a".repeat(129)), None);
+        assert_eq!(pkce_challenge(&format!("{}+", "a".repeat(43))), None);
     }
 
     #[test]
     fn a_code_is_exchanged_once_by_its_client_with_its_verifier() {
-        let (accounts, ada, mark, client) = ready();
+        let (accounts, ada, mark, client) = set_up_accounts();
         let other = accounts
             .register_client(None, &[BACK.to_owned()], NOW)
             .unwrap();
-        let code = approved(&accounts, &ada, &mark, &client);
+        let code = approve_client(&accounts, &ada, &mark, &client);
 
         let refused = |client: &Client, redirect: Option<&str>, verifier: &str| {
             accounts
@@ -544,9 +550,9 @@ mod tests {
         assert!(refused(&other, Some(BACK), VERIFIER).contains("another client"));
         assert!(refused(&client, Some("https://chatgpt.com/x"), VERIFIER).contains("redirect_uri"));
         assert!(refused(&client, Some(BACK), &"b".repeat(43)).contains("code_verifier"));
-        assert!(exchanged(&accounts, "not-a-code", &client, NOW).is_err());
+        assert!(exchange_code(&accounts, "not-a-code", &client, NOW).is_err());
 
-        let issued = exchanged(&accounts, &code, &client, NOW).unwrap();
+        let issued = exchange_code(&accounts, &code, &client, NOW).unwrap();
         assert_eq!(issued.person, ada);
         assert!(issued.access.starts_with(ACCESS_PREFIX));
         assert!(issued.refresh.starts_with(REFRESH_PREFIX));
@@ -564,7 +570,7 @@ mod tests {
         );
 
         // A second exchange of the code ends what the first was given.
-        let again = exchanged(&accounts, &code, &client, NOW + 1).unwrap_err();
+        let again = exchange_code(&accounts, &code, &client, NOW + 1).unwrap_err();
         assert!(again.contains("exchanged already"), "{again}");
         assert_eq!(accounts.bearer(&issued.access, NOW + 1).unwrap(), None);
         assert!(accounts.grants().unwrap().is_empty());
@@ -572,16 +578,16 @@ mod tests {
 
     #[test]
     fn a_code_lasts_two_minutes() {
-        let (accounts, ada, mark, client) = ready();
-        let code = approved(&accounts, &ada, &mark, &client);
-        assert!(exchanged(&accounts, &code, &client, NOW + CODE_SECONDS).is_err());
+        let (accounts, ada, mark, client) = set_up_accounts();
+        let code = approve_client(&accounts, &ada, &mark, &client);
+        assert!(exchange_code(&accounts, &code, &client, NOW + CODE_SECONDS).is_err());
     }
 
     #[test]
     fn tokens_expire_and_a_refresh_token_is_exchanged_once() {
-        let (accounts, ada, mark, client) = ready();
-        let code = approved(&accounts, &ada, &mark, &client);
-        let first = exchanged(&accounts, &code, &client, NOW).unwrap();
+        let (accounts, ada, mark, client) = set_up_accounts();
+        let code = approve_client(&accounts, &ada, &mark, &client);
+        let first = exchange_code(&accounts, &code, &client, NOW).unwrap();
         let later = NOW + ACCESS_SECONDS;
         assert_eq!(
             accounts.bearer(&first.access, later - 1).unwrap(),
@@ -620,8 +626,8 @@ mod tests {
         assert!(accounts.grants().unwrap().is_empty());
 
         // A refresh token left alone for thirty days has expired.
-        let code = approved(&accounts, &ada, &mark, &client);
-        let third = exchanged(&accounts, &code, &client, NOW).unwrap();
+        let code = approve_client(&accounts, &ada, &mark, &client);
+        let third = exchange_code(&accounts, &code, &client, NOW).unwrap();
         let expired = accounts
             .refresh(&third.refresh, &client.id, NOW + REFRESH_SECONDS)
             .unwrap();
@@ -630,9 +636,9 @@ mod tests {
 
     #[test]
     fn an_approval_ends_with_the_sign_in_it_was_given_in() {
-        let (accounts, ada, mark, client) = ready();
-        let code = approved(&accounts, &ada, &mark, &client);
-        let issued = exchanged(&accounts, &code, &client, NOW).unwrap();
+        let (accounts, ada, mark, client) = set_up_accounts();
+        let code = approve_client(&accounts, &ada, &mark, &client);
+        let issued = exchange_code(&accounts, &code, &client, NOW).unwrap();
         let reset = Change {
             password: Some("the next long one".to_owned()),
             ..Change::default()
@@ -647,8 +653,8 @@ mod tests {
         );
 
         // An approval given before the password changed is no good either.
-        let code = approved(&accounts, &ada, &mark, &client);
-        let turned = exchanged(&accounts, &code, &client, NOW).unwrap_err();
+        let code = approve_client(&accounts, &ada, &mark, &client);
+        let turned = exchange_code(&accounts, &code, &client, NOW).unwrap_err();
         assert!(turned.contains("no longer sign in"), "{turned}");
 
         // Turning the account off ends it too.
@@ -656,8 +662,8 @@ mod tests {
             .verify("ada", "the next long one")
             .unwrap()
             .unwrap();
-        let code = approved(&accounts, &ada, &entered.mark, &client);
-        let issued = exchanged(&accounts, &code, &client, NOW).unwrap();
+        let code = approve_client(&accounts, &ada, &entered.mark, &client);
+        let issued = exchange_code(&accounts, &code, &client, NOW).unwrap();
         accounts
             .add(New {
                 admin: true,
@@ -669,7 +675,7 @@ mod tests {
                 }
             })
             .unwrap();
-        let waiting = approved(&accounts, &ada, &entered.mark, &client);
+        let waiting = approve_client(&accounts, &ada, &entered.mark, &client);
         let off = Change {
             active: Some(false),
             ..Change::default()
@@ -691,7 +697,7 @@ mod tests {
                 .unwrap()
                 .is_err()
         );
-        assert!(exchanged(&accounts, &waiting, &client, NOW).is_err());
+        assert!(exchange_code(&accounts, &waiting, &client, NOW).is_err());
         assert!(accounts.grants().unwrap().is_empty());
     }
 
@@ -714,7 +720,7 @@ mod tests {
         let client = accounts
             .register_client(None, &[BACK.to_owned()], NOW)
             .unwrap();
-        let challenge = challenge();
+        let challenge = verifier_challenge();
         let approval = Approval {
             client: &client.id,
             person: &grace.id,
@@ -723,7 +729,7 @@ mod tests {
             challenge: &challenge,
         };
         let code = accounts.approve(&approval, NOW).unwrap();
-        let issued = exchanged(&accounts, &code, &client, NOW).unwrap();
+        let issued = exchange_code(&accounts, &code, &client, NOW).unwrap();
         assert_eq!(
             accounts.bearer(&issued.access, NOW).unwrap(),
             Some(grace.clone())
@@ -753,12 +759,12 @@ mod tests {
 
     #[test]
     fn a_client_revokes_its_own_tokens_and_an_admin_any_approval() {
-        let (accounts, ada, mark, client) = ready();
+        let (accounts, ada, mark, client) = set_up_accounts();
         let other = accounts
             .register_client(None, &[BACK.to_owned()], NOW)
             .unwrap();
-        let code = approved(&accounts, &ada, &mark, &client);
-        let issued = exchanged(&accounts, &code, &client, NOW).unwrap();
+        let code = approve_client(&accounts, &ada, &mark, &client);
+        let issued = exchange_code(&accounts, &code, &client, NOW).unwrap();
 
         accounts.revoke_issued(&issued.refresh, &other.id).unwrap();
         assert!(accounts.bearer(&issued.access, NOW).unwrap().is_some());
@@ -771,8 +777,8 @@ mod tests {
         accounts.revoke_issued(&next.refresh, &client.id).unwrap();
         assert_eq!(accounts.bearer(&next.access, NOW).unwrap(), None);
 
-        let code = approved(&accounts, &ada, &mark, &client);
-        let issued = exchanged(&accounts, &code, &client, NOW).unwrap();
+        let code = approve_client(&accounts, &ada, &mark, &client);
+        let issued = exchange_code(&accounts, &code, &client, NOW).unwrap();
         let listed = accounts.grants().unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].person, ada.id);

@@ -5,7 +5,7 @@ use super::{Change, New};
 pub(super) const PASSWORD: &str = "a long enough one";
 
 /// Someone who signs in with a password.
-pub(super) fn new(username: &str, name: &str, password: &str) -> New {
+pub(super) fn new_with_password(username: &str, name: &str, password: &str) -> New {
     New {
         username: username.to_owned(),
         name: name.to_owned(),
@@ -24,7 +24,7 @@ pub(super) fn with_email(username: &str, email: &str) -> New {
     }
 }
 
-pub(super) fn email(email: &str) -> Change {
+pub(super) fn change_email(email: &str) -> Change {
     Change {
         email: Some(email.to_owned()),
         ..Change::default()

@@ -7,7 +7,7 @@ use uuid::Uuid;
 use super::accounts::{Accounts, Refused};
 use super::grants;
 use super::sessions::{GOOGLE, PERSON, end_sessions};
-use super::sign_in::{Entered, hashed, mark};
+use super::sign_in::{Entered, compute_password_mark, hash_password};
 use crate::api::Person;
 
 /// The most bytes a username has.
@@ -43,13 +43,13 @@ impl Accounts {
     /// The account `spool dev` works as has no password and is not one who
     /// can: a store that was developed on still gets its first account.
     pub fn needs_setup(&self) -> Result<bool, Refused> {
-        Ok(self.admins(&self.connection(), true)? == 0)
+        Ok(self.count_admins(&self.connection(), true)? == 0)
     }
 
     /// How many admins are on: with `signs_in`, only those who can sign in,
     /// with a password or, where the server signs people in with Google, by
     /// their email.
-    fn admins(&self, connection: &Connection, signs_in: bool) -> Result<i64, Refused> {
+    fn count_admins(&self, connection: &Connection, signs_in: bool) -> Result<i64, Refused> {
         Ok(connection.query_row(
             "SELECT count(*) FROM person WHERE admin AND active
              AND (password IS NOT NULL OR (? AND email IS NOT NULL) OR NOT ?)",
@@ -59,7 +59,7 @@ impl Accounts {
     }
 
     /// Refuses an account nobody could sign in to.
-    fn enterable(&self, password: bool, email: bool) -> Result<(), Refused> {
+    fn check_can_sign_in(&self, password: bool, email: bool) -> Result<(), Refused> {
         match (password, email, self.google) {
             (true, _, _) | (_, true, true) => Ok(()),
             (false, _, true) => Err(Refused::Invalid(
@@ -76,40 +76,40 @@ impl Accounts {
 
     /// Makes the first account, an admin. Refused once an admin can sign in.
     pub fn first(&self, username: &str, name: &str, password: &str) -> Result<Entered, Refused> {
-        let person = drafted(username, name, None, true)?;
-        let hash = hashed(password)?;
+        let person = draft_person(username, name, None, true)?;
+        let hash = hash_password(password)?;
         let mut connection = self.connection();
         let transaction = connection.transaction()?;
-        if self.admins(&transaction, true)? != 0 {
+        if self.count_admins(&transaction, true)? != 0 {
             return Err(Refused::SetUp);
         }
-        let person = insert(&transaction, person, Some(&hash))?;
+        let person = insert_person(&transaction, person, Some(&hash))?;
         transaction.commit()?;
         Ok(Entered {
             person,
-            mark: mark(&hash),
+            mark: compute_password_mark(&hash),
         })
     }
 
     pub fn add(&self, new: New) -> Result<Person, Refused> {
-        let person = drafted(&new.username, &new.name, new.email.as_deref(), new.admin)?;
-        self.enterable(new.password.is_some(), person.email.is_some())?;
-        let hash = new.password.as_deref().map(hashed).transpose()?;
-        insert(&self.connection(), person, hash.as_deref())
+        let person = draft_person(&new.username, &new.name, new.email.as_deref(), new.admin)?;
+        self.check_can_sign_in(new.password.is_some(), person.email.is_some())?;
+        let hash = new.password.as_deref().map(hash_password).transpose()?;
+        insert_person(&self.connection(), person, hash.as_deref())
     }
 
     /// The account `spool dev` works as: an admin nobody can sign in as with
     /// a password. Made the first time it is asked for.
     pub fn dev(&self) -> Result<Person, Refused> {
         let connection = self.connection();
-        if let Some(person) = find(&connection, "username", "dev")? {
+        if let Some(person) = find_person(&connection, "username", "dev")? {
             return Ok(person);
         }
-        insert(&connection, drafted("dev", "Dev", None, true)?, None)
+        insert_person(&connection, draft_person("dev", "Dev", None, true)?, None)
     }
 
     pub fn get(&self, id: &str) -> Result<Option<Person>, Refused> {
-        find(&self.connection(), "id", id)
+        find_person(&self.connection(), "id", id)
     }
 
     /// Everyone, in the order they were added.
@@ -117,7 +117,7 @@ impl Accounts {
         let connection = self.connection();
         let mut statement = connection.prepare(&format!("{PEOPLE} ORDER BY created, username"))?;
         let people = statement
-            .query_map([], person)?
+            .query_map([], read_person_row)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(people)
     }
@@ -126,15 +126,19 @@ impl Accounts {
     /// ends its sessions. Another email is another Google account's: the
     /// sessions that began with the one before end.
     pub fn change(&self, id: &str, change: Change) -> Result<Person, Refused> {
-        let name = change.name.as_deref().map(named).transpose()?;
-        let hash = change.password.as_deref().map(hashed).transpose()?;
-        let email = change.email.as_deref().map(addressed).transpose()?;
+        let name = change
+            .name
+            .as_deref()
+            .map(validate_person_name)
+            .transpose()?;
+        let hash = change.password.as_deref().map(hash_password).transpose()?;
+        let email = change.email.as_deref().map(validate_email).transpose()?;
         let mut connection = self.connection();
         let transaction = connection.transaction()?;
-        let before = find(&transaction, "id", id)?.ok_or(Refused::Unknown)?;
+        let before = find_person(&transaction, "id", id)?.ok_or(Refused::Unknown)?;
         // Once an admin can sign in, one always can. Until then `dev` is the
         // admin, and stays one.
-        let signs_in = self.admins(&transaction, true)? != 0;
+        let signs_in = self.count_admins(&transaction, true)? != 0;
         let after = Person {
             name: name.unwrap_or(before.name.clone()),
             admin: change.admin.unwrap_or(before.admin),
@@ -179,7 +183,7 @@ impl Accounts {
             "UPDATE person SET name = ?, admin = ?, active = ?, password = coalesce(?, password) WHERE id = ?",
             params![after.name, after.admin, after.active, hash, id],
         )?;
-        if self.admins(&transaction, signs_in)? == 0 {
+        if self.count_admins(&transaction, signs_in)? == 0 {
             return Err(Refused::LastAdmin);
         }
         if hash.is_some() || !after.active {
@@ -199,7 +203,7 @@ pub(super) const PASSWORD: usize = 7;
 /// Where the mark of the account's Google account is.
 pub(super) const BOUND: usize = 8;
 
-pub(super) fn person(row: &rusqlite::Row<'_>) -> rusqlite::Result<Person> {
+pub(super) fn read_person_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Person> {
     Ok(Person {
         id: row.get(0)?,
         username: row.get(1)?,
@@ -211,20 +215,32 @@ pub(super) fn person(row: &rusqlite::Row<'_>) -> rusqlite::Result<Person> {
     })
 }
 
-fn find(connection: &Connection, column: &str, value: &str) -> Result<Option<Person>, Refused> {
+fn find_person(
+    connection: &Connection,
+    column: &str,
+    value: &str,
+) -> Result<Option<Person>, Refused> {
     Ok(connection
-        .query_row(&format!("{PEOPLE} WHERE {column} = ?"), [value], person)
+        .query_row(
+            &format!("{PEOPLE} WHERE {column} = ?"),
+            [value],
+            read_person_row,
+        )
         .optional()?)
 }
 
 /// Stores a new account, with the hash of its password if it has one.
-fn insert(connection: &Connection, person: Person, hash: Option<&str>) -> Result<Person, Refused> {
+fn insert_person(
+    connection: &Connection,
+    person: Person,
+    hash: Option<&str>,
+) -> Result<Person, Refused> {
     let person = Person {
         password: hash.is_some(),
         ..person
     };
     if let Some(email) = &person.email
-        && find(connection, "email", email)?.is_some()
+        && find_person(connection, "email", email)?.is_some()
     {
         return Err(Refused::EmailTaken(email.clone()));
     }
@@ -249,7 +265,7 @@ fn insert(connection: &Connection, person: Person, hash: Option<&str>) -> Result
 }
 
 /// A new account as it would be stored, with a new ID.
-fn drafted(
+fn draft_person(
     username: &str,
     name: &str,
     email: Option<&str>,
@@ -265,10 +281,10 @@ fn drafted(
     Ok(Person {
         id: Uuid::now_v7().to_string(),
         username,
-        name: named(name)?,
+        name: validate_person_name(name)?,
         admin,
         active: true,
-        email: email.map(addressed).transpose()?.flatten(),
+        email: email.map(validate_email).transpose()?.flatten(),
         password: false,
     })
 }
@@ -276,7 +292,7 @@ fn drafted(
 /// An email as it is stored, or none if it is empty. It is compared with
 /// what Google says, not written to: it has to look like an address and no
 /// more.
-fn addressed(email: &str) -> Result<Option<String>, Refused> {
+fn validate_email(email: &str) -> Result<Option<String>, Refused> {
     let email = email.trim().to_lowercase();
     if email.is_empty() {
         return Ok(None);
@@ -295,7 +311,7 @@ fn addressed(email: &str) -> Result<Option<String>, Refused> {
     Ok(Some(email))
 }
 
-fn named(name: &str) -> Result<String, Refused> {
+fn validate_person_name(name: &str) -> Result<String, Refused> {
     let name = name.trim();
     if name.is_empty() || name.chars().count() > 200 {
         return Err(Refused::Invalid("a name is 1 to 200 characters".to_owned()));
@@ -305,7 +321,7 @@ fn named(name: &str) -> Result<String, Refused> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::testing::{PASSWORD, email, new, with_email};
+    use super::super::testing::{PASSWORD, change_email, new_with_password, with_email};
     use super::*;
 
     #[test]
@@ -316,7 +332,7 @@ mod tests {
         // With a password as well, the email waits for Google.
         let both = New {
             email: Some("grace@example.com".to_owned()),
-            ..new("grace", "Grace", PASSWORD)
+            ..new_with_password("grace", "Grace", PASSWORD)
         };
         assert!(plain.add(both.clone()).is_ok());
 
@@ -349,23 +365,31 @@ mod tests {
             Err(taken.clone())
         );
         assert_eq!(
-            accounts.change(&hopper.id, email("grace@example.com")),
+            accounts.change(&hopper.id, change_email("grace@example.com")),
             Err(taken)
         );
 
         // Whoever has a password can do without the email. Who has not, cannot.
-        assert_eq!(accounts.change(&grace.id, email("")).unwrap().email, None);
-        let refused = accounts.change(&hopper.id, email(" "));
+        assert_eq!(
+            accounts.change(&grace.id, change_email("")).unwrap().email,
+            None
+        );
+        let refused = accounts.change(&hopper.id, change_email(" "));
         assert!(matches!(refused, Err(Refused::Invalid(_))), "{refused:?}");
         let both = Change {
             password: Some(PASSWORD.to_owned()),
-            ..email("")
+            ..change_email("")
         };
         assert_eq!(accounts.change(&hopper.id, both).unwrap().email, None);
         assert!(accounts.verify("hopper", PASSWORD).unwrap().is_some());
         // An email of one's own is left as it is.
-        let ada = accounts.change(&ada.id, email("ada@example.com")).unwrap();
-        assert_eq!(accounts.change(&ada.id, email("ADA@example.com")), Ok(ada));
+        let ada = accounts
+            .change(&ada.id, change_email("ada@example.com"))
+            .unwrap();
+        assert_eq!(
+            accounts.change(&ada.id, change_email("ADA@example.com")),
+            Ok(ada)
+        );
     }
 
     #[test]
@@ -420,11 +444,13 @@ mod tests {
             ("bob", " ", PASSWORD),
             ("bob", "Bob", "short"),
         ] {
-            let refused = accounts.add(new(username, name, password)).unwrap_err();
+            let refused = accounts
+                .add(new_with_password(username, name, password))
+                .unwrap_err();
             assert!(matches!(refused, Refused::Invalid(_)), "{refused:?}");
         }
         assert_eq!(
-            accounts.add(new("ADA", "Other", PASSWORD)),
+            accounts.add(new_with_password("ADA", "Other", PASSWORD)),
             Err(Refused::Taken("ada".to_owned()))
         );
     }
@@ -443,7 +469,9 @@ mod tests {
         let accounts = Accounts::in_memory();
         let dev = accounts.dev().unwrap();
         // Someone `spool dev` added signs in, and manages nobody.
-        accounts.add(new("bob", "Bob", PASSWORD)).unwrap();
+        accounts
+            .add(new_with_password("bob", "Bob", PASSWORD))
+            .unwrap();
         assert!(accounts.needs_setup().unwrap());
         let off = Change {
             active: Some(false),

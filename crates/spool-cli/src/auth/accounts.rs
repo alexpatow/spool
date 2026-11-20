@@ -132,7 +132,7 @@ pub struct Accounts {
 
 impl Accounts {
     pub fn open(path: &Path) -> Result<Self, Refused> {
-        let accounts = Self::over(Connection::open(path)?)?;
+        let accounts = Self::from_connection(Connection::open(path)?)?;
         // The hashes are nobody else's to read, whoever shares the machine.
         #[cfg(unix)]
         {
@@ -151,11 +151,11 @@ impl Accounts {
 
     /// Accounts that last as long as the process, for tests.
     pub fn in_memory() -> Self {
-        Self::over(Connection::open_in_memory().expect("SQLite opens in memory"))
+        Self::from_connection(Connection::open_in_memory().expect("SQLite opens in memory"))
             .expect("the accounts schema is valid")
     }
 
-    fn over(mut connection: Connection) -> Result<Self, Refused> {
+    fn from_connection(mut connection: Connection) -> Result<Self, Refused> {
         // Another process may have the file open: `spool token` works while
         // the server runs.
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
@@ -200,7 +200,7 @@ pub fn code() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::super::testing::{PASSWORD, email};
+    use super::super::testing::{PASSWORD, change_email};
     use super::*;
 
     #[test]
@@ -227,7 +227,9 @@ mod tests {
             assert!(!accounts.needs_setup().unwrap());
         }
         let accounts = Accounts::open(&path).unwrap().with_google(true);
-        let ada = accounts.change("p-1", email("ada@example.com")).unwrap();
+        let ada = accounts
+            .change("p-1", change_email("ada@example.com"))
+            .unwrap();
         let entered = accounts
             .enter_with_google("g-1", Some("ada@example.com"))
             .unwrap();

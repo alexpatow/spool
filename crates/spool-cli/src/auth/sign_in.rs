@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use super::accounts::{Accounts, Refused, code};
-use super::people::{BOUND, PASSWORD, PEOPLE, person};
+use super::people::{BOUND, PASSWORD, PEOPLE, read_person_row};
 use super::sessions::end_sessions;
 use crate::api::Person;
 
@@ -30,11 +30,11 @@ impl Accounts {
         let found: Option<(Person, Option<String>)> = self
             .connection()
             .query_row(&format!("{PEOPLE} WHERE id = ?"), [id], |row| {
-                Ok((person(row)?, row.get(PASSWORD)?))
+                Ok((read_person_row(row)?, row.get(PASSWORD)?))
             })
             .optional()?;
         Ok(found.and_then(|(person, hash)| {
-            let same = hash.is_some_and(|hash| mark(&hash) == began_with);
+            let same = hash.is_some_and(|hash| compute_password_mark(&hash) == began_with);
             (same && person.active).then_some(person)
         }))
     }
@@ -53,7 +53,7 @@ impl Accounts {
             .query_row(
                 &format!("{PEOPLE} WHERE id = ? AND bound = ?"),
                 [id, began_with],
-                person,
+                read_person_row,
             )
             .optional()?;
         Ok(found.filter(|person| person.active))
@@ -83,7 +83,7 @@ impl Accounts {
         let mut connection = self.connection();
         let transaction = connection.transaction()?;
         // The account and the mark of its Google account, if it has one.
-        let bound = |row: &rusqlite::Row<'_>| Ok((person(row)?, row.get(BOUND)?));
+        let bound = |row: &rusqlite::Row<'_>| Ok((read_person_row(row)?, row.get(BOUND)?));
         let known: Option<(Person, Option<String>)> = transaction
             .query_row(&format!("{PEOPLE} WHERE google = ?"), [subject], bound)
             .optional()?;
@@ -125,7 +125,7 @@ impl Accounts {
             .query_row(
                 &format!("{PEOPLE} WHERE username = ?"),
                 [&username],
-                |row| Ok((person(row)?, row.get(PASSWORD)?)),
+                |row| Ok((read_person_row(row)?, row.get(PASSWORD)?)),
             )
             .optional()?;
         match found {
@@ -135,13 +135,13 @@ impl Accounts {
                 // may not be the account's.
                 Ok((right && person.active).then(|| Entered {
                     person,
-                    mark: mark(&hash),
+                    mark: compute_password_mark(&hash),
                 }))
             }
             _ => {
                 // The work a real check does, so that the time taken does
                 // not say whether the username exists.
-                let _ = password_auth::verify_password(password, nobody());
+                let _ = password_auth::verify_password(password, dummy_password_hash());
                 Ok(None)
             }
         }
@@ -160,7 +160,7 @@ impl Accounts {
             .ok_or(Refused::Unknown)?
             .ok_or(Refused::WrongPassword)?;
         password_auth::verify_password(current, &stored).map_err(|_| Refused::WrongPassword)?;
-        let hash = hashed(new)?;
+        let hash = hash_password(new)?;
         let mut connection = self.connection();
         let transaction = connection.transaction()?;
         // Only over the password that was checked: one an admin set in the
@@ -174,11 +174,11 @@ impl Accounts {
         }
         end_sessions(&transaction, id)?;
         transaction.commit()?;
-        Ok(mark(&hash))
+        Ok(compute_password_mark(&hash))
     }
 }
 
-pub(super) fn hashed(password: &str) -> Result<String, Refused> {
+pub(super) fn hash_password(password: &str) -> Result<String, Refused> {
     if password.chars().count() < MIN_PASSWORD {
         return Err(Refused::Invalid(format!(
             "a password has at least {MIN_PASSWORD} characters"
@@ -189,12 +189,12 @@ pub(super) fn hashed(password: &str) -> Result<String, Refused> {
 
 /// What a session keeps of the password it began with: the SHA-256 of its
 /// stored hash, which changes whenever the password is set.
-pub(super) fn mark(hash: &str) -> String {
+pub(super) fn compute_password_mark(hash: &str) -> String {
     hex::encode(Sha256::digest(hash))
 }
 
 /// A hash no password matches, to check against when there is no account.
-fn nobody() -> &'static str {
+fn dummy_password_hash() -> &'static str {
     static HASH: std::sync::LazyLock<String> =
         std::sync::LazyLock::new(|| password_auth::generate_hash(Uuid::now_v7().as_bytes()));
     &HASH
@@ -202,7 +202,7 @@ fn nobody() -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::super::testing::{PASSWORD, email, new, with_email};
+    use super::super::testing::{PASSWORD, change_email, new_with_password, with_email};
     use super::super::{Change, New};
     use super::*;
 
@@ -246,7 +246,7 @@ mod tests {
 
         // Another email is another Google account's.
         let moved = accounts
-            .change(&grace.id, email("hopper@example.com"))
+            .change(&grace.id, change_email("hopper@example.com"))
             .unwrap();
         assert_eq!(moved.email.as_deref(), Some("hopper@example.com"));
         assert_eq!(holder(&first), None);
@@ -260,7 +260,7 @@ mod tests {
         assert_eq!(holder(&second), Some(moved.clone()));
 
         let moved = accounts
-            .change(&grace.id, email("g.hopper@example.com"))
+            .change(&grace.id, change_email("g.hopper@example.com"))
             .unwrap();
         let (entered, third) = begin("g-2", "g.hopper@example.com").unwrap();
         assert_eq!(entered, moved);
@@ -279,7 +279,9 @@ mod tests {
     fn a_password_signs_in_only_its_own_active_account() {
         let accounts = Accounts::in_memory();
         let ada = accounts.first("ada", "Ada", PASSWORD).unwrap().person;
-        let bob = accounts.add(new("bob", "Bob", "another long one")).unwrap();
+        let bob = accounts
+            .add(new_with_password("bob", "Bob", "another long one"))
+            .unwrap();
         let entered = accounts.verify(" ADA ", PASSWORD).unwrap();
         assert_eq!(entered.map(|entered| entered.person), Some(ada.clone()));
         assert_eq!(accounts.verify("ada", "another long one").unwrap(), None);
@@ -330,7 +332,7 @@ mod tests {
         accounts
             .add(New {
                 admin: true,
-                ..new("bob", "Bob", PASSWORD)
+                ..new_with_password("bob", "Bob", PASSWORD)
             })
             .unwrap();
         accounts.change(&ada.id, off).unwrap();

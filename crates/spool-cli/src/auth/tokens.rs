@@ -30,12 +30,13 @@ impl Accounts {
         let inserted = connection.execute(
             "INSERT INTO token (id, name, secret, created_by) VALUES (?, ?, ?, ?)
              ON CONFLICT (name) DO NOTHING",
-            params![id, name, sealed(&secret), by],
+            params![id, name, hash_token(&secret), by],
         )?;
         if inserted == 0 {
             return Err(Refused::TokenTaken(name));
         }
-        let token = connection.query_row(&format!("{TOKENS} WHERE id = ?"), [&id], token)?;
+        let token =
+            connection.query_row(&format!("{TOKENS} WHERE id = ?"), [&id], read_token_row)?;
         Ok((token, secret))
     }
 
@@ -44,7 +45,7 @@ impl Accounts {
         let connection = self.connection();
         let mut statement = connection.prepare(&format!("{TOKENS} ORDER BY created_at, name"))?;
         let tokens = statement
-            .query_map([], token)?
+            .query_map([], read_token_row)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(tokens)
     }
@@ -64,7 +65,11 @@ impl Accounts {
         let mut connection = self.connection();
         let transaction = connection.transaction()?;
         let found = transaction
-            .query_row(&format!("{TOKENS} WHERE {column} = ?"), [value], token)
+            .query_row(
+                &format!("{TOKENS} WHERE {column} = ?"),
+                [value],
+                read_token_row,
+            )
             .optional()?
             .ok_or(Refused::UnknownToken)?;
         transaction.execute("DELETE FROM token WHERE id = ?", [&found.id])?;
@@ -76,7 +81,7 @@ impl Accounts {
     /// used, to the minute: a token is presented with every request, and
     /// that is not worth a write each time.
     pub fn agent(&self, presented: &str) -> Result<Option<String>, Refused> {
-        let secret = sealed(presented);
+        let secret = hash_token(presented);
         let connection = self.connection();
         let found: Option<(String, bool)> = connection
             .query_row(
@@ -103,7 +108,7 @@ impl Accounts {
 
 const TOKENS: &str = "SELECT id, name, created_at, created_by, last_used_at FROM token";
 
-fn token(row: &rusqlite::Row<'_>) -> rusqlite::Result<Token> {
+fn read_token_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Token> {
     Ok(Token {
         id: row.get(0)?,
         name: row.get(1)?,
@@ -116,7 +121,7 @@ fn token(row: &rusqlite::Row<'_>) -> rusqlite::Result<Token> {
 /// What is kept of a token: its SHA-256. A token is 32 random bytes, so
 /// nothing is gained by a hash that is slow to make, and it is looked up by
 /// this.
-pub(super) fn sealed(token: &str) -> String {
+pub(super) fn hash_token(token: &str) -> String {
     hex::encode(Sha256::digest(token))
 }
 
