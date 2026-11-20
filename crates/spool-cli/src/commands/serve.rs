@@ -157,10 +157,6 @@ macro_rules! say {
 
 const DEFAULT_PORT: u16 = 7765;
 
-fn failed(message: impl Into<String>) -> Failure {
-    Failure::failed(message.into())
-}
-
 /// IDs and the clock: the system's, or reproducible ones for tests.
 fn build_engine_options(seed: Option<u64>) -> Options {
     match seed {
@@ -197,7 +193,7 @@ pub fn serve(arguments: ServeArgs) -> Result<(), Failure> {
         }
         Some(applied) if applied == manifest.hash => engine.adopt(&manifest)?,
         Some(applied) => {
-            return Err(failed(format!(
+            return Err(Failure::failed(format!(
                 "the store at {} was applied with manifest {applied}, and this server runs on \
                  manifest {}",
                 store.display(),
@@ -216,7 +212,7 @@ pub fn serve(arguments: ServeArgs) -> Result<(), Failure> {
     say!("accounts  {}", super::accounts_path(&store).display());
     let empty = accounts
         .needs_setup()
-        .map_err(|refused| failed(refused.to_string()))?;
+        .map_err(|refused| Failure::failed(refused.to_string()))?;
     let mut options = ServerOptions::new(accounts);
     options.setup = empty.then(auth::code);
     options.https = !(arguments.plain_http || listen.ip().is_loopback());
@@ -264,7 +260,7 @@ impl GoogleClient {
                 } else {
                     (SECRET, ID)
                 };
-                Err(failed(format!(
+                Err(Failure::failed(format!(
                     "sign-in with Google needs both {ID} and {SECRET}: {has} is set and {lacks} is not"
                 )))
             }
@@ -308,14 +304,14 @@ pub fn dev(arguments: DevArgs) -> Result<(), Failure> {
         .filter(|parent| !parent.as_os_str().is_empty())
     {
         std::fs::create_dir_all(parent)
-            .map_err(|error| failed(format!("{}: {error}", parent.display())))?;
+            .map_err(|error| Failure::failed(format!("{}: {error}", parent.display())))?;
     }
     let user_code = super::user_code(Some(&arguments.user_code), &dir);
     let engine =
         Engine::open(&store, build_engine_options(arguments.seed)).map_err(
             |error| match error {
                 // The usual cause by far, and what to do about it.
-                spool::Error::StoreInUse { path, holder } => failed(format!(
+                spool::Error::StoreInUse { path, holder } => Failure::failed(format!(
                     "the store {} is open in another process{}, most likely a `spool dev` that is \
              already running on this project",
                     path.display(),
@@ -326,7 +322,7 @@ pub fn dev(arguments: DevArgs) -> Result<(), Failure> {
              with Ctrl-C and start this one again",
                 ),
                 // A store with no migration to the current format.
-                spool::Error::FormatVersion { found, expected } => failed(format!(
+                spool::Error::FormatVersion { found, expected } => Failure::failed(format!(
                     "the store {} has format version {found}, which this version of `spool` \
              cannot open (current format: {expected})",
                     store.display(),
@@ -443,14 +439,14 @@ fn run_server(
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-        .map_err(|error| failed(format!("the server could not start: {error}")))?;
+        .map_err(|error| Failure::failed(format!("the server could not start: {error}")))?;
     runtime.block_on(async {
         let listener = tokio::net::TcpListener::bind(listen)
             .await
             .map_err(|error| cannot_listen(listen, &error, options.dev))?;
         let address = listener
             .local_addr()
-            .map_err(|error| failed(error.to_string()))?;
+            .map_err(|error| Failure::failed(error.to_string()))?;
         // Tests listen on port 0 and read the port from this line.
         say!("listening on http://{address}");
         let given = reached.at.is_some();
@@ -461,7 +457,7 @@ fn run_server(
         if let Some(client) = reached.google {
             let google =
                 Google::new(&client.issuer, &client.id, &client.secret, &at).map_err(|error| {
-                    failed(format!("sign-in with Google cannot be set up: {error}"))
+                    Failure::failed(format!("sign-in with Google cannot be set up: {error}"))
                 })?;
             say!("google    {}", google.redirect());
             say!(
@@ -503,7 +499,7 @@ fn run_server(
         }
         server::serve(listener, engine, &options, wait_for_shutdown())
             .await
-            .map_err(|error| failed(format!("the server stopped: {error}")))
+            .map_err(|error| Failure::failed(format!("the server stopped: {error}")))
     })?;
     // This ends the connections that were not done in time, and waits for
     // the work the engine was given: a run is not cut off half way.
@@ -516,7 +512,7 @@ fn run_server(
 /// said in words, with another port to try: the next one up.
 fn cannot_listen(listen: SocketAddr, error: &std::io::Error, dev: bool) -> Failure {
     if error.kind() != std::io::ErrorKind::AddrInUse {
-        return failed(format!("cannot listen on {listen}: {error}"));
+        return Failure::failed(format!("cannot listen on {listen}: {error}"));
     }
     let mut other = listen;
     other.set_port(match listen.port() {
@@ -524,7 +520,7 @@ fn cannot_listen(listen: SocketAddr, error: &std::io::Error, dev: bool) -> Failu
         port => port + 1,
     });
     if dev {
-        failed(format!(
+        Failure::failed(format!(
             "cannot listen on {listen}: something else is listening there, perhaps a \
              `spool dev` on another project"
         ))
@@ -533,7 +529,7 @@ fn cannot_listen(listen: SocketAddr, error: &std::io::Error, dev: bool) -> Failu
              the commands that call it there with SPOOL_URL=http://{other}"
         ))
     } else {
-        failed(format!(
+        Failure::failed(format!(
             "cannot listen on {listen}: something else is listening there"
         ))
         .hint(format!(

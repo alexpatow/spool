@@ -209,16 +209,13 @@ const DOCKERIGNORE: &str = "\
 .env
 ";
 
-pub(super) fn failed(message: impl Into<String>) -> Failure {
-    Failure::failed(message.into())
-}
-
 pub(super) fn write_file(path: &Path, contents: &str) -> Result<(), Failure> {
     if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir)
-            .map_err(|error| failed(format!("{}: {error}", dir.display())))?;
+            .map_err(|error| Failure::failed(format!("{}: {error}", dir.display())))?;
     }
-    std::fs::write(path, contents).map_err(|error| failed(format!("{}: {error}", path.display())))
+    std::fs::write(path, contents)
+        .map_err(|error| Failure::failed(format!("{}: {error}", path.display())))
 }
 
 pub fn info(arguments: InfoArgs) -> Result<(), Failure> {
@@ -462,7 +459,7 @@ pub fn build(arguments: BuildArgs) -> Result<(), Failure> {
     let dockerfile_path = dir.join("Dockerfile");
     if dockerfile_path.exists() {
         if arguments.base_image.is_some() {
-            return Err(failed(format!(
+            return Err(Failure::failed(format!(
                 "{} already exists and belongs to the project; change its base image there",
                 dockerfile_path.display()
             )));

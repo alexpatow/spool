@@ -8,7 +8,7 @@ use clap::Args;
 use clap::builder::PossibleValue;
 use spool::{Manifest, Runtime};
 
-use super::project::{failed, write_file};
+use super::project::write_file;
 use crate::Failure;
 use crate::output::{Output, OutputArgs, hint};
 
@@ -345,7 +345,7 @@ fn init_git(dir: &Path) -> Result<(), Failure> {
         .env_remove("GIT_OBJECT_DIRECTORY")
         .output()
         .map_err(|error| {
-            let failure = failed(format!(
+            let failure = Failure::failed(format!(
                 "could not run git init in {}: {error}",
                 dir.display()
             ));
@@ -359,7 +359,7 @@ fn init_git(dir: &Path) -> Result<(), Failure> {
         return Ok(());
     }
     let detail = String::from_utf8_lossy(&output.stderr);
-    Err(failed(format!(
+    Err(Failure::failed(format!(
         "git init in {} failed ({}): {}",
         dir.display(),
         output.status,
@@ -374,16 +374,17 @@ fn refuse_unless_empty(dir: &Path, named: bool) -> Result<(), Failure> {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(_) if dir.exists() && !dir.is_dir() => {
-            return Err(failed(format!(
+            return Err(Failure::failed(format!(
                 "{} is a file, and a project is a folder",
                 dir.display()
             )));
         }
-        Err(error) => return Err(failed(format!("{}: {error}", dir.display()))),
+        Err(error) => return Err(Failure::failed(format!("{}: {error}", dir.display()))),
     };
     let mut held = Vec::new();
     for entry in entries {
-        let entry = entry.map_err(|error| failed(format!("{}: {error}", dir.display())))?;
+        let entry =
+            entry.map_err(|error| Failure::failed(format!("{}: {error}", dir.display())))?;
         let name = entry.file_name().to_string_lossy().into_owned();
         if !MAY_HOLD.contains(&name.as_str()) {
             held.push(name);
@@ -397,7 +398,7 @@ fn refuse_unless_empty(dir: &Path, named: bool) -> Result<(), Failure> {
             true => dir.display().to_string(),
             false => "this folder".to_owned(),
         };
-        return Err(failed(format!(
+        return Err(Failure::failed(format!(
             "{which} is a project already: it has an entities/ folder"
         )));
     }
@@ -413,7 +414,7 @@ fn refuse_unless_empty(dir: &Path, named: bool) -> Result<(), Failure> {
     if held.len() > SHOWN {
         listed.push_str(&format!(" and {} more", held.len() - SHOWN));
     }
-    Err(failed(if named {
+    Err(Failure::failed(if named {
         format!(
             "{} already holds files ({listed}). `spool init` makes a project only in a new \
              or empty folder: give it another name",

@@ -19,7 +19,7 @@ use clap::Args;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use super::project::{failed, write_file};
+use super::project::write_file;
 use crate::Failure;
 use crate::output::{Output, OutputArgs, hint};
 use crate::style::{self, paint};
@@ -155,7 +155,7 @@ pub fn update_skills(arguments: UpdateSkillsArgs) -> Result<(), Failure> {
             true => dir.display().to_string(),
             false => "this folder".to_owned(),
         };
-        return Err(failed(format!(
+        return Err(Failure::failed(format!(
             "{which} is not a Spool project: it has no entities/ folder"
         ))
         .hint("`spool init` makes a project, with these files in it"));
@@ -285,10 +285,10 @@ fn link_skill(dir: &Path, name: &str, force: bool) -> Result<Change, Failure> {
     let target = PathBuf::from(format!("../../{SKILLS_DIR}/{name}"));
     let status = match std::fs::symlink_metadata(&full) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Status::Added,
-        Err(error) => return Err(failed(format!("{}: {error}", full.display()))),
+        Err(error) => return Err(Failure::failed(format!("{}: {error}", full.display()))),
         Ok(found) if found.file_type().is_symlink() => {
             let points = std::fs::read_link(&full)
-                .map_err(|error| failed(format!("{}: {error}", full.display())))?;
+                .map_err(|error| Failure::failed(format!("{}: {error}", full.display())))?;
             if points == target {
                 return Ok(new_change(path, Status::Unchanged));
             }
@@ -313,7 +313,7 @@ fn link_skill(dir: &Path, name: &str, force: bool) -> Result<Change, Failure> {
     };
     if let Some(parent) = full.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|error| failed(format!("{}: {error}", parent.display())))?;
+            .map_err(|error| Failure::failed(format!("{}: {error}", parent.display())))?;
     }
     symlink(&target, &full)?;
     Ok(new_change(path, status))
@@ -322,12 +322,12 @@ fn link_skill(dir: &Path, name: &str, force: bool) -> Result<Change, Failure> {
 #[cfg(unix)]
 fn symlink(target: &Path, at: &Path) -> Result<(), Failure> {
     std::os::unix::fs::symlink(target, at)
-        .map_err(|error| failed(format!("{}: {error}", at.display())))
+        .map_err(|error| Failure::failed(format!("{}: {error}", at.display())))
 }
 
 #[cfg(not(unix))]
 fn symlink(_: &Path, at: &Path) -> Result<(), Failure> {
-    Err(failed(format!(
+    Err(Failure::failed(format!(
         "{}: links are made on Linux and macOS only",
         at.display()
     )))
@@ -389,7 +389,7 @@ fn read_if_exists(path: &Path) -> Result<Option<String>, Failure> {
     match std::fs::read_to_string(path) {
         Ok(text) => Ok(Some(text)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(failed(format!("{}: {error}", path.display()))),
+        Err(error) => Err(Failure::failed(format!("{}: {error}", path.display()))),
     }
 }
 
@@ -398,7 +398,7 @@ fn remove_path(path: &Path, folder: bool) -> Result<(), Failure> {
         true => std::fs::remove_dir(path),
         false => std::fs::remove_file(path),
     };
-    removed.map_err(|error| failed(format!("{}: {error}", path.display())))
+    removed.map_err(|error| Failure::failed(format!("{}: {error}", path.display())))
 }
 
 /// A skill as it is written: with the hash of itself in its frontmatter.
