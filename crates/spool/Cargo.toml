@@ -23,7 +23,6 @@ sha2.workspace = true
 spool-core.workspace = true
 thiserror.workspace = true
 time.workspace = true
-toml.workspace = true
 
 # To stop a strategy that ran out of time together with what it started.
 [target.'cfg(unix)'.dependencies]
@@ -31,6 +30,10 @@ libc.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+# For the tests that take a benchmark scenario as their fixture. The
+# benchmark depends on the engine, which Cargo allows of a dependency
+# of the tests alone.
+spool-bench.workspace = true
 tempfile.workspace = true
 
 [lints]

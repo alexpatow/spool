@@ -14,7 +14,8 @@ mod support;
 use std::path::{Path, PathBuf};
 
 use spool::core::{IdentityStore, MemoryState, Op};
-use spool::{BenchReport, Engine, Options, Scenario, StepReport};
+use spool::{Engine, Options};
+use spool_bench::{BenchReport, Scenario, StepReport};
 use support::*;
 
 fn corrections() -> PathBuf {

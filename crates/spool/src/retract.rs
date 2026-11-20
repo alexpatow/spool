@@ -61,8 +61,8 @@ pub struct RetractReport {
 }
 
 /// A condition on `record_id` that leaves out the records that are taken
-/// back.
-pub(crate) const NOT_RETRACTED: &str = "record_id NOT IN (
+/// back, for a query over `spool.record`.
+pub const NOT_RETRACTED: &str = "record_id NOT IN (
     SELECT record_id FROM spool.retraction WHERE restored_run IS NULL)";
 
 /// A query for the records that came back in a load run after `after`

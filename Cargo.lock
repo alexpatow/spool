@@ -3185,10 +3185,22 @@ dependencies = [
  "serde-saphyr",
  "serde_json",
  "sha2 0.11.1",
+ "spool-bench",
  "spool-core",
  "tempfile",
  "thiserror 2.0.21",
  "time",
+]
+
+[[package]]
+name = "spool-bench"
+version = "0.4.0"
+dependencies = [
+ "hex",
+ "serde",
+ "sha2 0.11.1",
+ "spool",
+ "thiserror 2.0.21",
  "toml",
 ]
 
@@ -3226,6 +3238,7 @@ dependencies = [
  "signal-hook",
  "snapbox",
  "spool",
+ "spool-bench",
  "subtle",
  "tempfile",
  "tokio",

@@ -1,0 +1,460 @@
+//! What only a scenario measures: extraction against labelled mentions,
+//! whether corrections hold, and how one grouping of the records compares
+//! with another. The scores of a store against a truth relation are the
+//! engine's, [`Metrics`].
+
+use serde::{Deserialize, Serialize};
+use spool::{BCubed, Churn, IdStability, Metrics, PairMetrics};
+
+/// The mentions an extractor found, against the labelled mentions of the
+/// same documents. A mention is right when a label has the same document,
+/// entity type, start and end: half a name is a wrong mention and a missed
+/// one. This says nothing about which entity a mention is, which is what
+/// resolution is scored on.
+///
+/// A ratio is `None` when its denominator is zero, as for [`PairMetrics`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ExtractionMetrics {
+    /// Labelled mentions.
+    pub labelled: u64,
+    /// Mentions the extractor found.
+    pub extracted: u64,
+    /// Those of them that are labelled.
+    pub correct: u64,
+    pub precision: Option<f64>,
+    pub recall: Option<f64>,
+    pub f1: Option<f64>,
+}
+
+impl ExtractionMetrics {
+    pub(crate) fn new(labelled: u64, extracted: u64, correct: u64) -> Self {
+        let ratio = |numerator: u64, denominator: u64| {
+            (denominator > 0).then(|| numerator as f64 / denominator as f64)
+        };
+        Self {
+            labelled,
+            extracted,
+            correct,
+            precision: ratio(correct, extracted),
+            recall: ratio(correct, labelled),
+            f1: ratio(2 * correct, extracted + labelled),
+        }
+    }
+}
+
+/// Extraction and resolution together: the identities the extracted mentions
+/// ended in, against every labelled mention and its true entity.
+///
+/// [`ExtractionMetrics`] says nothing about identities, and [`Metrics`]
+/// leaves out what extraction got wrong. Here both mistakes cost. A labelled
+/// mention the extractor missed is in no identity, so every pair it should
+/// have been in is missing. A mention the extractor made up is no entity at
+/// all, so every pair it is in is wrong. A mention without an identity is a
+/// group of its own, as for [`Metrics`].
+///
+/// With an extractor that finds exactly the labelled mentions, `pairs` and
+/// `b_cubed` are those of [`Metrics`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct EndToEndMetrics {
+    /// Labelled mentions.
+    pub labelled: u64,
+    /// Mentions the extractor found.
+    pub extracted: u64,
+    /// The entities the labelled mentions are of.
+    pub true_entities: u64,
+    /// Those with at least one labelled mention that was extracted.
+    pub entities_found: u64,
+    /// Pairs of extracted mentions in one identity, against pairs of
+    /// labelled mentions of one entity.
+    pub pairs: PairMetrics,
+    /// Precision is averaged over the extracted mentions: the share of a
+    /// mention's identity that is the same entity, and nothing for a
+    /// mention that is made up. Recall is averaged over the labelled
+    /// mentions: the share of a mention's entity that is in its identity,
+    /// and nothing for a mention that was missed.
+    pub b_cubed: BCubed,
+}
+
+impl EndToEndMetrics {
+    /// `labelled` is the true entity of each labelled mention. `extracted`
+    /// is each extracted mention: its true entity, when a label is at its
+    /// place, and the group it is in.
+    pub(crate) fn new(labelled: &[&str], extracted: &[(Option<&str>, &str)]) -> Self {
+        use std::collections::{BTreeMap, HashMap, HashSet};
+
+        let pairs = |size: u64| size * size.saturating_sub(1) / 2;
+        let mut entities: HashMap<&str, u64> = HashMap::new();
+        for entity in labelled {
+            *entities.entry(entity).or_default() += 1;
+        }
+        let mut groups: HashMap<&str, u64> = HashMap::new();
+        let mut cells: HashMap<(&str, &str), u64> = HashMap::new();
+        for (entity, group) in extracted {
+            *groups.entry(group).or_default() += 1;
+            if let Some(entity) = entity {
+                *cells.entry((group, entity)).or_default() += 1;
+            }
+        }
+
+        // B-cubed sums n²/size over cells. The whole numbers are added per
+        // size and the fractions in size order, so the result does not
+        // depend on the order the cells are visited in.
+        let mut by_group_size: BTreeMap<u64, u64> = BTreeMap::new();
+        let mut by_entity_size: BTreeMap<u64, u64> = BTreeMap::new();
+        for ((group, entity), n) in &cells {
+            *by_group_size.entry(groups[group]).or_default() += n * n;
+            *by_entity_size.entry(entities[entity]).or_default() += n * n;
+        }
+        // The sum of no floats is -0.0, which would print as "-0.0000".
+        let summed = |by_size: &BTreeMap<u64, u64>| -> f64 {
+            by_size.iter().fold(0.0, |sum, (size, squares)| {
+                sum + *squares as f64 / *size as f64
+            })
+        };
+
+        let true_positives: u64 = cells.values().map(|n| pairs(*n)).sum();
+        let predicted: u64 = groups.values().map(|size| pairs(*size)).sum();
+        let actual: u64 = entities.values().map(|size| pairs(*size)).sum();
+        let found: HashSet<&str> = cells.keys().map(|(_, entity)| *entity).collect();
+        Self {
+            labelled: labelled.len() as u64,
+            extracted: extracted.len() as u64,
+            true_entities: entities.len() as u64,
+            entities_found: found.len() as u64,
+            pairs: PairMetrics {
+                true_positives,
+                predicted,
+                actual,
+                precision: ratio(true_positives as f64, predicted as f64),
+                recall: ratio(true_positives as f64, actual as f64),
+                f1: ratio(2.0 * true_positives as f64, (predicted + actual) as f64),
+            },
+            b_cubed: BCubed {
+                precision: ratio(summed(&by_group_size), extracted.len() as f64),
+                recall: ratio(summed(&by_entity_size), labelled.len() as f64),
+            },
+        }
+    }
+}
+
+/// Whether the splits a scenario made still hold: no identity has members
+/// from both sides of the split.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SplitRecovery {
+    pub splits: u64,
+    pub kept_apart: u64,
+    pub share: Option<f64>,
+}
+
+/// Whether the constraints a scenario recorded are still honoured. A
+/// constraint is honoured while it is in force and state agrees with it: the
+/// two records of a `must_link` share an identity, and those of a
+/// `cannot_link` do not.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct OverridePersistence {
+    pub constraints: u64,
+    pub honoured: u64,
+    pub share: Option<f64>,
+}
+
+/// How far the result depends on the order the batches arrived in: the
+/// steps as written against the same steps in reverse, without the
+/// scenario's corrections. A record without an identity is a group of
+/// its own.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct OrderSensitivity {
+    pub records: u64,
+    /// Records grouped with the same records in both orders.
+    pub same_group: u64,
+    pub agreement: Option<f64>,
+    /// Pairs of records that share an identity in both orders, and in
+    /// at least one.
+    pub pairs_in_both: u64,
+    pub pairs_in_either: u64,
+    pub pair_agreement: Option<f64>,
+}
+
+/// How the identities of a store that rows were taken back from compare
+/// with those of a store that was never sent them: the same steps in the
+/// same order, without the rows the sources have taken back as things
+/// stand, and without the scenario's corrections. The records compared are
+/// those the sources still hold, and one without an identity is a group of
+/// its own.
+///
+/// The two differ where a row that is gone was what joined two that are
+/// left: the store keeps them together, as it never parts an identity on
+/// its own, and the rebuild never puts them together.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Rebuild {
+    pub records: u64,
+    /// Records grouped with the same records in both.
+    pub same_group: u64,
+    pub agreement: Option<f64>,
+    /// Pairs of records that share an identity in both.
+    pub pairs_in_both: u64,
+    /// Pairs that share an identity in the store and not in the rebuild.
+    pub pairs_only_kept: u64,
+    /// Of those, the pairs an open `possible_split` review item asks
+    /// about: its two records are in different groups of the item.
+    #[serde(default)]
+    pub pairs_only_kept_asked: u64,
+    /// Pairs that share an identity in the rebuild and not in the store.
+    pub pairs_only_rebuilt: u64,
+    /// Pairs in both, of those in either.
+    pub pair_agreement: Option<f64>,
+    /// The rebuild against the truth, to set beside the step's own.
+    pub metrics: Metrics,
+}
+
+impl Rebuild {
+    /// Compares the grouping a store kept with the one a rebuild gives the
+    /// same records, each a list of `(record, group)`.
+    pub(crate) fn between(
+        kept: &[(String, String)],
+        rebuilt: &[(String, String)],
+        metrics: Metrics,
+    ) -> Self {
+        let compared = Compared::between(kept, rebuilt);
+        let in_either = compared.in_first + compared.in_second - compared.in_both;
+        Self {
+            records: compared.records,
+            same_group: compared.same_group,
+            agreement: ratio(compared.same_group as f64, compared.records as f64),
+            pairs_in_both: compared.in_both,
+            pairs_only_kept: compared.in_first - compared.in_both,
+            pairs_only_kept_asked: 0,
+            pairs_only_rebuilt: compared.in_second - compared.in_both,
+            pair_agreement: ratio(compared.in_both as f64, in_either as f64),
+            metrics,
+        }
+    }
+}
+
+/// What matching everything again with a strategy did to the identities
+/// that existed. This is the cost of changing strategy: how many
+/// records kept their identity ID, and how much of what the strategy
+/// would change was only suggested.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct UpgradeStability {
+    /// The strategy that judged every record again.
+    pub strategy: String,
+    /// Records that had an identity before the rematch.
+    pub records: u64,
+    /// Those whose identity ID is the same after it.
+    pub retained: u64,
+    pub share: Option<f64>,
+    /// Pairs of identities the strategy's judgements would merge, and
+    /// identities they would split. None of it is applied by the rematch.
+    pub suggested_merges: u64,
+    pub suggested_splits: u64,
+    /// Changes to existing identities that were committed during the step:
+    /// identities merged and records moved.
+    pub applied_changes: u64,
+}
+
+impl UpgradeStability {
+    pub(crate) fn new(
+        strategy: &str,
+        stability: &IdStability,
+        churn: &Churn,
+        suggested_merges: u64,
+        suggested_splits: u64,
+    ) -> Self {
+        Self {
+            strategy: strategy.to_owned(),
+            records: stability.records,
+            retained: stability.unchanged,
+            share: stability.strict,
+            suggested_merges,
+            suggested_splits,
+            applied_changes: churn.identities_merged + churn.records_reassigned,
+        }
+    }
+}
+
+impl SplitRecovery {
+    pub(crate) fn new(splits: u64, kept_apart: u64) -> Self {
+        Self {
+            splits,
+            kept_apart,
+            share: ratio(kept_apart as f64, splits as f64),
+        }
+    }
+}
+
+impl OverridePersistence {
+    pub(crate) fn new(constraints: u64, honoured: u64) -> Self {
+        Self {
+            constraints,
+            honoured,
+            share: ratio(honoured as f64, constraints as f64),
+        }
+    }
+}
+
+impl OrderSensitivity {
+    /// Compares two groupings of the same records, each a list of
+    /// `(record, group)`.
+    pub(crate) fn between(first: &[(String, String)], second: &[(String, String)]) -> Self {
+        let compared = Compared::between(first, second);
+        let in_either = compared.in_first + compared.in_second - compared.in_both;
+        Self {
+            records: compared.records,
+            same_group: compared.same_group,
+            agreement: ratio(compared.same_group as f64, compared.records as f64),
+            pairs_in_both: compared.in_both,
+            pairs_in_either: in_either,
+            pair_agreement: ratio(compared.in_both as f64, in_either as f64),
+        }
+    }
+}
+
+/// Two groupings of the same records, set against each other.
+struct Compared {
+    records: u64,
+    /// Records grouped with the same records in both.
+    same_group: u64,
+    /// Pairs of records that share a group in both, in the first and in
+    /// the second.
+    in_both: u64,
+    in_first: u64,
+    in_second: u64,
+}
+
+impl Compared {
+    fn between(first: &[(String, String)], second: &[(String, String)]) -> Self {
+        use std::collections::{BTreeSet, HashMap};
+
+        fn groups(partition: &[(String, String)]) -> HashMap<&str, BTreeSet<&str>> {
+            let mut groups: HashMap<&str, BTreeSet<&str>> = HashMap::new();
+            for (record, group) in partition {
+                groups.entry(group).or_default().insert(record);
+            }
+            groups
+        }
+        let pairs = |size: usize| (size * size.saturating_sub(1) / 2) as u64;
+
+        let (first_groups, second_groups) = (groups(first), groups(second));
+        let second_of: HashMap<&str, &str> = second
+            .iter()
+            .map(|(record, group)| (record.as_str(), group.as_str()))
+            .collect();
+
+        let mut same_group = 0;
+        let mut cells: HashMap<(&str, &str), usize> = HashMap::new();
+        for (record, group) in first {
+            let Some(other) = second_of.get(record.as_str()) else {
+                continue;
+            };
+            *cells.entry((group, other)).or_default() += 1;
+            if first_groups[group.as_str()] == second_groups[other] {
+                same_group += 1;
+            }
+        }
+        Self {
+            records: first.len() as u64,
+            same_group,
+            in_both: cells.values().map(|size| pairs(*size)).sum(),
+            in_first: first_groups.values().map(|group| pairs(group.len())).sum(),
+            in_second: second_groups.values().map(|group| pairs(group.len())).sum(),
+        }
+    }
+}
+
+fn ratio(numerator: f64, denominator: f64) -> Option<f64> {
+    (denominator > 0.0).then(|| numerator / denominator)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{EndToEndMetrics, OrderSensitivity};
+
+    #[test]
+    fn a_missed_mention_and_a_made_up_one_both_cost_end_to_end() {
+        // Two entities of three mentions each. The extractor found two of
+        // `a` and all of `b`, and made one up. Both of `a` and one of `b`
+        // are in one identity with the made-up mention, and the rest of `b`
+        // is in another.
+        let labelled = ["a", "a", "a", "b", "b", "b"];
+        let extracted = [
+            (Some("a"), "one"),
+            (Some("a"), "one"),
+            (Some("b"), "one"),
+            (None, "one"),
+            (Some("b"), "two"),
+            (Some("b"), "two"),
+        ];
+        let scored = EndToEndMetrics::new(&labelled, &extracted);
+        assert_eq!((scored.labelled, scored.extracted), (6, 6));
+        assert_eq!((scored.true_entities, scored.entities_found), (2, 2));
+        // Right pairs: the two of `a`, and the two of `b` in `two`. Pairs
+        // made: six in `one` and one in `two`. Pairs there are: three each.
+        let pairs = &scored.pairs;
+        assert_eq!(
+            (pairs.true_positives, pairs.predicted, pairs.actual),
+            (2, 7, 6)
+        );
+        // Precision: 2/4 for each `a`, 1/4 for the `b` in `one`, nothing for
+        // the made-up mention, and 1 for each `b` in `two`.
+        assert_eq!(scored.b_cubed.precision, Some(3.25 / 6.0));
+        // Recall: 2/3 for each `a` that was found and nothing for the one
+        // that was not, 1/3 for the `b` in `one` and 2/3 for the other two.
+        assert_eq!(scored.b_cubed.recall, Some(3.0 / 6.0));
+    }
+
+    #[test]
+    fn nothing_extracted_is_no_precision_and_no_recall_at_all() {
+        let scored = EndToEndMetrics::new(&["a", "a"], &[]);
+        assert_eq!(scored.entities_found, 0);
+        assert_eq!(scored.pairs.precision, None);
+        assert_eq!(scored.pairs.recall, Some(0.0));
+        assert_eq!(scored.b_cubed.precision, None);
+        // Zero, and not the zero with a minus sign before it.
+        assert_eq!(scored.b_cubed.recall.map(f64::to_bits), Some(0));
+    }
+
+    fn grouping(groups: &[&[&str]]) -> Vec<(String, String)> {
+        groups
+            .iter()
+            .enumerate()
+            .flat_map(|(group, members)| {
+                members
+                    .iter()
+                    .map(move |member| ((*member).to_owned(), format!("group-{group}")))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_same_groups_under_other_ids_agree_completely() {
+        let first = grouping(&[&["a", "b", "c"], &["d"], &["e", "f"]]);
+        let second = grouping(&[&["f", "e"], &["c", "a", "b"], &["d"]]);
+        let order = OrderSensitivity::between(&first, &second);
+        assert_eq!((order.records, order.same_group), (6, 6));
+        assert_eq!((order.pairs_in_both, order.pairs_in_either), (4, 4));
+        assert_eq!(order.agreement, Some(1.0));
+        assert_eq!(order.pair_agreement, Some(1.0));
+    }
+
+    #[test]
+    fn an_record_that_moved_changes_both_groups_it_touched() {
+        // `c` is with `a` and `b` in one order and with `d` in the other.
+        let first = grouping(&[&["a", "b", "c"], &["d"], &["e", "f"]]);
+        let second = grouping(&[&["a", "b"], &["c", "d"], &["e", "f"]]);
+        let order = OrderSensitivity::between(&first, &second);
+        assert_eq!((order.records, order.same_group), (6, 2));
+        // Together in both: a-b and e-f. In either: those, a-c, b-c and c-d.
+        assert_eq!((order.pairs_in_both, order.pairs_in_either), (2, 5));
+        assert_eq!(order.pair_agreement, Some(0.4));
+    }
+
+    #[test]
+    fn nothing_grouped_has_no_pairs_to_agree_on() {
+        let alone = grouping(&[&["a"], &["b"]]);
+        let order = OrderSensitivity::between(&alone, &alone);
+        assert_eq!(order.agreement, Some(1.0));
+        assert_eq!(order.pair_agreement, None);
+        let empty = OrderSensitivity::between(&[], &[]);
+        assert_eq!((empty.agreement, empty.pair_agreement), (None, None));
+    }
+}

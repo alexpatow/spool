@@ -5,10 +5,10 @@ mod common;
 use std::fs;
 use std::path::Path;
 
-use common::cell;
 use sha2::{Digest, Sha256};
 use spool::arrow::record_batch::RecordBatchReader;
-use spool::{Engine, Error, Options, PossibleSplits, Rows, Scenario};
+use spool::{Engine, Options, Rows};
+use spool_bench::{BenchReport, Error, PossibleSplits, Scenario, StepReport, take_column};
 
 const PAPERS: &str = "\
 id,title,work
@@ -55,12 +55,12 @@ fn scenario(ingest: &str) -> String {
     )
 }
 
-fn run(root: &Path) -> spool::Result<spool::BenchReport> {
+fn run(root: &Path) -> spool_bench::Result<BenchReport> {
     let engine = Engine::open_in_memory(Options::seeded(0))?;
     Scenario::load(root.join("bench"))?.run(&engine, |_| Ok(()))
 }
 
-fn scenario_error(result: spool::Result<impl std::fmt::Debug>) -> String {
+fn scenario_error(result: spool_bench::Result<impl std::fmt::Debug>) -> String {
     match result {
         Err(Error::Scenario(message)) => message,
         other => panic!("expected a scenario error, got {other:?}"),
@@ -85,18 +85,18 @@ fn csv_rows_are_text_and_an_empty_field_is_missing() {
         .collect();
     assert_eq!(names, ["id", "title", "work"]);
 
-    let (rest, truth) = rows.take_column("work", "id").unwrap();
+    let (rest, truth) = take_column(rows, "work", "id").unwrap();
     assert_eq!(rest.schema().fields().len(), 2);
     assert_eq!(
         truth,
         [("1", "w1"), ("2", "w1"), ("4", "w3")].map(|(id, work)| (id.to_owned(), work.to_owned()))
     );
     let batches: Vec<_> = rest.map(Result::unwrap).collect();
-    assert_eq!(cell(&batches[0], 0, 0).as_deref(), Some("1"));
-    assert_eq!(cell(&batches[0], 1, 2).as_deref(), Some("Threads"));
+    assert_eq!(common::cell(&batches[0], 0, 0).as_deref(), Some("1"));
+    assert_eq!(common::cell(&batches[0], 1, 2).as_deref(), Some("Threads"));
 
     let missing = Rows::from_csv(dir.path().join("nothing.csv"));
-    assert!(matches!(missing, Err(Error::Io { .. })));
+    assert!(matches!(missing, Err(spool::Error::Io { .. })));
 }
 
 #[test]
@@ -327,7 +327,7 @@ fn an_ingest_can_take_only_the_rows_a_condition_holds_for() {
     let batches: Vec<_> = rows.map(Result::unwrap).collect();
     let ids: Vec<_> = batches
         .iter()
-        .flat_map(|batch| (0..batch.num_rows()).map(|row| cell(batch, 0, row)))
+        .flat_map(|batch| (0..batch.num_rows()).map(|row| common::cell(batch, 0, row)))
         .collect();
     assert_eq!(ids, [Some("1".to_owned()), Some("2".to_owned())]);
 
@@ -738,7 +738,7 @@ fn corrections_are_applied_as_a_reviewer_would_and_measured_after_each_step() {
 
     // The merge puts two works in one identity. Whoever held the merged ID
     // is redirected, so only the strict measure counts it as a change.
-    let kinds = |step: &spool::StepReport| -> Vec<String> {
+    let kinds = |step: &StepReport| -> Vec<String> {
         step.corrections
             .iter()
             .map(|correction| correction.kind.clone())

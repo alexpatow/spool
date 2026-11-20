@@ -20,7 +20,8 @@ use std::process::Command;
 
 use common::*;
 use spool::core::{IdentityStore, MemoryState, ReviewItem, Seq, Snapshot};
-use spool::{BenchReport, Engine, Manifest, Options, RecordFilter, ResolveOptions, Rows, Scenario};
+use spool::{Engine, Manifest, Options, RecordFilter, ResolveOptions, Rows};
+use spool_bench::{BenchReport, Scenario};
 
 fn companies() -> PathBuf {
     benchmarks().join("identity/companies-small")

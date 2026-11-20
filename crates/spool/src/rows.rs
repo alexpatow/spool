@@ -236,66 +236,6 @@ impl Rows {
         let schema = arrow.get_schema();
         Ok(Self::new(schema, arrow.collect()))
     }
-
-    /// Removes a column and returns its values with those of `key_column`,
-    /// row by row. Rows where either is missing are left out of the pairs.
-    /// A column that is the key column itself is read and left in place.
-    pub fn take_column(
-        self,
-        column: &str,
-        key_column: &str,
-    ) -> Result<(Self, Vec<(String, String)>)> {
-        let missing = |name: &str| Error::Scenario(format!("the rows have no column `{name}`"));
-        let at = self.schema.index_of(column).map_err(|_| missing(column))?;
-        let key_at = self
-            .schema
-            .index_of(key_column)
-            .map_err(|_| missing(key_column))?;
-        let keep: Vec<usize> = (0..self.schema.fields().len())
-            .filter(|index| *index != at || at == key_at)
-            .collect();
-
-        let mut pairs = Vec::new();
-        let mut batches = Vec::new();
-        for batch in self.batches {
-            let text = |index: usize| -> Result<StringArray> {
-                let array = duckdb::arrow::compute::cast(batch.column(index), &DataType::Utf8)?;
-                Ok(duckdb::arrow::array::AsArray::as_string::<i32>(&array).clone())
-            };
-            let (keys, values) = (text(key_at)?, text(at)?);
-            for (key, value) in keys.iter().zip(values.iter()) {
-                if let (Some(key), Some(value)) = (key, value) {
-                    pairs.push((key.to_owned(), value.to_owned()));
-                }
-            }
-            batches.push(batch.project(&keep)?);
-        }
-        let schema = Arc::new(self.schema.project(&keep)?);
-        Ok((Self::new(schema, batches), pairs))
-    }
-
-    /// Leaves out the rows whose value of `key_column` is one of `keys`.
-    pub(crate) fn without(
-        self,
-        key_column: &str,
-        keys: &std::collections::HashSet<String>,
-    ) -> Result<Self> {
-        let at = self
-            .schema
-            .index_of(key_column)
-            .map_err(|_| Error::Scenario(format!("the rows have no column `{key_column}`")))?;
-        let mut batches = Vec::new();
-        for batch in self.batches {
-            let array = duckdb::arrow::compute::cast(batch.column(at), &DataType::Utf8)?;
-            let kept: duckdb::arrow::array::BooleanArray =
-                duckdb::arrow::array::AsArray::as_string::<i32>(&array)
-                    .iter()
-                    .map(|key| Some(key.is_none_or(|key| !keys.contains(key))))
-                    .collect();
-            batches.push(duckdb::arrow::compute::filter_record_batch(&batch, &kept)?);
-        }
-        Ok(Self::new(self.schema, batches))
-    }
 }
 
 impl Iterator for Rows {

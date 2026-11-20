@@ -17,9 +17,8 @@ use std::time::{Duration, Instant};
 
 use common::{benchmarks, identity, load, members, record_id};
 use spool::core::{Actor, EntityType, Op};
-use spool::{
-    Engine, Error, Manifest, Options, ResolveOptions, RunFilter, RunStatus, Scenario, UserCode,
-};
+use spool::{Engine, Error, Manifest, Options, ResolveOptions, RunFilter, RunStatus, UserCode};
+use spool_bench::Scenario;
 
 /// The content hash of every changeset in the log.
 fn hashes(engine: &Engine) -> Vec<String> {

@@ -14,7 +14,8 @@ use std::time::Duration;
 
 use common::{benchmarks, identity, members, select};
 use spool::core::ReviewItem;
-use spool::{BenchReport, Engine, Options, Scenario, UserCode};
+use spool::{Engine, Options, UserCode};
+use spool_bench::{BenchReport, Scenario};
 
 /// Runs a scenario of the person project on a new store.
 fn run(file: &str, strategy: Option<&str>, seed: u64) -> (Engine, BenchReport) {

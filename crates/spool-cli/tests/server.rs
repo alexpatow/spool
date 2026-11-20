@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use arrow::array::{Array, AsArray};
 use serde_json::{Value, json};
 use spool::core::Seq;
-use spool::{Engine, IdentityFilter, Options, ReviewFilter, ReviewStatus, Rows, Scenario};
+use spool::{Engine, IdentityFilter, Options, ReviewFilter, ReviewStatus, Rows};
 use support::*;
 
 fn companies() -> PathBuf {
@@ -30,7 +30,7 @@ const STEPS: [[(&str, &str); 2]; 2] = [
 /// The company scenario run in this process, with the library.
 fn library(seed: u64) -> Engine {
     let engine = Engine::open_in_memory(Options::seeded(seed)).unwrap();
-    Scenario::load(companies())
+    spool_bench::Scenario::load(companies())
         .unwrap()
         .run(&engine, |_| Ok(()))
         .unwrap();

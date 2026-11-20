@@ -42,6 +42,7 @@ serde_json.workspace = true
 serde_urlencoded.workspace = true
 sha2.workspace = true
 spool = { workspace = true, features = ["schema"] }
+spool-bench.workspace = true
 subtle.workspace = true
 tokio.workspace = true
 tower-sessions.workspace = true

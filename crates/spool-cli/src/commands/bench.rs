@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use anstream::println;
 use spool::arrow::array::{Array, AsArray};
 use spool::core::ReviewItem;
-use spool::{BenchReport, Engine, Options, Scenario, StepReport, StrategyRef, UserCode};
+use spool::{Engine, Options, StrategyRef, UserCode};
+use spool_bench::{BenchReport, Scenario, StepReport};
 
 use super::UserCodeArgs;
 use crate::Failure;
@@ -49,6 +50,12 @@ pub struct BenchArgs {
     output: OutputArgs,
 }
 
+impl From<spool_bench::Error> for Failure {
+    fn from(error: spool_bench::Error) -> Self {
+        Failure::failed(error.to_string())
+    }
+}
+
 pub fn bench(arguments: BenchArgs) -> Result<(), Failure> {
     let out = Output::report(&arguments.output, "`spool bench`")?;
     let mut scenario = Scenario::load(&arguments.scenario)?;
@@ -64,7 +71,7 @@ fn run(
     scenario: Scenario,
     user_code: UserCode,
     out: Output,
-) -> spool::Result<()> {
+) -> spool_bench::Result<()> {
     let db = match &arguments.db {
         Some(db) => db.clone(),
         None => scenario.project_dir().join(".spool").join("bench.duckdb"),
@@ -83,7 +90,9 @@ fn run(
     }
     println!("scenario  {}", scenario.name);
     println!("database  {}", db.display());
-    let report = scenario.run(&engine, |step| print_step(&engine, step, arguments.list))?;
+    let report = scenario.run(&engine, |step| {
+        Ok(print_step(&engine, step, arguments.list)?)
+    })?;
 
     if let Some(order) = &report.order_sensitivity {
         let taken = report.steps.iter().any(|step| !step.retract.is_empty());

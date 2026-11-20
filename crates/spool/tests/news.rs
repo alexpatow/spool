@@ -21,9 +21,9 @@ use std::time::Duration;
 
 use common::{benchmarks, select};
 use spool::{
-    BenchReport, DocumentFilter, Engine, ExtractOptions, Manifest, NewDocument, Options,
-    RecordFilter, Scenario, UserCode,
+    DocumentFilter, Engine, ExtractOptions, Manifest, NewDocument, Options, RecordFilter, UserCode,
 };
+use spool_bench::{BenchReport, Scenario};
 
 fn news() -> PathBuf {
     benchmarks().join("extraction/company-news")
