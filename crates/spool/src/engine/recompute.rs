@@ -80,18 +80,8 @@ impl Engine {
         plan: &str,
         reason: Option<String>,
     ) -> Result<RecomputeApplied> {
-        self.apply_recompute_by(&Actor::Engine, entity_type, plan, reason)
-    }
-
-    pub(super) fn apply_recompute_by(
-        &self,
-        by: &Actor,
-        entity_type: Option<&EntityType>,
-        plan: &str,
-        reason: Option<String>,
-    ) -> Result<RecomputeApplied> {
-        let _turn = lock(&self.resolving);
-        self.lock().apply_recompute(by, entity_type, plan, reason)
+        self.acting(Actor::Engine)
+            .apply_recompute(entity_type, plan, reason)
     }
 }
 
@@ -113,7 +103,7 @@ fn recomputed_types<'a>(
 
 impl Inner {
     #[expect(clippy::too_many_lines)]
-    fn apply_recompute(
+    pub(super) fn apply_recompute(
         &mut self,
         by: &Actor,
         entity_type: Option<&EntityType>,

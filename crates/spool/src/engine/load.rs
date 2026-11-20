@@ -52,8 +52,7 @@ impl Engine {
         entity_type: &str,
         rows: impl RecordBatchReader,
     ) -> Result<LoadReport> {
-        self.lock()
-            .load(&Actor::Engine, source, entity_type, rows, true)
+        self.acting(Actor::Engine).load(source, entity_type, rows)
     }
 
     /// As [`Engine::load`], for a caller that means to add rows and not to
@@ -70,8 +69,8 @@ impl Engine {
         entity_type: &str,
         rows: impl RecordBatchReader,
     ) -> Result<LoadReport> {
-        self.lock()
-            .load(&Actor::Engine, source, entity_type, rows, false)
+        self.acting(Actor::Engine)
+            .load_without_replacing(source, entity_type, rows)
     }
 
     /// Stores a row and matches its record against existing identities with
@@ -83,21 +82,8 @@ impl Engine {
         row: &serde_json::Map<String, serde_json::Value>,
         replace: bool,
     ) -> Result<AddRecordReport> {
-        self.add_record_by(&Actor::Engine, source, entity_type, row, replace)
-    }
-
-    pub(super) fn add_record_by(
-        &self,
-        by: &Actor,
-        source: &str,
-        entity_type: &EntityType,
-        row: &serde_json::Map<String, serde_json::Value>,
-        replace: bool,
-    ) -> Result<AddRecordReport> {
-        let rows = Rows::from_json(std::slice::from_ref(row))?;
-        let _turn = lock(&self.resolving);
-        self.lock()
-            .add_record(by, source, entity_type, rows, replace)
+        self.acting(Actor::Engine)
+            .add_record(source, entity_type, row, replace)
     }
 
     /// Takes back rows a source no longer holds, named by their keys. Every
@@ -255,7 +241,7 @@ impl Inner {
         Ok((report, record))
     }
 
-    fn add_record(
+    pub(super) fn add_record(
         &mut self,
         by: &Actor,
         source: &str,

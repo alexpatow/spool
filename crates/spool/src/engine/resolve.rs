@@ -2,15 +2,14 @@
 //! reconciled, and the draft is committed or left for review.
 
 use serde::{Deserialize, Serialize};
-use spool_core::{Actor, EntityType, Policy};
+use spool_core::{Actor, EntityType};
 
-use super::{Disposition, Engine, Inner, Scope, StrategyRef, TypeResolution, lock};
+use super::{Engine, Inner, StrategyRef, TypeResolution};
 use crate::error::{Error, Result};
 use crate::project::{EntityTypeManifest, Strategy};
 use crate::retract;
 use crate::review;
 use crate::rules;
-use crate::runs::RunStatus;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResolveOptions {
@@ -51,7 +50,7 @@ pub struct ResolveReport {
 }
 
 /// The strategy a resolve runs for an entity type.
-enum Chosen {
+pub(super) enum Chosen {
     Rules,
     UserCode(Strategy),
 }
@@ -74,93 +73,14 @@ impl Engine {
     /// resolve that is cut short leaves the run unfinished, and the next
     /// resolve examines the same records again.
     pub fn resolve(&self, options: &ResolveOptions) -> Result<ResolveReport> {
-        self.resolve_by(&Actor::Engine, options)
-    }
-
-    pub(super) fn resolve_by(&self, by: &Actor, options: &ResolveOptions) -> Result<ResolveReport> {
-        let _turn = lock(&self.resolving);
-        let plan = self.lock().plan(options)?;
-        // Before anything is started: user code needs the project's files,
-        // and a file that is not the one the manifest was compiled from is
-        // never run.
-        let user_code = self.user_code();
-        for (_, chosen) in &plan {
-            if let Chosen::UserCode(strategy) = chosen {
-                user_code
-                    .as_deref()
-                    .ok_or_else(|| Error::NoUserCode(strategy.name.clone()))?
-                    .check(&strategy.into())?;
-            }
-        }
-        let then = if options.leave_for_review {
-            Disposition::LeaveForReview
-        } else {
-            Disposition::Commit
-        };
-
-        let mut report = ResolveReport::default();
-        for (entity_type, chosen) in plan {
-            let mut inner = self.lock();
-            if !options.rematch && !inner.has_work(&entity_type)? {
-                continue;
-            }
-            let scope = Scope {
-                entity_type,
-                rematch: options.rematch,
-            };
-            let resolution = match chosen {
-                Chosen::Rules => {
-                    let run = inner.begin_match(
-                        by,
-                        &StrategyRef::rules(),
-                        &scope,
-                        RunStatus::Running,
-                        None,
-                    )?;
-                    inner.in_run(run, |inner| {
-                        inner.judge_with_rules(run)?;
-                        inner.conclude(by, run, &Policy::default(), then)
-                    })?
-                }
-                Chosen::UserCode(strategy) => {
-                    let user_code = user_code
-                        .clone()
-                        .ok_or_else(|| Error::NoUserCode(strategy.name.clone()))?;
-                    let reference = StrategyRef {
-                        name: strategy.name.clone(),
-                        version: Some(strategy.hash.clone()),
-                    };
-                    let run =
-                        inner.begin_match(by, &reference, &scope, RunStatus::Running, None)?;
-                    let mut task =
-                        inner.in_run(run, |inner| inner.write_task(run, &strategy, &user_code))?;
-                    // The user code runs with the writer let go. The run
-                    // stays `running`, and what it was given stays as it
-                    // was written, whatever is committed meanwhile.
-                    drop(inner);
-                    let executed = task.execute();
-                    let mut inner = self.lock();
-                    let resolution = inner.in_run(run, |inner| {
-                        executed?;
-                        inner
-                            .take_judgements(run, &task)
-                            .map_err(|error| task.rejected(error))?;
-                        inner.conclude(by, run, &Policy::default(), then)
-                    })?;
-                    task.remove();
-                    resolution
-                }
-            };
-            report.resolved.push(resolution.1);
-        }
-        Ok(report)
+        self.acting(Actor::Engine).resolve(options)
     }
 }
 
 impl Inner {
     /// The entity types a resolve covers, each with the strategy it runs.
     /// Nothing is started if a type lacks the strategy that was named.
-    fn plan(&self, options: &ResolveOptions) -> Result<Vec<(EntityType, Chosen)>> {
+    pub(super) fn plan(&self, options: &ResolveOptions) -> Result<Vec<(EntityType, Chosen)>> {
         let manifest = self.manifest.as_deref().ok_or(Error::NoManifest)?;
         let entries: Vec<&EntityTypeManifest> = match &options.entity_type {
             Some(entity_type) => vec![self.declared(entity_type.as_str())?.1],
@@ -195,7 +115,7 @@ impl Inner {
     /// loaded since its last match run that succeeded, records that
     /// came back since then after their source had taken them back, or open
     /// review items with records that wait for an identity.
-    fn has_work(&self, entity_type: &EntityType) -> Result<bool> {
+    pub(super) fn has_work(&self, entity_type: &EntityType) -> Result<bool> {
         let after_run = self.last_batch_match(entity_type)?;
         let loaded = self.count(&format!(
             "SELECT count(*) FROM spool.record

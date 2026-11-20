@@ -125,8 +125,7 @@ impl Engine {
     /// The run is `open`: it takes judgements until it is reconciled, and it
     /// stays open across a restart.
     pub fn begin_run(&self, strategy: &StrategyRef, scope: &Scope) -> Result<RunId> {
-        self.lock()
-            .begin_match(&Actor::Engine, strategy, scope, RunStatus::Open, None)
+        self.acting(Actor::Engine).begin_run(strategy, scope)
     }
 
     /// A run's candidate pairs with both sides' features: `left_id`,

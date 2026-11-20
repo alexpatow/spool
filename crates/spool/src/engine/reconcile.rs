@@ -123,10 +123,7 @@ impl Engine {
     /// The same as [`reconcile_with`](Self::reconcile_with) and
     /// [`Disposition::LeaveForReview`], returning the draft itself.
     pub fn reconcile(&self, run: RunId, policy: &Policy) -> Result<Draft> {
-        let (draft, _) =
-            self.lock()
-                .reconcile(&Actor::Engine, run, policy, Disposition::LeaveForReview)?;
-        Ok(draft)
+        self.acting(Actor::Engine).reconcile(run, policy)
     }
 
     /// Turns a match run's judgements into a draft changeset, and commits the
@@ -147,8 +144,7 @@ impl Engine {
         policy: &Policy,
         then: Disposition,
     ) -> Result<TypeResolution> {
-        let (_, report) = self.lock().reconcile(&Actor::Engine, run, policy, then)?;
-        Ok(report)
+        self.acting(Actor::Engine).reconcile_with(run, policy, then)
     }
 }
 

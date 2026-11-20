@@ -10,8 +10,8 @@ use spool_core::{Actor, DocumentId, EntityType, RecordId, RunId};
 
 use super::{Engine, Inner, Reading, lock};
 use crate::documents::{
-    self, AddDocumentReport, DocumentEntry, DocumentFilter, DocumentReading, DocumentRecord,
-    ExtractOptions, ExtractReport, ExtractorRef, NewDocument,
+    self, AddDocumentReport, DocumentEntry, DocumentFilter, DocumentReading, ExtractOptions,
+    ExtractReport, ExtractorRef, NewDocument,
 };
 use crate::error::{Error, Result};
 use crate::load::LoadReport;
@@ -32,7 +32,7 @@ impl Engine {
     ///
     /// Nothing is extracted yet: [`extract`](Self::extract) does that.
     pub fn add_documents(&self, source: &str, documents: &[NewDocument]) -> Result<LoadReport> {
-        self.lock().add_documents(&Actor::Engine, source, documents)
+        self.acting(Actor::Engine).add_documents(source, documents)
     }
 
     /// Stores one document, reads it with a project extractor, and matches
@@ -44,66 +44,8 @@ impl Engine {
         document: &NewDocument,
         extractor: Option<&str>,
     ) -> Result<AddDocumentReport> {
-        self.add_document_by(&Actor::Engine, source, document, extractor)
-    }
-
-    pub(super) fn add_document_by(
-        &self,
-        by: &Actor,
-        source: &str,
-        document: &NewDocument,
-        extractor: Option<&str>,
-    ) -> Result<AddDocumentReport> {
-        let _turn = lock(&self.resolving);
-        let mut inner = self.lock();
-        let manifest = inner.manifest.as_deref().ok_or(Error::NoManifest)?;
-        if manifest.source(source).is_none() {
-            return Err(Error::Documents(format!(
-                "source `{source}` is not declared: the project has no sources/{source}.yaml"
-            )));
-        }
-        let extractor = choose_extractor(manifest, extractor)?;
-        inner.add_documents(by, source, std::slice::from_ref(document))?;
-        let document = inner.store.conn.query_row(
-            "SELECT d.document_id::VARCHAR FROM spool.document d
-             WHERE d.source_id = ? AND d.source_key = ? AND NOT EXISTS (
-                 SELECT 1 FROM spool.document later WHERE later.supersedes = d.document_id)",
-            params![source, document.key],
-            |row| row.get::<_, String>(0),
-        )?;
-        let document = parse(&document)?;
-        let mentions = match inner.document_reading(document, &extractor)? {
-            Some(mentions) => mentions,
-            None => {
-                let options = ExtractOptions::with(&extractor.name);
-                let report;
-                (inner, report) =
-                    self.extract_locked(inner, by, &options, &extractor, Some(document))?;
-                if let Some(failed) = report.failed.first() {
-                    return Err(Error::Extractor {
-                        extractor: extractor.name,
-                        message: format!(
-                            "could not read document `{}`: {}",
-                            failed.key, failed.reason
-                        ),
-                    });
-                }
-                inner.document_mentions(document, report.run)?
-            }
-        };
-        let mut records = Vec::with_capacity(mentions.len());
-        for (record, entity_type, start, end) in mentions {
-            let placed = inner.place_record(by, &entity_type, record)?;
-            records.push(DocumentRecord {
-                record,
-                entity_type,
-                start,
-                end,
-                identity: placed.identity,
-                review: placed.review,
-            });
-        }
-        Ok(AddDocumentReport { document, records })
+        self.acting(Actor::Engine)
+            .add_document(source, document, extractor)
     }
 
     /// A document with its text, the extractors that have read it and the
@@ -157,21 +99,12 @@ impl Engine {
     /// in time, or writes a mention the engine refuses fails its run, and
     /// nothing it found is stored.
     pub fn extract(&self, options: &ExtractOptions) -> Result<ExtractReport> {
-        self.extract_by(&Actor::Engine, options)
-    }
-
-    pub(super) fn extract_by(&self, by: &Actor, options: &ExtractOptions) -> Result<ExtractReport> {
-        let _turn = lock(&self.resolving);
-        let inner = self.lock();
-        let manifest = inner.manifest.as_deref().ok_or(Error::NoManifest)?;
-        let extractor = choose_extractor(manifest, Some(&options.extractor))?;
-        let (_inner, report) = self.extract_locked(inner, by, options, &extractor, None)?;
-        Ok(report)
+        self.acting(Actor::Engine).extract(options)
     }
 
     /// Takes the writer back after user code runs. A combined call can
     /// place the mentions before another writer can change them.
-    fn extract_locked<'a>(
+    pub(super) fn extract_locked<'a>(
         &'a self,
         mut inner: MutexGuard<'a, Inner>,
         by: &Actor,
@@ -251,7 +184,10 @@ impl Engine {
     }
 }
 
-fn choose_extractor(manifest: &crate::project::Manifest, name: Option<&str>) -> Result<Extractor> {
+pub(super) fn choose_extractor(
+    manifest: &crate::project::Manifest,
+    name: Option<&str>,
+) -> Result<Extractor> {
     let extractors = &manifest.extractors;
     let names = || {
         extractors
@@ -305,7 +241,7 @@ type ExtractedRecord = (RecordId, EntityType, u64, u64);
 impl Inner {
     /// Reuse a successful reading by the same extractor version if all of
     /// its mentions are still present. Format 11 readings lack these links.
-    fn document_reading(
+    pub(super) fn document_reading(
         &self,
         document: DocumentId,
         extractor: &Extractor,
@@ -331,7 +267,11 @@ impl Inner {
         Ok((mentions.len() as i64 == count).then_some(mentions))
     }
 
-    fn document_mentions(&self, document: DocumentId, run: RunId) -> Result<Vec<ExtractedRecord>> {
+    pub(super) fn document_mentions(
+        &self,
+        document: DocumentId,
+        run: RunId,
+    ) -> Result<Vec<ExtractedRecord>> {
         let mut statement = self.store.conn.prepare(&format!(
             "SELECT r.record_id::VARCHAR, r.entity_type,
                     (r.evidence->>'start')::UBIGINT AS start_at,
