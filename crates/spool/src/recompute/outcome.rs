@@ -25,7 +25,7 @@ enum Node {
     Waiting(usize),
 }
 
-fn choose(n: u64) -> u64 {
+fn count_pairs(n: u64) -> u64 {
     n * n.saturating_sub(1) / 2
 }
 
@@ -192,7 +192,7 @@ impl Outcome {
         let mut nodes: Vec<Node> = Vec::new();
         let mut index: HashMap<Node, usize> = HashMap::new();
         let mut parent: Vec<usize> = Vec::new();
-        fn find(parent: &mut [usize], mut node: usize) -> usize {
+        fn find_root(parent: &mut [usize], mut node: usize) -> usize {
             while parent[node] != node {
                 parent[node] = parent[parent[node]];
                 node = parent[node];
@@ -227,13 +227,13 @@ impl Outcome {
                 node(source, &mut nodes, &mut parent),
                 node(target, &mut nodes, &mut parent),
             );
-            let (ra, rb) = (find(&mut parent, a), find(&mut parent, b));
+            let (ra, rb) = (find_root(&mut parent, a), find_root(&mut parent, b));
             parent[ra.max(rb)] = ra.min(rb);
             edges.push((*record, a, b));
         }
         let mut parts: BTreeMap<usize, (BTreeSet<Node>, Vec<RecordId>)> = BTreeMap::new();
         for (record, a, b) in edges {
-            let root = find(&mut parent, a);
+            let root = find_root(&mut parent, a);
             let part = parts.entry(root).or_default();
             part.0.insert(nodes[a]);
             part.0.insert(nodes[b]);
@@ -436,9 +436,9 @@ impl Outcome {
                     summary.losing += 1;
                 }
             }
-            summary.pairs_after += choose(group.len() as u64);
+            summary.pairs_after += count_pairs(group.len() as u64);
         }
-        summary.pairs_kept = cells.values().map(|n| choose(*n)).sum();
+        summary.pairs_kept = cells.values().map(|n| count_pairs(*n)).sum();
         for record in &self.records {
             let from = self.now.get(record).copied();
             match (from, self.target(*record)) {
@@ -640,6 +640,8 @@ pub(crate) fn combined_plan(plans: &[String]) -> String {
 }
 
 /// Mints the IDs of the new identities an outcome needs.
-pub(crate) fn mint<'a>(ids: &'a mut dyn IdGenerator) -> impl FnMut() -> IdentityId + 'a {
+pub(crate) fn build_identity_minter<'a>(
+    ids: &'a mut dyn IdGenerator,
+) -> impl FnMut() -> IdentityId + 'a {
     move || ids.identity_id()
 }

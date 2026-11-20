@@ -180,7 +180,7 @@ impl Inner {
             let report = self.in_run(reconcile_run, |inner| {
                 let (ops, identities) = {
                     let mut ids = lock_ignoring_poison(&inner.ids);
-                    outcome.operations(recompute::mint(ids.as_mut()))
+                    outcome.operations(recompute::build_identity_minter(ids.as_mut()))
                 };
                 let changeset = Changeset {
                     id: lock_ignoring_poison(&inner.ids).changeset_id(),

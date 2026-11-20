@@ -75,7 +75,7 @@ use crate::store::parse;
 /// `concluding` is the match run that is being reconciled, if one is: its
 /// judgements count from then on, and its status says so only when the
 /// reconciling is done.
-fn groups(
+fn read_held_groups(
     conn: &Connection,
     identities: &[IdentityId],
     concluding: Option<RunId>,
@@ -85,7 +85,7 @@ fn groups(
 
 /// The members of each of the given active identities, in the groups that
 /// what people and sources said holds together: a `must_link`, the versions
-/// of a row, and the decisions of people and agents, as for [`groups`], and
+/// of a row, and the decisions of people and agents, as for [`read_held_groups`], and
 /// no judgement of any run. A recomputation keeps each group together
 /// whatever the rules say now.
 pub(crate) fn held_together(
@@ -341,7 +341,7 @@ struct Open {
 /// The open `possible_split` items that `condition` holds for. The
 /// condition is about `r`, a row of `spool.review_item`, and `i`, the
 /// identity it names.
-fn open(conn: &Connection, condition: &str) -> Result<Vec<Open>> {
+fn read_open_items(conn: &Connection, condition: &str) -> Result<Vec<Open>> {
     let mut statement = conn.prepare(&format!(
         "SELECT r.review_id, i.identity_id::VARCHAR, to_json(r.groups)::VARCHAR
          FROM spool.review_item r
@@ -375,14 +375,14 @@ fn any_open(conn: &Connection) -> Result<bool> {
     )?)
 }
 
-fn ids(items: impl IntoIterator<Item = i64>) -> String {
+fn join_item_ids(items: impl IntoIterator<Item = i64>) -> String {
     let ids: Vec<String> = items.into_iter().map(|id| id.to_string()).collect();
     ids.join(", ")
 }
 
 /// The identities that the records of the given items are in now, for each
 /// item, with those of its records that are there.
-fn whereabouts(
+fn locate_item_records(
     conn: &Connection,
     items: &[Open],
 ) -> Result<BTreeMap<i64, BTreeMap<IdentityId, BTreeSet<RecordId>>>> {
@@ -395,7 +395,7 @@ fn whereabouts(
          FROM (SELECT review_id, unnest(record_ids) AS record_id
                FROM spool.review_item WHERE review_id IN ({})) r
          JOIN spool.membership m ON m.record_id = r.record_id AND m.to_seq IS NULL",
-        ids(items.iter().map(|item| item.id))
+        join_item_ids(items.iter().map(|item| item.id))
     ))?;
     let mut rows = statement.query([])?;
     while let Some(row) = rows.next()? {
@@ -411,7 +411,7 @@ fn whereabouts(
 
 /// Whether records have something to ask of the identity they are in:
 /// they come from more than one of the groups it is in now.
-fn apart(records: &BTreeSet<RecordId>, groups: &[Vec<RecordId>]) -> bool {
+fn records_span_groups(records: &BTreeSet<RecordId>, groups: &[Vec<RecordId>]) -> bool {
     groups
         .iter()
         .filter(|group| group.iter().any(|record| records.contains(record)))
@@ -420,18 +420,21 @@ fn apart(records: &BTreeSet<RecordId>, groups: &[Vec<RecordId>]) -> bool {
 }
 
 /// A list of record IDs as SQL.
-fn list(records: &[RecordId]) -> String {
+fn quote_uuid_list(records: &[RecordId]) -> String {
     let quoted: Vec<String> = records.iter().map(|id| format!("'{id}'")).collect();
     format!("[{}]::UUID[]", quoted.join(", "))
 }
 
 /// The records and the groups of an item as SQL: every record in the
 /// groups, in order, and the groups as they are.
-fn held(groups: &[Vec<RecordId>]) -> (String, String) {
+fn quote_records_and_groups(groups: &[Vec<RecordId>]) -> (String, String) {
     let mut records: Vec<RecordId> = groups.iter().flatten().copied().collect();
     records.sort();
-    let grouped: Vec<String> = groups.iter().map(|group| list(group)).collect();
-    (list(&records), format!("[{}]", grouped.join(", ")))
+    let grouped: Vec<String> = groups.iter().map(|group| quote_uuid_list(group)).collect();
+    (
+        quote_uuid_list(&records),
+        format!("[{}]", grouped.join(", ")),
+    )
 }
 
 /// Brings open items in step with where their records are, so that each
@@ -449,15 +452,19 @@ fn held(groups: &[Vec<RecordId>]) -> (String, String) {
 /// from. The items that are left with nothing to ask are returned, for
 /// the caller to close: their identity is in one group, or another item
 /// asks for it.
-fn settle(conn: &Connection, items: Vec<Open>, concluding: Option<RunId>) -> Result<Vec<i64>> {
-    let places = whereabouts(conn, &items)?;
+fn settle_open_items(
+    conn: &Connection,
+    items: Vec<Open>,
+    concluding: Option<RunId>,
+) -> Result<Vec<i64>> {
+    let places = locate_item_records(conn, &items)?;
     let identities: Vec<IdentityId> = places
         .values()
         .flat_map(|identities| identities.keys().copied())
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
-    let now = groups(conn, &identities, concluding)?;
+    let now = read_held_groups(conn, &identities, concluding)?;
     // The identities that have the question, each with the items whose
     // records ask it, in the order of the items.
     let mut asking: BTreeMap<IdentityId, Vec<&Open>> = BTreeMap::new();
@@ -465,7 +472,7 @@ fn settle(conn: &Connection, items: Vec<Open>, concluding: Option<RunId>) -> Res
         for (identity, records) in places.get(&item.id).into_iter().flatten() {
             if now
                 .get(identity)
-                .is_some_and(|groups| apart(records, groups))
+                .is_some_and(|groups| records_span_groups(records, groups))
             {
                 asking.entry(*identity).or_default().push(item);
             }
@@ -511,7 +518,7 @@ fn settle(conn: &Connection, items: Vec<Open>, concluding: Option<RunId>) -> Res
                 |row| row.get(0),
             )?,
         };
-        let (records, grouped) = held(&now[identity]);
+        let (records, grouped) = quote_records_and_groups(&now[identity]);
         conn.execute(
             &format!(
                 "INSERT INTO spool.review_item
@@ -526,7 +533,7 @@ fn settle(conn: &Connection, items: Vec<Open>, concluding: Option<RunId>) -> Res
     for (identity, item) in &kept {
         let groups = &now[identity];
         if item.identity != *identity || item.groups != *groups {
-            let (records, grouped) = held(groups);
+            let (records, grouped) = quote_records_and_groups(groups);
             conn.execute(
                 &format!(
                     "UPDATE spool.review_item
@@ -551,14 +558,14 @@ fn settle(conn: &Connection, items: Vec<Open>, concluding: Option<RunId>) -> Res
 /// back to. An identity that has an open item keeps it, in step with its
 /// groups, and is not counted.
 pub(crate) fn raise(conn: &Connection, run: RunId, identities: &[IdentityId]) -> Result<u64> {
-    let apart: BTreeMap<IdentityId, Vec<Vec<RecordId>>> = groups(conn, identities, None)?
+    let apart: BTreeMap<IdentityId, Vec<Vec<RecordId>>> = read_held_groups(conn, identities, None)?
         .into_iter()
         .filter(|(_, groups)| groups.len() > 1)
         .collect();
     if apart.is_empty() {
         return Ok(0);
     }
-    let known: BTreeMap<IdentityId, Open> = open(conn, "true")?
+    let known: BTreeMap<IdentityId, Open> = read_open_items(conn, "true")?
         .into_iter()
         .map(|item| (item.identity, item))
         .collect();
@@ -569,7 +576,7 @@ pub(crate) fn raise(conn: &Connection, run: RunId, identities: &[IdentityId]) ->
     )?;
     let mut raised = 0;
     for (identity, groups) in apart {
-        let (records, grouped) = held(&groups);
+        let (records, grouped) = quote_records_and_groups(&groups);
         if let Some(item) = known.get(&identity) {
             if item.groups != groups {
                 conn.execute(
@@ -630,20 +637,20 @@ pub(crate) fn resolve_answered(conn: &Connection, seq: Seq) -> Result<()> {
            ON m.to_seq IS NULL AND m.record_id IN (op.record_id, op.other_record_id)
          WHERE op.seq = {seq} AND op.kind IN ('constrain', 'unconstrain')"
     );
-    let items = open(
+    let items = read_open_items(
         conn,
         &format!(
             "i.identity_id IN ({touched})
              OR coalesce(i.merged_into, i.identity_id) IN ({touched})"
         ),
     )?;
-    let answered = settle(conn, items, concluding)?;
+    let answered = settle_open_items(conn, items, concluding)?;
     if !answered.is_empty() {
         conn.execute(
             &format!(
                 "UPDATE spool.review_item SET status = 'resolved', closed_seq = ?
                  WHERE review_id IN ({})",
-                ids(answered)
+                join_item_ids(answered)
             ),
             [seq.0 as i64],
         )?;
@@ -664,14 +671,14 @@ pub(crate) fn supersede_answered(
     if !any_open(conn)? {
         return Ok(());
     }
-    let items = open(conn, &format!("r.entity_type = '{entity_type}'"))?;
-    let answered = settle(conn, items, Some(match_run))?;
+    let items = read_open_items(conn, &format!("r.entity_type = '{entity_type}'"))?;
+    let answered = settle_open_items(conn, items, Some(match_run))?;
     if !answered.is_empty() {
         conn.execute(
             &format!(
                 "UPDATE spool.review_item SET status = 'superseded', closed_run = ?
                  WHERE review_id IN ({})",
-                ids(answered)
+                join_item_ids(answered)
             ),
             [run.0 as i64],
         )?;
@@ -683,19 +690,19 @@ pub(crate) fn supersede_answered(
 /// nothing to ask of the identity it names, which is closed in the
 /// transaction that answers it, or one that names an identity another open
 /// item names.
-pub(crate) fn stale(conn: &Connection) -> Result<u64> {
+pub(crate) fn count_stale_items(conn: &Connection) -> Result<u64> {
     if !any_open(conn)? {
         return Ok(0);
     }
-    let items = open(conn, "true")?;
-    let places = whereabouts(conn, &items)?;
+    let items = read_open_items(conn, "true")?;
+    let places = locate_item_records(conn, &items)?;
     let identities: Vec<IdentityId> = items
         .iter()
         .map(|item| item.identity)
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
-    let now = groups(conn, &identities, None)?;
+    let now = read_held_groups(conn, &identities, None)?;
     let mut asked: BTreeSet<IdentityId> = BTreeSet::new();
     let mut stale = 0;
     for item in &items {
@@ -703,7 +710,7 @@ pub(crate) fn stale(conn: &Connection) -> Result<u64> {
             places.get(&item.id).and_then(|at| at.get(&item.identity)),
             now.get(&item.identity),
         ) {
-            (Some(records), Some(groups)) => apart(records, groups),
+            (Some(records), Some(groups)) => records_span_groups(records, groups),
             _ => false,
         };
         if !asks || !asked.insert(item.identity) {

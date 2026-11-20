@@ -226,7 +226,7 @@ impl Inner {
         // stays open once what the store knows holds its groups together or
         // they no longer share the identity, and an identity has one at
         // most.
-        let stale = possible_split::stale(&self.store.conn)?;
+        let stale = possible_split::count_stale_items(&self.store.conn)?;
         if stale > 0 {
             problems.push(format!(
                 "{stale} open `possible_split` review items with nothing left to ask, or that ask what another asks"

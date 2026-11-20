@@ -44,7 +44,7 @@ mod outcome;
 mod types;
 
 pub(crate) use compute::{compute, create_scope, judge_for_preview};
-pub(crate) use outcome::{combined_plan, mint};
+pub(crate) use outcome::{build_identity_minter, combined_plan};
 pub use types::{
     After, AppliedType, ApprovedPlacement, Before, Change, ChangeDetail, ChangeKind,
     ConstraintNote, Contradiction, DEFAULT_CHANGES, DecisionSummary, Fate, PersonDecision,

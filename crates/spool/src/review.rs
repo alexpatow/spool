@@ -310,11 +310,11 @@ pub(crate) fn list(conn: &Connection, filter: &ReviewFilter) -> Result<Vec<Revie
                 "possible_split" => ReviewKind::PossibleSplit,
                 other => return Err(unknown("kind", other).into()),
             },
-            records: split(row.get(4)?)
+            records: split_id_list(row.get(4)?)
                 .iter()
                 .map(|id| parse(id))
                 .collect::<Result<_>>()?,
-            identities: split(row.get(5)?)
+            identities: split_id_list(row.get(5)?)
                 .iter()
                 .map(|id| parse(id))
                 .collect::<Result<_>>()?,
@@ -372,20 +372,20 @@ impl Shape {
         };
         Self {
             kind,
-            records: sorted(records.iter().map(ToString::to_string).collect()),
-            identities: sorted(identities),
+            records: sort_unique_ids(records.iter().map(ToString::to_string).collect()),
+            identities: sort_unique_ids(identities),
         }
     }
 }
 
-fn sorted(mut ids: Vec<String>) -> Vec<String> {
+fn sort_unique_ids(mut ids: Vec<String>) -> Vec<String> {
     ids.sort();
     ids.dedup();
     ids
 }
 
-fn split(joined: Option<String>) -> Vec<String> {
-    sorted(
+fn split_id_list(joined: Option<String>) -> Vec<String> {
+    sort_unique_ids(
         joined
             .unwrap_or_default()
             .split(',')
@@ -615,8 +615,8 @@ pub(crate) fn record(
                 row.get(0)?,
                 Shape {
                     kind,
-                    records: split(row.get(2)?),
-                    identities: split(row.get(3)?),
+                    records: split_id_list(row.get(2)?),
+                    identities: split_id_list(row.get(3)?),
                 },
             ));
         }

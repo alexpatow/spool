@@ -81,7 +81,7 @@ pub(crate) fn compute(
     entity_type: &EntityType,
     judgements: &str,
 ) -> Result<Outcome> {
-    let records: Vec<RecordId> = strings(
+    let records: Vec<RecordId> = query_strings(
         conn,
         &format!("SELECT record_id::VARCHAR FROM {SCOPE} ORDER BY record_id"),
     )?
@@ -137,7 +137,7 @@ pub(crate) fn compute(
         ))?;
         let mut rows = statement.query([])?;
         while let Some(row) = rows.next()? {
-            let pair = ordered(
+            let pair = sort_record_pair(
                 parse(&row.get::<_, String>(0)?)?,
                 parse(&row.get::<_, String>(1)?)?,
             );
@@ -162,7 +162,7 @@ pub(crate) fn compute(
         ))?;
         let mut rows = statement.query([])?;
         while let Some(row) = rows.next()? {
-            let pair = ordered(
+            let pair = sort_record_pair(
                 parse(&row.get::<_, String>(0)?)?,
                 parse(&row.get::<_, String>(1)?)?,
             );
@@ -182,7 +182,7 @@ pub(crate) fn compute(
         }
     }
     let mut dismissed_splits = 0;
-    for item in strings(
+    for item in query_strings(
         conn,
         &format!(
             "SELECT to_json(record_ids)::VARCHAR FROM spool.review_item
@@ -214,9 +214,9 @@ pub(crate) fn compute(
     }
     verdicts
         .retain(|(a, b), verdict| *verdict != Verdict::NoMatch || held.find(*a) != held.find(*b));
-    for (root, members) in joined(&held) {
+    for (root, members) in collect_joined_sets(&held) {
         for record in members.into_iter().filter(|record| *record != root) {
-            verdicts.insert(ordered(root, record), Verdict::Match);
+            verdicts.insert(sort_record_pair(root, record), Verdict::Match);
         }
     }
 
@@ -235,7 +235,7 @@ pub(crate) fn compute(
         ))?;
         let mut rows = statement.query([])?;
         while let Some(row) = rows.next()? {
-            let pair = ordered(
+            let pair = sort_record_pair(
                 parse(&row.get::<_, String>(0)?)?,
                 parse(&row.get::<_, String>(1)?)?,
             );
@@ -332,7 +332,7 @@ pub(crate) fn compute(
     // The records of a group that is kept out are what the rest contradicts
     // itself about, so the item they wait in names its identity.
     let mut kept_out: Vec<Option<RecordId>> = vec![None; waiting.len()];
-    for set in joined(&held).into_values() {
+    for set in collect_joined_sets(&held).into_values() {
         let Some(at) = waiting
             .iter()
             .position(|group| group.binary_search(&set[0]).is_ok())
@@ -431,10 +431,10 @@ pub(crate) fn compute(
         }
     }
 
-    let labels = labels(conn)?;
+    let labels = read_record_labels(conn)?;
     let shaped = shaped_by_people(conn)?;
     let approved = approved_placements(conn)?;
-    let open_items: Vec<Vec<RecordId>> = strings(
+    let open_items: Vec<Vec<RecordId>> = query_strings(
         conn,
         &format!(
             "SELECT to_json(record_ids)::VARCHAR FROM spool.review_item
@@ -475,11 +475,11 @@ pub(crate) fn compute(
     })
 }
 
-fn ordered(a: RecordId, b: RecordId) -> (RecordId, RecordId) {
+fn sort_record_pair(a: RecordId, b: RecordId) -> (RecordId, RecordId) {
     if a <= b { (a, b) } else { (b, a) }
 }
 
-fn strings(conn: &Connection, sql: &str) -> Result<Vec<String>> {
+fn query_strings(conn: &Connection, sql: &str) -> Result<Vec<String>> {
     let mut statement = conn.prepare(sql)?;
     let mut rows = statement.query([])?;
     let mut found = Vec::new();
@@ -489,7 +489,7 @@ fn strings(conn: &Connection, sql: &str) -> Result<Vec<String>> {
     Ok(found)
 }
 
-fn labels(conn: &Connection) -> Result<HashMap<RecordId, (String, i64)>> {
+fn read_record_labels(conn: &Connection) -> Result<HashMap<RecordId, (String, i64)>> {
     let mut statement = conn.prepare(&format!(
         "SELECT l.record_id::VARCHAR, l.label, epoch_us(o.loaded_at) FROM spool.record_label l
          JOIN spool.record o ON o.record_id = l.record_id
@@ -564,7 +564,7 @@ fn approved_placements(conn: &Connection) -> Result<BTreeMap<RecordId, (Changese
 
 /// Each set of more than one record, by its first record, with its records
 /// in order.
-fn joined(held: &DisjointSets<RecordId>) -> BTreeMap<RecordId, Vec<RecordId>> {
+fn collect_joined_sets(held: &DisjointSets<RecordId>) -> BTreeMap<RecordId, Vec<RecordId>> {
     let mut sets = held.sets();
     sets.retain(|_, members| members.len() > 1);
     sets
