@@ -19,5 +19,4 @@
 1012 crates/spool/tests/it/usercode.rs
 819 packages/client/src/index.ts
 977 packages/client/test/client.test.ts
-1361 packages/studio/test/studio.test.tsx
 897 site/src/components/explainer/scenes.tsx
