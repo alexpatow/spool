@@ -2,24 +2,10 @@ import * as stylex from "@stylexjs/stylex";
 import type { ReactNode } from "react";
 
 import type { Info, RunEntry, TypeInfo } from "../api.ts";
-import {
-  Code,
-  Fields,
-  LinkTo,
-  Load,
-  Notice,
-  Onward,
-  Page,
-  Quiet,
-  Ref,
-  ScreenLink,
-  Section,
-  Source,
-  Table,
-  When,
-  Word,
-} from "../components.tsx";
-import type { Leads } from "../components.tsx";
+import { Code, Fields, Load, Notice, Page, Quiet, Section } from "../components/layout.tsx";
+import { Table } from "../components/table.tsx";
+import { LinkTo, Onward, Ref, ScreenLink, Source, When, Word } from "../components/refs.tsx";
+import type { Leads } from "../components/refs.tsx";
 import { count } from "../format.ts";
 import { keys, useRead } from "../queries.ts";
 import { colors, display, linen, radius, spacing, typography } from "spool-ui/tokens.stylex";

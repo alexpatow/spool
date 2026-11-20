@@ -12,35 +12,11 @@ import type {
   IdentityView,
   RecordEntry,
 } from "../api.ts";
-import {
-  Code,
-  ExplainTicked,
-  Filters,
-  Flag,
-  Id,
-  Labelled,
-  Load,
-  Notice,
-  Ops,
-  Page,
-  PagedTable,
-  Panel,
-  Quiet,
-  Reason,
-  Ref,
-  Row,
-  Section,
-  Source,
-  Sources,
-  Table,
-  Text,
-  When,
-  Word,
-  message,
-  sortingOf,
-  useNarrow,
-  useTicks,
-} from "../components.tsx";
+import { Code, Load, Notice, Page, Panel, Quiet, Reason, Row, Section, Text, message } from "../components/layout.tsx";
+import { PagedTable, Table } from "../components/table.tsx";
+import { Id, Ops, Ref, Source, Sources, When, Word } from "../components/refs.tsx";
+import { Flag, Labelled } from "../components/forms.tsx";
+import { ExplainTicked, Filters, sortingOf, useNarrow, useTicks } from "../components/filters.tsx";
 import { Button } from "spool-ui/components/button";
 import { Input } from "spool-ui/components/input";
 import * as ShelfTable from "spool-ui/components/table";

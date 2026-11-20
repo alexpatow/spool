@@ -1,7 +1,7 @@
 // Who made a change. The log names a person by the ID of their account,
 // which does not change when their name does.
 
-import { Code } from "./components.tsx";
+import { Code } from "./components/layout.tsx";
 import { useStudio } from "./hooks.ts";
 
 /** What an actor is called where `Who` shows it, for sorting by it. */

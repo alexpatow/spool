@@ -4,22 +4,10 @@ import type { ReactNode } from "react";
 
 import { Act, At, Done, Would } from "../act.tsx";
 import type { LogEntry, LogSort } from "../api.ts";
-import {
-  Code,
-  Fields,
-  Id,
-  Load,
-  Notice,
-  Ops,
-  Page,
-  PagedTable,
-  Reason,
-  Ref,
-  Section,
-  Text,
-  sortingOf,
-  useNarrow,
-} from "../components.tsx";
+import { Code, Fields, Load, Notice, Page, Reason, Section, Text } from "../components/layout.tsx";
+import { PagedTable } from "../components/table.tsx";
+import { Id, Ops, Ref } from "../components/refs.tsx";
+import { sortingOf, useNarrow } from "../components/filters.tsx";
 import { LogIcon, UndoIcon } from "../icons.tsx";
 import { keys, stale, useOpNames, useRead, useReadPages } from "../queries.ts";
 import { Who } from "../who.tsx";

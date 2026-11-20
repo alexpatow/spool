@@ -10,7 +10,9 @@ import type { ComponentProps, ReactNode } from "react";
 
 import { SpoolError } from "./api.ts";
 import type { Committed, Op, SpoolClient } from "./api.ts";
-import { Failure, Labelled, Lines, Notice, Ops, Parts, Ref } from "./components.tsx";
+import { Failure, Lines, Notice } from "./components/layout.tsx";
+import { Ops, Parts, Ref } from "./components/refs.tsx";
+import { Labelled } from "./components/forms.tsx";
 import { Button } from "spool-ui/components/button";
 import type { ButtonSize, ButtonVariant } from "spool-ui/components/button";
 import * as Dialog from "spool-ui/components/dialog";

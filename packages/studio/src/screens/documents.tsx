@@ -3,28 +3,10 @@ import { getRouteApi } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef } from "react";
 
 import type { DocumentEntry, DocumentSort, RecordEntry, SpoolClient } from "../api.ts";
-import {
-  Code,
-  Fields,
-  Filters,
-  Id,
-  Placed,
-  LinkTo,
-  Load,
-  Page,
-  PagedTable,
-  Quiet,
-  Ref,
-  ScreenLink,
-  Section,
-  sortingOf,
-  Source,
-  Table,
-  useNarrow,
-  usePair,
-  When,
-  Word,
-} from "../components.tsx";
+import { Code, Fields, Load, Page, Quiet, Section } from "../components/layout.tsx";
+import { PagedTable, Table } from "../components/table.tsx";
+import { Id, Placed, LinkTo, Ref, ScreenLink, Source, When, Word } from "../components/refs.tsx";
+import { Filters, sortingOf, useNarrow, usePair } from "../components/filters.tsx";
 import { FileTextIcon } from "../icons.tsx";
 import { colors, radius, spacing, typography } from "spool-ui/tokens.stylex";
 import { tones } from "../styles/tones.stylex";

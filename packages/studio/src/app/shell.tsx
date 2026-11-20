@@ -8,7 +8,9 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
 import { Act } from "../act.tsx";
-import { Labelled, Page, ScreenLink, Text } from "../components.tsx";
+import { Page, Text } from "../components/layout.tsx";
+import { ScreenLink } from "../components/refs.tsx";
+import { Labelled } from "../components/forms.tsx";
 import { Button } from "spool-ui/components/button";
 import { Input } from "spool-ui/components/input";
 import { Kbd } from "spool-ui/components/kbd";

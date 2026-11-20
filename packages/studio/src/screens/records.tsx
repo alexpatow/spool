@@ -5,32 +5,11 @@ import type { ReactNode } from "react";
 
 import { Act, At, Done, Mistake } from "../act.tsx";
 import type { DocumentEntry, RecordEntry, RecordSort, Op, ReviewEntry } from "../api.ts";
-import {
-  Code,
-  Fields,
-  Filters,
-  Id,
-  Placed,
-  Json,
-  Labelled,
-  Load,
-  message,
-  Notice,
-  Page,
-  PagedTable,
-  Ref,
-  Row,
-  ScreenLink,
-  Section,
-  Select,
-  sortingOf,
-  Source,
-  Text,
-  useNarrow,
-  usePair,
-  When,
-  Word,
-} from "../components.tsx";
+import { Code, Fields, Json, Load, message, Notice, Page, Row, Section, Text } from "../components/layout.tsx";
+import { PagedTable } from "../components/table.tsx";
+import { Id, Placed, Ref, ScreenLink, Source, When, Word } from "../components/refs.tsx";
+import { Labelled, Select } from "../components/forms.tsx";
+import { Filters, sortingOf, useNarrow, usePair } from "../components/filters.tsx";
 import { Button } from "spool-ui/components/button";
 import { Input } from "spool-ui/components/input";
 import { findIdentity, findRecord, found } from "../find.ts";

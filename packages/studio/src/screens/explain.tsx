@@ -8,8 +8,6 @@ import type { Comparison, ConstraintKind, Explained, Explanation, Link, RuleRead
 import {
   Code,
   Fields,
-  Placed,
-  Labelled,
   Lines,
   Load,
   message,
@@ -17,18 +15,15 @@ import {
   Page,
   Panel,
   Reason,
-  Ref,
   Row,
   Section,
-  Select,
   Sentence,
-  Source,
-  Table,
   Text,
-  When,
-  Word,
-} from "../components.tsx";
-import type { Tone } from "../components.tsx";
+} from "../components/layout.tsx";
+import { Table } from "../components/table.tsx";
+import { Placed, Ref, Source, When, Word } from "../components/refs.tsx";
+import { Labelled, Select } from "../components/forms.tsx";
+import type { Tone } from "../components/layout.tsx";
 import { Button } from "spool-ui/components/button";
 import { Input } from "spool-ui/components/input";
 import * as ShelfTable from "spool-ui/components/table";

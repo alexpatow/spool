@@ -9,7 +9,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import type { IdentitySummary, RecordEntry } from "./api.ts";
-import { SCREENS, Source, Sources, message } from "./components.tsx";
+import { message } from "./components/layout.tsx";
+import { SCREENS, Source, Sources } from "./components/refs.tsx";
 import * as Command from "spool-ui/components/command";
 import { findScreen, isReference } from "./find.ts";
 import { count, identityMatch, recordName, short } from "./format.ts";

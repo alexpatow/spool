@@ -2,24 +2,10 @@ import { getRouteApi } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 
 import type { RunEntry, RunKind, RunSort, RunStatus } from "../api.ts";
-import {
-  Code,
-  Fields,
-  Filters,
-  Identity,
-  Lines,
-  Load,
-  Notice,
-  Onward,
-  Page,
-  Ref,
-  Section,
-  Table,
-  sortingOf,
-  useNarrow,
-  When,
-  Word,
-} from "../components.tsx";
+import { Code, Fields, Lines, Load, Notice, Page, Section } from "../components/layout.tsx";
+import { Table } from "../components/table.tsx";
+import { Identity, Onward, Ref, When, Word } from "../components/refs.tsx";
+import { Filters, sortingOf, useNarrow } from "../components/filters.tsx";
 import { RunIcon } from "../icons.tsx";
 import { count } from "../format.ts";
 import { useTypes } from "../hooks.ts";

@@ -4,22 +4,10 @@ import type { ReactNode } from "react";
 
 import { Act, At, Done } from "../act.tsx";
 import type { DraftEntry, DraftStatus, DraftSummary } from "../api.ts";
-import {
-  Fields,
-  Filters,
-  Id,
-  Load,
-  Ops,
-  Page,
-  Reason,
-  Ref,
-  Row,
-  Section,
-  Table,
-  When,
-  Word,
-  useNarrow,
-} from "../components.tsx";
+import { Fields, Load, Page, Reason, Row, Section } from "../components/layout.tsx";
+import { Table } from "../components/table.tsx";
+import { Id, Ops, Ref, When, Word } from "../components/refs.tsx";
+import { Filters, useNarrow } from "../components/filters.tsx";
 import { CheckIcon, DraftIcon } from "../icons.tsx";
 import { count } from "../format.ts";
 import { useTypes } from "../hooks.ts";

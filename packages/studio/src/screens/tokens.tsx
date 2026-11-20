@@ -4,7 +4,10 @@ import type { ReactNode } from "react";
 
 import { Act, Done } from "../act.tsx";
 import type { Grant, Token } from "../api.ts";
-import { Code, Labelled, Load, Notice, Page, Section, Table, When } from "../components.tsx";
+import { Code, Load, Notice, Page, Section } from "../components/layout.tsx";
+import { Table } from "../components/table.tsx";
+import { When } from "../components/refs.tsx";
+import { Labelled } from "../components/forms.tsx";
 import { CopyButton } from "spool-ui/components/copy-button";
 import { Input } from "spool-ui/components/input";
 import { useStudio } from "../hooks.ts";

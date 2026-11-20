@@ -7,7 +7,8 @@ import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
 import type { OAuthRequest, Person, SessionState, SpoolClient } from "../api.ts";
-import { Code, Failure, Labelled, Notice, Quiet, Row, Text } from "../components.tsx";
+import { Code, Failure, Notice, Quiet, Row, Text } from "../components/layout.tsx";
+import { Labelled } from "../components/forms.tsx";
 import { Button } from "spool-ui/components/button";
 import { Input } from "spool-ui/components/input";
 import { NewPassword, password, typed } from "../screens/people.tsx";

@@ -15,7 +15,7 @@ import { SpoolClient, SpoolError } from "./api.ts";
 import type { Fetch, Info, Person, SessionState } from "./api.ts";
 import { Approve, Door, SetupForm, SignInForm, here, isAt, withoutRefusal } from "./app/door.tsx";
 import { AroundContext } from "./app/shell.tsx";
-import { Failure, Notice, Quiet } from "./components.tsx";
+import { Failure, Notice, Quiet } from "./components/layout.tsx";
 import { Button } from "spool-ui/components/button";
 import { StudioContext } from "./hooks.ts";
 import { createQueryClient, keys } from "./queries.ts";

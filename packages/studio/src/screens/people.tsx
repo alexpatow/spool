@@ -3,7 +3,10 @@ import type { ReactNode } from "react";
 
 import { Act, Done, Mistake } from "../act.tsx";
 import type { ChangePersonRequest, Person } from "../api.ts";
-import { Code, Flag, Labelled, Load, Page, Table, Word } from "../components.tsx";
+import { Code, Load, Page } from "../components/layout.tsx";
+import { Table } from "../components/table.tsx";
+import { Word } from "../components/refs.tsx";
+import { Flag, Labelled } from "../components/forms.tsx";
 import { Input } from "spool-ui/components/input";
 import { useStudio } from "../hooks.ts";
 import { UserPlusIcon } from "../icons.tsx";
