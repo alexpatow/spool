@@ -69,7 +69,7 @@ Every step keeps behaviour as it is: the checks are `cargo fmt`, `cargo clippy
       `server/oauth.rs` and the sign-in section of `server.rs` in one place.
 - [ ] F2. `server.rs` (2,972 lines) into `server/{mod, error, request,
       handlers/*}.rs`, handlers named after the engine module they call.
-- [ ] F3. `commands/show.rs` (2,600 lines) into `commands/show/*.rs`, one per
+- [x] F3. `commands/show.rs` (2,600 lines) into `commands/show/*.rs`, one per
       subcommand, and `commands/explain.rs`.
 - [ ] F4. `server/mcp.rs` into `server/mcp/{mod, tools, limits}.rs`.
 - [ ] F5. MCP tools call typed functions, not handlers through strings.

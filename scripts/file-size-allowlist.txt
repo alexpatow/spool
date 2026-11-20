@@ -4,7 +4,6 @@
 880 crates/spool-cli/src/accounts/oauth.rs
 825 crates/spool-cli/src/api.rs
 1163 crates/spool-cli/src/commands/extract.rs
-2594 crates/spool-cli/src/commands/show.rs
 2922 crates/spool-cli/src/server.rs
 1516 crates/spool-cli/src/server/mcp.rs
 888 crates/spool-cli/src/server/oauth.rs
