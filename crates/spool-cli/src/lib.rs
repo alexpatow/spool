@@ -9,3 +9,4 @@ pub mod delimited;
 pub mod google;
 pub mod server;
 pub mod studio;
+pub mod text;

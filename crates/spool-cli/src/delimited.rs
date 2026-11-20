@@ -16,6 +16,8 @@ use arrow::array::{ArrayRef, StringBuilder};
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use arrow::record_batch::RecordBatch;
 
+use crate::text::count;
+
 /// The most columns the first line may name. A source lists every column
 /// its rows may have, and none lists near as many: this is what keeps a
 /// first line that anyone could send from costing more than it is worth.
@@ -159,13 +161,6 @@ fn describe(error: &csv::Error) -> Malformed {
         csv::ErrorKind::Io(error) => format!("it cannot be read: {error}"),
         _ => error.to_string(),
     })
-}
-
-fn count(number: u64, what: &str) -> String {
-    match number {
-        1 => format!("1 {what}"),
-        _ => format!("{number} {what}s"),
-    }
 }
 
 #[cfg(test)]

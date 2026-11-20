@@ -15,10 +15,11 @@ use spool::{
     DeclaredSource, ExtractReport, Extractor, FailedDocument, RecordEntry, RunEntry, RunStatus,
 };
 
-use super::remote::{self, Remote, RemoteArgs, WAIT_MS, listed, typed};
+use super::remote::{self, Remote, RemoteArgs, WAIT_MS, typed};
 use crate::Failure;
 use crate::output::{Output, OutputArgs, aligned, hint};
 use crate::progress;
+use spool_cli::text::{count, listed};
 
 /// Find records in documents with one of the project's extractors
 ///
@@ -221,7 +222,7 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
                 return Err(Failure::stopped(format!(
                     "stopped: {stored} of {} are stored and none is read yet. The same command \
                      again stores the rest and reads them.",
-                    plural(files.len() as u64, "document", "documents")
+                    count(files.len() as u64, "document")
                 )));
             }
             let documents: Vec<Value> = sent
@@ -253,7 +254,7 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
                         hint(format!(
                             "stored     {stored} of {} before this: the same command again \
                              stores the rest and reads them",
-                            plural(files.len() as u64, "document", "documents")
+                            count(files.len() as u64, "document")
                         ));
                     }
                     return Err(failure);
@@ -274,18 +275,18 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
             println!("source     {source}");
             println!(
                 "read       {} from {}",
-                plural(files.len() as u64, "document", "documents"),
+                count(files.len() as u64, "document"),
                 match (arguments.paths.as_slice(), files.as_slice()) {
                     (_, [file]) => file.path.clone(),
                     ([named], _) if Path::new(named).is_dir() => named.clone(),
-                    (_, files) => plural(files.len() as u64, "file", "files"),
+                    (_, files) => count(files.len() as u64, "file"),
                 }
             );
             println!(
                 "loaded     {} new, {} already held, {}",
                 inserted - superseded,
                 duplicates,
-                plural(superseded, "new version", "new versions"),
+                count(superseded, "new version"),
             );
         }
     }
@@ -354,7 +355,7 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
                 "warning: took back {} that run {} found nowhere, though it found nothing at all: \
                  if the extractor is wrong, mend it and run `spool extract --again`, and what it \
                  finds again goes back to the identity it left",
-                plural(report.taken_back, "record", "records"),
+                count(report.taken_back, "record"),
                 run.run
             ));
         }
@@ -371,7 +372,7 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
                 "run {} could not read any of its {}, as {}:{} says: {}. They are not \
                  read, and the same command reads them again.",
                 run.run,
-                plural(report.documents, "document", "documents"),
+                count(report.documents, "document"),
                 first.source,
                 first.key,
                 first.reason
@@ -418,8 +419,8 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
     }
     println!(
         "found      {} in {}: {} new, {} already held{}",
-        plural(found.mentions, "record", "records"),
-        plural(found.documents, "document", "documents"),
+        count(found.mentions, "record"),
+        count(found.documents, "document"),
         found.inserted.saturating_sub(found.superseded),
         found.duplicates,
         match found.superseded {
@@ -431,14 +432,14 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
     if found.taken_back > 0 {
         println!(
             "taken back {}: no extractor finds {} any more",
-            plural(found.taken_back, "record", "records"),
+            count(found.taken_back, "record"),
             if found.taken_back == 1 { "it" } else { "them" }
         );
     }
     if !found.failed.is_empty() {
         println!(
             "failed     {}: they are not read, and the same command reads them again",
-            plural(found.failed.len() as u64, "document", "documents")
+            count(found.failed.len() as u64, "document")
         );
         let rows: Vec<Vec<String>> = found
             .failed
@@ -819,7 +820,7 @@ impl<'a> Progress<'a> {
             return;
         }
         let read = found.documents + found.failed.len() as u64;
-        let records = format!(", {}", plural(found.mentions, "record", "records"));
+        let records = format!(", {}", count(found.mentions, "record"));
         if self.counted {
             self.bar.set_position(read);
             self.bar.set_message(records);
@@ -840,9 +841,9 @@ impl<'a> Progress<'a> {
                 "Extracted",
                 &format!(
                     "{} in {}: {}, {} failed",
-                    plural(found.documents, "document", "documents"),
+                    count(found.documents, "document"),
                     progress::took(self.began.elapsed()),
-                    plural(found.mentions, "record", "records"),
+                    count(found.mentions, "record"),
                     found.failed.len()
                 ),
             );
@@ -856,7 +857,7 @@ impl<'a> Progress<'a> {
         if kept == 0 {
             return;
         }
-        let read = plural(kept, "document", "documents");
+        let read = count(kept, "document");
         let before = match failed {
             Some(run) => format!("run {run}"),
             None => "the batch that failed".to_owned(),
@@ -898,7 +899,7 @@ fn stopped(found: &Found, again: bool, cancelled: Option<RunId>) -> String {
             ": run {run} was cancelled, and nothing it read is kept"
         ));
     }
-    let kept = plural(found.documents, "document", "documents");
+    let kept = count(found.documents, "document");
     let are = if found.documents == 1 { "is" } else { "are" };
     match (again, found.documents) {
         (false, 0) => said.push_str(". The same command again reads the documents."),
@@ -987,10 +988,6 @@ fn shown(text: &str) -> String {
     let mut cut: String = line.chars().take(SHOWN - 1).collect();
     cut.push('…');
     cut
-}
-
-fn plural(number: u64, one: &str, many: &str) -> String {
-    format!("{number} {}", if number == 1 { one } else { many })
 }
 
 fn unreported(run: &RunEntry, what: &str) -> Failure {

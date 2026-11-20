@@ -1198,17 +1198,11 @@ fn names_said(side: &Side) -> String {
     }
 }
 
-fn links_count(count: usize) -> String {
-    match count {
-        1 => "1 link".to_owned(),
-        count => format!("{count} links"),
-    }
-}
-
-fn records_count(count: u64) -> String {
-    match count {
-        1 => "1 record".to_owned(),
-        count => format!("{count} records"),
+/// A number of things, as a sentence says it: `1 link`, `2 links`.
+fn count(number: u64, what: &str) -> String {
+    match number {
+        1 => format!("1 {what}"),
+        number => format!("{number} {what}s"),
     }
 }
 
@@ -1227,7 +1221,7 @@ fn identity_summary(explanation: &IdentityExplanation) -> Vec<String> {
     said.push(format!(
         "{called} is a `{}` identity of {} with {} different {}.",
         explanation.entity_type,
-        records_count(explanation.records),
+        count(explanation.records, "record"),
         explanation.names,
         if explanation.names == 1 {
             "name"
@@ -1269,7 +1263,7 @@ fn identity_summary(explanation: &IdentityExplanation) -> Vec<String> {
         };
         said.push(format!(
             "Without the {} only rule `{}` made, it would fall into {} pieces: {}{more}.",
-            links_count(hold.alone as usize),
+            count(hold.alone, "link"),
             hold.rule,
             hold.pieces,
             pieces.join(", "),
@@ -1287,8 +1281,8 @@ fn identity_summary(explanation: &IdentityExplanation) -> Vec<String> {
                 };
                 said.push(format!(
                     "Removing {} would part {}{} from the other {}{}.",
-                    links_count(split.links.len()),
-                    records_count(small.records),
+                    count(split.links.len() as u64, "link"),
+                    count(small.records, "record"),
                     names_said(small),
                     large.records,
                     names_said(large),
@@ -1448,10 +1442,10 @@ fn summary(explanation: &Explanation) -> Vec<String> {
                 if let [with_left, with_right] = &cut.sides[..] {
                     said.push(format!(
                         "Removing {} would part them, leaving {} with `{l}`{} and {} with `{r}`{}.",
-                        links_count(cut.links.len()),
-                        records_count(with_left.records),
+                        count(cut.links.len() as u64, "link"),
+                        count(with_left.records, "record"),
                         names_said(with_left),
-                        records_count(with_right.records),
+                        count(with_right.records, "record"),
                         names_said(with_right),
                     ));
                 }

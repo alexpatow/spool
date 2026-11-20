@@ -117,6 +117,7 @@ use crate::api::{
 use crate::delimited::{self, Malformed};
 use crate::google::{Failed, Google, Provider, Started};
 use crate::studio;
+use crate::text::listed;
 
 mod local;
 mod mcp;
@@ -1475,15 +1476,6 @@ where
 
 fn run_id(text: &str) -> ApiResult<RunId> {
     Ok(RunId(id(text, "a run ID")?))
-}
-
-/// Names between backticks, as a sentence lists them: `a`, `b` and `c`.
-fn listed(names: &[&str]) -> String {
-    let quoted: Vec<String> = names.iter().map(|name| format!("`{name}`")).collect();
-    match quoted.split_last() {
-        Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
-        _ => quoted.join(""),
-    }
 }
 
 fn is_text(headers: &HeaderMap) -> bool {

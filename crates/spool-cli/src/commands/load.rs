@@ -17,10 +17,10 @@ use spool_cli::api::{ARROW_STREAM, Info};
 use spool_cli::delimited::{EMPTY, Reader};
 
 use super::remote::{self, Remote, RemoteArgs, WAIT_MS, unsuccessful};
-use super::show::count;
 use crate::Failure;
 use crate::output::{Output, OutputArgs, fields, hint};
 use crate::progress;
+use spool_cli::text::{count, listed};
 
 /// Send the rows of a file to a running server
 ///
@@ -517,7 +517,7 @@ fn target<'a>(
                             Some(entity_type) => format!("`{entity_type}` reads"),
                             None => "the project has".to_owned(),
                         };
-                        let listed = remote::listed(&names);
+                        let listed = listed(&names);
                         return Err(Failure::failed(match file {
                             Some(file) => format!(
                                 "{has} the sources {listed}, and {file} is named after {}: say \

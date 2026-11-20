@@ -23,6 +23,7 @@ use spool_cli::api::{DocumentList, Info, RecordList};
 use super::remote::{Remote, RemoteArgs, typed};
 use crate::output::{Cell, Output, OutputArgs, Table, aligned, fields, hint, indented, table};
 use crate::{Failure, Kind};
+use spool_cli::text::count;
 
 /// Show what a running server holds
 ///
@@ -2576,15 +2577,6 @@ fn share(unlinked: u64, linked: u64) -> String {
         100 if linked > 0 => ">99%".to_owned(),
         percent => format!("{percent}%"),
     }
-}
-
-pub(super) fn count(number: u64, what: &str) -> String {
-    let plural = match what.strip_suffix('y') {
-        _ if number == 1 => what.to_owned(),
-        Some(stem) => format!("{stem}ies"),
-        None => format!("{what}s"),
-    };
-    format!("{number} {plural}")
 }
 
 /// The members of a JSON object, one per line. Anything else on one line.

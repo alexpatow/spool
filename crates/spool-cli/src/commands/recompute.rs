@@ -10,8 +10,9 @@ use spool::{
     TypeRecompute,
 };
 
+use spool_cli::text::count;
+
 use super::remote::{Remote, RemoteArgs, typed};
-use super::show::count;
 use crate::Failure;
 use crate::output::{Output, OutputArgs, aligned, fields, hint, table};
 use crate::progress;

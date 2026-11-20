@@ -12,6 +12,7 @@ use super::remote::{Remote, RemoteArgs, typed};
 use crate::Failure;
 use crate::output::{Output, OutputArgs};
 use crate::progress;
+use spool_cli::text::count;
 
 /// Retract rows a source no longer holds
 ///
@@ -85,10 +86,7 @@ pub fn retract(arguments: RetractArgs) -> Result<(), Failure> {
     }
 
     let remote = Remote::new(&arguments.remote);
-    let waiting = progress::spinner(format!(
-        "Taking back {}",
-        super::show::count(keys.len() as u64, "row")
-    ));
+    let waiting = progress::spinner(format!("Taking back {}", count(keys.len() as u64, "row")));
     let mut answer = remote.post(
         "/retract",
         &json!({

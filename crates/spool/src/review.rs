@@ -384,13 +384,6 @@ fn sorted(mut ids: Vec<String>) -> Vec<String> {
     ids
 }
 
-/// A list of IDs as a SQL value. The IDs are UUIDs the engine printed, so
-/// they are safe to splice.
-fn uuid_list(ids: &[String]) -> String {
-    let quoted: Vec<String> = ids.iter().map(|id| format!("'{id}'")).collect();
-    format!("[{}]::UUID[]", quoted.join(", "))
-}
-
 fn split(joined: Option<String>) -> Vec<String> {
     sorted(
         joined
@@ -653,8 +646,8 @@ pub(crate) fn record(
             &format!(
                 "INSERT INTO spool.review_item
                  VALUES (?, ?, ?, ?, {}, {}, 'open', NULL, NULL, NULL, NULL, NULL, NULL)",
-                uuid_list(&shape.records),
-                uuid_list(&shape.identities)
+                lookup::uuid_list(&shape.records),
+                lookup::uuid_list(&shape.identities)
             ),
             params![next_id, run.0 as i64, entity_type.as_str(), shape.kind],
         )?;

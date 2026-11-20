@@ -44,9 +44,11 @@ Every step keeps behaviour as it is: the checks are `cargo fmt`, `cargo clippy
 
 - [x] D1. Union-find: one in `spool-core`, used by `reconcile.rs`,
       `recompute.rs` and `possible_split.rs`.
-- [ ] D2. `spool-cli/src/text.rs`: `listed`, `plural`/`count`, `share`, which
+- [x] D2. `spool-cli/src/text.rs`: `listed`, `plural`/`count`, `share`, which
       are written two to four times across the commands and the server.
-- [ ] D3. `is_zero`, `uuid_list`, `lock`: one each.
+- [x] D3. `uuid_list`: one. `is_zero` stays one per crate (the other copy is
+      in `bench.rs`, which E7 moves to a crate of its own), and the two
+      `lock` helpers are in different crates and guard different types.
 
 ## E. Engine crate structure
 

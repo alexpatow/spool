@@ -56,16 +56,6 @@ pub fn named_after<'a>(file: &str, sources: &[&'a str]) -> Option<&'a str> {
         .copied()
 }
 
-/// Names in a sentence: `a`, `a` and `b`, or `a`, `b` and `c`.
-pub fn listed(names: &[&str]) -> String {
-    let quoted: Vec<String> = names.iter().map(|name| format!("`{name}`")).collect();
-    match quoted.as_slice() {
-        [] => String::new(),
-        [only] => only.clone(),
-        [first @ .., last] => format!("{} and {last}", first.join(", ")),
-    }
-}
-
 pub struct Remote {
     agent: ureq::Agent,
     pub url: String,
@@ -327,12 +317,5 @@ mod tests {
         });
         assert_eq!(remote.url, "http://spool.example.com");
         assert_eq!(remote.token.as_deref(), Some("secret"));
-    }
-
-    #[test]
-    fn names_are_listed_as_a_sentence_lists_them() {
-        assert_eq!(listed(&["crm"]), "`crm`");
-        assert_eq!(listed(&["crm", "notes"]), "`crm` and `notes`");
-        assert_eq!(listed(&["a", "b", "c"]), "`a`, `b` and `c`");
     }
 }

@@ -8,10 +8,11 @@ use spool::core::EntityType;
 use spool::{RunEntry, RunStatus, StrategyRef, TypeInfo};
 
 use super::remote::{Remote, RemoteArgs, WAIT_MS, unsuccessful};
-use super::show::{count, placed};
+use super::show::placed;
 use crate::Failure;
 use crate::output::{Output, OutputArgs, fields, hint};
 use crate::progress;
+use spool_cli::text::count;
 
 /// Match new records and place them in identities
 ///
