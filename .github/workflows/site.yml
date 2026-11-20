@@ -74,6 +74,15 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
 
+      # The workspace's own checks of how TypeScript is written, which CI
+      # runs for the packages and which a change to the site alone would
+      # otherwise pass by.
+      - name: Format and lint
+        working-directory: .
+        run: |
+          bun run fmt:check
+          bun run lint
+
       # Shelf's components are copied into `packages/ui` as source, and a
       # file there says what each was copied from. This fails if a file it
       # names is gone, if the package does not declare what a component

@@ -8,7 +8,7 @@ import { LinkTo, Onward, Ref, ScreenLink, Source, When, Word } from "../componen
 import type { Leads } from "../components/refs.tsx";
 import { count } from "../format.ts";
 import { keys, useRead } from "../queries.ts";
-import { colors, display, linen, radius, spacing, typography } from "spool-ui/tokens.stylex";
+import { colors, display, linen, radius, spacing } from "spool-ui/tokens.stylex";
 import { tones } from "../styles/tones.stylex";
 import { useCalled, Who } from "../who.tsx";
 

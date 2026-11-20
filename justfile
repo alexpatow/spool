@@ -18,16 +18,24 @@ fmt:
     bun run fmt
 
 # Fails if the Rust code or the TypeScript is not formatted.
-fmt-check:
+fmt-check: install
     cargo fmt --all -- --check
     bun run fmt:check
 
-# Clippy, with warnings as errors, as CI runs it.
-lint:
+# Clippy and oxlint, with warnings as errors, as CI runs them.
+lint: install
     cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+    bun run lint
 
-# Installs what the TypeScript packages and the site depend on. They are one
-# bun workspace, with one lockfile at the root.
+# Not part of `check`: what it finds today is listed for a later change.
+#
+# TypeScript exports, files and dependencies nothing uses.
+unused: install
+    bun run unused
+
+# They are one bun workspace, with one lockfile at the root.
+#
+# Installs what the TypeScript packages and the site depend on.
 install:
     bun install --frozen-lockfile
 
@@ -43,8 +51,10 @@ sizes:
 generated:
     bash scripts/check-generated.sh --all
 
-# The Rust tests. The tests that run user code, the stress tests and the
-# studio's are ignored unless asked for: `just test-all`.
+# The tests that run user code, the stress tests and the studio's are
+# ignored unless asked for: `just test-all`.
+#
+# The Rust tests, without the ones that are ignored.
 test *arguments:
     cargo test --locked --workspace {{ arguments }}
 

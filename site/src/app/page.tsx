@@ -11,7 +11,7 @@ import { explainer } from "@/lib/explainer";
 import { sharing, siteCardPath } from "@/lib/sharing";
 import { site } from "@/lib/site";
 import { layout, breakpoints } from "@/styles/layout.stylex";
-import { colors, linen, spacing, typography } from "spool-ui/tokens.stylex";
+import { colors, linen, spacing } from "spool-ui/tokens.stylex";
 
 const server = `curl -fsSL ${site.repository}/releases/latest/download/install.sh | sh
 spool init companies --example companies

@@ -1,0 +1,30 @@
+{
+  "$schema": "./node_modules/knip/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": [],
+      "project": []
+    },
+    "packages/client": {
+      "entry": ["scripts/*.ts", "test/**/*.test.ts"]
+    },
+    "packages/strategy": {
+      "entry": ["scripts/*.ts", "test/**/*.test.ts"]
+    },
+    "packages/stress": {
+      "entry": ["src/{scale,crash,reviewer,hostile}.ts", "test/**/*.test.ts"]
+    },
+    "packages/studio": {
+      "entry": ["src/routes/**/*.tsx", "scripts/*.ts", "test/**/*.test.{ts,tsx}"]
+    },
+    "packages/ui": {
+      "entry": ["src/**/*.{ts,tsx}"]
+    },
+    "site": {
+      "entry": ["scripts/*.ts", "video/*.ts"],
+      "ignoreDependencies": ["@stylexjs/babel-plugin"]
+    }
+  },
+  "ignoreDependencies": ["@fontsource/*"],
+  "ignoreBinaries": ["ffmpeg"]
+}

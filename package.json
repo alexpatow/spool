@@ -9,6 +9,12 @@
   ],
   "scripts": {
     "fmt": "bun fmt --no-script 'packages/**/*.{ts,tsx}' 'site/**/*.{ts,tsx,mjs,js}'",
-    "fmt:check": "bun fmt --no-script --check 'packages/**/*.{ts,tsx}' 'site/**/*.{ts,tsx,mjs,js}'"
+    "fmt:check": "bun fmt --no-script --check 'packages/**/*.{ts,tsx}' 'site/**/*.{ts,tsx,mjs,js}'",
+    "lint": "oxlint",
+    "unused": "knip"
+  },
+  "devDependencies": {
+    "knip": "6.47.0",
+    "oxlint": "1.94.0"
   }
 }

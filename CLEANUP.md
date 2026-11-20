@@ -107,9 +107,9 @@ Every step keeps behaviour as it is: the checks are `cargo fmt`, `cargo clippy
 - [x] H6. `components.tsx` into `components/{layout, table, refs, filters}.tsx`.
 - [x] H7. `screens/review.tsx` into `screens/review/*.tsx`; `app.tsx` into
       `app/{door, shell}.tsx`.
-- [ ] H8. `oxlint` for the TypeScript at the workspace root, until `bun lint`
-      is out, and `bun fmt` to format it. `knip` for exports, files and
-      dependencies nothing uses.
+- [x] H8. `oxlint` for the TypeScript at the workspace root, until `bun lint`
+      is out, and `bun fmt` to format it, both in CI. `knip` is set up and
+      runs with `just unused`; what it finds is for a later change.
 - [x] H9. Nothing to move: the TypeScript is tested with `bun test` and the
       Rust with `cargo test` already.
 
@@ -120,6 +120,7 @@ Every step keeps behaviour as it is: the checks are `cargo fmt`, `cargo clippy
       `release/by-legal-form.py` is what the release scripts and the image
       test put in a project.
 - [x] I2. `docs/`: planning documents under `docs/design/`.
-- [ ] I3. CI: file-size check, `cargo-machete`, `jscpd`.
+- [x] I3. CI: the file-size check and `cargo-machete`. `jscpd` is left for
+      a later change.
 - [ ] I4. `AGENTS.md` brought up to date with the tree as it ends up; this
       file removed.

@@ -83,6 +83,8 @@ export function Palette({
 
   useEffect(() => {
     if (!open) {
+      // A palette that closes forgets what was typed into it, for the next time it opens.
+      // oxlint-disable-next-line react/set-state-in-effect
       setTyped("");
       setResults(null);
       setProblem(null);
@@ -91,6 +93,8 @@ export function Palette({
 
   useEffect(() => {
     const mine = ++asked.current;
+    // Each search starts clean: the problem shown was the last search's.
+    // oxlint-disable-next-line react/set-state-in-effect
     setProblem(null);
     if (words === "") {
       setResults(null);

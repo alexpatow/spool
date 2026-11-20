@@ -558,7 +558,7 @@ describe("a run judged by the caller", () => {
     expect(candidates.map((candidate) => candidate.left_code).sort()).toEqual(["anvil", "hammer"]);
     // The same pairs come as an Arrow stream, which starts with a continuation marker.
     const arrow = await client.candidatesArrow(id);
-    expect([...arrow.slice(0, 4)]).toEqual([0xff, 0xff, 0xff, 0xff]);
+    expect(Array.from(arrow.slice(0, 4))).toEqual([0xff, 0xff, 0xff, 0xff]);
 
     const stored = await client.submitJudgements(
       id,

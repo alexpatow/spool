@@ -111,6 +111,34 @@ jobs:
       - name: Lint
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
+  typescript:
+    name: Format, lint and type-check the TypeScript
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.4"
+
+      # The packages and the site are one workspace, with one lockfile.
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Format
+        run: bun run fmt:check
+
+      - name: Lint
+        run: bun run lint
+
+      # The site is type-checked by its own workflow, with what it builds.
+      - name: Type check
+        run: |
+          for package in packages/*/; do
+            (cd "$package" && bun run typecheck)
+          done
+
   test:
     name: Test (${{ matrix.name }})
     runs-on: ubuntu-24.04

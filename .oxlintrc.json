@@ -1,0 +1,26 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "react", "unicorn", "oxc"],
+  "categories": {
+    "correctness": "error"
+  },
+  "rules": {
+    // A row of a table is written as an array of its cells, which have a
+    // place and not a key. React says so itself, in the tests, where a list
+    // that is mapped has none.
+    "react/jsx-key": "off"
+  },
+  "ignorePatterns": [
+    "crates/",
+    "benchmarks/",
+    "target/",
+    "site/.next/",
+    // Written by a generator: see .gitattributes.
+    "packages/client/src/types.ts",
+    "packages/studio/src/routeTree.gen.ts",
+    // Shelf's files, which `shelf check` compares with the registry's.
+    "packages/ui/src/components/ui/",
+    "packages/ui/src/lib/shelf/",
+    "packages/ui/src/styles/shelf/"
+  ]
+}
