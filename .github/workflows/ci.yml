@@ -55,6 +55,8 @@ env:
   RUST_TOOLCHAIN: "1.98.1"
   NEXTEST_VERSION: "0.9.152"
   NEXTEST_LINUX_X64_SHA256: d039b43c3e0958441b6ad0a39c8884d018b3d2e8fb9928f209074b1100b5e17a
+  MACHETE_VERSION: "0.10.1"
+  MACHETE_LINUX_X64_SHA256: 785d381985140ffa172246d82089adeb7f2eb9c774d961c48f77a4494023afb5
   # Each test binary carries the debug information of everything it links,
   # and with all of it they fill the runner's disk. Line numbers are kept,
   # for a backtrace, and only those of this workspace: see `Configure Cargo`.
@@ -84,6 +86,23 @@ jobs:
 
       - name: Format
         run: cargo fmt --all -- --check
+
+      # A source file over the budget fails unless it was over it when the
+      # check was added, and those may only get shorter.
+      - name: Line budget
+        run: bash scripts/check-file-size.sh
+
+      # A dependency a crate names and does not use. What is named for
+      # another reason is listed in that crate's Cargo.toml.
+      - name: Dependencies nothing uses
+        run: |
+          archive=$(mktemp)
+          trap 'rm -f "$archive"' EXIT
+          name="cargo-machete-v$MACHETE_VERSION-x86_64-unknown-linux-musl"
+          curl -fsSL "https://github.com/bnjbvr/cargo-machete/releases/download/v$MACHETE_VERSION/$name.tar.gz" -o "$archive"
+          printf '%s  %s\n' "$MACHETE_LINUX_X64_SHA256" "$archive" | sha256sum --check --strict
+          tar -xzf "$archive" -C "${CARGO_HOME:-$HOME/.cargo}/bin" --strip-components 1 "$name/cargo-machete"
+          cargo machete
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:

@@ -61,3 +61,8 @@ tempfile.workspace = true
 
 [lints]
 workspace = true
+
+# Named so that this crate's build script runs after the one that downloads
+# the DuckDB library, and used by no code: see the workspace's Cargo.toml.
+[package.metadata.cargo-machete]
+ignored = ["libduckdb-sys"]
