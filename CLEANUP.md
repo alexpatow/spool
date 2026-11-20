@@ -106,8 +106,10 @@ Every step keeps behaviour as it is: the checks are `cargo fmt`, `cargo clippy
 
 ## I. Repository
 
-- [ ] I1. `examples/extractors/model.ts` and `release/by-legal-form.py` to
-      where the tests that use them look.
+- [x] I1. Left where they are, on a second look: `examples/extractors/model.ts`
+      is an example written to be copied into a project, and
+      `release/by-legal-form.py` is what the release scripts and the image
+      test put in a project.
 - [x] I2. `docs/`: planning documents under `docs/design/`.
 - [ ] I3. CI: file-size check, `cargo-machete`, `jscpd`.
 - [ ] I4. `AGENTS.md` brought up to date with the tree as it ends up; this
