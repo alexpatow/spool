@@ -5,10 +5,10 @@ name: Claude Code Review
 # each finding, and what survives is posted as inline comments, or as one
 # comment saying nothing was found.
 #
-# The review runs once per pull request. The plugin stops when Claude has
-# already commented, so a push to a reviewed pull request would start a run
-# that does nothing: `synchronize` is not on the list. To have a later push
-# reviewed, mention `@claude` on the pull request (see claude.yml).
+# Every push is reviewed. The plugin by itself stops when Claude has already
+# commented on the pull request, so the prompt tells it to go on, and to
+# leave out what an earlier review has already raised. A push that turns up
+# nothing new gets no comment. A newer push cancels a review still running.
 #
 # The action refuses to run a workflow whose file differs from the one on
 # the default branch, so a change to this file is first tried on the pull
@@ -18,7 +18,7 @@ name: Claude Code Review
 # alone is not reviewed.
 on:
   pull_request:
-    types: [opened, ready_for_review, reopened]
+    types: [opened, synchronize, ready_for_review, reopened]
     paths:
       - "**"
       - ".*"
@@ -66,9 +66,22 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: "https://github.com/anthropics/claude-code.git"
           plugins: "code-review@claude-code-plugins"
-          prompt: "/code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number }}"
-          # The tools the plugin's command declares. With only the inline
-          # comment tool allowed, it cannot read the pull request or post
-          # its summary.
+          # What follows the pull request is read by the command as part of
+          # its arguments.
+          prompt: >-
+            /code-review:code-review --comment
+            ${{ github.repository }}/pull/${{ github.event.pull_request.number }}
+            This run reviews the pull request as of commit ${{ github.event.pull_request.head.sha }}.
+            In step 1, do not stop because Claude has already commented: a
+            review runs on every push. Read the comments already on it, with
+            `gh pr view ${{ github.event.pull_request.number }} --comments` and
+            `gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments --paginate`
+            for the inline ones, and do not post
+            an issue that has already been raised, whether or not it was
+            resolved. If an earlier review exists and this run finds no new
+            issues, post no comment at all.
+          # The tools the plugin's command declares, and reading this pull
+          # request's inline comments. With only the inline comment tool
+          # allowed, it cannot read the pull request or post its summary.
           claude_args: >-
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh search:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh search:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments:*)"
