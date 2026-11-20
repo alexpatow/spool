@@ -2378,6 +2378,7 @@ impl Inner {
     /// the commit and the line that records it, the next run examines the
     /// same records again, and those the commit placed are no longer
     /// new.
+    #[expect(clippy::too_many_lines)]
     fn conclude(
         &mut self,
         by: &Actor,
@@ -2867,6 +2868,7 @@ impl Inner {
             .draft)
     }
 
+    #[expect(clippy::too_many_lines)]
     fn apply_recompute(
         &mut self,
         by: &Actor,
@@ -3220,6 +3222,7 @@ impl Inner {
         Ok(count as u64)
     }
 
+    #[expect(clippy::too_many_lines)]
     fn verify(&mut self) -> Result<()> {
         let mut problems = Vec::new();
 

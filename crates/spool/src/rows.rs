@@ -60,6 +60,7 @@ impl Rows {
     /// are integers unless one of them has a fraction. A nested value is
     /// refused: send it as text, or flatten it. So is an integer that its
     /// column cannot hold exactly.
+    #[expect(clippy::too_many_lines)]
     pub fn from_json(rows: &[serde_json::Map<String, serde_json::Value>]) -> Result<Self> {
         use serde_json::Value;
 

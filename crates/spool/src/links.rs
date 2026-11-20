@@ -424,6 +424,7 @@ impl Graph {
     /// Of the cuts with that few links, the one whose smaller side is the
     /// larger: a cut that parts one record from the rest says less about
     /// where two things were joined than one that parts two groups.
+    #[expect(clippy::too_many_lines)]
     pub(crate) fn cut(&self, one: &[u32], other: &[u32]) -> Option<Parting> {
         let mut sink = vec![false; self.len()];
         for &at in other {

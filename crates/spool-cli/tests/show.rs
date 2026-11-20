@@ -113,6 +113,7 @@ fn workshop(dir: &Path) -> Server {
 }
 
 #[test]
+#[expect(clippy::too_many_lines)]
 fn show_lists_what_a_server_holds() {
     let dir = tempfile::tempdir().unwrap();
     let server = workshop(dir.path());
@@ -455,6 +456,7 @@ fn chained(dir: &Path) -> Server {
 }
 
 #[test]
+#[expect(clippy::too_many_lines)]
 fn explain_names_each_link_of_a_chain_by_its_records_and_its_rule() {
     let dir = tempfile::tempdir().unwrap();
     let server = chained(dir.path());
@@ -637,6 +639,7 @@ fn explain_names_each_link_of_a_chain_by_its_records_and_its_rule() {
 }
 
 #[test]
+#[expect(clippy::too_many_lines)]
 fn drafts_and_review_items_are_shown_with_what_they_hold() {
     let dir = tempfile::tempdir().unwrap();
     let companies = benchmarks().join("identity/companies-small");
@@ -1085,6 +1088,7 @@ fn a_source_and_key_name_the_latest_version_however_many_there_were() {
 }
 
 #[test]
+#[expect(clippy::too_many_lines)]
 fn the_attributes_of_the_records_that_stand_are_shown_across_them() {
     let dir = tempfile::tempdir().unwrap();
     let project = dir.path().join("project");
@@ -1433,6 +1437,7 @@ fn a_rule_that_sql_refuses_on_a_pair_is_shown_as_one_that_cannot_be_applied() {
 }
 
 #[test]
+#[expect(clippy::too_many_lines)]
 fn a_mistake_or_a_server_that_does_not_answer_is_said_plainly() {
     let dir = tempfile::tempdir().unwrap();
     let server = workshop(dir.path());

@@ -119,6 +119,7 @@ extern "C" fn interrupted(_: libc::c_int) {
 
 /// Catches the first Ctrl-C. A request in flight is not cut short by it, so
 /// the command notices within the second it asks the server again.
+#[allow(unsafe_code)]
 fn catch_ctrl_c() {
     #[cfg(unix)]
     // SAFETY: the handler only stores to an atomic, which is safe in a
@@ -184,6 +185,7 @@ impl Answered {
     }
 }
 
+#[expect(clippy::too_many_lines)]
 pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
     let out = Output::report(&arguments.output, "`spool extract`")?;
     let files = read(&arguments.paths)?;

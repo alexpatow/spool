@@ -460,6 +460,7 @@ fn an_extractor_is_one_the_project_has_and_needs_the_projects_files() {
 
 #[test]
 #[ignore = "runs uv"]
+#[expect(clippy::too_many_lines)]
 fn what_an_extractor_finds_is_records_and_resolves_like_rows() {
     let news = News::new();
     news.write(

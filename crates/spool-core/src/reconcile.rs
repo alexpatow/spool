@@ -139,6 +139,7 @@ pub enum ReviewItem {
 /// The output depends only on the inputs: groups are visited in order of their
 /// smallest record ID, so the same evidence and the same ID generator
 /// give the same draft.
+#[expect(clippy::too_many_lines)]
 pub fn reconcile<S: IdentityState + ?Sized>(
     evidence: &EvidenceSummary,
     state: &S,

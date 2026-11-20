@@ -146,6 +146,7 @@ fn write_results(out: &Path, report: &BenchReport) -> spool::Result<()> {
     })
 }
 
+#[expect(clippy::too_many_lines)]
 fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<()> {
     println!("\n== {} ==", step.name);
     for ingest in &step.ingest {

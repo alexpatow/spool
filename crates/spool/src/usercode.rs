@@ -950,6 +950,7 @@ pub(crate) fn run(
         };
         if let Some(stop) = stop {
             #[cfg(unix)]
+            #[allow(unsafe_code)]
             {
                 // SAFETY: `kill` takes no pointers. The group is the child's
                 // own, and still exists: the child has not been waited for.
@@ -1054,6 +1055,7 @@ mod tests {
     }
 
     #[test]
+    #[expect(clippy::too_many_lines)]
     fn a_strategy_is_started_with_its_task_and_without_the_servers_token() {
         let dir = tempfile::tempdir().unwrap();
         let user_code = UserCode {

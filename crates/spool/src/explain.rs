@@ -1319,6 +1319,7 @@ fn rule_or_rules(names: &[&str]) -> &'static str {
     if names.len() == 1 { "rule" } else { "rules" }
 }
 
+#[expect(clippy::too_many_lines)]
 fn summary(explanation: &Explanation) -> Vec<String> {
     let (left, right) = (&explanation.left.record, &explanation.right.record);
     // Two versions of one row have the same source and key.

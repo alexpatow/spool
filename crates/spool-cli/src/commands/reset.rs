@@ -45,6 +45,7 @@ pub struct ResetArgs {
     output: OutputArgs,
 }
 
+#[expect(clippy::too_many_lines)]
 pub fn reset(arguments: ResetArgs) -> Result<(), Failure> {
     let out = Output::report(&arguments.output, "`spool reset`")?;
     // What it removes and keeps is the report, or with JSON what the

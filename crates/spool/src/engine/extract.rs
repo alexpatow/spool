@@ -522,6 +522,7 @@ impl Inner {
 
     /// Reads the mentions an extractor wrote, checks them against the
     /// documents it was given, and stores them as records.
+    #[expect(clippy::too_many_lines)]
     fn take_mentions(
         &mut self,
         by: &Actor,

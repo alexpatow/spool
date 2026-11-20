@@ -62,6 +62,7 @@ fn match_runs(server: &Server) -> Vec<Value> {
 /// The first steps of a new project, with what each prints: the text the
 /// README and the site show.
 #[test]
+#[expect(clippy::too_many_lines)]
 fn the_first_rows_of_a_new_project_are_loaded_matched_and_shown() {
     let dir = tempfile::tempdir().unwrap();
     let project = init_companies(dir.path());

@@ -360,6 +360,7 @@ pub fn router(engine: Arc<Engine>, options: &ServerOptions) -> Router {
 
 /// The API over `engine`, whose requests are told through `stopping` when
 /// the server is.
+#[expect(clippy::too_many_lines)]
 fn router_until(engine: Arc<Engine>, options: &ServerOptions, stopping: Stopping) -> Router {
     let app = App {
         engine,

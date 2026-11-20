@@ -13,7 +13,7 @@ Every step keeps behaviour as it is: the checks are `cargo fmt`, `cargo clippy
       goes, where shared helpers live, what is never hand-rolled, naming.
 - [x] A2. `justfile`: `check`, `fmt`, `lint`, `test`, `regen`, one entry point
       for what `scripts/check-generated.sh` and CI spell out by hand.
-- [ ] A3. `[workspace.lints]`: `unsafe_code = "deny"` with an `allow` at each
+- [x] A3. `[workspace.lints]`: `unsafe_code = "deny"` with an `allow` at each
       of the three places that need it; `clippy::too_many_lines` with the
       functions that are over it today marked, so new ones fail.
 - [x] A4. `scripts/check-file-size.sh`: a line budget for source files with an

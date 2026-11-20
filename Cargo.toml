@@ -99,3 +99,14 @@ opt-level = 3
 
 [profile.dev.package.blake2]
 opt-level = 3
+
+# Lints for every crate of the workspace: each has `[lints] workspace = true`.
+[workspace.lints.rust]
+# The few places that need `unsafe` allow it where they use it, with the
+# reason beside it.
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+# A function over the length in clippy.toml. Those that were over it when the
+# lint was turned on are marked `#[expect]`: a new one fails.
+too_many_lines = "warn"

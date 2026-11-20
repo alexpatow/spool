@@ -182,6 +182,7 @@ fn print_report(report: &RecomputeReport, entity_type: Option<&str>) -> Result<(
     Ok(())
 }
 
+#[expect(clippy::too_many_lines)]
 fn print_type(recomputed: &TypeRecompute) {
     let summary = &recomputed.summary;
     println!(
@@ -538,6 +539,7 @@ fn print_detail(
     Ok(())
 }
 
+#[expect(clippy::too_many_lines)]
 fn print_change(recomputed: &TypeRecompute, detail: &ChangeDetail) {
     let change = &detail.change;
     fields(&[

@@ -372,6 +372,7 @@ fn the_sample_model_reads_the_note_and_what_it_names_joins_the_rows() {
     the_steps_after_init(&init_companies(dir.path()));
 }
 
+#[expect(clippy::too_many_lines)]
 fn the_steps_after_init(project: &Path) {
     let server = Server::dev(project);
     let shown = |arguments: &[&str]| shown(&server, project, arguments);
@@ -1388,6 +1389,7 @@ fn ctrl_c_cancels_the_batch_that_is_running_and_keeps_the_ones_before() {
 /// The step as a program takes it: two requests, with no JSON to write.
 #[test]
 #[ignore = "runs uv"]
+#[expect(clippy::too_many_lines)]
 fn the_same_step_over_http_sends_the_file_as_it_is() {
     let dir = tempfile::tempdir().unwrap();
     let project = init_with_stand_in(dir.path());
@@ -1568,6 +1570,7 @@ fn the_same_step_over_http_sends_the_file_as_it_is() {
 /// What a reader is told when the step cannot be taken, each as it is said.
 /// The machine has neither `uv` nor `bun`, as a reader's may not.
 #[test]
+#[expect(clippy::too_many_lines)]
 fn extract_says_what_is_in_the_way() {
     let dir = tempfile::tempdir().unwrap();
     let project = init_companies(dir.path());

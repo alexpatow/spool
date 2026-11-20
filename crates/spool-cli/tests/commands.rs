@@ -487,6 +487,7 @@ fn update_skills_brings_the_files_for_agents_to_this_version_and_keeps_edits() {
 }
 
 #[test]
+#[expect(clippy::too_many_lines)]
 fn init_with_an_example_says_what_it_wrote_and_what_to_run_next() {
     let dir = tempfile::tempdir().unwrap();
 

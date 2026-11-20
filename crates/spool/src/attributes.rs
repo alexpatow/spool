@@ -117,6 +117,7 @@ fn cells() -> String {
 
 type Group = (String, String);
 
+#[expect(clippy::too_many_lines)]
 pub(crate) fn attributes(
     conn: &Connection,
     manifest: Option<&Manifest>,

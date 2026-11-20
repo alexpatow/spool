@@ -403,6 +403,7 @@ fn split(joined: Option<String>) -> Vec<String> {
 }
 
 /// A review item with the records it is about.
+#[expect(clippy::too_many_lines)]
 pub(crate) fn case(conn: &Connection, id: u64) -> Result<ReviewCase> {
     let only = ReviewFilter {
         id: Some(id),

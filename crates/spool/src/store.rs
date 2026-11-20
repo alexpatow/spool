@@ -71,6 +71,7 @@ impl DuckStore {
     }
 
     /// Replaces the projection tables with the given state.
+    #[expect(clippy::too_many_lines)]
     pub(crate) fn write_projection(&mut self, snapshot: &Snapshot) -> Result<()> {
         let identities = batch(vec![
             (
@@ -206,6 +207,7 @@ impl DuckStore {
         Ok(())
     }
 
+    #[expect(clippy::too_many_lines)]
     fn append(&mut self, changeset: &Changeset, content_hash: &ContentHash) -> Result<Seq> {
         let committed_at = self.clock.now_micros();
         let ops = op_rows(&changeset.ops)?;

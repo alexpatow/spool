@@ -1003,6 +1003,7 @@ fn text_column(batches: &[arrow::record_batch::RecordBatch], name: &str) -> Vec<
 }
 
 #[test]
+#[expect(clippy::too_many_lines)]
 fn a_caller_judges_the_candidates_of_a_run_step_by_step() {
     let dir = tempfile::tempdir().unwrap();
     let server = things_server(dir.path());
@@ -1429,6 +1430,7 @@ fn lists_are_sorted_as_the_query_says_and_read_in_pages_in_that_order() {
 }
 
 #[test]
+#[expect(clippy::too_many_lines)]
 fn what_is_read_says_what_things_are_called_where_they_came_from_and_what_waits() {
     let library = library(5);
     let dir = tempfile::tempdir().unwrap();
@@ -1600,6 +1602,7 @@ fn what_is_read_says_what_things_are_called_where_they_came_from_and_what_waits(
 }
 
 #[test]
+#[expect(clippy::too_many_lines)]
 fn a_pair_of_records_is_explained() {
     let dir = tempfile::tempdir().unwrap();
     let server = things_server(dir.path());

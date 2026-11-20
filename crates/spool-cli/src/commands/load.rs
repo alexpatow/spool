@@ -71,6 +71,7 @@ const PART_BYTES: usize = 32 * 1024 * 1024;
 /// one it was read with.
 const OTHER_DELIMITERS: [char; 4] = [';', '\t', '|', ','];
 
+#[expect(clippy::too_many_lines)]
 pub fn load(arguments: LoadArgs) -> Result<(), Failure> {
     let out = Output::report(&arguments.output, "`spool load`")?;
     let file = &arguments.file;
@@ -426,6 +427,7 @@ fn format(delimiter: u8) -> String {
 /// more of the file's `columns` than any other: a new project has a source
 /// of rows and a source of what is found in documents, and a file of rows
 /// is the first's whatever it is called.
+#[expect(clippy::too_many_lines)]
 fn target<'a>(
     info: &'a Info,
     file: Option<&str>,

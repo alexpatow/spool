@@ -147,6 +147,7 @@ fn a_match_is_explained_by_the_run_that_judged_it_and_the_rules_that_held() {
 }
 
 #[test]
+#[expect(clippy::too_many_lines)]
 fn two_members_that_were_never_compared_are_joined_through_others() {
     let engine = engine();
     load(

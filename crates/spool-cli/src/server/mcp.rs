@@ -1253,6 +1253,7 @@ impl Tools {
 
     /// Runs a tool: reads its arguments and calls the handler of the path
     /// that does the same.
+    #[expect(clippy::too_many_lines)]
     async fn call(&self, tool: &str, given: JsonObject, caller: Caller) -> ApiResult {
         let app = State(self.app.clone());
         let caller = Extension(caller);

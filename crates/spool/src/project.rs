@@ -539,6 +539,7 @@ impl Project {
     /// Checks every file, the SQL by preparing it against DuckDB, and
     /// returns the manifest. A mistake in a file fails here, not during a
     /// run.
+    #[expect(clippy::too_many_lines)]
     pub fn compile(&self) -> Result<Manifest> {
         // A scratch database with the engine's schema to prepare against.
         let scratch = DuckStore::open(None, Box::new(StepClock::new(0, 0)))?;
@@ -959,6 +960,7 @@ fn dollar_quote(text: &[u8]) -> Option<&[u8]> {
 /// Checks an `entity.yaml` against the sources and transforms it names, and
 /// writes the query that computes its features: one row per record, each
 /// feature from the columns its source's mapping says.
+#[expect(clippy::too_many_lines)]
 fn entity_of(
     file: &YamlFile,
     sources: &[Source],

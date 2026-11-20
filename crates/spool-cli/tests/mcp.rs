@@ -158,6 +158,7 @@ fn text(value: &Value) -> &str {
 }
 
 #[test]
+#[expect(clippy::too_many_lines)]
 fn a_client_connects_and_is_told_the_tools() {
     let dir = tempfile::tempdir().unwrap();
     let (server, _) = thing_server(dir.path());
@@ -450,6 +451,7 @@ fn the_endpoint_answers_only_a_caller_the_api_answers() {
 }
 
 #[test]
+#[expect(clippy::too_many_lines)]
 fn a_tool_that_looks_something_up_answers_what_the_api_answers() {
     let dir = tempfile::tempdir().unwrap();
     let server = company_server(dir.path());
@@ -651,6 +653,7 @@ fn a_tool_that_looks_something_up_answers_what_the_api_answers() {
 }
 
 #[test]
+#[expect(clippy::too_many_lines)]
 fn identity_snapshots_keep_historical_members_and_merge_redirects() {
     let dir = tempfile::tempdir().unwrap();
     let (server, _) = thing_server(dir.path());
@@ -859,6 +862,7 @@ fn identity_snapshots_keep_historical_members_and_merge_redirects() {
 }
 
 #[test]
+#[expect(clippy::too_many_lines)]
 fn a_tool_that_changes_something_is_held_to_the_rules_of_the_api() {
     let dir = tempfile::tempdir().unwrap();
     let server = company_server(dir.path());
@@ -1007,6 +1011,7 @@ fn a_tool_that_changes_something_is_held_to_the_rules_of_the_api() {
 }
 
 #[test]
+#[expect(clippy::too_many_lines)]
 fn rows_are_loaded_matched_and_taken_back_through_tools() {
     let dir = tempfile::tempdir().unwrap();
     let (server, _) = thing_server(dir.path());

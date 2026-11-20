@@ -302,6 +302,7 @@ fn man(dir: &std::path::Path) -> Result<(), Failure> {
 /// `spool info | head`, panics. A command that prints and exits takes the
 /// signal's default instead and ends there. The server does not: it must not
 /// die because whatever was reading its output went away.
+#[allow(unsafe_code)]
 fn end_quietly_when_the_output_closes() {
     #[cfg(unix)]
     // SAFETY: this sets a signal's disposition to its default, before any

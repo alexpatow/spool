@@ -146,6 +146,7 @@ fn build_with_install_starts_each_strategy_and_reports_one_that_does_not_start()
 
 #[test]
 #[ignore = "runs uv"]
+#[expect(clippy::too_many_lines)]
 fn the_server_runs_the_projects_strategies_and_no_other_code() {
     let dir = tempfile::tempdir().unwrap();
     let project = dir.path().join("project");

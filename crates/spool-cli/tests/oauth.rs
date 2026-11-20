@@ -214,6 +214,7 @@ fn call(server: &Server, token: &str, name: &str, arguments: Value) -> Value {
 /// person who approved, and on to refreshing, a stolen refresh token, and
 /// an admin taking the approval back.
 #[test]
+#[expect(clippy::too_many_lines)]
 fn an_assistant_signs_in_and_works_as_the_person_who_approved_it() {
     let dir = tempfile::tempdir().unwrap();
     let setup = set_up(dir.path());

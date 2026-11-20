@@ -68,6 +68,7 @@ fn help_is_printed_on_request() {
 /// A mistake in the arguments is said with the usage of the command it was
 /// made in, and exits with 2.
 #[test]
+#[expect(clippy::too_many_lines)]
 fn a_mistake_is_said_with_the_usage_and_exits_with_two() {
     for (arguments, expected) in [
         (

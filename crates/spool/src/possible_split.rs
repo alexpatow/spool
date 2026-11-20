@@ -100,6 +100,7 @@ pub(crate) fn held_together(
 /// rules said, and the store does not record who approved.
 pub(crate) const APPROVED_DRAFTS_DECIDE: bool = false;
 
+#[expect(clippy::too_many_lines)]
 fn groups_by(
     conn: &Connection,
     identities: &[IdentityId],

@@ -52,6 +52,7 @@ pub struct MatchArgs {
     remote: RemoteArgs,
 }
 
+#[expect(clippy::too_many_lines)]
 pub fn run(arguments: MatchArgs) -> Result<(), Failure> {
     let out = Output::report(&arguments.output, "`spool match`")?;
     let remote = Remote::new(&arguments.remote);

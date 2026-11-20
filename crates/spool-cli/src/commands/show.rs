@@ -874,6 +874,7 @@ impl View<'_> {
         Ok(())
     }
 
+    #[expect(clippy::too_many_lines)]
     fn run(&self, run: u64) -> Result<(), Failure> {
         let answer = self.remote.get(&format!("/runs/{run}"), &[], || {
             format!("there is no run {run}")
@@ -1859,6 +1860,7 @@ struct Mention {
     cut_after: bool,
 }
 
+#[expect(clippy::too_many_lines)]
 fn print_explanation(explanation: &Explanation) {
     for sentence in &explanation.summary {
         println!("{sentence}");

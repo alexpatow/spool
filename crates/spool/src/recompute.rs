@@ -483,6 +483,7 @@ pub(crate) struct Outcome {
 /// Works out what the identities of `entity_type` would be, from the
 /// records in the scope table and the judgements in `judgements`, a
 /// relation with the columns of `spool.judgement`.
+#[expect(clippy::too_many_lines)]
 pub(crate) fn compute(
     conn: &Connection,
     entity_type: &EntityType,
@@ -1196,6 +1197,7 @@ impl Outcome {
     }
 
     /// The changes, largest first, each with its records.
+    #[expect(clippy::too_many_lines)]
     fn changes(&self) -> Vec<(Change, Vec<RecordId>)> {
         let mut nodes: Vec<Node> = Vec::new();
         let mut index: HashMap<Node, usize> = HashMap::new();

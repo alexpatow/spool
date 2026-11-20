@@ -34,6 +34,7 @@ fn an_unmanaged_binary_leaves_its_installation_alone() {
 }
 
 #[test]
+#[expect(clippy::too_many_lines)]
 fn updates_the_installation_then_refreshes_skills_with_the_installed_binary() {
     let dir = tempfile::tempdir().unwrap();
     let release_root = dir.path().join("releases");
