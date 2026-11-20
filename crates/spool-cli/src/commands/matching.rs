@@ -8,7 +8,7 @@ use spool::core::EntityType;
 use spool::{RunEntry, RunStatus, StrategyRef, TypeInfo};
 
 use super::remote::{Remote, RemoteArgs, WAIT_MS, unsuccessful};
-use super::show::placed;
+use super::show::runs::placed;
 use crate::Failure;
 use crate::output::{Output, OutputArgs, fields, hint};
 use crate::progress;

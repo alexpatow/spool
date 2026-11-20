@@ -14,8 +14,8 @@ use anstream::eprintln;
 use clap::{ColorChoice, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use commands::{
-    add, bench, extract, init, load, matching, project, recompute, reset, retract, serve, show,
-    token, update, update_skills,
+    add, bench, explain, extract, init, load, matching, project, recompute, reset, retract, serve,
+    show, token, update, update_skills,
 };
 
 /// Extract, resolve and track entities
@@ -57,7 +57,7 @@ enum Command {
     Match(matching::MatchArgs),
     Recompute(recompute::RecomputeArgs),
     Show(show::ShowArgs),
-    Explain(show::ExplainArgs),
+    Explain(explain::ExplainArgs),
     Retract(retract::RetractArgs),
     Reset(reset::ResetArgs),
     Update(update::UpdateArgs),
@@ -271,7 +271,7 @@ fn run(command: Command, color: ColorChoice) -> (Vec<&'static str>, Result<(), F
             path.extend(args.what.as_ref().map(show::What::name));
             (path, show::show(args))
         }
-        Command::Explain(args) => (vec!["explain"], show::explain(args)),
+        Command::Explain(args) => (vec!["explain"], explain::explain(args)),
         Command::Retract(args) => (vec!["retract"], retract::retract(args)),
         Command::Reset(args) => (vec!["reset"], reset::reset(args)),
         Command::Update(args) => (vec!["update"], update::update(args, color)),
