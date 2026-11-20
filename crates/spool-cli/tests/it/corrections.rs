@@ -1,12 +1,15 @@
-//! Milestone 3's exit criteria that the identity benchmark measures. The
-//! others are tested where the code lives:
+//! A reviewer's corrections, on the company benchmark: what `spool bench`
+//! measures of a wrong merge and of its repair, and that the corrections are
+//! the same with the same seed and can be rebuilt from the log.
+//!
+//! What else corrections do is tested where the code lives:
 //!
 //! - The in-memory state and the DuckDB store agree on all six operations and
 //!   on the undo of each: `spool_core::conformance` and
-//!   `src/store_property.rs`.
+//!   `crates/spool/src/store_property.rs`.
 //! - Merge, undo, split, constraints, superseding rows and dismissed review
-//!   items through the library: `crates/spool/tests/lifecycle.rs`.
-//! - The same through the API: `lifecycle.rs` here, and
+//!   items through the library: `crates/spool/tests/it/lifecycle.rs`.
+//! - The same through the API: `lifecycle.rs` beside this file, and
 //!   `packages/client/test` for the TypeScript client.
 
 use std::path::{Path, PathBuf};

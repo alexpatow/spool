@@ -13,9 +13,11 @@
 //! ```
 
 mod accounts;
+mod batches;
 mod cli;
 mod client;
 mod commands;
+mod corrections;
 mod extract;
 mod first_extraction;
 mod google;
@@ -23,8 +25,6 @@ mod lifecycle;
 mod load;
 mod matching;
 mod mcp;
-mod milestone_1;
-mod milestone_3;
 mod oauth;
 mod output;
 mod recompute;

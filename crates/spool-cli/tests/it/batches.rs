@@ -1,15 +1,22 @@
-//! Milestone 1's exit criteria, one test each, in the order the architecture
-//! proposal lists them. Three of them are tested where the code lives:
+//! Rows that arrive in batches, on the company benchmark: what a second
+//! batch leaves of the identities the first one made, what is left for a
+//! reviewer, and that a run with the same seed is the same run. Some of the
+//! tests run `spool bench`, and the others run the same scenario in this
+//! process and read the store.
 //!
-//! - "A resolve that is cut short at any step is completed by the next one":
-//!   `interrupted.rs`.
-//! - "The in-memory state and the DuckDB store pass the same conformance
-//!   suite": `spool_core::conformance` runs in `spool-core/tests/conformance.rs`
-//!   and in `src/store.rs`, and `src/store_property.rs` compares the two
-//!   stores on random changesets.
-//! - "A changeset with a stale precondition is rejected and names the
-//!   conflicting operation": the conformance suite, and
-//!   `a_stale_draft_is_rejected_and_names_the_operation` in `engine.rs`.
+//! What belongs beside these is tested where the code lives:
+//!
+//! - A resolve that is cut short at any step is completed by the next one:
+//!   `crates/spool/tests/it/interrupted.rs`.
+//! - The in-memory state and the DuckDB store pass the same conformance
+//!   suite: `spool_core::conformance` runs in
+//!   `crates/spool-core/tests/conformance.rs` and in
+//!   `crates/spool/src/store.rs`, and `crates/spool/src/store_property.rs`
+//!   compares the two stores on random changesets.
+//! - A changeset with a stale precondition is rejected and names the
+//!   conflicting operation: the conformance suite, and
+//!   `a_stale_draft_is_rejected_and_names_the_operation` in
+//!   `crates/spool/tests/it/engine.rs`.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
