@@ -5,10 +5,8 @@
 //! ignored unless asked for:
 //!
 //! ```sh
-//! cargo test -p spool --test news -- --include-ignored
+//! cargo test -p spool-bench --test news -- --include-ignored
 //! ```
-
-mod common;
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -19,11 +17,11 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use common::{benchmarks, select};
 use spool::{
     DocumentFilter, Engine, ExtractOptions, Manifest, NewDocument, Options, RecordFilter, UserCode,
 };
 use spool_bench::{BenchReport, Scenario};
+use spool_testing::{benchmarks, select};
 
 fn news() -> PathBuf {
     benchmarks().join("extraction/company-news")

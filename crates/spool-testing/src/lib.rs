@@ -1,5 +1,5 @@
-//! Helpers shared by the integration tests.
-#![allow(dead_code)]
+//! What the integration tests of the crates share: the project of `thing`s
+//! they resolve, and reading what a store holds.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;

@@ -2,14 +2,12 @@
 //! identity, is matched with nothing, and comes back when the source sends
 //! the row again.
 
-mod common;
-
-use common::*;
 use spool::core::{Actor, Op, RecordId};
 use spool::{
     DraftFilter, DraftStatus, Engine, Error, RecordFilter, ResolveOptions, ResolveReport,
     RetractReport, ReviewFilter, ReviewStatus, RunKind, RunStatus,
 };
+use spool_testing::*;
 
 fn resolve(engine: &Engine) -> ResolveReport {
     engine.resolve(&ResolveOptions::default()).unwrap()

@@ -1,12 +1,9 @@
 //! Runs as task records, the read lane, and what a restart does to a run.
 
-mod common;
-
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
-use common::*;
 use spool::arrow::datatypes::SchemaRef;
 use spool::arrow::error::ArrowError;
 use spool::arrow::record_batch::{RecordBatch, RecordBatchReader};
@@ -15,6 +12,7 @@ use spool::{
     Engine, EntityTypeSource, Error, LoggedChangeset, Options, ResolveOptions, RunFilter, RunKind,
     RunStatus, Scope, SqlFile, StrategyRef, watch_runs,
 };
+use spool_testing::*;
 
 fn thing_scope() -> Scope {
     Scope::new(EntityType::new("thing").unwrap())

@@ -1,14 +1,12 @@
 //! Reads of single things, typed review items, and rows given as JSON.
 
-mod common;
-
-use common::*;
 use serde_json::json;
 use spool::core::{Actor, EntityType, IdGenerator, Op, SeededIds, Seq};
 use spool::{
     AttributeFilter, DerivedFeature, Engine, Error, IdentityFilter, Manifest, Options,
     RecordFilter, ResolveOptions, ReviewFilter, ReviewKind, ReviewStatus, Rows, SqlFile, YamlFile,
 };
+use spool_testing::*;
 
 /// The tests' things, and two sources more whose rows hold numbers.
 fn engine() -> Engine {

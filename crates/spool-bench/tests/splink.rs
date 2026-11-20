@@ -4,18 +4,16 @@
 //! are ignored unless asked for:
 //!
 //! ```sh
-//! cargo test -p spool --test splink -- --include-ignored
+//! cargo test -p spool-bench --test splink -- --include-ignored
 //! ```
-
-mod common;
 
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-use common::{benchmarks, identity, members, select};
 use spool::core::ReviewItem;
 use spool::{Engine, Options, UserCode};
 use spool_bench::{BenchReport, Scenario};
+use spool_testing::{benchmarks, identity, members, select};
 
 /// Runs a scenario of the person project on a new store.
 fn run(file: &str, strategy: Option<&str>, seed: u64) -> (Engine, BenchReport) {

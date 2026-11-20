@@ -1,10 +1,8 @@
 //! Review items: kept in the store, and examined again by later runs.
 
-mod common;
-
-use common::*;
 use spool::core::{Actor, Changeset, IdGenerator, IdentityId, Op, ReviewItem, SeededIds};
 use spool::{Engine, Options, ResolveOptions, ResolveReport};
+use spool_testing::*;
 
 fn resolve(engine: &Engine) -> ResolveReport {
     engine.resolve(&ResolveOptions::default()).unwrap()

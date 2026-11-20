@@ -1,0 +1,15 @@
+[package]
+name = "spool-testing"
+description = "What the integration tests of the Spool crates share."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+spool.workspace = true
+
+[lints]
+workspace = true

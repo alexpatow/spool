@@ -1,14 +1,12 @@
 //! Rematching: a run that examines every record again, and reports
 //! where its strategy disagrees with the identities as they are.
 
-mod common;
-
-use common::{engine, identity, load, members, record_id};
 use spool::core::{Actor, EntityType, Op, Policy};
 use spool::{
     Disposition, Engine, ResolveOptions, Rows, RunStatus, Scope, StrategyRef, SuggestedMerge,
     SuggestedSplit, Suggestions,
 };
+use spool_testing::{engine, identity, load, members, record_id};
 
 fn reviewer() -> Actor {
     Actor::User("reviewer".to_owned())

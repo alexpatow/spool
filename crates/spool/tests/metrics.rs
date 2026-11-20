@@ -1,10 +1,8 @@
 //! Metrics against a partition small enough to score by hand.
 
-mod common;
-
-use common::*;
 use spool::core::{Actor, Changeset, EntityType, IdGenerator, Op, SeededIds};
 use spool::{Engine, Rows};
+use spool_testing::*;
 
 fn close(actual: Option<f64>, expected: f64) {
     let actual = actual.expect("the ratio has a denominator");

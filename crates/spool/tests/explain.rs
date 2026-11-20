@@ -1,14 +1,12 @@
 //! Explanations: why two records share an identity, or do not.
 
-mod common;
-
-use common::*;
 use serde_json::json;
 use spool::core::{Actor, ConstraintKind, EntityType, IdGenerator, Op, Policy, SeededIds, Verdict};
 use spool::{
     Disposition, DraftStatus, Engine, Error, Explanation, LinkKind, Options, Outcome,
     ResolveOptions, ReviewFilter, ReviewStatus, Rows, RunStatus, Scope, SqlFile, StrategyRef,
 };
+use spool_testing::*;
 
 fn reviewer() -> Actor {
     Actor::User("reviewer".to_owned())

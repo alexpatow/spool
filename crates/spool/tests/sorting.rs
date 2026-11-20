@@ -2,17 +2,15 @@
 //! each continuing after the last entry of the page before, walk it with
 //! no entry twice or missing.
 
-mod common;
-
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 
-use common::*;
 use spool::core::{Actor, Changeset, ConstraintKind, IdentityId, Op, Seq};
 use spool::{
     Direction, DocumentFilter, DocumentSort, Engine, IdentityFilter, IdentitySort, LogSort,
     NewDocument, Options, RecordFilter, RecordSort, ResolveOptions, RunFilter, RunSort, Sort,
 };
+use spool_testing::*;
 
 const DIRECTIONS: [Direction; 2] = [Direction::Ascending, Direction::Descending];
 

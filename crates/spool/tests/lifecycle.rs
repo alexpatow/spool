@@ -2,9 +2,6 @@
 //! constraints that keep decisions, undo, rows that change at their source,
 //! and review items a reviewer closes.
 
-mod common;
-
-use common::*;
 use spool::core::{
     Actor, Changeset, Committed, ConstraintKind, IdGenerator, IdentityId, Op, Reason, RecordId,
     ReviewItem, SeededIds, Seq,
@@ -13,6 +10,7 @@ use spool::{
     ConstraintFilter, Engine, Error, Options, RecordFilter, ResolveOptions, ResolveReport,
     ReviewFilter, ReviewKind, ReviewStatus, TypeResolution,
 };
+use spool_testing::*;
 
 fn resolve(engine: &Engine) -> ResolveReport {
     engine.resolve(&ResolveOptions::default()).unwrap()

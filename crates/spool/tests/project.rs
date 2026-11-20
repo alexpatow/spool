@@ -1,12 +1,10 @@
 //! Project discovery and compilation.
 
-mod common;
-
 use std::fs;
 use std::path::Path;
 
-use common::benchmarks;
 use spool::{Error, Manifest, Project};
+use spool_testing::benchmarks;
 
 const SOURCE: &str = "key: id\ncolumns: [id, title]\n";
 const ENTITY: &str = "\

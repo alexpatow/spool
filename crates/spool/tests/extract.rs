@@ -8,21 +8,19 @@
 //! cargo test -p spool --test extract -- --include-ignored
 //! ```
 
-mod common;
-
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use common::members;
 use spool::core::{Actor, DocumentId, EntityType, IdentityId, Policy};
 use spool::{
     Disposition, DocumentFilter, Engine, Error, ExtractOptions, ExtractReport, Manifest,
     NewDocument, Options, RecordEntry, RecordFilter, ResolveOptions, RunFilter, RunKind, RunStatus,
     Scope, StrategyRef, UserCode, locator,
 };
+use spool_testing::members;
 
 /// A project on disk that declares a `company` by its name, and the
 /// extractors a test writes into it.

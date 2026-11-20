@@ -11,17 +11,14 @@
 //!   conflicting operation": the conformance suite, and
 //!   `a_stale_draft_is_rejected_and_names_the_operation` in `engine.rs`.
 
-#[path = "../../spool/tests/common/mod.rs"]
-mod common;
-
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use common::*;
 use spool::core::{IdentityStore, MemoryState, ReviewItem, Seq, Snapshot};
 use spool::{Engine, Manifest, Options, RecordFilter, ResolveOptions, Rows};
 use spool_bench::{BenchReport, Scenario};
+use spool_testing::*;
 
 fn companies() -> PathBuf {
     benchmarks().join("identity/companies-small")

@@ -1,14 +1,12 @@
 //! Recomputing: what the identities would be under the rules as they are
 //! now, shown first and applied only when asked.
 
-mod common;
-
-use common::{SOURCES, entity, identity, load, manifest_of, members, record_id, thing};
 use spool::core::{Actor, ConstraintKind, EntityType, Op};
 use spool::{
     ChangeKind, Engine, EntityTypeSource, Error, Fate, Options, RecomputeRequest, ResolveOptions,
     RunStatus, SqlFile,
 };
+use spool_testing::{SOURCES, entity, identity, load, manifest_of, members, record_id, thing};
 
 fn reviewer() -> Actor {
     Actor::User("reviewer".to_owned())

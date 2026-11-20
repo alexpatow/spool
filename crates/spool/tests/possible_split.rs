@@ -2,15 +2,13 @@
 //! it together: the records stay where they are, and a `possible_split`
 //! review item asks a reviewer whether they are one thing.
 
-mod common;
-
-use common::*;
 use spool::core::{Actor, ConstraintKind, IdentityId, Op, Policy, RecordId, Verdict};
 use spool::{
     Disposition, Engine, EntityTypeSource, Error, Options, RecordFilter, ResolveOptions,
     ResolveReport, RetractReport, ReviewEntry, ReviewFilter, ReviewKind, ReviewStatus, Rows, Scope,
     SqlFile, StrategyRef,
 };
+use spool_testing::*;
 
 fn resolve(engine: &Engine) -> ResolveReport {
     engine.resolve(&ResolveOptions::default()).unwrap()

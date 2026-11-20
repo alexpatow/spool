@@ -1,13 +1,11 @@
 //! Drafts left for review: stored, approved, rejected, superseded.
 
-mod common;
-
-use common::*;
 use spool::core::{Actor, Changeset, EntityType, IdGenerator, Op, Policy, Reason, SeededIds};
 use spool::{
     Disposition, DraftFilter, DraftStatus, Engine, Error, Options, ResolveOptions, RunStatus,
     Scope, StrategyRef,
 };
+use spool_testing::*;
 
 fn leave_for_review() -> ResolveOptions {
     ResolveOptions {

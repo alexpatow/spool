@@ -8,17 +8,15 @@
 //! cargo test -p spool --test usercode -- --include-ignored
 //! ```
 
-mod common;
-
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use common::{benchmarks, identity, load, members, record_id};
 use spool::core::{Actor, EntityType, Op};
 use spool::{Engine, Error, Manifest, Options, ResolveOptions, RunFilter, RunStatus, UserCode};
 use spool_bench::Scenario;
+use spool_testing::{benchmarks, identity, load, members, record_id};
 
 /// The content hash of every changeset in the log.
 fn hashes(engine: &Engine) -> Vec<String> {
@@ -371,7 +369,7 @@ fn judgements_from_user_code_are_checked_like_a_callers() {
         assert!(message.contains(problem), "{message}");
         // Refused whole: nothing is stored and nothing is committed.
         assert_eq!(
-            common::count(&things.engine, "SELECT count(*) FROM spool.judgement"),
+            spool_testing::count(&things.engine, "SELECT count(*) FROM spool.judgement"),
             0
         );
         assert_eq!(things.engine.head().unwrap().0, 0);
@@ -542,7 +540,7 @@ def judge(candidates):
             .load(
                 entity_type,
                 entity_type,
-                common::rows(&[("1", Some("anvil"), None), ("2", Some("anvil"), None)]),
+                spool_testing::rows(&[("1", Some("anvil"), None), ("2", Some("anvil"), None)]),
             )
             .unwrap();
     }
@@ -678,7 +676,7 @@ def judge(features, candidates, task):
     assert!(row("depot", "9")["code"].is_null());
 
     // The score and the detail are kept with the judgement.
-    let kept = common::select(
+    let kept = spool_testing::select(
         engine,
         "SELECT score::VARCHAR, detail::VARCHAR FROM spool.judgement ORDER BY run_id DESC LIMIT 1",
     );
@@ -901,7 +899,7 @@ await strategy(async (task) => {{
     assert!(row("depot", "9")["identity_id"].is_null());
     assert!(row("depot", "9")["code"].is_null());
 
-    let kept = common::select(
+    let kept = spool_testing::select(
         engine,
         "SELECT score::VARCHAR, detail::VARCHAR FROM spool.judgement ORDER BY run_id LIMIT 1",
     );

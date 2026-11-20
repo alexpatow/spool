@@ -1,16 +1,14 @@
 //! The engine's API, exercised with a made-up entity type.
 
-mod common;
-
 use std::collections::BTreeSet;
 
-use common::*;
 use spool::core::{
     Actor, Changeset, EntityType, IdGenerator, Op, Policy, Reason, ReviewItem, SeededIds, Seq,
 };
 use spool::{
     Engine, EntityTypeSource, Error, Options, ResolveOptions, Rows, Scope, StrategyRef, YamlFile,
 };
+use spool_testing::*;
 
 fn resolve(engine: &Engine) -> spool::ResolveReport {
     engine.resolve(&ResolveOptions::default()).unwrap()

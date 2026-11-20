@@ -3,13 +3,11 @@
 //! becomes of the identities and their IDs, what is recorded, what later
 //! runs do, and what undoing the answer puts back.
 
-mod common;
-
-use common::*;
 use spool::core::{Actor, Changeset, Committed, IdentityId, Op, RecordId, Seq};
 use spool::{
     ConstraintFilter, Engine, ResolveOptions, ReviewEntry, ReviewFilter, ReviewKind, ReviewStatus,
 };
+use spool_testing::*;
 
 fn reviewer() -> Actor {
     Actor::User("reviewer".to_owned())

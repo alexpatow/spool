@@ -1,11 +1,8 @@
 //! What a person reads of the store: what things are called, where their
 //! records came from, what a search finds, and what a review item is about.
 
-mod common;
-
 use std::collections::BTreeSet;
 
-use common::*;
 use serde_json::json;
 use spool::core::{
     Actor, Changeset, Constraint, ConstraintKind, IdGenerator, IdentityId, Op, SeededIds, Verdict,
@@ -14,6 +11,7 @@ use spool::{
     CaseConstraint, Engine, Error, IdentityFilter, IdentityMatch, IdentitySort, Options,
     RecordFilter, ResolveOptions, ReviewFilter, Rows, Sort, YamlFile,
 };
+use spool_testing::*;
 
 /// The tests' things, and three sources more whose rows name a thing in
 /// columns of their own.

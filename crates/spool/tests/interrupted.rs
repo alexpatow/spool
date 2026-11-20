@@ -1,16 +1,14 @@
 //! A `resolve` that is interrupted loses nothing: the next one does the work.
 
-mod common;
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 
-use common::*;
 use spool::core::{Clock, ReviewItem, SeededIds, StepClock};
 use spool::{Engine, Options, ResolveOptions};
+use spool_testing::*;
 
 /// A clock that stops the process, as far as the engine can tell, at a chosen
 /// reading. The engine reads the clock at each step of a run, so counting

@@ -1,7 +1,5 @@
 //! Scenario files, CSV rows and checksummed datasets.
 
-mod common;
-
 use std::fs;
 use std::path::Path;
 
@@ -9,6 +7,7 @@ use sha2::{Digest, Sha256};
 use spool::arrow::record_batch::RecordBatchReader;
 use spool::{Engine, Options, Rows};
 use spool_bench::{BenchReport, Error, PossibleSplits, Scenario, StepReport, take_column};
+use spool_testing::cell;
 
 const PAPERS: &str = "\
 id,title,work
@@ -92,8 +91,8 @@ fn csv_rows_are_text_and_an_empty_field_is_missing() {
         [("1", "w1"), ("2", "w1"), ("4", "w3")].map(|(id, work)| (id.to_owned(), work.to_owned()))
     );
     let batches: Vec<_> = rest.map(Result::unwrap).collect();
-    assert_eq!(common::cell(&batches[0], 0, 0).as_deref(), Some("1"));
-    assert_eq!(common::cell(&batches[0], 1, 2).as_deref(), Some("Threads"));
+    assert_eq!(cell(&batches[0], 0, 0).as_deref(), Some("1"));
+    assert_eq!(cell(&batches[0], 1, 2).as_deref(), Some("Threads"));
 
     let missing = Rows::from_csv(dir.path().join("nothing.csv"));
     assert!(matches!(missing, Err(spool::Error::Io { .. })));
@@ -327,7 +326,7 @@ fn an_ingest_can_take_only_the_rows_a_condition_holds_for() {
     let batches: Vec<_> = rows.map(Result::unwrap).collect();
     let ids: Vec<_> = batches
         .iter()
-        .flat_map(|batch| (0..batch.num_rows()).map(|row| common::cell(batch, 0, row)))
+        .flat_map(|batch| (0..batch.num_rows()).map(|row| cell(batch, 0, row)))
         .collect();
     assert_eq!(ids, [Some("1".to_owned()), Some("2".to_owned())]);
 
@@ -556,7 +555,7 @@ fn committed_scenarios() -> Vec<std::path::PathBuf> {
         }
     }
     let mut found = Vec::new();
-    walk(&common::benchmarks(), &mut found);
+    walk(&spool_testing::benchmarks(), &mut found);
     found.sort();
     found
 }
@@ -577,12 +576,12 @@ fn every_committed_scenario_fits_its_project_and_the_datasets_that_are_listed() 
 #[test]
 fn each_source_of_the_music_project_is_read_in_its_own_way() {
     let engine = Engine::open_in_memory(Options::seeded(0)).unwrap();
-    let report = Scenario::load(common::benchmarks().join("resolution/music/sample.toml"))
+    let report = Scenario::load(spool_testing::benchmarks().join("resolution/music/sample.toml"))
         .unwrap()
         .run(&engine, |_| Ok(()))
         .unwrap();
     let features = |key: &str| {
-        common::select(
+        spool_testing::select(
             &engine,
             &format!(
                 "SELECT f.title, f.artist, f.album, f.number::VARCHAR, f.seconds::VARCHAR, f.year, f.language
@@ -657,8 +656,8 @@ fn each_source_of_the_music_project_is_read_in_its_own_way() {
     assert_eq!(metrics.false_splits, 2);
     assert_eq!(metrics.pairs.true_positives, 10 + 6 + 10 + 6);
     assert_ne!(
-        common::identity(&engine, "source_3", "101459"),
-        common::identity(&engine, "source_5", "135493")
+        spool_testing::identity(&engine, "source_3", "101459"),
+        spool_testing::identity(&engine, "source_5", "135493")
     );
 }
 

@@ -30,10 +30,11 @@ libc.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
-# For the tests that take a benchmark scenario as their fixture. The
-# benchmark depends on the engine, which Cargo allows of a dependency
-# of the tests alone.
+# For the tests that take a benchmark scenario as their fixture, and the
+# helpers the crates' tests share. Both depend on the engine, which Cargo
+# allows of a dependency of the tests alone.
 spool-bench.workspace = true
+spool-testing.workspace = true
 tempfile.workspace = true
 
 [lints]
