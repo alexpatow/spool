@@ -68,10 +68,7 @@ fn scenario_error(result: spool::Result<impl std::fmt::Debug>) -> String {
 }
 
 fn sha256(text: &str) -> String {
-    Sha256::digest(text.as_bytes())
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    hex::encode(Sha256::digest(text.as_bytes()))
 }
 
 #[test]
@@ -406,10 +403,7 @@ fn a_dataset_that_is_an_archive_is_unpacked_once_and_an_ingest_names_a_file_in_i
         .status()
         .unwrap();
     assert!(packed.success());
-    let checksum: String = Sha256::digest(fs::read(&archive).unwrap())
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
+    let checksum = hex::encode(Sha256::digest(fs::read(&archive).unwrap()));
     let datasets = |archive_line: &str| {
         format!(
             "[[dataset]]\nname = \"shelves\"\nurl = \"file://{}\"\nsha256 = \"{checksum}\"\n\

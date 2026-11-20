@@ -87,11 +87,7 @@ struct File {
 
 impl File {
     fn new(media_type: &'static str, contents: &'static [u8]) -> Self {
-        let hash: String = Sha256::digest(contents)
-            .iter()
-            .take(16)
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
+        let hash = hex::encode(&Sha256::digest(contents)[..16]);
         File {
             media_type,
             contents,

@@ -1076,7 +1076,7 @@ impl Outcome {
             };
             hash.update(format!("{record} {now} {then}\n").as_bytes());
         }
-        hex(&hash.finalize())
+        hex::encode(hash.finalize())
     }
 
     /// The operations that make the identities what they would be, with
@@ -1646,11 +1646,7 @@ pub(crate) fn combined_plan(plans: &[String]) -> String {
         hash.update(plan.as_bytes());
         hash.update([0]);
     }
-    hex(&hash.finalize())
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    hex::encode(hash.finalize())
 }
 
 /// Mints the IDs of the new identities an outcome needs.

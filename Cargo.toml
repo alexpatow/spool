@@ -40,6 +40,11 @@ url = "2.5"
 # the protocol and its Streamable HTTP transport. Only spool-cli depends on it.
 rmcp = { version = "3.11", default-features = false, features = ["server", "transport-streamable-http-server"] }
 base64 = "0.22"
+# Bytes as hexadecimal, wherever a hash is written as text.
+hex = "0.4"
+# Comparing secrets in time that says nothing about them. Only spool-cli
+# depends on it.
+subtle = "2"
 
 # The `spool` command's arguments, help and usage errors. Only spool-cli
 # depends on it.

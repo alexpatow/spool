@@ -8,6 +8,8 @@ mod support;
 
 use std::collections::HashMap;
 
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use support::{Request, Response, Server, path, write_things};
@@ -17,24 +19,8 @@ const CLAUDE: &str = "https://claude.ai/api/mcp/auth_callback";
 const VERIFIER: &str = "the-verifier-an-assistant-keeps-to-itself-until-it-has-a-code";
 const ACCEPT: &str = "application/json, text/event-stream";
 
-fn base64url(bytes: &[u8]) -> String {
-    const URL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    let mut text = String::new();
-    for chunk in bytes.chunks(3) {
-        let group = chunk
-            .iter()
-            .chain([0, 0].iter())
-            .take(3)
-            .fold(0u32, |group, byte| (group << 8) | u32::from(*byte));
-        for index in 0..=chunk.len() {
-            text.push(URL[((group >> (18 - 6 * index)) & 63) as usize] as char);
-        }
-    }
-    text
-}
-
 fn challenge(verifier: &str) -> String {
-    base64url(&Sha256::digest(verifier))
+    URL_SAFE_NO_PAD.encode(Sha256::digest(verifier))
 }
 
 /// Fields as a query or a form writes them.

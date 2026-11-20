@@ -14,6 +14,8 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing;
 use axum::{Json, Router};
+use base64::Engine as _;
+use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use openidconnect::core::{CoreJsonWebKeySet, CoreJwsSigningAlgorithm, CoreRsaPrivateSigningKey};
 use openidconnect::{JsonWebKeyId, PrivateSigningKey};
 use serde_json::{Value, json};
@@ -29,36 +31,6 @@ const AT_GOOGLE: &str = "spool_google";
 
 fn key(pem: &str) -> CoreRsaPrivateSigningKey {
     CoreRsaPrivateSigningKey::from_pem(pem, Some(JsonWebKeyId::new("the-key".to_owned()))).unwrap()
-}
-
-fn base64(bytes: &[u8], alphabet: &[u8; 64], pad: bool) -> String {
-    let mut text = String::new();
-    for chunk in bytes.chunks(3) {
-        let group = chunk
-            .iter()
-            .chain([0, 0].iter())
-            .take(3)
-            .fold(0u32, |group, byte| (group << 8) | u32::from(*byte));
-        for index in 0..4 {
-            if index <= chunk.len() {
-                let six = (group >> (18 - 6 * index)) & 63;
-                text.push(alphabet[six as usize] as char);
-            } else if pad {
-                text.push('=');
-            }
-        }
-    }
-    text
-}
-
-fn base64url(bytes: &[u8]) -> String {
-    const URL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    base64(bytes, URL, false)
-}
-
-fn base64_plain(bytes: &[u8]) -> String {
-    const PLAIN: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    base64(bytes, PLAIN, true)
 }
 
 /// What a query or a form says, with its `%` and `+` read.
@@ -278,7 +250,7 @@ async fn exchange(
     // The client says who it is, as Google's own would have it.
     let client = format!(
         "Basic {}",
-        base64_plain(format!("{CLIENT_ID}:{CLIENT_SECRET}").as_bytes())
+        STANDARD.encode(format!("{CLIENT_ID}:{CLIENT_SECRET}"))
     );
     if headers.get("authorization").and_then(|v| v.to_str().ok()) != Some(&client) {
         return refusal("invalid_client");
@@ -289,7 +261,7 @@ async fn exchange(
     };
     // Whoever brings the code is who asked for it.
     let verifier = form.get("code_verifier").map_or("", String::as_str);
-    if base64url(&Sha256::digest(verifier)) != grant.challenge {
+    if URL_SAFE_NO_PAD.encode(Sha256::digest(verifier)) != grant.challenge {
         return refusal("invalid_grant");
     }
     let now = std::time::SystemTime::now()
@@ -316,8 +288,8 @@ async fn exchange(
     let head = json!({ "alg": algorithm, "kid": "the-key", "typ": "JWT" });
     let signed = format!(
         "{}.{}",
-        base64url(head.to_string().as_bytes()),
-        base64url(claims.to_string().as_bytes())
+        URL_SAFE_NO_PAD.encode(head.to_string()),
+        URL_SAFE_NO_PAD.encode(claims.to_string())
     );
     let signer = match wrong {
         Some(Wrong::Signer) => key(include_str!("fixtures/someone-else.pem")),
@@ -332,7 +304,7 @@ async fn exchange(
             )
             .unwrap(),
     };
-    let token = format!("{signed}.{}", base64url(&signature));
+    let token = format!("{signed}.{}", URL_SAFE_NO_PAD.encode(&signature));
     (
         StatusCode::OK,
         Json(json!({ "access_token": "unused", "token_type": "Bearer", "id_token": token })),

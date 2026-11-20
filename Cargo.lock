@@ -3160,6 +3160,7 @@ name = "spool"
 version = "0.4.0"
 dependencies = [
  "duckdb",
+ "hex",
  "libc",
  "proptest",
  "schemars 1.2.3",
@@ -3189,6 +3190,7 @@ dependencies = [
  "comfy-table",
  "csv",
  "getrandom 0.3.4",
+ "hex",
  "http-body",
  "indicatif",
  "libc",
@@ -3205,6 +3207,7 @@ dependencies = [
  "sha2 0.11.1",
  "snapbox",
  "spool",
+ "subtle",
  "tempfile",
  "tokio",
  "tower-sessions",
@@ -3217,6 +3220,7 @@ dependencies = [
 name = "spool-core"
 version = "0.4.0"
 dependencies = [
+ "hex",
  "schemars 1.2.3",
  "serde",
  "sha2 0.11.1",

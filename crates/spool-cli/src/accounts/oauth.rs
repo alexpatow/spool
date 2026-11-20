@@ -14,6 +14,8 @@
 //! the account is moved to another Google account. A code, and each token,
 //! is kept as its SHA-256.
 
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -535,23 +537,7 @@ fn challenged(verifier: &str) -> Option<String> {
     if !(43..=128).contains(&verifier.len()) || !verifier.chars().all(allowed) {
         return None;
     }
-    Some(base64url(&Sha256::digest(verifier)))
-}
-
-pub fn base64url(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    let mut text = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let group = chunk
-            .iter()
-            .chain([0, 0].iter())
-            .take(3)
-            .fold(0u32, |group, byte| (group << 8) | u32::from(*byte));
-        for index in 0..=chunk.len() {
-            text.push(ALPHABET[((group >> (18 - 6 * index)) & 63) as usize] as char);
-        }
-    }
-    text
+    Some(URL_SAFE_NO_PAD.encode(Sha256::digest(verifier)))
 }
 
 #[cfg(test)]

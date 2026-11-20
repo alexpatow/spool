@@ -665,7 +665,7 @@ fn token(row: &rusqlite::Row<'_>) -> rusqlite::Result<Token> {
 /// nothing is gained by a hash that is slow to make, and it is looked up by
 /// this.
 fn sealed(token: &str) -> String {
-    hex(&Sha256::digest(token))
+    hex::encode(Sha256::digest(token))
 }
 
 /// A person, and after what a [`Person`] has, the hash of their password.
@@ -803,11 +803,7 @@ fn hashed(password: &str) -> Result<String, Refused> {
 /// What a session keeps of the password it began with: the SHA-256 of its
 /// stored hash, which changes whenever the password is set.
 fn mark(hash: &str) -> String {
-    hex(&Sha256::digest(hash))
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    hex::encode(Sha256::digest(hash))
 }
 
 /// A hash no password matches, to check against when there is no account.
@@ -821,11 +817,11 @@ fn nobody() -> &'static str {
 pub fn code() -> String {
     let mut bytes = [0u8; 32];
     getrandom::fill(&mut bytes).expect("the system gives random bytes");
-    hex(&bytes)
+    hex::encode(bytes)
 }
 
 fn stored_id(id: &Id) -> String {
-    hex(&Sha256::digest(id.0.to_le_bytes()))
+    hex::encode(Sha256::digest(id.0.to_le_bytes()))
 }
 
 fn backend(error: impl std::fmt::Display) -> session_store::Error {

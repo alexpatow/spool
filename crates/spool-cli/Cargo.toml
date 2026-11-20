@@ -28,6 +28,7 @@ comfy-table.workspace = true
 indicatif.workspace = true
 csv.workspace = true
 getrandom.workspace = true
+hex.workspace = true
 http-body.workspace = true
 libduckdb-sys.workspace = true
 openidconnect.workspace = true
@@ -41,6 +42,7 @@ serde_json.workspace = true
 serde_urlencoded.workspace = true
 sha2.workspace = true
 spool = { workspace = true, features = ["schema"] }
+subtle.workspace = true
 tokio.workspace = true
 tower-sessions.workspace = true
 ureq.workspace = true

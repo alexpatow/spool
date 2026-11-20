@@ -186,12 +186,7 @@ impl ContentHash {
         for op in ops {
             op.encode(&mut hasher);
         }
-        let hex = hasher
-            .finalize()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
-        Self(hex)
+        Self(hex::encode(hasher.finalize()))
     }
 
     /// Wraps a hash read back from a store.

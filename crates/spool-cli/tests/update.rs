@@ -160,10 +160,7 @@ exec "$FIXTURE_SPOOL" "$@"
     assert_eq!(fs::read_link(&link).unwrap(), old);
     assert!(!rules.exists());
 
-    let digest: String = Sha256::digest(fs::read(mock.join(&archive)).unwrap())
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
+    let digest = hex::encode(Sha256::digest(fs::read(mock.join(&archive)).unwrap()));
     fs::write(&sums, format!("{digest}  {archive}\n")).unwrap();
     let applied = update();
     assert!(

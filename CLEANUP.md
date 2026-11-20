@@ -30,11 +30,11 @@ Every step keeps behaviour as it is: the checks are `cargo fmt`, `cargo clippy
 
 ## C. Crates in place of hand-rolled code
 
-- [ ] C1. `base64` (already a dependency) for `base64url`, `unbase64` and the
+- [x] C1. `base64` (already a dependency) for `base64url`, `unbase64` and the
       two copies in the tests.
-- [ ] C2. `hex` for the thirteen `format!("{byte:02x}")` loops, three `fn hex`
+- [x] C2. `hex` for the thirteen `format!("{byte:02x}")` loops, three `fn hex`
       and `unhex`.
-- [ ] C3. `subtle` for the constant-time compare in `server.rs`.
+- [x] C3. `subtle` for the constant-time compare in `server.rs`.
 - [ ] C4. `time` for the calendar arithmetic in `spool/src/time.rs`.
 - [ ] C5. `dotenvy` for `parse_env`. Errors still name a line by its number
       alone.

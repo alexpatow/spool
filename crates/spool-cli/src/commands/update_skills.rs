@@ -451,11 +451,7 @@ fn unedited(text: &str) -> bool {
 /// The first 16 hexadecimal digits of the SHA-256 of `text`: enough to tell
 /// an edit, which is all it is for.
 fn digest(text: &str) -> String {
-    Sha256::digest(text.as_bytes())
-        .iter()
-        .take(8)
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    hex::encode(&Sha256::digest(text.as_bytes())[..8])
 }
 
 #[cfg(test)]

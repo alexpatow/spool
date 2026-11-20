@@ -13,6 +13,7 @@ repository.workspace = true
 schema = ["dep:schemars"]
 
 [dependencies]
+hex.workspace = true
 schemars = { workspace = true, optional = true }
 serde.workspace = true
 sha2.workspace = true

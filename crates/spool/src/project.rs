@@ -1201,11 +1201,7 @@ pub(crate) fn strategy_hash(file: &Path) -> Result<String> {
     if owned.is_dir() {
         walk(&mut hasher, &owned, &owned)?;
     }
-    Ok(hasher
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect())
+    Ok(hex::encode(hasher.finalize()))
 }
 
 /// SHA-256 of several texts, each with its length, as lowercase hex.
@@ -1215,20 +1211,13 @@ pub(crate) fn hash_text(texts: &[&str]) -> String {
         hasher.update((text.len() as u64).to_le_bytes());
         hasher.update(text.as_bytes());
     }
-    hasher
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    hex::encode(hasher.finalize())
 }
 
 /// SHA-256 of a value's JSON form, as lowercase hex.
 pub(crate) fn hash_json(value: &impl Serialize) -> String {
     let json = serde_json::to_vec(value).expect("manifest types serialise to JSON");
-    Sha256::digest(&json)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    hex::encode(Sha256::digest(&json))
 }
 
 /// Trims whitespace and trailing semicolons, so a file can end the way SQL

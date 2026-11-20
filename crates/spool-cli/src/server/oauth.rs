@@ -25,6 +25,8 @@ use axum::http::header::{AUTHORIZATION, CACHE_CONTROL, LOCATION, PRAGMA};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD_NO_PAD;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tower_sessions::Session;
@@ -698,7 +700,11 @@ fn client_of(field: Option<&str>, headers: &HeaderMap) -> Result<String, OAuthEr
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.split_once(' '))
         .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("basic"))
-        .and_then(|(_, encoded)| unbase64(encoded.trim()))
+        .and_then(|(_, encoded)| {
+            // Padding is taken off, so a client that leaves it out is read too.
+            let encoded = encoded.trim().trim_end_matches('=');
+            String::from_utf8(STANDARD_NO_PAD.decode(encoded).ok()?).ok()
+        })
         .and_then(|decoded| decoded.split_once(':').map(|(user, _)| user.to_owned()))
         .and_then(|user| {
             serde_urlencoded::from_str::<Vec<(String, String)>>(&format!("u={user}")).ok()
@@ -706,24 +712,6 @@ fn client_of(field: Option<&str>, headers: &HeaderMap) -> Result<String, OAuthEr
         .and_then(|mut pairs| pairs.pop().map(|(_, user)| user))
         .filter(|user| !user.is_empty());
     basic.ok_or_else(|| OAuthError::client("`client_id` is missing"))
-}
-
-fn unbase64(text: &str) -> Option<String> {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut bits = 0u32;
-    let mut held = 0;
-    let mut bytes = Vec::new();
-    for byte in text.trim_end_matches('=').bytes() {
-        let six = ALPHABET.iter().position(|&c| c == byte)? as u32;
-        bits = (bits << 6) | six;
-        held += 6;
-        if held >= 8 {
-            held -= 8;
-            bytes.push((bits >> held) as u8);
-            bits &= (1 << held) - 1;
-        }
-    }
-    String::from_utf8(bytes).ok()
 }
 
 /// Takes back a token a client was given (RFC 7009). The answer is the same

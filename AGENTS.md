@@ -47,14 +47,14 @@ in each layer it reaches, and an existing one is extended where it already is.
 
 1. **Look before you write.** Search for a helper before adding one. Shared
    helpers live in a few named places:
-   - `spool_core::hash` for SHA-256 as hex, `spool_core::DisjointSets` for
-     grouping.
+   - `spool_core::DisjointSets` for grouping records that are joined in
+     pairs.
    - `crates/spool-cli/src/text.rs` for the words the commands print: lists,
      plurals, shares.
    - `packages/studio/src/format.ts` for how the studio writes values.
    A helper that two files need moves to the shared place; it is not copied.
 
-2. **Do not hand-roll what a crate does.** Encodings (hex, base64), dates,
+2. **Do not hand-roll what a crate does.** Encodings (`hex`, `base64`), dates,
    comparisons that must take constant time, parsers of standard formats
    (`.env`, CSV, URLs) and signal handling come from a dependency. Prefer one
    that is already in `Cargo.lock` or `bun.lock`.

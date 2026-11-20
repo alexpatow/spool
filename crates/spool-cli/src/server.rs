@@ -94,6 +94,7 @@ use spool::{
     LogSort, RecordFilter, RecordSort, ResolveOptions, ReviewFilter, ReviewStatus, Rows, RunFilter,
     RunKind, RunSort, RunStatus, Scope, Sort, StrategyRef, watch_runs,
 };
+use subtle::ConstantTimeEq;
 use tokio::net::TcpListener;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch};
 use tower_sessions::cookie::time::Duration as SessionLength;
@@ -1002,7 +1003,7 @@ async fn set_up(State(app): State<App>, session: Session, body: Bytes) -> ApiRes
     let right = {
         let code = app.setup.lock().unwrap_or_else(|held| held.into_inner());
         code.as_deref()
-            .is_some_and(|code| same(code.as_bytes(), request.code.trim().as_bytes()))
+            .is_some_and(|code| code.as_bytes().ct_eq(request.code.trim().as_bytes()).into())
     };
     if !right {
         return Err(unauthorized(
@@ -1157,22 +1158,6 @@ fn turned_away(app: &App, next: &str, why: &str) -> Response {
     send_to(app, &format!("{page}{joint}google={why}{fragment}"), None)
 }
 
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-fn unhex(text: &str) -> Option<String> {
-    let digits = text.as_bytes();
-    if !digits.len().is_multiple_of(2) {
-        return None;
-    }
-    let bytes = digits
-        .chunks(2)
-        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok())
-        .collect::<Option<Vec<u8>>>()?;
-    String::from_utf8(bytes).ok()
-}
-
 /// A sign-in at Google as the browser keeps it: what Google sends back,
 /// what its token repeats, what proves who asked, and where to go after.
 struct Kept {
@@ -1190,7 +1175,7 @@ impl Kept {
             started.state,
             started.nonce,
             started.verifier,
-            hex(next.as_bytes())
+            hex::encode(next)
         )
     }
 
@@ -1210,7 +1195,7 @@ impl Kept {
             state: parts.next()?.to_owned(),
             nonce: parts.next()?.to_owned(),
             verifier: parts.next()?.to_owned(),
-            next: unhex(parts.next()?)?,
+            next: String::from_utf8(hex::decode(parts.next()?).ok()?).ok()?,
         };
         (parts.next().is_none() && !kept.state.is_empty()).then_some(kept)
     }
@@ -1314,7 +1299,7 @@ async fn google_callback(
     let kept = Kept::read(&app, &headers).filter(|kept| {
         back.state
             .as_deref()
-            .is_some_and(|state| same(state.as_bytes(), kept.state.as_bytes()))
+            .is_some_and(|state| state.as_bytes().ct_eq(kept.state.as_bytes()).into())
     });
     let Some(kept) = kept else {
         return Ok(turned_away(&app, "/", "expired"));
@@ -1453,18 +1438,6 @@ async fn revoke_token(
 ) -> ApiResult {
     caller.admin()?;
     ok(people(&app, move |accounts| accounts.revoke_token(&token)).await?)
-}
-
-/// Compares without stopping at the first difference, so that the time taken
-/// says nothing about how much of a guess was right.
-fn same(a: &[u8], b: &[u8]) -> bool {
-    let mut difference = a.len() ^ b.len();
-    for index in 0..a.len().max(b.len()) {
-        let x = a.get(index).copied().unwrap_or(0);
-        let y = b.get(index).copied().unwrap_or(0);
-        difference |= usize::from(x ^ y);
-    }
-    difference == 0
 }
 
 // Reading requests
@@ -2931,7 +2904,7 @@ async fn dismiss_review(
 
 #[cfg(test)]
 mod tests {
-    use super::{delimited_rows, same};
+    use super::delimited_rows;
     use axum::body::Bytes;
     use std::sync::Arc;
     use std::time::Duration;
@@ -2953,21 +2926,5 @@ mod tests {
         // A body that cannot be read gives its turn back too.
         assert!(delimited_rows(&reading, Bytes::new(), b',').await.is_err());
         assert_eq!(reading.available_permits(), 1);
-    }
-
-    #[test]
-    fn codes_are_compared_whole() {
-        assert!(same(b"secret", b"secret"));
-        assert!(same(b"", b""));
-        for (a, b) in [
-            (&b"secret"[..], &b"secreT"[..]),
-            (b"secret", b"secret "),
-            (b"secret", b"secre"),
-            (b"", b"x"),
-            (b"a\0", b"a"),
-        ] {
-            assert!(!same(a, b), "{a:?} and {b:?}");
-            assert!(!same(b, a), "{b:?} and {a:?}");
-        }
     }
 }

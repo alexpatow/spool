@@ -13,6 +13,7 @@ schema = ["dep:schemars", "spool-core/schema"]
 
 [dependencies]
 duckdb.workspace = true
+hex.workspace = true
 schemars = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
