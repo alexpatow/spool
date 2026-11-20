@@ -8,7 +8,7 @@
 //! ignored unless asked for:
 //!
 //! ```sh
-//! cargo test -p spool-cli --test first_extraction -- --include-ignored
+//! cargo test -p spool-cli --test it -- --include-ignored first_extraction::
 //! ```
 //!
 //! Those put a stand-in in the sample extractor's place, which finds the
@@ -20,13 +20,11 @@
 //! nothing unless `SPOOL_TEST_MODEL` is set:
 //!
 //! ```sh
-//! SPOOL_TEST_MODEL=1 cargo test -p spool-cli --test first_extraction -- --include-ignored sample_model
+//! SPOOL_TEST_MODEL=1 cargo test -p spool-cli --test it -- --include-ignored sample_model
 //! ```
 //!
 //! One of the two fetches the model each time it runs, into caches of its
 //! own.
-
-mod support;
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
@@ -35,7 +33,8 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
-use support::*;
+
+use crate::support::*;
 
 const NOTE: &str = "\
 Call with Dana Reyes on 12 November. She has moved to Acorn Tools Ltd and runs

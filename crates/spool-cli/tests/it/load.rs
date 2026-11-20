@@ -1,14 +1,13 @@
 //! `spool load`, run against a server over a socket.
 
-mod support;
-
 use std::io::Write;
 use std::net::TcpListener;
 use std::path::Path;
 use std::process::{Output, Stdio};
 
 use serde_json::{Value, json};
-use support::*;
+
+use crate::support::*;
 
 /// `spool load <arguments>` in `dir`, which has to succeed: what it printed
 /// and what it said beside.

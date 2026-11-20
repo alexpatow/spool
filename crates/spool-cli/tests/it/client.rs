@@ -1,11 +1,9 @@
 //! The API's schema and the TypeScript client that is generated from it.
 
-mod support;
-
 use std::path::PathBuf;
 use std::process::Command;
 
-use support::*;
+use crate::support::*;
 
 fn repository() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")

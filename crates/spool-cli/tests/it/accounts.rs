@@ -1,10 +1,9 @@
 //! People and tokens: the first account, signing in, who may manage accounts
 //! and tokens, and who a change is recorded under.
 
-mod support;
-
 use serde_json::{Value, json};
-use support::{Response, Server, path, run, succeed, text, write_things};
+
+use crate::support::{self, Response, Server, path, run, succeed, text, write_things};
 
 const PASSWORD: &str = "a long enough one";
 

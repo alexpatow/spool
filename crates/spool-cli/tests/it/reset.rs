@@ -1,9 +1,8 @@
 //! `spool reset`: the development store started over, and nothing else.
 
-mod support;
-
 use serde_json::json;
-use support::*;
+
+use crate::support::*;
 
 fn reset(arguments: &[&str]) -> std::process::Output {
     let mut all = vec!["reset"];

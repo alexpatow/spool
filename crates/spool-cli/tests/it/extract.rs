@@ -3,15 +3,14 @@
 //! The tests that start `uv` are ignored unless asked for:
 //!
 //! ```sh
-//! cargo test -p spool-cli --test extract -- --include-ignored
+//! cargo test -p spool-cli --test it -- --include-ignored extract::
 //! ```
-
-mod support;
 
 use std::path::Path;
 
 use serde_json::{Value, json};
-use support::*;
+
+use crate::support::*;
 
 /// Takes a capitalised word to be a thing, with the word in lower case as
 /// its code.

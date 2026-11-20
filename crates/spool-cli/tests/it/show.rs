@@ -3,17 +3,16 @@
 //! The test that starts `uv` is ignored unless asked for:
 //!
 //! ```sh
-//! cargo test -p spool-cli --test show -- --include-ignored
+//! cargo test -p spool-cli --test it -- --include-ignored show::
 //! ```
-
-mod support;
 
 use std::path::Path;
 use std::process::Output;
 
 use serde_json::{Value, json};
 use spool::Rows;
-use support::*;
+
+use crate::support::*;
 
 /// `spool <arguments>` against `server`, with its token in the environment
 /// if it asks for one.

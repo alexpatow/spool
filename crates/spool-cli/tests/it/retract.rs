@@ -1,12 +1,11 @@
 //! Rows a source takes back, over the API and with `spool retract`.
 
-mod support;
-
 use std::path::Path;
 use std::process::Output;
 
 use serde_json::{Value, json};
-use support::*;
+
+use crate::support::*;
 
 fn load(server: &Server, table: &[&[&str]]) -> Value {
     let response = server.post(

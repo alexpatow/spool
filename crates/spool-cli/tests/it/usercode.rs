@@ -3,15 +3,14 @@
 //! The tests that start `uv` are ignored unless asked for:
 //!
 //! ```sh
-//! cargo test -p spool-cli --test usercode -- --include-ignored
+//! cargo test -p spool-cli --test it -- --include-ignored usercode::
 //! ```
-
-mod support;
 
 use std::path::Path;
 
 use serde_json::{Value, json};
-use support::*;
+
+use crate::support::*;
 
 /// Judges two things the same if their code is the same, whatever their
 /// colour: the project's rules keep two colours apart, so the two disagree.

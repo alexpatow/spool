@@ -56,7 +56,7 @@ if changed packages/studio/src packages/studio/public packages/studio/index.html
     studio=1
 fi
 if changed "${rust_config[@]}" "$schema_path" crates/spool-cli/src/api.rs crates/spool-cli/src/api \
-    crates/spool-cli/src/main.rs crates/spool-cli/src/commands/mod.rs crates/spool-cli/tests/client.rs \
+    crates/spool-cli/src/main.rs crates/spool-cli/src/commands/mod.rs crates/spool-cli/tests/it/client.rs \
     ':(glob)crates/spool/src/**/*.rs' ':(glob)crates/spool-core/src/**/*.rs'; then
     schema=1
 fi
@@ -116,7 +116,7 @@ if ((schema)); then
     check 'HTTP JSON Schema' \
         'schema=$(cargo run --locked --quiet -p spool-cli -- schema) && mkdir -p schema &&
   printf "%s\n" "$schema" > schema/spool-api.v1.schema.json && (cd packages/client && bun run generate)' \
-        cargo test --locked -p spool-cli --test client -- the_committed_schema_is_the_one_the_server_speaks --exact
+        cargo test --locked -p spool-cli --test it -- client::the_committed_schema_is_the_one_the_server_speaks --exact
 fi
 if ((types)); then
     check 'TypeScript client types' '(cd packages/client && bun run generate)' \

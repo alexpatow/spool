@@ -1,14 +1,13 @@
 //! The MCP endpoint, called as a client calls it: JSON-RPC over HTTP against
 //! the real binary.
 
-mod support;
-
 use std::path::{Path, PathBuf};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
 use spool::Rows;
-use support::*;
+
+use crate::support::{self, *};
 
 /// What a client sends to say it takes either kind of answer.
 const ACCEPT: &str = "application/json, text/event-stream";
@@ -185,7 +184,7 @@ fn a_client_connects_and_is_told_the_tools() {
         .expect("embedded PNG");
     assert_eq!(
         STANDARD.decode(encoded).unwrap(),
-        include_bytes!("../assets/mcp-icon.png")
+        include_bytes!("../../assets/mcp-icon.png")
     );
     assert!(hello["capabilities"]["tools"].is_object(), "{hello}");
     for named in [

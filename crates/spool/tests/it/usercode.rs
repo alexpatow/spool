@@ -5,7 +5,7 @@
 //! the first time, or `bun`, so they are ignored unless asked for:
 //!
 //! ```sh
-//! cargo test -p spool --test usercode -- --include-ignored
+//! cargo test -p spool --test it -- --include-ignored usercode::
 //! ```
 
 use std::fs;

@@ -4,15 +4,14 @@
 //! tokens and calls `/mcp` with them. The test is both the assistant and
 //! the person's browser.
 
-mod support;
-
 use std::collections::HashMap;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use support::{Request, Response, Server, path, write_things};
+
+use crate::support::{self, Request, Response, Server, path, write_things};
 
 const PASSWORD: &str = "a long enough one";
 const CLAUDE: &str = "https://claude.ai/api/mcp/auth_callback";

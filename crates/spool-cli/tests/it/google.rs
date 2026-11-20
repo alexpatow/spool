@@ -4,8 +4,6 @@
 //!
 //! The keys under `fixtures/` were made for these tests and guard nothing.
 
-mod support;
-
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -20,7 +18,8 @@ use openidconnect::core::{CoreJsonWebKeySet, CoreJwsSigningAlgorithm, CoreRsaPri
 use openidconnect::{JsonWebKeyId, PrivateSigningKey};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use support::{Response, Server, path, write_things};
+
+use crate::support::{self, Response, Server, path, write_things};
 
 const PASSWORD: &str = "a long enough one";
 const CLIENT_ID: &str = "spool-under-test";
@@ -229,7 +228,7 @@ async fn configuration(State(stand_in): State<StandIn>) -> Json<Value> {
 }
 
 async fn keys() -> Json<Value> {
-    let key = key(include_str!("fixtures/stand-in-for-google.pem"));
+    let key = key(include_str!("../fixtures/stand-in-for-google.pem"));
     let set = CoreJsonWebKeySet::new(vec![key.as_verification_key()]);
     Json(serde_json::to_value(set).unwrap())
 }
@@ -292,8 +291,8 @@ async fn exchange(
         URL_SAFE_NO_PAD.encode(claims.to_string())
     );
     let signer = match wrong {
-        Some(Wrong::Signer) => key(include_str!("fixtures/someone-else.pem")),
-        _ => key(include_str!("fixtures/stand-in-for-google.pem")),
+        Some(Wrong::Signer) => key(include_str!("../fixtures/someone-else.pem")),
+        _ => key(include_str!("../fixtures/stand-in-for-google.pem")),
     };
     let signature = match wrong {
         Some(Wrong::Unsigned) => Vec::new(),

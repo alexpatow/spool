@@ -1,12 +1,11 @@
 //! What a reviewer does to identities, over the HTTP API against the real
 //! binary: merge, undo, split, constraints and dismissing a review item.
 
-mod support;
-
 use std::path::Path;
 
 use serde_json::{Value, json};
-use support::*;
+
+use crate::support::*;
 
 /// What the test token writes as.
 const REVIEWER: &str = "agent:api";

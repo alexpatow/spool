@@ -1,14 +1,13 @@
 //! The commands a project goes through: `init`, `info`, `build`, `apply`,
 //! `serve` and `dev`, run as a user runs them.
 
-mod support;
-
 use std::path::Path;
 use std::process::Command;
 
 use serde_json::{Value, json};
 use spool::Rows;
-use support::*;
+
+use crate::support::*;
 
 fn read(path: &Path) -> String {
     std::fs::read_to_string(path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))

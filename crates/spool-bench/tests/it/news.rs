@@ -5,7 +5,7 @@
 //! ignored unless asked for:
 //!
 //! ```sh
-//! cargo test -p spool-bench --test news -- --include-ignored
+//! cargo test -p spool-bench --test it -- --include-ignored news::
 //! ```
 
 use std::collections::BTreeSet;

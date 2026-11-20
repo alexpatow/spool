@@ -1,13 +1,12 @@
 //! `spool match`, run against a server over a socket, and what `spool show
 //! records` says before and after it.
 
-mod support;
-
 use std::net::TcpListener;
 use std::path::Path;
 
 use serde_json::{Value, json};
-use support::*;
+
+use crate::support::*;
 
 /// What `spool <arguments>` printed in `dir`: its result, then what it said
 /// beside on standard error. It has to succeed.

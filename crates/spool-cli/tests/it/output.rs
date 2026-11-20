@@ -1,12 +1,11 @@
 //! What the commands print in each format, and where: the result on
 //! standard output, and hints beside it on standard error.
 
-mod support;
-
 use std::path::Path;
 
 use serde_json::Value;
-use support::*;
+
+use crate::support::*;
 
 /// A server over the sample project, with its first rows loaded and
 /// matched.

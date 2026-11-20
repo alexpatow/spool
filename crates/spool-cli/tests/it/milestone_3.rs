@@ -9,14 +9,13 @@
 //! - The same through the API: `lifecycle.rs` here, and
 //!   `packages/client/test` for the TypeScript client.
 
-mod support;
-
 use std::path::{Path, PathBuf};
 
 use spool::core::{IdentityStore, MemoryState, Op};
 use spool::{Engine, Options};
 use spool_bench::{BenchReport, Scenario, StepReport};
-use support::*;
+
+use crate::support::*;
 
 fn corrections() -> PathBuf {
     benchmarks().join("identity/companies-small/corrections.toml")

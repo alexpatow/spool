@@ -4,7 +4,7 @@
 //! are ignored unless asked for:
 //!
 //! ```sh
-//! cargo test -p spool-bench --test splink -- --include-ignored
+//! cargo test -p spool-bench --test it -- --include-ignored splink::
 //! ```
 
 use std::collections::BTreeSet;

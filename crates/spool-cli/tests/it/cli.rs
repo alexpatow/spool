@@ -1,11 +1,9 @@
 //! The `spool` command's arguments and exit codes. The help of each command
 //! is checked against its snapshot by a test inside the binary.
 
-mod support;
-
 use std::path::Path;
 
-use support::{benchmarks, run as spool, text};
+use crate::support::{self, benchmarks, run as spool, text};
 
 fn copy_dir(from: &Path, to: &Path) {
     std::fs::create_dir_all(to).unwrap();

@@ -1,12 +1,11 @@
 //! `spool recompute` and `POST /v1/recompute`, against a `spool dev` server
 //! whose rules change under identities that exist.
 
-mod support;
-
 use std::path::Path;
 
 use serde_json::{Value, json};
-use support::*;
+
+use crate::support::*;
 
 fn shown(server: &Server, dir: &Path, arguments: &[&str]) -> String {
     let output = server.spool_in(dir, arguments).output().unwrap();

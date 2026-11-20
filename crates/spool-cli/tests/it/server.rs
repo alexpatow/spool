@@ -1,14 +1,13 @@
 //! The HTTP API, called over a socket against the real binary.
 
-mod support;
-
 use std::path::{Path, PathBuf};
 
 use arrow::array::{Array, AsArray};
 use serde_json::{Value, json};
 use spool::core::Seq;
 use spool::{Engine, IdentityFilter, Options, ReviewFilter, ReviewStatus, Rows};
-use support::*;
+
+use crate::support::*;
 
 fn companies() -> PathBuf {
     benchmarks().join("identity/companies-small")

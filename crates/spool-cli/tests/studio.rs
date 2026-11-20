@@ -1,5 +1,6 @@
 //! The studio: the page the server answers a browser with.
 
+#[path = "it/support/mod.rs"]
 mod support;
 
 use std::path::{Path, PathBuf};
