@@ -24,10 +24,10 @@ mod files;
 mod report;
 mod running;
 
-use batches::{next_batch, sending};
-use choose::{extractor, readable, source_of};
-use files::read;
-use report::{list, shown, stopped};
+use batches::{group_files_to_send, next_batch};
+use choose::{check_source_readable, choose_extractor, source_of};
+use files::read_files;
+use report::{describe_stopped_extraction, print_found_records, shorten_found_text};
 use running::Progress;
 
 /// Find records in documents with one of the project's extractors
@@ -194,17 +194,17 @@ impl Answered {
 #[expect(clippy::too_many_lines)]
 pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
     let out = Output::report(&arguments.output, "`spool extract`")?;
-    let files = read(&arguments.paths)?;
+    let files = read_files(&arguments.paths)?;
     catch_ctrl_c();
 
     let remote = Remote::new(&arguments.remote);
     let info = remote.info()?;
     let timeout = info.task_timeout_ms.map(Duration::from_millis);
     let info = info.store;
-    let extractor = extractor(&info.extractors, arguments.extractor.as_deref())?;
+    let extractor = choose_extractor(&info.extractors, arguments.extractor.as_deref())?;
     let source = source_of(&info.sources, arguments.source.as_deref(), &files)?;
     if let Some(source) = &source {
-        readable(&info.sources, source)?;
+        check_source_readable(&info.sources, source)?;
     }
     let as_json = !out.is_table();
     let again = arguments.again;
@@ -215,7 +215,7 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
     {
         let (mut inserted, mut duplicates, mut superseded) = (0, 0, 0);
         let mut stored = 0;
-        let parts = sending(&files);
+        let parts = group_files_to_send(&files);
         let storing = match parts.len() {
             1 => ProgressBar::hidden(),
             _ => progress::bar(
@@ -245,7 +245,7 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
                     "/documents",
                     &json!({ "source": source, "documents": documents, "wait_ms": WAIT_MS }),
                 )
-                .and_then(|started| ended(&remote, started))
+                .and_then(|started| wait_for_run(&remote, started))
                 .and_then(|(answer, run)| {
                     answered.documents.push(answer["run"].clone());
                     match run.status {
@@ -272,7 +272,7 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
             let report = run
                 .load
                 .as_ref()
-                .ok_or_else(|| unreported(&run, "what it stored"))?;
+                .ok_or_else(|| missing_report_failure(&run, "what it stored"))?;
             inserted += report.inserted;
             duplicates += report.duplicates;
             superseded += report.superseded;
@@ -309,7 +309,9 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
     let mut since: Option<RunId> = None;
     loop {
         if was_interrupted() {
-            return Err(Failure::stopped(stopped(&found, again, None)));
+            return Err(Failure::stopped(describe_stopped_extraction(
+                &found, again, None,
+            )));
         }
         let mut request = json!({
             "extractor": extractor.name,
@@ -328,7 +330,7 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
         let waited = remote
             .post("/extractions", &request)
             .and_then(|started| progress.follow(&remote, started))
-            .and_then(|answer| ended(&remote, answer));
+            .and_then(|answer| wait_for_run(&remote, answer));
         let (answer, run) = match waited {
             Ok(ended) => ended,
             Err(failure) => {
@@ -345,7 +347,11 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
                 answered.print(out);
             }
             if progress.cancelled {
-                return Err(Failure::stopped(stopped(&found, again, Some(run.run))));
+                return Err(Failure::stopped(describe_stopped_extraction(
+                    &found,
+                    again,
+                    Some(run.run),
+                )));
             }
             progress.stopped(found.documents, again, Some(run.run));
             return Err(remote::unsuccessful(&run));
@@ -353,7 +359,7 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
         let report = run
             .extraction
             .as_ref()
-            .ok_or_else(|| unreported(&run, "what it found"))?;
+            .ok_or_else(|| missing_report_failure(&run, "what it found"))?;
         found.add(report);
         progress.relay(&report.stderr);
         // An extractor that finds nothing anywhere takes back all that was
@@ -391,7 +397,9 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
             if as_json {
                 answered.print(out);
             }
-            return Err(Failure::stopped(stopped(&found, again, None)));
+            return Err(Failure::stopped(describe_stopped_extraction(
+                &found, again, None,
+            )));
         }
         if since.is_none() {
             since = Some(run.run);
@@ -457,7 +465,7 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
             .map(|failed| {
                 vec![
                     format!("{}:{}", failed.source, failed.key),
-                    shown(&failed.reason),
+                    shorten_found_text(&failed.reason),
                 ]
             })
             .collect();
@@ -470,7 +478,7 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
     if let Some(source) = &source
         && !files.is_empty()
     {
-        list(
+        print_found_records(
             &remote,
             source,
             &files[..files.len().min(LISTED)],
@@ -487,7 +495,7 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
 }
 
 /// Waits for the run a call started.
-fn ended(remote: &Remote, answer: Value) -> Result<(Value, RunEntry), Failure> {
+fn wait_for_run(remote: &Remote, answer: Value) -> Result<(Value, RunEntry), Failure> {
     remote.ended(answer)?.ok_or_else(|| {
         Failure::failed(
             "the server started no run; is it a Spool server of this version?".to_owned(),
@@ -495,7 +503,7 @@ fn ended(remote: &Remote, answer: Value) -> Result<(Value, RunEntry), Failure> {
     })
 }
 
-fn unreported(run: &RunEntry, what: &str) -> Failure {
+fn missing_report_failure(run: &RunEntry, what: &str) -> Failure {
     Failure::failed(format!(
         "run {} succeeded and did not report {what}; is the server of this version?",
         run.run

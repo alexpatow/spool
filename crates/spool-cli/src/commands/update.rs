@@ -69,7 +69,7 @@ pub fn update(arguments: UpdateArgs, color: ColorChoice) -> Result<(), Failure> 
     let latest = latest_version()?;
     let current = Version::parse(CURRENT).expect("Cargo's version is semver");
     if latest.cmp_precedence(&current).is_gt() {
-        install(&installed, &old_target, &latest)?;
+        run_install_script(&installed, &old_target, &latest)?;
         println!("updated  spool {current} to {latest}");
     } else {
         println!("current  spool {current}");
@@ -220,7 +220,11 @@ fn latest_version() -> Result<Version, Failure> {
         })
 }
 
-fn install(installed: &Installation, old_target: &Path, version: &Version) -> Result<(), Failure> {
+fn run_install_script(
+    installed: &Installation,
+    old_target: &Path,
+    version: &Version,
+) -> Result<(), Failure> {
     let mut command = Command::new("sh");
     command
         .arg("-s")

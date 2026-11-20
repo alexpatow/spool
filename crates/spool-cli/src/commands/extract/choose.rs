@@ -9,7 +9,7 @@ use crate::Failure;
 use crate::commands::remote;
 
 /// The extractor that was named, or the project's only one.
-pub(super) fn extractor<'a>(
+pub(super) fn choose_extractor<'a>(
     known: &'a [Extractor],
     named: Option<&str>,
 ) -> Result<&'a Extractor, Failure> {
@@ -107,7 +107,10 @@ pub(super) fn source_of(
 /// before anything is stored: what an extractor finds is a record of an
 /// entity type, and the type's mapping has to say what it reads from the
 /// source.
-pub(super) fn readable(sources: &[DeclaredSource], source: &str) -> Result<(), Failure> {
+pub(super) fn check_source_readable(
+    sources: &[DeclaredSource],
+    source: &str,
+) -> Result<(), Failure> {
     let Some(declared) = sources.iter().find(|declared| declared.name == source) else {
         return Ok(());
     };
@@ -128,7 +131,7 @@ mod tests {
 
     /// What `source_of` says of files called `files` in a project with
     /// `sources`: the source, or why there is none.
-    fn said(sources: &[&str], named: Option<&str>, files: &[&str]) -> String {
+    fn describe_source_choice(sources: &[&str], named: Option<&str>, files: &[&str]) -> String {
         let sources: Vec<DeclaredSource> = sources
             .iter()
             .map(|name| DeclaredSource {
@@ -155,27 +158,42 @@ mod tests {
 
     #[test]
     fn the_source_is_the_one_named_the_only_one_or_the_one_the_files_are_named_after() {
-        assert_eq!(said(&["notes"], None, &["call.txt"]), "notes");
-        assert_eq!(said(&["crm", "notes"], None, &["notes-1.txt"]), "notes");
         assert_eq!(
-            said(&["crm", "notes"], None, &["notes-1.txt", "notes.md"]),
+            describe_source_choice(&["notes"], None, &["call.txt"]),
             "notes"
         );
-        assert_eq!(said(&["crm", "notes"], Some("crm"), &["call.txt"]), "crm");
+        assert_eq!(
+            describe_source_choice(&["crm", "notes"], None, &["notes-1.txt"]),
+            "notes"
+        );
+        assert_eq!(
+            describe_source_choice(&["crm", "notes"], None, &["notes-1.txt", "notes.md"]),
+            "notes"
+        );
+        assert_eq!(
+            describe_source_choice(&["crm", "notes"], Some("crm"), &["call.txt"]),
+            "crm"
+        );
         // With no file, the extractor reads what the server holds.
-        assert_eq!(said(&["crm", "notes"], None, &[]), "every source");
-        assert_eq!(said(&["crm", "notes"], Some("notes"), &[]), "notes");
+        assert_eq!(
+            describe_source_choice(&["crm", "notes"], None, &[]),
+            "every source"
+        );
+        assert_eq!(
+            describe_source_choice(&["crm", "notes"], Some("notes"), &[]),
+            "notes"
+        );
     }
 
     #[test]
     fn a_source_that_cannot_be_told_is_asked_for() {
         assert_eq!(
-            said(&["crm", "notes"], None, &["call.txt"]),
+            describe_source_choice(&["crm", "notes"], None, &["call.txt"]),
             "the project has the sources `crm` and `notes`, and call.txt is named after \
              neither: say which its documents belong to with `--source`"
         );
         assert_eq!(
-            said(
+            describe_source_choice(
                 &["crm", "notes", "wire"],
                 None,
                 &["notes-1.txt", "call.txt"]
@@ -184,17 +202,17 @@ mod tests {
              none of them: say which its documents belong to with `--source`"
         );
         assert_eq!(
-            said(&["crm", "notes"], None, &["notes-1.txt", "crm-1.txt"]),
+            describe_source_choice(&["crm", "notes"], None, &["notes-1.txt", "crm-1.txt"]),
             "the files are named after different sources, `notes` and `crm`: extract them one \
              source at a time, or say which they all belong to with `--source`"
         );
         assert_eq!(
-            said(&["crm", "notes"], Some("news"), &["call.txt"]),
+            describe_source_choice(&["crm", "notes"], Some("news"), &["call.txt"]),
             "the project has no source `news`: there is no sources/news.yaml. It has `crm` and \
              `notes`."
         );
         assert_eq!(
-            said(&[], None, &["call.txt"]),
+            describe_source_choice(&[], None, &["call.txt"]),
             "the project declares no source, so there is nothing a document can belong to. A \
              source is a file sources/<name>.yaml that lists what a record found in its \
              documents may say."

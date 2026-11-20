@@ -162,7 +162,7 @@ fn failed(message: impl Into<String>) -> Failure {
 }
 
 /// IDs and the clock: the system's, or reproducible ones for tests.
-fn options(seed: Option<u64>) -> Options {
+fn build_engine_options(seed: Option<u64>) -> Options {
     match seed {
         Some(seed) => Options::seeded(seed),
         None => Options::default(),
@@ -188,7 +188,7 @@ pub fn serve(arguments: ServeArgs) -> Result<(), Failure> {
     let project = super::project_dir(&arguments.project);
     let user_code = super::user_code(Some(&arguments.user_code), &project);
 
-    let engine = Engine::open(&store, options(arguments.seed))?;
+    let engine = Engine::open(&store, build_engine_options(arguments.seed))?;
     engine.set_user_code(user_code);
     match engine.applied_manifest_hash()? {
         None => {
@@ -221,7 +221,7 @@ pub fn serve(arguments: ServeArgs) -> Result<(), Failure> {
     options.setup = empty.then(auth::code);
     options.https = !(arguments.plain_http || listen.ip().is_loopback());
     options.studio = !arguments.no_studio;
-    run(Arc::new(engine), listen, options, reached)
+    run_server(Arc::new(engine), listen, options, reached)
 }
 
 /// How people reach a server, apart from the address it listens on.
@@ -301,7 +301,7 @@ pub fn dev(arguments: DevArgs) -> Result<(), Failure> {
         .store
         .clone()
         .unwrap_or_else(|| dir.join(".spool").join("dev.duckdb"));
-    let seen = fingerprint(&dir);
+    let seen = fingerprint_project(&dir);
     let manifest = Manifest::load(&dir)?;
     if let Some(parent) = store
         .parent()
@@ -311,27 +311,30 @@ pub fn dev(arguments: DevArgs) -> Result<(), Failure> {
             .map_err(|error| failed(format!("{}: {error}", parent.display())))?;
     }
     let user_code = super::user_code(Some(&arguments.user_code), &dir);
-    let engine = Engine::open(&store, options(arguments.seed)).map_err(|error| match error {
-        // The usual cause by far, and what to do about it.
-        spool::Error::StoreInUse { path, holder } => failed(format!(
-            "the store {} is open in another process{}, most likely a `spool dev` that is \
+    let engine =
+        Engine::open(&store, build_engine_options(arguments.seed)).map_err(
+            |error| match error {
+                // The usual cause by far, and what to do about it.
+                spool::Error::StoreInUse { path, holder } => failed(format!(
+                    "the store {} is open in another process{}, most likely a `spool dev` that is \
              already running on this project",
-            path.display(),
-            holder.map_or_else(String::new, |pid| format!(" (PID {pid})")),
-        ))
-        .hint(
-            "one server runs on a store at a time: use the one that is running, or stop it \
+                    path.display(),
+                    holder.map_or_else(String::new, |pid| format!(" (PID {pid})")),
+                ))
+                .hint(
+                    "one server runs on a store at a time: use the one that is running, or stop it \
              with Ctrl-C and start this one again",
-        ),
-        // A store with no migration to the current format.
-        spool::Error::FormatVersion { found, expected } => failed(format!(
-            "the store {} has format version {found}, which this version of `spool` \
+                ),
+                // A store with no migration to the current format.
+                spool::Error::FormatVersion { found, expected } => failed(format!(
+                    "the store {} has format version {found}, which this version of `spool` \
              cannot open (current format: {expected})",
-            store.display(),
-        ))
-        .hint("open the file with a version of `spool` that supports its format"),
-        other => other.into(),
-    })?;
+                    store.display(),
+                ))
+                .hint("open the file with a version of `spool` that supports its format"),
+                other => other.into(),
+            },
+        )?;
     let engine = Arc::new(engine);
     engine.set_user_code(user_code);
     let report = engine.apply(&manifest)?;
@@ -345,8 +348,8 @@ pub fn dev(arguments: DevArgs) -> Result<(), Failure> {
     options.https = false;
 
     let watched = Arc::clone(&engine);
-    std::thread::spawn(move || watch(&dir, &watched, seen));
-    run(engine, listen, options, Reached::default())
+    std::thread::spawn(move || watch_project(&dir, &watched, seen));
+    run_server(engine, listen, options, Reached::default())
 }
 
 fn print_applied(manifest: &Manifest, report: &ApplyReport) {
@@ -372,10 +375,10 @@ fn print_applied(manifest: &Manifest, report: &ApplyReport) {
 
 /// Applies the project again whenever its files change. A project that does
 /// not compile is reported, and the engine keeps the last one that did.
-fn watch(dir: &Path, engine: &Engine, mut seen: u64) {
+fn watch_project(dir: &Path, engine: &Engine, mut seen: u64) {
     loop {
         std::thread::sleep(Duration::from_millis(300));
-        let now = fingerprint(dir);
+        let now = fingerprint_project(dir);
         if now == seen {
             continue;
         }
@@ -406,8 +409,8 @@ fn watch(dir: &Path, engine: &Engine, mut seen: u64) {
 /// A number that changes when one of the project's files is added, removed
 /// or edited. Contents are read, not timestamps: projects are small, and two
 /// saves within a timestamp's resolution must both be seen.
-fn fingerprint(dir: &Path) -> u64 {
-    fn visit(path: &Path, hasher: &mut impl Hasher) {
+fn fingerprint_project(dir: &Path) -> u64 {
+    fn hash_files_under(path: &Path, hasher: &mut impl Hasher) {
         let Ok(entries) = std::fs::read_dir(path) else {
             return;
         };
@@ -418,7 +421,7 @@ fn fingerprint(dir: &Path) -> u64 {
         for entry in entries {
             entry.hash(hasher);
             if entry.is_dir() {
-                visit(&entry, hasher);
+                hash_files_under(&entry, hasher);
             } else if let Ok(contents) = std::fs::read(&entry) {
                 contents.hash(hasher);
             }
@@ -426,12 +429,12 @@ fn fingerprint(dir: &Path) -> u64 {
     }
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     for part in ["sources", "transforms", "entities", "extractors"] {
-        visit(&dir.join(part), &mut hasher);
+        hash_files_under(&dir.join(part), &mut hasher);
     }
     hasher.finish()
 }
 
-fn run(
+fn run_server(
     engine: Arc<Engine>,
     listen: SocketAddr,
     mut options: ServerOptions,
@@ -498,7 +501,7 @@ fn run(
             }
             None => {}
         }
-        server::serve(listener, engine, &options, shutdown())
+        server::serve(listener, engine, &options, wait_for_shutdown())
             .await
             .map_err(|error| failed(format!("the server stopped: {error}")))
     })?;
@@ -541,7 +544,7 @@ fn cannot_listen(listen: SocketAddr, error: &std::io::Error, dev: bool) -> Failu
 
 /// Completes when the process is asked to stop: Ctrl-C, or SIGTERM from
 /// whatever runs the container.
-async fn shutdown() {
+async fn wait_for_shutdown() {
     let interrupt = async {
         let _ = tokio::signal::ctrl_c().await;
     };

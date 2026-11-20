@@ -44,7 +44,7 @@ impl View<'_> {
                             common_values(attribute, true),
                             common_values(attribute, false),
                         ),
-                        becomes(&attribute.features).into(),
+                        format_derived_features(&attribute.features).into(),
                     ]);
                 }
             }
@@ -90,10 +90,10 @@ impl View<'_> {
                         false => attribute.name.clone(),
                     }
                     .into(),
-                    filled(attribute.filled, group.records).into(),
+                    format_filled_share(attribute.filled, group.records).into(),
                     attribute.distinct.to_string().into(),
                     common_values(attribute, true).into(),
-                    becomes(&attribute.features).into(),
+                    format_derived_features(&attribute.features).into(),
                 ]);
             }
             table.print();
@@ -111,7 +111,7 @@ impl View<'_> {
 
 /// How many records have a value, and what part of all of them that is.
 /// A part that is not all is never written as 100%, nor some as 0%.
-fn filled(filled: u64, records: u64) -> String {
+fn format_filled_share(filled: u64, records: u64) -> String {
     if records == 0 {
         return filled.to_string();
     }
@@ -172,7 +172,7 @@ fn common_values(attribute: &AttributeSummary, cut: bool) -> String {
 /// The features made from an attribute: a feature that is the column as it
 /// is by its name, and one computed from it as the feature, `=`, and what
 /// computes it.
-fn becomes(features: &[DerivedFeature]) -> String {
+fn format_derived_features(features: &[DerivedFeature]) -> String {
     if features.is_empty() {
         return "-".to_owned();
     }

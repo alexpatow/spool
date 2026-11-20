@@ -6,7 +6,7 @@ use spool::core::ChangesetId;
 use spool::{DraftEntry, DraftSummary};
 use spool_cli::text::count;
 
-use super::{DraftsArgs, Query, View, describe, when};
+use super::{DraftsArgs, Query, View, describe_op, format_timestamp};
 use crate::Failure;
 use crate::commands::remote::typed;
 use crate::output::{Cell, Table, fields};
@@ -75,7 +75,7 @@ impl View<'_> {
             rows.push(("superseded by", format!("reconcile run {run}")));
         }
         if let Some(at) = &draft.rejected_at {
-            let mut rejected = when(at);
+            let mut rejected = format_timestamp(at);
             if let Some(reason) = &draft.rejected_reason {
                 rejected.push_str(&format!(", \"{reason}\""));
             }
@@ -84,7 +84,7 @@ impl View<'_> {
         fields(&rows);
         println!("\noperations");
         for op in &entry.changeset.ops {
-            println!("  {}", describe(op));
+            println!("  {}", describe_op(op));
         }
         Ok(())
     }

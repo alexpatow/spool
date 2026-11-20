@@ -102,7 +102,7 @@ impl Remote {
         for (name, value) in query {
             request = request.query(*name, value);
         }
-        self.answer(request.call())
+        self.read_answer(request.call())
     }
 
     /// `POST <path>` under `/v1` with a JSON body, and the JSON it answers.
@@ -114,12 +114,13 @@ impl Remote {
         if let Some(token) = &self.token {
             request = request.header("Authorization", format!("Bearer {token}"));
         }
-        self.answer(request.send(body.to_string()))?.ok_or_else(|| {
-            Failure::failed(format!(
-                "{} has no `/v1{path}`; is it a Spool server of this version?",
-                self.url
-            ))
-        })
+        self.read_answer(request.send(body.to_string()))?
+            .ok_or_else(|| {
+                Failure::failed(format!(
+                    "{} has no `/v1{path}`; is it a Spool server of this version?",
+                    self.url
+                ))
+            })
     }
 
     /// `POST <path>` under `/v1` with a body that is not JSON, and the JSON
@@ -141,7 +142,7 @@ impl Remote {
         for (name, value) in query {
             request = request.query(*name, value);
         }
-        self.answer(request.send(body))?.ok_or_else(|| {
+        self.read_answer(request.send(body))?.ok_or_else(|| {
             Failure::failed(format!(
                 "{} has no `/v1{path}`; is it a Spool server of this version?",
                 self.url
@@ -175,7 +176,7 @@ impl Remote {
 
     /// What the server answered, as JSON. `Ok(None)` when it has no such
     /// thing.
-    fn answer(
+    fn read_answer(
         &self,
         sent: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
     ) -> Result<Option<Value>, Failure> {

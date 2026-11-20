@@ -9,7 +9,8 @@ use spool::core::{ConstraintEntry, DocumentId, IdentityId, RecordId};
 use spool::{HistoryEntry, IdentitySummary, IdentityView, Member, RecordEntry};
 
 use super::{
-    IdentitiesArgs, Query, View, describe, label_cell, mixed, named, position, when, word,
+    IdentitiesArgs, Query, View, describe_op, format_enum_word, format_log_position,
+    format_source_key, format_timestamp, has_mixed_types, label_cell,
 };
 use crate::Failure;
 use crate::commands::remote::typed;
@@ -28,7 +29,7 @@ impl View<'_> {
         let identities: Vec<IdentitySummary> = typed(&answer["identities"])?;
         // The type is said once, by the option that chose it or by there
         // being one, and per row only when the rows differ.
-        let typed_rows = mixed(identities.iter().map(|identity| &identity.entity_type));
+        let typed_rows = has_mixed_types(identities.iter().map(|identity| &identity.entity_type));
         let mut table = Table::new("identities")
             .column("identity")
             .column_if("type", typed_rows)
@@ -41,10 +42,10 @@ impl View<'_> {
                 identity.members.to_string().into(),
                 identity.names.to_string().into(),
                 Cell::shortened(
-                    share(identity.unlinked_pairs, identity.linked_pairs),
+                    format_unlinked_share(identity.unlinked_pairs, identity.linked_pairs),
                     identity.unlinked_pairs.to_string(),
                 ),
-                position(identity.created),
+                format_log_position(identity.created),
             ]);
         }
         self.out.items(&answer, "identities", &table)?;
@@ -100,7 +101,7 @@ impl View<'_> {
                         member.record.to_string(),
                         match mentions.get(&member.record) {
                             Some(mention) => mention.clone(),
-                            None => named(&member.source, member.key.as_deref()),
+                            None => format_source_key(&member.source, member.key.as_deref()),
                         },
                         format!("log position {}", member.since),
                     ]
@@ -116,7 +117,7 @@ impl View<'_> {
                     .iter()
                     .map(|record| {
                         vec![
-                            word(&record.constraint.kind),
+                            format_enum_word(&record.constraint.kind),
                             record.constraint.a.to_string(),
                             record.constraint.b.to_string(),
                             format!("log position {}", record.from),
@@ -130,7 +131,7 @@ impl View<'_> {
             let mut line = format!(
                 "  {}  {}  {}",
                 entry.seq,
-                when(&entry.committed_at),
+                format_timestamp(&entry.committed_at),
                 entry.actor
             );
             if let Some(run) = entry.run {
@@ -141,7 +142,7 @@ impl View<'_> {
             }
             println!("{line}");
             for op in &entry.ops {
-                println!("      {}", describe(op));
+                println!("      {}", describe_op(op));
             }
         }
         Ok(())
@@ -194,7 +195,7 @@ impl View<'_> {
 
 /// The part of an identity's pairs of members that no link joins, as a
 /// percentage: none when it has no pairs, and never 0% or 100% unless it is.
-fn share(unlinked: u64, linked: u64) -> String {
+fn format_unlinked_share(unlinked: u64, linked: u64) -> String {
     let pairs = unlinked + linked;
     if pairs == 0 {
         return "-".to_owned();

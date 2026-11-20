@@ -5,7 +5,7 @@ use spool::RunEntry;
 use spool::core::ReviewItem;
 use spool_cli::text::count;
 
-use super::{Query, RunsArgs, View, when, word};
+use super::{Query, RunsArgs, View, format_enum_word, format_timestamp};
 use crate::Failure;
 use crate::commands::remote::typed;
 use crate::output::{Cell, Table, fields};
@@ -32,7 +32,7 @@ impl View<'_> {
             ];
             table.row(vec![
                 run.run.to_string().into(),
-                word(&run.kind).into(),
+                format_enum_word(&run.kind).into(),
                 run.status.to_string().into(),
                 about
                     .into_iter()
@@ -41,7 +41,7 @@ impl View<'_> {
                     .join(", ")
                     .into(),
                 run.started_by.to_string().into(),
-                Cell::shortened(when(&run.started_at), &run.started_at),
+                Cell::shortened(format_timestamp(&run.started_at), &run.started_at),
             ]);
         }
         self.out.items(&answer, "runs", &table)?;
@@ -60,7 +60,7 @@ impl View<'_> {
         let run: RunEntry = typed(&answer["run"])?;
         let mut rows = vec![
             ("run", run.run.to_string()),
-            ("kind", word(&run.kind)),
+            ("kind", format_enum_word(&run.kind)),
             ("status", run.status.to_string()),
         ];
         if let Some(entity_type) = &run.entity_type {
@@ -69,19 +69,19 @@ impl View<'_> {
         if let Some(strategy) = &run.strategy {
             rows.push((
                 "strategy",
-                versioned(&strategy.name, strategy.version.as_deref()),
+                format_name_and_version(&strategy.name, strategy.version.as_deref()),
             ));
         }
         if let Some(extractor) = &run.extractor {
             rows.push((
                 "extractor",
-                versioned(&extractor.name, Some(&extractor.version)),
+                format_name_and_version(&extractor.name, Some(&extractor.version)),
             ));
         }
         rows.push(("started by", run.started_by.to_string()));
-        rows.push(("started", when(&run.started_at)));
+        rows.push(("started", format_timestamp(&run.started_at)));
         if let Some(finished) = &run.finished_at {
-            rows.push(("finished", when(finished)));
+            rows.push(("finished", format_timestamp(finished)));
         }
         if let Some(error) = &run.error {
             rows.push(("error", error.clone()));
@@ -206,7 +206,7 @@ impl View<'_> {
                     report.judgements.match_, report.judgements.no_match, report.judgements.unsure
                 ),
             ));
-            rows.push(("placed", placed(report)));
+            rows.push(("placed", format_placed_records(report)));
             rows.push((
                 "left out",
                 format!(
@@ -275,7 +275,7 @@ fn left_for_review(identities: u64) -> String {
     )
 }
 
-fn versioned(name: &str, version: Option<&str>) -> String {
+fn format_name_and_version(name: &str, version: Option<&str>) -> String {
     match version {
         Some(version) => format!("{name}, version {version}"),
         None => name.to_owned(),
@@ -283,7 +283,7 @@ fn versioned(name: &str, version: Option<&str>) -> String {
 }
 
 /// What a match run placed, and the earlier versions it moved along.
-pub(in crate::commands) fn placed(report: &spool::TypeResolution) -> String {
+pub(in crate::commands) fn format_placed_records(report: &spool::TypeResolution) -> String {
     let mut placed = format!(
         "{}, {} created",
         count(report.records_assigned, "record"),

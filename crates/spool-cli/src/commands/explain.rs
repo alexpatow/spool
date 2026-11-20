@@ -13,7 +13,7 @@ use spool_cli::text::count;
 
 use super::remote::{Remote, RemoteArgs, typed};
 use super::show::records::find_record;
-use super::show::{label, plain, word};
+use super::show::{format_enum_word, format_json_value, shorten_label};
 use crate::output::{Output, OutputArgs, aligned, fields, table};
 use crate::{Failure, Kind};
 
@@ -150,7 +150,7 @@ fn print_explanation(explanation: &Explanation) {
                     .features
                     .as_ref()
                     .and_then(|features| features.get(name))
-                    .map_or_else(|| "-".to_owned(), plain)
+                    .map_or_else(|| "-".to_owned(), format_json_value)
             };
             rows.push(vec![name.clone(), value(0), value(1)]);
         }
@@ -200,8 +200,10 @@ fn print_explanation(explanation: &Explanation) {
                     .judgements
                     .iter()
                     .map(|judgement| match judgement.score {
-                        Some(score) => format!("{} ({score})", word(&judgement.verdict)),
-                        None => word(&judgement.verdict),
+                        Some(score) => {
+                            format!("{} ({score})", format_enum_word(&judgement.verdict))
+                        }
+                        None => format_enum_word(&judgement.verdict),
                     })
                     .collect();
                 vec![
@@ -237,7 +239,7 @@ fn print_explanation(explanation: &Explanation) {
             };
             println!(
                 "  {} from log position {}{until}",
-                word(&record.constraint.kind),
+                format_enum_word(&record.constraint.kind),
                 record.from
             );
         }
@@ -249,8 +251,8 @@ fn print_explanation(explanation: &Explanation) {
             println!(
                 "  item {} ({}, {})",
                 item.id,
-                word(&item.kind),
-                word(&item.status)
+                format_enum_word(&item.kind),
+                format_enum_word(&item.status)
             );
         }
     }
@@ -274,17 +276,17 @@ fn print_explanation(explanation: &Explanation) {
 /// and under it how it is linked to the next.
 fn print_chain(path: &[Link]) {
     let Some(first) = path.first() else { return };
-    let mut rows = vec![step(1, &first.from_record)];
+    let mut rows = vec![format_step_row(1, &first.from_record)];
     for (at, link) in path.iter().enumerate() {
         rows.push(vec![String::new(), format!("  {}", how_linked(link))]);
-        rows.push(step(at + 2, &link.to_record));
+        rows.push(format_step_row(at + 2, &link.to_record));
     }
     for row in rows {
         println!("  {}", row.join(" ").trim_end());
     }
 }
 
-fn step(number: usize, record: &Named) -> Vec<String> {
+fn format_step_row(number: usize, record: &Named) -> Vec<String> {
     vec![format!("{number}."), said_record(record)]
 }
 
@@ -343,7 +345,7 @@ fn print_identity_explanation(explanation: &IdentityExplanation) {
     }
     rows.extend([
         ("type", explanation.entity_type.to_string()),
-        ("name", label(explanation.label.as_deref())),
+        ("name", shorten_label(explanation.label.as_deref())),
         ("records", explanation.records.to_string()),
         ("names", explanation.names.to_string()),
         ("pairs", explanation.pairs.to_string()),

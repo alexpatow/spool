@@ -72,15 +72,15 @@ impl Action {
 
 pub fn token(arguments: TokenArgs) -> Result<(), Failure> {
     match &arguments.action {
-        Action::Add { name } => add(&arguments, name),
-        Action::List => list(&arguments),
-        Action::Revoke { name } => revoke(&arguments, name),
+        Action::Add { name } => add_token(&arguments, name),
+        Action::List => list_tokens(&arguments),
+        Action::Revoke { name } => revoke_token(&arguments, name),
     }
 }
 
 /// The accounts beside the store the arguments name. The store has to be
 /// there: a token made beside a path nobody serves would open nothing.
-fn accounts(arguments: &TokenArgs) -> Result<(Accounts, PathBuf), Failure> {
+fn open_store_accounts(arguments: &TokenArgs) -> Result<(Accounts, PathBuf), Failure> {
     let store = super::store_path(&arguments.store)?;
     if !store.is_file() {
         return Err(Failure::failed(format!(
@@ -91,14 +91,16 @@ fn accounts(arguments: &TokenArgs) -> Result<(Accounts, PathBuf), Failure> {
     Ok((super::open_accounts(&store)?, super::accounts_path(&store)))
 }
 
-fn refused(refused: spool_cli::auth::Refused) -> Failure {
+fn failure_from_refused(refused: spool_cli::auth::Refused) -> Failure {
     Failure::failed(refused.to_string())
 }
 
-fn add(arguments: &TokenArgs, name: &str) -> Result<(), Failure> {
+fn add_token(arguments: &TokenArgs, name: &str) -> Result<(), Failure> {
     let out = Output::report(&arguments.output, "`spool token add`")?;
-    let (accounts, path) = accounts(arguments)?;
-    let (token, secret) = accounts.add_token(name, None).map_err(refused)?;
+    let (accounts, path) = open_store_accounts(arguments)?;
+    let (token, secret) = accounts
+        .add_token(name, None)
+        .map_err(failure_from_refused)?;
     if !out.is_table() {
         out.json(&AddedToken { token, secret });
         return Ok(());
@@ -114,11 +116,11 @@ fn add(arguments: &TokenArgs, name: &str) -> Result<(), Failure> {
     Ok(())
 }
 
-fn list(arguments: &TokenArgs) -> Result<(), Failure> {
+fn list_tokens(arguments: &TokenArgs) -> Result<(), Failure> {
     let out = Output::list(&arguments.output);
-    let (accounts, _) = accounts(arguments)?;
-    let tokens = accounts.tokens().map_err(refused)?;
-    let people = accounts.list().map_err(refused)?;
+    let (accounts, _) = open_store_accounts(arguments)?;
+    let tokens = accounts.tokens().map_err(failure_from_refused)?;
+    let people = accounts.list().map_err(failure_from_refused)?;
     let made_by = |id: &Option<String>| match id {
         None => "spool token add".to_owned(),
         Some(id) => people
@@ -144,10 +146,12 @@ fn list(arguments: &TokenArgs) -> Result<(), Failure> {
     Ok(())
 }
 
-fn revoke(arguments: &TokenArgs, name: &str) -> Result<(), Failure> {
+fn revoke_token(arguments: &TokenArgs, name: &str) -> Result<(), Failure> {
     let out = Output::report(&arguments.output, "`spool token revoke`")?;
-    let (accounts, _) = accounts(arguments)?;
-    let token = accounts.revoke_token_named(name).map_err(refused)?;
+    let (accounts, _) = open_store_accounts(arguments)?;
+    let token = accounts
+        .revoke_token_named(name)
+        .map_err(failure_from_refused)?;
     match out.is_table() {
         true => println!("revoked `{}`: the server no longer accepts it", token.name),
         false => out.json(&token),

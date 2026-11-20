@@ -13,7 +13,8 @@ use spool::{DocumentEntry, RecordEntry, ReviewEntry};
 use spool_cli::api::{DocumentList, Info, RecordList};
 
 use super::{
-    Query, RecordsArgs, View, label_cell, mixed, named, plain, record_name, version, when, word,
+    Query, RecordsArgs, View, format_enum_word, format_json_value, format_source_key,
+    format_timestamp, format_version_status, has_mixed_types, label_cell, record_name,
 };
 use crate::Failure;
 use crate::commands::remote::{Remote, typed};
@@ -227,7 +228,7 @@ impl View<'_> {
             .add("limit", what.limit);
         let narrowed = !query.0.is_empty();
         let all_versions = what.all_versions;
-        Self::latest(&mut query, all_versions);
+        Self::ask_for_latest(&mut query, all_versions);
         let answer = self.remote.list("/records", &query.0)?;
         // JSON is the answer as it is, which needs nothing more.
         if self.out.is_json() {
@@ -244,7 +245,7 @@ impl View<'_> {
             true => self.attribute_columns(&records)?,
             false => Vec::new(),
         };
-        let typed_rows = mixed(records.iter().map(|record| &record.entity_type));
+        let typed_rows = has_mixed_types(records.iter().map(|record| &record.entity_type));
         let mut table = Table::new("records")
             .column_if("record", what.ids)
             .column_if("type", typed_rows)
@@ -270,7 +271,9 @@ impl View<'_> {
             if what.attributes {
                 row.extend(attributes.iter().map(
                     |attribute| match record.payload.get(attribute) {
-                        Some(value) if !value.is_null() => label_cell(Some(&plain(value))),
+                        Some(value) if !value.is_null() => {
+                            label_cell(Some(&format_json_value(value)))
+                        }
                         _ => "-".into(),
                     },
                 ));
@@ -286,7 +289,9 @@ impl View<'_> {
             if all_versions {
                 let in_replaced = mention_document(record)
                     .is_some_and(|document| replaced_documents.contains(&document));
-                row.push(version(record.superseded_by.is_some() || in_replaced).into());
+                row.push(
+                    format_version_status(record.superseded_by.is_some() || in_replaced).into(),
+                );
             }
             table.row(row);
         }
@@ -336,7 +341,11 @@ impl View<'_> {
         }
         rows.push((
             "loaded",
-            format!("{} by run {}", when(&record.loaded_at), record.load_run),
+            format!(
+                "{} by run {}",
+                format_timestamp(&record.loaded_at),
+                record.load_run
+            ),
         ));
         if !record.found_by.is_empty() {
             rows.push((
@@ -378,23 +387,23 @@ impl View<'_> {
                 format!(
                     "item {} ({}, {})",
                     item.id,
-                    word(&item.kind),
-                    word(&item.status)
+                    format_enum_word(&item.kind),
+                    format_enum_word(&item.status)
                 ),
             ));
         }
         fields(&rows);
 
         println!("\npayload");
-        object(&record.payload);
+        print_json_object(&record.payload);
         if let Some(evidence) = &record.evidence {
             println!("\nevidence");
-            object(evidence);
+            print_json_object(evidence);
         }
         if let Some(mention) = mention {
             println!(
                 "\nin document {}, characters {} to {}",
-                named(mention.source.as_str(), Some(mention.key.as_str())),
+                format_source_key(mention.source.as_str(), Some(mention.key.as_str())),
                 mention.start,
                 mention.end
             );
@@ -483,15 +492,15 @@ fn mention_document(record: &RecordEntry) -> Option<DocumentId> {
 }
 
 /// The members of a JSON object, one per line. Anything else on one line.
-fn object(value: &Value) {
+fn print_json_object(value: &Value) {
     match value.as_object() {
         Some(members) => {
             let rows: Vec<Vec<String>> = members
                 .iter()
-                .map(|(name, value)| vec![name.clone(), plain(value)])
+                .map(|(name, value)| vec![name.clone(), format_json_value(value)])
                 .collect();
             aligned(&rows, 2);
         }
-        None => println!("  {}", plain(value)),
+        None => println!("  {}", format_json_value(value)),
     }
 }

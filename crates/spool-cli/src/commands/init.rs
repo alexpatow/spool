@@ -8,7 +8,7 @@ use clap::Args;
 use clap::builder::PossibleValue;
 use spool::{Manifest, Runtime};
 
-use super::project::{failed, write};
+use super::project::{failed, write_file};
 use crate::Failure;
 use crate::output::{Output, OutputArgs, hint};
 
@@ -41,14 +41,14 @@ pub struct InitArgs {
     /// The folder to make the project in, made if it is not there [default: the current folder]
     dir: Option<PathBuf>,
     /// Fill the project with an example
-    #[arg(long, value_name = "NAME", value_parser = examples())]
+    #[arg(long, value_name = "NAME", value_parser = example_values())]
     example: Option<String>,
     #[command(flatten)]
     output: OutputArgs,
 }
 
 /// The names of the examples, each with what it holds.
-fn examples() -> Vec<PossibleValue> {
+fn example_values() -> Vec<PossibleValue> {
     EXAMPLES
         .iter()
         .map(|example| PossibleValue::new(example.name).help(example.about))
@@ -231,7 +231,7 @@ pub fn init(arguments: InitArgs) -> Result<(), Failure> {
     files.push((".gitignore".to_owned(), GITIGNORE));
     files.push((".env.example".to_owned(), ENV_EXAMPLE));
     for (file, contents) in &files {
-        write(&dir.join(file), contents)?;
+        write_file(&dir.join(file), contents)?;
     }
     super::update_skills::write_agent_files(&dir, false)?;
 
@@ -276,7 +276,7 @@ pub fn init(arguments: InitArgs) -> Result<(), Failure> {
                 .iter()
                 .map(|(command, does)| serde_json::json!({ "command": command, "does": does }))
                 .collect::<Vec<_>>(),
-            "not_installed": missing.iter().map(|runtime| program(*runtime)).collect::<Vec<_>>(),
+            "not_installed": missing.iter().map(|runtime| runtime_program(*runtime)).collect::<Vec<_>>(),
         }));
         return Ok(());
     }
@@ -305,7 +305,7 @@ pub fn init(arguments: InitArgs) -> Result<(), Failure> {
             for runtime in missing {
                 hint(format!(
                     "`{}` is not installed here. Before `spool extract`, install it:\n\n  {}",
-                    program(runtime),
+                    runtime_program(runtime),
                     runtime.install_command()
                 ));
             }
@@ -320,7 +320,7 @@ pub fn init(arguments: InitArgs) -> Result<(), Failure> {
 }
 
 /// What runs code of a runtime.
-fn program(runtime: Runtime) -> &'static str {
+fn runtime_program(runtime: Runtime) -> &'static str {
     match runtime {
         Runtime::Python => "uv",
         Runtime::Typescript => "bun",

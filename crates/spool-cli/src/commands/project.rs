@@ -77,7 +77,7 @@ fn base_image() -> String {
     format!("ghcr.io/alexpatow/spool:{}", env!("CARGO_PKG_VERSION"))
 }
 
-fn dockerfile(base_image: &str) -> String {
+fn format_dockerfile(base_image: &str) -> String {
     format!(
         "\
 # Written by `spool build`. It belongs to this project: edit it as you need.
@@ -213,7 +213,7 @@ pub(super) fn failed(message: impl Into<String>) -> Failure {
     Failure::failed(message.into())
 }
 
-pub(super) fn write(path: &Path, contents: &str) -> Result<(), Failure> {
+pub(super) fn write_file(path: &Path, contents: &str) -> Result<(), Failure> {
     if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir)
             .map_err(|error| failed(format!("{}: {error}", dir.display())))?;
@@ -470,16 +470,16 @@ pub fn build(arguments: BuildArgs) -> Result<(), Failure> {
     } else {
         let image = arguments.base_image.clone().unwrap_or_else(base_image);
         let contents = if runtimes.is_empty() {
-            dockerfile(&image)
+            format_dockerfile(&image)
         } else {
             dockerfile_with_user_code(&image, uses(Runtime::Python), uses(Runtime::Typescript))
         };
-        write(&dockerfile_path, &contents)?;
+        write_file(&dockerfile_path, &contents)?;
         say("wrote", &dockerfile_path.display());
         wrote.push(dockerfile_path);
         let dockerignore = dir.join(".dockerignore");
         if !dockerignore.exists() {
-            write(&dockerignore, DOCKERIGNORE)?;
+            write_file(&dockerignore, DOCKERIGNORE)?;
             say("wrote", &dockerignore.display());
             wrote.push(dockerignore);
         }

@@ -15,7 +15,7 @@ pub(super) fn next_batch(read: u64, took: Duration, target: Duration) -> u64 {
 }
 
 /// The files in groups that are each sent in one request.
-pub(super) fn sending(files: &[File]) -> Vec<&[File]> {
+pub(super) fn group_files_to_send(files: &[File]) -> Vec<&[File]> {
     let mut groups = Vec::new();
     let (mut start, mut bytes) = (0, 0);
     for (index, file) in files.iter().enumerate() {
@@ -37,7 +37,7 @@ pub(super) fn sending(files: &[File]) -> Vec<&[File]> {
 mod tests {
     use std::time::Duration;
 
-    use super::{File, next_batch, sending};
+    use super::{File, group_files_to_send, next_batch};
 
     #[test]
     fn a_batch_is_made_to_take_the_time_it_is_given_and_grows_by_steps() {
@@ -66,11 +66,17 @@ mod tests {
             text: "x".repeat(bytes),
         };
         let small: Vec<File> = (0..2_500).map(|_| file(10)).collect();
-        let sizes: Vec<usize> = sending(&small).iter().map(|group| group.len()).collect();
+        let sizes: Vec<usize> = group_files_to_send(&small)
+            .iter()
+            .map(|group| group.len())
+            .collect();
         assert_eq!(sizes, vec![1_000, 1_000, 500]);
         let large: Vec<File> = (0..3).map(|_| file(10 * 1024 * 1024)).collect();
-        let sizes: Vec<usize> = sending(&large).iter().map(|group| group.len()).collect();
+        let sizes: Vec<usize> = group_files_to_send(&large)
+            .iter()
+            .map(|group| group.len())
+            .collect();
         assert_eq!(sizes, vec![1, 1, 1]);
-        assert!(sending(&[]).is_empty());
+        assert!(group_files_to_send(&[]).is_empty());
     }
 }

@@ -378,7 +378,7 @@ impl View<'_> {
 
     /// Asks a list for the versions nothing replaced, unless it is to show
     /// every version.
-    fn latest(query: &mut Query, all_versions: bool) {
+    fn ask_for_latest(query: &mut Query, all_versions: bool) {
         if !all_versions {
             query.0.push(("latest", "true".to_owned()));
         }
@@ -386,7 +386,7 @@ impl View<'_> {
 }
 
 /// A changeset operation in words.
-fn describe(op: &Op) -> String {
+fn describe_op(op: &Op) -> String {
     match op {
         Op::CreateIdentity {
             identity,
@@ -413,9 +413,14 @@ fn describe(op: &Op) -> String {
             to: None,
         } => format!("leave record {record} without an identity"),
         Op::Merge { from, into } => format!("merge {from} into {into}"),
-        Op::Constrain { kind, a, b } => format!("constrain {a} and {b}: {}", word(kind)),
+        Op::Constrain { kind, a, b } => {
+            format!("constrain {a} and {b}: {}", format_enum_word(kind))
+        }
         Op::Unconstrain { kind, a, b } => {
-            format!("remove the {} constraint on {a} and {b}", word(kind))
+            format!(
+                "remove the {} constraint on {a} and {b}",
+                format_enum_word(kind)
+            )
         }
         Op::Reinstate { identity } => format!("reinstate identity {identity}"),
     }
@@ -423,7 +428,7 @@ fn describe(op: &Op) -> String {
 
 /// How an enum is written in the API, which is how the documentation names
 /// it.
-pub(super) fn word<T: Serialize>(value: &T) -> String {
+pub(super) fn format_enum_word<T: Serialize>(value: &T) -> String {
     match serde_json::to_value(value) {
         Ok(Value::String(word)) => word,
         Ok(other) => other.to_string(),
@@ -432,7 +437,7 @@ pub(super) fn word<T: Serialize>(value: &T) -> String {
 }
 
 /// A JSON value on one line, text without its quotes.
-pub(super) fn plain(value: &Value) -> String {
+pub(super) fn format_json_value(value: &Value) -> String {
     match value {
         Value::String(text) => text.clone(),
         Value::Null => "-".to_owned(),
@@ -441,7 +446,7 @@ pub(super) fn plain(value: &Value) -> String {
 }
 
 /// A timestamp to the second.
-fn when(timestamp: &str) -> String {
+fn format_timestamp(timestamp: &str) -> String {
     match timestamp.split_once('.') {
         Some((seconds, _)) => format!("{seconds}Z"),
         None => timestamp.to_owned(),
@@ -455,7 +460,7 @@ const LABEL_CHARACTERS: usize = 40;
 
 /// What a record or an identity is called, in a list: its label, cut to a
 /// length that keeps the columns after it in sight.
-pub(super) fn label(label: Option<&str>) -> String {
+pub(super) fn shorten_label(label: Option<&str>) -> String {
     let Some(label) = label else {
         return "-".to_owned();
     };
@@ -478,24 +483,24 @@ pub(super) fn label(label: Option<&str>) -> String {
 
 /// A label as a cell: cut short in a table, and whole in CSV.
 fn label_cell(whole: Option<&str>) -> Cell {
-    Cell::shortened(label(whole), whole.unwrap_or_default())
+    Cell::shortened(shorten_label(whole), whole.unwrap_or_default())
 }
 
 /// A position in the log as a cell: said as one in a table, and the
 /// number in CSV.
-fn position(seq: impl std::fmt::Display) -> Cell {
+fn format_log_position(seq: impl std::fmt::Display) -> Cell {
     Cell::shortened(format!("log position {seq}"), seq.to_string())
 }
 
 /// Whether the rows of a list are of more than one entity type.
-fn mixed<'a, T: PartialEq + 'a>(mut types: impl Iterator<Item = &'a T>) -> bool {
+fn has_mixed_types<'a, T: PartialEq + 'a>(mut types: impl Iterator<Item = &'a T>) -> bool {
     match types.next() {
         Some(first) => types.any(|other| other != first),
         None => false,
     }
 }
 
-fn named(source: &str, key: Option<&str>) -> String {
+fn format_source_key(source: &str, key: Option<&str>) -> String {
     match key {
         Some(key) => format!("{source}:{key}"),
         None => format!("{source} (no key)"),
@@ -508,12 +513,12 @@ fn named(source: &str, key: Option<&str>) -> String {
 fn record_name(record: &RecordEntry) -> String {
     match &record.key {
         Some(_) => record.name(),
-        None => named(&record.source, None),
+        None => format_source_key(&record.source, None),
     }
 }
 
 /// What a list that shows every version says of each.
-fn version(replaced: bool) -> String {
+fn format_version_status(replaced: bool) -> String {
     match replaced {
         true => "replaced".to_owned(),
         false => "current".to_owned(),

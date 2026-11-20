@@ -13,7 +13,11 @@ use crate::output::{aligned, hint};
 
 /// What a command stopped with Ctrl-C says it left: the documents read
 /// before it stopped are kept, and those of the run it cancelled are not.
-pub(super) fn stopped(found: &Found, again: bool, cancelled: Option<RunId>) -> String {
+pub(super) fn describe_stopped_extraction(
+    found: &Found,
+    again: bool,
+    cancelled: Option<RunId>,
+) -> String {
     let mut said = String::from("stopped");
     if let Some(run) = cancelled {
         said.push_str(&format!(
@@ -38,7 +42,7 @@ pub(super) fn stopped(found: &Found, again: bool, cancelled: Option<RunId>) -> S
 /// Prints the records of the files' documents, in the order of the files
 /// and of the text. They are what the extractor found there, and what any
 /// other extractor found there before it.
-pub(super) fn list(
+pub(super) fn print_found_records(
     remote: &Remote,
     source: &str,
     files: &[File],
@@ -72,7 +76,11 @@ pub(super) fn list(
                 .as_ref()
                 .and_then(|evidence| evidence["text"].as_str())
                 .unwrap_or_default();
-            lines.push((record.entity_type.to_string(), shown(text), record.name()));
+            lines.push((
+                record.entity_type.to_string(),
+                shorten_found_text(text),
+                record.name(),
+            ));
         }
     }
     if lines.is_empty() {
@@ -97,7 +105,7 @@ pub(super) fn list(
 }
 
 /// A found text on one line, cut short when it is long.
-pub(super) fn shown(text: &str) -> String {
+pub(super) fn shorten_found_text(text: &str) -> String {
     let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if line.chars().count() <= SHOWN {
         return line;

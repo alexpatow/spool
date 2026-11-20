@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use spool::{RecordEntry, ReviewEntry, ReviewKind, ReviewStatus};
 use spool_cli::text::count;
 
-use super::{Query, ReviewArgs, View, record_name, when, word};
+use super::{Query, ReviewArgs, View, format_enum_word, format_timestamp, record_name};
 use crate::Failure;
 use crate::commands::remote::typed;
 use crate::output::{Cell, Table, aligned, fields, indented, table};
@@ -32,11 +32,11 @@ impl View<'_> {
         for item in &items {
             table.row(vec![
                 item.id.to_string().into(),
-                word(&item.kind).into(),
-                word(&item.status).into(),
+                format_enum_word(&item.kind).into(),
+                format_enum_word(&item.status).into(),
                 item.entity_type.to_string().into(),
                 Cell::shortened(format!("run {}", item.run), item.run.to_string()),
-                about(item).into(),
+                describe_review_item(item).into(),
             ]);
         }
         self.out.items(&answer, "items", &table)?;
@@ -79,8 +79,8 @@ impl View<'_> {
 
         let mut rows = vec![
             ("review item", item.id.to_string()),
-            ("kind", word(&item.kind)),
-            ("status", word(&item.status)),
+            ("kind", format_enum_word(&item.kind)),
+            ("status", format_enum_word(&item.status)),
             ("type", item.entity_type.to_string()),
             (
                 "raised by",
@@ -104,7 +104,7 @@ impl View<'_> {
             });
         }
         if let Some(dismissal) = &item.dismissed {
-            let mut by = format!("{} at {}", dismissal.by, when(&dismissal.at));
+            let mut by = format!("{} at {}", dismissal.by, format_timestamp(&dismissal.at));
             if let Some(reason) = &dismissal.reason {
                 by.push_str(&format!(", \"{reason}\""));
             }
@@ -150,7 +150,7 @@ impl View<'_> {
 }
 
 /// What a review item is about, in a few words.
-fn about(item: &ReviewEntry) -> String {
+fn describe_review_item(item: &ReviewEntry) -> String {
     if item.kind == ReviewKind::PossibleSplit {
         return format!(
             "{} of one identity in {} that nothing holds together",

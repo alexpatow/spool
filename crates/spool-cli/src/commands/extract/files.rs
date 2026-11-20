@@ -10,14 +10,14 @@ use crate::Failure;
 /// Reads the files the paths name. A file is one document, stored under its
 /// name, and a folder stands for the files under it, each stored under its
 /// path from the folder.
-pub(super) fn read(paths: &[String]) -> Result<Vec<File>, Failure> {
+pub(super) fn read_files(paths: &[String]) -> Result<Vec<File>, Failure> {
     let mut found: Vec<(String, String)> = Vec::new();
     for path in paths {
         let metadata =
             std::fs::metadata(path).map_err(|error| Failure::failed(format!("{path}: {error}")))?;
         if metadata.is_dir() {
             let before = found.len();
-            under(Path::new(path), "", &mut found)?;
+            collect_files_under(Path::new(path), "", &mut found)?;
             if found.len() == before {
                 return Err(Failure::failed(format!(
                     "{path} is a folder with no files in it, other than ones whose names start \
@@ -69,7 +69,11 @@ pub(super) fn read(paths: &[String]) -> Result<Vec<File>, Failure> {
 /// each with its key: its path from the folder that was named, after
 /// `prefix`. What starts with a dot is left out. A link to a file is read
 /// and a link to a folder is not followed, since it can lead back up.
-fn under(folder: &Path, prefix: &str, found: &mut Vec<(String, String)>) -> Result<(), Failure> {
+fn collect_files_under(
+    folder: &Path,
+    prefix: &str,
+    found: &mut Vec<(String, String)>,
+) -> Result<(), Failure> {
     let unreadable =
         |error: std::io::Error| Failure::failed(format!("{}: {error}", folder.display()));
     let mut entries = std::fs::read_dir(folder)
@@ -88,7 +92,7 @@ fn under(folder: &Path, prefix: &str, found: &mut Vec<(String, String)>) -> Resu
         };
         let kind = entry.file_type().map_err(unreadable)?;
         let is_file = if kind.is_dir() {
-            under(&path, &key, found)?;
+            collect_files_under(&path, &key, found)?;
             false
         } else if kind.is_symlink() {
             std::fs::metadata(&path)
@@ -106,11 +110,11 @@ fn under(folder: &Path, prefix: &str, found: &mut Vec<(String, String)>) -> Resu
 
 #[cfg(test)]
 mod tests {
-    use super::{File, read};
+    use super::{File, read_files};
 
     /// The files the paths name, which have to be read.
     fn read_all(paths: &[String]) -> Vec<File> {
-        read(paths).unwrap_or_else(|failure| panic!("{}", failure.message()))
+        read_files(paths).unwrap_or_else(|failure| panic!("{}", failure.message()))
     }
 
     #[test]

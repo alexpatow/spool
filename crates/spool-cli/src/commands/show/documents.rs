@@ -6,7 +6,9 @@ use spool::DocumentEntry;
 use spool::core::DocumentId;
 use spool_cli::text::count;
 
-use super::{DocumentsArgs, Query, View, named, version, when};
+use super::{
+    DocumentsArgs, Query, View, format_source_key, format_timestamp, format_version_status,
+};
 use crate::Failure;
 use crate::commands::remote::typed;
 use crate::output::{Cell, Table, fields};
@@ -19,7 +21,7 @@ impl View<'_> {
             .add("after", what.after.as_ref())
             .add("limit", what.limit);
         let all_versions = what.all_versions;
-        Self::latest(&mut query, all_versions);
+        Self::ask_for_latest(&mut query, all_versions);
         let answer = self.remote.list("/documents", &query.0)?;
         let documents: Vec<DocumentEntry> = typed(&answer["documents"])?;
         let mut table = Table::new("documents").columns([
@@ -34,12 +36,12 @@ impl View<'_> {
         for document in &documents {
             let mut row: Vec<Cell> = vec![
                 document.id.to_string().into(),
-                named(&document.source, Some(&document.key)).into(),
+                format_source_key(&document.source, Some(&document.key)).into(),
                 document.length.to_string().into(),
                 read_by(document).into(),
             ];
             if all_versions {
-                row.push(version(document.superseded_by.is_some()).into());
+                row.push(format_version_status(document.superseded_by.is_some()).into());
             }
             table.row(row);
         }
@@ -70,7 +72,11 @@ impl View<'_> {
         rows.push(("characters", document.length.to_string()));
         rows.push((
             "loaded",
-            format!("{} by run {}", when(&document.loaded_at), document.load_run),
+            format!(
+                "{} by run {}",
+                format_timestamp(&document.loaded_at),
+                document.load_run
+            ),
         ));
         if let Some(earlier) = document.supersedes {
             rows.push(("replaces", earlier.to_string()));

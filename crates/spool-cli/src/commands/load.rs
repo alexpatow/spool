@@ -79,10 +79,10 @@ pub fn load(arguments: LoadArgs) -> Result<(), Failure> {
         Some(rows) => usize::try_from(rows).unwrap_or(usize::MAX),
         None => usize::MAX,
     };
-    let delimiter = delimiter(arguments.delimiter.as_deref(), file)?;
+    let delimiter = choose_delimiter(arguments.delimiter.as_deref(), file)?;
 
     // The file first: what is wrong with it can be said without a server.
-    let (input, name) = open(file)?;
+    let (input, name) = open_rows_file(file)?;
     let bar = match std::fs::metadata(file) {
         Ok(found) if file != "-" && found.is_file() => progress::bytes("Loading", found.len()),
         _ => progress::spinner(format!("Loading {name}")),
@@ -94,7 +94,7 @@ pub fn load(arguments: LoadArgs) -> Result<(), Failure> {
     let unreadable = |why: &dyn std::fmt::Display| {
         Failure::failed(format!(
             "{name} cannot be read as {}: {why}",
-            format(delimiter)
+            describe_format(delimiter)
         ))
     };
     // A text file that was not said to hold rows may be a document.
@@ -136,7 +136,7 @@ pub fn load(arguments: LoadArgs) -> Result<(), Failure> {
         ))
         .hint(extract_reads(&name)));
     }
-    let (source, entity_type) = target(
+    let (source, entity_type) = choose_load_target(
         &info,
         (file != "-").then_some(file.as_str()),
         &columns,
@@ -167,7 +167,7 @@ pub fn load(arguments: LoadArgs) -> Result<(), Failure> {
             Ok(None) => break,
             Err(why) => return Err(total.before(unreadable(&why), &name)),
         };
-        let (answer, report) = send(&remote, &source.name, entity_type, &batch)
+        let (answer, report) = send_batch(&remote, &source.name, entity_type, &batch)
             .map_err(|failure| total.before(failure, &name))?;
         total.add(batch.num_rows() as u64, &report);
         bar.set_message(format!(", {} sent", count(total.rows, "row")));
@@ -305,7 +305,7 @@ impl Total {
 }
 
 /// Sends one part and waits for its load run.
-fn send(
+fn send_batch(
     remote: &Remote,
     source: &str,
     entity_type: &str,
@@ -344,7 +344,7 @@ fn send(
 }
 
 /// The file's rows, and what to call the file.
-fn open(file: &str) -> Result<(Box<dyn Read>, String), Failure> {
+fn open_rows_file(file: &str) -> Result<(Box<dyn Read>, String), Failure> {
     if file == "-" {
         return Ok((
             Box::new(std::io::stdin().lock()),
@@ -369,7 +369,7 @@ fn open(file: &str) -> Result<(Box<dyn Read>, String), Failure> {
 
 /// The character between the fields: the one that was asked for, or the one
 /// the file's name says.
-fn delimiter(asked: Option<&str>, file: &str) -> Result<u8, Failure> {
+fn choose_delimiter(asked: Option<&str>, file: &str) -> Result<u8, Failure> {
     match asked {
         Some("tab" | "\\t" | "\t") => Ok(b'\t'),
         Some(other) => match other.as_bytes() {
@@ -413,7 +413,7 @@ fn extract_reads(name: &str) -> String {
 }
 
 /// What a file with this character between its fields is called.
-fn format(delimiter: u8) -> String {
+fn describe_format(delimiter: u8) -> String {
     match delimiter {
         b',' => "CSV".to_owned(),
         b'\t' => "tab-separated text".to_owned(),
@@ -428,7 +428,7 @@ fn format(delimiter: u8) -> String {
 /// of rows and a source of what is found in documents, and a file of rows
 /// is the first's whatever it is called.
 #[expect(clippy::too_many_lines)]
-fn target<'a>(
+fn choose_load_target<'a>(
     info: &'a Info,
     file: Option<&str>,
     columns: &[String],
