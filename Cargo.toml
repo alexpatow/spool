@@ -67,6 +67,8 @@ comfy-table = { version = "8", default-features = false, features = ["custom_sty
 # spool-cli names arrow itself for the IPC and JSON forms the server speaks.
 arrow = { version = "60.1", default-features = false, features = ["ipc", "json"] }
 duckdb = { version = "~1.20000.2", features = ["appender-arrow", "vtab-arrow"] }
+# The `.env` of a project, whose variables its code is run with.
+dotenvy = "0.15"
 # The CSV that `spool load` and the server read rows from. Only spool-cli
 # depends on it: it says which line of a file is wrong, which a new user needs.
 csv = "1.3"

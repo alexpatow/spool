@@ -12,6 +12,7 @@ repository.workspace = true
 schema = ["dep:schemars", "spool-core/schema"]
 
 [dependencies]
+dotenvy.workspace = true
 duckdb.workspace = true
 hex.workspace = true
 schemars = { workspace = true, optional = true }

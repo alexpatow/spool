@@ -394,9 +394,13 @@ impl UserCode {
         };
         parse_env(&text).map_err(|line| Error::Project {
             file: path,
-            message: format!(
-                "line {line} is not `NAME=value`, a comment that starts with `#`, or blank"
-            ),
+            message: match line {
+                0 => "a line is not `NAME=value`, a comment that starts with `#`, or blank"
+                    .to_owned(),
+                line => format!(
+                    "line {line} is not `NAME=value`, a comment that starts with `#`, or blank"
+                ),
+            },
         })
     }
 
@@ -558,46 +562,29 @@ fn found(program: &OsString) -> bool {
 /// The file of a project that sets variables for its code.
 const ENV_FILE: &str = ".env";
 
-/// The variables a `.env` sets, or the number of its first line that is
-/// wrong. A line is `NAME=value`, which may start with `export `; blank lines
-/// and lines that start with `#` are passed over. A value between quotes,
-/// double or single, is what is between them as it stands. One without is
-/// trimmed and ends before ` #`, where a comment begins.
+/// The variables a `.env` sets, as `dotenvy` reads one, or the number of its
+/// first line that is wrong. A value may name a variable the file set
+/// earlier, as `$NAME` or `${NAME}`, unless it is between single quotes.
+///
+/// `dotenvy` says which line is wrong by its text, which may be a secret, so
+/// the line is found again here and only its number is handed on.
 fn parse_env(text: &str) -> std::result::Result<Vec<(String, String)>, usize> {
-    let mut variables = Vec::new();
-    for (number, line) in text.lines().enumerate() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let line = line.strip_prefix("export ").unwrap_or(line);
-        let wrong = number + 1;
-        let (name, value) = line.split_once('=').ok_or(wrong)?;
-        let name = name.trim();
-        let plain = name
-            .chars()
-            .next()
-            .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
-            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
-        if !plain {
-            return Err(wrong);
-        }
-        let value = value.trim();
-        let value = match value.chars().next() {
-            Some(quote @ ('"' | '\'')) => {
-                let inside = &value[1..];
-                let end = inside.find(quote).ok_or(wrong)?;
-                let after = inside[end + 1..].trim_start();
-                if !(after.is_empty() || after.starts_with('#')) {
-                    return Err(wrong);
-                }
-                &inside[..end]
-            }
-            _ => value.split(" #").next().unwrap_or_default().trim_end(),
-        };
-        variables.push((name.to_owned(), value.to_owned()));
-    }
-    Ok(variables)
+    dotenvy::from_read_iter(text.as_bytes())
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|error| {
+            let dotenvy::Error::LineParse(wrong, _) = error else {
+                // Nothing is read from a file or from the environment here.
+                return 0;
+            };
+            // A value that opens a quote and never closes it runs on to the
+            // end of the text: the line it began on is the wrong one.
+            // Of a line that is wrong from its value on, only the value is
+            // said.
+            let began = wrong.lines().next().unwrap_or_default();
+            text.lines()
+                .position(|line| line.contains(began))
+                .map_or(0, |index| index + 1)
+        })
 }
 
 /// `dir`, followed by what the variable already holds.
@@ -1207,13 +1194,15 @@ mod tests {
         let text = "\
 # a comment
 
-PLAIN=one two
+PLAIN=one
 export EXPORTED=2
 SPACED = three   # said of it
 DOUBLE=\"four # five\"
 SINGLE='$six'  # quoted
 EMPTY=
 WITH_EQUALS=a=b
+AFTER_PLAIN=$PLAIN/more
+AFTER_BRACES=\"${EXPORTED} of them\"
 ";
         let pairs = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
             pairs
@@ -1224,13 +1213,15 @@ WITH_EQUALS=a=b
         assert_eq!(
             parse_env(text),
             Ok(pairs(&[
-                ("PLAIN", "one two"),
+                ("PLAIN", "one"),
                 ("EXPORTED", "2"),
                 ("SPACED", "three"),
                 ("DOUBLE", "four # five"),
                 ("SINGLE", "$six"),
                 ("EMPTY", ""),
                 ("WITH_EQUALS", "a=b"),
+                ("AFTER_PLAIN", "one/more"),
+                ("AFTER_BRACES", "2 of them"),
             ]))
         );
         // A wrong line is named by its number.
@@ -1240,6 +1231,8 @@ WITH_EQUALS=a=b
             ("A B=1\n", 1),
             ("\n\nOPEN=\"no end\n", 3),
             ("AFTER='quoted' more\n", 1),
+            // A value of more than one word is between quotes.
+            ("A=1\nWORDS=one two\n", 2),
         ] {
             assert_eq!(parse_env(text), Err(line), "{text:?}");
         }

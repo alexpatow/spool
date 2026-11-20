@@ -36,7 +36,7 @@ Every step keeps behaviour as it is: the checks are `cargo fmt`, `cargo clippy
       and `unhex`.
 - [x] C3. `subtle` for the constant-time compare in `server.rs`.
 - [x] C4. `time` for the calendar arithmetic in `spool/src/time.rs`.
-- [ ] C5. `dotenvy` for `parse_env`. Errors still name a line by its number
+- [x] C5. `dotenvy` for `parse_env`. Errors still name a line by its number
       alone.
 - [ ] C6. `signal-hook` for the `unsafe` `sigaction` in `commands/extract.rs`.
 

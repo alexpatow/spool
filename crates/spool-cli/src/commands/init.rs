@@ -85,7 +85,8 @@ const ENV_EXAMPLE: &str = "\
 # strategies. Copy this file to .env, which Git does not keep, and set each
 # one there as NAME=value. Spool hands them to that code each time it runs
 # it, and never prints them. A variable that is set already where Spool runs
-# keeps its value.
+# keeps its value. A value with a space or a `$` in it goes between single
+# quotes.
 #
 # OPENAI_API_KEY=sk-...
 ";
