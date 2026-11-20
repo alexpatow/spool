@@ -138,7 +138,7 @@ impl Engine {
     /// The same as [`candidates`](Self::candidates), with the schema, which
     /// is known even when there are no pairs.
     pub fn candidate_rows(&self, run: RunId) -> Result<Rows> {
-        self.read(|conn| candidates(conn, run))
+        self.read(|conn| read_candidates(conn, run))
     }
 
     /// Adds judgements to an open match run and returns how many were
@@ -185,7 +185,7 @@ impl Engine {
 }
 
 /// The candidate pairs of a run with both sides' features.
-fn candidates(conn: &Connection, run: RunId) -> Result<Rows> {
+fn read_candidates(conn: &Connection, run: RunId) -> Result<Rows> {
     let (_, config) = match_run(conn, run)?;
     let table = features::table(&config.entity_type);
     let columns = feature_columns(conn, &table)?;

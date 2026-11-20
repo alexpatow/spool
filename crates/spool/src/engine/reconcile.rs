@@ -10,7 +10,7 @@ use spool_core::{
 };
 
 use super::matching::MatchConfig;
-use super::{Engine, Inner, id_error, lock};
+use super::{Engine, Inner, id_error, lock_ignoring_poison};
 use crate::drafts;
 use crate::error::{Error, Result};
 use crate::possible_split;
@@ -211,7 +211,7 @@ impl Inner {
                 restored = retract::restored_between(config.after_run, run),
             ))?;
             let mut draft = {
-                let mut ids = lock(&inner.ids);
+                let mut ids = lock_ignoring_poison(&inner.ids);
                 reconcile(&evidence, &inner.store, policy, ids.as_mut())?
             };
             draft.changeset.run = Some(reconcile_run);

@@ -140,7 +140,7 @@ impl Inner {
             let tx = inner.store.conn.transaction()?;
             let (mut inserted, mut restored) = (0, 0);
             if let Some(load_run) = load_run {
-                for ((entity_type, source), staged) in grouped(&staged)? {
+                for ((entity_type, source), staged) in group_mentions(&staged)? {
                     let stored = load::insert(&tx, entity_type, source, now, load_run, staged)?;
                     inserted += stored.inserted;
                     restored += stored.restored;
@@ -510,7 +510,7 @@ impl Inner {
 /// The mentions of each entity type and source, as the batch a load
 /// stores. `ord` is the mention's position in what the extractor wrote.
 #[allow(clippy::type_complexity)]
-fn grouped(
+fn group_mentions(
     mentions: &[Mention],
 ) -> Result<Vec<((&str, &str), duckdb::arrow::record_batch::RecordBatch)>> {
     let mut groups: BTreeMap<(&str, &str), Vec<(usize, &Mention)>> = BTreeMap::new();

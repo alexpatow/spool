@@ -8,7 +8,7 @@ use duckdb::params;
 use serde_json::json;
 use spool_core::{Actor, DocumentId, EntityType, RecordId, RunId};
 
-use super::{Engine, Inner, Reading, lock};
+use super::{Engine, Inner, Reading, lock_ignoring_poison};
 use crate::documents::{
     self, AddDocumentReport, DocumentEntry, DocumentFilter, DocumentReading, ExtractOptions,
     ExtractReport, ExtractorRef, NewDocument,
@@ -68,7 +68,7 @@ impl Engine {
     /// Says of each of the documents the extraction in progress reads that
     /// it is reading them.
     fn mark_reading(&self, documents: &mut [DocumentEntry]) {
-        let reading = lock(&self.reading);
+        let reading = lock_ignoring_poison(&self.reading);
         let Some(reading) = reading.as_ref() else {
             return;
         };
@@ -143,7 +143,7 @@ impl Engine {
         };
 
         let given = inner.task_document_ids()?;
-        *lock(&self.reading) = Some(Reading {
+        *lock_ignoring_poison(&self.reading) = Some(Reading {
             run,
             extractor: extractor.name.clone(),
             documents: given,
@@ -226,7 +226,7 @@ struct ReadingEnds<'a>(&'a Mutex<Option<Reading>>, &'a usercode::Running, RunId)
 
 impl Drop for ReadingEnds<'_> {
     fn drop(&mut self) {
-        *lock(self.0) = None;
+        *lock_ignoring_poison(self.0) = None;
         self.1.forget(self.2);
     }
 }

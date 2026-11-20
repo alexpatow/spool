@@ -13,7 +13,7 @@ use spool_core::{
     RunId, ValidationError, validate,
 };
 
-use super::{Disposition, Engine, Inner, Scope, StrategyRef, lock};
+use super::{Disposition, Engine, Inner, Scope, StrategyRef, lock_ignoring_poison};
 use crate::error::{Error, Result};
 use crate::features;
 use crate::load::{self, LoadReport};
@@ -341,7 +341,7 @@ impl Inner {
                 return Ok(report);
             }
             let changeset = Changeset {
-                id: lock(&self.ids).changeset_id(),
+                id: lock_ignoring_poison(&self.ids).changeset_id(),
                 base: self.store.head()?,
                 actor: Actor::Engine,
                 reason: Some(reason.clone()),
@@ -438,7 +438,7 @@ impl Inner {
                 None
             } else {
                 let changeset = Changeset {
-                    id: lock(&inner.ids).changeset_id(),
+                    id: lock_ignoring_poison(&inner.ids).changeset_id(),
                     base: inner.store.head()?,
                     actor,
                     reason: reason

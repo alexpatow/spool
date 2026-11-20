@@ -8,7 +8,7 @@ use spool_core::{
 };
 
 use super::matching::MatchConfig;
-use super::{Engine, Inner, StrategyRef, lock};
+use super::{Engine, Inner, StrategyRef, lock_ignoring_poison};
 use crate::drafts;
 use crate::error::{Error, Result};
 use crate::possible_split;
@@ -179,11 +179,11 @@ impl Inner {
             )?;
             let report = self.in_run(reconcile_run, |inner| {
                 let (ops, identities) = {
-                    let mut ids = lock(&inner.ids);
+                    let mut ids = lock_ignoring_poison(&inner.ids);
                     outcome.operations(recompute::mint(ids.as_mut()))
                 };
                 let changeset = Changeset {
-                    id: lock(&inner.ids).changeset_id(),
+                    id: lock_ignoring_poison(&inner.ids).changeset_id(),
                     base: inner.store.head()?,
                     actor: Actor::Engine,
                     reason: Some(match &reason {

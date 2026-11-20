@@ -8,7 +8,7 @@ use super::extract::choose_extractor;
 use super::resolve::Chosen;
 use super::{
     AddRecordReport, Disposition, Engine, ResolveOptions, ResolveReport, RunStatus, Scope,
-    StrategyRef, TypeResolution, lock,
+    StrategyRef, TypeResolution, lock_ignoring_poison,
 };
 use crate::documents::{
     AddDocumentReport, DocumentRecord, ExtractOptions, ExtractReport, NewDocument,
@@ -79,7 +79,7 @@ impl Acting<'_> {
         replace: bool,
     ) -> Result<AddRecordReport> {
         let rows = Rows::from_json(std::slice::from_ref(row))?;
-        let _turn = lock(&self.engine.resolving);
+        let _turn = lock_ignoring_poison(&self.engine.resolving);
         self.engine
             .lock()
             .add_record(&self.actor, source, entity_type, rows, replace)
@@ -99,7 +99,7 @@ impl Acting<'_> {
         document: &NewDocument,
         extractor: Option<&str>,
     ) -> Result<AddDocumentReport> {
-        let _turn = lock(&self.engine.resolving);
+        let _turn = lock_ignoring_poison(&self.engine.resolving);
         let mut inner = self.engine.lock();
         let manifest = inner.manifest.as_deref().ok_or(Error::NoManifest)?;
         if manifest.source(source).is_none() {
@@ -159,7 +159,7 @@ impl Acting<'_> {
     /// As [`Engine::extract`]. The load run that stores what the extractor
     /// found is started by the same caller.
     pub fn extract(&self, options: &ExtractOptions) -> Result<ExtractReport> {
-        let _turn = lock(&self.engine.resolving);
+        let _turn = lock_ignoring_poison(&self.engine.resolving);
         let inner = self.engine.lock();
         let manifest = inner.manifest.as_deref().ok_or(Error::NoManifest)?;
         let extractor = choose_extractor(manifest, Some(&options.extractor))?;
@@ -179,7 +179,7 @@ impl Acting<'_> {
     /// As [`Engine::resolve`]. The reconcile run of each match run is
     /// started by the same caller.
     pub fn resolve(&self, options: &ResolveOptions) -> Result<ResolveReport> {
-        let _turn = lock(&self.engine.resolving);
+        let _turn = lock_ignoring_poison(&self.engine.resolving);
         let plan = self.engine.lock().plan(options)?;
         // Before anything is started: user code needs the project's files,
         // and a file that is not the one the manifest was compiled from is
@@ -294,7 +294,7 @@ impl Acting<'_> {
         plan: &str,
         reason: Option<String>,
     ) -> Result<RecomputeApplied> {
-        let _turn = lock(&self.engine.resolving);
+        let _turn = lock_ignoring_poison(&self.engine.resolving);
         self.engine
             .lock()
             .apply_recompute(&self.actor, entity_type, plan, reason)

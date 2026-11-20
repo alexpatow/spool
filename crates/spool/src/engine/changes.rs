@@ -11,7 +11,7 @@ use spool_core::{
     validate,
 };
 
-use super::{Engine, Inner, lock};
+use super::{Engine, Inner, lock_ignoring_poison};
 use crate::drafts::{self, DraftEntry, DraftFilter, DraftStatus, DraftSummary};
 use crate::error::{Error, Result};
 use crate::following::following;
@@ -135,7 +135,7 @@ impl Engine {
 
     /// Constraints, ordered by their records.
     pub fn constraints(&self, filter: &ConstraintFilter) -> Result<Vec<ConstraintEntry>> {
-        self.read(|conn| constraints(conn, filter))
+        self.read(|conn| list_constraints(conn, filter))
     }
 
     /// Closes an open review item without giving its records an
@@ -177,7 +177,7 @@ impl Engine {
 
     /// Mints IDs for a caller that writes its own changesets.
     pub fn mint_ids(&self, identities: usize, changesets: usize) -> MintedIds {
-        let mut ids = lock(&self.ids);
+        let mut ids = lock_ignoring_poison(&self.ids);
         MintedIds {
             identities: (0..identities).map(|_| ids.identity_id()).collect(),
             changesets: (0..changesets).map(|_| ids.changeset_id()).collect(),
@@ -185,7 +185,7 @@ impl Engine {
     }
 }
 
-fn constraints(conn: &Connection, filter: &ConstraintFilter) -> Result<Vec<ConstraintEntry>> {
+fn list_constraints(conn: &Connection, filter: &ConstraintFilter) -> Result<Vec<ConstraintEntry>> {
     let mut statement = conn.prepare(
         "SELECT c.record_a::VARCHAR, c.record_b::VARCHAR, c.kind, c.from_seq, c.to_seq
          FROM spool.constraint_link c
@@ -298,7 +298,7 @@ impl Inner {
         along: bool,
     ) -> Result<Authored> {
         let mut changeset = Changeset {
-            id: lock(&self.ids).changeset_id(),
+            id: lock_ignoring_poison(&self.ids).changeset_id(),
             base: self.store.head()?,
             actor,
             reason,
@@ -404,7 +404,7 @@ impl Inner {
             (named, rest)
         };
 
-        let new = lock(&self.ids).identity_id();
+        let new = lock_ignoring_poison(&self.ids).identity_id();
         let mut ops = vec![Op::CreateIdentity {
             identity: new,
             entity_type: entry.entity_type,

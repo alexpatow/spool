@@ -117,10 +117,10 @@ struct Readers {
 
 impl Readers {
     fn with<T>(&self, read: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
-        let idle = lock(&self.idle).pop();
+        let idle = lock_ignoring_poison(&self.idle).pop();
         let conn = match idle {
             Some(conn) => conn,
-            None => store::reader(&lock(&self.source), self.attached)?,
+            None => store::reader(&lock_ignoring_poison(&self.source), self.attached)?,
         };
         // One transaction, so a read made of several queries sees one
         // committed state however many changesets commit while it runs.
@@ -129,13 +129,13 @@ impl Readers {
         // A read has nothing to commit. A connection whose transaction did
         // not end is not kept for the next read.
         if conn.execute_batch("ROLLBACK").is_ok() {
-            lock(&self.idle).push(conn);
+            lock_ignoring_poison(&self.idle).push(conn);
         }
         result
     }
 }
 
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+fn lock_ignoring_poison<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
@@ -257,7 +257,7 @@ impl Engine {
     }
 
     fn lock(&self) -> MutexGuard<'_, Inner> {
-        lock(&self.inner)
+        lock_ignoring_poison(&self.inner)
     }
 
     fn read<T>(&self, read: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
