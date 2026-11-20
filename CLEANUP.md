@@ -110,7 +110,8 @@ Every step keeps behaviour as it is: the checks are `cargo fmt`, `cargo clippy
 - [ ] H8. `oxlint` for the TypeScript at the workspace root, until `bun lint`
       is out, and `bun fmt` to format it. `knip` for exports, files and
       dependencies nothing uses.
-- [ ] H9. Last of all: move to `bun test`.
+- [x] H9. Nothing to move: the TypeScript is tested with `bun test` and the
+      Rust with `cargo test` already.
 
 ## I. Repository
 
