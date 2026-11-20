@@ -13,7 +13,7 @@ use crate::error::{Error, Result};
 use crate::features;
 use crate::order::{Key, Keyed, Sort};
 use crate::project::Declaration;
-use crate::store::{parse, read_head};
+use crate::store::{parse_stored, read_head};
 
 // Named by a doc comment only.
 #[cfg(doc)]
@@ -263,7 +263,7 @@ pub(crate) fn identity(conn: &Connection, id: IdentityId) -> Result<Option<Ident
         return Ok(None);
     };
     let current = match merged_into {
-        Some(survivor) => parse(&survivor)?,
+        Some(survivor) => parse_stored(&survivor)?,
         None => id,
     };
     Ok(Some(IdentityView {
@@ -335,7 +335,7 @@ fn identity_current_at(conn: &Connection, id: IdentityId, seq: Seq) -> Result<Id
         let Some(survivor) = row.get::<_, Option<String>>(0)? else {
             return Ok(current);
         };
-        current = parse(&survivor)?;
+        current = parse_stored(&survivor)?;
     }
     Err(StateError::new(format!(
         "identity {id} has a merge cycle at changeset {seq}"
@@ -371,7 +371,7 @@ fn identity_members(
     };
     while let Some(row) = rows.next()? {
         members.push(Member {
-            record: parse(&row.get::<_, String>(0)?)?,
+            record: parse_stored(&row.get::<_, String>(0)?)?,
             source: row.get(1)?,
             key: row.get(2)?,
             since: Seq(row.get::<_, i64>(3)? as u64),
@@ -410,7 +410,7 @@ fn label_at(
     let mut rows = statement.query(params![identity.to_string(), seq.0 as i64])?;
     let mut oldest = Vec::new();
     while let Some(row) = rows.next()? {
-        oldest.push(parse(&row.get::<_, String>(0)?)?);
+        oldest.push(parse_stored(&row.get::<_, String>(0)?)?);
     }
     let names = features::snapshot_labels(conn, &declaration, label, &oldest)?;
     Ok(common_label(names.into_iter()))
@@ -444,7 +444,7 @@ fn read_identity_labels(
     let mut rows = statement.query([])?;
     while let Some(row) = rows.next()? {
         labels
-            .entry(parse(&row.get::<_, String>(0)?)?)
+            .entry(parse_stored(&row.get::<_, String>(0)?)?)
             .or_default()
             .push(row.get(1)?);
     }
@@ -475,7 +475,7 @@ fn describe_identities(conn: &Connection, identities: &mut [IdentitySummary]) ->
     let mut rows = statement.query([])?;
     while let Some(row) = rows.next()? {
         sources
-            .entry(parse(&row.get::<_, String>(0)?)?)
+            .entry(parse_stored(&row.get::<_, String>(0)?)?)
             .or_default()
             .push(SourceCount {
                 source: row.get(1)?,
@@ -494,7 +494,7 @@ fn describe_identities(conn: &Connection, identities: &mut [IdentitySummary]) ->
     let mut rows = statement.query([])?;
     while let Some(row) = rows.next()? {
         names.insert(
-            parse(&row.get::<_, String>(0)?)?,
+            parse_stored(&row.get::<_, String>(0)?)?,
             row.get::<_, i64>(1)? as u64,
         );
     }
@@ -524,7 +524,7 @@ fn describe_identities(conn: &Connection, identities: &mut [IdentitySummary]) ->
     let mut rows = statement.query([])?;
     while let Some(row) = rows.next()? {
         linked.insert(
-            parse(&row.get::<_, String>(0)?)?,
+            parse_stored(&row.get::<_, String>(0)?)?,
             row.get::<_, i64>(1)? as u64,
         );
     }
@@ -546,7 +546,7 @@ const IDENTITY_COLUMNS: &str = "
 
 fn identity_summary(row: &duckdb::Row<'_>) -> Result<IdentitySummary> {
     Ok(IdentitySummary {
-        id: parse(&row.get::<_, String>(0)?)?,
+        id: parse_stored(&row.get::<_, String>(0)?)?,
         entity_type: entity_type(row.get(1)?)?,
         label: None,
         created: Seq(row.get::<_, i64>(2)? as u64),
@@ -667,10 +667,10 @@ pub(crate) fn identities(
                 0 => IdentityMatch::Label { value: row.get(5)? },
                 1 => IdentityMatch::Alias {
                     value: row.get(5)?,
-                    record: parse(&row.get::<_, String>(6)?)?,
+                    record: parse_stored(&row.get::<_, String>(6)?)?,
                 },
                 _ => IdentityMatch::Record {
-                    record: parse(&row.get::<_, String>(6)?)?,
+                    record: parse_stored(&row.get::<_, String>(6)?)?,
                     field: None,
                 },
             };
@@ -759,7 +759,10 @@ fn describe_record_matches(
     let mut rows = statement.query([search])?;
     let mut fields = BTreeMap::new();
     while let Some(row) = rows.next()? {
-        fields.insert(parse::<RecordId>(&row.get::<_, String>(0)?)?, row.get(1)?);
+        fields.insert(
+            parse_stored::<RecordId>(&row.get::<_, String>(0)?)?,
+            row.get(1)?,
+        );
     }
     for identity in identities {
         if let Some(IdentityMatch::Record { record, field }) = &mut identity.search_match {

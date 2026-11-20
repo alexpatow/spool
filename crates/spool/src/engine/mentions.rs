@@ -11,7 +11,7 @@ use spool_core::{Actor, DocumentId, EntityType, RunId};
 
 use super::Inner;
 use super::extract::TASK;
-use crate::batch::{Column, batch};
+use crate::batch::{Column, build_batch};
 use crate::documents::{
     self, ExtractReport, ExtractorRef, FailedDocument, Mention, RawMention, TaskDocument,
 };
@@ -20,7 +20,7 @@ use crate::features;
 use crate::load::{self, LoadReport};
 use crate::project::{Declaration, Extractor};
 use crate::retract::NOT_RETRACTED;
-use crate::store::parse;
+use crate::store::parse_stored;
 use crate::usercode::{self, Task};
 
 /// The most characters of why an extractor could not read a document that
@@ -173,7 +173,7 @@ impl Inner {
                     extractor.name,
                     extractor.hash,
                     run.0 as i64,
-                    &ArrowBatchRegistration::new(batch(vec![
+                    &ArrowBatchRegistration::new(build_batch(vec![
                         ("document_id", Column::Text(ids)),
                         ("mentions", Column::Integer(counts)),
                         ("failure", Column::Text(why)),
@@ -204,7 +204,7 @@ impl Inner {
                         run.0 as i64,
                         extractor.name,
                         extractor.hash,
-                        &ArrowBatchRegistration::new(batch(vec![
+                        &ArrowBatchRegistration::new(build_batch(vec![
                             (
                                 "document_id",
                                 column(|mention| mention.document.to_string())
@@ -438,7 +438,7 @@ impl Inner {
         let mut given = HashMap::new();
         while let Some(row) = rows.next()? {
             given.insert(
-                parse(&row.get::<_, String>(0)?)?,
+                parse_stored(&row.get::<_, String>(0)?)?,
                 TaskDocument {
                     source: row.get(1)?,
                     key: row.get(2)?,
@@ -531,7 +531,7 @@ fn group_mentions(
                         .collect(),
                 )
             };
-            let staged = batch(vec![
+            let staged = build_batch(vec![
                 (
                     "ord",
                     Column::Integer(mentions.iter().map(|(ord, _)| *ord as i64).collect()),

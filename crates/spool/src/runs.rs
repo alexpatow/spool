@@ -15,7 +15,7 @@ use crate::load::LoadReport;
 use crate::order::{ActorNames, Key, Keyed, Sort, actor_names_cte, names_table};
 use crate::recompute::AppliedType;
 use crate::retract::RetractReport;
-use crate::store::parse;
+use crate::store::parse_stored;
 use crate::time::format_rfc3339;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -260,7 +260,7 @@ fn run_entry_from_row(row: &duckdb::Row<'_>) -> Result<RunEntry> {
                 {
                     report.committed = Some(Committed {
                         seq: Seq(seq as u64),
-                        changeset: parse(&row.get::<_, String>(11)?)?,
+                        changeset: parse_stored(&row.get::<_, String>(11)?)?,
                         content_hash: ContentHash::from_stored(row.get(12)?),
                     });
                 }
@@ -278,7 +278,7 @@ fn run_entry_from_row(row: &duckdb::Row<'_>) -> Result<RunEntry> {
         run,
         kind,
         status: RunStatus::from_stored(&row.get::<_, String>(2)?)?,
-        started_by: parse::<Actor>(&row.get::<_, String>(15)?)?,
+        started_by: parse_stored::<Actor>(&row.get::<_, String>(15)?)?,
         strategy: row.get::<_, Option<String>>(3)?.map(|name| StrategyRef {
             name,
             version: row.get(4).unwrap_or(None),

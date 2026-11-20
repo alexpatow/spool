@@ -17,7 +17,7 @@ use crate::error::{Error, Result};
 use crate::load::LoadReport;
 use crate::recompute::RecomputeApplied;
 use crate::rows::Rows;
-use crate::store::parse;
+use crate::store::parse_stored;
 
 /// The engine as one caller of it. Each run started through this is
 /// recorded as started by that caller, and does what the method of the same
@@ -116,7 +116,7 @@ impl Acting<'_> {
             params![source, document.key],
             |row| row.get::<_, String>(0),
         )?;
-        let document = parse(&document)?;
+        let document = parse_stored(&document)?;
         let mentions = match inner.document_reading(document, &extractor)? {
             Some(mentions) => mentions,
             None => {

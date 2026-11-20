@@ -12,7 +12,7 @@ use crate::retract::{self, NOT_RETRACTED};
 
 /// The feature table of an entity type. The name is safe to splice into SQL
 /// because [`EntityType`] allows only lowercase letters, digits and `_`.
-pub(crate) fn table(entity_type: &EntityType) -> String {
+pub(crate) fn table_name(entity_type: &EntityType) -> String {
     format!("spool.features_{entity_type}")
 }
 
@@ -88,7 +88,7 @@ pub(crate) fn create_table(
     declaration: &Declaration,
     version: u32,
 ) -> Result<()> {
-    let table = table(entity_type);
+    let table = table_name(entity_type);
     define_transforms(conn, &declaration.transforms)?;
     conn.execute_batch(&format!(
         "CREATE TABLE {table} AS
@@ -116,7 +116,7 @@ pub(crate) fn label_view<'a>(
             let label = declaration.label.as_deref()?;
             Some(format!(
                 "SELECT record_id, nullif(trim({label}::VARCHAR), '') AS label FROM {}",
-                table(entity_type)
+                table_name(entity_type)
             ))
         })
         .collect();
@@ -167,7 +167,7 @@ pub(crate) fn drop_table(conn: &Connection, entity_type: &EntityType) -> Result<
     conn.execute_batch(&format!(
         "DROP VIEW IF EXISTS spool.entity_{entity_type};
          DROP TABLE IF EXISTS {};",
-        table(entity_type)
+        table_name(entity_type)
     ))?;
     Ok(())
 }
@@ -242,7 +242,7 @@ pub(crate) fn fill(
     conn.execute_batch(&format!(
         "INSERT INTO {} SELECT * FROM spool_new_features;
          DROP TABLE spool_new_features;",
-        table(entity_type)
+        table_name(entity_type)
     ))?;
     Ok(None)
 }

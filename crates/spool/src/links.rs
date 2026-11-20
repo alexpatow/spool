@@ -14,11 +14,11 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use duckdb::Connection;
-use spool_core::{IdentityId, RecordId, RunId};
+use spool_core::{DisjointSets, IdentityId, RecordId, RunId};
 
 use crate::error::Result;
 use crate::explain::LinkKind;
-use crate::store::parse;
+use crate::store::parse_stored;
 
 mod cuts;
 
@@ -80,7 +80,7 @@ impl Graph {
         )?;
         let mut rows = statement.query([identity.to_string()])?;
         while let Some(row) = rows.next()? {
-            members.push(parse::<RecordId>(&row.get::<_, String>(0)?)?);
+            members.push(parse_stored::<RecordId>(&row.get::<_, String>(0)?)?);
         }
 
         // The members are numbered in SQL, so that a million links are read
@@ -203,33 +203,14 @@ impl Graph {
     /// The groups the members would be in without the links that only
     /// `rule` made, the largest first.
     pub(crate) fn pieces_without(&self, rule: u32) -> Vec<Vec<u32>> {
-        let mut parent: Vec<u32> = (0..self.len() as u32).collect();
-        fn find_root(parent: &mut [u32], mut at: u32) -> u32 {
-            while parent[at as usize] != at {
-                let up = parent[parent[at as usize] as usize];
-                parent[at as usize] = up;
-                at = up;
-            }
-            at
-        }
+        let mut sets = DisjointSets::new(0..self.len() as u32);
         for edge in &self.edges {
             if self.rule_sets[edge.rules as usize] == [rule] {
                 continue;
             }
-            let (one, other) = (
-                find_root(&mut parent, edge.a),
-                find_root(&mut parent, edge.b),
-            );
-            if one != other {
-                parent[one.max(other) as usize] = one.min(other);
-            }
+            sets.join(edge.a, edge.b);
         }
-        let mut pieces: HashMap<u32, Vec<u32>> = HashMap::new();
-        for at in 0..self.len() as u32 {
-            let top = find_root(&mut parent, at);
-            pieces.entry(top).or_default().push(at);
-        }
-        let mut pieces: Vec<Vec<u32>> = pieces.into_values().collect();
+        let mut pieces: Vec<Vec<u32>> = sets.sets().into_values().collect();
         pieces.sort_by(|one, other| other.len().cmp(&one.len()).then_with(|| one.cmp(other)));
         pieces
     }

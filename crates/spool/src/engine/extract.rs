@@ -18,7 +18,7 @@ use crate::load::LoadReport;
 use crate::project::Extractor;
 use crate::retract::NOT_RETRACTED;
 use crate::runs::RunStatus;
-use crate::store::parse;
+use crate::store::parse_stored;
 use crate::usercode::{self, ExtractType, Task, UserCode};
 
 /// The documents of the extraction in progress. One extraction runs at a
@@ -286,7 +286,7 @@ impl Inner {
         let mut mentions = Vec::new();
         while let Some(row) = rows.next()? {
             mentions.push((
-                parse(&row.get::<_, String>(0)?)?,
+                parse_stored(&row.get::<_, String>(0)?)?,
                 EntityType::new(row.get::<_, String>(1)?)?,
                 row.get(2)?,
                 row.get(3)?,
@@ -447,7 +447,7 @@ impl Inner {
         let mut rows = statement.query([])?;
         let mut ids = HashSet::new();
         while let Some(row) = rows.next()? {
-            ids.insert(parse(&row.get::<_, String>(0)?)?);
+            ids.insert(parse_stored(&row.get::<_, String>(0)?)?);
         }
         Ok(ids)
     }

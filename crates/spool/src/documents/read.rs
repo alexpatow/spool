@@ -9,7 +9,7 @@ use super::{DocumentEntry, DocumentExtraction};
 use crate::batch::id_list;
 use crate::error::Result;
 use crate::order::{Key, Keyed, Sort};
-use crate::store::parse;
+use crate::store::parse_stored;
 use crate::time::format_rfc3339;
 
 /// Which documents to list. Results are ordered by ID, or as `sort` says.
@@ -90,11 +90,11 @@ fn document_entry_from_row(row: &duckdb::Row<'_>) -> Result<DocumentEntry> {
     let id = |at: usize| -> Result<Option<DocumentId>> {
         row.get::<_, Option<String>>(at)?
             .as_deref()
-            .map(parse)
+            .map(parse_stored)
             .transpose()
     };
     Ok(DocumentEntry {
-        id: parse(&row.get::<_, String>(0)?)?,
+        id: parse_stored(&row.get::<_, String>(0)?)?,
         source: row.get(1)?,
         key: row.get(2)?,
         uri: row.get(3)?,

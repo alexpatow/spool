@@ -10,7 +10,7 @@ use spool_core::{Actor, ChangesetId, ContentHash, IdentityId, LogEntry, Op, RunI
 use super::clamp_limit;
 use crate::error::Result;
 use crate::order::{Key, Keyed, Sort, actor_names_cte, names_table};
-use crate::store::{OpRow, log_entry, op_from_row, parse};
+use crate::store::{OpRow, log_entry, op_from_row, parse_stored};
 use crate::time::format_rfc3339;
 
 /// A committed changeset as far as it concerns one identity.
@@ -92,8 +92,8 @@ pub(crate) fn history(conn: &Connection, id: IdentityId) -> Result<Vec<HistoryEn
             Some(entry) if entry.seq == seq => entry.ops.push(op),
             _ => entries.push(HistoryEntry {
                 seq,
-                changeset: parse(&row.get::<_, String>(1)?)?,
-                actor: parse(&row.get::<_, String>(2)?)?,
+                changeset: parse_stored(&row.get::<_, String>(1)?)?,
+                actor: parse_stored(&row.get::<_, String>(2)?)?,
                 reason: row.get(3)?,
                 run: row.get::<_, Option<i64>>(4)?.map(|run| RunId(run as u64)),
                 committed_at: format_rfc3339(row.get(5)?),
@@ -295,7 +295,7 @@ fn started_by(conn: &Connection, first: Seq, last: Seq) -> Result<BTreeMap<Seq, 
     while let Some(row) = rows.next()? {
         started.insert(
             Seq(row.get::<_, i64>(0)? as u64),
-            parse(&row.get::<_, String>(1)?)?,
+            parse_stored(&row.get::<_, String>(1)?)?,
         );
     }
     Ok(started)

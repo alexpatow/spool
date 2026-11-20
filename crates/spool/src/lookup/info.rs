@@ -9,7 +9,7 @@ use super::entity_type;
 use crate::error::Result;
 use crate::project::{Extractor, FeatureColumn, Manifest, Strategy};
 use crate::schema;
-use crate::store::parse;
+use crate::store::parse_stored;
 use crate::time::format_rfc3339;
 
 /// What a store holds.
@@ -173,7 +173,7 @@ pub(crate) fn info(conn: &Connection, manifest: Option<&Manifest>) -> Result<Sto
             open_draft: row
                 .get::<_, Option<String>>(6)?
                 .as_deref()
-                .map(parse)
+                .map(parse_stored)
                 .transpose()?,
             name,
         });

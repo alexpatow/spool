@@ -7,7 +7,7 @@ use duckdb::{Connection, params};
 use spool_core::{DocumentId, RunId};
 
 use super::NewDocument;
-use crate::batch::{Column, batch};
+use crate::batch::{Column, build_batch};
 use crate::error::{Error, Result};
 use crate::versions;
 
@@ -38,7 +38,7 @@ pub(crate) fn stage(source: &str, documents: &[NewDocument]) -> Result<Option<Re
     if ids.is_empty() {
         return Ok(None);
     }
-    Ok(Some(batch(vec![
+    Ok(Some(build_batch(vec![
         ("ord", Column::Integer(ords)),
         ("document_id", Column::Text(ids)),
         ("source_key", Column::Text(keys)),

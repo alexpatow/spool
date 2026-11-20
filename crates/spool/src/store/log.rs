@@ -7,7 +7,7 @@ use spool_core::{
 };
 
 use super::ops::{OpRow, op_from_row};
-use super::parse;
+use super::parse_stored;
 use crate::error::{Error, Result};
 
 pub(crate) fn read_log(conn: &Connection) -> Result<Vec<LogEntry>> {
@@ -66,9 +66,9 @@ pub(crate) fn log_entry(row: &duckdb::Row<'_>) -> Result<LogEntry> {
     Ok(LogEntry {
         seq: Seq(row.get::<_, i64>(0)? as u64),
         changeset: Changeset {
-            id: parse(&row.get::<_, String>(1)?)?,
+            id: parse_stored(&row.get::<_, String>(1)?)?,
             base: Seq(row.get::<_, i64>(2)? as u64),
-            actor: parse(&row.get::<_, String>(3)?)?,
+            actor: parse_stored(&row.get::<_, String>(3)?)?,
             reason: row.get(4)?,
             run: row.get::<_, Option<i64>>(5)?.map(|run| RunId(run as u64)),
             ops: Vec::new(),
@@ -151,7 +151,7 @@ pub(crate) fn read_merged_before(
     )?;
     let mut rows = statement.query(params![identity.to_string(), seq.0 as i64])?;
     Ok(match rows.next()? {
-        Some(row) => Some(parse(&row.get::<_, String>(0)?)?),
+        Some(row) => Some(parse_stored(&row.get::<_, String>(0)?)?),
         None => None,
     })
 }

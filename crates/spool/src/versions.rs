@@ -25,7 +25,7 @@ use duckdb::arrow::datatypes::Int64Type;
 use duckdb::arrow::record_batch::RecordBatch;
 
 use crate::error::Result;
-use crate::store::parse;
+use crate::store::parse_stored;
 
 /// What the store holds that bears on one thing a source sent.
 pub(crate) struct Held<Id> {
@@ -141,7 +141,7 @@ where
     while let Some(row) = held.next()? {
         let read = |index: usize| -> Result<Option<Id>> {
             row.get::<_, Option<String>>(index)?
-                .map(|id| parse(&id))
+                .map(|id| parse_stored(&id))
                 .transpose()
         };
         let latest = match read(2)? {
@@ -163,7 +163,7 @@ where
     let keys = expect_column(staged, "source_key").as_string::<i32>();
     let mut contents = Vec::with_capacity(staged.num_rows());
     for id in expect_column(staged, id).as_string::<i32>().iter() {
-        contents.push(parse::<Id>(id.unwrap_or_default())?);
+        contents.push(parse_stored::<Id>(id.unwrap_or_default())?);
     }
     Ok(place(keys.iter().zip(contents), &found, again))
 }

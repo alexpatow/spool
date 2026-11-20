@@ -7,7 +7,7 @@ use spool_core::{Changeset, ContentHash, IdentityStatus, Seq, Snapshot};
 
 use super::DuckStore;
 use super::ops::op_rows;
-use crate::batch::{Column, batch};
+use crate::batch::{Column, build_batch};
 use crate::drafts;
 use crate::error::Result;
 use crate::possible_split;
@@ -17,7 +17,7 @@ impl DuckStore {
     /// Replaces the projection tables with the given state.
     #[expect(clippy::too_many_lines)]
     pub(crate) fn write_projection(&mut self, snapshot: &Snapshot) -> Result<()> {
-        let identities = batch(vec![
+        let identities = build_batch(vec![
             (
                 "identity_id",
                 to_text_column(snapshot.identities.iter().map(|record| Some(record.id))),
@@ -72,7 +72,7 @@ impl DuckStore {
                 ),
             ),
         ])?;
-        let memberships = batch(vec![
+        let memberships = build_batch(vec![
             (
                 "record_id",
                 to_text_column(snapshot.memberships.iter().map(|row| Some(row.record))),
@@ -102,7 +102,7 @@ impl DuckStore {
             ),
         ])?;
         let links = &snapshot.constraints;
-        let constraints = batch(vec![
+        let constraints = build_batch(vec![
             (
                 "record_a",
                 to_text_column(links.iter().map(|row| Some(row.constraint.a))),

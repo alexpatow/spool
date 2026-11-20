@@ -30,11 +30,11 @@ use duckdb::{Connection, params};
 use serde::{Deserialize, Serialize};
 use spool_core::{Committed, EntityType, IdentityId, Op, RecordId, RunId, Seq};
 
-use crate::batch::{Column, batch};
+use crate::batch::{Column, build_batch};
 use crate::error::{Error, Result};
 use crate::features;
 use crate::review::ABOUT_WAITING;
-use crate::store::parse;
+use crate::store::parse_stored;
 
 /// What a retraction did.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -98,7 +98,7 @@ pub(crate) fn name(
     source: &str,
     keys: &[String],
 ) -> Result<Named> {
-    let keys = batch(vec![(
+    let keys = build_batch(vec![(
         "source_key",
         Column::Text(keys.iter().cloned().map(Some).collect()),
     )])?;
@@ -146,8 +146,8 @@ pub(crate) fn members(conn: &Connection) -> Result<Vec<(RecordId, IdentityId)>> 
     let mut members = Vec::new();
     while let Some(row) = rows.next()? {
         members.push((
-            parse(&row.get::<_, String>(0)?)?,
-            parse(&row.get::<_, String>(1)?)?,
+            parse_stored(&row.get::<_, String>(0)?)?,
+            parse_stored(&row.get::<_, String>(1)?)?,
         ));
     }
     Ok(members)
@@ -176,7 +176,7 @@ pub(crate) fn record(
     )?;
     conn.execute_batch(&format!(
         "DELETE FROM {} WHERE record_id IN (SELECT record_id FROM {NAMED})",
-        features::table(entity_type)
+        features::table_name(entity_type)
     ))?;
     // The draft could never be approved: it gives a record an identity that
     // may not have one. Its match run has not succeeded, so the records
@@ -280,9 +280,9 @@ pub(crate) fn returning(conn: &Connection, run: RunId) -> Result<Vec<Op>> {
     let mut ops = Vec::new();
     while let Some(row) = rows.next()? {
         ops.push(Op::Assign {
-            record: parse(&row.get::<_, String>(0)?)?,
+            record: parse_stored(&row.get::<_, String>(0)?)?,
             from: None,
-            to: Some(parse(&row.get::<_, String>(1)?)?),
+            to: Some(parse_stored(&row.get::<_, String>(1)?)?),
         });
     }
     Ok(ops)
@@ -305,7 +305,7 @@ pub(crate) fn refuse_placing(conn: &Connection, ops: &[Op]) -> Result<()> {
     if placed.is_empty() {
         return Ok(());
     }
-    let placed = batch(vec![("record_id", Column::Text(placed))])?;
+    let placed = build_batch(vec![("record_id", Column::Text(placed))])?;
     let mut statement = conn.prepare(
         "SELECT r.record_id::VARCHAR
          FROM arrow(?) p
@@ -315,7 +315,7 @@ pub(crate) fn refuse_placing(conn: &Connection, ops: &[Op]) -> Result<()> {
     )?;
     let mut rows = statement.query([&ArrowBatchRegistration::new(placed)])?;
     match rows.next()? {
-        Some(row) => Err(Error::Retracted(parse(&row.get::<_, String>(0)?)?)),
+        Some(row) => Err(Error::Retracted(parse_stored(&row.get::<_, String>(0)?)?)),
         None => Ok(()),
     }
 }

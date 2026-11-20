@@ -11,7 +11,7 @@ use duckdb::vtab::arrow::ArrowBatchRegistration;
 use serde::{Deserialize, Serialize};
 use spool_core::Actor;
 
-use crate::batch::{Column, batch};
+use crate::batch::{Column, build_batch};
 use crate::error::Result;
 
 /// Which way a list runs.
@@ -191,7 +191,7 @@ pub(crate) fn names_table(names: &[(Actor, String)]) -> Result<ArrowBatchRegistr
             .map(|(actor, name)| (Some(actor.to_string()), Some(name.clone())))
             .unzip()
     };
-    Ok(ArrowBatchRegistration::new(batch(vec![
+    Ok(ArrowBatchRegistration::new(build_batch(vec![
         ("actor", Column::Text(actors)),
         ("name", Column::Text(called)),
     ])?))

@@ -187,7 +187,7 @@ impl Engine {
 /// The candidate pairs of a run with both sides' features.
 fn read_candidates(conn: &Connection, run: RunId) -> Result<Rows> {
     let (_, config) = match_run(conn, run)?;
-    let table = features::table(&config.entity_type);
+    let table = features::table_name(&config.entity_type);
     let columns = feature_columns(conn, &table)?;
     let mut statement = conn.prepare(&candidates_query(&table, &columns, run, false))?;
     let arrow = statement.query_arrow([])?;
@@ -502,7 +502,7 @@ impl Inner {
             },
         )?;
         let conn = &self.store.conn;
-        let table = features::table(&config.entity_type);
+        let table = features::table_name(&config.entity_type);
         let columns = feature_columns(conn, &table)?;
         let copy = |query: &str, file: &str| {
             conn.execute_batch(&format!(

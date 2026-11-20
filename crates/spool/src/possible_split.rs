@@ -64,9 +64,10 @@ use duckdb::vtab::arrow::ArrowBatchRegistration;
 use duckdb::{Connection, params};
 use spool_core::{DisjointSets, EntityType, IdentityId, RecordId, RunId, Seq, StateError};
 
-use crate::batch::{Column, batch};
+use crate::batch::{Column, build_batch};
 use crate::error::Result;
-use crate::store::parse;
+use crate::lookup::uuid_list;
+use crate::store::parse_stored;
 
 /// The members of each of the given active identities, as the groups that
 /// are each held together, the largest group first. An identity without
@@ -112,7 +113,7 @@ fn groups_by(
         return Ok(found);
     }
     let asked = || -> Result<ArrowBatchRegistration> {
-        Ok(ArrowBatchRegistration::new(batch(vec![(
+        Ok(ArrowBatchRegistration::new(build_batch(vec![(
             "identity_id",
             Column::Text(
                 identities
@@ -151,10 +152,10 @@ fn groups_by(
         ))?;
         let mut rows = statement.query([&asked()?])?;
         while let Some(row) = rows.next()? {
-            let record: RecordId = parse(&row.get::<_, String>(0)?)?;
+            let record: RecordId = parse_stored(&row.get::<_, String>(0)?)?;
             union.insert(record);
             held.insert(record);
-            members.push((record, parse(&row.get::<_, String>(1)?)?));
+            members.push((record, parse_stored(&row.get::<_, String>(1)?)?));
         }
     }
     {
@@ -199,8 +200,8 @@ fn groups_by(
         ))?;
         let mut rows = statement.query([&asked()?])?;
         while let Some(row) = rows.next()? {
-            let a: RecordId = parse(&row.get::<_, String>(0)?)?;
-            let b: RecordId = parse(&row.get::<_, String>(1)?)?;
+            let a: RecordId = parse_stored(&row.get::<_, String>(0)?)?;
+            let b: RecordId = parse_stored(&row.get::<_, String>(1)?)?;
             union.join(a, b);
             if !row.get::<_, bool>(2)? {
                 held.join(a, b);
@@ -300,7 +301,7 @@ fn groups_by(
                 decision = Some(at);
             }
             let side: String = row.get(2)?;
-            let record: RecordId = parse(&row.get::<_, String>(3)?)?;
+            let record: RecordId = parse_stored(&row.get::<_, String>(3)?)?;
             if row.get::<_, bool>(4)? {
                 together.insert(side.clone());
             }
@@ -354,7 +355,7 @@ fn read_open_items(conn: &Connection, condition: &str) -> Result<Vec<Open>> {
     while let Some(row) = rows.next()? {
         items.push(Open {
             id: row.get(0)?,
-            identity: parse(&row.get::<_, String>(1)?)?,
+            identity: parse_stored(&row.get::<_, String>(1)?)?,
             groups: match row.get::<_, Option<String>>(2)? {
                 Some(groups) => serde_json::from_str(&groups).map_err(StateError::new)?,
                 None => Vec::new(),
@@ -402,9 +403,9 @@ fn locate_item_records(
         found
             .entry(row.get(0)?)
             .or_default()
-            .entry(parse(&row.get::<_, String>(1)?)?)
+            .entry(parse_stored(&row.get::<_, String>(1)?)?)
             .or_default()
-            .insert(parse(&row.get::<_, String>(2)?)?);
+            .insert(parse_stored(&row.get::<_, String>(2)?)?);
     }
     Ok(found)
 }
@@ -419,22 +420,13 @@ fn records_span_groups(records: &BTreeSet<RecordId>, groups: &[Vec<RecordId>]) -
         > 1
 }
 
-/// A list of record IDs as SQL.
-fn quote_uuid_list(records: &[RecordId]) -> String {
-    let quoted: Vec<String> = records.iter().map(|id| format!("'{id}'")).collect();
-    format!("[{}]::UUID[]", quoted.join(", "))
-}
-
 /// The records and the groups of an item as SQL: every record in the
 /// groups, in order, and the groups as they are.
 fn quote_records_and_groups(groups: &[Vec<RecordId>]) -> (String, String) {
     let mut records: Vec<RecordId> = groups.iter().flatten().copied().collect();
     records.sort();
-    let grouped: Vec<String> = groups.iter().map(|group| quote_uuid_list(group)).collect();
-    (
-        quote_uuid_list(&records),
-        format!("[{}]", grouped.join(", ")),
-    )
+    let grouped: Vec<String> = groups.iter().map(|group| uuid_list(group)).collect();
+    (uuid_list(&records), format!("[{}]", grouped.join(", ")))
 }
 
 /// Brings open items in step with where their records are, so that each
@@ -739,7 +731,7 @@ pub(crate) fn taken_back(conn: &Connection, identities: &[IdentityId]) -> Result
     let mut rows = statement.query([])?;
     let mut records = Vec::new();
     while let Some(row) = rows.next()? {
-        records.push(parse(&row.get::<_, String>(0)?)?);
+        records.push(parse_stored(&row.get::<_, String>(0)?)?);
     }
     Ok(records)
 }

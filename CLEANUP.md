@@ -81,7 +81,7 @@ Every step keeps behaviour as it is: the checks are `cargo fmt`, `cargo clippy
       name, words argument errors and unknown tools its own way, and adds
       fields to `tools/list`, each of which a client would see. Each tool
       is declared once with a `declare(...)` of the server's own instead.
-- [~] F7. Greppable names: verb-and-noun names for the private helpers whose
+- [x] F7. Greppable names: verb-and-noun names for the private helpers whose
       one-word names collide (`named`, `listed`, `list`, `text`, ...).
 
 ## G. Tests
@@ -107,8 +107,10 @@ Every step keeps behaviour as it is: the checks are `cargo fmt`, `cargo clippy
 - [ ] H6. `components.tsx` into `components/{layout, table, refs, filters}.tsx`.
 - [ ] H7. `screens/review.tsx` into `screens/review/*.tsx`; `app.tsx` into
       `app/{door, shell}.tsx`.
-- [ ] H8. One linter for TypeScript (Biome) at the workspace root, and `knip`
-      for exports, files and dependencies nothing uses.
+- [ ] H8. `oxlint` for the TypeScript at the workspace root, until `bun lint`
+      is out, and `bun fmt` to format it. `knip` for exports, files and
+      dependencies nothing uses.
+- [ ] H9. Last of all: move to `bun test`.
 
 ## I. Repository
 

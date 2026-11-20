@@ -84,7 +84,7 @@ impl Project {
             features::create_table(&scratch.conn, &name, &declaration, 1)
                 .map_err(|error| in_entity(error.to_string()))?;
 
-            let table = features::table(&name);
+            let table = features::table_name(&name);
             let compile_rules = |files: &[SqlFile]| -> Result<Vec<Rule>> {
                 let mut rules = Vec::new();
                 let mut seen = BTreeSet::new();

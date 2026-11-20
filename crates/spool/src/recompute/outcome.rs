@@ -14,7 +14,7 @@ use super::{
     RecordMove, TypeRecompute,
 };
 use crate::error::Result;
-use crate::store::parse;
+use crate::store::parse_stored;
 
 /// A node of the graph whose connected parts are the changes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -554,7 +554,7 @@ impl Outcome {
             let mut rows = statement.query([])?;
             while let Some(row) = rows.next()? {
                 sources.insert(
-                    parse(&row.get::<_, String>(0)?)?,
+                    parse_stored(&row.get::<_, String>(0)?)?,
                     (row.get(1)?, row.get(2)?),
                 );
             }

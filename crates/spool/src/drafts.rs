@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use spool_core::{Changeset, ChangesetId, EntityType, Op, RunId, Seq, StateError};
 
 use crate::error::Result;
-use crate::store::{OpRow, op_from_row, op_rows, parse};
+use crate::store::{OpRow, op_from_row, op_rows, parse_stored};
 use crate::time::format_rfc3339;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -216,7 +216,7 @@ fn draft_summary_from_row(row: &duckdb::Row<'_>) -> Result<(DraftSummary, String
     let seq = |value: Option<i64>| value.map(|seq| Seq(seq as u64));
     let run = |value: Option<i64>| value.map(|run| RunId(run as u64));
     let summary = DraftSummary {
-        id: parse(&row.get::<_, String>(0)?)?,
+        id: parse_stored(&row.get::<_, String>(0)?)?,
         entity_type: EntityType::new(row.get::<_, String>(1)?).map_err(StateError::new)?,
         match_run: RunId(row.get::<_, i64>(2)? as u64),
         reconcile_run: RunId(row.get::<_, i64>(3)? as u64),
@@ -288,7 +288,7 @@ pub(crate) fn get(conn: &Connection, id: ChangesetId) -> Result<Option<DraftEntr
     let changeset = Changeset {
         id: draft.id,
         base: draft.base,
-        actor: parse(&actor)?,
+        actor: parse_stored(&actor)?,
         reason,
         run: Some(draft.reconcile_run),
         ops,

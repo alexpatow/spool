@@ -17,7 +17,7 @@ use crate::possible_split;
 use crate::project::RuleSet;
 use crate::retract::NOT_RETRACTED;
 use crate::rules::{self, NOT_DISMISSED, SCOPE};
-use crate::store::parse;
+use crate::store::parse_stored;
 
 /// Where a preview keeps the candidate pairs and judgements of the rules.
 /// They are temporary tables of a connection that reads, and are gone
@@ -86,7 +86,7 @@ pub(crate) fn compute(
         &format!("SELECT record_id::VARCHAR FROM {SCOPE} ORDER BY record_id"),
     )?
     .iter()
-    .map(|id| parse(id))
+    .map(|id| parse_stored(id))
     .collect::<Result<_>>()?;
 
     let mut now: HashMap<RecordId, IdentityId> = HashMap::new();
@@ -100,8 +100,8 @@ pub(crate) fn compute(
         ))?;
         let mut rows = statement.query([])?;
         while let Some(row) = rows.next()? {
-            let identity: IdentityId = parse(&row.get::<_, String>(1)?)?;
-            now.insert(parse(&row.get::<_, String>(0)?)?, identity);
+            let identity: IdentityId = parse_stored(&row.get::<_, String>(1)?)?;
+            now.insert(parse_stored(&row.get::<_, String>(0)?)?, identity);
             created.insert(identity, row.get(2)?);
         }
     }
@@ -138,8 +138,8 @@ pub(crate) fn compute(
         let mut rows = statement.query([])?;
         while let Some(row) = rows.next()? {
             let pair = sort_record_pair(
-                parse(&row.get::<_, String>(0)?)?,
-                parse(&row.get::<_, String>(1)?)?,
+                parse_stored(&row.get::<_, String>(0)?)?,
+                parse_stored(&row.get::<_, String>(1)?)?,
             );
             let verdict: Verdict = row
                 .get::<_, String>(2)?
@@ -163,8 +163,8 @@ pub(crate) fn compute(
         let mut rows = statement.query([])?;
         while let Some(row) = rows.next()? {
             let pair = sort_record_pair(
-                parse(&row.get::<_, String>(0)?)?,
-                parse(&row.get::<_, String>(1)?)?,
+                parse_stored(&row.get::<_, String>(0)?)?,
+                parse_stored(&row.get::<_, String>(1)?)?,
             );
             verdicts.insert(pair, Verdict::Match);
         }
@@ -236,8 +236,8 @@ pub(crate) fn compute(
         let mut rows = statement.query([])?;
         while let Some(row) = rows.next()? {
             let pair = sort_record_pair(
-                parse(&row.get::<_, String>(0)?)?,
-                parse(&row.get::<_, String>(1)?)?,
+                parse_stored(&row.get::<_, String>(0)?)?,
+                parse_stored(&row.get::<_, String>(1)?)?,
             );
             let kind = match row.get::<_, String>(2)?.as_str() {
                 "must_link" => ConstraintKind::MustLink,
@@ -245,7 +245,7 @@ pub(crate) fn compute(
             };
             let decision = PersonDecision {
                 seq: Seq(row.get::<_, i64>(3)? as u64),
-                actor: parse(&row.get::<_, String>(4)?)?,
+                actor: parse_stored(&row.get::<_, String>(4)?)?,
                 reason: row.get(5)?,
             };
             verdicts.insert(
@@ -499,7 +499,7 @@ fn read_record_labels(conn: &Connection) -> Result<HashMap<RecordId, (String, i6
     let mut found = HashMap::new();
     while let Some(row) = rows.next()? {
         found.insert(
-            parse(&row.get::<_, String>(0)?)?,
+            parse_stored(&row.get::<_, String>(0)?)?,
             (row.get(1)?, row.get(2)?),
         );
     }
@@ -526,11 +526,11 @@ fn shaped_by_people(conn: &Connection) -> Result<BTreeMap<IdentityId, Vec<Person
     let mut found: BTreeMap<IdentityId, Vec<PersonDecision>> = BTreeMap::new();
     while let Some(row) = rows.next()? {
         found
-            .entry(parse(&row.get::<_, String>(0)?)?)
+            .entry(parse_stored(&row.get::<_, String>(0)?)?)
             .or_default()
             .push(PersonDecision {
                 seq: Seq(row.get::<_, i64>(1)? as u64),
-                actor: parse(&row.get::<_, String>(2)?)?,
+                actor: parse_stored(&row.get::<_, String>(2)?)?,
                 reason: row.get(3)?,
             });
     }
@@ -552,9 +552,9 @@ fn approved_placements(conn: &Connection) -> Result<BTreeMap<RecordId, (Changese
     let mut found = BTreeMap::new();
     while let Some(row) = rows.next()? {
         found.insert(
-            parse(&row.get::<_, String>(0)?)?,
+            parse_stored(&row.get::<_, String>(0)?)?,
             (
-                parse(&row.get::<_, String>(1)?)?,
+                parse_stored(&row.get::<_, String>(1)?)?,
                 Seq(row.get::<_, i64>(2)? as u64),
             ),
         );

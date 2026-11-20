@@ -9,7 +9,7 @@ use spool_core::{
 
 use super::log::read_head;
 use super::ops::constraint_kind;
-use super::parse;
+use super::parse_stored;
 use crate::batch::id_list;
 use crate::error::Result;
 
@@ -36,8 +36,8 @@ pub(crate) fn read_snapshot(conn: &Connection) -> Result<Snapshot> {
     let mut rows = statement.query([])?;
     while let Some(row) = rows.next()? {
         memberships.push(Membership {
-            record: parse(&row.get::<_, String>(0)?)?,
-            identity: parse(&row.get::<_, String>(1)?)?,
+            record: parse_stored(&row.get::<_, String>(0)?)?,
+            identity: parse_stored(&row.get::<_, String>(1)?)?,
             from: Seq(row.get::<_, i64>(2)? as u64),
             to: row.get::<_, Option<i64>>(3)?.map(|seq| Seq(seq as u64)),
         });
@@ -131,7 +131,7 @@ pub(crate) fn read_assignments(
     let mut assignments = Vec::with_capacity(records.len());
     while let Some(row) = rows.next()? {
         assignments.push(match row.get::<_, Option<String>>(0)? {
-            Some(id) => Some(parse(&id)?),
+            Some(id) => Some(parse_stored(&id)?),
             None => None,
         });
     }
@@ -154,8 +154,8 @@ pub(crate) fn read_members(
     let mut members = Vec::new();
     while let Some(row) = rows.next()? {
         members.push((
-            parse(&row.get::<_, String>(0)?)?,
-            parse(&row.get::<_, String>(1)?)?,
+            parse_stored(&row.get::<_, String>(0)?)?,
+            parse_stored(&row.get::<_, String>(1)?)?,
         ));
     }
     members.sort_unstable();
@@ -237,8 +237,8 @@ fn query_constraints<T: ToString>(
 pub(crate) fn constraint_from_row(row: &duckdb::Row<'_>, at: usize) -> Result<Constraint> {
     Ok(Constraint::new(
         constraint_kind(row.get::<_, Option<String>>(at + 2)?.as_deref())?,
-        parse(&row.get::<_, String>(at)?)?,
-        parse(&row.get::<_, String>(at + 1)?)?,
+        parse_stored(&row.get::<_, String>(at)?)?,
+        parse_stored(&row.get::<_, String>(at + 1)?)?,
     ))
 }
 
@@ -254,7 +254,7 @@ pub(crate) fn read_left_at(
     let mut rows = statement.query(params![identity.to_string(), seq.0 as i64])?;
     let mut left = Vec::new();
     while let Some(row) = rows.next()? {
-        left.push(parse(&row.get::<_, String>(0)?)?);
+        left.push(parse_stored(&row.get::<_, String>(0)?)?);
     }
     left.sort_unstable();
     Ok(left)
@@ -267,16 +267,16 @@ fn identity_entry(row: &duckdb::Row<'_>, at: usize) -> Result<IdentityEntry> {
     let merged_seq: Option<i64> = row.get(at + 4)?;
     let merge_target: Option<String> = row.get(at + 5)?;
     Ok(IdentityEntry {
-        id: parse(&row.get::<_, String>(at)?)?,
+        id: parse_stored(&row.get::<_, String>(at)?)?,
         entity_type: EntityType::new(row.get::<_, String>(at + 1)?).map_err(StateError::new)?,
         created: Seq(row.get::<_, i64>(at + 2)? as u64),
         status: match merged_into {
-            Some(survivor) => IdentityStatus::MergedInto(parse(&survivor)?),
+            Some(survivor) => IdentityStatus::MergedInto(parse_stored(&survivor)?),
             None => IdentityStatus::Active,
         },
         merged: match (merge_target, merged_seq) {
             (Some(into), Some(seq)) => Some(Merged {
-                into: parse(&into)?,
+                into: parse_stored(&into)?,
                 seq: Seq(seq as u64),
             }),
             _ => None,

@@ -19,7 +19,7 @@ use crate::lookup::{self, RecordEntry};
 use crate::project::{Manifest, Rule, RuleSet};
 use crate::review::{self, ReviewEntry, ReviewFilter};
 use crate::runs::RunStatus;
-use crate::store::{self, parse};
+use crate::store::{self, parse_stored};
 use crate::time::format_rfc3339;
 
 /// What the store knows about a pair of records, and what follows
@@ -259,7 +259,7 @@ pub(crate) fn explain_pair(
     let comparisons = read_comparisons(conn, left.id, right.id)?;
     let constraints = read_pair_constraints(conn, left.id, right.id)?;
     let declared = manifest.and_then(|manifest| manifest.entity_type(left.entity_type.as_str()));
-    let table = features::table(&left.entity_type);
+    let table = features::table_name(&left.entity_type);
     let (left, right) = (explain_record(conn, left)?, explain_record(conn, right)?);
     // Last, because a rule SQL refuses ends the read: see `read_rules`.
     let rules = match declared {
@@ -291,7 +291,7 @@ pub(crate) fn explain_pair(
 }
 
 fn explain_record(conn: &Connection, record: RecordEntry) -> Result<Explained> {
-    let features = feature_row(conn, &features::table(&record.entity_type), record.id)?;
+    let features = feature_row(conn, &features::table_name(&record.entity_type), record.id)?;
 
     let mut statement = conn.prepare(
         "SELECT c.seq, c.changeset_id::VARCHAR, c.actor, c.reason, c.run_id,
@@ -304,8 +304,8 @@ fn explain_record(conn: &Connection, record: RecordEntry) -> Result<Explained> {
     let placed = match rows.next()? {
         Some(row) => Some(Placement {
             seq: Seq(row.get::<_, i64>(0)? as u64),
-            changeset: parse(&row.get::<_, String>(1)?)?,
-            actor: parse(&row.get::<_, String>(2)?)?,
+            changeset: parse_stored(&row.get::<_, String>(1)?)?,
+            actor: parse_stored(&row.get::<_, String>(2)?)?,
             reason: row.get(3)?,
             run: row.get::<_, Option<i64>>(4)?.map(|run| RunId(run as u64)),
             committed_at: format_rfc3339(row.get(5)?),

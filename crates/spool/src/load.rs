@@ -15,11 +15,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use spool_core::{Committed, RecordId, RunId};
 
-use crate::batch::{Column, batch};
+use crate::batch::{Column, build_batch};
 use crate::error::{Error, Result};
 use crate::project::Source;
 use crate::retract;
-use crate::store::parse;
+use crate::store::parse_stored;
 use crate::versions;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,7 +76,7 @@ pub(crate) fn stored_record(
 ) -> Result<RecordId> {
     let key = staged.column(2).as_string::<i32>();
     if key.is_null(0) {
-        return parse(staged.column(1).as_string::<i32>().value(0));
+        return parse_stored(staged.column(1).as_string::<i32>().value(0));
     }
     let id: String = conn.query_row(
         "SELECT o.record_id::VARCHAR FROM spool.record o
@@ -86,7 +86,7 @@ pub(crate) fn stored_record(
         params![entity_type, source, key.value(0)],
         |row| row.get(0),
     )?;
-    parse(&id)
+    parse_stored(&id)
 }
 
 /// The rows of one incoming batch, as a batch of `ord`, `record_id`,
@@ -199,7 +199,7 @@ pub(crate) fn stage(
     if ids.is_empty() {
         return Ok(None);
     }
-    Ok(Some(batch(vec![
+    Ok(Some(build_batch(vec![
         ("ord", Column::Integer(ords)),
         ("record_id", Column::Text(ids)),
         ("source_key", Column::Text(keys)),

@@ -15,7 +15,7 @@ use crate::features;
 use crate::links::{Graph, Parting};
 use crate::lookup;
 use crate::project::Manifest;
-use crate::store::parse;
+use crate::store::parse_stored;
 
 // Named by a doc comment only.
 #[cfg(doc)]
@@ -223,7 +223,7 @@ impl<'a> Describe<'a> {
         Self {
             conn,
             graph,
-            table: features::table(entity_type),
+            table: features::table_name(entity_type),
             rules,
             named: BTreeMap::new(),
             rows: BTreeMap::new(),
@@ -414,7 +414,7 @@ pub(super) fn read_member_labels(
     )?;
     let mut rows = statement.query([identity.to_string()])?;
     while let Some(row) = rows.next()? {
-        let id: RecordId = parse(&row.get::<_, String>(0)?)?;
+        let id: RecordId = parse_stored(&row.get::<_, String>(0)?)?;
         if let Some(at) = graph.number(id) {
             labels[at as usize] = row.get(1)?;
         }

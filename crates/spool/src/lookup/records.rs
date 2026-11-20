@@ -11,7 +11,7 @@ use super::identities::identity_label;
 use super::{clamp_limit, encode_search_words, entity_type, uuid_list};
 use crate::error::Result;
 use crate::order::{Key, Keyed, Sort};
-use crate::store::parse;
+use crate::store::parse_stored;
 use crate::time::format_rfc3339;
 
 /// A record as it was loaded, and the identity it belongs to now.
@@ -181,11 +181,11 @@ fn record_from_row(row: &duckdb::Row<'_>) -> Result<RecordEntry> {
     {
         row.get::<_, Option<String>>(at)?
             .as_deref()
-            .map(parse)
+            .map(parse_stored)
             .transpose()
     }
     Ok(RecordEntry {
-        id: parse(&row.get::<_, String>(0)?)?,
+        id: parse_stored(&row.get::<_, String>(0)?)?,
         entity_type: entity_type(row.get(1)?)?,
         source: row.get(2)?,
         key: row.get(3)?,

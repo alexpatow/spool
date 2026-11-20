@@ -4,8 +4,8 @@ use std::str::FromStr;
 
 use spool_core::{ConstraintKind, EntityType, Op, StateError};
 
-use super::parse;
-use crate::batch::{Column, batch};
+use super::parse_stored;
+use crate::batch::{Column, build_batch};
 use crate::error::Result;
 
 pub(super) fn constraint_kind(value: Option<&str>) -> Result<ConstraintKind> {
@@ -76,14 +76,14 @@ pub(crate) fn op_from_row(row: OpRow) -> Result<Op> {
         let value = value.ok_or_else(|| {
             StateError::new(format!("an operation row has no value in `{column}`"))
         })?;
-        parse(&value)
+        parse_stored(&value)
     }
     fn parse_optional<T>(value: Option<String>) -> Result<Option<T>>
     where
         T: FromStr,
         T::Err: std::error::Error + Send + Sync + 'static,
     {
-        value.as_deref().map(parse).transpose()
+        value.as_deref().map(parse_stored).transpose()
     }
     let constraint_kind = |value: Option<String>| constraint_kind(value.as_deref());
 
@@ -126,7 +126,7 @@ pub(crate) fn op_from_row(row: OpRow) -> Result<Op> {
 pub(crate) fn op_rows(ops: &[Op]) -> Result<duckdb::arrow::record_batch::RecordBatch> {
     let rows: Vec<OpRow> = ops.iter().map(op_to_row).collect();
     let column = |pick: fn(&OpRow) -> Option<String>| Column::Text(rows.iter().map(pick).collect());
-    batch(vec![
+    build_batch(vec![
         (
             "op_index",
             Column::Integer((0..rows.len() as i64).collect()),

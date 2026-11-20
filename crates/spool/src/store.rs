@@ -140,7 +140,7 @@ pub(crate) fn open_reader(conn: &Connection, attached: bool) -> Result<Connectio
     Ok(reader)
 }
 
-pub(crate) fn parse<T>(text: &str) -> Result<T>
+pub(crate) fn parse_stored<T>(text: &str) -> Result<T>
 where
     T: FromStr,
     T::Err: std::error::Error + Send + Sync + 'static,

@@ -18,9 +18,9 @@ use duckdb::Connection;
 use duckdb::vtab::arrow::ArrowBatchRegistration;
 use spool_core::{IdentityId, Op, RecordId};
 
-use crate::batch::{Column, batch};
+use crate::batch::{Column, build_batch};
 use crate::error::Result;
-use crate::store::parse;
+use crate::store::parse_stored;
 
 /// The moves that take the earlier versions of each row `ops` places to
 /// where `ops` places it, ordered by the row's operation and then by
@@ -55,7 +55,7 @@ pub(crate) fn build_following_moves(conn: &Connection, ops: &[Op]) -> Result<Vec
     if placed.is_empty() {
         return Ok(Vec::new());
     }
-    let staged = batch(vec![
+    let staged = build_batch(vec![
         ("ord", Column::Integer((0..placed.len() as i64).collect())),
         (
             "record_id",
@@ -93,13 +93,13 @@ pub(crate) fn build_following_moves(conn: &Connection, ops: &[Op]) -> Result<Vec
     let mut ops = Vec::new();
     let mut taken = BTreeSet::new();
     while let Some(row) = rows.next()? {
-        let record: RecordId = parse(&row.get::<_, String>(0)?)?;
+        let record: RecordId = parse_stored(&row.get::<_, String>(0)?)?;
         let from: Option<IdentityId> = row
             .get::<_, Option<String>>(1)?
             .as_deref()
-            .map(parse)
+            .map(parse_stored)
             .transpose()?;
-        let to: IdentityId = parse(&row.get::<_, String>(2)?)?;
+        let to: IdentityId = parse_stored(&row.get::<_, String>(2)?)?;
         if moved.contains(&record)
             || from.is_some_and(|from| decided.contains(&from))
             || !taken.insert(record)
