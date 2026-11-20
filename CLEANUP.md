@@ -65,9 +65,9 @@ Every step keeps behaviour as it is: the checks are `cargo fmt`, `cargo clippy
 
 ## F. Server and CLI structure
 
-- [ ] F1. `auth/` module: `accounts.rs`, `accounts/oauth.rs`, `google.rs`,
+- [x] F1. `auth/` module: `accounts.rs`, `accounts/oauth.rs`, `google.rs`,
       `server/oauth.rs` and the sign-in section of `server.rs` in one place.
-- [ ] F2. `server.rs` (2,972 lines) into `server/{mod, error, request,
+- [x] F2. `server.rs` (2,972 lines) into `server/{mod, error, request,
       handlers/*}.rs`, handlers named after the engine module they call.
 - [x] F3. `commands/show.rs` (2,600 lines) into `commands/show/*.rs`, one per
       subcommand, and `commands/explain.rs`.
