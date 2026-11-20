@@ -1,6 +1,6 @@
 # Signing people in
 
-`spool serve` authenticates every caller. This page is for whoever runs the server: how people sign in, and what to set up before a team depends on it. The design is in the [architecture proposal](architecture-proposal.md#access).
+`spool serve` authenticates every caller. This page is for whoever runs the server: how people sign in, and what to set up before a team depends on it. The design is in the [architecture proposal](design/architecture-proposal.md#access).
 
 ## Passwords are for getting started
 

@@ -223,7 +223,7 @@ Ctrl-C stops the server. Data stays in `.spool/dev.duckdb`. Delete `.spool/` to 
 - [docs/mcp.md](docs/mcp.md): connecting Claude Code, Claude Desktop, Codex and other MCP clients.
 - [docs/sign-in.md](docs/sign-in.md): running a server other people sign in to.
 - [benchmarks/README.md](benchmarks/README.md): larger projects on public data, benchmarked up to 5,000,000 records. `benchmarks/extraction/company-news` has extractors in Python and TypeScript.
-- [docs/architecture-proposal.md](docs/architecture-proposal.md): the design, covering records, judgements, identities, constraints, changesets and strategies.
+- [docs/design/architecture-proposal.md](docs/design/architecture-proposal.md): the design, covering records, judgements, identities, constraints, changesets and strategies.
 - [Credits](https://spool.alexpatow.com/docs/credits) lists the projects that shaped Spool's design.
 - Bugs and questions: [open an issue](https://github.com/alexpatow/spool/issues).
 

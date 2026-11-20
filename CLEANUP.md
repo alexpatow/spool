@@ -108,7 +108,7 @@ Every step keeps behaviour as it is: the checks are `cargo fmt`, `cargo clippy
 
 - [ ] I1. `examples/extractors/model.ts` and `release/by-legal-form.py` to
       where the tests that use them look.
-- [ ] I2. `docs/`: planning documents under `docs/design/`.
+- [x] I2. `docs/`: planning documents under `docs/design/`.
 - [ ] I3. CI: file-size check, `cargo-machete`, `jscpd`.
 - [ ] I4. `AGENTS.md` brought up to date with the tree as it ends up; this
       file removed.
