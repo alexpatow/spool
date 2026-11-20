@@ -28,7 +28,11 @@ describe("an address", () => {
     // A filter is read as what it is, and one that cannot be is as if it were not there.
     expect(read("/runs?limit=3&order=desc&kind=load").search).toEqual({ limit: 3, order: "desc", kind: "load" });
     expect(read("/runs?limit=many&order=down").search).toEqual({ limit: undefined, order: undefined });
-    expect(read("/documents/a%2Fb?at=70")).toEqual({ route: "/documents/$id", params: { id: "a/b" }, search: { at: 70 } });
+    expect(read("/documents/a%2Fb?at=70")).toEqual({
+      route: "/documents/$id",
+      params: { id: "a/b" },
+      search: { at: 70 },
+    });
     // What is not a filter of the screen is left as the address has it.
     expect(read("/people?page=1").search).toEqual({ page: "1" });
   });
@@ -54,7 +58,9 @@ describe("an address", () => {
   test("leaves out a filter that is empty or off", () => {
     expect(stringifySearch({})).toBe("");
     expect(stringifySearch({ q: "", unassigned: false, type: null, source: undefined })).toBe("");
-    expect(stringifySearch({ q: "halden energy", limit: 0, unassigned: true })).toBe("?q=halden+energy&limit=0&unassigned=true");
+    expect(stringifySearch({ q: "halden energy", limit: 0, unassigned: true })).toBe(
+      "?q=halden+energy&limit=0&unassigned=true",
+    );
     expect(parseSearch("?q=halden+energy&limit=0")).toEqual({ q: "halden energy", limit: "0" });
   });
 });

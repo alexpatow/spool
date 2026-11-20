@@ -32,7 +32,8 @@ function styleSheet(fileName: string): Plugin {
       delete bundle[was];
       this.emitFile({ type: "asset", fileName, source: sheet.source });
       for (const file of Object.values(bundle)) {
-        if (file.type === "asset" && typeof file.source === "string") file.source = file.source.replaceAll(was, fileName);
+        if (file.type === "asset" && typeof file.source === "string")
+          file.source = file.source.replaceAll(was, fileName);
       }
     },
   };

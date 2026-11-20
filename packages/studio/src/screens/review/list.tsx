@@ -106,8 +106,8 @@ export function ReviewItems() {
               {ordered(items, order)
                 .slice(0, shown)
                 .map((item) => (
-                <Case key={item.id} id={item.id} linked done={setDone} />
-              ))}
+                  <Case key={item.id} id={item.id} linked done={setDone} />
+                ))}
               {items.length > shown ? (
                 <div {...stylex.props(styles.more)}>
                   <Button variant="outline" size="sm" onClick={() => setShown(shown + AT_ONCE)}>

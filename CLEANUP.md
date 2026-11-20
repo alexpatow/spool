@@ -100,12 +100,12 @@ Every step keeps behaviour as it is: the checks are `cargo fmt`, `cargo clippy
       used by the site and the studio. The studio's copy step goes.
 - [x] H3. One harness that starts a real `spool` for the client's tests, the
       studio's and the stress tests.
-- [ ] H4. Studio on TanStack Router: file routes, typed search params;
+- [x] H4. Studio on TanStack Router: file routes, typed search params;
       `router.ts` goes.
-- [ ] H5. Studio on TanStack Query: `useLoad`, `usePages`, `useNames`,
+- [x] H5. Studio on TanStack Query: `useLoad`, `usePages`, `useNames`,
       `useLabels` and the global `version` counter go.
-- [ ] H6. `components.tsx` into `components/{layout, table, refs, filters}.tsx`.
-- [ ] H7. `screens/review.tsx` into `screens/review/*.tsx`; `app.tsx` into
+- [x] H6. `components.tsx` into `components/{layout, table, refs, filters}.tsx`.
+- [x] H7. `screens/review.tsx` into `screens/review/*.tsx`; `app.tsx` into
       `app/{door, shell}.tsx`.
 - [ ] H8. `oxlint` for the TypeScript at the workspace root, until `bun lint`
       is out, and `bun fmt` to format it. `knip` for exports, files and

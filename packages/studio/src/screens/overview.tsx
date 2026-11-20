@@ -224,7 +224,10 @@ function Waiting({ types }: { types: TypeInfo[] }) {
     if (type.open_draft) {
       lines.push(
         <span key={`${type.name}-draft`}>
-          1 draft to approve ({type.name}) <Onward to="/drafts/$id" params={{ id: type.open_draft }}>Open</Onward>
+          1 draft to approve ({type.name}){" "}
+          <Onward to="/drafts/$id" params={{ id: type.open_draft }}>
+            Open
+          </Onward>
         </span>,
       );
     }

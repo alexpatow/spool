@@ -195,7 +195,9 @@ export function SplitCard({
                 {groups.map((_, index) => (
                   <ShelfTable.Cell key={index} style={[shared.cell, shared.value]}>
                     <Constraints
-                      constraints={constraints.filter(({ a, b }) => groupOf.get(a) === index || groupOf.get(b) === index)}
+                      constraints={constraints.filter(
+                        ({ a, b }) => groupOf.get(a) === index || groupOf.get(b) === index,
+                      )}
                       names={names}
                     />
                   </ShelfTable.Cell>
@@ -257,9 +259,8 @@ export function SplitCard({
                             });
                             return (
                               <>
-                                Split at <At committed={report.committed} />:{" "}
-                                {count(report.moved.length, "record")} moved to{" "}
-                                <Ref kind="identity" id={report.identity} />.
+                                Split at <At committed={report.committed} />: {count(report.moved.length, "record")}{" "}
+                                moved to <Ref kind="identity" id={report.identity} />.
                               </>
                             );
                           }}
@@ -277,7 +278,10 @@ export function SplitCard({
                 name="keep"
                 title="They are one thing: keep them as one"
                 does={[
-                  `A must_link is recorded between ${recordName(left[0]![0]!)} and ${listed(left.slice(1).map((group) => recordName(group[0]!)))}, one record of each group. ${identityName(identity)} stays as it is, with all ${count(left.reduce((sum, group) => sum + group.length, 0), "record")} and its ID.`,
+                  `A must_link is recorded between ${recordName(left[0]![0]!)} and ${listed(left.slice(1).map((group) => recordName(group[0]!)))}, one record of each group. ${identityName(identity)} stays as it is, with all ${count(
+                    left.reduce((sum, group) => sum + group.length, 0),
+                    "record",
+                  )} and its ID.`,
                   left.length > 2
                     ? "The must_links hold the groups together while the records they name stay: the question is not asked again when other records come and go, and it can be if a source takes back one of those."
                     : "The must_link holds the groups together while the two records it names stay: the question is not asked again when other records come and go, and it can be if a source takes back one of those two.",
@@ -296,9 +300,12 @@ export function SplitCard({
                       const committed = await client.commit({
                         reason,
                         base: head,
-                        ops: others.map(
-                          (group): Op => ({ op: "constrain", kind: "must_link", a: first![0]!.id, b: group[0]!.id }),
-                        ),
+                        ops: others.map((group): Op => ({
+                          op: "constrain",
+                          kind: "must_link",
+                          a: first![0]!.id,
+                          b: group[0]!.id,
+                        })),
                       });
                       return (
                         <>

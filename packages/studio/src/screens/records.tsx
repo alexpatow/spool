@@ -99,8 +99,7 @@ export function RecordsPage() {
           {
             title: "Identity",
             sort: "identity",
-            cell: (record) =>
-              <Placed record={record} labels={labels} />,
+            cell: (record) => <Placed record={record} labels={labels} />,
           },
           { title: "ID", cell: (record) => <Ref kind="record" id={record.id} />, sort: "id" },
         ]}
@@ -170,9 +169,8 @@ function RecordScreen({ record, review, document }: Loaded) {
       ) : record.retracted != null ? (
         <Notice tone="waits">
           <span>
-            Taken back by its source in{" "}
-            <Ref kind="run" id={record.retracted} label={`run ${record.retracted}`} />. It has no identity, and no run
-            examines it, until the source sends the row again.
+            Taken back by its source in <Ref kind="run" id={record.retracted} label={`run ${record.retracted}`} />. It
+            has no identity, and no run examines it, until the source sends the row again.
           </span>
         </Notice>
       ) : null}
@@ -212,8 +210,7 @@ function RecordScreen({ record, review, document }: Loaded) {
           [
             "Loaded",
             <>
-              <When at={record.loaded_at} /> by{" "}
-              <Ref kind="run" id={record.load_run} label={`run ${record.load_run}`} />
+              <When at={record.loaded_at} /> by <Ref kind="run" id={record.load_run} label={`run ${record.load_run}`} />
             </>,
           ],
           [
@@ -228,10 +225,7 @@ function RecordScreen({ record, review, document }: Loaded) {
                   </span>
                 )),
           ],
-          [
-            "Identity",
-            <Placed record={record} labels={labels} />,
-          ],
+          ["Identity", <Placed record={record} labels={labels} />],
           ["Supersedes", record.supersedes ? <Ref kind="record" id={record.supersedes} /> : null],
           ["Superseded by", record.superseded_by ? <Ref kind="record" id={record.superseded_by} /> : null],
           [

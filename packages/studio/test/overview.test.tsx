@@ -99,13 +99,19 @@ describe("company records a reviewer corrected", () => {
     const table = await screen.findByRole("table", { name: "company sources" });
     const records = () => rowsOf(table).map((line) => Number(line[1]));
     const as = records();
-    expect(within(table).getAllByRole("columnheader").every((head) => head.getAttribute("aria-sort") === "none")).toBe(
-      true,
-    );
+    expect(
+      within(table)
+        .getAllByRole("columnheader")
+        .every((head) => head.getAttribute("aria-sort") === "none"),
+    ).toBe(true);
     const button = within(within(table).getByRole("columnheader", { name: /^Records/ })).getByRole("button");
     fireEvent.click(button);
     expect(records()).toEqual([...as].sort((a, b) => b - a));
-    expect(within(table).getByRole("columnheader", { name: /^Records/ }).getAttribute("aria-sort")).toBe("descending");
+    expect(
+      within(table)
+        .getByRole("columnheader", { name: /^Records/ })
+        .getAttribute("aria-sort"),
+    ).toBe("descending");
     fireEvent.click(button);
     expect(records()).toEqual([...as].sort((a, b) => a - b));
     // The page stays where it is: the order of a list read whole is not in the address.

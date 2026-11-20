@@ -107,12 +107,13 @@ export const SCREENS = {
  * a list has one, the screens and the choices, so the router's mark is left
  * out and the list's own is `current`.
  */
-const Anchor = forwardRef<HTMLAnchorElement, ComponentProps<"a"> & { current?: "page" | "true" }>(
-  function Anchor({ current, "aria-current": _routers, ...props }, ref) {
-    const { "data-status": _status, disabled: _disabled, ...anchor } = props as typeof props & Record<string, unknown>;
-    return <a ref={ref} {...anchor} aria-current={current} />;
-  },
-);
+const Anchor = forwardRef<HTMLAnchorElement, ComponentProps<"a"> & { current?: "page" | "true" }>(function Anchor(
+  { current, "aria-current": _routers, ...props },
+  ref,
+) {
+  const { "data-status": _status, disabled: _disabled, ...anchor } = props as typeof props & Record<string, unknown>;
+  return <a ref={ref} {...anchor} aria-current={current} />;
+});
 
 const RouterLink = createLink(Anchor);
 

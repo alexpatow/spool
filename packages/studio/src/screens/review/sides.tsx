@@ -50,9 +50,7 @@ export function SideBySide({ found }: { found: ReviewCase }) {
     <section aria-label="The identities" data-part="identities" {...stylex.props(styles.sides)}>
       {candidates.map((candidate) => {
         const { identity, members } = candidate;
-        const mine = judgements.filter(
-          (judgement) => judgement.identity === identity.id && held.has(judgement.record),
-        );
+        const mine = judgements.filter((judgement) => judgement.identity === identity.id && held.has(judgement.record));
         const matches = mine.filter((judgement) => judgement.verdict === "match");
         const against = mine.filter((judgement) => judgement.verdict === "no_match");
         const rulesHeld = [...new Set(matches.flatMap((judgement) => rulesOf(judgement.detail, "match")))];
@@ -75,7 +73,9 @@ export function SideBySide({ found }: { found: ReviewCase }) {
                 </li>
               ))}
               {identity.members > SAMPLE ? (
-                <li {...stylex.props(shared.none)}>and {count(identity.members - Math.min(SAMPLE, members.length), "more record")}</li>
+                <li {...stylex.props(shared.none)}>
+                  and {count(identity.members - Math.min(SAMPLE, members.length), "more record")}
+                </li>
               ) : null}
             </ul>
             {differ.length > 0 ? (

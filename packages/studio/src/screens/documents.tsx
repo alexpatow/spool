@@ -205,8 +205,7 @@ function DocumentScreen({ document, found, cut, at }: Loaded & { at: number | nu
             {
               title: "Identity",
               value: ({ record }) => (record.identity ? (labels.get(record.identity) ?? record.identity) : null),
-              cell: ({ record }) =>
-                <Placed record={record} labels={labels} />,
+              cell: ({ record }) => <Placed record={record} labels={labels} />,
             },
           ]}
           rows={found}

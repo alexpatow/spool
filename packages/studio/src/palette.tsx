@@ -20,7 +20,18 @@ import { colors, spacing, typography } from "spool-ui/tokens.stylex";
 
 /** A screen that is not of one thing: the overview, or a list. */
 export interface Place {
-  to: "/" | "/review" | "/drafts" | "/identities" | "/records" | "/documents" | "/explain" | "/runs" | "/log" | "/people" | "/tokens";
+  to:
+    | "/"
+    | "/review"
+    | "/drafts"
+    | "/identities"
+    | "/records"
+    | "/documents"
+    | "/explain"
+    | "/runs"
+    | "/log"
+    | "/people"
+    | "/tokens";
   label: string;
   icon: ReactNode;
 }

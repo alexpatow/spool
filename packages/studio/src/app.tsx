@@ -212,7 +212,11 @@ function Studio({
     : () => {
         client.signOut().then(
           // Nobody is signed in, which the server need not be asked.
-          () => queryClient.setQueryData<SessionState>(keys.session, (was) => was && { ...was, person: null, setup: false }),
+          () =>
+            queryClient.setQueryData<SessionState>(
+              keys.session,
+              (was) => was && { ...was, person: null, setup: false },
+            ),
           (error: unknown) => setLeft(error),
         );
       };

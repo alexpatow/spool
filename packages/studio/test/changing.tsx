@@ -92,4 +92,5 @@ export const changes = () => calls.filter((call) => !call.startsWith("GET "));
 
 export const head = async () => (await server.client.info()).store.head;
 
-export const entry = async (seq: number) => (await server.client.changesets({ after: seq - 1, limit: 1 })).changesets[0]!;
+export const entry = async (seq: number) =>
+  (await server.client.changesets({ after: seq - 1, limit: 1 })).changesets[0]!;

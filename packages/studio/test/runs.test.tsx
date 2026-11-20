@@ -93,9 +93,11 @@ describe("company records a reviewer corrected", () => {
     // Another click turns it around.
     fireEvent.click(within(header("Records")).getByRole("button"));
     expect(here()).toBe("/identities?sort=records&order=asc");
-    await waitFor(() => expect(rowsOf(screen.getByRole("table")).map((line) => Number(line[2]))).toEqual(
-      [...records].reverse().sort((a, b) => a - b),
-    ));
+    await waitFor(() =>
+      expect(rowsOf(screen.getByRole("table")).map((line) => Number(line[2]))).toEqual(
+        [...records].reverse().sort((a, b) => a - b),
+      ),
+    );
 
     // The runs are the newest first, and a list cut at a limit is sorted before it is cut.
     cleanup();

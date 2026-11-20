@@ -370,10 +370,7 @@ function Side({ title, letter, explained }: { title: string; letter: string; exp
           ["Source", <Source name={record.source} />],
           ["ID", <Ref kind="record" id={record.id} />],
           ["Entity type", record.entity_type],
-          [
-            "Identity",
-            <Placed record={record} labels={labels} />,
-          ],
+          ["Identity", <Placed record={record} labels={labels} />],
           [
             "Assigned",
             placed ? (

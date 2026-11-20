@@ -46,9 +46,13 @@ describe("company records a reviewer corrected", () => {
 
     // Before anything is done, each answer says what it does.
     const answers = card.getByRole("region", { name: "Answers" });
-    expect([...answers.querySelectorAll("[data-answer]")].map((answer) => answer.getAttribute("data-answer"))).toEqual(
-      ["merge", "assign", "new", "dismiss", "leave"],
-    );
+    expect([...answers.querySelectorAll("[data-answer]")].map((answer) => answer.getAttribute("data-answer"))).toEqual([
+      "merge",
+      "assign",
+      "new",
+      "dismiss",
+      "leave",
+    ]);
     const does = (name: string) => answers.querySelector(`[data-answer=${name}]`)!.textContent!;
     expect(does("assign")).toContain(
       "Pioneer Supplies is placed in the one you choose, which then has 3 records for Pioneer Supplies and 2 records for PIONEER SUPPLIES LTD.",

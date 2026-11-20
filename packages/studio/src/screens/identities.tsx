@@ -279,7 +279,8 @@ function IdentityScreen({ head, view, records, constraints, history }: Loaded) {
               {
                 title: "And",
                 value: (record) => names.get(record.b) ?? record.b,
-                cell: (record) => <Ref kind="record" id={record.b} label={names.get(record.b)} /> },
+                cell: (record) => <Ref kind="record" id={record.b} label={names.get(record.b)} />,
+              },
               {
                 title: "Since",
                 value: (record) => record.from,

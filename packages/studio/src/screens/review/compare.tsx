@@ -55,7 +55,11 @@ export function Compare({ found }: { found: ReviewCase }) {
             {records.map((record) => (
               <ShelfTable.Head key={record.id} scope="col" style={[shared.cell, shared.column, shared.waits]}>
                 <span data-part="record-kind" {...stylex.props(shared.columnKind)}>
-                  {record.identity ? "Record" : record.retracted != null ? "Taken back by its source" : "Unassigned record"}
+                  {record.identity
+                    ? "Record"
+                    : record.retracted != null
+                      ? "Taken back by its source"
+                      : "Unassigned record"}
                 </span>
                 <span {...stylex.props(shared.columnName)}>
                   <Ref kind="record" id={record.id} label={labelOf(record)} />

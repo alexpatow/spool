@@ -107,8 +107,7 @@ function leftForReview(identities: number | undefined): ReactNode {
   if (!identities) return null;
   return (
     <>
-      {count(identities, "identity")} with records that nothing holds together now.{" "}
-      <Onward to="/review">review</Onward>
+      {count(identities, "identity")} with records that nothing holds together now. <Onward to="/review">review</Onward>
     </>
   );
 }
@@ -192,11 +191,7 @@ function RunView({ run }: { run: RunEntry }) {
               [
                 "Committed",
                 retraction.committed ? (
-                  <Ref
-                    kind="log"
-                    id={retraction.committed.seq}
-                    label={`log position ${retraction.committed.seq}`}
-                  />
+                  <Ref kind="log" id={retraction.committed.seq} label={`log position ${retraction.committed.seq}`} />
                 ) : null,
               ],
             ]}

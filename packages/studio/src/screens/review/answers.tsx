@@ -74,8 +74,8 @@ export function Answer({
 /** What undoing a placement from the log does. */
 const UNDO_WAITS = (
   <>
-    Undo it from the log and the records wait again with no identity. No match run asks about them then, only a
-    rematch (<Code>spool match --rematch</Code>).
+    Undo it from the log and the records wait again with no identity. No match run asks about them then, only a rematch
+    (<Code>spool match --rematch</Code>).
   </>
 );
 
@@ -128,7 +128,9 @@ export function Answers({
           <Answer
             name="dismiss"
             title="Close it"
-            does={["None of its records waits for an identity any more, so there is nothing to place. Dismissing it changes no identity."]}
+            does={[
+              "None of its records waits for an identity any more, so there is nothing to place. Dismissing it changes no identity.",
+            ]}
             action={dismiss}
           />
         </ol>
@@ -210,7 +212,9 @@ export function Answers({
             n === 1
               ? `${these} becomes an identity of its own, with an ID made when the change is made.`
               : `Each of the ${count(n, "record")} becomes an identity of its own, with an ID made when the change is made. The dialog lets some of them go elsewhere instead.`,
-            candidates.length > 0 ? `${listed(names)} ${candidates.length === 1 ? "stays as it is" : "stay as they are"}.` : null,
+            candidates.length > 0
+              ? `${listed(names)} ${candidates.length === 1 ? "stays as it is" : "stay as they are"}.`
+              : null,
             "Undo it from the log and the records wait again with no identity, and only a rematch asks about them. An identity that was made is not taken back: its ID stays, with no records.",
           ].filter((said): said is string => said !== null)}
           action={
@@ -244,9 +248,9 @@ export function Answers({
       </ol>
       <div {...stylex.props(shared.checked)}>
         <Quiet>
-          A merge is refused, changing nothing, if the records of these identities changed since this screen was read.
-          A placement is refused if one of its records has an identity by then. Neither is checked for anything else
-          that changed since.
+          A merge is refused, changing nothing, if the records of these identities changed since this screen was read. A
+          placement is refused if one of its records has an identity by then. Neither is checked for anything else that
+          changed since.
         </Quiet>
       </div>
     </section>
