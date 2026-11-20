@@ -34,15 +34,15 @@ import {
   When,
   Word,
 } from "../components.tsx";
-import { Button } from "../components/ui/button";
-import * as ShelfTable from "../components/ui/table";
+import { Button } from "spool-ui/components/button";
+import * as ShelfTable from "spool-ui/components/table";
 import { facts, fieldsOf, latest, same, sourcesOf, valueOf } from "../facts.ts";
 import { count, recordName, short, tail } from "../format.ts";
 import { useLoad, useNames, useStudio } from "../hooks.ts";
 import { CheckIcon, InboxIcon, MergeIcon, PlusIcon, SplitIcon } from "../icons.tsx";
 import { href, navigate } from "../router.ts";
 import type { Route } from "../router.ts";
-import { colors, display, linen, radius, spacing, typography } from "../styles/shelf/tokens.stylex";
+import { colors, display, linen, radius, spacing, typography } from "spool-ui/tokens.stylex";
 import { tones } from "../styles/tones.stylex";
 import { foremost, tally } from "../verdicts.ts";
 import { identityName } from "./identities.tsx";

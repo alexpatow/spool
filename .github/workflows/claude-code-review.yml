@@ -26,8 +26,6 @@ on:
       - "!docs/**"
       - "!site/**"
       - "site/content/docs/cli-reference.mdx"
-      - "site/src/styles/shelf/**"
-      - "site/src/components/brand.tsx"
       - "site/src/app/icon.svg"
       - "!.github/workflows/site.yml"
       - "!README.md"

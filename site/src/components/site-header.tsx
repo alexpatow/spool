@@ -1,11 +1,11 @@
 import * as stylex from "@stylexjs/stylex";
 import Link from "next/link";
 
-import { Wordmark } from "@/components/brand";
+import { Wordmark } from "spool-ui/brand";
 import { SiteLinks } from "@/components/site-links";
-import { Button } from "@/components/ui/button";
+import { Button } from "spool-ui/components/button";
 import { layout, breakpoints } from "@/styles/layout.stylex";
-import { colors, spacing } from "@/styles/shelf/tokens.stylex";
+import { colors, spacing } from "spool-ui/tokens.stylex";
 
 const links = [
   { href: "/docs", label: "Docs" },

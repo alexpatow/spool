@@ -2,15 +2,17 @@ name: Site
 
 # The website and documentation in `site/`. The jobs in ci.yml leave it out,
 # so a change to the site alone starts this workflow and no other, except a
-# change to the tokens, themes, mark or icon the studio is built from, which
-# starts ci.yml as well.
+# change to the icon the studio shows, which starts ci.yml as well.
 #
 # The site is one package of the bun workspace at the root, which has the
-# one lockfile: a change to what any package depends on starts this too.
+# one lockfile: a change to what any package depends on starts this too. So
+# does a change to `packages/ui`, where the tokens, themes, components and
+# mark it shares with the studio are, and that starts ci.yml as well.
 on:
   pull_request:
     paths:
       - "site/**"
+      - "packages/ui/**"
       - "package.json"
       - "bun.lock"
       - ".github/workflows/site.yml"
@@ -18,6 +20,7 @@ on:
     branches: [main]
     paths:
       - "site/**"
+      - "packages/ui/**"
       - "package.json"
       - "bun.lock"
       - ".github/workflows/site.yml"
@@ -71,9 +74,12 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
 
-      # Shelf's components are copied into the site as source. This fails if
-      # one of them was edited, since an update would then overwrite the edit.
+      # Shelf's components are copied into `packages/ui` as source, and a
+      # file there says what each was copied from. This fails if a file it
+      # names is gone, if the package does not declare what a component
+      # depends on, or if an import of one does not resolve.
       - name: Check Shelf's files
+        working-directory: packages/ui
         run: bun run shelf check
 
       - name: Type check

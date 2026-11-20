@@ -5,7 +5,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 
 import { vars } from "@/components/explainer/part";
 import { breakpoints } from "@/styles/layout.stylex";
-import { colors, display, linen, spacing, typography } from "@/styles/shelf/tokens.stylex";
+import { colors, display, linen, spacing, typography } from "spool-ui/tokens.stylex";
 
 /** The size every scene's picture is drawn at, in pixels, before it is scaled to fit. */
 export const WIDTH = 420;

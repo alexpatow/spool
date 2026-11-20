@@ -1,7 +1,7 @@
 import * as stylex from "@stylexjs/stylex";
 import type { ComponentProps } from "react";
-import { colors, display, linen, radius, spacing, typography } from "@/styles/shelf/tokens.stylex";
-import type { Styled } from "@/lib/shelf/utils";
+import { colors, display, linen, radius, spacing, typography } from "../../styles/shelf/tokens.stylex";
+import type { Styled } from "../../lib/shelf/utils";
 
 /**
  * Styles for prose, one small component per element:

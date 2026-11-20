@@ -1,9 +1,9 @@
 import * as stylex from "@stylexjs/stylex";
 
 import { ThemeToggle } from "@/components/theme-toggle";
-import { Button } from "@/components/ui/button";
+import { Button } from "spool-ui/components/button";
 import { site } from "@/lib/site";
-import { spacing } from "@/styles/shelf/tokens.stylex";
+import { spacing } from "spool-ui/tokens.stylex";
 
 /** The right-hand end of both headers: the repository and the theme. */
 export function SiteLinks() {

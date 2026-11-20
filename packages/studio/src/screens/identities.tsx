@@ -39,9 +39,9 @@ import {
   useSorting,
   useTicks,
 } from "../components.tsx";
-import { Button } from "../components/ui/button";
-import { Input } from "../components/ui/input";
-import * as ShelfTable from "../components/ui/table";
+import { Button } from "spool-ui/components/button";
+import { Input } from "spool-ui/components/input";
+import * as ShelfTable from "spool-ui/components/table";
 import { facts, latest, sourcesOf } from "../facts.ts";
 import type { Fact } from "../facts.ts";
 import { findIdentity } from "../find.ts";
@@ -49,7 +49,7 @@ import { count, identitiesOf, identityMatch, recordName, recordsOf, short, tail 
 import { useLabels, useLoad, useNames, usePages, useStudio } from "../hooks.ts";
 import { IdentityIcon, MergeIcon, SplitIcon } from "../icons.tsx";
 import type { Route } from "../router.ts";
-import { colors, spacing, typography } from "../styles/shelf/tokens.stylex";
+import { colors, spacing, typography } from "spool-ui/tokens.stylex";
 import { Who } from "../who.tsx";
 
 /** What to call an identity: what most of its records call it, or its ID when none of them says. */

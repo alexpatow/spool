@@ -3,11 +3,11 @@
 import * as stylex from "@stylexjs/stylex";
 import { Fragment, useEffect, useRef } from "react";
 
-import { Mark } from "@/components/brand";
+import { Mark } from "spool-ui/brand";
 import { Part, parts, timing, vars } from "@/components/explainer/part";
 import { HEIGHT, Scene, WIDTH } from "@/components/explainer/scene";
 import { identities, note, records, type SampleRecord } from "@/lib/sample";
-import { colors, display, linen, typography } from "@/styles/shelf/tokens.stylex";
+import { colors, display, linen, typography } from "spool-ui/tokens.stylex";
 
 const rows = records.filter((record) => record.source === "crm");
 const mentions = records.filter((record) => record.source === "notes");

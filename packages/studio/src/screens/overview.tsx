@@ -21,7 +21,7 @@ import {
 import { count } from "../format.ts";
 import { useLoad } from "../hooks.ts";
 import { href } from "../router.ts";
-import { colors, display, linen, radius, spacing, typography } from "../styles/shelf/tokens.stylex";
+import { colors, display, linen, radius, spacing, typography } from "spool-ui/tokens.stylex";
 import { tones } from "../styles/tones.stylex";
 import { useCalled, Who } from "../who.tsx";
 

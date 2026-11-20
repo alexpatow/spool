@@ -1,5 +1,26 @@
 {
   "items": {
+    "breadcrumb": {
+      "dependencies": {
+        "@stylexjs/stylex": "^0.19.1"
+      },
+      "files": {
+        "src/components/ui/breadcrumb.tsx": {
+          "baseHash": "8fb26e69a36f8fb7bf0705b2f75dd65278265e8f8f9098c598c69a90dc13544a",
+          "source": "breadcrumb.tsx"
+        }
+      },
+      "installedAt": "2026-11-20T16:04:45.795Z",
+      "path": "components/breadcrumb",
+      "registry": "https://registry.shelfui.dev",
+      "revision": "e47a31ddeaf1a795f5e870443dbe5b9557a60d4eb4cf1f185012c48847f9e5ac",
+      "shelfDependencies": [
+        "foundations",
+        "icons",
+        "utils"
+      ],
+      "type": "component"
+    },
     "button": {
       "dependencies": {
         "@base-ui/react": "^1.9.0",
@@ -343,6 +364,26 @@
       "path": "components/tooltip",
       "registry": "https://registry.shelfui.dev",
       "revision": "0bd0ee79c48dcbd2451ce908daf306bab1651a4c179ca6059c9fa7206026b81c",
+      "shelfDependencies": [
+        "foundations",
+        "utils"
+      ],
+      "type": "component"
+    },
+    "typography": {
+      "dependencies": {
+        "@stylexjs/stylex": "^0.19.1"
+      },
+      "files": {
+        "src/components/ui/typography.tsx": {
+          "baseHash": "425f1341a57e5a1dc2d2590b61d425040572f093f3cad80c3edc588a98b73d9d",
+          "source": "typography.tsx"
+        }
+      },
+      "installedAt": "2026-11-20T16:04:45.795Z",
+      "path": "components/typography",
+      "registry": "https://registry.shelfui.dev",
+      "revision": "fe7887910d4c8144177461d24515a4abcfe029b122016815fe3b65b0666241e0",
       "shelfDependencies": [
         "foundations",
         "utils"

@@ -1,6 +1,6 @@
 import * as stylex from "@stylexjs/stylex";
 
-import { darkLinen, darkTheme } from "@/styles/shelf/themes";
+import { darkLinen, darkTheme } from "spool-ui/themes";
 
 export const THEME_STORAGE_KEY = "spool-theme";
 

@@ -229,7 +229,7 @@ Ctrl-C stops the server. Data stays in `.spool/dev.duckdb`. Delete `.spool/` to 
 
 ## Check generated files before committing
 
-After staging your changes, run `./scripts/check-generated.sh`. It checks the staged versions of the affected generated files, including the Studio bundle and shared assets, HTTP schema and client types, CLI help and command reference, and TypeScript strategy helper. It uses Bun for TypeScript and Cargo for Rust as needed.
+After staging your changes, run `./scripts/check-generated.sh`. It checks the staged versions of the affected generated files, including the Studio bundle, HTTP schema and client types, CLI help and command reference, and TypeScript strategy helper. It uses Bun for TypeScript and Cargo for Rust as needed.
 
 With Git 2.54 or newer, run `./scripts/check-generated.sh --install-hook` once per clone. The hook runs alongside existing hooks in current and future linked worktrees that contain the script. To remove it, run `git config --local --remove-section hook.spool-check-generated`. With older Git, you can call `./scripts/check-generated.sh` from your `pre-commit` hook.
 

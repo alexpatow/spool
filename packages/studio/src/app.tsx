@@ -12,9 +12,9 @@ import { Act } from "./act.tsx";
 import { SpoolClient, SpoolError } from "./api.ts";
 import type { Fetch, Info, OAuthRequest, Person, SessionState } from "./api.ts";
 import { Code, Failure, Labelled, Notice, Page, Quiet, Row, Text } from "./components.tsx";
-import { Button } from "./components/ui/button";
-import { Input } from "./components/ui/input";
-import { Kbd } from "./components/ui/kbd";
+import { Button } from "spool-ui/components/button";
+import { Input } from "spool-ui/components/input";
+import { Kbd } from "spool-ui/components/kbd";
 import {
   Sidebar,
   SidebarContent,
@@ -29,7 +29,7 @@ import {
   SidebarProvider,
   SidebarTrigger,
   useSidebar,
-} from "./components/ui/sidebar";
+} from "spool-ui/components/sidebar";
 import { StudioContext, useRoute, useStudio } from "./hooks.ts";
 import {
   DarkModeIcon,
@@ -64,8 +64,8 @@ import { NewPassword, People, password, typed } from "./screens/people.tsx";
 import { Tokens } from "./screens/tokens.tsx";
 import { ReviewItem, ReviewItems } from "./screens/review.tsx";
 import { Run, Runs } from "./screens/runs.tsx";
-import { Mark, Wordmark } from "./brand.tsx";
-import { colors, display, linen, radius, spacing, typography } from "./styles/shelf/tokens.stylex";
+import { Mark, Wordmark } from "spool-ui/brand";
+import { colors, display, linen, radius, spacing, typography } from "spool-ui/tokens.stylex";
 import { applyTheme } from "./styles/themes.ts";
 import type { Theme } from "./styles/themes.ts";
 import { tones } from "./styles/tones.stylex";

@@ -23,7 +23,7 @@ import {
   Word,
 } from "../components.tsx";
 import { FileTextIcon } from "../icons.tsx";
-import { colors, radius, spacing, typography } from "../styles/shelf/tokens.stylex";
+import { colors, radius, spacing, typography } from "spool-ui/tokens.stylex";
 import { tones } from "../styles/tones.stylex";
 import { codePoints, count, mentionOf, named, readBy, segments } from "../format.ts";
 import type { Mention } from "../format.ts";

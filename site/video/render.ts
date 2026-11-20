@@ -39,7 +39,7 @@ const fonts = {
 
 /** The mark and the wordmark, as `brand.tsx` draws them. */
 function brand() {
-  const source = readFileSync(join(here, "../src/components/brand.tsx"), "utf8");
+  const source = readFileSync(join(here, "../../packages/ui/src/brand.tsx"), "utf8");
   const constant = (name: string) => {
     const found = source.match(new RegExp(`const ${name} =\\s*((?:"[^"]*"\\s*\\+?\\s*)+);`));
     if (!found?.[1]) throw new Error(`brand.tsx: no ${name}`);

@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { Act, Done, Mistake } from "../act.tsx";
 import type { ChangePersonRequest, Person } from "../api.ts";
 import { Code, Flag, Labelled, Load, Page, Table, Word } from "../components.tsx";
-import { Input } from "../components/ui/input";
+import { Input } from "spool-ui/components/input";
 import { useLoad, useStudio } from "../hooks.ts";
 import { UserPlusIcon } from "../icons.tsx";
 

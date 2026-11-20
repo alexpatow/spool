@@ -3,6 +3,9 @@ import { createMDX } from "fumadocs-mdx/next";
 /** @type {import('next').NextConfig} */
 const config = {
   reactStrictMode: true,
+  // `packages/ui` is TypeScript with StyleX in it, compiled here like the
+  // site's own files.
+  transpilePackages: ["spool-ui"],
   // Next.js would otherwise write an AGENTS.md of its own into this directory.
   agentRules: false,
   // A docs address answers with HTML or Markdown by what the request accepts.

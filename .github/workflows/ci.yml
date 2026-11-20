@@ -7,10 +7,11 @@ name: CI
 # them must take it off both lists, which are the same. `README.md` here is
 # the one at the root: a crate's or a package's is not on the lists.
 #
-# The studio is built from the site's tokens, themes and mark, and its test
-# checks that its copies of them are the site's: those files start the jobs.
-# So does the command reference, which a test of `spool` checks is what the
-# commands' help says.
+# The studio's page shows the site's icon, which its build reads from the
+# site: that file starts the jobs. So does the command reference, which a
+# test of `spool` checks is what the commands' help says. The tokens, themes,
+# components and mark the two share are in `packages/ui`, which is on
+# neither list.
 # A later pattern wins over an earlier one, and files whose names begin
 # with a dot, such as this one, are named on their own.
 on:
@@ -22,8 +23,6 @@ on:
       - "!docs/**"
       - "!site/**"
       - "site/content/docs/cli-reference.mdx"
-      - "site/src/styles/shelf/**"
-      - "site/src/components/brand.tsx"
       - "site/src/app/icon.svg"
       - "!.github/workflows/site.yml"
       - "!README.md"
@@ -37,8 +36,6 @@ on:
       - "!docs/**"
       - "!site/**"
       - "site/content/docs/cli-reference.mdx"
-      - "site/src/styles/shelf/**"
-      - "site/src/components/brand.tsx"
       - "site/src/app/icon.svg"
       - "!.github/workflows/site.yml"
       - "!README.md"

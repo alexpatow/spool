@@ -1,9 +1,9 @@
 import * as stylex from "@stylexjs/stylex";
 
-import { Mark } from "@/components/brand";
+import { Mark } from "spool-ui/brand";
 import { vars } from "@/components/explainer/part";
 import { identities, records } from "@/lib/sample";
-import { colors, display, linen, typography } from "@/styles/shelf/tokens.stylex";
+import { colors, display, linen, typography } from "spool-ui/tokens.stylex";
 
 const acorn = identities[0];
 const spellings = [...new Set(records.filter((record) => record.identity === 0).map((record) => record.name))];

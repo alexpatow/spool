@@ -5,13 +5,13 @@ import Link from "next/link";
 import { Hero } from "@/components/explainer/hero";
 import { Explainer } from "@/components/explainer/scenes";
 import { SiteHeader } from "@/components/site-header";
-import { Button } from "@/components/ui/button";
-import * as Typography from "@/components/ui/typography";
+import { Button } from "spool-ui/components/button";
+import * as Typography from "spool-ui/components/typography";
 import { explainer } from "@/lib/explainer";
 import { sharing } from "@/lib/sharing";
 import { site } from "@/lib/site";
 import { layout, breakpoints } from "@/styles/layout.stylex";
-import { colors, display, linen, spacing, typography } from "@/styles/shelf/tokens.stylex";
+import { colors, display, linen, spacing, typography } from "spool-ui/tokens.stylex";
 
 export const metadata: Metadata = {
   ...sharing({

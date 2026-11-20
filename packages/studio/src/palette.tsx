@@ -8,13 +8,13 @@ import type { ReactNode } from "react";
 
 import type { IdentitySummary, RecordEntry } from "./api.ts";
 import { Source, Sources, message } from "./components.tsx";
-import * as Command from "./components/ui/command";
+import * as Command from "spool-ui/components/command";
 import { findScreen, isReference } from "./find.ts";
 import { count, identityMatch, recordName, short } from "./format.ts";
 import { useStudio } from "./hooks.ts";
 import { ArrowRightIcon, IdentityIcon, RecordIcon, SearchIcon } from "./icons.tsx";
 import { href, navigate } from "./router.ts";
-import { colors, spacing, typography } from "./styles/shelf/tokens.stylex";
+import { colors, spacing, typography } from "spool-ui/tokens.stylex";
 
 export interface Place {
   path: string;

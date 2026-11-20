@@ -4,11 +4,11 @@ import type { ReactNode } from "react";
 import { DocsBreadcrumb } from "@/components/docs-breadcrumb";
 import { DocsSidebar } from "@/components/docs-sidebar";
 import { SiteLinks } from "@/components/site-links";
-import { Separator } from "@/components/ui/separator";
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { Separator } from "spool-ui/components/separator";
+import { SidebarInset, SidebarProvider, SidebarTrigger } from "spool-ui/components/sidebar";
 import { navGroups } from "@/lib/nav";
 import { layout } from "@/styles/layout.stylex";
-import { colors, spacing } from "@/styles/shelf/tokens.stylex";
+import { colors, spacing } from "spool-ui/tokens.stylex";
 
 export default function DocsLayout({ children }: { children: ReactNode }) {
   const groups = navGroups();

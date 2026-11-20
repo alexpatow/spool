@@ -74,35 +74,6 @@ fn serve_things(dir: &Path, more: &[&str]) -> Server {
     Server::start(&arguments)
 }
 
-/// What the studio takes from the site, as `(site, studio)` under each's `src`.
-const SHARED: [(&str, &str); 5] = [
-    (
-        "styles/shelf/tokens.stylex.ts",
-        "styles/shelf/tokens.stylex.ts",
-    ),
-    ("styles/shelf/themes.ts", "styles/shelf/themes.ts"),
-    (
-        "styles/shelf/conditions.stylex.ts",
-        "styles/shelf/conditions.stylex.ts",
-    ),
-    ("styles/shelf/fonts.css", "styles/shelf/fonts.css"),
-    ("components/brand.tsx", "brand.tsx"),
-];
-
-#[test]
-fn the_studio_looks_as_the_site_does_from_the_sites_own_files() {
-    for (site, studio) in SHARED {
-        let theirs = std::fs::read_to_string(repository().join("site/src").join(site)).unwrap();
-        let ours =
-            std::fs::read_to_string(repository().join("packages/studio/src").join(studio)).unwrap();
-        // The copy says where it came from, and then is the site's file.
-        assert!(
-            ours.contains(&format!("site/src/{site}")) && ours.ends_with(&theirs),
-            "packages/studio/src/{studio} is not site/src/{site}: run `bun run build` in packages/studio"
-        );
-    }
-}
-
 #[test]
 fn the_server_answers_a_browser_with_the_studio_and_asks_no_token_for_it() {
     let dir = tempfile::tempdir().unwrap();

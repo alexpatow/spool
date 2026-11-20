@@ -28,8 +28,8 @@ import {
   When,
   Word,
 } from "../components.tsx";
-import { Button } from "../components/ui/button";
-import { Input } from "../components/ui/input";
+import { Button } from "spool-ui/components/button";
+import { Input } from "spool-ui/components/input";
 import { findIdentity, findRecord, found } from "../find.ts";
 import { excerpt, mentionOf, named, recordName } from "../format.ts";
 import type { Excerpt, Mention } from "../format.ts";
@@ -37,7 +37,7 @@ import { useLabels, useLoad, usePages, useStudio } from "../hooks.ts";
 import { RecordIcon } from "../icons.tsx";
 import { href, navigate } from "../router.ts";
 import type { Route } from "../router.ts";
-import { colors, radius, spacing, typography } from "../styles/shelf/tokens.stylex";
+import { colors, radius, spacing, typography } from "spool-ui/tokens.stylex";
 import { tones } from "../styles/tones.stylex";
 
 /** What a record is known by in its source: its key, or where in a document it was found. */

@@ -5,10 +5,10 @@ import Link from "next/link";
 import type { ComponentProps } from "react";
 
 import { CodeBlock } from "@/components/code-block";
-import * as Table from "@/components/ui/table";
-import * as Typography from "@/components/ui/typography";
+import * as Table from "spool-ui/components/table";
+import * as Typography from "spool-ui/components/typography";
 import { layout } from "@/styles/layout.stylex";
-import { colors, radius, spacing, typography } from "@/styles/shelf/tokens.stylex";
+import { colors, radius, spacing, typography } from "spool-ui/tokens.stylex";
 
 const styles = stylex.create({
   heading: {

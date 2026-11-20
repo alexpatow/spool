@@ -6,13 +6,13 @@ import type { ReactNode } from "react";
 
 import { SpoolError } from "./api.ts";
 import type { Op } from "./api.ts";
-import { Button } from "./components/ui/button";
-import { Checkbox } from "./components/ui/checkbox";
-import { CopyButton } from "./components/ui/copy-button";
-import { Input } from "./components/ui/input";
-import * as NativeSelect from "./components/ui/native-select";
-import { Spinner } from "./components/ui/spinner";
-import * as ShelfTable from "./components/ui/table";
+import { Button } from "spool-ui/components/button";
+import { Checkbox } from "spool-ui/components/checkbox";
+import { CopyButton } from "spool-ui/components/copy-button";
+import { Input } from "spool-ui/components/input";
+import * as NativeSelect from "spool-ui/components/native-select";
+import { Spinner } from "spool-ui/components/spinner";
+import * as ShelfTable from "spool-ui/components/table";
 import { describeOp, plain, short, tail, when } from "./format.ts";
 import type { Part } from "./format.ts";
 import type { Loaded, Pages } from "./hooks.ts";
@@ -27,7 +27,7 @@ import {
 } from "./icons.tsx";
 import { href, navigate } from "./router.ts";
 import type { QueryValue, Route } from "./router.ts";
-import { colors, display, linen, radius, spacing, typography } from "./styles/shelf/tokens.stylex";
+import { colors, display, linen, radius, spacing, typography } from "spool-ui/tokens.stylex";
 import { tones } from "./styles/tones.stylex";
 
 export function message(error: unknown): string {

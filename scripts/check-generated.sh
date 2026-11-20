@@ -52,7 +52,7 @@ if changed packages/studio/src packages/studio/public packages/studio/index.html
     package.json bun.lock packages/studio/bunfig.toml \
     packages/studio/scripts/build.ts crates/spool-cli/assets/studio \
     packages/client/src packages/client/package.json packages/client/tsconfig.json \
-    site/src/styles/shelf site/src/components/brand.tsx site/src/app/icon.svg; then
+    packages/ui/src packages/ui/package.json site/src/app/icon.svg; then
     studio=1
 fi
 if changed "${rust_config[@]}" "$schema_path" crates/spool-cli/src/api.rs crates/spool-cli/src/api \
@@ -123,7 +123,7 @@ if ((types)); then
         bun run --cwd packages/client check-types
 fi
 if ((studio)); then
-    check 'Studio bundle and shared assets' 'bun install --frozen-lockfile && (cd packages/studio && bun run build)' \
+    check 'Studio bundle' 'bun install --frozen-lockfile && (cd packages/studio && bun run build)' \
         check_build packages/studio
 fi
 if ((help)); then

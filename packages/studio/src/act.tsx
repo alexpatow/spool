@@ -9,13 +9,13 @@ import type { ComponentProps, ReactNode } from "react";
 import { SpoolError } from "./api.ts";
 import type { Committed, Op, SpoolClient } from "./api.ts";
 import { Failure, Labelled, Lines, Notice, Ops, Parts, Ref } from "./components.tsx";
-import { Button } from "./components/ui/button";
-import type { ButtonSize, ButtonVariant } from "./components/ui/button";
-import * as Dialog from "./components/ui/dialog";
-import { Input } from "./components/ui/input";
+import { Button } from "spool-ui/components/button";
+import type { ButtonSize, ButtonVariant } from "spool-ui/components/button";
+import * as Dialog from "spool-ui/components/dialog";
+import { Input } from "spool-ui/components/input";
 import { describeOp } from "./format.ts";
 import { useOpNames, useStudio } from "./hooks.ts";
-import { colors, radius, spacing, typography } from "./styles/shelf/tokens.stylex";
+import { colors, radius, spacing, typography } from "spool-ui/tokens.stylex";
 
 /** Something the reviewer left out, which the studio can say without asking the server. */
 export class Mistake extends Error {}

@@ -39,7 +39,7 @@ export {
   LightModeIcon,
   PlusIcon,
   SearchIcon,
-} from "./components/ui/icons";
+} from "spool-ui/components/icons";
 
 type IconProps = Omit<SVGProps<SVGSVGElement>, "ref">;
 

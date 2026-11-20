@@ -1,0 +1,42 @@
+{
+  "name": "spool-ui",
+  "version": "0.1.0",
+  "description": "The tokens, themes, components and mark the Spool site and studio share.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./brand": "./src/brand.tsx",
+    "./components/*": "./src/components/ui/*.tsx",
+    "./conditions.stylex": "./src/styles/shelf/conditions.stylex.ts",
+    "./fonts.css": "./src/styles/shelf/fonts.css",
+    "./themes": "./src/styles/shelf/themes.ts",
+    "./tokens.stylex": "./src/styles/shelf/tokens.stylex.ts",
+    "./utils": "./src/lib/shelf/utils.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "shelf": "shelf",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@base-ui/react": "1.9.0",
+    "@fontsource-variable/geist": "^5.3.0",
+    "@fontsource-variable/geist-mono": "^5.3.0",
+    "@fontsource-variable/hanken-grotesk": "5.3.0",
+    "@fontsource-variable/newsreader": "5.3.0",
+    "@fontsource/commit-mono": "5.3.0",
+    "@stylexjs/stylex": "0.19.2",
+    "lucide-react": "1.74.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@shelfui/cli": "0.1.0",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "typescript": "^5.6.0"
+  }
+}

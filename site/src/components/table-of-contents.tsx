@@ -4,8 +4,8 @@ import * as stylex from "@stylexjs/stylex";
 import { AnchorProvider, TOCItem, type TOCItemType, useActiveAnchor } from "fumadocs-core/toc";
 
 import { layout, breakpoints } from "@/styles/layout.stylex";
-import { media } from "@/styles/shelf/conditions.stylex";
-import { colors, spacing, typography } from "@/styles/shelf/tokens.stylex";
+import { media } from "spool-ui/conditions.stylex";
+import { colors, spacing, typography } from "spool-ui/tokens.stylex";
 
 /** The headings of the page, on the right, with the one in view marked. */
 export function TableOfContents({ items }: { items: TOCItemType[] }) {

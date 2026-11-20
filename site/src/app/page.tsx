@@ -5,13 +5,13 @@ import Link from "next/link";
 import { CodeBlock } from "@/components/code-block";
 import { FirstScreen } from "@/components/first-screen";
 import { SiteHeader } from "@/components/site-header";
-import { Button } from "@/components/ui/button";
-import * as Typography from "@/components/ui/typography";
+import { Button } from "spool-ui/components/button";
+import * as Typography from "spool-ui/components/typography";
 import { explainer } from "@/lib/explainer";
 import { sharing, siteCardPath } from "@/lib/sharing";
 import { site } from "@/lib/site";
 import { layout, breakpoints } from "@/styles/layout.stylex";
-import { colors, linen, spacing, typography } from "@/styles/shelf/tokens.stylex";
+import { colors, linen, spacing, typography } from "spool-ui/tokens.stylex";
 
 const server = `curl -fsSL ${site.repository}/releases/latest/download/install.sh | sh
 spool init companies --example companies

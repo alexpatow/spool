@@ -1,8 +1,8 @@
 import * as stylex from "@stylexjs/stylex";
 import { type ComponentProps, type ReactNode, isValidElement } from "react";
 
-import { CopyButton } from "@/components/ui/copy-button";
-import { colors, radius, spacing, typography } from "@/styles/shelf/tokens.stylex";
+import { CopyButton } from "spool-ui/components/copy-button";
+import { colors, radius, spacing, typography } from "spool-ui/tokens.stylex";
 
 /** The text of a highlighted block, which is what the copy button copies. */
 function textOf(node: ReactNode): string {

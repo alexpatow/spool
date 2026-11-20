@@ -1,9 +1,9 @@
 import * as stylex from "@stylexjs/stylex";
 import type { ComponentProps } from "react";
-import { media } from "@/styles/shelf/conditions.stylex";
-import { colors, spacing, typography } from "@/styles/shelf/tokens.stylex";
+import { media } from "../../styles/shelf/conditions.stylex";
+import { colors, spacing, typography } from "../../styles/shelf/tokens.stylex";
 import { ChevronRightIcon, MoreIcon } from "./icons";
-import type { Styled } from "@/lib/shelf/utils";
+import type { Styled } from "../../lib/shelf/utils";
 
 /**
  * Where the current page sits in the site's hierarchy:

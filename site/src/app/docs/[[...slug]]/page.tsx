@@ -6,15 +6,15 @@ import { notFound } from "next/navigation";
 import { mdxComponents } from "@/components/mdx";
 import { PageActions } from "@/components/page-actions";
 import { TableOfContents } from "@/components/table-of-contents";
-import * as Typography from "@/components/ui/typography";
+import * as Typography from "spool-ui/components/typography";
 import { markdownPath } from "@/lib/markdown";
 import { type NavPage, neighbours } from "@/lib/nav";
 import { docsCardPath, sharing } from "@/lib/sharing";
 import { site } from "@/lib/site";
 import { source } from "@/lib/source";
 import { layout, breakpoints } from "@/styles/layout.stylex";
-import { media } from "@/styles/shelf/conditions.stylex";
-import { colors, radius, spacing, typography } from "@/styles/shelf/tokens.stylex";
+import { media } from "spool-ui/conditions.stylex";
+import { colors, radius, spacing, typography } from "spool-ui/tokens.stylex";
 
 type Props = { params: Promise<{ slug?: string[] }> };
 

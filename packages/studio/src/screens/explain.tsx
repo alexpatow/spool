@@ -28,11 +28,11 @@ import {
   Word,
 } from "../components.tsx";
 import type { Tone } from "../components.tsx";
-import { Button } from "../components/ui/button";
-import { Input } from "../components/ui/input";
-import * as ShelfTable from "../components/ui/table";
+import { Button } from "spool-ui/components/button";
+import { Input } from "spool-ui/components/input";
+import * as ShelfTable from "spool-ui/components/table";
 import { CheckIcon } from "../icons.tsx";
-import { colors, radius, spacing, typography } from "../styles/shelf/tokens.stylex";
+import { colors, radius, spacing, typography } from "spool-ui/tokens.stylex";
 import { tones } from "../styles/tones.stylex";
 import { findRecord } from "../find.ts";
 import { recordName, plain } from "../format.ts";

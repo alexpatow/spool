@@ -5,11 +5,11 @@ import type { ReactNode } from "react";
 import { Act, Done } from "../act.tsx";
 import type { Grant, Token } from "../api.ts";
 import { Code, Labelled, Load, Notice, Page, Section, Table, When } from "../components.tsx";
-import { CopyButton } from "../components/ui/copy-button";
-import { Input } from "../components/ui/input";
+import { CopyButton } from "spool-ui/components/copy-button";
+import { Input } from "spool-ui/components/input";
 import { useLoad, useStudio } from "../hooks.ts";
 import { PlusIcon } from "../icons.tsx";
-import { colors, radius, spacing, typography } from "../styles/shelf/tokens.stylex";
+import { colors, radius, spacing, typography } from "spool-ui/tokens.stylex";
 import { Who } from "../who.tsx";
 import { typed } from "./people.tsx";
 
