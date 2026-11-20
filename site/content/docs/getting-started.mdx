@@ -22,16 +22,16 @@ Follow along with the CLI commands. The HTTP and MCP examples show how those ste
 curl -fsSL https://github.com/alexpatow/spool/releases/latest/download/install.sh | sh
 ```
 
-The script downloads the build for your platform, verifies its checksum, unpacks it to `~/.local/share/spool/0.3.0` and symlinks `~/.local/bin/spool`. It also links the man pages and the bash, zsh and fish completions under `~/.local/share`. It doesn't need root or touch your shell config. If `~/.local/bin` isn't on your `PATH`, it prints the line to add.
+The script downloads the build for your platform, verifies its checksum, unpacks it to `~/.local/share/spool/0.4.0` and symlinks `~/.local/bin/spool`. It also links the man pages and the bash, zsh and fish completions under `~/.local/share`. It doesn't need root or touch your shell config. If `~/.local/bin` isn't on your `PATH`, it prints the line to add.
 
-To install by hand, unpack `spool-0.3.0-<target>.tar.gz` from the [release](https://github.com/alexpatow/spool/releases/tag/v0.3.0) and put its `bin/` on your `PATH`. Keep `bin/` and `lib/` side by side, because the binary loads DuckDB from `../lib`.
+To install by hand, unpack `spool-0.4.0-<target>.tar.gz` from the [release](https://github.com/alexpatow/spool/releases/tag/v0.4.0) and put its `bin/` on your `PATH`. Keep `bin/` and `lib/` side by side, because the binary loads DuckDB from `../lib`.
 
 ```sh
 spool --version
 ```
 
 ```text title="Output"
-spool 0.3.0
+spool 0.4.0
 ```
 
 ## Create a project

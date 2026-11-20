@@ -125,7 +125,7 @@ SPOOL_TOKEN=$TOKEN spool show
 
 ```text title="Output"
 server     http://127.0.0.1:7765
-api        v1, engine 0.3.0, store format 12
+api        v1, engine 0.4.0, store format 12
 manifest   b6dff33d6c0977f4afb2497792bcaa9785e8b865994fa5c94eb9761f57a6e0a7
 head       log position 0
 documents  0
@@ -149,7 +149,7 @@ docker build -t companies .
 docker run -p 7765:7765 -v spool-data:/data companies
 ```
 
-The generated Dockerfile starts from `ghcr.io/alexpatow/spool:0.3.0`, builds the manifest, and runs `spool serve` with the store at `/data/spool.duckdb` on a volume. For projects with Python files, like the sample, it also copies in `uv` and runs `spool build --install`, which installs every strategy's and extractor's dependencies, including the sample model, so the server downloads nothing at runtime. To apply a changed project, stop the server and run `docker run --rm -v spool-data:/data companies apply`.
+The generated Dockerfile starts from `ghcr.io/alexpatow/spool:0.4.0`, builds the manifest, and runs `spool serve` with the store at `/data/spool.duckdb` on a volume. For projects with Python files, like the sample, it also copies in `uv` and runs `spool build --install`, which installs every strategy's and extractor's dependencies, including the sample model, so the server downloads nothing at runtime. To apply a changed project, stop the server and run `docker run --rm -v spool-data:/data companies apply`.
 
 The generated `.dockerignore` keeps `.env` out of the image. Pass your code's variables at runtime, for example with `docker run --env-file .env`. Without Docker, set them in `spool serve`'s environment, or put a `.env` in the project directory named by `--project`.
 
