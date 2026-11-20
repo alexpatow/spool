@@ -34,19 +34,19 @@ pub fn page(cli: &mut Command) -> String {
     );
     for (heading, about) in SHARED {
         page.push_str(&format!("\n### {heading}\n\n{about}\n\n"));
-        let options: Vec<&Arg> = shared(cli, heading);
+        let options: Vec<&Arg> = find_shared_options(cli, heading);
         for arg in options {
-            page.push_str(&option(arg));
+            page.push_str(&format_option(arg));
         }
     }
     for sub in cli.get_subcommands() {
-        command(sub, "spool", &mut page);
+        write_command_section(sub, "spool", &mut page);
     }
     page
 }
 
 /// The options under `heading` of the first command that has them.
-fn shared<'a>(command: &'a Command, heading: &str) -> Vec<&'a Arg> {
+fn find_shared_options<'a>(command: &'a Command, heading: &str) -> Vec<&'a Arg> {
     let here: Vec<&Arg> = command
         .get_arguments()
         .filter(|arg| !arg.is_hide_set() && arg.get_help_heading() == Some(heading))
@@ -56,12 +56,12 @@ fn shared<'a>(command: &'a Command, heading: &str) -> Vec<&'a Arg> {
     }
     command
         .get_subcommands()
-        .map(|sub| shared(sub, heading))
+        .map(|sub| find_shared_options(sub, heading))
         .find(|found| !found.is_empty())
         .unwrap_or_default()
 }
 
-fn command(command: &Command, parent: &str, page: &mut String) {
+fn write_command_section(command: &Command, parent: &str, page: &mut String) {
     if command.is_hide_set() || command.get_name() == "help" {
         return;
     }
@@ -72,7 +72,7 @@ fn command(command: &Command, parent: &str, page: &mut String) {
         .or(command.get_about())
         .map(ToString::to_string)
         .unwrap_or_default();
-    page.push_str(&prose(&about));
+    page.push_str(&format_prose(&about));
     page.push_str("\n\n");
     let usage = command.clone().render_usage().to_string();
     let usage = usage.trim_start_matches("Usage: ").trim();
@@ -86,7 +86,7 @@ fn command(command: &Command, parent: &str, page: &mut String) {
     if !positional.is_empty() {
         page.push_str("\nArguments:\n\n");
         for arg in positional {
-            page.push_str(&option(arg));
+            page.push_str(&format_option(arg));
         }
     }
     let mut headings: Vec<Option<&str>> = Vec::new();
@@ -111,7 +111,7 @@ fn command(command: &Command, parent: &str, page: &mut String) {
             .iter()
             .filter(|arg| !arg.is_positional() && arg.get_help_heading() == heading)
         {
-            page.push_str(&option(arg));
+            page.push_str(&format_option(arg));
         }
     }
     if !takes.is_empty() {
@@ -139,13 +139,13 @@ fn command(command: &Command, parent: &str, page: &mut String) {
         }
     }
     for sub in command.get_subcommands() {
-        self::command(sub, &name, page);
+        write_command_section(sub, &name, page);
     }
 }
 
 /// An argument or an option, as an item of a list: its name, what it is,
 /// and the default, the possible values and the variable clap knows of.
-fn option(arg: &Arg) -> String {
+fn format_option(arg: &Arg) -> String {
     let mut named = Vec::new();
     if let Some(short) = arg.get_short() {
         named.push(format!("-{short}"));
@@ -186,7 +186,7 @@ fn option(arg: &Arg) -> String {
         .or(arg.get_help())
         .map(ToString::to_string)
         .unwrap_or_default();
-    let mut paragraphs: Vec<String> = help.split("\n\n").map(prose).collect();
+    let mut paragraphs: Vec<String> = help.split("\n\n").map(format_prose).collect();
     let mut first = paragraphs.remove(0);
     let mut facts = Vec::new();
     let defaults: Vec<String> = arg
@@ -225,7 +225,7 @@ fn option(arg: &Arg) -> String {
 /// Help text as Markdown that MDX reads as text: a word with a
 /// placeholder such as `<DIR>` in it in code, and no braces, which MDX would
 /// read as an expression.
-fn prose(text: &str) -> String {
+fn format_prose(text: &str) -> String {
     let mut out = String::new();
     let mut code = false;
     for (at, word) in text.trim().split(' ').enumerate() {
@@ -264,30 +264,30 @@ fn prose(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::prose;
+    use super::format_prose;
 
     #[test]
     fn help_is_markdown_that_mdx_reads_as_text() {
         assert_eq!(
-            prose("the folder <DIR>/.spool/ holds it"),
+            format_prose("the folder <DIR>/.spool/ holds it"),
             "the folder `<DIR>/.spool/` holds it"
         );
         assert_eq!(
-            prose("named as <source>:<key>, which"),
+            format_prose("named as <source>:<key>, which"),
             "named as `<source>:<key>`, which"
         );
         assert_eq!(
-            prose("[default: <DIR>/.spool/dev.duckdb]"),
+            format_prose("[default: <DIR>/.spool/dev.duckdb]"),
             "[default: `<DIR>/.spool/dev.duckdb`]"
         );
         assert_eq!(
-            prose("in sources/<name>.yaml."),
+            format_prose("in sources/<name>.yaml."),
             "in `sources/<name>.yaml`."
         );
         assert_eq!(
-            prose("in code `<a> b` and {c}"),
+            format_prose("in code `<a> b` and {c}"),
             "in code `<a> b` and \\{c\\}"
         );
-        assert_eq!(prose("a < b"), "a \\< b");
+        assert_eq!(format_prose("a < b"), "a \\< b");
     }
 }

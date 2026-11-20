@@ -53,7 +53,9 @@ impl<R: Read> Reader<R> {
             .delimiter(delimiter)
             .trim(csv::Trim::Headers)
             .from_reader(input);
-        let header = records.byte_headers().map_err(|error| describe(&error))?;
+        let header = records
+            .byte_headers()
+            .map_err(|error| describe_csv_error(&error))?;
         if header.is_empty() {
             return Err(Malformed(EMPTY.to_owned()));
         }
@@ -113,7 +115,7 @@ impl<R: Read> Reader<R> {
             match self.records.read_byte_record(&mut self.record) {
                 Ok(true) => {}
                 Ok(false) => break,
-                Err(error) => return Err(describe(&error)),
+                Err(error) => return Err(describe_csv_error(&error)),
             }
             for (builder, field) in builders.iter_mut().zip(self.record.iter()) {
                 bytes += field.len() + 4;
@@ -144,7 +146,7 @@ impl<R: Read> Reader<R> {
 
 const NOT_UTF8: &str = "the text is not UTF-8. Save the file as UTF-8 and send it again";
 
-fn describe(error: &csv::Error) -> Malformed {
+fn describe_csv_error(error: &csv::Error) -> Malformed {
     Malformed(match error.kind() {
         csv::ErrorKind::UnequalLengths {
             pos,
@@ -173,7 +175,7 @@ mod tests {
 
     /// The names of the columns and every row of the text, as the values of
     /// its columns.
-    fn read(text: &[u8], delimiter: u8) -> Result<(Vec<String>, Vec<Row>), Malformed> {
+    fn read_all_rows(text: &[u8], delimiter: u8) -> Result<(Vec<String>, Vec<Row>), Malformed> {
         let mut reader = Reader::new(text, delimiter)?;
         let names = reader
             .schema()
@@ -198,17 +200,17 @@ mod tests {
         Ok((names, rows))
     }
 
-    fn refused(text: &[u8]) -> String {
-        read(text, b',').unwrap_err().0
+    fn read_error_message(text: &[u8]) -> String {
+        read_all_rows(text, b',').unwrap_err().0
     }
 
-    fn some(text: &str) -> Option<String> {
+    fn some_string(text: &str) -> Option<String> {
         Some(text.to_owned())
     }
 
     #[test]
     fn rows_are_text_and_an_empty_field_is_missing() {
-        let (names, rows) = read(
+        let (names, rows) = read_all_rows(
             b"id,name,country\n1,\"Acorn, Ltd\",GB\n2,,\"\"\n\n3,\"say \"\"hi\"\"\", padded \n",
             b',',
         )
@@ -217,9 +219,17 @@ mod tests {
         assert_eq!(
             rows,
             [
-                vec![some("1"), some("Acorn, Ltd"), some("GB")],
-                vec![some("2"), None, None],
-                vec![some("3"), some("say \"hi\""), some(" padded ")],
+                vec![
+                    some_string("1"),
+                    some_string("Acorn, Ltd"),
+                    some_string("GB")
+                ],
+                vec![some_string("2"), None, None],
+                vec![
+                    some_string("3"),
+                    some_string("say \"hi\""),
+                    some_string(" padded ")
+                ],
             ]
         );
     }
@@ -228,22 +238,23 @@ mod tests {
     fn the_ways_a_file_was_saved_do_not_show() {
         // A byte order mark, Windows line ends, no line end after the last
         // row, and spaces around the names of the columns.
-        let (names, rows) = read(b"\xef\xbb\xbfid , name\r\n1,anvil\r\n2,bolt", b',').unwrap();
+        let (names, rows) =
+            read_all_rows(b"\xef\xbb\xbfid , name\r\n1,anvil\r\n2,bolt", b',').unwrap();
         assert_eq!(names, ["id", "name"]);
         assert_eq!(
             rows,
             [
-                vec![some("1"), some("anvil")],
-                vec![some("2"), some("bolt")]
+                vec![some_string("1"), some_string("anvil")],
+                vec![some_string("2"), some_string("bolt")]
             ]
         );
     }
 
     #[test]
     fn another_character_can_stand_between_the_fields() {
-        let (names, rows) = read(b"id\tname\n1\tanvil, large\n", b'\t').unwrap();
+        let (names, rows) = read_all_rows(b"id\tname\n1\tanvil, large\n", b'\t').unwrap();
         assert_eq!(names, ["id", "name"]);
-        assert_eq!(rows, [vec![some("1"), some("anvil, large")]]);
+        assert_eq!(rows, [vec![some_string("1"), some_string("anvil, large")]]);
     }
 
     #[test]
@@ -280,7 +291,7 @@ mod tests {
 
     #[test]
     fn a_first_line_alone_has_no_rows() {
-        let (names, rows) = read(b"id,name\n", b',').unwrap();
+        let (names, rows) = read_all_rows(b"id,name\n", b',').unwrap();
         assert_eq!(names, ["id", "name"]);
         assert!(rows.is_empty());
     }
@@ -297,31 +308,31 @@ mod tests {
     #[test]
     fn what_is_wrong_is_said_with_its_line() {
         assert_eq!(
-            refused(b""),
+            read_error_message(b""),
             "it is empty: the first line has to name the columns"
         );
         assert_eq!(
-            refused(b"id,name\n1,anvil\n2,bolt,red\n"),
+            read_error_message(b"id,name\n1,anvil\n2,bolt,red\n"),
             "line 3 has 3 fields, and the first line names 2 columns"
         );
         assert_eq!(
-            refused(b"id,name\n1\n"),
+            read_error_message(b"id,name\n1\n"),
             "line 2 has 1 field, and the first line names 2 columns"
         );
         assert_eq!(
-            refused(b"id,name,name\n1,anvil,bolt\n"),
+            read_error_message(b"id,name,name\n1,anvil,bolt\n"),
             "line 1: two columns are named `name`"
         );
         assert_eq!(
-            refused(b"id,,name\n1,anvil,bolt\n"),
+            read_error_message(b"id,,name\n1,anvil,bolt\n"),
             "line 1: column 2 has no name. The first line has to name the columns"
         );
         assert_eq!(
-            refused(b"id,name\n1,anvil\n2,caf\xe9\n"),
+            read_error_message(b"id,name\n1,anvil\n2,caf\xe9\n"),
             "line 3: the text is not UTF-8. Save the file as UTF-8 and send it again"
         );
         assert_eq!(
-            refused(b"id,caf\xe9\n1,anvil\n"),
+            read_error_message(b"id,caf\xe9\n1,anvil\n"),
             "line 1: the text is not UTF-8. Save the file as UTF-8 and send it again"
         );
     }
@@ -331,7 +342,7 @@ mod tests {
         // The value in quotes holds a line break, so the row after it is on
         // line 4 of the file.
         assert_eq!(
-            refused(b"id,note\n1,\"two\nlines\"\n2,x,y\n"),
+            read_error_message(b"id,note\n1,\"two\nlines\"\n2,x,y\n"),
             "line 4 has 3 fields, and the first line names 2 columns"
         );
     }

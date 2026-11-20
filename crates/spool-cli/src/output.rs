@@ -361,15 +361,15 @@ pub fn render(header: Option<Vec<String>>, rows: &[Vec<String>], indent: usize) 
 
 /// Label and value, one pair per line, the values in one column.
 pub fn fields(rows: &[(&str, String)]) {
-    pairs(rows, 0);
+    print_pairs(rows, 0);
 }
 
 /// As [`fields`], indented.
 pub fn indented(rows: &[(&str, String)]) {
-    pairs(rows, 2);
+    print_pairs(rows, 2);
 }
 
-fn pairs(rows: &[(&str, String)], indent: usize) {
+fn print_pairs(rows: &[(&str, String)], indent: usize) {
     let rows: Vec<Vec<String>> = rows
         .iter()
         .map(|(label, value)| vec![paint(style::LABEL, label), value.clone()])

@@ -173,7 +173,7 @@ impl From<spool::Error> for Failure {
 
 /// The colour `--color` asks for, read before the arguments are parsed, so
 /// that the help and the usage errors follow it as well.
-fn color(arguments: &[OsString]) -> ColorChoice {
+fn read_color_choice(arguments: &[OsString]) -> ColorChoice {
     let mut given = None;
     let mut words = arguments.iter().skip(1).map(|word| word.to_string_lossy());
     while let Some(word) = words.next() {
@@ -195,7 +195,7 @@ fn color(arguments: &[OsString]) -> ColorChoice {
 
 fn main() -> ExitCode {
     let arguments: Vec<OsString> = std::env::args_os().collect();
-    let choice = color(&arguments);
+    let choice = read_color_choice(&arguments);
     anstream::ColorChoice::write_global(match choice {
         ColorChoice::Auto => anstream::ColorChoice::Auto,
         ColorChoice::Always => anstream::ColorChoice::Always,
@@ -217,7 +217,7 @@ fn main() -> ExitCode {
     if !matches!(command, Command::Serve(_) | Command::Dev(_)) {
         end_quietly_when_the_output_closes();
     }
-    let (path, ended) = run(command, choice);
+    let (path, ended) = run_command(command, choice);
     let Err(failure) = ended else {
         return ExitCode::SUCCESS;
     };
@@ -255,7 +255,7 @@ fn main() -> ExitCode {
 
 /// Runs a command, and says which it was: the names of the command and of
 /// its subcommand, for the usage a mistake is shown with.
-fn run(command: Command, color: ColorChoice) -> (Vec<&'static str>, Result<(), Failure>) {
+fn run_command(command: Command, color: ColorChoice) -> (Vec<&'static str>, Result<(), Failure>) {
     match command {
         Command::Init(args) => (vec!["init"], init::init(args)),
         Command::Info(args) => (vec!["info"], project::info(args)),
@@ -288,11 +288,11 @@ fn run(command: Command, color: ColorChoice) -> (Vec<&'static str>, Result<(), F
             clap_complete::generate(args.shell, &mut command, "spool", &mut out);
             (vec!["completions"], Ok(()))
         }
-        Command::Man(args) => (vec!["man"], man(&args.dir)),
+        Command::Man(args) => (vec!["man"], write_man_pages(&args.dir)),
     }
 }
 
-fn man(dir: &std::path::Path) -> Result<(), Failure> {
+fn write_man_pages(dir: &std::path::Path) -> Result<(), Failure> {
     let wrote =
         std::fs::create_dir_all(dir).and_then(|()| clap_mangen::generate_to(Cli::command(), dir));
     wrote.map_err(|error| Failure::failed(format!("{}: {error}", dir.display())))
@@ -504,7 +504,7 @@ mod tests {
     /// `SNAPSHOTS=overwrite cargo test` writes them again.
     #[test]
     fn the_help_of_every_command_is_its_snapshot() {
-        fn visit(command: &mut clap::Command, path: &str, found: &mut Vec<String>) {
+        fn check_help_snapshot(command: &mut clap::Command, path: &str, found: &mut Vec<String>) {
             let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots/help");
             let help = command.render_help().to_string();
             snapbox::Assert::new().action_env("SNAPSHOTS").eq(
@@ -515,14 +515,14 @@ mod tests {
             for sub in command.get_subcommands_mut() {
                 if sub.get_name() != "help" {
                     let name = format!("{path}-{}", sub.get_name());
-                    visit(sub, &name, found);
+                    check_help_snapshot(sub, &name, found);
                 }
             }
         }
         let mut command = Cli::command().term_width(100);
         command.build();
         let mut found = Vec::new();
-        visit(&mut command, "spool", &mut found);
+        check_help_snapshot(&mut command, "spool", &mut found);
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots/help");
         let mut written: Vec<String> = std::fs::read_dir(&dir)
             .unwrap()
