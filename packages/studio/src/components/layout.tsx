@@ -174,19 +174,19 @@ export function Row({ children, end = false }: { children: ReactNode; end?: bool
   return <div {...stylex.props(styles.row, end && styles.rowEnd)}>{children}</div>;
 }
 
-/** Label and value, one pair per row. A value that is `null` or `undefined` leaves its row out. */
-export function Fields({ rows }: { rows: Array<[string, ReactNode]> }) {
+/** Labels and their values, one `Field` per row. */
+export function Fields({ children }: { children: ReactNode }) {
+  return <dl {...stylex.props(styles.fields)}>{children}</dl>;
+}
+
+/** A row of `Fields`. A value that is `null` or `undefined` leaves the row out. */
+export function Field({ label, children }: { label: string; children?: ReactNode }) {
+  if (children === null || children === undefined) return null;
   return (
-    <dl {...stylex.props(styles.fields)}>
-      {rows
-        .filter(([, value]) => value !== null && value !== undefined)
-        .map(([label, value]) => (
-          <div key={label} {...stylex.props(styles.field)}>
-            <dt {...stylex.props(styles.term)}>{label}</dt>
-            <dd {...stylex.props(styles.value)}>{value}</dd>
-          </div>
-        ))}
-    </dl>
+    <div {...stylex.props(styles.field)}>
+      <dt {...stylex.props(styles.term)}>{label}</dt>
+      <dd {...stylex.props(styles.value)}>{children}</dd>
+    </div>
   );
 }
 
@@ -204,7 +204,15 @@ export function Json({ value }: { value: unknown }) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return <Code>{plain(value)}</Code>;
   }
-  return <Fields rows={Object.entries(value).map(([name, member]) => [name, <Code>{plain(member)}</Code>])} />;
+  return (
+    <Fields>
+      {Object.entries(value).map(([name, member]) => (
+        <Field key={name} label={name}>
+          <Code>{plain(member)}</Code>
+        </Field>
+      ))}
+    </Fields>
+  );
 }
 
 const styles = stylex.create({

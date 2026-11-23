@@ -4,12 +4,6 @@
   "categories": {
     "correctness": "error"
   },
-  "rules": {
-    // A row of a table is written as an array of its cells, which have a
-    // place and not a key. React says so itself, in the tests, where a list
-    // that is mapped has none.
-    "react/jsx-key": "off"
-  },
   "ignorePatterns": [
     "crates/",
     "benchmarks/",

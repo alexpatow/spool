@@ -3,7 +3,7 @@ import { getRouteApi } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef } from "react";
 
 import type { DocumentEntry, DocumentSort, RecordEntry, SpoolClient } from "../api.ts";
-import { Code, Fields, Load, Page, Quiet, Section } from "../components/layout.tsx";
+import { Code, Field, Fields, Load, Page, Quiet, Section } from "../components/layout.tsx";
 import { PagedTable, Table } from "../components/table.tsx";
 import { Id, Placed, LinkTo, Ref, ScreenLink, Source, When, Word } from "../components/refs.tsx";
 import { Filters, sortingOf, useNarrow, usePair } from "../components/filters.tsx";
@@ -126,47 +126,51 @@ function DocumentScreen({ document, found, cut, at }: Loaded & { at: number | nu
   const points = useMemo(() => codePoints(document.text ?? ""), [document.text]);
   return (
     <>
-      <Fields
-        rows={[
-          ["Source", <Source name={document.source} />],
-          ["Key", <Code>{document.key}</Code>],
-          ["URI", document.uri],
-          ["Characters", document.length],
-          [
-            "Loaded",
+      <Fields>
+        <Field label="Source">
+          <Source name={document.source} />
+        </Field>
+        <Field label="Key">
+          <Code>{document.key}</Code>
+        </Field>
+        <Field label="URI">{document.uri}</Field>
+        <Field label="Characters">{document.length}</Field>
+        <Field label="Loaded">
+          <>
+            <When at={document.loaded_at} /> by{" "}
+            <Ref kind="run" id={document.load_run} label={`run ${document.load_run}`} />
+          </>
+        </Field>
+        <Field label="Supersedes">
+          {document.supersedes ? <Ref kind="document" id={document.supersedes} /> : null}
+        </Field>
+        <Field label="Superseded by">
+          {document.superseded_by ? <Ref kind="document" id={document.superseded_by} /> : null}
+        </Field>
+        <Field label="Extracted by">
+          {document.extractions.length === 0 && !document.reading ? (
+            "not read yet"
+          ) : (
             <>
-              <When at={document.loaded_at} /> by{" "}
-              <Ref kind="run" id={document.load_run} label={`run ${document.load_run}`} />
-            </>,
-          ],
-          ["Supersedes", document.supersedes ? <Ref kind="document" id={document.supersedes} /> : null],
-          ["Superseded by", document.superseded_by ? <Ref kind="document" id={document.superseded_by} /> : null],
-          [
-            "Extracted by",
-            document.extractions.length === 0 && !document.reading ? (
-              "not read yet"
-            ) : (
-              <>
-                {document.extractions.map((extraction, index) => (
-                  <span key={extraction.run}>
-                    {index > 0 ? ", " : ""}
-                    <Code>{extraction.extractor}</Code>
-                    {extraction.failure ? " failed in " : " in "}
-                    <Ref kind="run" id={extraction.run} label={`run ${extraction.run}`} />
-                    {extraction.failure ? `: ${extraction.failure}` : ` (${count(extraction.mentions, "mention")})`}
-                  </span>
-                ))}
-                {document.reading ? (
-                  <span>
-                    {document.extractions.length > 0 ? ", " : ""}being read by <Code>{document.reading.extractor}</Code>{" "}
-                    in <Ref kind="run" id={document.reading.run} label={`run ${document.reading.run}`} />
-                  </span>
-                ) : null}
-              </>
-            ),
-          ],
-        ]}
-      />
+              {document.extractions.map((extraction, index) => (
+                <span key={extraction.run}>
+                  {index > 0 ? ", " : ""}
+                  <Code>{extraction.extractor}</Code>
+                  {extraction.failure ? " failed in " : " in "}
+                  <Ref kind="run" id={extraction.run} label={`run ${extraction.run}`} />
+                  {extraction.failure ? `: ${extraction.failure}` : ` (${count(extraction.mentions, "mention")})`}
+                </span>
+              ))}
+              {document.reading ? (
+                <span>
+                  {document.extractions.length > 0 ? ", " : ""}being read by <Code>{document.reading.extractor}</Code>{" "}
+                  in <Ref kind="run" id={document.reading.run} label={`run ${document.reading.run}`} />
+                </span>
+              ) : null}
+            </>
+          )}
+        </Field>
+      </Fields>
       <Section title="Text">
         <Marked points={points} found={found} at={at} />
         {cut ? (

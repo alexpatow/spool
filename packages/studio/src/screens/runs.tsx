@@ -2,7 +2,7 @@ import { getRouteApi } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 
 import type { RunEntry, RunKind, RunSort, RunStatus } from "../api.ts";
-import { Code, Fields, Lines, Load, Notice, Page, Section } from "../components/layout.tsx";
+import { Code, Field, Fields, Lines, Load, Notice, Page, Section } from "../components/layout.tsx";
 import { Table } from "../components/table.tsx";
 import { Identity, Onward, Ref, When, Word } from "../components/refs.tsx";
 import { Filters, sortingOf, useNarrow } from "../components/filters.tsx";
@@ -121,33 +121,35 @@ function RunView({ run }: { run: RunEntry }) {
   ]);
   return (
     <>
-      <Fields
-        rows={[
-          ["Kind", run.kind],
-          ["Status", <Word value={run.status} />],
-          ["Entity type", run.entity_type],
-          [
-            "Strategy",
-            run.strategy ? (
-              <>
-                <Code>{run.strategy.name}</Code>
-                {run.strategy.version ? ` version ${run.strategy.version}` : null}
-              </>
-            ) : null,
-          ],
-          [
-            "Extractor",
-            run.extractor ? (
-              <>
-                <Code>{run.extractor.name}</Code> version {run.extractor.version}
-              </>
-            ) : null,
-          ],
-          ["Started by", <Who actor={run.started_by} />],
-          ["Started", <When at={run.started_at} />],
-          ["Finished", run.finished_at ? <When at={run.finished_at} /> : null],
-        ]}
-      />
+      <Fields>
+        <Field label="Kind">{run.kind}</Field>
+        <Field label="Status">
+          <Word value={run.status} />
+        </Field>
+        <Field label="Entity type">{run.entity_type}</Field>
+        <Field label="Strategy">
+          {run.strategy ? (
+            <>
+              <Code>{run.strategy.name}</Code>
+              {run.strategy.version ? ` version ${run.strategy.version}` : null}
+            </>
+          ) : null}
+        </Field>
+        <Field label="Extractor">
+          {run.extractor ? (
+            <>
+              <Code>{run.extractor.name}</Code> version {run.extractor.version}
+            </>
+          ) : null}
+        </Field>
+        <Field label="Started by">
+          <Who actor={run.started_by} />
+        </Field>
+        <Field label="Started">
+          <When at={run.started_at} />
+        </Field>
+        <Field label="Finished">{run.finished_at ? <When at={run.finished_at} /> : null}</Field>
+      </Fields>
       {run.error ? (
         <Notice tone="bad" role="alert">
           {run.error}
@@ -155,106 +157,71 @@ function RunView({ run }: { run: RunEntry }) {
       ) : null}
       {load ? (
         <Section title="Load">
-          <Fields
-            rows={[
-              [
-                "Rows",
-                `${load.received} received: ${load.inserted} new, ${load.duplicates} duplicates, ${load.superseded ?? 0} new versions`,
-              ],
-              [
-                "Came back",
-                load.restored
-                  ? `${count(load.restored, "record")} the source had taken back, ${load.returned ?? 0} of them to the identity they left`
-                  : null,
-              ],
-              ["Left for review", leftForReview(load.possible_splits)],
-              [
-                "Committed",
-                load.committed ? (
-                  <Ref kind="log" id={load.committed.seq} label={`log position ${load.committed.seq}`} />
-                ) : null,
-              ],
-            ]}
-          />
+          <Fields>
+            <Field label="Rows">{`${load.received} received: ${load.inserted} new, ${load.duplicates} duplicates, ${load.superseded ?? 0} new versions`}</Field>
+            <Field label="Came back">
+              {load.restored
+                ? `${count(load.restored, "record")} the source had taken back, ${load.returned ?? 0} of them to the identity they left`
+                : null}
+            </Field>
+            <Field label="Left for review">{leftForReview(load.possible_splits)}</Field>
+            <Field label="Committed">
+              {load.committed ? (
+                <Ref kind="log" id={load.committed.seq} label={`log position ${load.committed.seq}`} />
+              ) : null}
+            </Field>
+          </Fields>
         </Section>
       ) : null}
       {retraction ? (
         <Section title="Retraction">
-          <Fields
-            rows={[
-              ["Keys", `${retraction.received} named, ${retraction.unknown} unknown`],
-              [
-                "Taken back",
-                `${count(retraction.retracted, "record")}, ${retraction.detached} of them left an identity`,
-              ],
-              ["Left for review", leftForReview(retraction.possible_splits)],
-              [
-                "Committed",
-                retraction.committed ? (
-                  <Ref kind="log" id={retraction.committed.seq} label={`log position ${retraction.committed.seq}`} />
-                ) : null,
-              ],
-            ]}
-          />
+          <Fields>
+            <Field label="Keys">{`${retraction.received} named, ${retraction.unknown} unknown`}</Field>
+            <Field label="Taken back">{`${count(retraction.retracted, "record")}, ${retraction.detached} of them left an identity`}</Field>
+            <Field label="Left for review">{leftForReview(retraction.possible_splits)}</Field>
+            <Field label="Committed">
+              {retraction.committed ? (
+                <Ref kind="log" id={retraction.committed.seq} label={`log position ${retraction.committed.seq}`} />
+              ) : null}
+            </Field>
+          </Fields>
         </Section>
       ) : null}
       {extraction ? (
         <Section title="Extraction">
-          <Fields
-            rows={[
-              ["Documents", `${extraction.documents} read`],
-              [
-                "Mentions",
-                `${extraction.mentions} found: ${extraction.inserted} new, ${extraction.duplicates} duplicates, ${extraction.superseded} new versions`,
-              ],
-              [
-                "Load run",
-                extraction.load_run ? (
-                  <Ref kind="run" id={extraction.load_run} label={`load run ${extraction.load_run}`} />
-                ) : null,
-              ],
-            ]}
-          />
+          <Fields>
+            <Field label="Documents">{`${extraction.documents} read`}</Field>
+            <Field label="Mentions">{`${extraction.mentions} found: ${extraction.inserted} new, ${extraction.duplicates} duplicates, ${extraction.superseded} new versions`}</Field>
+            <Field label="Load run">
+              {extraction.load_run ? (
+                <Ref kind="run" id={extraction.load_run} label={`load run ${extraction.load_run}`} />
+              ) : null}
+            </Field>
+          </Fields>
         </Section>
       ) : null}
       {resolution ? (
         <>
           <Section title="Resolution">
-            <Fields
-              rows={[
-                [
-                  "Examined",
-                  `${count(resolution.new_records, "record")}, ${resolution.reexamined} of them from earlier review items`,
-                ],
-                ["Candidates", count(resolution.candidates, "pair")],
-                [
-                  "Judgements",
-                  `${resolution.judgements.match} match, ${resolution.judgements.no_match} no_match, ${resolution.judgements.unsure} unsure`,
-                ],
-                [
-                  "Assigned",
-                  `${count(resolution.records_assigned, "record")}, ${count(resolution.identities_created, "identity")} created`,
-                ],
-                [
-                  "Unassigned",
-                  `${count(resolution.records_unassigned, "record")} in ${count(resolution.review.length, "review item")}`,
-                ],
-                [
-                  "Reconcile run",
-                  <Ref kind="run" id={resolution.reconcile_run} label={`run ${resolution.reconcile_run}`} />,
-                ],
-                [
-                  resolution.committed || !resolution.draft ? "Committed" : "Draft",
-                  resolution.committed ? (
-                    <Ref kind="log" id={resolution.committed.seq} label={`log position ${resolution.committed.seq}`} />
-                  ) : resolution.draft ? (
-                    <Ref kind="draft" id={resolution.draft} />
-                  ) : (
-                    "nothing to commit"
-                  ),
-                ],
-              ]}
-            />
+            <Fields>
+              <Field label="Examined">{`${count(resolution.new_records, "record")}, ${resolution.reexamined} of them from earlier review items`}</Field>
+              <Field label="Candidates">{count(resolution.candidates, "pair")}</Field>
+              <Field label="Judgements">{`${resolution.judgements.match} match, ${resolution.judgements.no_match} no_match, ${resolution.judgements.unsure} unsure`}</Field>
+              <Field label="Assigned">{`${count(resolution.records_assigned, "record")}, ${count(resolution.identities_created, "identity")} created`}</Field>
+              <Field label="Unassigned">{`${count(resolution.records_unassigned, "record")} in ${count(resolution.review.length, "review item")}`}</Field>
+              <Field label="Reconcile run">
+                <Ref kind="run" id={resolution.reconcile_run} label={`run ${resolution.reconcile_run}`} />
+              </Field>
+              <Field label={resolution.committed || !resolution.draft ? "Committed" : "Draft"}>
+                {resolution.committed ? (
+                  <Ref kind="log" id={resolution.committed.seq} label={`log position ${resolution.committed.seq}`} />
+                ) : resolution.draft ? (
+                  <Ref kind="draft" id={resolution.draft} />
+                ) : (
+                  "nothing to commit"
+                )}
+              </Field>
+            </Fields>
           </Section>
           {resolution.review.length > 0 ? (
             <Section title="Review items">

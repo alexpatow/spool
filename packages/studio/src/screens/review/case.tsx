@@ -7,7 +7,7 @@ import type { ReactNode } from "react";
 
 import { Done } from "../../act.tsx";
 import type { RecordEntry, ReviewCase, ReviewEntry } from "../../api.ts";
-import { Fields, Load, Page, Reason } from "../../components/layout.tsx";
+import { Field, Fields, Load, Page, Reason } from "../../components/layout.tsx";
 import { Ref, When, Word } from "../../components/refs.tsx";
 import { InboxIcon } from "../../icons.tsx";
 import { keys, useRead } from "../../queries.ts";
@@ -75,51 +75,45 @@ export function Case({
 
 function Details({ item }: { item: ReviewEntry }) {
   return (
-    <Fields
-      rows={[
-        ["Kind", <Word value={item.kind} />],
-        ["Status", <Word value={item.status} />],
-        ["Entity type", item.entity_type],
-        [
-          "Run",
+    <Fields>
+      <Field label="Kind">
+        <Word value={item.kind} />
+      </Field>
+      <Field label="Status">
+        <Word value={item.status} />
+      </Field>
+      <Field label="Entity type">{item.entity_type}</Field>
+      <Field label="Run">
+        <Ref kind="run" id={item.run} label={`${item.kind === "possible_split" ? "" : "reconcile "}run ${item.run}`} />
+      </Field>
+      <Field label="Resolved at">
+        {item.resolved_seq ? (
+          <Ref kind="log" id={item.resolved_seq} label={`log position ${item.resolved_seq}`} />
+        ) : null}
+      </Field>
+      <Field label="Superseded by">
+        {item.superseded_by ? (
           <Ref
             kind="run"
-            id={item.run}
-            label={`${item.kind === "possible_split" ? "" : "reconcile "}run ${item.run}`}
-          />,
-        ],
-        [
-          "Resolved at",
-          item.resolved_seq ? (
-            <Ref kind="log" id={item.resolved_seq} label={`log position ${item.resolved_seq}`} />
-          ) : null,
-        ],
-        [
-          "Superseded by",
-          item.superseded_by ? (
-            <Ref
-              kind="run"
-              id={item.superseded_by}
-              label={`${item.kind === "possible_split" ? "" : "reconcile "}run ${item.superseded_by}`}
-            />
-          ) : null,
-        ],
-        [
-          "Dismissed by",
-          item.dismissed ? (
-            <>
-              <Who actor={item.dismissed.by} /> at <When at={item.dismissed.at} />
-              {item.dismissed.reason ? (
-                <>
-                  {" "}
-                  <Reason>{item.dismissed.reason}</Reason>
-                </>
-              ) : null}
-            </>
-          ) : null,
-        ],
-      ]}
-    />
+            id={item.superseded_by}
+            label={`${item.kind === "possible_split" ? "" : "reconcile "}run ${item.superseded_by}`}
+          />
+        ) : null}
+      </Field>
+      <Field label="Dismissed by">
+        {item.dismissed ? (
+          <>
+            <Who actor={item.dismissed.by} /> at <When at={item.dismissed.at} />
+            {item.dismissed.reason ? (
+              <>
+                {" "}
+                <Reason>{item.dismissed.reason}</Reason>
+              </>
+            ) : null}
+          </>
+        ) : null}
+      </Field>
+    </Fields>
   );
 }
 
