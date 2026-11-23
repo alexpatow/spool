@@ -53,7 +53,6 @@ pub struct MatchArgs {
     remote: RemoteArgs,
 }
 
-#[expect(clippy::too_many_lines)]
 pub fn run(arguments: MatchArgs) -> Result<(), Failure> {
     let out = Output::report(&arguments.output, "`spool match`")?;
     let remote = Remote::new(&arguments.remote);
@@ -67,53 +66,14 @@ pub fn run(arguments: MatchArgs) -> Result<(), Failure> {
         ));
     }
     let named = arguments.entity_type.as_deref();
-    let chosen: Vec<&TypeInfo> = match named {
-        Some(name) => vec![
-            types
-                .iter()
-                .find(|declared| declared.name.as_str() == name)
-                .ok_or_else(|| {
-                    Failure::failed(format!(
-                        "the project has no entity type `{name}`. It has {}.",
-                        quote_type_names(types)
-                    ))
-                })?,
-        ],
-        None => types.iter().collect(),
-    };
+    let chosen = choose_types(types, named)?;
 
     // The server takes a name it does not know for a strategy the caller
     // runs, and starts a run that waits for judgements. Nobody would send
     // them here.
     let strategy = Some(arguments.strategy.as_str()).filter(|name| *name != StrategyRef::RULES);
     if let Some(strategy) = strategy {
-        let [entity_type] = chosen.as_slice() else {
-            return Err(Failure::failed(format!(
-                "a strategy judges one entity type: say which `{strategy}` is for with \
-                 `--type`. The project has {}.",
-                quote_type_names(types)
-            )));
-        };
-        if !entity_type
-            .strategies
-            .iter()
-            .any(|known| known.name == strategy)
-        {
-            let known: Vec<String> = std::iter::once(StrategyRef::RULES)
-                .chain(
-                    entity_type
-                        .strategies
-                        .iter()
-                        .map(|known| known.name.as_str()),
-                )
-                .map(|known| format!("`{known}`"))
-                .collect();
-            return Err(Failure::failed(format!(
-                "`{}` has no strategy `{strategy}`. It has {}.",
-                entity_type.name,
-                known.join(", ")
-            )));
-        }
+        check_strategy(&chosen, types, strategy)?;
     }
 
     let rematch = arguments.rematch;
@@ -203,6 +163,64 @@ pub fn run(arguments: MatchArgs) -> Result<(), Failure> {
     for said in hints.iter().filter(|said| !said.is_empty()) {
         hint(said);
     }
+    join_failures(failures)
+}
+
+/// The entity types to match: the one named, or every one.
+fn choose_types<'a>(
+    types: &'a [TypeInfo],
+    named: Option<&str>,
+) -> Result<Vec<&'a TypeInfo>, Failure> {
+    Ok(match named {
+        Some(name) => vec![
+            types
+                .iter()
+                .find(|declared| declared.name.as_str() == name)
+                .ok_or_else(|| {
+                    Failure::failed(format!(
+                        "the project has no entity type `{name}`. It has {}.",
+                        quote_type_names(types)
+                    ))
+                })?,
+        ],
+        None => types.iter().collect(),
+    })
+}
+
+/// Fails unless `strategy` judges the one entity type chosen.
+fn check_strategy(chosen: &[&TypeInfo], types: &[TypeInfo], strategy: &str) -> Result<(), Failure> {
+    let [entity_type] = chosen else {
+        return Err(Failure::failed(format!(
+            "a strategy judges one entity type: say which `{strategy}` is for with \
+             `--type`. The project has {}.",
+            quote_type_names(types)
+        )));
+    };
+    if !entity_type
+        .strategies
+        .iter()
+        .any(|known| known.name == strategy)
+    {
+        let known: Vec<String> = std::iter::once(StrategyRef::RULES)
+            .chain(
+                entity_type
+                    .strategies
+                    .iter()
+                    .map(|known| known.name.as_str()),
+            )
+            .map(|known| format!("`{known}`"))
+            .collect();
+        return Err(Failure::failed(format!(
+            "`{}` has no strategy `{strategy}`. It has {}.",
+            entity_type.name,
+            known.join(", ")
+        )));
+    }
+    Ok(())
+}
+
+/// The failures of the types matched, as one.
+fn join_failures(mut failures: Vec<Failure>) -> Result<(), Failure> {
     match failures.len() {
         0 => Ok(()),
         1 => Err(failures.remove(0)),

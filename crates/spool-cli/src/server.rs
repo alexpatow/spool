@@ -234,7 +234,6 @@ pub fn router(engine: Arc<Engine>, options: &ServerOptions) -> Router {
 
 /// The API over `engine`, whose requests are told through `stopping` when
 /// the server is.
-#[expect(clippy::too_many_lines)]
 fn router_until(engine: Arc<Engine>, options: &ServerOptions, stopping: Stopping) -> Router {
     let app = App {
         engine,
@@ -274,7 +273,56 @@ fn router_until(engine: Arc<Engine>, options: &ServerOptions, stopping: Stopping
         .layer(DefaultBodyLimit::max(
             options.max_body_bytes.min(MAX_AUTH_BODY_BYTES),
         ));
-    let v1 = Router::new()
+    let v1 = api_routes()
+        .fallback(not_found)
+        .layer(middleware::from_fn_with_state(app.clone(), authorize));
+    let mcp = Router::new()
+        .route_service(MCP_PATH, mcp::build_mcp_service(app.clone(), options))
+        .layer(middleware::map_response(mcp::describe_refusal))
+        .layer(middleware::from_fn_with_state(app.clone(), authorize_mcp));
+    // Clients send these, and anyone may: what they read is a few fields.
+    let oauth = Router::new()
+        .route(oauth::RESOURCE_METADATA, get(oauth::resource_metadata))
+        .route(
+            &format!("{}{MCP_PATH}", oauth::RESOURCE_METADATA),
+            get(oauth::resource_metadata),
+        )
+        .route(oauth::SERVER_METADATA, get(oauth::server_metadata))
+        .route(oauth::REGISTER, post(oauth::register))
+        .route(oauth::AUTHORIZE, get(oauth::authorize))
+        .route(oauth::TOKEN, post(oauth::token))
+        .route(oauth::REVOKE, post(oauth::revoke))
+        .layer(DefaultBodyLimit::max(
+            options.max_body_bytes.min(MAX_AUTH_BODY_BYTES),
+        ));
+    let mut router = Router::new()
+        .route("/healthz", get(info::health))
+        .nest("/auth", auth)
+        .nest(&format!("/{}", api::VERSION), v1)
+        .merge(mcp)
+        .merge(oauth);
+    if options.studio {
+        router = router.merge(studio::routes());
+    }
+    let router = router
+        .fallback(not_found)
+        .layer(sessions)
+        .layer(middleware::from_fn(own_pages_only))
+        .layer(DefaultBodyLimit::max(options.max_body_bytes))
+        .layer(middleware::map_response(describe_failure))
+        .with_state(app);
+    let router = match options.dev {
+        true => router.layer(middleware::from_fn(local::this_machine_only)),
+        false => router,
+    };
+    router
+        .layer(middleware::from_fn(newline::end_with_a_newline))
+        .layer(middleware::from_fn(unread::finish_the_body))
+}
+
+/// The routes of the API, each to the handler of its operation.
+fn api_routes() -> Router<App> {
+    Router::new()
         .route("/info", get(info::info))
         .route("/load", post(load::load))
         .route("/retract", post(load::retract))
@@ -335,50 +383,6 @@ fn router_until(engine: Arc<Engine>, options: &ServerOptions, stopping: Stopping
         .route("/tokens/{token}/revoke", post(tokens::revoke_token))
         .route("/grants", get(oauth::list_grants))
         .route("/grants/{grant}/revoke", post(oauth::end_grant))
-        .fallback(not_found)
-        .layer(middleware::from_fn_with_state(app.clone(), authorize));
-    let mcp = Router::new()
-        .route_service(MCP_PATH, mcp::build_mcp_service(app.clone(), options))
-        .layer(middleware::map_response(mcp::describe_refusal))
-        .layer(middleware::from_fn_with_state(app.clone(), authorize_mcp));
-    // Clients send these, and anyone may: what they read is a few fields.
-    let oauth = Router::new()
-        .route(oauth::RESOURCE_METADATA, get(oauth::resource_metadata))
-        .route(
-            &format!("{}{MCP_PATH}", oauth::RESOURCE_METADATA),
-            get(oauth::resource_metadata),
-        )
-        .route(oauth::SERVER_METADATA, get(oauth::server_metadata))
-        .route(oauth::REGISTER, post(oauth::register))
-        .route(oauth::AUTHORIZE, get(oauth::authorize))
-        .route(oauth::TOKEN, post(oauth::token))
-        .route(oauth::REVOKE, post(oauth::revoke))
-        .layer(DefaultBodyLimit::max(
-            options.max_body_bytes.min(MAX_AUTH_BODY_BYTES),
-        ));
-    let mut router = Router::new()
-        .route("/healthz", get(info::health))
-        .nest("/auth", auth)
-        .nest(&format!("/{}", api::VERSION), v1)
-        .merge(mcp)
-        .merge(oauth);
-    if options.studio {
-        router = router.merge(studio::routes());
-    }
-    let router = router
-        .fallback(not_found)
-        .layer(sessions)
-        .layer(middleware::from_fn(own_pages_only))
-        .layer(DefaultBodyLimit::max(options.max_body_bytes))
-        .layer(middleware::map_response(describe_failure))
-        .with_state(app);
-    let router = match options.dev {
-        true => router.layer(middleware::from_fn(local::this_machine_only)),
-        false => router,
-    };
-    router
-        .layer(middleware::from_fn(newline::end_with_a_newline))
-        .layer(middleware::from_fn(unread::finish_the_body))
 }
 
 /// Serves the API on `listener` until `shutdown` completes, and then stops
