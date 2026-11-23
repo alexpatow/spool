@@ -40,7 +40,22 @@ impl Engine {
     /// their candidates were generated from the old features.
     pub fn apply(&self, manifest: &Manifest) -> Result<ApplyReport> {
         let mut inner = self.lock();
-        let report = inner.apply(manifest)?;
+        let report = inner.apply(manifest, Rebuild::Allowed)?;
+        self.set_manifest(inner.manifest.clone());
+        Ok(report)
+    }
+
+    /// Applies `manifest` as [`apply`](Self::apply) does, if that computes
+    /// no feature table again: the store's tables work with the manifest,
+    /// whatever else in it changed, such as rules, strategies, sources or
+    /// extractors. New entity types get their empty tables.
+    ///
+    /// When the declaration of a type the store holds has changed, nothing
+    /// is applied and the call fails with [`Error::RebuildNeeded`], naming
+    /// those types.
+    pub fn apply_without_rebuild(&self, manifest: &Manifest) -> Result<ApplyReport> {
+        let mut inner = self.lock();
+        let report = inner.apply(manifest, Rebuild::Refused)?;
         self.set_manifest(inner.manifest.clone());
         Ok(report)
     }
@@ -64,14 +79,22 @@ impl Engine {
     }
 }
 
+/// Whether applying a manifest may compute feature tables again.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Rebuild {
+    Allowed,
+    Refused,
+}
+
 impl Inner {
-    fn apply(&mut self, manifest: &Manifest) -> Result<ApplyReport> {
+    fn apply(&mut self, manifest: &Manifest, rebuild: Rebuild) -> Result<ApplyReport> {
         let now = self.store.clock.now_micros();
         let mut report = ApplyReport {
             declared: Vec::new(),
             unchanged: Vec::new(),
             rebuilt: Vec::new(),
         };
+        let mut refused = Vec::new();
         let tx = self.store.conn.transaction()?;
         for entity_type in &manifest.entity_types {
             let name = &entity_type.name;
@@ -89,6 +112,10 @@ impl Inner {
             let version = match stored {
                 Some((_, hash)) if hash == entity_type.declaration_hash => {
                     report.unchanged.push(name.clone());
+                    continue;
+                }
+                Some(_) if rebuild == Rebuild::Refused => {
+                    refused.push(name.clone());
                     continue;
                 }
                 Some((version, _)) => version as u32 + 1,
@@ -141,6 +168,10 @@ impl Inner {
                 ],
             )?;
             report.rebuilt.push(name.clone());
+        }
+        if !refused.is_empty() {
+            // The transaction is dropped, and what it did is undone with it.
+            return Err(Error::RebuildNeeded(refused));
         }
         features::label_view(
             &tx,

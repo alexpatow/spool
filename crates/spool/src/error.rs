@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use spool_core::{
-    ChangesetId, DocumentId, IdentityId, RecordId, Rejection, ReplayError, RunId, Seq, StateError,
-    ValidationError,
+    ChangesetId, DocumentId, EntityType, IdentityId, RecordId, Rejection, ReplayError, RunId, Seq,
+    StateError, ValidationError,
 };
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -61,6 +61,15 @@ pub enum Error {
 
     #[error("apply rejected: {0}")]
     Apply(String),
+
+    /// Applying the manifest would compute the feature tables of these
+    /// types again, because their declarations changed, and the caller
+    /// asked for an apply that does not.
+    #[error(
+        "the declaration of {} changed, and applying it computes the feature tables again",
+        .0.iter().map(|name| format!("`{name}`")).collect::<Vec<_>>().join(", ")
+    )]
+    RebuildNeeded(Vec<EntityType>),
 
     #[error("load rejected: {0}")]
     Load(String),

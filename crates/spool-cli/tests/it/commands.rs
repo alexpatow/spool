@@ -202,7 +202,7 @@ fn apply_declares_types_and_rebuilds_the_features_of_a_changed_declaration() {
 }
 
 #[test]
-fn serve_sets_up_an_empty_store_and_refuses_one_applied_with_another_manifest() {
+fn serve_sets_up_a_store_applies_what_its_tables_fit_and_refuses_a_changed_declaration() {
     let dir = tempfile::tempdir().unwrap();
     let project = dir.path().join("project");
     write_things(&project);
@@ -230,28 +230,46 @@ fn serve_sets_up_an_empty_store_and_refuses_one_applied_with_another_manifest() 
     assert_eq!(info["store"]["entity_types"][0]["identities"], 1);
     server.stop();
 
-    // A changed project is refused until it is applied.
+    // A changed rule leaves the feature tables as they are, so the server
+    // applies the new manifest itself and starts.
     std::fs::remove_file(project.join("entities/thing/rules/no_match/other_colour.sql")).unwrap();
     build(&project);
-    let stopped = Server::start_with(&serve_arguments(&manifest, &store, "3")).unwrap_err();
+    let server = Server::start(&serve_arguments(&manifest, &store, "3"));
+    let info = server.read("/v1/info");
+    let ruled = info["store"]["manifest_hash"].clone();
+    assert_ne!(ruled, hash);
+    assert_eq!(info["store"]["head"], 1);
+    assert_eq!(info["store"]["entity_types"][0]["declaration_version"], 1);
+    server.stop();
+
+    // A changed declaration computes the type's feature table again, which
+    // is refused until it is applied. The refusal changes nothing.
+    std::fs::write(
+        project.join("entities/thing/entity.yaml"),
+        thing_entity("{ from: code, transform: lower }"),
+    )
+    .unwrap();
+    build(&project);
+    let stopped = Server::start_with(&serve_arguments(&manifest, &store, "4")).unwrap_err();
     assert_eq!(stopped.code, Some(1));
     assert!(
-        stopped.output.contains(hash.as_str().unwrap()),
+        stopped.output.contains(ruled.as_str().unwrap()),
         "{}",
         stopped.output
     );
+    assert!(stopped.output.contains("`thing`"), "{}", stopped.output);
     assert!(stopped.output.contains("spool apply"), "{}", stopped.output);
 
     succeed(&["apply", path(&project), "--store", path(&store)]);
-    let server = Server::start(&serve_arguments(&manifest, &store, "3"));
+    let server = Server::start(&serve_arguments(&manifest, &store, "4"));
     let info = server.read("/v1/info");
-    assert_ne!(info["store"]["manifest_hash"], hash);
+    assert_ne!(info["store"]["manifest_hash"], ruled);
     assert_eq!(info["store"]["entity_types"][0]["identities"], 1);
     server.stop();
 
     // No manifest, no server.
     std::fs::remove_file(&manifest).unwrap();
-    let stopped = Server::start_with(&serve_arguments(&manifest, &store, "4")).unwrap_err();
+    let stopped = Server::start_with(&serve_arguments(&manifest, &store, "5")).unwrap_err();
     assert_eq!(stopped.code, Some(1));
     assert!(
         stopped.output.contains("manifest.json"),
@@ -371,7 +389,7 @@ fn dev_serves_a_project_directory_and_applies_changes_as_they_are_saved() {
     )
     .unwrap();
     let applied = server.printed("applied");
-    assert!(applied.contains("rules only"), "{applied}");
+    assert!(applied.contains("no table changed"), "{applied}");
     let third = server.read("/v1/info")["store"]["manifest_hash"].clone();
     assert_ne!(third, second);
 

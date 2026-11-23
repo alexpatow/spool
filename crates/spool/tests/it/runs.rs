@@ -374,6 +374,58 @@ fn an_engine_adopts_only_the_manifest_its_store_was_applied_with() {
     engine.resolve(&ResolveOptions::default()).unwrap();
 }
 
+#[test]
+fn an_apply_without_rebuild_takes_on_changed_rules_and_refuses_a_changed_declaration() {
+    let engine = engine();
+    load(&engine, "shop", &[("1", Some("anvil"), None)]);
+    engine.resolve(&ResolveOptions::default()).unwrap();
+
+    // Rules are not stored in a table, so a manifest that changes only them
+    // is applied.
+    let fewer_rules = manifest_of(vec![EntityTypeSource {
+        no_match: Vec::new(),
+        ..thing()
+    }]);
+    let report = engine.apply_without_rebuild(&fewer_rules).unwrap();
+    assert!(report.rebuilt.is_empty());
+    assert_eq!(report.unchanged.len(), 1);
+    assert_eq!(
+        engine.applied_manifest_hash().unwrap(),
+        Some(fewer_rules.hash.clone())
+    );
+    assert_eq!(engine.manifest().unwrap().hash, fewer_rules.hash);
+
+    // A changed declaration would compute the feature table again: it is
+    // refused, and the store and the engine keep what they had.
+    let changed = manifest_of(vec![EntityTypeSource {
+        entity: entity(
+            Some("name"),
+            &[
+                ("name", "{ from: name, transform: upper }"),
+                ("code", "code"),
+            ],
+            &SOURCES,
+        ),
+        ..thing()
+    }]);
+    let error = engine.apply_without_rebuild(&changed).unwrap_err();
+    assert!(
+        matches!(&error, Error::RebuildNeeded(types) if types.len() == 1 && types[0].as_str() == "thing"),
+        "{error}"
+    );
+    assert_eq!(
+        engine.applied_manifest_hash().unwrap(),
+        Some(fewer_rules.hash.clone())
+    );
+    assert_eq!(engine.manifest().unwrap().hash, fewer_rules.hash);
+    assert_eq!(
+        engine.info().unwrap().entity_types[0].declaration_version,
+        1
+    );
+    engine.resolve(&ResolveOptions::default()).unwrap();
+    engine.verify().unwrap();
+}
+
 fn pipeline() -> Actor {
     Actor::Agent("pipeline".to_owned())
 }
