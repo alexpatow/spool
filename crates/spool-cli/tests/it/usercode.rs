@@ -143,9 +143,50 @@ fn build_with_install_starts_each_strategy_and_reports_one_that_does_not_start()
     assert!(complaint.contains("SyntaxError"), "{complaint}");
 }
 
+/// A version that is not the one the project was built with is refused, and
+/// a strategy that fails is a failed run that changed nothing.
+fn refuse_another_version_and_fail_a_broken_strategy(server: &Server) {
+    // A version that is not the one the project was built with is refused.
+    load(
+        server,
+        &[
+            &["id", "code", "colour"],
+            &["4", "hammer", "red"],
+            &["5", "hammer", "green"],
+        ],
+    );
+    let refused = server
+        .post(
+            "/v1/match",
+            json!({ "entity_type": "thing", "strategy": { "name": "by_code", "version": "1" } }),
+        )
+        .error(400, "invalid");
+    assert!(refused.contains("not 1"), "{refused}");
+
+    // A strategy that fails is a failed run, and nothing changed.
+    let failed = server
+        .post(
+            "/v1/match",
+            json!({ "entity_type": "thing", "strategy": { "name": "broken" } }),
+        )
+        .error(500, "strategy_failed");
+    assert!(failed.contains("strategy `broken`"), "{failed}");
+    assert!(failed.contains("the model is missing"), "{failed}");
+    let runs = server.read("/v1/runs?status=failed")["runs"].clone();
+    assert_eq!(runs.as_array().unwrap().len(), 1, "{runs}");
+    assert_eq!(runs[0]["strategy"]["name"], "broken");
+    assert!(
+        runs[0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("the model is missing"),
+        "{runs}"
+    );
+    assert_eq!(thing(server)["unassigned"], 2);
+}
+
 #[test]
 #[ignore = "runs uv"]
-#[expect(clippy::too_many_lines)]
 fn the_server_runs_the_projects_strategies_and_no_other_code() {
     let dir = tempfile::tempdir().unwrap();
     let project = dir.path().join("project");
@@ -215,43 +256,7 @@ fn the_server_runs_the_projects_strategies_and_no_other_code() {
     assert_eq!(thing(&server)["identities"], 2);
     assert_eq!(server.read("/v1/info")["store"]["head"], head);
 
-    // A version that is not the one the project was built with is refused.
-    load(
-        &server,
-        &[
-            &["id", "code", "colour"],
-            &["4", "hammer", "red"],
-            &["5", "hammer", "green"],
-        ],
-    );
-    let refused = server
-        .post(
-            "/v1/match",
-            json!({ "entity_type": "thing", "strategy": { "name": "by_code", "version": "1" } }),
-        )
-        .error(400, "invalid");
-    assert!(refused.contains("not 1"), "{refused}");
-
-    // A strategy that fails is a failed run, and nothing changed.
-    let failed = server
-        .post(
-            "/v1/match",
-            json!({ "entity_type": "thing", "strategy": { "name": "broken" } }),
-        )
-        .error(500, "strategy_failed");
-    assert!(failed.contains("strategy `broken`"), "{failed}");
-    assert!(failed.contains("the model is missing"), "{failed}");
-    let runs = server.read("/v1/runs?status=failed")["runs"].clone();
-    assert_eq!(runs.as_array().unwrap().len(), 1, "{runs}");
-    assert_eq!(runs[0]["strategy"]["name"], "broken");
-    assert!(
-        runs[0]["error"]
-            .as_str()
-            .unwrap()
-            .contains("the model is missing"),
-        "{runs}"
-    );
-    assert_eq!(thing(&server)["unassigned"], 2);
+    refuse_another_version_and_fail_a_broken_strategy(&server);
 
     // The strategy joins the two hammers the rules would have kept apart.
     let run = server.call(

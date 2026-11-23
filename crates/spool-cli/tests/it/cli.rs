@@ -66,7 +66,6 @@ fn help_is_printed_on_request() {
 /// A mistake in the arguments is said with the usage of the command it was
 /// made in, and exits with 2.
 #[test]
-#[expect(clippy::too_many_lines)]
 fn a_mistake_is_said_with_the_usage_and_exits_with_two() {
     for (arguments, expected) in [
         (
@@ -108,7 +107,11 @@ fn a_mistake_is_said_with_the_usage_and_exits_with_two() {
         assert_eq!(text(&output.stderr), expected, "{arguments:?}");
         assert_eq!(text(&output.stdout), "", "{arguments:?}");
     }
+}
 
+/// Every mistake in the arguments exits with 2, and says what it is.
+#[test]
+fn every_mistake_in_the_arguments_exits_with_two_and_says_what_it_is() {
     for (arguments, expected) in [
         (&["bench", "a", "b"][..], "unexpected argument 'b'"),
         (

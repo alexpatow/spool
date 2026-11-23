@@ -278,9 +278,86 @@ fn an_extractor_is_one_the_project_has_and_needs_the_projects_files() {
     );
 }
 
+/// What was read is not read again, and reading it again on purpose finds
+/// what is already known.
+fn read_again_on_purpose(news: &News, first: DocumentId, second: DocumentId) {
+    let engine = &news.engine;
+    let nothing = news.extract("names").unwrap();
+    assert_eq!((nothing.documents, nothing.mentions), (0, 0));
+    let again = engine
+        .extract(&ExtractOptions {
+            again: true,
+            source: Some("news".to_owned()),
+            limit: Some(1),
+            ..ExtractOptions::with("names")
+        })
+        .unwrap();
+    assert_eq!(
+        (
+            again.documents,
+            again.mentions,
+            again.inserted,
+            again.duplicates
+        ),
+        (1, 2, 0, 2)
+    );
+    assert_eq!(engine.document(first).unwrap().extractions.len(), 2);
+    assert_eq!(engine.document(second).unwrap().extractions.len(), 1);
+    assert!(
+        !engine
+            .resolve(&ResolveOptions::default())
+            .unwrap()
+            .resolved
+            .iter()
+            .any(|resolved| resolved.new_records > 0)
+    );
+}
+
+/// An extractor that says more about a mention it found before makes the
+/// next version of that record, which stays the same company.
+fn say_more_about_what_was_found(news: &News, first: DocumentId, acme: IdentityId) {
+    let engine = &news.engine;
+    news.extractor(
+        "names.py",
+        &NAMES.replace(
+            "name=found.group())",
+            "name=found.group(), form=found.group().split()[-1])",
+        ),
+    );
+    let more = engine
+        .extract(&ExtractOptions {
+            again: true,
+            ..ExtractOptions::with("names")
+        })
+        .unwrap();
+    assert_eq!(
+        (
+            more.documents,
+            more.mentions,
+            more.inserted,
+            more.superseded
+        ),
+        (2, 4, 4, 4)
+    );
+    let versions = engine
+        .records(&RecordFilter::keyed(
+            "news",
+            locator(first, "company", 2, 10),
+        ))
+        .unwrap();
+    assert_eq!(versions.len(), 2);
+    assert_eq!(versions[1].supersedes, Some(versions[0].id));
+    assert_eq!(
+        versions[1].payload,
+        serde_json::json!({ "name": "Acme Inc", "form": "Inc" })
+    );
+    engine.resolve(&ResolveOptions::default()).unwrap();
+    assert_eq!(engine.identity(acme).unwrap().members.len(), 4);
+    engine.verify().unwrap();
+}
+
 #[test]
 #[ignore = "runs uv"]
-#[expect(clippy::too_many_lines)]
 fn what_an_extractor_finds_is_records_and_resolves_like_rows() {
     let news = News::new();
     news.write(
@@ -391,77 +468,9 @@ fn what_an_extractor_finds_is_records_and_resolves_like_rows() {
             .is_some_and(|globex| globex != acme)
     );
 
-    // What was read is not read again, and reading it again on purpose
-    // finds what is already known.
-    let nothing = news.extract("names").unwrap();
-    assert_eq!((nothing.documents, nothing.mentions), (0, 0));
-    let again = engine
-        .extract(&ExtractOptions {
-            again: true,
-            source: Some("news".to_owned()),
-            limit: Some(1),
-            ..ExtractOptions::with("names")
-        })
-        .unwrap();
-    assert_eq!(
-        (
-            again.documents,
-            again.mentions,
-            again.inserted,
-            again.duplicates
-        ),
-        (1, 2, 0, 2)
-    );
-    assert_eq!(engine.document(first).unwrap().extractions.len(), 2);
-    assert_eq!(engine.document(second).unwrap().extractions.len(), 1);
-    assert!(
-        !engine
-            .resolve(&ResolveOptions::default())
-            .unwrap()
-            .resolved
-            .iter()
-            .any(|resolved| resolved.new_records > 0)
-    );
+    read_again_on_purpose(&news, first, second);
 
-    // An extractor that says more about a mention it found before makes
-    // the next version of that record, which stays the same company.
-    news.extractor(
-        "names.py",
-        &NAMES.replace(
-            "name=found.group())",
-            "name=found.group(), form=found.group().split()[-1])",
-        ),
-    );
-    let more = engine
-        .extract(&ExtractOptions {
-            again: true,
-            ..ExtractOptions::with("names")
-        })
-        .unwrap();
-    assert_eq!(
-        (
-            more.documents,
-            more.mentions,
-            more.inserted,
-            more.superseded
-        ),
-        (2, 4, 4, 4)
-    );
-    let versions = engine
-        .records(&RecordFilter::keyed(
-            "news",
-            locator(first, "company", 2, 10),
-        ))
-        .unwrap();
-    assert_eq!(versions.len(), 2);
-    assert_eq!(versions[1].supersedes, Some(versions[0].id));
-    assert_eq!(
-        versions[1].payload,
-        serde_json::json!({ "name": "Acme Inc", "form": "Inc" })
-    );
-    engine.resolve(&ResolveOptions::default()).unwrap();
-    assert_eq!(engine.identity(acme).unwrap().members.len(), 4);
-    engine.verify().unwrap();
+    say_more_about_what_was_found(&news, first, acme);
 }
 
 #[test]

@@ -16,7 +16,6 @@ fn without_agent_files(files: Vec<String>) -> Vec<String> {
 }
 
 #[test]
-#[expect(clippy::too_many_lines)]
 fn init_with_an_example_says_what_it_wrote_and_what_to_run_next() {
     let dir = tempfile::tempdir().unwrap();
 
@@ -113,9 +112,14 @@ c-9,Acorn Tool,GB
         assert_eq!(lines, [sql], "{rule}");
     }
 
-    // An example that does not exist is refused with the ones that do, and
-    // nothing is made.
-    let refused = init_in(dir.path(), &["people", "--example", "people"]);
+    refuse_unknown_examples(dir.path());
+    tell_of_a_missing_uv(dir.path(), &project);
+}
+
+/// An example that does not exist is refused with the ones that do, and
+/// nothing is made.
+fn refuse_unknown_examples(dir: &Path) {
+    let refused = init_in(dir, &["people", "--example", "people"]);
     assert_eq!(refused.status.code(), Some(2));
     let complaint = text(&refused.stderr);
     assert!(
@@ -124,25 +128,27 @@ c-9,Acorn Tool,GB
         ),
         "{complaint}"
     );
-    assert!(!dir.path().join("people").exists());
+    assert!(!dir.join("people").exists());
     // The options that named an example's entity type and source are gone.
     for option in ["--entity", "--source"] {
-        let refused = init_in(dir.path(), &["other", option, "person"]);
+        let refused = init_in(dir, &["other", option, "person"]);
         assert_eq!(refused.status.code(), Some(2), "{option}");
-        assert!(!dir.path().join("other").exists());
+        assert!(!dir.join("other").exists());
     }
+}
 
-    // On a machine without `uv`, which the last step needs and the others
-    // do not, the reader is told so now, with the line that installs it:
-    // the project is written all the same.
-    let empty = dir.path().join("empty");
+/// On a machine without `uv`, which the last step needs and the others do
+/// not, the reader is told so now, with the line that installs it: the
+/// project is written all the same.
+fn tell_of_a_missing_uv(dir: &Path, project: &Path) {
+    let empty = dir.join("empty");
     std::fs::create_dir(&empty).unwrap();
     // The isolated PATH also has no Git. Give each project a repository first.
     for name in ["bare", "ready", "plain"] {
-        git_init(&dir.path().join(name));
+        git_init(&dir.join(name));
     }
     let created = spool()
-        .current_dir(dir.path())
+        .current_dir(dir)
         .args(["init", "bare", "--example", "companies"])
         .env("PATH", &empty)
         .env("HOME", &empty)
@@ -165,14 +171,14 @@ about 330 MB, most of it the model, and later runs fetch nothing.
         ),
         "{created}"
     );
-    assert_eq!(files_of(&dir.path().join("bare")), files_of(&project));
+    assert_eq!(files_of(&dir.join("bare")), files_of(project));
     // It is found where its installer puts it, with the search path as it
     // was.
     let installed = empty.join(".local/bin/uv");
     std::fs::create_dir_all(installed.parent().unwrap()).unwrap();
     std::fs::copy(std::env::current_exe().unwrap(), &installed).unwrap();
     let created = spool()
-        .current_dir(dir.path())
+        .current_dir(dir)
         .args(["init", "ready", "--example", "companies"])
         .env("PATH", &empty)
         .env("HOME", &empty)
@@ -187,10 +193,10 @@ about 330 MB, most of it the model, and later runs fetch nothing.
     );
     // An empty project has no code to run, and says nothing of `uv`.
     let created = spool()
-        .current_dir(dir.path())
+        .current_dir(dir)
         .args(["init", "plain"])
         .env("PATH", &empty)
-        .env("HOME", dir.path().join("nobody"))
+        .env("HOME", dir.join("nobody"))
         .env_remove("SPOOL_UV")
         .output()
         .unwrap();

@@ -3,7 +3,6 @@
 use super::*;
 
 #[test]
-#[expect(clippy::too_many_lines)]
 fn a_tool_that_changes_something_is_held_to_the_rules_of_the_api() {
     let dir = tempfile::tempdir().unwrap();
     let server = company_server(dir.path());
@@ -116,15 +115,22 @@ fn a_tool_that_changes_something_is_held_to_the_rules_of_the_api() {
     let nothing = json!({ "identity": acorn, "records": [], "reason": "nothing to move" });
     refused(&server, "split_identity", nothing, "conflict");
 
+    dismiss_and_mint(&server);
+    assert_eq!(head(&server), before + 3);
+}
+
+/// A review item dismissed with who dismissed it and why, and IDs minted a
+/// few at a time, neither of which is a change to the log.
+fn dismiss_and_mint(server: &Server) {
     // A review item is closed with who closed it and why.
     refused(
-        &server,
+        server,
         "dismiss_review_item",
         json!({ "item": 1 }),
         "invalid",
     );
     let dismissed = tool(
-        &server,
+        server,
         "dismiss_review_item",
         json!({ "item": 1, "reason": "too little to go on" }),
     );
@@ -132,35 +138,44 @@ fn a_tool_that_changes_something_is_held_to_the_rules_of_the_api() {
     assert_eq!(dismissed["dismissed"]["by"], "agent:api");
     assert_eq!(dismissed["dismissed"]["reason"], "too little to go on");
     assert_eq!(
-        tool(&server, "list_review_items", json!({})),
+        tool(server, "list_review_items", json!({})),
         json!({ "items": [], "next": null })
     );
     let again = json!({ "item": 1, "reason": "again" });
-    refused(&server, "dismiss_review_item", again, "conflict");
+    refused(server, "dismiss_review_item", again, "conflict");
 
     // IDs are minted a few at a time.
-    let minted = tool(&server, "mint_identity_ids", json!({}));
+    let minted = tool(server, "mint_identity_ids", json!({}));
     assert_eq!(minted["identities"].as_array().unwrap().len(), 1);
     assert_eq!(minted["changesets"], json!([]));
     refused(
-        &server,
+        server,
         "mint_identity_ids",
         json!({ "count": 101 }),
         "invalid",
     );
-    assert_eq!(head(&server), before + 3);
 }
 
 #[test]
-#[expect(clippy::too_many_lines)]
 fn rows_are_loaded_matched_and_taken_back_through_tools() {
     let dir = tempfile::tempdir().unwrap();
     let (server, _) = thing_server(dir.path());
-    let runs = || server.read("/v1/runs")["runs"].as_array().unwrap().len();
+    let loaded = load_through_a_tool(&server);
+    match_through_a_tool(&server, &loaded);
+    explain_and_take_back_through_tools(&server);
+    replace_rows_through_a_tool(&server);
+}
 
+fn count_runs(server: &Server) -> usize {
+    server.read("/v1/runs")["runs"].as_array().unwrap().len()
+}
+
+/// Rows loaded through `load_rows`, as the API loads them, and the run that
+/// loaded them read by `get_run`.
+fn load_through_a_tool(server: &Server) -> Value {
     // Before a row is loaded, the store says which sources the project
     // declares and the columns of each.
-    let described = tool(&server, "describe_store", json!({}));
+    let described = tool(server, "describe_store", json!({}));
     assert_eq!(described, server.read("/v1/info"));
     let declared = &described["store"]["sources"];
     assert_eq!(declared.as_array().unwrap().len(), 13, "{declared}");
@@ -181,7 +196,7 @@ fn rows_are_loaded_matched_and_taken_back_through_tools() {
         { "id": "4", "code": "hammer", "colour": "red" },
     ]);
     let load = json!({ "source": "shop", "entity_type": "thing", "rows": rows });
-    let loaded = tool(&server, "load_rows", load.clone());
+    let loaded = tool(server, "load_rows", load.clone());
     assert_eq!(loaded["run"]["kind"], "load", "{loaded}");
     assert_eq!(loaded["run"]["status"], "succeeded", "{loaded}");
     assert_eq!(loaded["run"]["load"]["inserted"], 4, "{loaded}");
@@ -192,9 +207,9 @@ fn rows_are_loaded_matched_and_taken_back_through_tools() {
             .len(),
         4
     );
-    assert_eq!(head(&server), 0);
+    assert_eq!(head(server), 0);
     // The same rows again add nothing.
-    let again = tool(&server, "load_rows", load);
+    let again = tool(server, "load_rows", load);
     assert_eq!(again["run"]["load"]["inserted"], 0, "{again}");
     assert_eq!(again["run"]["load"]["duplicates"], 4, "{again}");
     // What the API refuses of a load, the tool refuses.
@@ -219,11 +234,11 @@ fn rows_are_loaded_matched_and_taken_back_through_tools() {
         ),
     ] {
         let load = json!({ "source": source, "entity_type": entity_type, "rows": [row] });
-        let error = refused(&server, "load_rows", load, "invalid");
+        let error = refused(server, "load_rows", load, "invalid");
         assert!(text(&error["message"]).contains(why), "{error}");
     }
     refused(
-        &server,
+        server,
         "load_rows",
         json!({ "source": "shop", "entity_type": "thing", "rows": [], "actor": "user:someone" }),
         "invalid",
@@ -234,15 +249,19 @@ fn rows_are_loaded_matched_and_taken_back_through_tools() {
 
     // A run is read by its number, as the API reads it.
     let run = loaded["run"]["run"].as_u64().unwrap();
-    assert_eq!(tool(&server, "get_run", json!({ "run": run })), loaded);
+    assert_eq!(tool(server, "get_run", json!({ "run": run })), loaded);
     assert_eq!(
-        tool(&server, "get_run", json!({ "run": run, "wait_ms": 500 })),
+        tool(server, "get_run", json!({ "run": run, "wait_ms": 500 })),
         server.read(&format!("/v1/runs/{run}"))
     );
-    refused(&server, "get_run", json!({ "run": 99 }), "not_found");
+    refused(server, "get_run", json!({ "run": 99 }), "not_found");
+    loaded
+}
 
+/// A match run started through `run_match`, and what it refuses to start.
+fn match_through_a_tool(server: &Server, loaded: &Value) {
     // A match run places what was loaded and commits it.
-    let matched = tool(&server, "run_match", json!({ "entity_type": "thing" }));
+    let matched = tool(server, "run_match", json!({ "entity_type": "thing" }));
     let resolution = &matched["run"]["resolution"];
     assert_eq!(matched["run"]["kind"], "match", "{matched}");
     assert_eq!(matched["run"]["status"], "succeeded", "{matched}");
@@ -250,23 +269,23 @@ fn rows_are_loaded_matched_and_taken_back_through_tools() {
     assert_eq!(resolution["identities_created"], 3, "{matched}");
     assert_eq!(resolution["committed"]["seq"], 1, "{matched}");
     assert!(resolution["draft"].is_null(), "{matched}");
-    assert_eq!(head(&server), 1);
+    assert_eq!(head(server), 1);
     // A run says who started it. What a match run commits is the engine's
     // in the log, which says who asked beside it.
     assert_eq!(loaded["run"]["started_by"], "agent:api", "{loaded}");
     assert_eq!(matched["run"]["started_by"], "agent:api", "{matched}");
-    let placed = tool(&server, "list_changesets", json!({ "limit": 1 }));
+    let placed = tool(server, "list_changesets", json!({ "limit": 1 }));
     assert_eq!(placed["changesets"][0]["changeset"]["actor"], "engine");
     assert_eq!(placed["changesets"][0]["started_by"], "agent:api");
     let run = matched["run"]["run"].as_u64().unwrap();
-    assert_eq!(tool(&server, "get_run", json!({ "run": run })), matched);
+    assert_eq!(tool(server, "get_run", json!({ "run": run })), matched);
     // With nothing new, no run is started.
-    let nothing = tool(&server, "run_match", json!({ "entity_type": "thing" }));
+    let nothing = tool(server, "run_match", json!({ "entity_type": "thing" }));
     assert_eq!(nothing, json!({ "run": null }));
     // The project's rules are a strategy by name, and a rematch judges
     // what has an identity again and moves nothing.
     let rematch = json!({ "entity_type": "thing", "strategy": "rules", "rematch": true });
-    let rematched = tool(&server, "run_match", rematch);
+    let rematched = tool(server, "run_match", rematch);
     let resolution = &rematched["run"]["resolution"];
     assert_eq!(resolution["candidates"], 3, "{rematched}");
     assert_eq!(
@@ -274,32 +293,35 @@ fn rows_are_loaded_matched_and_taken_back_through_tools() {
         json!({ "merges": [], "splits": [] })
     );
     assert!(resolution["committed"].is_null(), "{rematched}");
-    assert_eq!(head(&server), 1);
+    assert_eq!(head(server), 1);
     // A draft is not left, since no tool approves one, and a strategy the
     // project does not have is not started, since no tool sends judgements.
-    let before = runs();
+    let before = count_runs(server);
     for arguments in [
         json!({ "entity_type": "thing", "commit": false }),
         json!({ "entity_type": "thing", "strategy": "mine" }),
         json!({ "entity_type": "widget" }),
     ] {
-        refused(&server, "run_match", arguments, "invalid");
+        refused(server, "run_match", arguments, "invalid");
     }
-    assert_eq!(runs(), before);
+    assert_eq!(count_runs(server), before);
     assert!(
         server.read("/v1/drafts")["drafts"]
             .as_array()
             .unwrap()
             .is_empty()
     );
+}
 
+/// A pair explained by source and key, and a row taken back and loaded again.
+fn explain_and_take_back_through_tools(server: &Server) {
     // A pair is explained by source and key, as by ID.
     let id = |key: &str| {
         let found = server.read(&format!("/v1/records?source=shop&key={key}"));
         text(&found["records"][0]["id"]).to_owned()
     };
     let by_key = tool(
-        &server,
+        server,
         "explain_pair",
         json!({ "a": "shop:1", "b": "shop:3" }),
     );
@@ -307,16 +329,16 @@ fn rows_are_loaded_matched_and_taken_back_through_tools() {
     assert_eq!(
         by_key,
         tool(
-            &server,
+            server,
             "explain_pair",
             json!({ "a": id("1"), "b": id("3") })
         )
     );
     assert_eq!(by_key, server.read("/v1/explain?a=shop:1&b=shop:3"));
     let unknown = json!({ "a": "shop:1", "b": "shop:9" });
-    refused(&server, "explain_pair", unknown, "not_found");
+    refused(server, "explain_pair", unknown, "not_found");
     let unnamed = refused(
-        &server,
+        server,
         "explain_pair",
         json!({ "a": "1", "b": "shop:3" }),
         "invalid",
@@ -329,35 +351,39 @@ fn rows_are_loaded_matched_and_taken_back_through_tools() {
     // Taking a row back says why, and is recorded under the caller. The
     // row stays, out of its identity.
     let keys = json!({ "source": "shop", "entity_type": "thing", "keys": ["2", "9"] });
-    refused(&server, "retract_rows", keys.clone(), "invalid");
+    refused(server, "retract_rows", keys.clone(), "invalid");
     let mut taken = keys;
     taken["reason"] = json!("loaded by mistake");
-    let retracted = tool(&server, "retract_rows", taken);
+    let retracted = tool(server, "retract_rows", taken);
     let retraction = &retracted["run"]["retraction"];
     assert_eq!(retracted["run"]["kind"], "retract", "{retracted}");
     assert_eq!(retraction["retracted"], 1, "{retracted}");
     assert_eq!(retraction["unknown"], 1, "{retracted}");
     assert_eq!(retraction["committed"]["seq"], 2, "{retracted}");
-    let entry = entry(&server, 2);
+    let entry = entry(server, 2);
     assert_eq!(entry["changeset"]["actor"], "agent:api", "{entry}");
     assert_eq!(entry["changeset"]["reason"], "loaded by mistake", "{entry}");
-    let record = tool(&server, "get_record", json!({ "record": id("2") }));
+    let record = tool(server, "get_record", json!({ "record": id("2") }));
     assert!(record["identity"].is_null(), "{record}");
     assert_eq!(record["retracted"], retracted["run"]["run"], "{record}");
     // Loading the row again ends the retraction.
     let row = json!({ "id": "2", "code": "anvil", "colour": "black" });
     let back = json!({ "source": "shop", "entity_type": "thing", "rows": [row] });
-    let back = tool(&server, "load_rows", back);
+    let back = tool(server, "load_rows", back);
     assert_eq!(back["run"]["load"]["restored"], 1, "{back}");
-    let record = tool(&server, "get_record", json!({ "record": id("2") }));
+    let record = tool(server, "get_record", json!({ "record": id("2") }));
     assert!(record["identity"].is_string(), "{record}");
     assert!(record["retracted"].is_null(), "{record}");
+}
 
+/// A row that would replace one the store holds, refused unless the call
+/// says to replace it.
+fn replace_rows_through_a_tool(server: &Server) {
     // A row under a key the store holds, with other values, would replace
     // that row. The tool refuses it unless the call says to, and the rows
     // that came with it are not loaded either.
     let held = || server.read("/v1/info")["store"]["entity_types"][0]["records"].clone();
-    let before = (held(), runs());
+    let before = (held(), count_runs(server));
     let rows = json!([
         { "id": "4", "code": "hammer", "colour": "blue" },
         { "id": "1", "code": "anvil", "colour": "black" },
@@ -365,7 +391,7 @@ fn rows_are_loaded_matched_and_taken_back_through_tools() {
         { "id": "3", "code": "anvil", "colour": "green" },
     ]);
     let mut change = json!({ "source": "shop", "entity_type": "thing", "rows": rows });
-    let error = refused(&server, "load_rows", change.clone(), "invalid");
+    let error = refused(server, "load_rows", change.clone(), "invalid");
     assert_eq!(
         error["message"],
         "load rejected: 2 rows have keys the store holds with other values: `3`, `4`. \
@@ -373,14 +399,14 @@ fn rows_are_loaded_matched_and_taken_back_through_tools() {
          meant to change, load again with `replace` set to true"
     );
     change["replace"] = json!(false);
-    refused(&server, "load_rows", change.clone(), "invalid");
+    refused(server, "load_rows", change.clone(), "invalid");
     assert_eq!(held(), before.0);
     // Each refused load is a run that failed.
-    assert_eq!(runs(), before.1 + 2);
+    assert_eq!(count_runs(server), before.1 + 2);
     let by_key = server.read("/v1/records?source=shop&key=4");
     assert_eq!(by_key["records"].as_array().unwrap().len(), 1, "{by_key}");
     change["replace"] = json!(true);
-    let changed = tool(&server, "load_rows", change);
+    let changed = tool(server, "load_rows", change);
     assert_eq!(changed["run"]["load"]["inserted"], 3, "{changed}");
     assert_eq!(changed["run"]["load"]["superseded"], 2, "{changed}");
     let by_key = server.read("/v1/records?source=shop&key=4");
@@ -389,16 +415,16 @@ fn rows_are_loaded_matched_and_taken_back_through_tools() {
     // again is refused the same way, and put back when the call says to.
     let row = json!({ "id": "4", "code": "hammer", "colour": "red" });
     let mut back = json!({ "source": "shop", "entity_type": "thing", "rows": [row] });
-    let error = refused(&server, "load_rows", back.clone(), "invalid");
+    let error = refused(server, "load_rows", back.clone(), "invalid");
     assert!(
         text(&error["message"]).starts_with("load rejected: 1 row has a key"),
         "{error}"
     );
     back["replace"] = json!(true);
-    let put_back = tool(&server, "load_rows", back);
+    let put_back = tool(server, "load_rows", back);
     assert_eq!(put_back["run"]["load"]["superseded"], 1, "{put_back}");
     let found = tool(
-        &server,
+        server,
         "search_records",
         json!({ "source": "shop", "key": "4" }),
     );

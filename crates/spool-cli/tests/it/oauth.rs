@@ -195,17 +195,10 @@ fn call(server: &Server, token: &str, name: &str, arguments: Value) -> Value {
     serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap()
 }
 
-/// The whole of it: from the first `401` to a change in the log under the
-/// person who approved, and on to refreshing, a stolen refresh token, and
-/// an admin taking the approval back.
-#[test]
-#[expect(clippy::too_many_lines)]
-fn an_assistant_signs_in_and_works_as_the_person_who_approved_it() {
-    let dir = tempfile::tempdir().unwrap();
-    let setup = set_up(dir.path());
-    let server = &setup.server;
-    let issuer = setup.issuer.as_str();
-
+/// An assistant that is refused is told where to read how to sign in, and
+/// the metadata there names this server as the one to sign in with, and
+/// says how.
+fn discover_how_to_sign_in(server: &Server, issuer: &str) {
     // The assistant is refused, and told where to read how to sign in.
     let list = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" });
     let refused = bare(server, "POST", "/mcp")
@@ -249,12 +242,15 @@ fn an_assistant_signs_in_and_works_as_the_person_who_approved_it() {
     ] {
         assert_eq!(said[endpoint], format!("{issuer}{at}"));
     }
+}
 
-    let client = register(server, "Claude", CLAUDE);
-
+/// The person's browser is sent to the studio, which asks them to sign in
+/// and shows what is asked. Only someone signed in approves, and only on
+/// the studio's own page.
+fn ask_in_the_studio(setup: &Setup, request: &str) {
+    let server = &setup.server;
     // The person's browser is sent to the studio, which asks them to sign
     // in and shows what is asked.
-    let request = authorization(&setup, &client, CLAUDE, "the-state");
     let page = bare(server, "GET", &format!("/oauth/authorize?{request}")).send();
     assert_eq!(page.status, 200);
     assert!(
@@ -281,6 +277,67 @@ fn an_assistant_signs_in_and_works_as_the_person_who_approved_it() {
         .json(&decision)
         .send();
     elsewhere.error(403, "forbidden");
+}
+
+/// An approval refreshed, and a refresh token used twice taken for a
+/// stolen copy: the approval ends for both.
+fn refresh_and_catch_a_stolen_token(setup: &Setup, client: &str, request: &str) {
+    let server = &setup.server;
+    let resource = format!("{}/mcp", setup.issuer);
+    let list = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" });
+    // Again, and this time refresh.
+    let code = query(&decide(setup, request, true))["code"].clone();
+    let tokens = exchange(setup, client, &code);
+    let refresh_with = |token: &str| {
+        form(
+            server,
+            "/oauth/token",
+            &[
+                ("grant_type", "refresh_token"),
+                ("refresh_token", token),
+                ("client_id", client),
+                ("resource", &resource),
+            ],
+        )
+    };
+    let first = tokens["refresh_token"].as_str().unwrap().to_owned();
+    let refreshed = refresh_with(&first).ok();
+    let access = refreshed["access_token"].as_str().unwrap().to_owned();
+    assert_ne!(refreshed["refresh_token"], tokens["refresh_token"]);
+    call(server, &access, "describe_store", json!({}));
+
+    // A refresh token that was used already is someone else's copy: the
+    // approval ends, for both of them.
+    assert_eq!(refresh_with(&first).expect(400)["error"], "invalid_grant");
+    let ended = mcp(server, &access, &list).send();
+    ended.error(401, "unauthorized");
+    assert!(
+        ended
+            .header("www-authenticate")
+            .unwrap()
+            .contains("invalid_token")
+    );
+    let next = refreshed["refresh_token"].as_str().unwrap();
+    assert_eq!(refresh_with(next).expect(400)["error"], "invalid_grant");
+}
+
+/// The whole of it: from the first `401` to a change in the log under the
+/// person who approved, and on to refreshing, a stolen refresh token, and
+/// an admin taking the approval back.
+#[test]
+fn an_assistant_signs_in_and_works_as_the_person_who_approved_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let setup = set_up(dir.path());
+    let server = &setup.server;
+    let issuer = setup.issuer.as_str();
+
+    discover_how_to_sign_in(server, issuer);
+    let list = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" });
+
+    let client = register(server, "Claude", CLAUDE);
+
+    let request = authorization(&setup, &client, CLAUDE, "the-state");
+    ask_in_the_studio(&setup, &request);
 
     let to = decide(&setup, &request, true);
     assert!(to.starts_with(&format!("{CLAUDE}?")), "{to}");
@@ -356,40 +413,7 @@ fn an_assistant_signs_in_and_works_as_the_person_who_approved_it() {
         .send()
         .error(401, "unauthorized");
 
-    // Again, and this time refresh.
-    let code = query(&decide(&setup, &request, true))["code"].clone();
-    let tokens = exchange(&setup, &client, &code);
-    let refresh_with = |token: &str| {
-        form(
-            server,
-            "/oauth/token",
-            &[
-                ("grant_type", "refresh_token"),
-                ("refresh_token", token),
-                ("client_id", &client),
-                ("resource", &resource),
-            ],
-        )
-    };
-    let first = tokens["refresh_token"].as_str().unwrap().to_owned();
-    let refreshed = refresh_with(&first).ok();
-    let access = refreshed["access_token"].as_str().unwrap().to_owned();
-    assert_ne!(refreshed["refresh_token"], tokens["refresh_token"]);
-    call(server, &access, "describe_store", json!({}));
-
-    // A refresh token that was used already is someone else's copy: the
-    // approval ends, for both of them.
-    assert_eq!(refresh_with(&first).expect(400)["error"], "invalid_grant");
-    let ended = mcp(server, &access, &list).send();
-    ended.error(401, "unauthorized");
-    assert!(
-        ended
-            .header("www-authenticate")
-            .unwrap()
-            .contains("invalid_token")
-    );
-    let next = refreshed["refresh_token"].as_str().unwrap();
-    assert_eq!(refresh_with(next).expect(400)["error"], "invalid_grant");
+    refresh_and_catch_a_stolen_token(&setup, &client, &request);
 
     // An admin sees every approval, and takes one back.
     let code = query(&decide(&setup, &request, true))["code"].clone();

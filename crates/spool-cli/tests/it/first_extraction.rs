@@ -334,7 +334,6 @@ fn the_sample_model_reads_the_note_and_what_it_names_joins_the_rows() {
     the_steps_after_init(&init_companies(dir.path()));
 }
 
-#[expect(clippy::too_many_lines)]
 fn the_steps_after_init(project: &Path) {
     let server = Server::dev(project);
     let shown = |arguments: &[&str]| shown(&server, project, arguments);
@@ -357,33 +356,7 @@ fn the_steps_after_init(project: &Path) {
     // With the sample extractor, on a machine that has not run it before,
     // this is where the model is fetched.
     assert_eq!(extracted(&server, project, &["samples/notes-1.txt"]), FIRST);
-    // Nobody signs in to a development server, so what the command started
-    // is the `dev` account's, as the load and the match before it are: the
-    // load of the note, the extraction, and the load of what it found.
-    let dev = server
-        .request("GET", "/auth/session")
-        .without("Authorization")
-        .send()
-        .ok();
-    let dev = format!("user:{}", dev["person"]["id"].as_str().unwrap());
-    let started: Vec<(Value, Value)> = server.read("/v1/runs")["runs"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .rev()
-        .map(|run| (run["kind"].clone(), run["started_by"].clone()))
-        .collect();
-    assert_eq!(
-        started,
-        ["load", "match", "reconcile", "load", "extract", "load"]
-            .map(|kind| (json!(kind), json!(dev)))
-    );
-    let run = shown(&[
-        "show",
-        "runs",
-        &runs(&server, "extract")[0]["run"].to_string(),
-    ]);
-    assert!(run.contains(&format!("\nstarted by  {dev}\n")), "{run}");
+    check_runs_are_the_dev_accounts(&server, project);
     // Each record says where it was found, and the place is the text.
     let records = found(&server);
     let note: Vec<char> = NOTE.chars().collect();
@@ -441,50 +414,7 @@ placed      3 records, 1 identity created
     }
     assert!(!acorn.contains('#'), "{acorn}");
 
-    // The same command again has nothing to do, and says how to have it
-    // done regardless. Reading the note again finds what was found.
-    assert_eq!(
-        shown(&["extract", "samples/notes-1.txt"]),
-        "\
-source     notes
-read       1 document from samples/notes-1.txt
-loaded     0 new, 1 already held, 0 new versions
-extractor  companies
-found      0 records: `companies` has read every document. `--again` reads them again.
-"
-    );
-    assert_eq!(
-        extracted(&server, project, &["samples/notes-1.txt", "--again"]),
-        "\
-source     notes
-read       1 document from samples/notes-1.txt
-loaded     0 new, 1 already held, 0 new versions
-extractor  companies
-found      3 records in 1 document: 0 new, 3 already held
-
-  company  Acorn Tools Ltd          notes:notes-1.txt[54-69]
-  company  Larkfield Logistics Ltd  notes:notes-1.txt[119-142]
-  company  Brightwater Foods Ltd    notes:notes-1.txt[179-200]
-"
-    );
-    // The same records, each found once more.
-    let without_readings = |records: Vec<Value>| -> Vec<Value> {
-        records
-            .into_iter()
-            .map(|mut record| {
-                record.as_object_mut().unwrap().remove("found_by");
-                record
-            })
-            .collect()
-    };
-    let again = found(&server);
-    assert!(
-        again
-            .iter()
-            .all(|record| record["found_by"].as_array().unwrap().len() == 2),
-        "{again:?}"
-    );
-    assert_eq!(without_readings(again), without_readings(records));
+    read_the_note_again(&server, project, records);
 
     // A document longer than the sample's model reads at once is read in
     // pieces, and a name is found wherever it is: here after two thousand
@@ -512,6 +442,85 @@ found      3 records in 1 document: 0 new, 3 already held
             .iter()
             .all(|run| run["status"] == "succeeded")
     );
+}
+
+/// Nobody signs in to a development server, so what `spool extract`
+/// started is the `dev` account's, as the load and the match before it are:
+/// the load of the note, the extraction, and the load of what it found.
+fn check_runs_are_the_dev_accounts(server: &Server, project: &Path) {
+    let shown = |arguments: &[&str]| shown(server, project, arguments);
+    let dev = server
+        .request("GET", "/auth/session")
+        .without("Authorization")
+        .send()
+        .ok();
+    let dev = format!("user:{}", dev["person"]["id"].as_str().unwrap());
+    let started: Vec<(Value, Value)> = server.read("/v1/runs")["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rev()
+        .map(|run| (run["kind"].clone(), run["started_by"].clone()))
+        .collect();
+    assert_eq!(
+        started,
+        ["load", "match", "reconcile", "load", "extract", "load"]
+            .map(|kind| (json!(kind), json!(dev)))
+    );
+    let run = shown(&[
+        "show",
+        "runs",
+        &runs(server, "extract")[0]["run"].to_string(),
+    ]);
+    assert!(run.contains(&format!("\nstarted by  {dev}\n")), "{run}");
+}
+
+/// The same command again has nothing to do, and says how to have it done
+/// regardless. Reading the note again finds what was found.
+fn read_the_note_again(server: &Server, project: &Path, records: Vec<Value>) {
+    let shown = |arguments: &[&str]| shown(server, project, arguments);
+    assert_eq!(
+        shown(&["extract", "samples/notes-1.txt"]),
+        "\
+source     notes
+read       1 document from samples/notes-1.txt
+loaded     0 new, 1 already held, 0 new versions
+extractor  companies
+found      0 records: `companies` has read every document. `--again` reads them again.
+"
+    );
+    assert_eq!(
+        extracted(server, project, &["samples/notes-1.txt", "--again"]),
+        "\
+source     notes
+read       1 document from samples/notes-1.txt
+loaded     0 new, 1 already held, 0 new versions
+extractor  companies
+found      3 records in 1 document: 0 new, 3 already held
+
+  company  Acorn Tools Ltd          notes:notes-1.txt[54-69]
+  company  Larkfield Logistics Ltd  notes:notes-1.txt[119-142]
+  company  Brightwater Foods Ltd    notes:notes-1.txt[179-200]
+"
+    );
+    // The same records, each found once more.
+    let without_readings = |records: Vec<Value>| -> Vec<Value> {
+        records
+            .into_iter()
+            .map(|mut record| {
+                record.as_object_mut().unwrap().remove("found_by");
+                record
+            })
+            .collect()
+    };
+    let again = found(server);
+    assert!(
+        again
+            .iter()
+            .all(|record| record["found_by"].as_array().unwrap().len() == 2),
+        "{again:?}"
+    );
+    assert_eq!(without_readings(again), without_readings(records));
 }
 
 /// What `spool extract` does with a note that changed, with a document

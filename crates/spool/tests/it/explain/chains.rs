@@ -1,9 +1,74 @@
 //! Records joined through others, and where an identity would part.
 
+use spool::core::RecordId;
+
 use super::*;
 
+/// One link parts the two: the one between the anvils and the block, which
+/// keeps each name together.
+fn check_the_cut(explanation: &Explanation, l: &str, left: RecordId, middle: RecordId) {
+    let cut = explanation.cut.as_ref().expect("a cut");
+    let [link] = &cut.links[..] else {
+        panic!("one link parts them");
+    };
+    assert_eq!(link.rules, ["same_code"]);
+    let anvils = "2 records with `shop:1` (2 × `anvil`)";
+    let block = "1 record with `shop:3` (1 × `block`)";
+    let (with_left, with_right, sizes) = match l {
+        "shop:1" => (anvils, block, [2, 1]),
+        _ => (block, anvils, [1, 2]),
+    };
+    assert_eq!(
+        cut.sides
+            .iter()
+            .map(|side| side.records)
+            .collect::<Vec<_>>(),
+        sizes
+    );
+    assert_eq!(link.from, if l == "shop:1" { middle } else { left });
+    assert!(
+        explanation.summary.contains(&format!(
+            "Removing 1 link would part them, leaving {with_left} and {with_right}."
+        )),
+        "{:#?}",
+        explanation.summary
+    );
+}
+
+/// A constraint between the two is a link of its own, and the one that is
+/// followed.
+fn a_constraint_is_a_link_of_its_own(engine: &Engine, left: RecordId, right: RecordId) {
+    engine
+        .author(
+            reviewer(),
+            Some("the same block".to_owned()),
+            vec![Op::Constrain {
+                kind: ConstraintKind::MustLink,
+                a: left,
+                b: right,
+            }],
+        )
+        .unwrap();
+    let explanation = explain(engine, ("shop", "1"), ("shop", "3"));
+    let [link] = &explanation.path[..] else {
+        panic!("they are linked directly");
+    };
+    assert_eq!((link.kind, link.run), (LinkKind::MustLink, None));
+    let [constraint] = &explanation.constraints[..] else {
+        panic!("one constraint");
+    };
+    assert_eq!(constraint.constraint.kind, ConstraintKind::MustLink);
+    assert_eq!(
+        (constraint.from, constraint.to),
+        (engine.head().unwrap(), None)
+    );
+    assert!(says(
+        &explanation,
+        "A `must_link` constraint committed at log position 2 says they belong together"
+    ));
+}
+
 #[test]
-#[expect(clippy::too_many_lines)]
 fn two_members_that_were_never_compared_are_joined_through_others() {
     let engine = engine();
     load(
@@ -81,34 +146,7 @@ fn two_members_that_were_never_compared_are_joined_through_others() {
         &explanation,
         "Without the links only rule `same_code` made, they would not be together."
     ));
-    // One link parts them: the one between the anvils and the block, which
-    // keeps each name together.
-    let cut = explanation.cut.as_ref().expect("a cut");
-    let [link] = &cut.links[..] else {
-        panic!("one link parts them");
-    };
-    assert_eq!(link.rules, ["same_code"]);
-    let anvils = "2 records with `shop:1` (2 × `anvil`)";
-    let block = "1 record with `shop:3` (1 × `block`)";
-    let (with_left, with_right, sizes) = match l.as_str() {
-        "shop:1" => (anvils, block, [2, 1]),
-        _ => (block, anvils, [1, 2]),
-    };
-    assert_eq!(
-        cut.sides
-            .iter()
-            .map(|side| side.records)
-            .collect::<Vec<_>>(),
-        sizes
-    );
-    assert_eq!(link.from, if l == "shop:1" { middle } else { left });
-    assert!(
-        explanation.summary.contains(&format!(
-            "Removing 1 link would part them, leaving {with_left} and {with_right}."
-        )),
-        "{:#?}",
-        explanation.summary
-    );
+    check_the_cut(&explanation, &l, left, middle);
     assert!(r.starts_with("shop:"));
     // One of the two has no code, so the rule about codes says nothing.
     let rules = explanation.rules.as_ref().unwrap();
@@ -126,36 +164,7 @@ fn two_members_that_were_never_compared_are_joined_through_others() {
         "By the rules as they are now, no block rule holds for the pair, so a run would not compare them. Block rule `same_code` cannot be decided, because a feature it reads is null."
     ));
 
-    // A constraint between the two is a link of its own, and the one that
-    // is followed.
-    engine
-        .author(
-            reviewer(),
-            Some("the same block".to_owned()),
-            vec![Op::Constrain {
-                kind: ConstraintKind::MustLink,
-                a: left,
-                b: right,
-            }],
-        )
-        .unwrap();
-    let explanation = explain(&engine, ("shop", "1"), ("shop", "3"));
-    let [link] = &explanation.path[..] else {
-        panic!("they are linked directly");
-    };
-    assert_eq!((link.kind, link.run), (LinkKind::MustLink, None));
-    let [constraint] = &explanation.constraints[..] else {
-        panic!("one constraint");
-    };
-    assert_eq!(constraint.constraint.kind, ConstraintKind::MustLink);
-    assert_eq!(
-        (constraint.from, constraint.to),
-        (engine.head().unwrap(), None)
-    );
-    assert!(says(
-        &explanation,
-        "A `must_link` constraint committed at log position 2 says they belong together"
-    ));
+    a_constraint_is_a_link_of_its_own(&engine, left, right);
 }
 
 #[test]

@@ -116,7 +116,6 @@ fn workshop(dir: &Path) -> Server {
 }
 
 #[test]
-#[expect(clippy::too_many_lines)]
 fn show_lists_what_a_server_holds() {
     let dir = tempfile::tempdir().unwrap();
     let server = workshop(dir.path());
@@ -130,165 +129,16 @@ fn show_lists_what_a_server_holds() {
     has(&overview, "  review      0 items open");
     assert_eq!(answered(&server, &["show"]), server.read("/v1/info"));
 
-    let runs = shown(&server, &["show", "runs"]);
-    assert!(
-        runs.starts_with("RUN  KIND       STATUS     ABOUT         STARTED BY  STARTED\n"),
-        "{runs}"
-    );
-    assert!(
-        runs.contains("\n2    match      succeeded  thing, rules  agent:api   "),
-        "{runs}"
-    );
-    assert!(
-        runs.contains("\n1    load       succeeded  thing         agent:api   "),
-        "{runs}"
-    );
-    let matches = shown(&server, &["show", "runs", "--kind", "match"]);
-    assert_eq!(matches.lines().count(), 2, "{matches}");
-    assert_eq!(
-        answered(
-            &server,
-            &["show", "runs", "--kind", "match", "--limit", "1"]
-        ),
-        server.read("/v1/runs?kind=match&limit=1")
-    );
-
-    let run = shown(&server, &["show", "runs", "2"]);
-    has(&run, "kind           match");
-    has(&run, "started by     agent:api");
-    has(
-        &run,
-        &format!(
-            "strategy       rules, version {}",
-            env!("CARGO_PKG_VERSION")
-        ),
-    );
-    has(
-        &run,
-        "examined       4 records, 0 of them left for review before",
-    );
-    has(&run, "candidates     3 pairs");
-    has(&run, "judgements     1 match, 2 no_match, 0 unsure");
-    has(&run, "placed         4 records, 3 identities created");
-    has(&run, "left out       0 records in 0 review items");
-    assert!(
-        run.contains("\ncommitted      log position 1, changeset "),
-        "{run}"
-    );
-    let loaded = shown(&server, &["show", "runs", "1"]);
-    has(
-        &loaded,
-        "rows      4 received: 4 new, 0 known, 0 new versions of a known row",
-    );
-
-    let identities = shown(&server, &["show", "identities"]);
-    assert_eq!(identities.lines().count(), 4, "{identities}");
-    assert!(
-        identities
-            .starts_with("IDENTITY                              NAME    MEMBERS  NAMES  UNLINKED PAIRS  CREATED AT\n"),
-        "{identities}"
-    );
-    let page = shown(
-        &server,
-        &["show", "identities", "--limit", "1", "--type", "thing"],
-    );
-    let first = page
-        .lines()
-        .nth(1)
-        .unwrap()
-        .split_whitespace()
-        .next()
-        .unwrap();
-    has(&page, &format!("more: add `--after {first}`"));
-    let rest = shown(&server, &["show", "identities", "--after", first]);
-    assert_eq!(rest.lines().count(), 3, "{rest}");
-    assert!(!rest.contains(first));
+    show_runs(&server);
 
     let (one, two) = (id_of(&server, "shop", "1"), id_of(&server, "shop", "2"));
     let anvils = server.read(&format!("/v1/records/{one}"))["identity"]
         .as_str()
         .unwrap()
         .to_owned();
-    let identity = shown(&server, &["show", "identities", &anvils]);
-    has(&identity, &format!("identity    {anvils}"));
-    has(&identity, "created at  log position 1");
-    has(
-        &identity,
-        "RECORD                                SOURCE AND KEY  SINCE",
-    );
-    for (id, name) in [(&one, "shop:1"), (&two, "shop:2")] {
-        has(&identity, &format!("{id}  {name}          log position 1"));
-        has(&identity, &format!("      place record {id} in {anvils}"));
-    }
-    has(&identity, &format!("      create thing identity {anvils}"));
-    assert!(
-        identity.contains("  engine  reconcile run 3  \"reconcile new records\"\n"),
-        "{identity}"
-    );
-    let bundle = answered(&server, &["show", "identities", &anvils]);
-    assert_eq!(
-        bundle["identity"],
-        server.read(&format!("/v1/identities/{anvils}"))
-    );
-    assert_eq!(
-        bundle["history"],
-        server.read(&format!("/v1/identities/{anvils}/history"))["history"]
-    );
-    assert_eq!(bundle["constraints"], json!([]));
+    show_identities(&server, &one, &two, &anvils);
 
-    // Records are listed by source and key, with the name their type's
-    // label gives them. Their IDs are one option away.
-    let records = shown(&server, &["show", "records", "--source", "shop"]);
-    let listed: Vec<&str> = records.lines().collect();
-    assert_eq!(listed.len(), 5, "{records}");
-    assert_eq!(listed[0], "SOURCE AND KEY  NAME    IDENTITY");
-    assert_eq!(listed[1], format!("shop:1          anvil   {anvils}"));
-    assert_eq!(listed[2], format!("shop:2          anvil   {anvils}"));
-    assert!(
-        listed[3].starts_with("shop:3          anvil   "),
-        "{records}"
-    );
-    assert!(
-        listed[4].starts_with("shop:4          hammer  "),
-        "{records}"
-    );
-    let with_ids = shown(&server, &["show", "records", "--source", "shop", "--ids"]);
-    assert_eq!(with_ids.lines().count(), 5, "{with_ids}");
-    has(
-        &with_ids,
-        "RECORD                                SOURCE AND KEY  NAME    IDENTITY",
-    );
-    has(&with_ids, &format!("{one}  shop:1  anvil  {anvils}"));
-    let page = shown(&server, &["show", "records", "--limit", "2"]);
-    has(&page, &format!("more: add `--after {two}`"));
-    let rest = shown(&server, &["show", "records", "--after", &two]);
-    assert_eq!(rest.lines().count(), 3, "{rest}");
-    assert!(rest.contains("\nshop:3  "), "{rest}");
-    let none = shown(&server, &["show", "records", "--unassigned"]);
-    assert_eq!(none, "no records\n");
-    // `--ids` is an option of the list.
-    let (code, complaint) = refused(&server, &["show", "records", "shop:1", "--ids"]);
-    assert_eq!(code, Some(2));
-    assert!(
-        complaint.starts_with("error: the argument '[RECORD]' cannot be used with '--ids'\n"),
-        "{complaint}"
-    );
-
-    // A record is named by its ID or by its source and key.
-    let record = shown(&server, &["show", "records", "shop:1"]);
-    assert_eq!(record, shown(&server, &["show", "records", &one]));
-    has(&record, &format!("record  {one}"));
-    has(&record, "source       shop");
-    has(&record, "key          1");
-    has(&record, &format!("identity     {anvils}"));
-    has(&record, "payload");
-    has(&record, "  code    anvil");
-    has(&record, "  colour  black");
-    assert!(record.contains(" by run 1\n"), "{record}");
-    let bundle = answered(&server, &["show", "records", "shop:1"]);
-    assert_eq!(bundle["record"], server.read(&format!("/v1/records/{one}")));
-    assert_eq!(bundle["mention"], Value::Null);
-    assert_eq!(bundle["review_items"], json!([]));
+    show_records(&server, &one, &two, &anvils);
 
     let log = shown(&server, &["show", "log"]);
     has(
@@ -309,7 +159,6 @@ fn show_lists_what_a_server_holds() {
 }
 
 #[test]
-#[expect(clippy::too_many_lines)]
 fn drafts_and_review_items_are_shown_with_what_they_hold() {
     let dir = tempfile::tempdir().unwrap();
     let companies = benchmarks().join("identity/companies-small");
@@ -331,39 +180,7 @@ fn drafts_and_review_items_are_shown_with_what_they_hold() {
     )["run"]
         .clone();
     let draft = run["resolution"]["draft"].as_str().unwrap();
-    let drafts = shown(&server, &["show", "drafts"]);
-    has(
-        &drafts,
-        "DRAFT                                 TYPE     STATUS  OPERATIONS  FROM",
-    );
-    assert!(
-        drafts.contains(&format!("\n{draft}  company  open    ")),
-        "{drafts}"
-    );
-    assert_eq!(
-        shown(&server, &["show", "drafts", "--status", "rejected"]),
-        "no drafts\n"
-    );
-    let overview = shown(&server, &["show"]);
-    has(
-        &overview,
-        &format!("  draft       {draft} waits for a decision"),
-    );
-    let waiting = shown(&server, &["show", "runs", &run["run"].to_string()]);
-    has(&waiting, "status         drafted");
-    has(&waiting, &format!("draft          {draft}"));
-
-    let one = shown(&server, &["show", "drafts", draft]);
-    has(&one, &format!("draft            {draft}"));
-    has(&one, "status           open");
-    has(&one, "written against  log position 0");
-    has(&one, "operations");
-    assert!(one.contains("\n  create company identity "), "{one}");
-    assert!(one.contains("\n  place record "), "{one}");
-    assert_eq!(
-        answered(&server, &["show", "drafts", draft]),
-        server.read(&format!("/v1/drafts/{draft}"))
-    );
+    show_an_open_draft(&server, &run, draft);
     server.call(&format!("/v1/drafts/{draft}/approve"), json!({}));
 
     // The second batch has a record that fits two companies.
@@ -436,61 +253,8 @@ crm:c-117       Pioneer Supplies  -
     assert_eq!(code, Some(1));
     assert_eq!(complaint, "error: there is no review item 9\n");
 
-    // The same company under a second key is held back with the first. When
-    // the CRM takes that row back, the item says which of the two still
-    // waits, and which identity a record went to once it is placed.
-    let mut again = server.read(&format!("/v1/records/{stuck}"))["payload"].clone();
-    again["id"] = json!("c-217");
-    let response = server.post(
-        "/v1/load",
-        json!({ "source": "crm", "entity_type": "company", "rows": [again] }),
-    );
-    assert_eq!(response.ok()["run"]["status"], "succeeded");
-    resolve(&server, "company");
-    let open = server.read("/v1/review?status=open");
-    let [raised] = &open["items"].as_array().unwrap()[..] else {
-        panic!("one open review item: {open}");
-    };
-    assert_eq!(raised["records"].as_array().unwrap().len(), 2);
-    let raised = raised["id"].to_string();
-    let taken = server.call(
-        "/v1/retract",
-        json!({ "source": "crm", "entity_type": "company", "keys": ["c-217"] }),
-    )["run"]["run"]
-        .clone();
-    let item = shown(&server, &["show", "review", &raised]);
-    has(&item, "status       open");
-    has(&item, &format!("{stuck}  crm:c-117  waits for an identity"));
-    has(
-        &item,
-        &format!(
-            "{}  crm:c-217  taken back by its source in run {taken}, so it does not wait",
-            id_of(&server, "crm", "c-217")
-        ),
-    );
-    server.call(
-        "/v1/changesets",
-        json!({ "ops": [{ "op": "assign", "record": stuck, "from": null, "to": matched }] }),
-    );
-    let item = shown(&server, &["show", "review", &raised]);
-    has(&item, "status       resolved");
-    has(&item, &format!("{stuck}  crm:c-117  in identity {matched}"));
-
-    // Review items are listed in pages, as the other lists are. Without a
-    // limit the API gives every item.
-    let every = server.read("/v1/review");
-    assert!(every["items"].as_array().unwrap().len() >= 2, "{every}");
-    assert_eq!(every["next"], Value::Null);
-    let page = shown(&server, &["show", "review", "--limit", "1"]);
-    assert_eq!(page.lines().count(), 3, "{page}");
-    assert!(page.contains("\n1     possible_merge  "), "{page}");
-    assert!(page.ends_with("\nmore: add `--after 1`\n"), "{page}");
-    let rest = shown(&server, &["show", "review", "--after", "1"]);
-    assert!(!rest.contains("\n1     "), "{rest}");
-    assert!(rest.contains(&format!("\n{raised} ")), "{rest}");
-    let answer = answered(&server, &["show", "review", "--limit", "1"]);
-    assert_eq!(answer, server.read("/v1/review?limit=1"));
-    assert_eq!(answer["next"], 1);
+    let raised = review_item_of_a_row_taken_back(&server, &stuck, &matched);
+    review_items_in_pages(&server, &raised);
 }
 
 #[test]
@@ -539,96 +303,11 @@ fn a_merged_identity_is_shown_with_the_constraints_of_the_one_it_became() {
 }
 
 #[test]
-#[expect(clippy::too_many_lines)]
 fn a_mistake_or_a_server_that_does_not_answer_is_said_plainly() {
     let dir = tempfile::tempdir().unwrap();
     let server = workshop(dir.path());
 
-    for (arguments, expected) in [
-        (
-            &["show", "weather"][..],
-            "unrecognized subcommand 'weather'",
-        ),
-        (
-            &["show", "runs", "first"],
-            "invalid value 'first' for '[RUN]'",
-        ),
-        (
-            &["show", "identities", "anvil"],
-            "invalid value 'anvil' for '[IDENTITY]'",
-        ),
-        (
-            &["show", "drafts", "anvil"],
-            "invalid value 'anvil' for '[DRAFT]'",
-        ),
-        (
-            &["show", "documents", "anvil"],
-            "invalid value 'anvil' for '[DOCUMENT]'",
-        ),
-        (
-            &["show", "review", "first"],
-            "invalid value 'first' for '[ITEM]'",
-        ),
-        (
-            &["show", "records", "anvil"],
-            "`anvil` does not name a record",
-        ),
-        (
-            &["show", "runs", "--source", "shop"],
-            "unexpected argument '--source'",
-        ),
-        (
-            &["show", "runs", "1", "--kind", "match"],
-            "the argument '[RUN]' cannot be used with '--kind <KIND>'",
-        ),
-        (&["show", "--type", "thing"], "unexpected argument '--type'"),
-        (&["show", "log", "1"], "unexpected argument '1'"),
-        (&["show", "runs", "1", "2"], "unexpected argument '2'"),
-        (
-            &["show", "runs", "--limit", "few"],
-            "invalid value 'few' for '--limit <LIMIT>'",
-        ),
-        (&["show", "runs", "--all"], "unexpected argument '--all'"),
-    ] {
-        let (code, complaint) = refused(&server, arguments);
-        assert_eq!(code, Some(2), "{arguments:?}: {complaint}");
-        assert!(complaint.contains(expected), "{arguments:?}: {complaint}");
-        assert!(complaint.starts_with("error: "), "{complaint}");
-    }
-
-    // What the server refuses is said in the server's words.
-    for (arguments, expected) in [
-        (
-            &["show", "runs", "99"][..],
-            "error: there is no run 99\n".to_owned(),
-        ),
-        (
-            &["show", "identities", "00000000-0000-7000-8000-000000000000"],
-            "error: there is no identity 00000000-0000-7000-8000-000000000000\n".to_owned(),
-        ),
-        (
-            &["show", "records", "shop:9"],
-            "error: there is no record with key `9` from source `shop`\n".to_owned(),
-        ),
-        (
-            &["show", "documents", "00000000-0000-7000-8000-000000000000"],
-            "error: there is no document 00000000-0000-7000-8000-000000000000\n".to_owned(),
-        ),
-        (
-            &["show", "drafts", "00000000-0000-7000-8000-000000000000"],
-            "error: there is no draft 00000000-0000-7000-8000-000000000000\n".to_owned(),
-        ),
-    ] {
-        let (code, complaint) = refused(&server, arguments);
-        assert_eq!(code, Some(1), "{arguments:?}");
-        assert_eq!(complaint, expected, "{arguments:?}");
-    }
-    let (code, complaint) = refused(&server, &["show", "runs", "--status", "asleep"]);
-    assert_eq!(code, Some(2));
-    assert!(
-        complaint.contains("invalid value 'asleep' for '--status <STATUS>'"),
-        "{complaint}"
-    );
+    refuse_mistakes(&server);
 
     // The token is taken from the option before the environment.
     let wrong = spool()
@@ -719,3 +398,356 @@ def find(document):
     for found in re.finditer(r"[A-Z][a-z]+", document.text):
         yield document.mention("thing", found.start(), found.end(), code=found.group().lower())
 "#;
+
+/// `spool show runs`: the list, and a match run and a load run.
+fn show_runs(server: &Server) {
+    let runs = shown(server, &["show", "runs"]);
+    assert!(
+        runs.starts_with("RUN  KIND       STATUS     ABOUT         STARTED BY  STARTED\n"),
+        "{runs}"
+    );
+    assert!(
+        runs.contains("\n2    match      succeeded  thing, rules  agent:api   "),
+        "{runs}"
+    );
+    assert!(
+        runs.contains("\n1    load       succeeded  thing         agent:api   "),
+        "{runs}"
+    );
+    let matches = shown(server, &["show", "runs", "--kind", "match"]);
+    assert_eq!(matches.lines().count(), 2, "{matches}");
+    assert_eq!(
+        answered(server, &["show", "runs", "--kind", "match", "--limit", "1"]),
+        server.read("/v1/runs?kind=match&limit=1")
+    );
+
+    let run = shown(server, &["show", "runs", "2"]);
+    has(&run, "kind           match");
+    has(&run, "started by     agent:api");
+    has(
+        &run,
+        &format!(
+            "strategy       rules, version {}",
+            env!("CARGO_PKG_VERSION")
+        ),
+    );
+    has(
+        &run,
+        "examined       4 records, 0 of them left for review before",
+    );
+    has(&run, "candidates     3 pairs");
+    has(&run, "judgements     1 match, 2 no_match, 0 unsure");
+    has(&run, "placed         4 records, 3 identities created");
+    has(&run, "left out       0 records in 0 review items");
+    assert!(
+        run.contains("\ncommitted      log position 1, changeset "),
+        "{run}"
+    );
+    let loaded = shown(server, &["show", "runs", "1"]);
+    has(
+        &loaded,
+        "rows      4 received: 4 new, 0 known, 0 new versions of a known row",
+    );
+}
+
+/// `spool show identities`: the list in pages, and one identity with its
+/// members and history.
+fn show_identities(server: &Server, one: &str, two: &str, anvils: &str) {
+    let identities = shown(server, &["show", "identities"]);
+    assert_eq!(identities.lines().count(), 4, "{identities}");
+    assert!(
+        identities
+            .starts_with("IDENTITY                              NAME    MEMBERS  NAMES  UNLINKED PAIRS  CREATED AT\n"),
+        "{identities}"
+    );
+    let page = shown(
+        server,
+        &["show", "identities", "--limit", "1", "--type", "thing"],
+    );
+    let first = page
+        .lines()
+        .nth(1)
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap();
+    has(&page, &format!("more: add `--after {first}`"));
+    let rest = shown(server, &["show", "identities", "--after", first]);
+    assert_eq!(rest.lines().count(), 3, "{rest}");
+    assert!(!rest.contains(first));
+    let identity = shown(server, &["show", "identities", anvils]);
+    has(&identity, &format!("identity    {anvils}"));
+    has(&identity, "created at  log position 1");
+    has(
+        &identity,
+        "RECORD                                SOURCE AND KEY  SINCE",
+    );
+    for (id, name) in [(one, "shop:1"), (two, "shop:2")] {
+        has(&identity, &format!("{id}  {name}          log position 1"));
+        has(&identity, &format!("      place record {id} in {anvils}"));
+    }
+    has(&identity, &format!("      create thing identity {anvils}"));
+    assert!(
+        identity.contains("  engine  reconcile run 3  \"reconcile new records\"\n"),
+        "{identity}"
+    );
+    let bundle = answered(server, &["show", "identities", anvils]);
+    assert_eq!(
+        bundle["identity"],
+        server.read(&format!("/v1/identities/{anvils}"))
+    );
+    assert_eq!(
+        bundle["history"],
+        server.read(&format!("/v1/identities/{anvils}/history"))["history"]
+    );
+    assert_eq!(bundle["constraints"], json!([]));
+}
+
+/// `spool show records`: the list, with IDs and in pages, and one record by
+/// its ID or its source and key.
+fn show_records(server: &Server, one: &str, two: &str, anvils: &str) {
+    // Records are listed by source and key, with the name their type's
+    // label gives them. Their IDs are one option away.
+    let records = shown(server, &["show", "records", "--source", "shop"]);
+    let listed: Vec<&str> = records.lines().collect();
+    assert_eq!(listed.len(), 5, "{records}");
+    assert_eq!(listed[0], "SOURCE AND KEY  NAME    IDENTITY");
+    assert_eq!(listed[1], format!("shop:1          anvil   {anvils}"));
+    assert_eq!(listed[2], format!("shop:2          anvil   {anvils}"));
+    assert!(
+        listed[3].starts_with("shop:3          anvil   "),
+        "{records}"
+    );
+    assert!(
+        listed[4].starts_with("shop:4          hammer  "),
+        "{records}"
+    );
+    let with_ids = shown(server, &["show", "records", "--source", "shop", "--ids"]);
+    assert_eq!(with_ids.lines().count(), 5, "{with_ids}");
+    has(
+        &with_ids,
+        "RECORD                                SOURCE AND KEY  NAME    IDENTITY",
+    );
+    has(&with_ids, &format!("{one}  shop:1  anvil  {anvils}"));
+    let page = shown(server, &["show", "records", "--limit", "2"]);
+    has(&page, &format!("more: add `--after {two}`"));
+    let rest = shown(server, &["show", "records", "--after", two]);
+    assert_eq!(rest.lines().count(), 3, "{rest}");
+    assert!(rest.contains("\nshop:3  "), "{rest}");
+    let none = shown(server, &["show", "records", "--unassigned"]);
+    assert_eq!(none, "no records\n");
+    // `--ids` is an option of the list.
+    let (code, complaint) = refused(server, &["show", "records", "shop:1", "--ids"]);
+    assert_eq!(code, Some(2));
+    assert!(
+        complaint.starts_with("error: the argument '[RECORD]' cannot be used with '--ids'\n"),
+        "{complaint}"
+    );
+
+    // A record is named by its ID or by its source and key.
+    let record = shown(server, &["show", "records", "shop:1"]);
+    assert_eq!(record, shown(server, &["show", "records", one]));
+    has(&record, &format!("record  {one}"));
+    has(&record, "source       shop");
+    has(&record, "key          1");
+    has(&record, &format!("identity     {anvils}"));
+    has(&record, "payload");
+    has(&record, "  code    anvil");
+    has(&record, "  colour  black");
+    assert!(record.contains(" by run 1\n"), "{record}");
+    let bundle = answered(server, &["show", "records", "shop:1"]);
+    assert_eq!(bundle["record"], server.read(&format!("/v1/records/{one}")));
+    assert_eq!(bundle["mention"], Value::Null);
+    assert_eq!(bundle["review_items"], json!([]));
+}
+
+/// A draft left for review, in the list, the overview, its run and itself.
+fn show_an_open_draft(server: &Server, run: &Value, draft: &str) {
+    let drafts = shown(server, &["show", "drafts"]);
+    has(
+        &drafts,
+        "DRAFT                                 TYPE     STATUS  OPERATIONS  FROM",
+    );
+    assert!(
+        drafts.contains(&format!("\n{draft}  company  open    ")),
+        "{drafts}"
+    );
+    assert_eq!(
+        shown(server, &["show", "drafts", "--status", "rejected"]),
+        "no drafts\n"
+    );
+    let overview = shown(server, &["show"]);
+    has(
+        &overview,
+        &format!("  draft       {draft} waits for a decision"),
+    );
+    let waiting = shown(server, &["show", "runs", &run["run"].to_string()]);
+    has(&waiting, "status         drafted");
+    has(&waiting, &format!("draft          {draft}"));
+
+    let one = shown(server, &["show", "drafts", draft]);
+    has(&one, &format!("draft            {draft}"));
+    has(&one, "status           open");
+    has(&one, "written against  log position 0");
+    has(&one, "operations");
+    assert!(one.contains("\n  create company identity "), "{one}");
+    assert!(one.contains("\n  place record "), "{one}");
+    assert_eq!(
+        answered(server, &["show", "drafts", draft]),
+        server.read(&format!("/v1/drafts/{draft}"))
+    );
+}
+
+/// A mistake in the arguments exits with 2, and what the server refuses
+/// with 1, in its words.
+fn refuse_mistakes(server: &Server) {
+    for (arguments, expected) in [
+        (
+            &["show", "weather"][..],
+            "unrecognized subcommand 'weather'",
+        ),
+        (
+            &["show", "runs", "first"],
+            "invalid value 'first' for '[RUN]'",
+        ),
+        (
+            &["show", "identities", "anvil"],
+            "invalid value 'anvil' for '[IDENTITY]'",
+        ),
+        (
+            &["show", "drafts", "anvil"],
+            "invalid value 'anvil' for '[DRAFT]'",
+        ),
+        (
+            &["show", "documents", "anvil"],
+            "invalid value 'anvil' for '[DOCUMENT]'",
+        ),
+        (
+            &["show", "review", "first"],
+            "invalid value 'first' for '[ITEM]'",
+        ),
+        (
+            &["show", "records", "anvil"],
+            "`anvil` does not name a record",
+        ),
+        (
+            &["show", "runs", "--source", "shop"],
+            "unexpected argument '--source'",
+        ),
+        (
+            &["show", "runs", "1", "--kind", "match"],
+            "the argument '[RUN]' cannot be used with '--kind <KIND>'",
+        ),
+        (&["show", "--type", "thing"], "unexpected argument '--type'"),
+        (&["show", "log", "1"], "unexpected argument '1'"),
+        (&["show", "runs", "1", "2"], "unexpected argument '2'"),
+        (
+            &["show", "runs", "--limit", "few"],
+            "invalid value 'few' for '--limit <LIMIT>'",
+        ),
+        (&["show", "runs", "--all"], "unexpected argument '--all'"),
+    ] {
+        let (code, complaint) = refused(server, arguments);
+        assert_eq!(code, Some(2), "{arguments:?}: {complaint}");
+        assert!(complaint.contains(expected), "{arguments:?}: {complaint}");
+        assert!(complaint.starts_with("error: "), "{complaint}");
+    }
+
+    // What the server refuses is said in the server's words.
+    for (arguments, expected) in [
+        (
+            &["show", "runs", "99"][..],
+            "error: there is no run 99\n".to_owned(),
+        ),
+        (
+            &["show", "identities", "00000000-0000-7000-8000-000000000000"],
+            "error: there is no identity 00000000-0000-7000-8000-000000000000\n".to_owned(),
+        ),
+        (
+            &["show", "records", "shop:9"],
+            "error: there is no record with key `9` from source `shop`\n".to_owned(),
+        ),
+        (
+            &["show", "documents", "00000000-0000-7000-8000-000000000000"],
+            "error: there is no document 00000000-0000-7000-8000-000000000000\n".to_owned(),
+        ),
+        (
+            &["show", "drafts", "00000000-0000-7000-8000-000000000000"],
+            "error: there is no draft 00000000-0000-7000-8000-000000000000\n".to_owned(),
+        ),
+    ] {
+        let (code, complaint) = refused(server, arguments);
+        assert_eq!(code, Some(1), "{arguments:?}");
+        assert_eq!(complaint, expected, "{arguments:?}");
+    }
+    let (code, complaint) = refused(server, &["show", "runs", "--status", "asleep"]);
+    assert_eq!(code, Some(2));
+    assert!(
+        complaint.contains("invalid value 'asleep' for '--status <STATUS>'"),
+        "{complaint}"
+    );
+}
+
+/// Review items listed in pages, as the other lists are. Without a limit
+/// the API gives every item.
+fn review_items_in_pages(server: &Server, raised: &str) {
+    let every = server.read("/v1/review");
+    assert!(every["items"].as_array().unwrap().len() >= 2, "{every}");
+    assert_eq!(every["next"], Value::Null);
+    let page = shown(server, &["show", "review", "--limit", "1"]);
+    assert_eq!(page.lines().count(), 3, "{page}");
+    assert!(page.contains("\n1     possible_merge  "), "{page}");
+    assert!(page.ends_with("\nmore: add `--after 1`\n"), "{page}");
+    let rest = shown(server, &["show", "review", "--after", "1"]);
+    assert!(!rest.contains("\n1     "), "{rest}");
+    assert!(rest.contains(&format!("\n{raised} ")), "{rest}");
+    let answer = answered(server, &["show", "review", "--limit", "1"]);
+    assert_eq!(answer, server.read("/v1/review?limit=1"));
+    assert_eq!(answer["next"], 1);
+}
+
+/// The same company under a second key, held back with the first: when the
+/// CRM takes that row back, the item says which of the two still waits,
+/// and which identity a record went to once it is placed.
+fn review_item_of_a_row_taken_back(server: &Server, stuck: &str, matched: &str) -> String {
+    // The same company under a second key is held back with the first. When
+    // the CRM takes that row back, the item says which of the two still
+    // waits, and which identity a record went to once it is placed.
+    let mut again = server.read(&format!("/v1/records/{stuck}"))["payload"].clone();
+    again["id"] = json!("c-217");
+    let response = server.post(
+        "/v1/load",
+        json!({ "source": "crm", "entity_type": "company", "rows": [again] }),
+    );
+    assert_eq!(response.ok()["run"]["status"], "succeeded");
+    resolve(server, "company");
+    let open = server.read("/v1/review?status=open");
+    let [raised] = &open["items"].as_array().unwrap()[..] else {
+        panic!("one open review item: {open}");
+    };
+    assert_eq!(raised["records"].as_array().unwrap().len(), 2);
+    let raised = raised["id"].to_string();
+    let taken = server.call(
+        "/v1/retract",
+        json!({ "source": "crm", "entity_type": "company", "keys": ["c-217"] }),
+    )["run"]["run"]
+        .clone();
+    let item = shown(server, &["show", "review", &raised]);
+    has(&item, "status       open");
+    has(&item, &format!("{stuck}  crm:c-117  waits for an identity"));
+    has(
+        &item,
+        &format!(
+            "{}  crm:c-217  taken back by its source in run {taken}, so it does not wait",
+            id_of(server, "crm", "c-217")
+        ),
+    );
+    server.call(
+        "/v1/changesets",
+        json!({ "ops": [{ "op": "assign", "record": stuck, "from": null, "to": matched }] }),
+    );
+    let item = shown(server, &["show", "review", &raised]);
+    has(&item, "status       resolved");
+    has(&item, &format!("{stuck}  crm:c-117  in identity {matched}"));
+    raised
+}

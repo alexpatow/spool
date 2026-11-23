@@ -213,7 +213,6 @@ fn lists_are_sorted_as_the_query_says_and_read_in_pages_in_that_order() {
 }
 
 #[test]
-#[expect(clippy::too_many_lines)]
 fn what_is_read_says_what_things_are_called_where_they_came_from_and_what_waits() {
     let library = library(5);
     let dir = tempfile::tempdir().unwrap();
@@ -339,53 +338,10 @@ fn what_is_read_says_what_things_are_called_where_they_came_from_and_what_waits(
         info["store"]["entity_types"][0]["records"]
     );
 
-    // A review item is read with the records it is about: the one that
-    // waits, the identities it matched with their members, and the
-    // judgements that say so.
-    let case = server.read("/v1/review/1/case");
-    assert_eq!(
-        case,
-        serde_json::to_value(library.review_case(1).unwrap()).unwrap()
-    );
-    assert_eq!(case["item"], server.read("/v1/review/1"));
-    assert_eq!(case["records"][0]["key"], "c-117");
-    assert!(case["records"][0]["label"].is_string());
-    let candidates = case["candidates"].as_array().unwrap();
-    assert_eq!(candidates.len(), 2);
-    for candidate in candidates {
-        assert!(candidate["identity"]["label"].is_string(), "{candidate}");
-        assert_eq!(
-            candidate["members"].as_array().unwrap().len() as u64,
-            candidate["identity"]["members"].as_u64().unwrap()
-        );
-    }
-    let judgements = case["judgements"].as_array().unwrap();
-    assert!(judgements.len() >= 2, "{case}");
-    assert!(
-        judgements
-            .iter()
-            .all(|judgement| judgement["record"] == case["records"][0]["id"])
-    );
-    assert!(
-        judgements
-            .iter()
-            .any(|judgement| judgement["verdict"] == "match")
-    );
-    // Each names the candidate it is about.
-    for judgement in judgements {
-        assert!(
-            candidates
-                .iter()
-                .any(|candidate| candidate["identity"]["id"] == judgement["identity"]),
-            "{judgement}"
-        );
-    }
-    server.get("/v1/review/99/case").error(404, "not_found");
-    server.get("/v1/review/x/case").error(400, "invalid");
+    read_a_review_case(&server, &library);
 }
 
 #[test]
-#[expect(clippy::too_many_lines)]
 fn a_pair_of_records_is_explained() {
     let dir = tempfile::tempdir().unwrap();
     let server = things_server(dir.path());
@@ -460,60 +416,7 @@ fn a_pair_of_records_is_explained() {
         .error(400, "invalid");
     assert!(message.contains("<source>:<key>"), "{message}");
 
-    // A record is named by its source and key as well. That is the row the
-    // source holds under the key now, whatever it held before.
-    assert_eq!(server.read("/v1/explain?a=shop:1&b=shop:2"), explanation);
-    assert_eq!(
-        server.read(&format!("/v1/explain?a=shop:3&b={first}")),
-        server.read(&format!("/v1/explain?a={red}&b={first}"))
-    );
-    let message = server
-        .get("/v1/explain?a=shop:1&b=shop:9")
-        .error(404, "not_found");
-    assert_eq!(
-        message,
-        "there is no record with key `9` from source `shop`"
-    );
-    let unknown = server
-        .get("/v1/explain?a=shop:1&b=shed:2")
-        .error(404, "not_found");
-    assert!(
-        unknown.starts_with(
-            "there is no record with key `2` from source `shed`: the project's sources are `"
-        ),
-        "{unknown}"
-    );
-    assert!(unknown.contains("`shop`"), "{unknown}");
-    load_things(
-        &server,
-        "shop",
-        &[
-            &["id", "code", "colour"],
-            &["2", "anvil", "blue"],
-            &["a:b", "anvil", "black"],
-        ],
-    );
-    let versions = server.read("/v1/records?source=shop&key=2");
-    let versions = versions["records"].as_array().unwrap();
-    assert_eq!(versions.len(), 2);
-    let latest = versions
-        .iter()
-        .find(|version| version["superseded_by"].is_null())
-        .unwrap();
-    assert_eq!(latest["payload"]["colour"], "blue");
-    let by_key = server.read("/v1/explain?a=shop:1&b=shop:2");
-    let (left, right) = (&by_key["left"]["record"], &by_key["right"]["record"]);
-    assert!(
-        left["id"] == latest["id"] || right["id"] == latest["id"],
-        "{by_key}"
-    );
-    // A key may have a colon in it: the first one ends the source's name.
-    let colon = server.read("/v1/explain?a=shop:1&b=shop:a:b");
-    let keys = [
-        &colon["left"]["record"]["key"],
-        &colon["right"]["record"]["key"],
-    ];
-    assert!(keys.contains(&&json!("a:b")), "{colon}");
+    explain_by_source_and_key(&server, &explanation, &first, &red);
 
     // Review items are listed by a record they name.
     assert_eq!(
@@ -619,4 +522,107 @@ fn records_are_listed_by_source_and_key_and_the_sources_are_named() {
             "entity_types": ["thing"],
         })
     );
+}
+
+/// A review item read with the records it is about: the one that waits,
+/// the identities it matched with their members, and the judgements that
+/// say so.
+fn read_a_review_case(server: &Server, library: &Engine) {
+    let case = server.read("/v1/review/1/case");
+    assert_eq!(
+        case,
+        serde_json::to_value(library.review_case(1).unwrap()).unwrap()
+    );
+    assert_eq!(case["item"], server.read("/v1/review/1"));
+    assert_eq!(case["records"][0]["key"], "c-117");
+    assert!(case["records"][0]["label"].is_string());
+    let candidates = case["candidates"].as_array().unwrap();
+    assert_eq!(candidates.len(), 2);
+    for candidate in candidates {
+        assert!(candidate["identity"]["label"].is_string(), "{candidate}");
+        assert_eq!(
+            candidate["members"].as_array().unwrap().len() as u64,
+            candidate["identity"]["members"].as_u64().unwrap()
+        );
+    }
+    let judgements = case["judgements"].as_array().unwrap();
+    assert!(judgements.len() >= 2, "{case}");
+    assert!(
+        judgements
+            .iter()
+            .all(|judgement| judgement["record"] == case["records"][0]["id"])
+    );
+    assert!(
+        judgements
+            .iter()
+            .any(|judgement| judgement["verdict"] == "match")
+    );
+    // Each names the candidate it is about.
+    for judgement in judgements {
+        assert!(
+            candidates
+                .iter()
+                .any(|candidate| candidate["identity"]["id"] == judgement["identity"]),
+            "{judgement}"
+        );
+    }
+    server.get("/v1/review/99/case").error(404, "not_found");
+    server.get("/v1/review/x/case").error(400, "invalid");
+}
+
+/// Records named by their source and key: the row the source holds under
+/// the key now, whatever it held before.
+fn explain_by_source_and_key(server: &Server, explanation: &Value, first: &str, red: &str) {
+    assert_eq!(&server.read("/v1/explain?a=shop:1&b=shop:2"), explanation);
+    assert_eq!(
+        server.read(&format!("/v1/explain?a=shop:3&b={first}")),
+        server.read(&format!("/v1/explain?a={red}&b={first}"))
+    );
+    let message = server
+        .get("/v1/explain?a=shop:1&b=shop:9")
+        .error(404, "not_found");
+    assert_eq!(
+        message,
+        "there is no record with key `9` from source `shop`"
+    );
+    let unknown = server
+        .get("/v1/explain?a=shop:1&b=shed:2")
+        .error(404, "not_found");
+    assert!(
+        unknown.starts_with(
+            "there is no record with key `2` from source `shed`: the project's sources are `"
+        ),
+        "{unknown}"
+    );
+    assert!(unknown.contains("`shop`"), "{unknown}");
+    load_things(
+        server,
+        "shop",
+        &[
+            &["id", "code", "colour"],
+            &["2", "anvil", "blue"],
+            &["a:b", "anvil", "black"],
+        ],
+    );
+    let versions = server.read("/v1/records?source=shop&key=2");
+    let versions = versions["records"].as_array().unwrap();
+    assert_eq!(versions.len(), 2);
+    let latest = versions
+        .iter()
+        .find(|version| version["superseded_by"].is_null())
+        .unwrap();
+    assert_eq!(latest["payload"]["colour"], "blue");
+    let by_key = server.read("/v1/explain?a=shop:1&b=shop:2");
+    let (left, right) = (&by_key["left"]["record"], &by_key["right"]["record"]);
+    assert!(
+        left["id"] == latest["id"] || right["id"] == latest["id"],
+        "{by_key}"
+    );
+    // A key may have a colon in it: the first one ends the source's name.
+    let colon = server.read("/v1/explain?a=shop:1&b=shop:a:b");
+    let keys = [
+        &colon["left"]["record"]["key"],
+        &colon["right"]["record"]["key"],
+    ];
+    assert!(keys.contains(&&json!("a:b")), "{colon}");
 }

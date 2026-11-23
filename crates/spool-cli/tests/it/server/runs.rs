@@ -218,7 +218,6 @@ fn text_column(batches: &[arrow::record_batch::RecordBatch], name: &str) -> Vec<
 }
 
 #[test]
-#[expect(clippy::too_many_lines)]
 fn a_caller_judges_the_candidates_of_a_run_step_by_step() {
     let dir = tempfile::tempdir().unwrap();
     let server = things_server(dir.path());
@@ -250,79 +249,9 @@ fn a_caller_judges_the_candidates_of_a_run_step_by_step() {
     assert_eq!(run["run"]["strategy"], strategy);
     let run = run["run"]["run"].as_u64().unwrap();
 
-    // The candidates come as Arrow, and as JSON when that is asked for.
-    let batches = server.get(&format!("/v1/runs/{run}/candidates")).batches();
-    let left = text_column(&batches, "left_id");
-    let right = text_column(&batches, "right_id");
-    let codes = text_column(&batches, "left_code");
-    assert_eq!(codes.len(), 2, "one pair of anvils and one of hammers");
-    assert_eq!(text_column(&batches, "right_code"), codes);
-    let listed = server
-        .request("GET", &format!("/v1/runs/{run}/candidates"))
-        .header("Accept", "application/json")
-        .send()
-        .ok();
-    let listed = listed["candidates"].as_array().unwrap();
-    assert_eq!(listed.len(), 2);
-    for (index, candidate) in listed.iter().enumerate() {
-        assert_eq!(candidate["left_id"].as_str(), left[index].as_deref());
-        assert_eq!(candidate["right_id"].as_str(), right[index].as_deref());
-        assert_eq!(candidate["left_code"].as_str(), codes[index].as_deref());
-        assert_eq!(candidate["left_colour"], candidate["right_colour"]);
-    }
-    let pair = |code: &str| {
-        let index = codes
-            .iter()
-            .position(|found| found.as_deref() == Some(code))
-            .unwrap();
-        (left[index].clone().unwrap(), right[index].clone().unwrap())
-    };
-    let (anvils, hammers) = (pair("anvil"), pair("hammer"));
+    let (anvils, hammers) = read_candidates(&server, run);
 
-    // Judgements go back as JSON or as Arrow.
-    let stored = server.call(
-        &format!("/v1/runs/{run}/judgements"),
-        json!({ "judgements": [{
-            "left_id": anvils.0,
-            "right_id": anvils.1,
-            "verdict": "match",
-            "score": 0.75,
-            "detail": { "why": "heads" },
-        }] }),
-    );
-    assert_eq!(stored, json!({ "stored": 1 }));
-    let none = server.call(
-        &format!("/v1/runs/{run}/judgements"),
-        json!({ "judgements": [] }),
-    );
-    assert_eq!(none, json!({ "stored": 0 }));
-    let stored = server
-        .post_arrow(
-            &format!("/v1/runs/{run}/judgements"),
-            rows(&[
-                &["left_id", "right_id", "verdict"],
-                &[&hammers.0, &hammers.1, "no_match"],
-            ]),
-        )
-        .ok();
-    assert_eq!(stored, json!({ "stored": 1 }));
-    server
-        .post(
-            &format!("/v1/runs/{run}/judgements"),
-            json!({ "judgements": [{ "left_id": anvils.0, "right_id": anvils.1, "verdict": "perhaps" }] }),
-        )
-        .error(400, "invalid");
-    let message = server
-        .post(
-            &format!("/v1/runs/{run}/judgements"),
-            json!({ "judgements": [{
-                "left_id": anvils.0,
-                "right_id": "00000000-0000-7000-8000-000000000000",
-                "verdict": "match",
-            }] }),
-        )
-        .error(400, "invalid");
-    assert!(message.contains("not a known thing"), "{message}");
+    send_judgements(&server, run, &anvils, &hammers);
 
     // Reconciling leaves a draft for review; approving it commits.
     let resolution = server.call(
@@ -432,4 +361,88 @@ fn an_open_run_is_reconciled_at_once_by_default_or_cancelled() {
         .map(|run| run["status"].as_str().unwrap())
         .collect();
     assert_eq!(statuses, ["succeeded", "failed"], "newest first");
+}
+
+/// The candidates of a run, as Arrow and as JSON: the pair of anvils, and
+/// the pair of hammers.
+fn read_candidates(server: &Server, run: u64) -> ((String, String), (String, String)) {
+    let batches = server.get(&format!("/v1/runs/{run}/candidates")).batches();
+    let left = text_column(&batches, "left_id");
+    let right = text_column(&batches, "right_id");
+    let codes = text_column(&batches, "left_code");
+    assert_eq!(codes.len(), 2, "one pair of anvils and one of hammers");
+    assert_eq!(text_column(&batches, "right_code"), codes);
+    let listed = server
+        .request("GET", &format!("/v1/runs/{run}/candidates"))
+        .header("Accept", "application/json")
+        .send()
+        .ok();
+    let listed = listed["candidates"].as_array().unwrap();
+    assert_eq!(listed.len(), 2);
+    for (index, candidate) in listed.iter().enumerate() {
+        assert_eq!(candidate["left_id"].as_str(), left[index].as_deref());
+        assert_eq!(candidate["right_id"].as_str(), right[index].as_deref());
+        assert_eq!(candidate["left_code"].as_str(), codes[index].as_deref());
+        assert_eq!(candidate["left_colour"], candidate["right_colour"]);
+    }
+    let pair = |code: &str| {
+        let index = codes
+            .iter()
+            .position(|found| found.as_deref() == Some(code))
+            .unwrap();
+        (left[index].clone().unwrap(), right[index].clone().unwrap())
+    };
+    (pair("anvil"), pair("hammer"))
+}
+
+/// Judgements sent back as JSON or as Arrow, and those refused.
+fn send_judgements(
+    server: &Server,
+    run: u64,
+    anvils: &(String, String),
+    hammers: &(String, String),
+) {
+    let stored = server.call(
+        &format!("/v1/runs/{run}/judgements"),
+        json!({ "judgements": [{
+            "left_id": anvils.0,
+            "right_id": anvils.1,
+            "verdict": "match",
+            "score": 0.75,
+            "detail": { "why": "heads" },
+        }] }),
+    );
+    assert_eq!(stored, json!({ "stored": 1 }));
+    let none = server.call(
+        &format!("/v1/runs/{run}/judgements"),
+        json!({ "judgements": [] }),
+    );
+    assert_eq!(none, json!({ "stored": 0 }));
+    let stored = server
+        .post_arrow(
+            &format!("/v1/runs/{run}/judgements"),
+            rows(&[
+                &["left_id", "right_id", "verdict"],
+                &[&hammers.0, &hammers.1, "no_match"],
+            ]),
+        )
+        .ok();
+    assert_eq!(stored, json!({ "stored": 1 }));
+    server
+        .post(
+            &format!("/v1/runs/{run}/judgements"),
+            json!({ "judgements": [{ "left_id": anvils.0, "right_id": anvils.1, "verdict": "perhaps" }] }),
+        )
+        .error(400, "invalid");
+    let message = server
+        .post(
+            &format!("/v1/runs/{run}/judgements"),
+            json!({ "judgements": [{
+                "left_id": anvils.0,
+                "right_id": "00000000-0000-7000-8000-000000000000",
+                "verdict": "match",
+            }] }),
+        )
+        .error(400, "invalid");
+    assert!(message.contains("not a known thing"), "{message}");
 }

@@ -58,17 +58,9 @@ fn match_runs(server: &Server) -> Vec<Value> {
         .clone()
 }
 
-/// The first steps of a new project, with what each prints: the text the
-/// README and the site show.
-#[test]
-#[expect(clippy::too_many_lines)]
-fn the_first_rows_of_a_new_project_are_loaded_matched_and_shown() {
-    let dir = tempfile::tempdir().unwrap();
-    let project = init_companies(dir.path());
-    let server = Server::dev(&project);
-    let shown = |arguments: &[&str]| shown(&server, &project, arguments);
-
-    // Before any rows, each command says which one comes first.
+/// Before any rows, each command says which one comes first.
+fn say_what_comes_first(server: &Server, project: &Path) {
+    let shown = |arguments: &[&str]| shown(server, project, arguments);
     assert_eq!(
         shown(&["match"]),
         "\
@@ -80,7 +72,76 @@ nothing to match: there are no `company` records yet
         shown(&["show", "records"]),
         "no records\n`spool load <file>` sends rows\n"
     );
-    assert_eq!(match_runs(&server), Vec::<Value>::new());
+    assert_eq!(match_runs(server), Vec::<Value>::new());
+}
+
+/// A second match has nothing new to look at, which is no failure.
+fn match_with_nothing_new(server: &Server, project: &Path) {
+    let shown = |arguments: &[&str]| shown(server, project, arguments);
+    assert_eq!(
+        shown(&["match"]),
+        "\
+nothing to match: no `company` record is new since the last match
+`spool load <file>` sends more rows, and `spool match --rematch` examines them all again
+"
+    );
+    assert_eq!(
+        shown(&["match", "--type", "company", "--json"]),
+        "{\n  \"run\": null\n}\n"
+    );
+    let answer: Value = serde_json::from_str(&shown(&["match", "--json"])).unwrap();
+    assert_eq!(
+        answer,
+        json!({ "runs": [{ "entity_type": "company", "run": null }] })
+    );
+    assert_eq!(match_runs(server).len(), 1);
+}
+
+/// The record IDs are one option away, and the identities have the name of
+/// one of their records.
+fn show_ids_and_names(server: &Server, project: &Path, [acorn, larkfield, kestrel]: [&str; 3]) {
+    let shown = |arguments: &[&str]| shown(server, project, arguments);
+    let with_ids = shown(&["show", "records", "--ids"]);
+    assert!(
+        with_ids.starts_with(&format!(
+            "\
+RECORD                                SOURCE AND KEY  NAME                 IDENTITY
+ab8e9d59-0aaa-96b9-ddb7-db0bff7a9356  crm:c-1         Acorn Tools          {acorn}
+"
+        )),
+        "{with_ids}"
+    );
+    let identities = shown(&["show", "identities"]);
+    assert!(
+        identities.starts_with(
+            "IDENTITY                              NAME                 MEMBERS  NAMES  UNLINKED PAIRS  CREATED AT\n"
+        ),
+        "{identities}"
+    );
+    assert!(
+        identities.contains(&format!(
+            "\n{larkfield}  Larkfield Logistics  2        2      0%              log position 1\n"
+        )),
+        "{identities}"
+    );
+    assert!(
+        identities.contains(&format!(
+            "\n{kestrel}  Kestrel Analytics    1        1      -               log position 2\n"
+        )),
+        "{identities}"
+    );
+}
+
+/// The first steps of a new project, with what each prints: the text the
+/// README and the site show.
+#[test]
+fn the_first_rows_of_a_new_project_are_loaded_matched_and_shown() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = init_companies(dir.path());
+    let server = Server::dev(&project);
+    let shown = |arguments: &[&str]| shown(&server, &project, arguments);
+
+    say_what_comes_first(&server, &project);
 
     assert_eq!(
         shown(&["load", "samples/crm-1.csv"]),
@@ -135,24 +196,7 @@ crm:c-6         Halden Group         {other_halden}
         "the list fits a page that is 100 characters wide"
     );
 
-    // A second match has nothing new to look at, which is no failure.
-    assert_eq!(
-        shown(&["match"]),
-        "\
-nothing to match: no `company` record is new since the last match
-`spool load <file>` sends more rows, and `spool match --rematch` examines them all again
-"
-    );
-    assert_eq!(
-        shown(&["match", "--type", "company", "--json"]),
-        "{\n  \"run\": null\n}\n"
-    );
-    let answer: Value = serde_json::from_str(&shown(&["match", "--json"])).unwrap();
-    assert_eq!(
-        answer,
-        json!({ "runs": [{ "entity_type": "company", "run": null }] })
-    );
-    assert_eq!(match_runs(&server).len(), 1);
+    match_with_nothing_new(&server, &project);
 
     // More rows: one for a company that is new, and two that join
     // identities, which keep their IDs.
@@ -185,37 +229,7 @@ crm:c-9         Acorn Tool           {acorn}
         )
     );
 
-    // The record IDs are one option away, and the identities have the name
-    // of one of their records.
-    let with_ids = shown(&["show", "records", "--ids"]);
-    assert!(
-        with_ids.starts_with(&format!(
-            "\
-RECORD                                SOURCE AND KEY  NAME                 IDENTITY
-ab8e9d59-0aaa-96b9-ddb7-db0bff7a9356  crm:c-1         Acorn Tools          {acorn}
-"
-        )),
-        "{with_ids}"
-    );
-    let identities = shown(&["show", "identities"]);
-    assert!(
-        identities.starts_with(
-            "IDENTITY                              NAME                 MEMBERS  NAMES  UNLINKED PAIRS  CREATED AT\n"
-        ),
-        "{identities}"
-    );
-    assert!(
-        identities.contains(&format!(
-            "\n{larkfield}  Larkfield Logistics  2        2      0%              log position 1\n"
-        )),
-        "{identities}"
-    );
-    assert!(
-        identities.contains(&format!(
-            "\n{kestrel}  Kestrel Analytics    1        1      -               log position 2\n"
-        )),
-        "{identities}"
-    );
+    show_ids_and_names(&server, &project, [&acorn, &larkfield, &kestrel]);
 
     // Every record again: the rules still say what the identities say.
     assert_eq!(

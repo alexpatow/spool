@@ -33,32 +33,10 @@ fn an_unmanaged_binary_leaves_its_installation_alone() {
     );
 }
 
-#[test]
-#[expect(clippy::too_many_lines)]
-fn updates_the_installation_then_refreshes_skills_with_the_installed_binary() {
-    let dir = tempfile::tempdir().unwrap();
-    let release_root = dir.path().join("releases");
-    let old = release_root.join(CURRENT).join("bin/spool");
-    fs::create_dir_all(old.parent().unwrap()).unwrap();
-    fs::copy(SPOOL, &old).unwrap();
-    // Both paths are custom. They can be recovered from the command even
-    // when the installer environment is gone.
-    let bin = dir.path().join("commands");
-    fs::create_dir(&bin).unwrap();
-    let link = bin.join("spool");
-    symlink(&old, &link).unwrap();
-
-    let project = dir.path().join("project");
-    fs::create_dir_all(project.join("entities")).unwrap();
-    let rules = project.join(".agents/skills/spool-rules/SKILL.md");
-    let mock = dir.path().join("mock");
-    fs::create_dir(&mock).unwrap();
-    let path = std::env::join_paths(
-        [mock.clone(), bin.clone()]
-            .into_iter()
-            .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
-    )
-    .unwrap();
+/// A release one patch after this version, as `curl` fetches it in `mock`:
+/// a stand-in `curl`, and an archive with a stand-in `spool`. Its versions,
+/// this one and the release's, and the name of the archive.
+fn mock_release(mock: &Path) -> (Version, String, String) {
     executable(
         &mock.join("curl"),
         r#"#!/bin/sh
@@ -106,12 +84,41 @@ exec "$FIXTURE_SPOOL" "$@"
     let archive = format!("{name}.tar.gz");
     assert!(
         Command::new("tar")
-            .current_dir(&mock)
+            .current_dir(mock)
             .args(["-czf", &archive, &name])
             .status()
             .unwrap()
             .success()
     );
+    (current_version, version, archive)
+}
+
+#[test]
+fn updates_the_installation_then_refreshes_skills_with_the_installed_binary() {
+    let dir = tempfile::tempdir().unwrap();
+    let release_root = dir.path().join("releases");
+    let old = release_root.join(CURRENT).join("bin/spool");
+    fs::create_dir_all(old.parent().unwrap()).unwrap();
+    fs::copy(SPOOL, &old).unwrap();
+    // Both paths are custom. They can be recovered from the command even
+    // when the installer environment is gone.
+    let bin = dir.path().join("commands");
+    fs::create_dir(&bin).unwrap();
+    let link = bin.join("spool");
+    symlink(&old, &link).unwrap();
+
+    let project = dir.path().join("project");
+    fs::create_dir_all(project.join("entities")).unwrap();
+    let rules = project.join(".agents/skills/spool-rules/SKILL.md");
+    let mock = dir.path().join("mock");
+    fs::create_dir(&mock).unwrap();
+    let path = std::env::join_paths(
+        [mock.clone(), bin.clone()]
+            .into_iter()
+            .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    let (current_version, version, archive) = mock_release(&mock);
     let set_latest = |tag: &str| {
         fs::write(
             mock.join("release.json"),

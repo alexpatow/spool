@@ -3,7 +3,6 @@
 use super::*;
 
 #[test]
-#[expect(clippy::too_many_lines)]
 fn a_tool_that_looks_something_up_answers_what_the_api_answers() {
     let dir = tempfile::tempdir().unwrap();
     let server = company_server(dir.path());
@@ -13,7 +12,16 @@ fn a_tool_that_looks_something_up_answers_what_the_api_answers() {
         server.read("/v1/info")
     );
 
-    let found = tool(&server, "search_identities", json!({ "q": "acorn" }));
+    let acorn = look_up_identities(&server);
+    look_up_records_review_and_log(&server, &acorn);
+    refuse_what_the_api_refuses(&server);
+    // Looking things up changed nothing.
+    assert_eq!(head(&server), 2);
+}
+
+/// Identities searched for by name, by ID and in pages, and read whole.
+fn look_up_identities(server: &Server) -> String {
+    let found = tool(server, "search_identities", json!({ "q": "acorn" }));
     assert_eq!(found, server.read("/v1/identities?q=acorn&limit=20"));
     assert_eq!(found["identities"][0]["label"], "Acorn Tools");
     assert_eq!(
@@ -23,7 +31,7 @@ fn a_tool_that_looks_something_up_answers_what_the_api_answers() {
     let acorn = text(&found["identities"][0]["id"]);
 
     let alias = tool(
-        &server,
+        server,
         "search_identities",
         json!({ "ids": [acorn], "q": "ACORN TOOL COMPANY LTD" }),
     );
@@ -33,7 +41,7 @@ fn a_tool_that_looks_something_up_answers_what_the_api_answers() {
     assert!(alias["record"].is_string());
 
     let field = tool(
-        &server,
+        server,
         "search_identities",
         json!({ "ids": [acorn], "q": "Sheffield" }),
     );
@@ -44,7 +52,7 @@ fn a_tool_that_looks_something_up_answers_what_the_api_answers() {
 
     // A list is short unless the call asks for more.
     let page = tool(
-        &server,
+        server,
         "search_identities",
         json!({ "entity_type": "company" }),
     );
@@ -52,13 +60,13 @@ fn a_tool_that_looks_something_up_answers_what_the_api_answers() {
         page,
         server.read("/v1/identities?entity_type=company&limit=20")
     );
-    let page = tool(&server, "search_identities", json!({ "limit": 2 }));
+    let page = tool(server, "search_identities", json!({ "limit": 2 }));
     assert_eq!(page["identities"].as_array().unwrap().len(), 2);
     let second = text(&page["identities"][1]["id"]);
     let ids = format!("{acorn},{second}");
     assert_eq!(
         tool(
-            &server,
+            server,
             "search_identities",
             json!({ "ids": [acorn, second] })
         ),
@@ -66,7 +74,7 @@ fn a_tool_that_looks_something_up_answers_what_the_api_answers() {
     );
     assert_eq!(
         tool(
-            &server,
+            server,
             "search_identities",
             json!({ "after": page["next"], "limit": 3 })
         ),
@@ -76,19 +84,19 @@ fn a_tool_that_looks_something_up_answers_what_the_api_answers() {
         ))
     );
 
-    let identity = tool(&server, "get_identity", json!({ "identity": acorn }));
+    let identity = tool(server, "get_identity", json!({ "identity": acorn }));
     assert_eq!(identity, server.read(&format!("/v1/identities/{acorn}")));
     assert_eq!(identity["members"].as_array().unwrap().len(), 3);
     assert_eq!(
-        tool(
-            &server,
-            "get_identity_history",
-            json!({ "identity": acorn })
-        ),
+        tool(server, "get_identity_history", json!({ "identity": acorn })),
         server.read(&format!("/v1/identities/{acorn}/history"))
     );
+    acorn.to_owned()
+}
 
-    let records = tool(&server, "search_records", json!({ "identity": acorn }));
+/// Records, review items, constraints and the log, as the API reads them.
+fn look_up_records_review_and_log(server: &Server, acorn: &str) {
+    let records = tool(server, "search_records", json!({ "identity": acorn }));
     assert_eq!(
         records,
         server.read(&format!("/v1/records?identity={acorn}&limit=20"))
@@ -97,42 +105,42 @@ fn a_tool_that_looks_something_up_answers_what_the_api_answers() {
     let b = text(&records["records"][1]["id"]);
     assert_eq!(
         tool(
-            &server,
+            server,
             "search_records",
             json!({ "source": "crm", "key": "c-102" })
         ),
         server.read("/v1/records?source=crm&key=c-102&limit=20")
     );
-    let unplaced = tool(&server, "search_records", json!({ "unassigned": true }));
+    let unplaced = tool(server, "search_records", json!({ "unassigned": true }));
     assert_eq!(
         unplaced,
         server.read("/v1/records?unassigned=true&limit=20")
     );
     assert_eq!(unplaced["records"].as_array().unwrap().len(), 1);
     assert_eq!(
-        tool(&server, "get_record", json!({ "record": a })),
+        tool(server, "get_record", json!({ "record": a })),
         server.read(&format!("/v1/records/{a}"))
     );
     assert_eq!(
-        tool(&server, "explain_pair", json!({ "a": a, "b": b })),
+        tool(server, "explain_pair", json!({ "a": a, "b": b })),
         server.read(&format!("/v1/explain?a={a}&b={b}"))
     );
 
-    let open = tool(&server, "list_review_items", json!({}));
+    let open = tool(server, "list_review_items", json!({}));
     assert_eq!(open, server.read("/v1/review?status=open"));
     assert_eq!(open["items"].as_array().unwrap().len(), 1);
     let none = tool(
-        &server,
+        server,
         "list_review_items",
         json!({ "status": "dismissed" }),
     );
     assert_eq!(none, json!({ "items": [], "next": null }));
     assert_eq!(
-        tool(&server, "get_review_case", json!({ "item": 1 })),
+        tool(server, "get_review_case", json!({ "item": 1 })),
         server.read("/v1/review/1/case")
     );
     assert_eq!(
-        tool(&server, "list_constraints", json!({})),
+        tool(server, "list_constraints", json!({})),
         server.read("/v1/constraints")
     );
     let mut log = server.read("/v1/changesets?after=1&limit=20");
@@ -145,13 +153,15 @@ fn a_tool_that_looks_something_up_answers_what_the_api_answers() {
             .unwrap();
         entry["operation_count"] = json!(ops.as_array().unwrap().len());
     }
-    assert_eq!(tool(&server, "list_changesets", json!({ "after": 1 })), log);
+    assert_eq!(tool(server, "list_changesets", json!({ "after": 1 })), log);
+}
 
-    // What the API does not find, or cannot read, the tool says as the API
-    // does, in an answer the model can read.
+/// What the API does not find, or cannot read, said as the API says it, in
+/// an answer the model can read.
+fn refuse_what_the_api_refuses(server: &Server) {
     let unused = "01a1ee50-0000-7000-8000-000000000000";
     let missing = refused(
-        &server,
+        server,
         "get_identity",
         json!({ "identity": unused }),
         "not_found",
@@ -166,13 +176,13 @@ fn a_tool_that_looks_something_up_answers_what_the_api_answers() {
         )
     );
     refused(
-        &server,
+        server,
         "get_review_case",
         json!({ "item": 99 }),
         "not_found",
     );
     let unread = refused(
-        &server,
+        server,
         "get_identity",
         json!({ "identity": "acorn" }),
         "invalid",
@@ -181,31 +191,28 @@ fn a_tool_that_looks_something_up_answers_what_the_api_answers() {
         text(&unread["message"]).contains("get_identity"),
         "{unread}"
     );
-    refused(&server, "get_identity", json!({}), "invalid");
+    refused(server, "get_identity", json!({}), "invalid");
     refused(
-        &server,
+        server,
         "search_records",
         json!({ "limit": "ten" }),
         "invalid",
     );
     refused(
-        &server,
+        server,
         "describe_store",
         json!({ "verbose": true }),
         "invalid",
     );
     refused(
-        &server,
+        server,
         "list_review_items",
         json!({ "status": "pending" }),
         "invalid",
     );
-    // Looking things up changed nothing.
-    assert_eq!(head(&server), 2);
 }
 
 #[test]
-#[expect(clippy::too_many_lines)]
 fn identity_snapshots_keep_historical_members_and_merge_redirects() {
     let dir = tempfile::tempdir().unwrap();
     let (server, _) = thing_server(dir.path());
@@ -225,29 +232,8 @@ fn identity_snapshots_keep_historical_members_and_merge_redirects() {
     let [anvil, vise, bolt, chisel] = ["a", "move", "b", "c"].map(record);
     let minted = server.call("/v1/ids", json!({ "identities": 3 }));
     let [a, b, c] = [0, 1, 2].map(|i| text(&minted["identities"][i]));
-    let commit = |ops| {
-        tool(
-            &server,
-            "commit_changeset",
-            json!({ "ops": ops, "reason": "historical example" }),
-        )["seq"]
-            .as_u64()
-            .unwrap()
-    };
-    let at = |id, seq| {
-        let http = server.read(&format!("/v1/identities/{id}/at?seq={seq}"));
-        assert_eq!(
-            http,
-            tool(
-                &server,
-                "get_identity_at",
-                json!({ "identity": id, "seq": seq })
-            )
-        );
-        assert_eq!(http["as_of_seq"], seq);
-        assert_eq!(http["id"], id);
-        http
-    };
+    let commit = |ops| commit_by_tool(&server, ops);
+    let at = |id, seq| identity_at(&server, id, seq);
 
     assert_eq!(
         commit(
@@ -337,11 +323,8 @@ fn identity_snapshots_keep_historical_members_and_merge_redirects() {
     assert_eq!(second_merge["members"].as_array().unwrap().len(), 3);
 
     let undo = |seq| {
-        tool(
-            &server,
-            "undo_changeset",
-            json!({ "seq": seq, "reason": "restore the separate tools" }),
-        )["committed"]["seq"]
+        let undo = json!({ "seq": seq, "reason": "restore the separate tools" });
+        tool(&server, "undo_changeset", undo)["committed"]["seq"]
             .as_u64()
             .unwrap()
     };
@@ -353,6 +336,38 @@ fn identity_snapshots_keep_historical_members_and_merge_redirects() {
     assert_eq!(at(a, 4), first_merge);
     assert_eq!(at(a, 2), assigned);
 
+    later_snapshots(&server, a, &anvil, &empty, &assigned);
+    assert_eq!(head(&server), 9);
+}
+
+/// Commits operations through `commit_changeset`, and the log position.
+fn commit_by_tool(server: &Server, ops: Vec<Value>) -> u64 {
+    let commit = json!({ "ops": ops, "reason": "historical example" });
+    tool(server, "commit_changeset", commit)["seq"]
+        .as_u64()
+        .unwrap()
+}
+
+/// An identity as of a log position, which the API and the tool both say.
+fn identity_at(server: &Server, id: &str, seq: u64) -> Value {
+    let http = server.read(&format!("/v1/identities/{id}/at?seq={seq}"));
+    assert_eq!(
+        http,
+        tool(
+            server,
+            "get_identity_at",
+            json!({ "identity": id, "seq": seq })
+        )
+    );
+    assert_eq!(http["as_of_seq"], seq);
+    assert_eq!(http["id"], id);
+    http
+}
+
+/// Snapshots after a new version of a row and a retraction leave the earlier
+/// ones as they were, and positions past the log are refused.
+fn later_snapshots(server: &Server, a: &str, anvil: &Value, empty: &Value, assigned: &Value) {
+    let at = |id, seq| identity_at(server, id, seq);
     let newer = server.call(
         "/v1/records",
         json!({
@@ -361,11 +376,11 @@ fn identity_snapshots_keep_historical_members_and_merge_redirects() {
         }),
     );
     let versioned = at(a, 8);
-    assert_ne!(newer["record"], anvil);
-    assert_eq!(at(a, 7)["members"][0]["record"], anvil);
+    assert_ne!(&newer["record"], anvil);
+    assert_eq!(&at(a, 7)["members"][0]["record"], anvil);
     let versions = versioned["members"].as_array().unwrap();
     assert_eq!(versions.len(), 2);
-    assert!(versions.iter().any(|member| member["record"] == anvil));
+    assert!(versions.iter().any(|member| &member["record"] == anvil));
     assert!(
         versions
             .iter()
@@ -378,8 +393,8 @@ fn identity_snapshots_keep_historical_members_and_merge_redirects() {
     assert_eq!(retracted["run"]["retraction"]["committed"]["seq"], 9);
     assert_eq!(at(a, 9)["members"], json!([]));
     assert_eq!(at(a, 8), versioned);
-    assert_eq!(at(a, 2), assigned);
-    assert_eq!(at(a, 1), empty);
+    assert_eq!(&at(a, 2), assigned);
+    assert_eq!(&at(a, 1), empty);
 
     let future = server
         .get(&format!("/v1/identities/{a}/at?seq=10"))
@@ -387,7 +402,7 @@ fn identity_snapshots_keep_historical_members_and_merge_redirects() {
     assert!(future.contains("store head at 9"), "{future}");
     assert_eq!(
         refused(
-            &server,
+            server,
             "get_identity_at",
             json!({ "identity": a, "seq": 10 }),
             "invalid"
@@ -404,11 +419,10 @@ fn identity_snapshots_keep_historical_members_and_merge_redirects() {
             .get(&format!("/v1/identities/{id}/at?seq={seq}"))
             .error(status, code);
         refused(
-            &server,
+            server,
             "get_identity_at",
             json!({ "identity": id, "seq": seq }),
             code,
         );
     }
-    assert_eq!(head(&server), 9);
 }

@@ -161,8 +161,32 @@ fn text(value: &Value) -> &str {
         .unwrap_or_else(|| panic!("not text: {value}"))
 }
 
+/// What a tool says of itself when tools are listed: what it reads or
+/// changes, and arguments that say nothing of who calls.
+fn check_tool_listed(tool: &Value, name: &str, reads: bool, says_why: bool) {
+    assert!(text(&tool["description"]).len() > 40, "{name}");
+    assert_eq!(tool["annotations"]["readOnlyHint"], reads, "{name}");
+    assert_eq!(tool["annotations"]["destructiveHint"], !reads, "{name}");
+    assert_eq!(tool["annotations"]["openWorldHint"], false, "{name}");
+    let schema = &tool["inputSchema"];
+    assert_eq!(schema["type"], "object", "{name}");
+    assert_eq!(schema["additionalProperties"], false, "{name}");
+    // Nothing a caller sends says who it is.
+    let empty = serde_json::Map::new();
+    let properties = schema["properties"].as_object().unwrap_or(&empty);
+    for (argument, described) in properties {
+        assert!(!["actor", "author", "user"].contains(&argument.as_str()));
+        // An argument that may be left out is described as what it is.
+        assert!(described.get("default").is_none(), "{name}.{argument}");
+        assert!(described.get("anyOf").is_none(), "{name}.{argument}");
+        assert!(!described["type"].is_array(), "{name}.{argument}");
+    }
+    // Every change made under the caller's name says why.
+    let required = schema["required"].as_array().cloned().unwrap_or_default();
+    assert_eq!(required.contains(&json!("reason")), says_why, "{name}");
+}
+
 #[test]
-#[expect(clippy::too_many_lines)]
 fn a_client_connects_and_is_told_the_tools() {
     let dir = tempfile::tempdir().unwrap();
     let (server, _) = thing_server(dir.path());
@@ -216,26 +240,7 @@ fn a_client_connects_and_is_told_the_tools() {
     assert_eq!(names, TOOLS.map(|(name, _, _)| name));
     assert!(listed["nextCursor"].is_null(), "{listed}");
     for (tool, (name, reads, says_why)) in tools.iter().zip(TOOLS) {
-        assert!(text(&tool["description"]).len() > 40, "{name}");
-        assert_eq!(tool["annotations"]["readOnlyHint"], reads, "{name}");
-        assert_eq!(tool["annotations"]["destructiveHint"], !reads, "{name}");
-        assert_eq!(tool["annotations"]["openWorldHint"], false, "{name}");
-        let schema = &tool["inputSchema"];
-        assert_eq!(schema["type"], "object", "{name}");
-        assert_eq!(schema["additionalProperties"], false, "{name}");
-        // Nothing a caller sends says who it is.
-        let empty = serde_json::Map::new();
-        let properties = schema["properties"].as_object().unwrap_or(&empty);
-        for (argument, described) in properties {
-            assert!(!["actor", "author", "user"].contains(&argument.as_str()));
-            // An argument that may be left out is described as what it is.
-            assert!(described.get("default").is_none(), "{name}.{argument}");
-            assert!(described.get("anyOf").is_none(), "{name}.{argument}");
-            assert!(!described["type"].is_array(), "{name}.{argument}");
-        }
-        // Every change made under the caller's name says why.
-        let required = schema["required"].as_array().cloned().unwrap_or_default();
-        assert_eq!(required.contains(&json!("reason")), says_why, "{name}");
+        check_tool_listed(tool, name, reads, says_why);
     }
     let search = &tools[1]["inputSchema"];
     assert_eq!(search["properties"]["q"]["type"], "string");

@@ -153,7 +153,6 @@ fn chained(dir: &Path) -> Server {
 }
 
 #[test]
-#[expect(clippy::too_many_lines)]
 fn explain_names_each_link_of_a_chain_by_its_records_and_its_rule() {
     let dir = tempfile::tempdir().unwrap();
     let server = chained(dir.path());
@@ -226,57 +225,7 @@ fn explain_names_each_link_of_a_chain_by_its_records_and_its_rule() {
     );
     assert_eq!(answer["cut"]["links"].as_array().unwrap().len(), 1);
 
-    // The list says how many names the identity has and how much of it
-    // only chains hold, largest first.
-    load(
-        &server,
-        "shop",
-        "thing",
-        rows(&[
-            &["id", "code", "colour", "name"],
-            &["5", "hammer", "", "Pein"],
-        ]),
-    );
-    resolve(&server, "thing");
-    let largest = shown(
-        &server,
-        &["show", "identities", "--sort", "records", "--order", "desc"],
-    );
-    let lines: Vec<&str> = largest.lines().collect();
-    assert_eq!(
-        lines[0].split_whitespace().collect::<Vec<_>>(),
-        [
-            "IDENTITY", "NAME", "MEMBERS", "NAMES", "UNLINKED", "PAIRS", "CREATED", "AT"
-        ]
-    );
-    assert_eq!(
-        lines[1].split_whitespace().skip(2).collect::<Vec<_>>(),
-        ["4", "2", "50%", "log", "position", "1"],
-        "{largest}"
-    );
-    assert_eq!(
-        lines[2].split_whitespace().skip(1).collect::<Vec<_>>(),
-        ["hammer", "1", "1", "-", "log", "position", "2"],
-        "{largest}"
-    );
-    let listed = answered(
-        &server,
-        &["show", "identities", "--sort", "names", "--order", "desc"],
-    );
-    assert_eq!(listed["identities"][0]["unlinked_pairs"], 3);
-    assert_eq!(listed["identities"][0]["linked_pairs"], 3);
-    let (code, complaint) = refused(&server, &["show", "identities", "--sort", "size"]);
-    assert_eq!(code, Some(2));
-    assert!(
-        complaint.contains("invalid value 'size' for '--sort <SORT>'"),
-        "{complaint}"
-    );
-    let (code, complaint) = refused(&server, &["show", "runs", "--sort", "records"]);
-    assert_eq!(code, Some(2));
-    assert!(
-        complaint.contains("unexpected argument '--sort'"),
-        "{complaint}"
-    );
+    list_identities_by_unlinked_pairs(&server);
 
     // An identity is explained by its ID or by any of its records.
     let identity = answer["left"]["record"]["identity"]
@@ -397,4 +346,58 @@ fn a_rule_that_sql_refuses_on_a_pair_is_shown_as_one_that_cannot_be_applied() {
     );
     // The server answers the next call.
     has(&shown(&server, &["show"]), "  identities  2");
+}
+
+/// After a hammer joins the chained things, the list says how many names
+/// each identity has and how much of it only chains hold, largest first.
+fn list_identities_by_unlinked_pairs(server: &Server) {
+    load(
+        server,
+        "shop",
+        "thing",
+        rows(&[
+            &["id", "code", "colour", "name"],
+            &["5", "hammer", "", "Pein"],
+        ]),
+    );
+    resolve(server, "thing");
+    let largest = shown(
+        server,
+        &["show", "identities", "--sort", "records", "--order", "desc"],
+    );
+    let lines: Vec<&str> = largest.lines().collect();
+    assert_eq!(
+        lines[0].split_whitespace().collect::<Vec<_>>(),
+        [
+            "IDENTITY", "NAME", "MEMBERS", "NAMES", "UNLINKED", "PAIRS", "CREATED", "AT"
+        ]
+    );
+    assert_eq!(
+        lines[1].split_whitespace().skip(2).collect::<Vec<_>>(),
+        ["4", "2", "50%", "log", "position", "1"],
+        "{largest}"
+    );
+    assert_eq!(
+        lines[2].split_whitespace().skip(1).collect::<Vec<_>>(),
+        ["hammer", "1", "1", "-", "log", "position", "2"],
+        "{largest}"
+    );
+    let listed = answered(
+        server,
+        &["show", "identities", "--sort", "names", "--order", "desc"],
+    );
+    assert_eq!(listed["identities"][0]["unlinked_pairs"], 3);
+    assert_eq!(listed["identities"][0]["linked_pairs"], 3);
+    let (code, complaint) = refused(server, &["show", "identities", "--sort", "size"]);
+    assert_eq!(code, Some(2));
+    assert!(
+        complaint.contains("invalid value 'size' for '--sort <SORT>'"),
+        "{complaint}"
+    );
+    let (code, complaint) = refused(server, &["show", "runs", "--sort", "records"]);
+    assert_eq!(code, Some(2));
+    assert!(
+        complaint.contains("unexpected argument '--sort'"),
+        "{complaint}"
+    );
 }
