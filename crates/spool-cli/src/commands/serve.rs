@@ -12,6 +12,7 @@ use spool::{ApplyReport, Engine, Manifest, Options};
 use spool_cli::auth;
 use spool_cli::auth::google::{self, Google};
 use spool_cli::server::{self, ServerOptions};
+use spool_cli::text;
 
 use clap::Args;
 
@@ -23,7 +24,11 @@ use crate::Failure;
 /// Runs the production server. It's the only process that opens the store.
 ///
 /// An empty store is set up from the manifest. A store applied with a
-/// different manifest is refused: run `spool apply` on it first.
+/// different manifest is applied with this one when its tables still work:
+/// changed rules, strategies, sources and extractors, and new entity types,
+/// are taken on at start. A changed declaration of an entity type the store
+/// holds is refused, because its feature table is computed again: run
+/// `spool apply` on the store first.
 ///
 /// A browser at the server's address gets the studio, Spool's web UI. People
 /// sign in with a username and password, and their accounts live in a file
@@ -192,20 +197,26 @@ pub fn serve(arguments: ServeArgs) -> Result<(), Failure> {
             say!("set up an empty store at {}", store.display());
         }
         Some(applied) if applied == manifest.hash => engine.adopt(&manifest)?,
-        Some(applied) => {
-            return Err(Failure::failed(format!(
-                "the store at {} was applied with manifest {applied}, and this server runs on \
-                 manifest {}",
-                store.display(),
-                manifest.hash,
-            ))
-            .hint(format!(
-                "applying a changed project is a step of its own: run `spool apply --store {} \
-                 --manifest {}` and start again",
-                store.display(),
-                manifest_file.display(),
-            )));
-        }
+        Some(applied) => match engine.apply_without_rebuild(&manifest) {
+            Ok(report) => print_applied(&manifest, &report),
+            Err(spool::Error::RebuildNeeded(types)) => {
+                let names: Vec<&str> = types.iter().map(|name| name.as_str()).collect();
+                return Err(Failure::failed(format!(
+                    "the store at {} was applied with manifest {applied}, and in manifest {} \
+                     the declaration of {} changed",
+                    store.display(),
+                    manifest.hash,
+                    text::listed(&names),
+                ))
+                .hint(format!(
+                    "computing feature tables again is a step of its own: run `spool apply \
+                     --store {} --manifest {}` and start again",
+                    store.display(),
+                    manifest_file.display(),
+                )));
+            }
+            Err(error) => return Err(error.into()),
+        },
     }
     say!("manifest  {}", manifest.hash);
     let accounts = super::open_accounts(&store)?.with_google(reached.google.is_some());
@@ -364,7 +375,7 @@ fn print_applied(manifest: &Manifest, report: &ApplyReport) {
         parts.push(format!("rebuilt {}", names(&report.rebuilt)));
     }
     if parts.is_empty() {
-        parts.push("rules only".to_owned());
+        parts.push("no table changed".to_owned());
     }
     say!("applied   {} ({})", manifest.hash, parts.join("; "));
 }

@@ -47,7 +47,7 @@ manifest  b6dff33d6c0977f4afb2497792bcaa9785e8b865994fa5c94eb9761f57a6e0a7
 declared  company
 ```
 
-`spool apply` creates the store if needed, declares new entity types, and rebuilds features for each type whose declaration changed. Identities aren't touched. It runs with the server stopped, so a rule change is: build, stop, apply, start.
+`spool apply` creates the store if needed, declares new entity types, and rebuilds features for each type whose declaration changed. Identities aren't touched. It runs with the server stopped, so a changed declaration is: build, stop, apply, start. Any other change, such as a rule, a strategy, a source or an extractor, the server applies itself when it starts.
 
 ## Serve
 
@@ -69,7 +69,7 @@ no admin can sign in yet: open that link, at the address people reach this serve
 
 `--listen` defaults to `0.0.0.0:7765`. Put a TLS-terminating reverse proxy in front, and pass the public address with `--public-url https://spool.example.com`.
 
-The server refuses a store applied with a different manifest, and tells you to run `spool apply` first.
+A store applied with a different manifest is applied with this one when the server starts, as long as no entity type's declaration changed: changed rules, strategies, sources and extractors, and new entity types, need no step of their own. When a declaration changed, its features have to be computed again, and the server refuses the store and tells you to run `spool apply` first.
 
 ## The first account
 
@@ -173,7 +173,7 @@ What to know:
 - **Memory.** Half a gigabyte holds rows and rules on a small store. A project whose extractor loads a model in the server, as the sample project's does, needs about 2 GB.
 - **Secrets your code reads**, such as a model's API key, go in the service's environment. Without one, an extractor that needs it fails rather than calling anyone.
 - **A deploy** replaces the container and has to keep the disk. The server stops while that happens, because the next process cannot open the store until this one has let go of it.
-- **A changed project** builds a new manifest, and the server refuses a store applied with another until it is applied again. With the server stopped, set the start command to the `apply` command at the top of the Dockerfile, the part after the image's name. When the logs show the `manifest` line of `spool apply`, set the start command back to `serve`. That first run is reported as failed, because `apply` ends.
+- **A changed project** builds a new manifest, which the server applies when it starts. A changed declaration is the exception: the server refuses the store until it is applied again. With the server stopped, set the start command to the `apply` command at the top of the Dockerfile, the part after the image's name. When the logs show the `manifest` line of `spool apply`, set the start command back to `serve`. That first run is reported as failed, because `apply` ends.
 
 ### Moving a store
 

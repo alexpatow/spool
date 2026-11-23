@@ -99,8 +99,9 @@ fn format_dockerfile(base_image: &str) -> String {
 # an OAuth client, and SPOOL_PUBLIC_URL to the address people open, such as
 # https://spool.example.com. `spool serve --help` says more.
 #
-# A changed project is applied to an existing store as a step of its own,
-# with the server stopped:
+# The server applies a changed project when it starts. A changed declaration
+# of an entity type computes its features again, and is applied to an
+# existing store as a step of its own, with the server stopped:
 #
 #   docker run --rm -v spool-data:/data my-spool apply --manifest /spool/manifest.json
 
@@ -175,8 +176,9 @@ fn dockerfile_with_user_code(base_image: &str, python: bool, typescript: bool) -
 # an OAuth client, and SPOOL_PUBLIC_URL to the address people open, such as
 # https://spool.example.com. `spool serve --help` says more.
 #
-# A changed project is applied to an existing store as a step of its own,
-# with the server stopped:
+# The server applies a changed project when it starts. A changed declaration
+# of an entity type computes its features again, and is applied to an
+# existing store as a step of its own, with the server stopped:
 #
 #   docker run --rm -v spool-data:/data my-spool apply
 

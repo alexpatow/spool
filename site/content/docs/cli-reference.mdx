@@ -724,7 +724,7 @@ Run the server from a manifest and a store
 
 Runs the production server. It's the only process that opens the store.
 
-An empty store is set up from the manifest. A store applied with a different manifest is refused: run `spool apply` on it first.
+An empty store is set up from the manifest. A store applied with a different manifest is applied with this one when its tables still work: changed rules, strategies, sources and extractors, and new entity types, are taken on at start. A changed declaration of an entity type the store holds is refused, because its feature table is computed again: run `spool apply` on the store first.
 
 A browser at the server's address gets the studio, Spool's web UI. People sign in with a username and password, and their accounts live in a file beside the store: `spool.auth.sqlite` for `spool.duckdb`. Until an admin exists, the server prints a link on startup. Whoever opens it creates the first account and becomes the admin who adds everyone else.
 
