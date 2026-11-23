@@ -13,7 +13,7 @@ import { repository } from "spool-testing";
 import { crmCsv, generate, records, registryCsv, truthCsv } from "./generate.ts";
 import type { Generated } from "./generate.ts";
 
-export const companiesProject = join(repository, "benchmarks/identity/companies-small");
+const companiesProject = join(repository, "benchmarks/identity/companies-small");
 
 /** Writes the project and returns how many records it holds. */
 /** Copies the company fixture's sources, transforms and entity type into `dir`. */

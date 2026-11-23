@@ -6,7 +6,7 @@ import type { IdentityView, RecordEntry, SpoolClient } from "./api.ts";
 
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export function isId(text: string): boolean {
+function isId(text: string): boolean {
   return ID.test(text);
 }
 

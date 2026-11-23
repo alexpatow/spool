@@ -33,7 +33,7 @@ const PAGE = 1000;
 
 type Row = Record<string, unknown>;
 
-export interface ReplayStep {
+interface ReplayStep {
   step: string;
   seconds: number;
   memory_mb: number;
@@ -42,7 +42,7 @@ export interface ReplayStep {
 }
 
 /** The last step of what `spool bench` reported, as far as it is used here. */
-export interface Quality {
+interface Quality {
   records: number;
   true_entities: number;
   identities: number;

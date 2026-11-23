@@ -336,7 +336,7 @@ const MOST_SAYING = 3;
  * holds, with the records that hold it. Where they disagree the field says
  * so, and every value is there.
  */
-export function Facts({ facts, of }: { facts: Fact[]; of: number }) {
+function Facts({ facts, of }: { facts: Fact[]; of: number }) {
   if (facts.length === 0) {
     return <Quiet>No fields.</Quiet>;
   }
@@ -581,7 +581,7 @@ function Merge({ view, head }: { view: IdentityView; head: number }) {
   );
 }
 
-export function History({ history, names }: { history: HistoryEntry[]; names: Map<string, string> }) {
+function History({ history, names }: { history: HistoryEntry[]; names: Map<string, string> }) {
   if (history.length === 0) return <Quiet>No history.</Quiet>;
   return (
     <ol data-part="history" {...stylex.props(styles.history)}>

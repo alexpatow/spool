@@ -13,7 +13,7 @@ export const siteCardPath = "/og/image.png";
  * the problem, how Spool solves it, and how it connects to your tools.
  * `video/` in the site makes it.
  */
-export const siteVideo = { path: "/videos/spool.mp4", width: 1920, height: 1080, type: "video/mp4" } as const;
+const siteVideo = { path: "/videos/spool.mp4", width: 1920, height: 1080, type: "video/mp4" } as const;
 
 /** Where the card of a docs page is: `/docs/concepts/matching` has `/og/docs/concepts/matching/image.png`. */
 export function docsCardPath(url: string): string {

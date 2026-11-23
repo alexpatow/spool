@@ -174,11 +174,6 @@ export function Row({ children, end = false }: { children: ReactNode; end?: bool
   return <div {...stylex.props(styles.row, end && styles.rowEnd)}>{children}</div>;
 }
 
-/** Things under each other. */
-export function Stack({ children }: { children: ReactNode }) {
-  return <div {...stylex.props(styles.stack)}>{children}</div>;
-}
-
 /** Label and value, one pair per row. A value that is `null` or `undefined` leaves its row out. */
 export function Fields({ rows }: { rows: Array<[string, ReactNode]> }) {
   return (
@@ -308,12 +303,6 @@ const styles = stylex.create({
   },
   rowEnd: {
     justifyContent: "flex-end",
-  },
-  stack: {
-    gap: spacing["3"],
-    display: "flex",
-    flexDirection: "column",
-    minWidth: 0,
   },
   quiet: {
     margin: 0,

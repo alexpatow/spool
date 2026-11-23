@@ -7,12 +7,12 @@ import { dirname, join } from "node:path";
 
 import { copyProject as copyProjectTo, makeHarness, makeScratchDirectory, repository } from "spool-testing";
 
-export { PASSWORD, cookies, firstPerson, readCsv, repository } from "spool-testing";
-export type { Browser, Server } from "spool-testing";
+export { PASSWORD, cookies, firstPerson, readCsv } from "spool-testing";
+export type { Server } from "spool-testing";
 
 // These tests call the server and do not time it, so the build that is
 // quickest to make will do: the debug build, unless `SPOOL_BIN` names a binary.
-export const { binary, spool, serve } = makeHarness("debug");
+export const { spool, serve } = makeHarness("debug");
 
 export const companies = join(repository, "benchmarks/identity/companies-small");
 
