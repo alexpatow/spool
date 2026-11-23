@@ -43,7 +43,7 @@ export async function asked(button: string | RegExp) {
 }
 
 /** Fills the fields of a button's dialog by their labels. */
-export async function fill(button: string | RegExp, fields: Record<string, string>) {
+async function fill(button: string | RegExp, fields: Record<string, string>) {
   const dialog = await asked(button);
   for (const [label, value] of Object.entries(fields)) {
     fireEvent.change(dialog.getByLabelText(label), { target: { value } });

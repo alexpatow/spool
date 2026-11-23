@@ -57,7 +57,6 @@ pub(super) struct Entity {
 /// Checks an `entity.yaml` against the sources and transforms it names, and
 /// writes the query that computes its features: one row per record, each
 /// feature from the columns its source's mapping says.
-#[expect(clippy::too_many_lines)]
 pub(super) fn entity_of(
     file: &YamlFile,
     sources: &[Source],
@@ -66,33 +65,7 @@ pub(super) fn entity_of(
     let written: EntityYaml =
         serde_saphyr::from_str(&file.yaml).map_err(|error| error.to_string())?;
 
-    if written.features.is_empty() {
-        return Err("an entity type lists its features".to_owned());
-    }
-    let mut features = BTreeSet::new();
-    for feature in &written.features {
-        if !is_sql_identifier(feature) {
-            return Err(format!(
-                "`{feature}` cannot name a feature: use lowercase letters, digits and `_`"
-            ));
-        }
-        if ["record_id", "declaration_version", "identity_id", "is_new"].contains(&feature.as_str())
-        {
-            return Err(format!(
-                "`{feature}` is a column the engine adds; give the feature another name"
-            ));
-        }
-        if !features.insert(feature.as_str()) {
-            return Err(format!("feature `{feature}` is listed twice"));
-        }
-    }
-    if let Some(label) = &written.label
-        && !features.contains(label.as_str())
-    {
-        return Err(format!(
-            "the label is `{label}`, which is not one of the features"
-        ));
-    }
+    let features = check_features(&written)?;
     if written.mapping.is_empty() {
         return Err("the mapping names no source, so nothing can become a record".to_owned());
     }
@@ -209,4 +182,37 @@ pub(super) fn entity_of(
         sources: written.mapping.into_keys().collect(),
         mapping,
     })
+}
+
+/// The features an `entity.yaml` lists, if each has a name of its own that
+/// the engine does not use, and its label is one of them.
+fn check_features(written: &EntityYaml) -> Result<BTreeSet<&str>, String> {
+    if written.features.is_empty() {
+        return Err("an entity type lists its features".to_owned());
+    }
+    let mut features = BTreeSet::new();
+    for feature in &written.features {
+        if !is_sql_identifier(feature) {
+            return Err(format!(
+                "`{feature}` cannot name a feature: use lowercase letters, digits and `_`"
+            ));
+        }
+        if ["record_id", "declaration_version", "identity_id", "is_new"].contains(&feature.as_str())
+        {
+            return Err(format!(
+                "`{feature}` is a column the engine adds; give the feature another name"
+            ));
+        }
+        if !features.insert(feature.as_str()) {
+            return Err(format!("feature `{feature}` is listed twice"));
+        }
+    }
+    if let Some(label) = &written.label
+        && !features.contains(label.as_str())
+    {
+        return Err(format!(
+            "the label is `{label}`, which is not one of the features"
+        ));
+    }
+    Ok(features)
 }

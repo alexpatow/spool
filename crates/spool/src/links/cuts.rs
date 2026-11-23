@@ -105,7 +105,6 @@ impl Graph {
     /// Of the cuts with that few links, the one whose smaller side is the
     /// larger: a cut that parts one record from the rest says less about
     /// where two things were joined than one that parts two groups.
-    #[expect(clippy::too_many_lines)]
     pub(crate) fn cut(&self, one: &[u32], other: &[u32]) -> Option<Parting> {
         let mut sink = vec![false; self.len()];
         for &at in other {
@@ -114,73 +113,12 @@ impl Graph {
         if one.is_empty() || other.is_empty() || one.iter().any(|&at| sink[at as usize]) {
             return None;
         }
-        // The flow along each edge: 1 from `a` to `b`, -1 back, or 0.
-        let mut flow = vec![0i8; self.edges.len()];
-        let residual = |flow: &[i8], from: u32, edge: u32| {
-            let sent = flow[edge as usize];
-            if self.edges[edge as usize].a == from {
-                sent < 1
-            } else {
-                sent > -1
-            }
-        };
-        const START: u32 = u32::MAX;
-        let mut paths = 0;
-        loop {
-            let mut reached: Vec<Option<(u32, u32)>> = vec![None; self.len()];
-            let mut queue = VecDeque::new();
-            for &at in one {
-                reached[at as usize] = Some((START, START));
-                queue.push_back(at);
-            }
-            let mut end = None;
-            while let Some(at) = queue.pop_front() {
-                if sink[at as usize] {
-                    end = Some(at);
-                    break;
-                }
-                for &(to, edge) in &self.adjacent[at as usize] {
-                    if reached[to as usize].is_none() && residual(&flow, at, edge) {
-                        reached[to as usize] = Some((at, edge));
-                        queue.push_back(to);
-                    }
-                }
-            }
-            let Some(mut at) = end else { break };
-            if paths == MOST_CUT {
-                return None;
-            }
-            paths += 1;
-            while let Some((before, edge)) =
-                reached[at as usize].filter(|&(before, _)| before != START)
-            {
-                flow[edge as usize] += if self.edges[edge as usize].a == before {
-                    1
-                } else {
-                    -1
-                };
-                at = before;
-            }
-        }
-        if paths == 0 {
-            return None;
-        }
+        let flow = self.max_flow(one, &sink)?;
+        let residual = |from: u32, edge: u32| self.residual(&flow, from, edge);
 
         // Every part a member of either group is in, so that the links
         // listed part the two groups in each.
-        let mut within = vec![false; self.len()];
-        let mut queue: VecDeque<u32> = one.iter().chain(other).copied().collect();
-        for &at in &queue {
-            within[at as usize] = true;
-        }
-        while let Some(at) = queue.pop_front() {
-            for &(to, _) in &self.adjacent[at as usize] {
-                if !within[to as usize] {
-                    within[to as usize] = true;
-                    queue.push_back(to);
-                }
-            }
-        }
+        let within = self.reach(one.iter().chain(other).copied(), |_, _, _| true);
         let part: Vec<u32> = (0..self.len() as u32)
             .filter(|&at| within[at as usize])
             .collect();
@@ -190,38 +128,14 @@ impl Graph {
         // nothing that reaches `other`. Groups of members that reach each
         // other are added whole, each after every group it reaches, and of
         // the sides that leaves, the most even is kept.
-        let mut inside = vec![false; self.len()];
-        let mut queue: VecDeque<u32> = one.iter().copied().collect();
-        for &at in one {
-            inside[at as usize] = true;
-        }
-        while let Some(at) = queue.pop_front() {
-            for &(to, edge) in &self.adjacent[at as usize] {
-                if !inside[to as usize] && residual(&flow, at, edge) {
-                    inside[to as usize] = true;
-                    queue.push_back(to);
-                }
-            }
-        }
-        let mut toward = vec![false; self.len()];
-        let mut queue: VecDeque<u32> = other.iter().copied().collect();
-        for &at in other {
-            toward[at as usize] = true;
-        }
-        while let Some(at) = queue.pop_front() {
-            for &(to, edge) in &self.adjacent[at as usize] {
-                if !toward[to as usize] && residual(&flow, to, edge) {
-                    toward[to as usize] = true;
-                    queue.push_back(to);
-                }
-            }
-        }
+        let mut inside = self.reach(one.iter().copied(), |at, _, edge| residual(at, edge));
+        let toward = self.reach(other.iter().copied(), |_, to, edge| residual(to, edge));
         let free: Vec<u32> = part
             .iter()
             .copied()
             .filter(|&at| !inside[at as usize] && !toward[at as usize])
             .collect();
-        let groups = self.reaching_groups(&free, &|from, edge| residual(&flow, from, edge));
+        let groups = self.reaching_groups(&free, &residual);
         let total = part.len();
         let mut size = part.iter().filter(|&&at| inside[at as usize]).count();
         let (mut best, mut best_at) = (size.min(total - size), 0);
@@ -249,6 +163,86 @@ impl Graph {
             one: with_one,
             other: with_other,
         })
+    }
+
+    /// A flow of one along each of the fewest chains of links from `one` to
+    /// the members marked in `sink` that share no link: 1 along an edge from
+    /// `a` to `b`, -1 back, or 0. `None` when no chain joins them, or when
+    /// there are more than [`MOST_CUT`].
+    fn max_flow(&self, one: &[u32], sink: &[bool]) -> Option<Vec<i8>> {
+        const START: u32 = u32::MAX;
+        let mut flow = vec![0i8; self.edges.len()];
+        let mut paths = 0;
+        loop {
+            let mut reached: Vec<Option<(u32, u32)>> = vec![None; self.len()];
+            let mut queue = VecDeque::new();
+            for &at in one {
+                reached[at as usize] = Some((START, START));
+                queue.push_back(at);
+            }
+            let mut end = None;
+            while let Some(at) = queue.pop_front() {
+                if sink[at as usize] {
+                    end = Some(at);
+                    break;
+                }
+                for &(to, edge) in &self.adjacent[at as usize] {
+                    if reached[to as usize].is_none() && self.residual(&flow, at, edge) {
+                        reached[to as usize] = Some((at, edge));
+                        queue.push_back(to);
+                    }
+                }
+            }
+            let Some(mut at) = end else { break };
+            if paths == MOST_CUT {
+                return None;
+            }
+            paths += 1;
+            while let Some((before, edge)) =
+                reached[at as usize].filter(|&(before, _)| before != START)
+            {
+                flow[edge as usize] += if self.edges[edge as usize].a == before {
+                    1
+                } else {
+                    -1
+                };
+                at = before;
+            }
+        }
+        (paths > 0).then_some(flow)
+    }
+
+    /// Whether `flow` leaves room along `edge` away from `from`.
+    fn residual(&self, flow: &[i8], from: u32, edge: u32) -> bool {
+        let sent = flow[edge as usize];
+        if self.edges[edge as usize].a == from {
+            sent < 1
+        } else {
+            sent > -1
+        }
+    }
+
+    /// Which members `starts` reach along the arcs from `at` to `to` over
+    /// `edge` that `open(at, to, edge)` lets through, starts included.
+    fn reach(
+        &self,
+        starts: impl IntoIterator<Item = u32>,
+        open: impl Fn(u32, u32, u32) -> bool,
+    ) -> Vec<bool> {
+        let mut reached = vec![false; self.len()];
+        let mut queue: VecDeque<u32> = starts.into_iter().collect();
+        for &at in &queue {
+            reached[at as usize] = true;
+        }
+        while let Some(at) = queue.pop_front() {
+            for &(to, edge) in &self.adjacent[at as usize] {
+                if !reached[to as usize] && open(at, to, edge) {
+                    reached[to as usize] = true;
+                    queue.push_back(to);
+                }
+            }
+        }
+        reached
     }
 
     /// The groups of `members` that reach each other along the arcs `open`

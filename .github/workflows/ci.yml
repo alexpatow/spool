@@ -132,6 +132,10 @@ jobs:
       - name: Lint
         run: bun run lint
 
+      # Exports, files and dependencies that nothing uses.
+      - name: Unused
+        run: bun run unused
+
       # The site is type-checked by its own workflow, with what it builds.
       - name: Type check
         run: |

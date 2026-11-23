@@ -13,7 +13,7 @@ import { UserPlusIcon } from "../icons.tsx";
 import { keys, stale, useRead } from "../queries.ts";
 
 /** The fewest characters the server takes as a password. */
-export const MIN_PASSWORD = 12;
+const MIN_PASSWORD = 12;
 
 /** A field for a password that is being set, not asked for. */
 export function NewPassword({

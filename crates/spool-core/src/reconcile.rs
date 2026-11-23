@@ -140,7 +140,6 @@ pub enum ReviewItem {
 /// The output depends only on the inputs: groups are visited in order of their
 /// smallest record ID, so the same evidence and the same ID generator
 /// give the same draft.
-#[expect(clippy::too_many_lines)]
 pub fn reconcile<S: IdentityState + ?Sized>(
     evidence: &EvidenceSummary,
     state: &S,
@@ -206,57 +205,16 @@ pub fn reconcile<S: IdentityState + ?Sized>(
     // What each group would do if it were the only one.
     let members = groups.sets();
     let none = BTreeSet::new();
-    let mut decisions: BTreeMap<RecordId, Decision> = BTreeMap::new();
-    for (root, group) in &members {
-        let matched = matched.get(root).unwrap_or(&none);
-        let refused = refused.get(root).unwrap_or(&none);
-        let mut matched_ids = matched.iter().copied();
-        let target = matched_ids.next();
-        let decision = if matched_ids.next().is_some() {
-            Decision::Review(ReviewItem::PossibleMerge {
-                records: group.clone(),
-                identities: matched.iter().copied().collect(),
-            })
-        } else if split_inside.contains(root) || target.is_some_and(|id| refused.contains(&id)) {
-            Decision::Review(ReviewItem::Conflict {
-                records: group.clone(),
-                identity: target,
-            })
-        } else {
-            match target {
-                Some(identity) => Decision::Join(identity),
-                None => Decision::Create,
-            }
-        };
-        decisions.insert(*root, decision);
-    }
-
-    // Groups that would join the same identity become members of one thing,
-    // so a `no_match` between two of them is a contradiction, just as it
-    // would be inside a group. Groups it connects are left for review
-    // together. Groups that become new identities stay apart, so a
-    // `no_match` between those contradicts nothing.
-    let mut clashes = DisjointSets::new(members.keys().copied());
-    let mut clashing = BTreeSet::new();
-    for pair in &evidence.pairs {
-        if pair.verdict != Verdict::NoMatch
-            || !new.contains_key(&pair.a)
-            || !new.contains_key(&pair.b)
-        {
-            continue;
-        }
-        let (a, b) = (groups.root(pair.a), groups.root(pair.b));
-        if a == b {
-            continue;
-        }
-        if let (Decision::Join(left), Decision::Join(right)) = (&decisions[&a], &decisions[&b])
-            && left == right
-        {
-            clashes.join(a, b);
-            clashing.extend([a, b]);
-        }
-    }
-    let mut clash_members = clashes.sets();
+    let mut decisions: BTreeMap<RecordId, Decision> = members
+        .iter()
+        .map(|(root, group)| {
+            let matched = matched.get(root).unwrap_or(&none);
+            let refused = refused.get(root).unwrap_or(&none);
+            let split = split_inside.contains(root);
+            (*root, Decision::of(group, matched, refused, split))
+        })
+        .collect();
+    let (mut clash_members, clashing) = find_clashes(&evidence.pairs, &new, &groups, &decisions);
 
     let mut ops = Vec::new();
     let mut review = Vec::new();
@@ -320,6 +278,73 @@ enum Decision {
     Review(ReviewItem),
     Join(IdentityId),
     Create,
+}
+
+impl Decision {
+    /// The decision for a group of new records, from the identities its
+    /// records match and refuse, and whether a `no_match` splits it.
+    fn of(
+        group: &[RecordId],
+        matched: &BTreeSet<IdentityId>,
+        refused: &BTreeSet<IdentityId>,
+        split_inside: bool,
+    ) -> Self {
+        let mut matched_ids = matched.iter().copied();
+        let target = matched_ids.next();
+        if matched_ids.next().is_some() {
+            Decision::Review(ReviewItem::PossibleMerge {
+                records: group.to_vec(),
+                identities: matched.iter().copied().collect(),
+            })
+        } else if split_inside || target.is_some_and(|id| refused.contains(&id)) {
+            Decision::Review(ReviewItem::Conflict {
+                records: group.to_vec(),
+                identity: target,
+            })
+        } else {
+            match target {
+                Some(identity) => Decision::Join(identity),
+                None => Decision::Create,
+            }
+        }
+    }
+}
+
+/// The groups a `no_match` connects among those that would join the same
+/// identity, each set by its root, and the roots of every such group.
+///
+/// Groups that would join the same identity become members of one thing,
+/// so a `no_match` between two of them is a contradiction, just as it
+/// would be inside a group. Groups it connects are left for review
+/// together. Groups that become new identities stay apart, so a
+/// `no_match` between those contradicts nothing.
+fn find_clashes(
+    pairs: &[NewPair],
+    new: &BTreeMap<RecordId, &EntityType>,
+    groups: &DisjointSets<RecordId>,
+    decisions: &BTreeMap<RecordId, Decision>,
+) -> (BTreeMap<RecordId, Vec<RecordId>>, BTreeSet<RecordId>) {
+    let mut clashes = DisjointSets::new(decisions.keys().copied());
+    let mut clashing = BTreeSet::new();
+    for pair in pairs {
+        if pair.verdict != Verdict::NoMatch
+            || !new.contains_key(&pair.a)
+            || !new.contains_key(&pair.b)
+        {
+            continue;
+        }
+        let (a, b) = (groups.root(pair.a), groups.root(pair.b));
+        if a == b {
+            continue;
+        }
+        if let (Decision::Join(left), Decision::Join(right)) = (&decisions[&a], &decisions[&b])
+            && left == right
+        {
+            clashes.join(a, b);
+            clashing.extend([a, b]);
+        }
+    }
+    (clashes.sets(), clashing)
 }
 
 #[cfg(test)]

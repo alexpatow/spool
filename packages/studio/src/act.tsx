@@ -193,7 +193,7 @@ export function Act({
 }
 
 /** Why a change was not made. A changeset the engine rejected is shown with the operations it names. */
-export function Refusal({ error }: { error: unknown }) {
+function Refusal({ error }: { error: unknown }) {
   if (error instanceof Mistake) {
     return (
       <Notice tone="bad" role="alert">

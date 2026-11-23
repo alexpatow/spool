@@ -6,15 +6,15 @@ use clap::Args;
 use serde_json::json;
 use spool::core::IdentityId;
 use spool::{
-    After, Change, ChangeDetail, Contradiction, Fate, RecomputeApplied, RecomputeReport,
-    TypeRecompute,
+    After, Change, ChangeDetail, Contradiction, DecisionSummary, Fate, RecomputeApplied,
+    RecomputeReport, RecomputeSummary, TypeRecompute,
 };
 
 use spool_cli::text::count;
 
 use super::remote::{Remote, RemoteArgs, typed};
 use crate::Failure;
-use crate::output::{Output, OutputArgs, aligned, fields, hint, table};
+use crate::output::{Output, OutputArgs, aligned, fields, hint, indented, table};
 use crate::progress;
 
 /// Show what the current rules would change in the identities
@@ -183,7 +183,6 @@ fn print_report(report: &RecomputeReport, entity_type: Option<&str>) -> Result<(
     Ok(())
 }
 
-#[expect(clippy::too_many_lines)]
 fn print_type(recomputed: &TypeRecompute) {
     let summary = &recomputed.summary;
     println!(
@@ -197,7 +196,23 @@ fn print_type(recomputed: &TypeRecompute) {
         println!("nothing would change");
         return;
     }
-    let mut rows: Vec<(&str, String)> = vec![(
+    fields(&summary_rows(summary));
+
+    let rows = decision_rows(&recomputed.decisions);
+    if !rows.is_empty() {
+        println!();
+        println!("decisions");
+        indented(&rows);
+    }
+
+    println!();
+    print_changes(recomputed);
+}
+
+/// What a recomputation would do to a type's identities and records, one
+/// row for each kind of change it makes.
+fn summary_rows(summary: &RecomputeSummary) -> Vec<(&'static str, String)> {
+    let mut rows: Vec<(&'static str, String)> = vec![(
         "unchanged",
         format!(
             "{} would keep exactly their records",
@@ -296,10 +311,12 @@ fn print_type(recomputed: &TypeRecompute) {
             summary.pairs_kept
         ),
     ));
-    fields(&rows);
+    rows
+}
 
-    let decisions = &recomputed.decisions;
-    let mut rows: Vec<(&str, String)> = Vec::new();
+/// What people decided that a recomputation keeps, or may undo.
+fn decision_rows(decisions: &DecisionSummary) -> Vec<(&'static str, String)> {
+    let mut rows: Vec<(&'static str, String)> = Vec::new();
     if decisions.cannot_link > 0 || decisions.must_link > 0 {
         rows.push((
             "constraints",
@@ -361,13 +378,11 @@ fn print_type(recomputed: &TypeRecompute) {
             ),
         ));
     }
-    if !rows.is_empty() {
-        println!();
-        println!("decisions");
-        print_indented_pairs(&rows);
-    }
+    rows
+}
 
-    println!();
+/// The changes a recomputation would make, the largest first.
+fn print_changes(recomputed: &TypeRecompute) {
     let shown = recomputed.changes.len() as u64;
     let first = recomputed.changes.first().map_or(0, |change| change.rank);
     if shown == 0 {
@@ -401,13 +416,6 @@ fn print_type(recomputed: &TypeRecompute) {
         ));
     }
     hint("`--identity <id>` shows a change record by record");
-}
-
-fn print_indented_pairs(rows: &[(&str, String)]) {
-    let width = rows.iter().map(|(label, _)| label.len()).max().unwrap_or(0);
-    for (label, text) in rows {
-        println!("  {label:width$}  {text}");
-    }
 }
 
 fn records_of(identities: u64) -> String {
@@ -548,7 +556,6 @@ fn print_detail(
     Ok(())
 }
 
-#[expect(clippy::too_many_lines)]
 fn print_change(recomputed: &TypeRecompute, detail: &ChangeDetail) {
     let change = &detail.change;
     fields(&[
@@ -583,31 +590,7 @@ fn print_change(recomputed: &TypeRecompute, detail: &ChangeDetail) {
         })
         .collect();
     aligned(&rows, 2);
-    println!();
-    println!("after");
-    let mut rows: Vec<Vec<String>> = Vec::new();
-    for (at, after) in change.after.iter().enumerate() {
-        let what = match (after.fate, after.identity) {
-            (Fate::Kept, Some(identity)) => format!("{identity}, keeps its ID"),
-            (Fate::New, _) => "a new identity".to_owned(),
-            _ => "waits for review without an identity".to_owned(),
-        };
-        rows.push(vec![
-            (at + 1).to_string(),
-            what,
-            label_or_unnamed(&after.label),
-            count(after.records, "record"),
-        ]);
-    }
-    aligned(&rows, 2);
-    for (at, after) in change.after.iter().enumerate() {
-        for merged in &after.merged {
-            println!(
-                "  {merged} is merged into {}, and its ID stands for it",
-                at + 1
-            );
-        }
-    }
+    print_after(&change.after);
     println!();
     let rows: Vec<Vec<String>> = detail
         .records
@@ -678,6 +661,36 @@ fn print_change(recomputed: &TypeRecompute, detail: &ChangeDetail) {
             println!(
                 "  {} by draft {} at log position {}",
                 placement.record, placement.draft, placement.seq
+            );
+        }
+    }
+}
+
+/// Where the records of a change would go: each group, numbered, and the
+/// identities merged into one.
+fn print_after(afters: &[After]) {
+    println!();
+    println!("after");
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    for (at, after) in afters.iter().enumerate() {
+        let what = match (after.fate, after.identity) {
+            (Fate::Kept, Some(identity)) => format!("{identity}, keeps its ID"),
+            (Fate::New, _) => "a new identity".to_owned(),
+            _ => "waits for review without an identity".to_owned(),
+        };
+        rows.push(vec![
+            (at + 1).to_string(),
+            what,
+            label_or_unnamed(&after.label),
+            count(after.records, "record"),
+        ]);
+    }
+    aligned(&rows, 2);
+    for (at, after) in afters.iter().enumerate() {
+        for merged in &after.merged {
+            println!(
+                "  {merged} is merged into {}, and its ID stands for it",
+                at + 1
             );
         }
     }

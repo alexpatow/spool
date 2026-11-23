@@ -181,7 +181,7 @@ export function Table<T>({
 }
 
 /** The button under a list that reads its next page. */
-export function More({ pages }: { pages: Pick<Pages<unknown>, "more" | "reading" | "readMore"> }) {
+function More({ pages }: { pages: Pick<Pages<unknown>, "more" | "reading" | "readMore"> }) {
   if (!pages.more) return null;
   return (
     <div {...stylex.props(shared.more)}>

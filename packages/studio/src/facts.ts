@@ -6,7 +6,7 @@
 import type { RecordEntry } from "./api.ts";
 import { plain } from "./format.ts";
 
-export interface Said {
+interface Said {
   /** The value as text. */
   value: string;
   records: RecordEntry[];

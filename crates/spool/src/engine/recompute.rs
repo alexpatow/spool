@@ -4,7 +4,8 @@
 use duckdb::params;
 use serde_json::json;
 use spool_core::{
-    Actor, Changeset, EntityType, IdentityState, IdentityStatus, IdentityStore, Policy, validate,
+    Actor, Changeset, EntityType, IdentityState, IdentityStatus, IdentityStore, Policy, RunId,
+    validate,
 };
 
 use super::matching::MatchConfig;
@@ -102,7 +103,6 @@ fn recomputed_types<'a>(
 }
 
 impl Inner {
-    #[expect(clippy::too_many_lines)]
     pub(super) fn apply_recompute(
         &mut self,
         by: &Actor,
@@ -117,38 +117,7 @@ impl Inner {
             .collect();
         let mut worked = Vec::new();
         for name in &names {
-            let (manifest, entry, version) = self.declared(name.as_str())?;
-            let config = MatchConfig {
-                entity_type: name.clone(),
-                declaration_version: version,
-                manifest_hash: manifest.hash.clone(),
-                after_run: self.last_batch_match(name)?,
-                review_items: review::open_ids(&self.store.conn, name)?,
-                record: None,
-                rematch: true,
-                recompute: true,
-                rules: entry.rules.clone(),
-            };
-            let run = self.start_run("match", by, Some(&StrategyRef::rules()), &json!(config))?;
-            let outcome = self.in_run(run, |inner| {
-                let tx = inner.store.conn.transaction()?;
-                recompute::create_scope(&tx, name, run)?;
-                rules::generate_candidates(&tx, name, run, &config.rules.block)?;
-                rules::judge_candidates(
-                    &tx,
-                    name,
-                    run,
-                    &config.rules.no_match,
-                    &config.rules.match_,
-                )?;
-                tx.commit()?;
-                recompute::compute(
-                    &inner.store.conn,
-                    name,
-                    &format!("(SELECT * FROM spool.judgement WHERE run_id = {run})"),
-                )
-            })?;
-            worked.push((run, outcome));
+            worked.push(self.rematch_for_recompute(by, name)?);
         }
         let plans: Vec<String> = worked.iter().map(|(_, outcome)| outcome.plan()).collect();
         let now = recompute::combined_plan(&plans);
@@ -242,5 +211,40 @@ impl Inner {
             applied.types.push(report);
         }
         Ok(applied)
+    }
+
+    /// Matches every record of a type again under its rules, in a match run
+    /// of its own, and works out what the judgements would change.
+    fn rematch_for_recompute(
+        &mut self,
+        by: &Actor,
+        name: &EntityType,
+    ) -> Result<(RunId, recompute::Outcome)> {
+        let (manifest, entry, version) = self.declared(name.as_str())?;
+        let config = MatchConfig {
+            entity_type: name.clone(),
+            declaration_version: version,
+            manifest_hash: manifest.hash.clone(),
+            after_run: self.last_batch_match(name)?,
+            review_items: review::open_ids(&self.store.conn, name)?,
+            record: None,
+            rematch: true,
+            recompute: true,
+            rules: entry.rules.clone(),
+        };
+        let run = self.start_run("match", by, Some(&StrategyRef::rules()), &json!(config))?;
+        let outcome = self.in_run(run, |inner| {
+            let tx = inner.store.conn.transaction()?;
+            recompute::create_scope(&tx, name, run)?;
+            rules::generate_candidates(&tx, name, run, &config.rules.block)?;
+            rules::judge_candidates(&tx, name, run, &config.rules.no_match, &config.rules.match_)?;
+            tx.commit()?;
+            recompute::compute(
+                &inner.store.conn,
+                name,
+                &format!("(SELECT * FROM spool.judgement WHERE run_id = {run})"),
+            )
+        })?;
+        Ok((run, outcome))
     }
 }

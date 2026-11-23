@@ -61,7 +61,7 @@ let stirred = 0;
 const browsers = new Map<string, Browser>();
 
 /** Who the studio is opened as: the first person of the server, an admin. */
-export const signedIn = (server: Server): Person => browsers.get(server.url)!.person;
+const signedIn = (server: Server): Person => browsers.get(server.url)!.person;
 
 /** How the log names what the studio changes. */
 export const author = (server: Server): string => `user:${signedIn(server).id}`;

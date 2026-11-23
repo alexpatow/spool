@@ -117,7 +117,9 @@ fn build_cells_cte() -> String {
 
 type Group = (String, String);
 
-#[expect(clippy::too_many_lines)]
+/// How many records hold an attribute, and how many different values, by its name.
+type Held = BTreeMap<String, (u64, u64)>;
+
 pub(crate) fn summarize_attributes(
     conn: &Connection,
     manifest: Option<&Manifest>,
@@ -149,52 +151,8 @@ pub(crate) fn summarize_attributes(
         }
     }
 
-    let mut found: BTreeMap<Group, BTreeMap<String, (u64, u64)>> = BTreeMap::new();
-    {
-        let mut statement = conn.prepare(&format!(
-            "{}
-             SELECT entity_type, source_id, attribute,
-                    count(nullif(value, '')), count(DISTINCT nullif(value, ''))
-             FROM cells GROUP BY ALL",
-            build_cells_cte()
-        ))?;
-        let mut rows = statement.query(params![entity_type, source])?;
-        while let Some(row) = rows.next()? {
-            found.entry((row.get(0)?, row.get(1)?)).or_default().insert(
-                row.get(2)?,
-                (row.get::<_, i64>(3)? as u64, row.get::<_, i64>(4)? as u64),
-            );
-        }
-    }
-
-    let mut common: BTreeMap<(Group, String), Vec<ValueCount>> = BTreeMap::new();
-    {
-        let mut statement = conn.prepare(&format!(
-            "{}
-             SELECT entity_type, source_id, attribute, left(value, {VALUE_CHARACTERS}), records
-             FROM (
-               SELECT entity_type, source_id, attribute, value, count(*) AS records,
-                      row_number() OVER (
-                        PARTITION BY entity_type, source_id, attribute
-                        ORDER BY count(*) DESC, value) AS nth
-               FROM cells
-               WHERE value <> ''
-               GROUP BY entity_type, source_id, attribute, value)
-             WHERE nth <= {COMMON_VALUES}
-             ORDER BY entity_type, source_id, attribute, nth",
-            build_cells_cte()
-        ))?;
-        let mut rows = statement.query(params![entity_type, source])?;
-        while let Some(row) = rows.next()? {
-            common
-                .entry(((row.get(0)?, row.get(1)?), row.get(2)?))
-                .or_default()
-                .push(ValueCount {
-                    value: row.get(3)?,
-                    records: row.get::<_, i64>(4)? as u64,
-                });
-        }
-    }
+    let mut found = count_attribute_values(conn, entity_type, source)?;
+    let mut common = read_common_values(conn, entity_type, source)?;
 
     let mut groups = Vec::new();
     for (group, records) in records {
@@ -265,4 +223,65 @@ pub(crate) fn summarize_attributes(
         });
     }
     Ok(groups)
+}
+
+/// How many records of each type and source hold each attribute, and how
+/// many different values they hold, leaving out empty text.
+fn count_attribute_values(
+    conn: &Connection,
+    entity_type: Option<&str>,
+    source: Option<&str>,
+) -> Result<BTreeMap<Group, Held>> {
+    let mut found: BTreeMap<Group, Held> = BTreeMap::new();
+    let mut statement = conn.prepare(&format!(
+        "{}
+         SELECT entity_type, source_id, attribute,
+                count(nullif(value, '')), count(DISTINCT nullif(value, ''))
+         FROM cells GROUP BY ALL",
+        build_cells_cte()
+    ))?;
+    let mut rows = statement.query(params![entity_type, source])?;
+    while let Some(row) = rows.next()? {
+        found.entry((row.get(0)?, row.get(1)?)).or_default().insert(
+            row.get(2)?,
+            (row.get::<_, i64>(3)? as u64, row.get::<_, i64>(4)? as u64),
+        );
+    }
+    Ok(found)
+}
+
+/// The values each attribute of each type and source holds most often,
+/// [`COMMON_VALUES`] of them, each cut to [`VALUE_CHARACTERS`].
+fn read_common_values(
+    conn: &Connection,
+    entity_type: Option<&str>,
+    source: Option<&str>,
+) -> Result<BTreeMap<(Group, String), Vec<ValueCount>>> {
+    let mut common: BTreeMap<(Group, String), Vec<ValueCount>> = BTreeMap::new();
+    let mut statement = conn.prepare(&format!(
+        "{}
+         SELECT entity_type, source_id, attribute, left(value, {VALUE_CHARACTERS}), records
+         FROM (
+           SELECT entity_type, source_id, attribute, value, count(*) AS records,
+                  row_number() OVER (
+                    PARTITION BY entity_type, source_id, attribute
+                    ORDER BY count(*) DESC, value) AS nth
+           FROM cells
+           WHERE value <> ''
+           GROUP BY entity_type, source_id, attribute, value)
+         WHERE nth <= {COMMON_VALUES}
+         ORDER BY entity_type, source_id, attribute, nth",
+        build_cells_cte()
+    ))?;
+    let mut rows = statement.query(params![entity_type, source])?;
+    while let Some(row) = rows.next()? {
+        common
+            .entry(((row.get(0)?, row.get(1)?), row.get(2)?))
+            .or_default()
+            .push(ValueCount {
+                value: row.get(3)?,
+                records: row.get::<_, i64>(4)? as u64,
+            });
+    }
+    Ok(common)
 }

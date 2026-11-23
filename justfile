@@ -10,7 +10,7 @@ default:
     @just --list --unsorted
 
 # Everything CI checks that needs no test run.
-check: fmt-check lint typecheck sizes generated
+check: fmt-check lint unused typecheck sizes generated
 
 # Formats the Rust code and the TypeScript.
 fmt:
@@ -27,8 +27,6 @@ lint: install
     cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
     bun run lint
 
-# Not part of `check`: what it finds today is listed for a later change.
-#
 # TypeScript exports, files and dependencies nothing uses.
 unused: install
     bun run unused

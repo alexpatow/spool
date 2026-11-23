@@ -90,7 +90,7 @@ export function plain(value: unknown): string {
 }
 
 /** What kind of thing an ID in a sentence names, so that it can be a link. */
-export type Named = { kind: "record" | "identity"; id: string };
+type Named = { kind: "record" | "identity"; id: string };
 export type Part = string | Named;
 
 const record = (id: string): Named => ({ kind: "record", id });

@@ -45,7 +45,6 @@ pub struct ResetArgs {
     output: OutputArgs,
 }
 
-#[expect(clippy::too_many_lines)]
 pub fn reset(arguments: ResetArgs) -> Result<(), Failure> {
     let out = Output::report(&arguments.output, "`spool reset`")?;
     // What it removes and keeps is the report, or with JSON what the
@@ -65,12 +64,7 @@ pub fn reset(arguments: ResetArgs) -> Result<(), Failure> {
         .store
         .clone()
         .unwrap_or_else(|| spool_dir.join("dev.duckdb"));
-    let shown = |path: &Path| -> String {
-        path.strip_prefix(&dir)
-            .unwrap_or(path)
-            .display()
-            .to_string()
-    };
+    let shown = |path: &Path| show_path(&dir, path);
 
     let spool_kind = std::fs::symlink_metadata(&spool_dir).map(|found| found.file_type());
     if spool_kind.as_ref().is_ok_and(|kind| kind.is_symlink()) {
@@ -88,52 +82,9 @@ pub fn reset(arguments: ResetArgs) -> Result<(), Failure> {
         nothing();
         return Ok(());
     }
-    let inside = store
-        .parent()
-        .and_then(|parent| parent.canonicalize().ok())
-        .zip(spool_dir.canonicalize().ok())
-        .is_some_and(|(parent, spool_dir)| parent == spool_dir);
-    if !inside
-        || store
-            .extension()
-            .is_none_or(|extension| extension != "duckdb")
-    {
-        return Err(Failure::usage(format!(
-            "`spool reset` removes only a development store: a .duckdb file directly under {}. \
-             {} is not one, and may be the store of a `spool serve`, which no command removes.",
-            spool_dir.display(),
-            store.display()
-        )));
-    }
+    check_store_path(&spool_dir, &store)?;
 
-    // DuckDB's log of writes not yet in the file, and where it spills what
-    // does not fit in memory, then the store itself: the store goes last,
-    // so that the lock on it is held while the others are removed. Each
-    // must be what DuckDB makes, and none a link, or nothing is removed.
-    let sidecar = |suffix: &str| {
-        let mut path = store.clone().into_os_string();
-        path.push(suffix);
-        PathBuf::from(path)
-    };
-    let mut removed: Vec<(PathBuf, Kind)> = Vec::new();
-    for (path, kind) in [
-        (sidecar(".wal"), Kind::File),
-        (sidecar(".tmp"), Kind::Directory),
-        (store.clone(), Kind::File),
-    ] {
-        match kind.check(&path) {
-            Ok(true) => removed.push((path, kind)),
-            Ok(false) => {}
-            Err(is) => {
-                return Err(Failure::failed(format!(
-                    "{} is {is}, where `spool reset` expects {}. It removes only what DuckDB \
-                     makes, so nothing was removed.",
-                    path.display(),
-                    kind.expected()
-                )));
-            }
-        }
-    }
+    let removed = list_store_files(&store)?;
     if removed.is_empty() {
         say(&format!(
             "there is no development store at {}: nothing to remove",
@@ -159,41 +110,7 @@ pub fn reset(arguments: ResetArgs) -> Result<(), Failure> {
         Err(_) => None,
     };
 
-    let mut kept: Vec<(String, String)> = Vec::new();
-    let accounts = accounts_path(&store);
-    let mut entries: Vec<PathBuf> = std::fs::read_dir(&spool_dir)
-        .map_err(|error| Failure::failed(format!("{}: {error}", spool_dir.display())))?
-        .filter_map(|entry| Some(entry.ok()?.path()))
-        .filter(|path| !removed.iter().any(|(gone, _)| gone == path))
-        .collect();
-    entries.sort();
-    for path in entries {
-        let name = path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let accounts_file = path
-            .to_string_lossy()
-            .starts_with(accounts.to_string_lossy().as_ref());
-        let what = if accounts_file {
-            "the accounts and tokens of `spool dev`"
-        } else if name == "manifest.json" {
-            "the manifest `spool build` wrote"
-        } else if path
-            .extension()
-            .is_some_and(|extension| extension == "duckdb")
-        {
-            "another store"
-        } else {
-            "not the store's"
-        };
-        let shown = match path.is_dir() {
-            true => format!("{}/", shown(&path)),
-            false => shown(&path),
-        };
-        kept.push((shown, what.to_owned()));
-    }
-
+    let mut kept = list_kept(&dir, &spool_dir, &store, &removed)?;
     kept.push((
         "the project's files".to_owned(),
         "everything outside .spool/".to_owned(),
@@ -228,40 +145,18 @@ pub fn reset(arguments: ResetArgs) -> Result<(), Failure> {
                     .to_owned(),
             ));
         }
-        eprint!("Remove the store? [y/N] ");
-        let _ = std::io::stderr().flush();
-        let mut answer = String::new();
-        std::io::stdin()
-            .lock()
-            .read_line(&mut answer)
-            .map_err(|error| Failure::failed(format!("reading the answer: {error}")))?;
-        if !matches!(answer.trim().to_lowercase().as_str(), "y" | "yes") {
+        if !ask_to_remove()? {
             say("nothing was removed");
             nothing();
             return Ok(());
         }
     }
 
-    for (path, kind) in &removed {
-        // Checked again: it may have changed while the question was asked.
-        if let Err(is) = kind.check(path) {
-            return Err(Failure::failed(format!(
-                "{} is {is} now, where `spool reset` expects {}; it stopped there",
-                path.display(),
-                kind.expected()
-            )));
-        }
-        // `remove_dir_all` removes a link inside the directory, not what
-        // it points to.
-        let gone = match kind {
-            Kind::Directory => std::fs::remove_dir_all(path),
-            Kind::File => std::fs::remove_file(path),
-        };
-        gone.map_err(|error| Failure::failed(format!("{}: {error}", path.display())))?;
+    remove_store_files(&removed, |path| {
         if out.is_table() {
             println!("removed  {}", shown(path));
         }
-    }
+    })?;
     if !out.is_table() {
         out.json(&serde_json::json!({
             "store": store,
@@ -277,6 +172,152 @@ pub fn reset(arguments: ResetArgs) -> Result<(), Failure> {
          fill it again.",
     );
     Ok(())
+}
+
+/// Fails unless `store` is a development store: a `.duckdb` file directly
+/// under `.spool/`.
+fn check_store_path(spool_dir: &Path, store: &Path) -> Result<(), Failure> {
+    let inside = store
+        .parent()
+        .and_then(|parent| parent.canonicalize().ok())
+        .zip(spool_dir.canonicalize().ok())
+        .is_some_and(|(parent, spool_dir)| parent == spool_dir);
+    if !inside
+        || store
+            .extension()
+            .is_none_or(|extension| extension != "duckdb")
+    {
+        return Err(Failure::usage(format!(
+            "`spool reset` removes only a development store: a .duckdb file directly under {}. \
+             {} is not one, and may be the store of a `spool serve`, which no command removes.",
+            spool_dir.display(),
+            store.display()
+        )));
+    }
+    Ok(())
+}
+
+/// The files of the store that are there, in the order they are removed.
+fn list_store_files(store: &Path) -> Result<Vec<(PathBuf, Kind)>, Failure> {
+    // DuckDB's log of writes not yet in the file, and where it spills what
+    // does not fit in memory, then the store itself: the store goes last,
+    // so that the lock on it is held while the others are removed. Each
+    // must be what DuckDB makes, and none a link, or nothing is removed.
+    let sidecar = |suffix: &str| {
+        let mut path = store.as_os_str().to_owned();
+        path.push(suffix);
+        PathBuf::from(path)
+    };
+    let mut removed: Vec<(PathBuf, Kind)> = Vec::new();
+    for (path, kind) in [
+        (sidecar(".wal"), Kind::File),
+        (sidecar(".tmp"), Kind::Directory),
+        (store.to_owned(), Kind::File),
+    ] {
+        match kind.check(&path) {
+            Ok(true) => removed.push((path, kind)),
+            Ok(false) => {}
+            Err(is) => {
+                return Err(Failure::failed(format!(
+                    "{} is {is}, where `spool reset` expects {}. It removes only what DuckDB \
+                     makes, so nothing was removed.",
+                    path.display(),
+                    kind.expected()
+                )));
+            }
+        }
+    }
+    Ok(removed)
+}
+
+/// Removes the files of the store, each checked again first, and tells
+/// `removed_one` of each.
+fn remove_store_files(
+    removed: &[(PathBuf, Kind)],
+    removed_one: impl Fn(&Path),
+) -> Result<(), Failure> {
+    for (path, kind) in removed {
+        // Checked again: it may have changed while the question was asked.
+        if let Err(is) = kind.check(path) {
+            return Err(Failure::failed(format!(
+                "{} is {is} now, where `spool reset` expects {}; it stopped there",
+                path.display(),
+                kind.expected()
+            )));
+        }
+        // `remove_dir_all` removes a link inside the directory, not what
+        // it points to.
+        let gone = match kind {
+            Kind::Directory => std::fs::remove_dir_all(path),
+            Kind::File => std::fs::remove_file(path),
+        };
+        gone.map_err(|error| Failure::failed(format!("{}: {error}", path.display())))?;
+        removed_one(path);
+    }
+    Ok(())
+}
+
+/// What `spool reset` keeps in `.spool/`, each path as shown with what it
+/// is.
+fn list_kept(
+    dir: &Path,
+    spool_dir: &Path,
+    store: &Path,
+    removed: &[(PathBuf, Kind)],
+) -> Result<Vec<(String, String)>, Failure> {
+    let mut kept: Vec<(String, String)> = Vec::new();
+    let accounts = accounts_path(store);
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(spool_dir)
+        .map_err(|error| Failure::failed(format!("{}: {error}", spool_dir.display())))?
+        .filter_map(|entry| Some(entry.ok()?.path()))
+        .filter(|path| !removed.iter().any(|(gone, _)| gone == path))
+        .collect();
+    entries.sort();
+    for path in entries {
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let accounts_file = path
+            .to_string_lossy()
+            .starts_with(accounts.to_string_lossy().as_ref());
+        let what = if accounts_file {
+            "the accounts and tokens of `spool dev`"
+        } else if name == "manifest.json" {
+            "the manifest `spool build` wrote"
+        } else if path
+            .extension()
+            .is_some_and(|extension| extension == "duckdb")
+        {
+            "another store"
+        } else {
+            "not the store's"
+        };
+        let shown = match path.is_dir() {
+            true => format!("{}/", show_path(dir, &path)),
+            false => show_path(dir, &path),
+        };
+        kept.push((shown, what.to_owned()));
+    }
+    Ok(kept)
+}
+
+/// Asks whether to remove the store, and whether the answer was yes.
+fn ask_to_remove() -> Result<bool, Failure> {
+    eprint!("Remove the store? [y/N] ");
+    let _ = std::io::stderr().flush();
+    let mut answer = String::new();
+    std::io::stdin()
+        .lock()
+        .read_line(&mut answer)
+        .map_err(|error| Failure::failed(format!("reading the answer: {error}")))?;
+    Ok(matches!(answer.trim().to_lowercase().as_str(), "y" | "yes"))
+}
+
+/// A path as `spool reset` shows it: from the project directory, when it is
+/// inside it.
+fn show_path(dir: &Path, path: &Path) -> String {
+    path.strip_prefix(dir).unwrap_or(path).display().to_string()
 }
 
 /// What a path `spool reset` removes must be.

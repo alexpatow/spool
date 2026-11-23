@@ -13,7 +13,8 @@ export { repository };
 // A debug build is several times slower, which is not what is measured
 // here: the binary is the release build, unless `SPOOL_BIN` names one.
 const harness = makeHarness("release");
-export const { binary, spool } = harness;
+export const { binary } = harness;
+const { spool } = harness;
 
 export function scratch(name: string): string {
   return makeScratchDirectory(name, process.env.SPOOL_STRESS_DIR ?? join(tmpdir(), "spool-stress"));
@@ -50,7 +51,7 @@ export interface ServeOptions {
 }
 
 /** Megabytes a process holds, as `ps` reports it. Zero once it is gone. */
-export function memoryOf(pid: number): number {
+function memoryOf(pid: number): number {
   const result = Bun.spawnSync(["ps", "-o", "rss=", "-p", String(pid)], { stdout: "pipe", stderr: "ignore" });
   const kilobytes = Number(result.stdout.toString().trim());
   return Number.isFinite(kilobytes) ? Math.round(kilobytes / 1024) : 0;

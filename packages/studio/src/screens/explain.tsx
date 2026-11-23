@@ -7,6 +7,7 @@ import { Act, At, Done } from "../act.tsx";
 import type { Comparison, ConstraintKind, Explained, Explanation, Link, RuleReading, RuleResult } from "../api.ts";
 import {
   Code,
+  Field,
   Fields,
   Lines,
   Load,
@@ -364,35 +365,39 @@ function Side({ title, letter, explained }: { title: string; letter: string; exp
         </div>
         <h2 {...stylex.props(styles.sideName)}>{record.label ?? recordName(record)}</h2>
       </div>
-      <Fields
-        rows={[
-          ["Record", <Ref kind="record" id={record.id} label={recordName(record)} />],
-          ["Source", <Source name={record.source} />],
-          ["ID", <Ref kind="record" id={record.id} />],
-          ["Entity type", record.entity_type],
-          ["Identity", <Placed record={record} labels={labels} />],
-          [
-            "Assigned",
-            placed ? (
-              <>
-                at <Ref kind="log" id={placed.seq} label={`log position ${placed.seq}`} /> by{" "}
-                <Who actor={placed.actor} />
-                {placed.run ? (
-                  <>
-                    , drafted by <Ref kind="run" id={placed.run} label={`reconcile run ${placed.run}`} />
-                  </>
-                ) : null}
-                {placed.reason ? (
-                  <>
-                    {" "}
-                    <Reason>{placed.reason}</Reason>
-                  </>
-                ) : null}
-              </>
-            ) : null,
-          ],
-        ]}
-      />
+      <Fields>
+        <Field label="Record">
+          <Ref kind="record" id={record.id} label={recordName(record)} />
+        </Field>
+        <Field label="Source">
+          <Source name={record.source} />
+        </Field>
+        <Field label="ID">
+          <Ref kind="record" id={record.id} />
+        </Field>
+        <Field label="Entity type">{record.entity_type}</Field>
+        <Field label="Identity">
+          <Placed record={record} labels={labels} />
+        </Field>
+        <Field label="Assigned">
+          {placed ? (
+            <>
+              at <Ref kind="log" id={placed.seq} label={`log position ${placed.seq}`} /> by <Who actor={placed.actor} />
+              {placed.run ? (
+                <>
+                  , drafted by <Ref kind="run" id={placed.run} label={`reconcile run ${placed.run}`} />
+                </>
+              ) : null}
+              {placed.reason ? (
+                <>
+                  {" "}
+                  <Reason>{placed.reason}</Reason>
+                </>
+              ) : null}
+            </>
+          ) : null}
+        </Field>
+      </Fields>
     </div>
   );
 }

@@ -179,7 +179,6 @@ impl Inner {
     /// the commit and the line that records it, the next run examines the
     /// same records again, and those the commit placed are no longer
     /// new.
-    #[expect(clippy::too_many_lines)]
     pub(super) fn conclude(
         &mut self,
         by: &Actor,
@@ -216,20 +215,7 @@ impl Inner {
             };
             draft.changeset.run = Some(reconcile_run);
 
-            let run_filter = format!("WHERE run_id = {run}");
-            let judged = |inner: &Self, verdict: &str| {
-                inner.count(&format!(
-                    "SELECT count(*) FROM spool.judgement {run_filter} AND verdict = '{verdict}'"
-                ))
-            };
-            let (mut identities_created, mut records_assigned) = (0, 0);
-            for op in &draft.changeset.ops {
-                match op {
-                    spool_core::Op::CreateIdentity { .. } => identities_created += 1,
-                    spool_core::Op::Assign { .. } => records_assigned += 1,
-                    _ => {}
-                }
-            }
+            let (identities_created, records_assigned) = count_creates_and_assigns(&draft.changeset.ops);
             let along = inner.versions_along(&draft.changeset)?;
             let versions_moved = along.len() as u64;
             draft.changeset.ops.extend(along);
@@ -241,13 +227,9 @@ impl Inner {
                 new_records,
                 reexamined,
                 candidates: inner.count(&format!(
-                    "SELECT count(*) FROM (SELECT DISTINCT left_id, right_id FROM spool.candidate {run_filter})"
+                    "SELECT count(*) FROM (SELECT DISTINCT left_id, right_id FROM spool.candidate WHERE run_id = {run})"
                 ))?,
-                judgements: JudgementCounts {
-                    match_: judged(inner, "match")?,
-                    no_match: judged(inner, "no_match")?,
-                    unsure: judged(inner, "unsure")?,
-                },
+                judgements: inner.judgement_counts(run)?,
                 identities_created,
                 records_assigned,
                 versions_moved,
@@ -325,6 +307,20 @@ impl Inner {
             tx.commit()?;
         }
         Ok((draft, report))
+    }
+
+    /// How many judgements of each verdict a match run made.
+    fn judgement_counts(&self, run: RunId) -> Result<JudgementCounts> {
+        let judged = |verdict: &str| {
+            self.count(&format!(
+                "SELECT count(*) FROM spool.judgement WHERE run_id = {run} AND verdict = '{verdict}'"
+            ))
+        };
+        Ok(JudgementCounts {
+            match_: judged("match")?,
+            no_match: judged("no_match")?,
+            unsure: judged("unsure")?,
+        })
     }
 
     /// Joins a match run's judgements against current membership. This is
@@ -518,4 +514,18 @@ impl Inner {
         }
         Ok(suggestions)
     }
+}
+
+/// How many identities a draft's operations create, and how many records
+/// they assign.
+fn count_creates_and_assigns(ops: &[spool_core::Op]) -> (u64, u64) {
+    let (mut created, mut assigned) = (0, 0);
+    for op in ops {
+        match op {
+            spool_core::Op::CreateIdentity { .. } => created += 1,
+            spool_core::Op::Assign { .. } => assigned += 1,
+            _ => {}
+        }
+    }
+    (created, assigned)
 }

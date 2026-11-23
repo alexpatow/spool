@@ -33,7 +33,7 @@ export interface Row {
   [column: string]: string;
 }
 
-export interface Batch {
+interface Batch {
   crm: Row[];
   registry: Row[];
 }
@@ -181,7 +181,7 @@ export function generate({ companies, seed, batches = 2 }: Shape): Generated {
 
 const quoted = (value: string) => (/[",\n]/.test(value) ? `"${value.replaceAll('"', '""')}"` : value);
 
-export function csv(columns: string[], rows: Row[]): string {
+function csv(columns: string[], rows: Row[]): string {
   const lines = [columns.join(",")];
   for (const row of rows) lines.push(columns.map((column) => quoted(row[column] ?? "")).join(","));
   return lines.join("\n") + "\n";

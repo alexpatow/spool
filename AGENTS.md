@@ -10,12 +10,12 @@ Run these from the repository root. `just` with no arguments lists them.
 
 | Command | What it does |
 |---|---|
-| `just check` | Everything CI checks that needs no test run: format, lint, types, file sizes, generated files |
+| `just check` | Everything CI checks that needs no test run: format, lint, unused exports, types, file sizes, generated files |
 | `just test` | The Rust tests (`cargo test`). `just test-all` adds the ones that need `uv` and `bun` |
 | `just regen` | Rewrites every generated file: schema, client types, studio bundle, strategy helper, help snapshots |
 | `just fmt` | Formats the Rust (`cargo fmt`) and the TypeScript (`bun fmt`) |
 | `just lint` | Clippy and oxlint |
-| `just unused` | TypeScript exports, files and dependencies nothing uses (knip). Not enforced yet |
+| `just unused` | TypeScript exports, files and dependencies nothing uses (knip) |
 
 Rust is tested with `cargo test` and TypeScript with `bun test`, in the
 package. `cargo test` also runs the studio's, the client's and the stress

@@ -191,15 +191,38 @@ fn rule_or_rules(names: &[&str]) -> &'static str {
     if names.len() == 1 { "rule" } else { "rules" }
 }
 
-#[expect(clippy::too_many_lines)]
+/// What a summary of a pair calls its two records: by source and key, or
+/// by ID when they have the same, as two versions of one row do.
+struct PairNames {
+    left: RecordId,
+    l: String,
+    r: String,
+}
+
+impl PairNames {
+    fn new(explanation: &Explanation) -> Self {
+        let (left, right) = (&explanation.left.record, &explanation.right.record);
+        let (l, r) = match (left.name(), right.name()) {
+            (l, r) if l == r => (left.id.to_string(), right.id.to_string()),
+            names => names,
+        };
+        PairNames {
+            left: left.id,
+            l,
+            r,
+        }
+    }
+
+    fn of(&self, id: RecordId) -> &String {
+        if id == self.left { &self.l } else { &self.r }
+    }
+}
+
 pub(super) fn pair_summary(explanation: &Explanation) -> Vec<String> {
     let (left, right) = (&explanation.left.record, &explanation.right.record);
-    // Two versions of one row have the same source and key.
-    let (l, r) = match (left.name(), right.name()) {
-        (l, r) if l == r => (left.id.to_string(), right.id.to_string()),
-        names => names,
-    };
-    let name_of = |id: RecordId| if id == left.id { &l } else { &r };
+    let names = PairNames::new(explanation);
+    let (l, r) = (&names.l, &names.r);
+    let name_of = |id: RecordId| names.of(id);
     let mut said = Vec::new();
 
     match (explanation.outcome, left.identity, right.identity) {
@@ -281,57 +304,7 @@ pub(super) fn pair_summary(explanation: &Explanation) -> Vec<String> {
     }
 
     if explanation.outcome == Outcome::SameIdentity {
-        match explanation.path.as_slice() {
-            [] => said.push(
-                "No chain of matches, constraints or versions joins them within the identity as it is now. Either what joined them has since been removed, or a changeset placed one of them directly."
-                    .to_owned(),
-            ),
-            [_] => {}
-            chain => {
-                let mut steps = format!("`{}`", name_of(left.id));
-                for link in chain {
-                    let to = match link.to {
-                        id if id == right.id => format!("`{r}`"),
-                        _ => format_record_name(&link.to_record),
-                    };
-                    steps.push_str(&format!(" → {to} ({})", how_linked(link)));
-                }
-                let between = chain.len() - 1;
-                said.push(format!(
-                    "Nothing links the two directly. They are joined through {between} other {}: {steps}.",
-                    if between == 1 { "member" } else { "members" }
-                ));
-            }
-        }
-        for rule in explanation
-            .held_by
-            .iter()
-            .filter(|_| explanation.path.len() > 1)
-        {
-            said.push(format!(
-                "Without the links only rule `{rule}` made, they would not be together."
-            ));
-        }
-        // A link of their own parts nothing that the sentence above has
-        // not said.
-        match &explanation.cut {
-            _ if explanation.path.len() < 2 => {}
-            Some(cut) => {
-                if let [with_left, with_right] = &cut.sides[..] {
-                    said.push(format!(
-                        "Removing {} would part them, leaving {} with `{l}`{} and {} with `{r}`{}.",
-                        format_count(cut.links.len() as u64, "link"),
-                        format_count(with_left.records, "record"),
-                        names_said(with_left),
-                        format_count(with_right.records, "record"),
-                        names_said(with_right),
-                    ));
-                }
-            }
-            None => said.push(format!(
-                "More than {MOST_CUT} links hold them together, so no few links part them."
-            )),
-        }
+        describe_joining(explanation, &names, &mut said);
     }
 
     match (&explanation.left.placed, &explanation.right.placed) {
@@ -350,6 +323,92 @@ pub(super) fn pair_summary(explanation: &Explanation) -> Vec<String> {
         }
     }
 
+    describe_review_items(explanation, &names, &mut said);
+
+    if let Some(rules) = &explanation.rules {
+        said.push(describe_rule_reading(rules));
+        if let Some(run) = read_otherwise(&explanation.comparisons, rules) {
+            said.push(format!(
+                "That is not what run {run} recorded, so the rules or the features have changed since."
+            ));
+        }
+        match (explanation.outcome, rules.verdict) {
+            (Outcome::DifferentIdentities, Some(Verdict::Match)) => said.push(
+                "Both already have an identity, and a run compares a pair only when one of the two is new to it. A rematch compares every pair and lists a pair like this one as a suggested merge."
+                    .to_owned(),
+            ),
+            (Outcome::SameIdentity, Some(Verdict::NoMatch)) => said.push(
+                "No run takes an identity apart. A rematch lists a pair like this one as a suggested split."
+                    .to_owned(),
+            ),
+            _ => {}
+        }
+    }
+    said
+}
+
+/// What joins two records of one identity, and what would part them.
+fn describe_joining(explanation: &Explanation, names: &PairNames, said: &mut Vec<String>) {
+    let (left, right) = (&explanation.left.record, &explanation.right.record);
+    let (l, r) = (&names.l, &names.r);
+    let name_of = |id: RecordId| names.of(id);
+    match explanation.path.as_slice() {
+        [] => said.push(
+            "No chain of matches, constraints or versions joins them within the identity as it is now. Either what joined them has since been removed, or a changeset placed one of them directly."
+                .to_owned(),
+        ),
+        [_] => {}
+        chain => {
+            let mut steps = format!("`{}`", name_of(left.id));
+            for link in chain {
+                let to = match link.to {
+                    id if id == right.id => format!("`{r}`"),
+                    _ => format_record_name(&link.to_record),
+                };
+                steps.push_str(&format!(" → {to} ({})", how_linked(link)));
+            }
+            let between = chain.len() - 1;
+            said.push(format!(
+                "Nothing links the two directly. They are joined through {between} other {}: {steps}.",
+                if between == 1 { "member" } else { "members" }
+            ));
+        }
+    }
+    for rule in explanation
+        .held_by
+        .iter()
+        .filter(|_| explanation.path.len() > 1)
+    {
+        said.push(format!(
+            "Without the links only rule `{rule}` made, they would not be together."
+        ));
+    }
+    // A link of their own parts nothing that the sentence above has
+    // not said.
+    match &explanation.cut {
+        _ if explanation.path.len() < 2 => {}
+        Some(cut) => {
+            if let [with_left, with_right] = &cut.sides[..] {
+                said.push(format!(
+                    "Removing {} would part them, leaving {} with `{l}`{} and {} with `{r}`{}.",
+                    format_count(cut.links.len() as u64, "link"),
+                    format_count(with_left.records, "record"),
+                    names_said(with_left),
+                    format_count(with_right.records, "record"),
+                    names_said(with_right),
+                ));
+            }
+        }
+        None => said.push(format!(
+            "More than {MOST_CUT} links hold them together, so no few links part them."
+        )),
+    }
+}
+
+/// The review items that name either record, and what became of each.
+fn describe_review_items(explanation: &Explanation, names: &PairNames, said: &mut Vec<String>) {
+    let (left, right) = (&explanation.left.record, &explanation.right.record);
+    let name_of = |id: RecordId| names.of(id);
     for item in &explanation.review_items {
         let named: Vec<&str> = [left.id, right.id]
             .into_iter()
@@ -395,27 +454,6 @@ pub(super) fn pair_summary(explanation: &Explanation) -> Vec<String> {
             _ => {}
         }
     }
-
-    if let Some(rules) = &explanation.rules {
-        said.push(describe_rule_reading(rules));
-        if let Some(run) = read_otherwise(&explanation.comparisons, rules) {
-            said.push(format!(
-                "That is not what run {run} recorded, so the rules or the features have changed since."
-            ));
-        }
-        match (explanation.outcome, rules.verdict) {
-            (Outcome::DifferentIdentities, Some(Verdict::Match)) => said.push(
-                "Both already have an identity, and a run compares a pair only when one of the two is new to it. A rematch compares every pair and lists a pair like this one as a suggested merge."
-                    .to_owned(),
-            ),
-            (Outcome::SameIdentity, Some(Verdict::NoMatch)) => said.push(
-                "No run takes an identity apart. A rematch lists a pair like this one as a suggested split."
-                    .to_owned(),
-            ),
-            _ => {}
-        }
-    }
-    said
 }
 
 fn describe_placement(placement: &Placement) -> String {

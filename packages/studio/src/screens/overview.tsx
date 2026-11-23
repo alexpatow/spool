@@ -2,7 +2,7 @@ import * as stylex from "@stylexjs/stylex";
 import type { ReactNode } from "react";
 
 import type { Info, RunEntry, TypeInfo } from "../api.ts";
-import { Code, Fields, Load, Notice, Page, Quiet, Section } from "../components/layout.tsx";
+import { Code, Field, Fields, Load, Notice, Page, Quiet, Section } from "../components/layout.tsx";
 import { Table } from "../components/table.tsx";
 import { LinkTo, Onward, Ref, ScreenLink, Source, When, Word } from "../components/refs.tsx";
 import type { Leads } from "../components/refs.tsx";
@@ -106,35 +106,31 @@ function Store({ info, runs }: { info: Info; runs: RunEntry[] }) {
             rowKey={(source) => source.source}
             empty="No records yet."
           />
-          <Fields
-            rows={[
-              [
-                "Features",
-                type.features.length > 0 ? (
-                  <span {...stylex.props(styles.list)}>
-                    {type.features.map((column) => (
-                      <span key={column.name}>
-                        <Code>{column.name}</Code>{" "}
-                        <span {...stylex.props(styles.aside)}>{column.data_type.toLowerCase()}</span>
-                      </span>
-                    ))}
-                  </span>
-                ) : null,
-              ],
-              [
-                "Strategies",
+          <Fields>
+            <Field label="Features">
+              {type.features.length > 0 ? (
                 <span {...stylex.props(styles.list)}>
-                  <Code>rules</Code>
-                  {(type.strategies ?? []).map((strategy) => (
-                    <span key={strategy.name}>
-                      <Code>{strategy.name}</Code> <span {...stylex.props(styles.aside)}>{strategy.runtime}</span>
+                  {type.features.map((column) => (
+                    <span key={column.name}>
+                      <Code>{column.name}</Code>{" "}
+                      <span {...stylex.props(styles.aside)}>{column.data_type.toLowerCase()}</span>
                     </span>
                   ))}
-                </span>,
-              ],
-              ["Declaration", `version ${type.declaration_version}`],
-            ]}
-          />
+                </span>
+              ) : null}
+            </Field>
+            <Field label="Strategies">
+              <span {...stylex.props(styles.list)}>
+                <Code>rules</Code>
+                {(type.strategies ?? []).map((strategy) => (
+                  <span key={strategy.name}>
+                    <Code>{strategy.name}</Code> <span {...stylex.props(styles.aside)}>{strategy.runtime}</span>
+                  </span>
+                ))}
+              </span>
+            </Field>
+            <Field label="Declaration">{`version ${type.declaration_version}`}</Field>
+          </Fields>
         </Section>
       ))}
       <Section title="Latest runs" actions={<Onward to="/runs">All runs</Onward>}>
@@ -194,14 +190,16 @@ function Store({ info, runs }: { info: Info; runs: RunEntry[] }) {
         </Section>
       ) : null}
       <Section title="Store">
-        <Fields
-          rows={[
-            ["API", `${info.api}, engine ${store.engine_version}, store format ${store.format_version}`],
-            ["Manifest", store.manifest_hash ? <Code>{store.manifest_hash}</Code> : "none applied"],
-            ["Head", <LinkTo to="/log">log position {store.head}</LinkTo>],
-            ["Documents", <LinkTo to="/documents">{store.documents ?? 0}</LinkTo>],
-          ]}
-        />
+        <Fields>
+          <Field label="API">{`${info.api}, engine ${store.engine_version}, store format ${store.format_version}`}</Field>
+          <Field label="Manifest">{store.manifest_hash ? <Code>{store.manifest_hash}</Code> : "none applied"}</Field>
+          <Field label="Head">
+            <LinkTo to="/log">log position {store.head}</LinkTo>
+          </Field>
+          <Field label="Documents">
+            <LinkTo to="/documents">{store.documents ?? 0}</LinkTo>
+          </Field>
+        </Fields>
       </Section>
     </>
   );

@@ -7,7 +7,6 @@ import {
   ArrowUpDownIcon as ArrowUpDown,
   ArrowUpIcon as ArrowUp,
   ArrowRightIcon as ArrowRight,
-  DatabaseIcon as Database,
   FilePenLineIcon as FilePenLine,
   FingerprintIcon as Fingerprint,
   GitCompareArrowsIcon as GitCompareArrows,
@@ -21,7 +20,6 @@ import {
   SplitIcon as Split,
   Undo2Icon as Undo2,
   UserPlusIcon as UserPlus,
-  UserRoundIcon as UserRound,
   UsersRoundIcon as UsersRound,
 } from "lucide-react";
 import type { SVGProps } from "react";
@@ -30,7 +28,6 @@ export {
   CheckIcon,
   CircleAlertIcon,
   CircleCheckIcon,
-  CloseIcon,
   DarkModeIcon,
   FileTextIcon,
   InboxIcon,
@@ -57,7 +54,6 @@ export const MergeIcon = (props: IconProps) => <GitMerge {...DEFAULTS} {...props
 export const RecordIcon = (props: IconProps) => <Rows3 {...DEFAULTS} {...props} />;
 export const RefreshIcon = (props: IconProps) => <RefreshCw {...DEFAULTS} {...props} />;
 export const RunIcon = (props: IconProps) => <Activity {...DEFAULTS} {...props} />;
-export const SourceIcon = (props: IconProps) => <Database {...DEFAULTS} {...props} />;
 export const SplitIcon = (props: IconProps) => <Split {...DEFAULTS} {...props} />;
 export const PasswordIcon = (props: IconProps) => <KeyRound {...DEFAULTS} {...props} />;
 export const PeopleIcon = (props: IconProps) => <UsersRound {...DEFAULTS} {...props} />;
@@ -65,4 +61,3 @@ export const TokenIcon = (props: IconProps) => <KeySquare {...DEFAULTS} {...prop
 export const SignOutIcon = (props: IconProps) => <LogOut {...DEFAULTS} {...props} />;
 export const UserPlusIcon = (props: IconProps) => <UserPlus {...DEFAULTS} {...props} />;
 export const UndoIcon = (props: IconProps) => <Undo2 {...DEFAULTS} {...props} />;
-export const UserIcon = (props: IconProps) => <UserRound {...DEFAULTS} {...props} />;

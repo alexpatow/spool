@@ -51,7 +51,7 @@ export function number(value: unknown): number | undefined {
 export type Order = "asc" | "desc";
 
 /** Which way a list is sorted. */
-export function order(value: unknown): Order | undefined {
+function order(value: unknown): Order | undefined {
   return value === "asc" || value === "desc" ? value : undefined;
 }
 

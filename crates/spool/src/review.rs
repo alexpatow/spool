@@ -396,7 +396,6 @@ fn split_id_list(joined: Option<String>) -> Vec<String> {
 }
 
 /// A review item with the records it is about.
-#[expect(clippy::too_many_lines)]
 pub(crate) fn case(conn: &Connection, id: u64) -> Result<ReviewCase> {
     let only = ReviewFilter {
         id: Some(id),
@@ -482,49 +481,7 @@ pub(crate) fn case(conn: &Connection, id: u64) -> Result<ReviewCase> {
         }
     }
 
-    let mut constraints = Vec::new();
-    {
-        let mut statement = conn.prepare(&format!(
-            "SELECT c.record_a::VARCHAR, c.record_b::VARCHAR, c.kind, c.from_seq,
-                    a.identity_id::VARCHAR, b.identity_id::VARCHAR
-             FROM spool.constraint_link c
-             LEFT JOIN spool.membership a
-               ON a.record_id = c.record_a AND a.to_seq IS NULL
-             LEFT JOIN spool.membership b
-               ON b.record_id = c.record_b AND b.to_seq IS NULL
-             WHERE c.to_seq IS NULL
-               AND (list_contains({held}, c.record_a)
-                    OR list_contains({held}, c.record_b)
-                    OR (a.identity_id <> b.identity_id
-                        AND list_contains({candidates}, a.identity_id)
-                        AND list_contains({candidates}, b.identity_id)))
-             ORDER BY c.from_seq, least(c.record_a, c.record_b),
-                      greatest(c.record_a, c.record_b)",
-            held = lookup::uuid_list(&item.records),
-            candidates = lookup::uuid_list(&current),
-        ))?;
-        let mut rows = statement.query([])?;
-        while let Some(row) = rows.next()? {
-            let place = |column: usize| -> Result<Option<IdentityId>> {
-                row.get::<_, Option<String>>(column)?
-                    .map(|id| parse_stored(&id))
-                    .transpose()
-            };
-            let constraint = store::constraint_from_row(row, 0)?;
-            // A constraint names the smaller ID first, however it is stored.
-            let stored_first: RecordId = parse_stored(&row.get::<_, String>(0)?)?;
-            let identities = if constraint.a == stored_first {
-                [place(4)?, place(5)?]
-            } else {
-                [place(5)?, place(4)?]
-            };
-            constraints.push(CaseConstraint {
-                constraint,
-                from: Seq(row.get::<_, i64>(3)? as u64),
-                identities,
-            });
-        }
-    }
+    let constraints = case_constraints(conn, &item.records, &current)?;
 
     let judged: Vec<RecordId> = judgements
         .iter()
@@ -545,6 +502,58 @@ pub(crate) fn case(conn: &Connection, id: u64) -> Result<ReviewCase> {
         taken_back: lookup::records_by_id(conn, &taken_back)?,
         constraints,
     })
+}
+
+/// The constraints in force on the records a review item holds, and those
+/// between members of the identities it names, each with where its records
+/// are now.
+fn case_constraints(
+    conn: &Connection,
+    held: &[RecordId],
+    candidates: &[IdentityId],
+) -> Result<Vec<CaseConstraint>> {
+    let mut constraints = Vec::new();
+    let mut statement = conn.prepare(&format!(
+        "SELECT c.record_a::VARCHAR, c.record_b::VARCHAR, c.kind, c.from_seq,
+                a.identity_id::VARCHAR, b.identity_id::VARCHAR
+         FROM spool.constraint_link c
+         LEFT JOIN spool.membership a
+           ON a.record_id = c.record_a AND a.to_seq IS NULL
+         LEFT JOIN spool.membership b
+           ON b.record_id = c.record_b AND b.to_seq IS NULL
+         WHERE c.to_seq IS NULL
+           AND (list_contains({held}, c.record_a)
+                OR list_contains({held}, c.record_b)
+                OR (a.identity_id <> b.identity_id
+                    AND list_contains({candidates}, a.identity_id)
+                    AND list_contains({candidates}, b.identity_id)))
+         ORDER BY c.from_seq, least(c.record_a, c.record_b),
+                  greatest(c.record_a, c.record_b)",
+        held = lookup::uuid_list(held),
+        candidates = lookup::uuid_list(candidates),
+    ))?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        let place = |column: usize| -> Result<Option<IdentityId>> {
+            row.get::<_, Option<String>>(column)?
+                .map(|id| parse_stored(&id))
+                .transpose()
+        };
+        let constraint = store::constraint_from_row(row, 0)?;
+        // A constraint names the smaller ID first, however it is stored.
+        let stored_first: RecordId = parse_stored(&row.get::<_, String>(0)?)?;
+        let identities = if constraint.a == stored_first {
+            [place(4)?, place(5)?]
+        } else {
+            [place(5)?, place(4)?]
+        };
+        constraints.push(CaseConstraint {
+            constraint,
+            from: Seq(row.get::<_, i64>(3)? as u64),
+            identities,
+        });
+    }
+    Ok(constraints)
 }
 
 /// The open review items of an entity type that have records waiting for

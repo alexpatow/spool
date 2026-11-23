@@ -10,7 +10,7 @@ use anstream::println;
 use indicatif::ProgressBar;
 use serde_json::{Value, json};
 use spool::core::RunId;
-use spool::{ExtractReport, FailedDocument, RunEntry, RunStatus};
+use spool::{ExtractReport, Extractor, FailedDocument, RunEntry, RunStatus};
 
 use super::remote::{self, Remote, RemoteArgs, WAIT_MS};
 use crate::Failure;
@@ -191,7 +191,6 @@ impl Answered {
     }
 }
 
-#[expect(clippy::too_many_lines)]
 pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
     let out = Output::report(&arguments.output, "`spool extract`")?;
     let files = read_files(&arguments.paths)?;
@@ -213,91 +212,14 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
     if let Some(source) = &source
         && !files.is_empty()
     {
-        let (mut inserted, mut duplicates, mut superseded) = (0, 0, 0);
-        let mut stored = 0;
-        let parts = group_files_to_send(&files);
-        let storing = match parts.len() {
-            1 => ProgressBar::hidden(),
-            _ => progress::bar(
-                "Storing",
-                files.len() as u64,
-                " documents",
-                0,
-                String::new(),
-            ),
-        };
-        for sent in parts {
-            if was_interrupted() {
-                return Err(Failure::stopped(format!(
-                    "stopped: {stored} of {} are stored and none is read yet. The same command \
-                     again stores the rest and reads them.",
-                    count(files.len() as u64, "document")
-                )));
-            }
-            let documents: Vec<Value> = sent
-                .iter()
-                .map(|file| json!({ "key": file.name, "text": file.text }))
-                .collect();
-            // A request the server refuses at once, and a run that fails
-            // later, both leave the documents sent before them stored.
-            let sending = remote
-                .post(
-                    "/documents",
-                    &json!({ "source": source, "documents": documents, "wait_ms": WAIT_MS }),
-                )
-                .and_then(|started| wait_for_run(&remote, started))
-                .and_then(|(answer, run)| {
-                    answered.documents.push(answer["run"].clone());
-                    match run.status {
-                        RunStatus::Succeeded => Ok(run),
-                        _ => Err(remote::unsuccessful(&run)),
-                    }
-                });
-            let run = match sending {
-                Ok(run) => run,
-                Err(failure) => {
-                    if as_json {
-                        answered.print(out);
-                    }
-                    if stored > 0 {
-                        hint(format!(
-                            "stored     {stored} of {} before this: the same command again \
-                             stores the rest and reads them",
-                            count(files.len() as u64, "document")
-                        ));
-                    }
-                    return Err(failure);
-                }
-            };
-            let report = run
-                .load
-                .as_ref()
-                .ok_or_else(|| missing_report_failure(&run, "what it stored"))?;
-            inserted += report.inserted;
-            duplicates += report.duplicates;
-            superseded += report.superseded;
-            stored += sent.len();
-            storing.set_position(stored as u64);
-        }
-        storing.finish_and_clear();
-        if !as_json {
-            println!("source     {source}");
-            println!(
-                "read       {} from {}",
-                count(files.len() as u64, "document"),
-                match (arguments.paths.as_slice(), files.as_slice()) {
-                    (_, [file]) => file.path.clone(),
-                    ([named], _) if Path::new(named).is_dir() => named.clone(),
-                    (_, files) => count(files.len() as u64, "file"),
-                }
-            );
-            println!(
-                "loaded     {} new, {} already held, {}",
-                inserted - superseded,
-                duplicates,
-                count(superseded, "new version"),
-            );
-        }
+        store_documents(
+            &remote,
+            source,
+            &files,
+            &arguments.paths,
+            out,
+            &mut answered,
+        )?;
     }
 
     let target = timeout.map_or(LONGEST_BATCH, |timeout| {
@@ -313,16 +235,7 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
                 &found, again, None,
             )));
         }
-        let mut request = json!({
-            "extractor": extractor.name,
-            "source": source,
-            "again": again,
-            "limit": size,
-            "wait_ms": QUIET_MS,
-        });
-        if let Some(since) = since {
-            request["since"] = json!(since);
-        }
+        let request = describe_batch(&extractor.name, source.as_deref(), again, size, since);
         let batch_began = Instant::now();
         // A batch the server refuses at once, as it does one that fails
         // within the wait, keeps the batches before it as well as one that
@@ -366,32 +279,14 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
         // found before, which is what a broken one does too. It is taken
         // back all the same, and comes back when it is found again.
         if report.mentions == 0 && report.taken_back > 0 {
-            progress.say(&format!(
-                "warning: took back {} that run {} found nowhere, though it found nothing at all: \
-                 if the extractor is wrong, mend it and run `spool extract --again`, and what it \
-                 finds again goes back to the identity it left",
-                count(report.taken_back, "record"),
-                run.run
-            ));
+            progress.say(&warn_took_back_everything(report.taken_back, run.run));
         }
-        // A batch none of whose documents could be read says more about the
-        // extractor than about them: a key that is wrong, a model that is
-        // not there. Going on would fail every batch after it.
-        if report.documents > 0 && report.failed.len() as u64 == report.documents {
+        if let Some(failure) = fail_unread_batch(report, run.run) {
             if as_json {
                 answered.print(out);
             }
             progress.stopped(found.documents, again, Some(run.run));
-            let first = &report.failed[0];
-            return Err(Failure::failed(format!(
-                "run {} could not read any of its {}, as {}:{} says: {}. They are not \
-                 read, and the same command reads them again.",
-                run.run,
-                count(report.documents, "document"),
-                first.source,
-                first.key,
-                first.reason
-            )));
+            return Err(failure);
         }
         if was_interrupted() && report.left > 0 {
             if as_json {
@@ -416,17 +311,138 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
         answered.print(out);
         return Ok(());
     }
+    print_extraction(
+        &remote,
+        extractor,
+        &found,
+        again,
+        source.as_deref(),
+        info.documents,
+        &files,
+    )
+}
+
+/// Sends the files to the server as documents of `source`, a part at a
+/// time, and says what it stored.
+fn store_documents(
+    remote: &Remote,
+    source: &str,
+    files: &[File],
+    paths: &[String],
+    out: Output,
+    answered: &mut Answered,
+) -> Result<(), Failure> {
+    let as_json = !out.is_table();
+    let (mut inserted, mut duplicates, mut superseded) = (0, 0, 0);
+    let mut stored = 0;
+    let parts = group_files_to_send(files);
+    let storing = match parts.len() {
+        1 => ProgressBar::hidden(),
+        _ => progress::bar(
+            "Storing",
+            files.len() as u64,
+            " documents",
+            0,
+            String::new(),
+        ),
+    };
+    for sent in parts {
+        if was_interrupted() {
+            return Err(Failure::stopped(format!(
+                "stopped: {stored} of {} are stored and none is read yet. The same command \
+                 again stores the rest and reads them.",
+                count(files.len() as u64, "document")
+            )));
+        }
+        let documents: Vec<Value> = sent
+            .iter()
+            .map(|file| json!({ "key": file.name, "text": file.text }))
+            .collect();
+        // A request the server refuses at once, and a run that fails
+        // later, both leave the documents sent before them stored.
+        let sending = remote
+            .post(
+                "/documents",
+                &json!({ "source": source, "documents": documents, "wait_ms": WAIT_MS }),
+            )
+            .and_then(|started| wait_for_run(remote, started))
+            .and_then(|(answer, run)| {
+                answered.documents.push(answer["run"].clone());
+                match run.status {
+                    RunStatus::Succeeded => Ok(run),
+                    _ => Err(remote::unsuccessful(&run)),
+                }
+            });
+        let run = match sending {
+            Ok(run) => run,
+            Err(failure) => {
+                if as_json {
+                    answered.print(out);
+                }
+                if stored > 0 {
+                    hint(format!(
+                        "stored     {stored} of {} before this: the same command again \
+                         stores the rest and reads them",
+                        count(files.len() as u64, "document")
+                    ));
+                }
+                return Err(failure);
+            }
+        };
+        let report = run
+            .load
+            .as_ref()
+            .ok_or_else(|| missing_report_failure(&run, "what it stored"))?;
+        inserted += report.inserted;
+        duplicates += report.duplicates;
+        superseded += report.superseded;
+        stored += sent.len();
+        storing.set_position(stored as u64);
+    }
+    storing.finish_and_clear();
+    if !as_json {
+        println!("source     {source}");
+        println!(
+            "read       {} from {}",
+            count(files.len() as u64, "document"),
+            match (paths, files) {
+                (_, [file]) => file.path.clone(),
+                ([named], _) if Path::new(named).is_dir() => named.clone(),
+                (_, files) => count(files.len() as u64, "file"),
+            }
+        );
+        println!(
+            "loaded     {} new, {} already held, {}",
+            inserted - superseded,
+            duplicates,
+            count(superseded, "new version"),
+        );
+    }
+    Ok(())
+}
+
+/// Says what the extractor found, in the documents it read and in the files
+/// given, and what to run next.
+fn print_extraction(
+    remote: &Remote,
+    extractor: &Extractor,
+    found: &Found,
+    again: bool,
+    source: Option<&str>,
+    documents_held: u64,
+    files: &[File],
+) -> Result<(), Failure> {
     println!("extractor  {}", extractor.name);
     if found.documents == 0 && found.failed.is_empty() {
         let name = &extractor.name;
         println!(
             "found      0 records: {}",
             if again {
-                match &source {
+                match source {
                     Some(source) => format!("the server holds no document of `{source}`."),
                     None => "the server holds no document.".to_owned(),
                 }
-            } else if info.documents == 0 && files.is_empty() {
+            } else if documents_held == 0 && files.is_empty() {
                 "the server holds no document. `spool extract <file>` gives it one.".to_owned()
             } else {
                 format!("`{name}` has read every document. `--again` reads them again.")
@@ -475,11 +491,11 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
         }
     }
 
-    if let Some(source) = &source
+    if let Some(source) = source
         && !files.is_empty()
     {
         print_found_records(
-            &remote,
+            remote,
             source,
             &files[..files.len().min(LISTED)],
             found.mentions,
@@ -492,6 +508,56 @@ pub fn extract(arguments: ExtractArgs) -> Result<(), Failure> {
         ));
     }
     Ok(())
+}
+
+/// The request for a batch of the extractor's work.
+fn describe_batch(
+    extractor: &str,
+    source: Option<&str>,
+    again: bool,
+    size: u64,
+    since: Option<RunId>,
+) -> Value {
+    let mut request = json!({
+        "extractor": extractor,
+        "source": source,
+        "again": again,
+        "limit": size,
+        "wait_ms": QUIET_MS,
+    });
+    if let Some(since) = since {
+        request["since"] = json!(since);
+    }
+    request
+}
+
+/// What is said of a run that took back what was found before and found
+/// nothing at all, which is what a broken extractor does too.
+fn warn_took_back_everything(taken_back: u64, run: RunId) -> String {
+    format!(
+        "warning: took back {} that run {run} found nowhere, though it found nothing at all: \
+         if the extractor is wrong, mend it and run `spool extract --again`, and what it \
+         finds again goes back to the identity it left",
+        count(taken_back, "record"),
+    )
+}
+
+/// The failure of a batch none of whose documents could be read, which says
+/// more about the extractor than about them: a key that is wrong, a model
+/// that is not there. Going on would fail every batch after it.
+fn fail_unread_batch(report: &ExtractReport, run: RunId) -> Option<Failure> {
+    if report.documents == 0 || report.failed.len() as u64 != report.documents {
+        return None;
+    }
+    let first = &report.failed[0];
+    Some(Failure::failed(format!(
+        "run {run} could not read any of its {}, as {}:{} says: {}. They are not \
+         read, and the same command reads them again.",
+        count(report.documents, "document"),
+        first.source,
+        first.key,
+        first.reason
+    )))
 }
 
 /// Waits for the run a call started.

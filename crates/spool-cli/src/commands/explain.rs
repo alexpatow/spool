@@ -8,7 +8,10 @@
 use anstream::println;
 use clap::Args;
 use spool::core::IdentityId;
-use spool::{Explanation, IdentityExplanation, Link, Named, RuleResult, Split, how_linked};
+use spool::{
+    Comparison, Explanation, IdentityExplanation, Link, Named, RuleReading, RuleResult, Split,
+    how_linked,
+};
 use spool_cli::text::count;
 
 use super::remote::{Remote, RemoteArgs, typed};
@@ -103,7 +106,6 @@ fn explain_identity(remote: &Remote, reference: &str, out: Output) -> Result<(),
     Ok(())
 }
 
-#[expect(clippy::too_many_lines)]
 fn print_explanation(explanation: &Explanation) {
     for sentence in &explanation.summary {
         println!("{sentence}");
@@ -158,76 +160,11 @@ fn print_explanation(explanation: &Explanation) {
     }
 
     if let Some(rules) = &explanation.rules {
-        println!("\nrules as they are now");
-        let mut rows = Vec::new();
-        for (group, results) in [
-            ("block", &rules.block),
-            ("no_match", &rules.no_match),
-            ("match", &rules.match_),
-        ] {
-            for RuleResult { name, holds, .. } in results {
-                rows.push(vec![
-                    group.to_owned(),
-                    name.clone(),
-                    match holds {
-                        Some(true) => "holds",
-                        Some(false) => "does not hold",
-                        None if group != "block" && rules.failed.is_some() => {
-                            "cannot be applied to these values"
-                        }
-                        None => "cannot be decided: a feature it reads is null",
-                    }
-                    .to_owned(),
-                ]);
-            }
-        }
-        if rows.is_empty() {
-            println!("  the entity type has none");
-        }
-        aligned(&rows, 2);
-        if let Some(failed) = &rules.failed {
-            println!("  applying the `no_match` and `match` rules failed: {failed}");
-        }
+        print_rule_results(rules);
     }
 
     if !explanation.comparisons.is_empty() {
-        println!("\nruns that compared them");
-        let rows: Vec<Vec<String>> = explanation
-            .comparisons
-            .iter()
-            .map(|comparison| {
-                let judged: Vec<String> = comparison
-                    .judgements
-                    .iter()
-                    .map(|judgement| match judgement.score {
-                        Some(score) => {
-                            format!("{} ({score})", format_enum_word(&judgement.verdict))
-                        }
-                        None => format_enum_word(&judgement.verdict),
-                    })
-                    .collect();
-                vec![
-                    format!("run {}", comparison.run),
-                    comparison
-                        .strategy
-                        .as_ref()
-                        .map_or_else(|| "-".to_owned(), |strategy| strategy.name.clone()),
-                    match comparison.draft {
-                        Some(draft) => format!("{}, draft {draft}", comparison.status),
-                        None => comparison.status.to_string(),
-                    },
-                    match comparison.blocked_by.is_empty() {
-                        true => "no block rule".to_owned(),
-                        false => format!("block: {}", comparison.blocked_by.join(", ")),
-                    },
-                    match judged.is_empty() {
-                        true => "no judgement".to_owned(),
-                        false => judged.join(", "),
-                    },
-                ]
-            })
-            .collect();
-        aligned(&rows, 2);
+        print_comparisons(&explanation.comparisons);
     }
 
     if !explanation.constraints.is_empty() {
@@ -270,6 +207,80 @@ fn print_explanation(explanation: &Explanation) {
         println!("\nwhat would part them");
         print_split(cut, ["with left", "with right"]);
     }
+}
+
+/// How each rule of the type reads the pair now.
+fn print_rule_results(rules: &RuleReading) {
+    println!("\nrules as they are now");
+    let mut rows = Vec::new();
+    for (group, results) in [
+        ("block", &rules.block),
+        ("no_match", &rules.no_match),
+        ("match", &rules.match_),
+    ] {
+        for RuleResult { name, holds, .. } in results {
+            rows.push(vec![
+                group.to_owned(),
+                name.clone(),
+                match holds {
+                    Some(true) => "holds",
+                    Some(false) => "does not hold",
+                    None if group != "block" && rules.failed.is_some() => {
+                        "cannot be applied to these values"
+                    }
+                    None => "cannot be decided: a feature it reads is null",
+                }
+                .to_owned(),
+            ]);
+        }
+    }
+    if rows.is_empty() {
+        println!("  the entity type has none");
+    }
+    aligned(&rows, 2);
+    if let Some(failed) = &rules.failed {
+        println!("  applying the `no_match` and `match` rules failed: {failed}");
+    }
+}
+
+/// The runs that compared the pair, each with what it judged.
+fn print_comparisons(comparisons: &[Comparison]) {
+    println!("\nruns that compared them");
+    let rows: Vec<Vec<String>> = comparisons
+        .iter()
+        .map(|comparison| {
+            let judged: Vec<String> = comparison
+                .judgements
+                .iter()
+                .map(|judgement| match judgement.score {
+                    Some(score) => {
+                        format!("{} ({score})", format_enum_word(&judgement.verdict))
+                    }
+                    None => format_enum_word(&judgement.verdict),
+                })
+                .collect();
+            vec![
+                format!("run {}", comparison.run),
+                comparison
+                    .strategy
+                    .as_ref()
+                    .map_or_else(|| "-".to_owned(), |strategy| strategy.name.clone()),
+                match comparison.draft {
+                    Some(draft) => format!("{}, draft {draft}", comparison.status),
+                    None => comparison.status.to_string(),
+                },
+                match comparison.blocked_by.is_empty() {
+                    true => "no block rule".to_owned(),
+                    false => format!("block: {}", comparison.blocked_by.join(", ")),
+                },
+                match judged.is_empty() {
+                    true => "no judgement".to_owned(),
+                    false => judged.join(", "),
+                },
+            ]
+        })
+        .collect();
+    aligned(&rows, 2);
 }
 
 /// A chain of links as numbered steps: each record by its label and name,

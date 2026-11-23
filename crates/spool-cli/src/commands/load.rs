@@ -71,7 +71,6 @@ const PART_BYTES: usize = 32 * 1024 * 1024;
 /// one it was read with.
 const OTHER_DELIMITERS: [char; 4] = [';', '\t', '|', ','];
 
-#[expect(clippy::too_many_lines)]
 pub fn load(arguments: LoadArgs) -> Result<(), Failure> {
     let out = Output::report(&arguments.output, "`spool load`")?;
     let file = &arguments.file;
@@ -115,26 +114,8 @@ pub fn load(arguments: LoadArgs) -> Result<(), Failure> {
 
     let remote = Remote::new(&arguments.remote);
     let info = remote.info()?;
-    // A first line that names no column of any source is prose, unless
-    // it is the columns with another character between them.
-    let listed = |column: &str| {
-        let lists = |source: &DeclaredSource| source.columns.iter().any(|known| known == column);
-        info.store.sources.iter().any(lists)
-    };
-    if may_be_text
-        && !columns.iter().any(|column| {
-            listed(column)
-                || column
-                    .split(OTHER_DELIMITERS)
-                    .any(|part| listed(part.trim()))
-        })
-    {
-        return Err(Failure::failed(format!(
-            "{name} does not look like rows: its first line names no column that a source of \
-             the project lists. `spool load` reads CSV, with the names of the columns on its \
-             first line."
-        ))
-        .hint(extract_reads(&name)));
+    if may_be_text {
+        check_rows_not_prose(&info, &name, &columns)?;
     }
     let (source, entity_type) = choose_load_target(
         &info,
@@ -190,28 +171,7 @@ pub fn load(arguments: LoadArgs) -> Result<(), Failure> {
         println!("loaded  0 rows: {name} has no rows after its first line");
         return Ok(());
     }
-    fields(&[(
-        "loaded",
-        format!(
-            "{} into source `{}`, type `{entity_type}`: {}",
-            count(total.rows, "row"),
-            source.name,
-            total.outcome()
-        ),
-    )]);
-    let waiting = total.waiting();
-    if waiting > 0 {
-        let command = match info.store.entity_types.len() {
-            0 | 1 => "spool match".to_owned(),
-            _ => format!("spool match --type {entity_type}"),
-        };
-        let places = if waiting == 1 {
-            "places it in an identity"
-        } else {
-            "places them in identities"
-        };
-        hint(format!("next: `{command}` {places}"));
-    }
+    print_loaded(&info, &total, &source.name, entity_type);
     Ok(())
 }
 
@@ -427,7 +387,6 @@ fn describe_format(delimiter: u8) -> String {
 /// more of the file's `columns` than any other: a new project has a source
 /// of rows and a source of what is found in documents, and a file of rows
 /// is the first's whatever it is called.
-#[expect(clippy::too_many_lines)]
 fn choose_load_target<'a>(
     info: &'a Info,
     file: Option<&str>,
@@ -436,14 +395,6 @@ fn choose_load_target<'a>(
     entity_type: Option<&'a str>,
 ) -> Result<(&'a DeclaredSource, &'a str), Failure> {
     let sources = &info.store.sources;
-    let quoted = |names: Vec<&str>| -> String {
-        names
-            .iter()
-            .map(|name| format!("`{name}`"))
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
-    let source_names = || quoted(sources.iter().map(|source| source.name.as_str()).collect());
     if sources.is_empty() {
         return Err(Failure::failed(
             "the project declares no source, so there is nothing rows can be loaded as. A \
@@ -460,7 +411,7 @@ fn choose_load_target<'a>(
     {
         return Err(Failure::failed(format!(
             "the project has no entity type `{entity_type}`. It has {}.",
-            quoted(
+            quote_names(
                 info.store
                     .entity_types
                     .iter()
@@ -470,13 +421,74 @@ fn choose_load_target<'a>(
         )));
     }
 
-    let reads = |source: &DeclaredSource, entity_type: &str| {
-        source
-            .entity_types
-            .iter()
-            .any(|reader| reader.as_str() == entity_type)
+    let source = choose_source(sources, file, columns, source, entity_type)?;
+
+    let entity_type = choose_entity_type(source, entity_type)?;
+    Ok((source, entity_type))
+}
+
+/// Fails when a file that was not said to hold rows looks like prose: its
+/// first line names no column of any source, unless it is the columns with
+/// another character between them.
+fn check_rows_not_prose(info: &Info, name: &str, columns: &[String]) -> Result<(), Failure> {
+    // A first line that names no column of any source is prose, unless
+    // it is the columns with another character between them.
+    let listed = |column: &str| {
+        let lists = |source: &DeclaredSource| source.columns.iter().any(|known| known == column);
+        info.store.sources.iter().any(lists)
     };
-    let source = match source {
+    if !columns.iter().any(|column| {
+        listed(column)
+            || column
+                .split(OTHER_DELIMITERS)
+                .any(|part| listed(part.trim()))
+    }) {
+        return Err(Failure::failed(format!(
+            "{name} does not look like rows: its first line names no column that a source of \
+             the project lists. `spool load` reads CSV, with the names of the columns on its \
+             first line."
+        ))
+        .hint(extract_reads(name)));
+    }
+    Ok(())
+}
+
+/// Says what a load came to, and what to run next.
+fn print_loaded(info: &Info, total: &Total, source: &str, entity_type: &str) {
+    fields(&[(
+        "loaded",
+        format!(
+            "{} into source `{}`, type `{entity_type}`: {}",
+            count(total.rows, "row"),
+            source,
+            total.outcome()
+        ),
+    )]);
+    let waiting = total.waiting();
+    if waiting > 0 {
+        let command = match info.store.entity_types.len() {
+            0 | 1 => "spool match".to_owned(),
+            _ => format!("spool match --type {entity_type}"),
+        };
+        let places = if waiting == 1 {
+            "places it in an identity"
+        } else {
+            "places them in identities"
+        };
+        hint(format!("next: `{command}` {places}"));
+    }
+}
+
+/// The source rows come from: the one asked for, or the one the project's
+/// sources, the type and the file leave.
+fn choose_source<'a>(
+    sources: &'a [DeclaredSource],
+    file: Option<&str>,
+    columns: &[String],
+    source: Option<&str>,
+    entity_type: Option<&str>,
+) -> Result<&'a DeclaredSource, Failure> {
+    Ok(match source {
         Some(name) => sources
             .iter()
             .find(|source| source.name == name)
@@ -484,14 +496,16 @@ fn choose_load_target<'a>(
                 Failure::failed(format!(
                     "the project has no source `{name}`: there is no sources/{name}.yaml. It \
                      has {}.",
-                    source_names()
+                    quote_names(sources.iter().map(|source| source.name.as_str()).collect())
                 ))
             })?,
         None => {
             // The type that was asked for narrows the choice.
             let fitting: Vec<&DeclaredSource> = sources
                 .iter()
-                .filter(|source| entity_type.is_none_or(|entity_type| reads(source, entity_type)))
+                .filter(|source| {
+                    entity_type.is_none_or(|entity_type| reads_source(source, entity_type))
+                })
                 .collect();
             match (fitting.as_slice(), entity_type) {
                 ([only], _) => *only,
@@ -536,15 +550,22 @@ fn choose_load_target<'a>(
                 }
             }
         }
-    };
+    })
+}
 
+/// The entity type rows of `source` are records of: the one asked for, if
+/// the source is mapped to it, or the only one it is.
+fn choose_entity_type<'a>(
+    source: &'a DeclaredSource,
+    entity_type: Option<&'a str>,
+) -> Result<&'a str, Failure> {
     let readers: Vec<&str> = source
         .entity_types
         .iter()
         .map(|reader| reader.as_str())
         .collect();
-    let entity_type = match (entity_type, readers.as_slice()) {
-        (Some(entity_type), _) if reads(source, entity_type) => entity_type,
+    Ok(match (entity_type, readers.as_slice()) {
+        (Some(entity_type), _) if reads_source(source, entity_type) => entity_type,
         (Some(entity_type), []) => {
             return Err(Failure::failed(format!(
                 "the mapping of `{entity_type}` has nothing for source `{}`: add it to \
@@ -557,7 +578,7 @@ fn choose_load_target<'a>(
                 "the mapping of `{entity_type}` has nothing for source `{}`, so its rows \
                  cannot be `{entity_type}` records. They can be loaded as {}.",
                 source.name,
-                quoted(readers)
+                quote_names(readers)
             )));
         }
         (None, [only]) => *only,
@@ -573,11 +594,27 @@ fn choose_load_target<'a>(
                 "say which entity type the rows are records of with `--type`: source `{}` is \
                  read by {}",
                 source.name,
-                quoted(readers)
+                quote_names(readers)
             )));
         }
-    };
-    Ok((source, entity_type))
+    })
+}
+
+/// Whether the mapping of `entity_type` reads `source`.
+fn reads_source(source: &DeclaredSource, entity_type: &str) -> bool {
+    source
+        .entity_types
+        .iter()
+        .any(|reader| reader.as_str() == entity_type)
+}
+
+/// Names, each in backticks, between commas.
+fn quote_names(names: Vec<&str>) -> String {
+    names
+        .iter()
+        .map(|name| format!("`{name}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// The source that lists more of a file's columns than any other does, if

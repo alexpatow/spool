@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 
 import { Act, At, Done, Mistake } from "../act.tsx";
 import type { DocumentEntry, RecordEntry, RecordSort, Op, ReviewEntry } from "../api.ts";
-import { Code, Fields, Json, Load, message, Notice, Page, Row, Section, Text } from "../components/layout.tsx";
+import { Code, Field, Fields, Json, Load, message, Notice, Page, Row, Section, Text } from "../components/layout.tsx";
 import { PagedTable } from "../components/table.tsx";
 import { Id, Placed, Ref, ScreenLink, Source, When, Word } from "../components/refs.tsx";
 import { Labelled, Select } from "../components/forms.tsx";
@@ -202,47 +202,48 @@ function RecordScreen({ record, review, document }: Loaded) {
           </span>
         </Notice>
       ) : null}
-      <Fields
-        rows={[
-          ["Entity type", record.entity_type],
-          ["Source", <Source name={record.source} />],
-          ["Key", record.key ? <Code>{record.key}</Code> : null],
-          [
-            "Loaded",
-            <>
-              <When at={record.loaded_at} /> by <Ref kind="run" id={record.load_run} label={`run ${record.load_run}`} />
-            </>,
-          ],
-          [
-            "Found by",
-            (record.found_by ?? []).length === 0
-              ? null
-              : (record.found_by ?? []).map((found, index) => (
-                  <span key={found.run}>
-                    {index > 0 ? ", " : ""}
-                    <Code>{found.extractor}</Code> version <Code>{found.version.slice(0, 8)}</Code> in{" "}
-                    <Ref kind="run" id={found.run} label={`run ${found.run}`} />
-                  </span>
-                )),
-          ],
-          ["Identity", <Placed record={record} labels={labels} />],
-          ["Supersedes", record.supersedes ? <Ref kind="record" id={record.supersedes} /> : null],
-          ["Superseded by", record.superseded_by ? <Ref kind="record" id={record.superseded_by} /> : null],
-          [
-            "Review",
-            review.length > 0 ? (
-              <Row>
-                {review.map((item) => (
-                  <Row key={item.id}>
-                    <Ref kind="review" id={item.id} label={`item ${item.id}`} /> <Word value={item.kind} />{" "}
-                    <Word value={item.status} />
-                  </Row>
-                ))}
-              </Row>
-            ) : null,
-          ],
-        ]}
-      />
+      <Fields>
+        <Field label="Entity type">{record.entity_type}</Field>
+        <Field label="Source">
+          <Source name={record.source} />
+        </Field>
+        <Field label="Key">{record.key ? <Code>{record.key}</Code> : null}</Field>
+        <Field label="Loaded">
+          <>
+            <When at={record.loaded_at} /> by <Ref kind="run" id={record.load_run} label={`run ${record.load_run}`} />
+          </>
+        </Field>
+        <Field label="Found by">
+          {(record.found_by ?? []).length === 0
+            ? null
+            : (record.found_by ?? []).map((found, index) => (
+                <span key={found.run}>
+                  {index > 0 ? ", " : ""}
+                  <Code>{found.extractor}</Code> version <Code>{found.version.slice(0, 8)}</Code> in{" "}
+                  <Ref kind="run" id={found.run} label={`run ${found.run}`} />
+                </span>
+              ))}
+        </Field>
+        <Field label="Identity">
+          <Placed record={record} labels={labels} />
+        </Field>
+        <Field label="Supersedes">{record.supersedes ? <Ref kind="record" id={record.supersedes} /> : null}</Field>
+        <Field label="Superseded by">
+          {record.superseded_by ? <Ref kind="record" id={record.superseded_by} /> : null}
+        </Field>
+        <Field label="Review">
+          {review.length > 0 ? (
+            <Row>
+              {review.map((item) => (
+                <Row key={item.id}>
+                  <Ref kind="review" id={item.id} label={`item ${item.id}`} /> <Word value={item.kind} />{" "}
+                  <Word value={item.status} />
+                </Row>
+              ))}
+            </Row>
+          ) : null}
+        </Field>
+      </Fields>
       {mention && document ? <Found mention={mention} document={document} excerpt={around} /> : null}
       <Section title="Payload">
         <Json value={record.payload} />

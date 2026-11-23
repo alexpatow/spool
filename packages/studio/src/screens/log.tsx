@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 
 import { Act, At, Done, Would } from "../act.tsx";
 import type { LogEntry, LogSort } from "../api.ts";
-import { Code, Fields, Load, Notice, Page, Reason, Section, Text } from "../components/layout.tsx";
+import { Code, Field, Fields, Load, Notice, Page, Reason, Section, Text } from "../components/layout.tsx";
 import { PagedTable } from "../components/table.tsx";
 import { Id, Ops, Ref } from "../components/refs.tsx";
 import { sortingOf, useNarrow } from "../components/filters.tsx";
@@ -61,22 +61,25 @@ function Entry({ entry }: { entry: LogEntry }) {
   const names = useOpNames(entry.changeset.ops);
   return (
     <>
-      <Fields
-        rows={[
-          ["Changeset", <Id value={entry.changeset.id} />],
-          ["Actor", <Who actor={entry.changeset.actor} />],
-          ["Reason", entry.changeset.reason ? <Reason>{entry.changeset.reason}</Reason> : null],
-          [
-            "Run",
-            entry.changeset.run ? (
-              <Ref kind="run" id={entry.changeset.run} label={`reconcile run ${entry.changeset.run}`} />
-            ) : null,
-          ],
-          ["Started by", entry.started_by ? <Who actor={entry.started_by} /> : null],
-          ["Base", `log position ${entry.changeset.base}`],
-          ["Content hash", <Code>{entry.content_hash}</Code>],
-        ]}
-      />
+      <Fields>
+        <Field label="Changeset">
+          <Id value={entry.changeset.id} />
+        </Field>
+        <Field label="Actor">
+          <Who actor={entry.changeset.actor} />
+        </Field>
+        <Field label="Reason">{entry.changeset.reason ? <Reason>{entry.changeset.reason}</Reason> : null}</Field>
+        <Field label="Run">
+          {entry.changeset.run ? (
+            <Ref kind="run" id={entry.changeset.run} label={`reconcile run ${entry.changeset.run}`} />
+          ) : null}
+        </Field>
+        <Field label="Started by">{entry.started_by ? <Who actor={entry.started_by} /> : null}</Field>
+        <Field label="Base">{`log position ${entry.changeset.base}`}</Field>
+        <Field label="Content hash">
+          <Code>{entry.content_hash}</Code>
+        </Field>
+      </Fields>
       <Section title="Operations" count={entry.changeset.ops.length}>
         <Ops ops={entry.changeset.ops} names={names} />
       </Section>

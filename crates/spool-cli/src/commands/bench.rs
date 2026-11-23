@@ -155,9 +155,20 @@ fn write_results(out: &Path, report: &BenchReport) -> spool::Result<()> {
     })
 }
 
-#[expect(clippy::too_many_lines)]
 fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<()> {
     println!("\n== {} ==", step.name);
+    print_step_inputs(step);
+    print_resolved(step, list);
+    print_identities(engine, list)?;
+    print_review(engine, step, list)?;
+    print_metrics(step);
+    print_whole_and_rebuilt(step);
+    Ok(())
+}
+
+/// What a step put in: rows, documents, mentions, rows taken back and
+/// corrections.
+fn print_step_inputs(step: &StepReport) {
     for ingest in &step.ingest {
         let review = match ingest.possible_splits {
             0 => String::new(),
@@ -227,6 +238,11 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
             correction.kind, correction.seq
         );
     }
+}
+
+/// What each match of a step resolved and committed, and the merges and
+/// splits a rematch suggested.
+fn print_resolved(step: &StepReport, list: usize) {
     if step.resolve.resolved.is_empty() {
         println!("resolved  nothing new");
     }
@@ -298,9 +314,10 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
             }
         }
     }
+}
 
-    print_identities(engine, list)?;
-
+/// What a step left for review, by the keys of the records.
+fn print_review(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<()> {
     let review: Vec<&ReviewItem> = step
         .resolve
         .resolved
@@ -353,7 +370,11 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
             println!("  ... and {more} more; raise --list to print them");
         }
     }
+    Ok(())
+}
 
+/// How the extraction and the identities of a step compare with the truth.
+fn print_metrics(step: &StepReport) {
     if let Some(extraction) = &step.extraction {
         println!("\nextraction ({} labelled mentions):", extraction.labelled);
         println!(
@@ -455,6 +476,11 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
             upgrade.applied_changes
         );
     }
+}
+
+/// How the whole of extraction and resolution compares with the truth, and
+/// the identities with those of the same steps without the rows taken back.
+fn print_whole_and_rebuilt(step: &StepReport) {
     if let Some(whole) = &step.end_to_end {
         println!(
             "\nend to end ({} labelled mentions, {} extracted):",
@@ -511,7 +537,6 @@ fn print_step(engine: &Engine, step: &StepReport, list: usize) -> spool::Result<
             there.false_splits
         );
     }
-    Ok(())
 }
 
 fn format_share(value: Option<f64>) -> String {
