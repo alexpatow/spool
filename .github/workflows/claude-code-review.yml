@@ -92,6 +92,8 @@ jobs:
           # request's inline comments. With only the inline comment tool
           # allowed, it cannot read the pull request or post its summary.
           # `git` and the file tools read a diff too large for `gh pr diff`
-          # from the checkout; they only read.
+          # from the checkout; they only read. `Agent` lets it launch the
+          # agents every step of the review is done by: without it, it
+          # skips them all and posts "No issues found" having read nothing.
           claude_args: >-
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh search:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Read,Grep,Glob"
+            --allowedTools "Agent,mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh search:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Read,Grep,Glob"
