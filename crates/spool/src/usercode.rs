@@ -480,37 +480,46 @@ mod tests {
         assert!(running.cancel(RunId(2)));
     }
 
-    #[test]
-    #[expect(clippy::too_many_lines)]
-    fn a_strategy_is_started_with_its_task_and_without_the_servers_token() {
-        let dir = tempfile::tempdir().unwrap();
-        let user_code = UserCode {
-            work_dir: dir.path().join("work"),
-            ..UserCode::new(dir.path().join("project"))
-        };
-        let strategy = |runtime, file: &str| Strategy {
+    fn strategy(runtime: Runtime, file: &str) -> Strategy {
+        Strategy {
             name: "model".to_owned(),
             runtime,
             file: file.to_owned(),
             hash: String::new(),
-        };
-        let environment = |command: &Command| -> Vec<(String, Option<String>)> {
-            command
-                .get_envs()
-                .map(|(name, value)| {
-                    (
-                        name.to_string_lossy().into_owned(),
-                        value.map(|value| value.to_string_lossy().into_owned()),
-                    )
-                })
-                .collect()
-        };
-        let arguments = |command: &Command| -> Vec<String> {
-            command
-                .get_args()
-                .map(|argument| argument.to_string_lossy().into_owned())
-                .collect()
-        };
+        }
+    }
+
+    fn environment(command: &Command) -> Vec<(String, Option<String>)> {
+        command
+            .get_envs()
+            .map(|(name, value)| {
+                (
+                    name.to_string_lossy().into_owned(),
+                    value.map(|value| value.to_string_lossy().into_owned()),
+                )
+            })
+            .collect()
+    }
+
+    fn arguments(command: &Command) -> Vec<String> {
+        command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// User code for a project in `dir`, with its tasks under `dir/work`.
+    fn user_code_in(dir: &Path) -> UserCode {
+        UserCode {
+            work_dir: dir.join("work"),
+            ..UserCode::new(dir.join("project"))
+        }
+    }
+
+    #[test]
+    fn a_python_strategy_is_started_with_its_task_and_without_the_servers_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let user_code = user_code_in(dir.path());
         let task = dir.path().join("work/run-1");
 
         let python = strategy(Runtime::Python, "entities/thing/strategies/model.py");
@@ -573,7 +582,11 @@ mod tests {
             std::fs::read_to_string(first.join("spool/__init__.py")).unwrap(),
             PYTHON_HELPER
         );
+    }
 
+    #[test]
+    fn a_strategy_started_from_relative_paths_is_given_absolute_ones() {
+        let python = strategy(Runtime::Python, "entities/thing/strategies/model.py");
         // Paths that are relative to where the engine runs still name the
         // same files from the project directory, where the command runs.
         let here = tempfile::tempdir_in(".").unwrap();
@@ -605,7 +618,12 @@ mod tests {
         // A strategy may be named after the library it wraps: the directory
         // of the file is not where Python looks for modules.
         assert!(set.contains(&("PYTHONSAFEPATH".to_owned(), Some("1".to_owned()))));
+    }
 
+    #[test]
+    fn a_typescript_strategy_is_started_without_the_servers_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let user_code = user_code_in(dir.path());
         let typescript = strategy(Runtime::Typescript, "entities/thing/strategies/model.ts");
         let command = user_code.command(&typescript, None).unwrap();
         assert_eq!(Path::new(command.get_program()).file_name().unwrap(), "bun");

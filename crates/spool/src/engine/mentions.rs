@@ -4,8 +4,8 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
-use duckdb::params;
 use duckdb::vtab::arrow::ArrowBatchRegistration;
+use duckdb::{Connection, params};
 use serde_json::json;
 use spool_core::{Actor, DocumentId, EntityType, RunId};
 
@@ -18,7 +18,7 @@ use crate::documents::{
 use crate::error::{Error, Result};
 use crate::features;
 use crate::load::{self, LoadReport};
-use crate::project::{Declaration, Extractor};
+use crate::project::{Declaration, Extractor, Manifest};
 use crate::retract::NOT_RETRACTED;
 use crate::store::parse_stored;
 use crate::usercode::{self, Task};
@@ -43,7 +43,6 @@ const WHOLE_NUMBERS: [&str; 9] = [
 impl Inner {
     /// Reads the mentions an extractor wrote, checks them against the
     /// documents it was given, and stores them as records.
-    #[expect(clippy::too_many_lines)]
     pub(super) fn take_mentions(
         &mut self,
         by: &Actor,
@@ -55,67 +54,21 @@ impl Inner {
         let manifest = self.manifest.clone().ok_or(Error::NoManifest)?;
         let given = self.task_documents()?;
         let failures = self.read_failures(&task.path(usercode::FAILED), &given)?;
-        // Nothing found in a document the extractor could not read is kept.
-        let raw: Vec<RawMention> = self
-            .read_mentions(&task.path(usercode::MENTIONS))?
-            .into_iter()
-            .filter(|mention| {
-                mention
-                    .document
-                    .as_deref()
-                    .and_then(|document| document.parse::<DocumentId>().ok())
-                    .is_none_or(|document| !failures.contains_key(&document))
-            })
-            .collect();
+        let raw = drop_failed_documents(
+            self.read_mentions(&task.path(usercode::MENTIONS))?,
+            &failures,
+        );
         let staged = documents::stage_mentions(
             &raw,
             &given,
             &|name| manifest.entity_type(name).is_some(),
             extractor,
         )?;
-        // A mention is a record of its document's source, and may say only
-        // what that source's file lists.
-        for (index, mention) in staged.iter().enumerate() {
-            let fail = |message: String| Error::Mentions(format!("row {}: {message}", index + 1));
-            let entry = manifest
-                .entity_type(&mention.entity_type)
-                .expect("a staged mention is of a declared type");
-            let source = manifest.source_of(&mention.source, entry).map_err(&fail)?;
-            let attributes: serde_json::Map<String, serde_json::Value> =
-                serde_json::from_str(&mention.payload).unwrap_or_default();
-            if let Some(unknown) = attributes
-                .keys()
-                .find(|name| !source.columns.contains(name))
-            {
-                return Err(fail(format!(
-                    "it has an attribute `{unknown}`, which sources/{}.yaml does not list",
-                    source.name
-                )));
-            }
-        }
+        check_mention_attributes(&manifest, &staged)?;
 
-        // Each type's declaration, for the feature rows of what is new.
-        let mut declared: BTreeMap<&str, (EntityType, Declaration, u32)> = BTreeMap::new();
-        for mention in &staged {
-            if !declared.contains_key(mention.entity_type.as_str()) {
-                let (_, entry, version) = self.declared(&mention.entity_type)?;
-                declared.insert(
-                    &mention.entity_type,
-                    (entry.name.clone(), entry.declaration.clone(), version),
-                );
-            }
-        }
+        let declared = self.declarations_of(&staged)?;
         let mut found: HashMap<DocumentId, i64> = given.keys().map(|id| (*id, 0)).collect();
-        let mut failed: Vec<FailedDocument> = failures
-            .iter()
-            .map(|(id, reason)| FailedDocument {
-                document: *id,
-                source: given[id].source.clone(),
-                key: given[id].key.clone(),
-                reason: reason.clone(),
-            })
-            .collect();
-        failed.sort_by(|a, b| (&a.source, &a.key).cmp(&(&b.source, &b.key)));
+        let failed = list_failed_documents(&failures, &given);
         for mention in &staged {
             *found.entry(mention.document).or_default() += 1;
         }
@@ -159,63 +112,7 @@ impl Inner {
                 }
             }
 
-            let (mut ids, mut counts, mut why) = (Vec::new(), Vec::new(), Vec::new());
-            for (id, count) in &found {
-                ids.push(Some(id.to_string()));
-                counts.push(*count);
-                why.push(failures.get(id).cloned());
-            }
-            tx.execute(
-                "INSERT INTO spool.extraction
-                 SELECT s.document_id::UUID, $1, $2, $3, s.mentions, s.failure
-                 FROM arrow($4) s",
-                params![
-                    extractor.name,
-                    extractor.hash,
-                    run.0 as i64,
-                    &ArrowBatchRegistration::new(build_batch(vec![
-                        ("document_id", Column::Text(ids)),
-                        ("mentions", Column::Integer(counts)),
-                        ("failure", Column::Text(why)),
-                    ])?)
-                ],
-            )?;
-            // Which mentions this reading found, new or found again, and
-            // the version of the extractor that found them.
-            if !staged.is_empty() {
-                let column = |value: fn(&Mention) -> String| {
-                    Column::Text(staged.iter().map(|mention| Some(value(mention))).collect())
-                };
-                // The record a mention found is the version its key holds
-                // now that it is stored: content held before under the key
-                // and found again is a version of its own, and not the
-                // record the content first made.
-                tx.execute(
-                    "INSERT INTO spool.extraction_found
-                     SELECT $1, f.document_id::UUID, $2, $3, f.entity_type, f.record_key,
-                            r.record_id
-                     FROM arrow($4) f
-                     JOIN spool.record r
-                       ON r.entity_type = f.entity_type AND r.source_id = f.source
-                      AND r.source_key = f.record_key
-                     WHERE NOT EXISTS (
-                         SELECT 1 FROM spool.record later WHERE later.supersedes = r.record_id)",
-                    params![
-                        run.0 as i64,
-                        extractor.name,
-                        extractor.hash,
-                        &ArrowBatchRegistration::new(build_batch(vec![
-                            (
-                                "document_id",
-                                column(|mention| mention.document.to_string())
-                            ),
-                            ("entity_type", column(|mention| mention.entity_type.clone())),
-                            ("source", column(|mention| mention.source.clone())),
-                            ("record_key", column(|mention| mention.key.clone())),
-                        ])?)
-                    ],
-                )?;
-            }
+            record_extraction(&tx, extractor, run, &found, &failures, &staged)?;
 
             let superseded: i64 = match load_run {
                 Some(load_run) => tx.query_row(
@@ -288,6 +185,25 @@ impl Inner {
     /// The documents the extractor said it could not read, with why: the
     /// optional `failed.parquet`, of `document_id` and `reason`. A document
     /// it was not given refuses the run, as a mention in one does.
+    /// The declaration of each type the mentions are of, for the feature
+    /// rows of what is new.
+    fn declarations_of<'a>(
+        &self,
+        staged: &'a [Mention],
+    ) -> Result<BTreeMap<&'a str, (EntityType, Declaration, u32)>> {
+        let mut declared = BTreeMap::new();
+        for mention in staged {
+            if !declared.contains_key(mention.entity_type.as_str()) {
+                let (_, entry, version) = self.declared(&mention.entity_type)?;
+                declared.insert(
+                    mention.entity_type.as_str(),
+                    (entry.name.clone(), entry.declaration.clone(), version),
+                );
+            }
+        }
+        Ok(declared)
+    }
+
     fn read_failures(
         &self,
         path: &Path,
@@ -542,6 +458,138 @@ fn group_mentions(
                 ("evidence", text(|mention| mention.evidence.clone())),
             ])?;
             Ok((group, staged))
+        })
+        .collect()
+}
+
+/// Checks that each mention says only what its document's source lists: a
+/// mention is a record of that source.
+fn check_mention_attributes(manifest: &Manifest, staged: &[Mention]) -> Result<()> {
+    // A mention is a record of its document's source, and may say only
+    // what that source's file lists.
+    for (index, mention) in staged.iter().enumerate() {
+        let fail = |message: String| Error::Mentions(format!("row {}: {message}", index + 1));
+        let entry = manifest
+            .entity_type(&mention.entity_type)
+            .expect("a staged mention is of a declared type");
+        let source = manifest.source_of(&mention.source, entry).map_err(&fail)?;
+        let attributes: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(&mention.payload).unwrap_or_default();
+        if let Some(unknown) = attributes
+            .keys()
+            .find(|name| !source.columns.contains(name))
+        {
+            return Err(fail(format!(
+                "it has an attribute `{unknown}`, which sources/{}.yaml does not list",
+                source.name
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Records that the extractor read each document it was given, how many
+/// mentions it found in each or why it could not, and which mentions this
+/// reading found.
+fn record_extraction(
+    tx: &Connection,
+    extractor: &Extractor,
+    run: RunId,
+    found: &HashMap<DocumentId, i64>,
+    failures: &HashMap<DocumentId, String>,
+    staged: &[Mention],
+) -> Result<()> {
+    let (mut ids, mut counts, mut why) = (Vec::new(), Vec::new(), Vec::new());
+    for (id, count) in found {
+        ids.push(Some(id.to_string()));
+        counts.push(*count);
+        why.push(failures.get(id).cloned());
+    }
+    tx.execute(
+        "INSERT INTO spool.extraction
+         SELECT s.document_id::UUID, $1, $2, $3, s.mentions, s.failure
+         FROM arrow($4) s",
+        params![
+            extractor.name,
+            extractor.hash,
+            run.0 as i64,
+            &ArrowBatchRegistration::new(build_batch(vec![
+                ("document_id", Column::Text(ids)),
+                ("mentions", Column::Integer(counts)),
+                ("failure", Column::Text(why)),
+            ])?)
+        ],
+    )?;
+    // Which mentions this reading found, new or found again, and
+    // the version of the extractor that found them.
+    if !staged.is_empty() {
+        let column = |value: fn(&Mention) -> String| {
+            Column::Text(staged.iter().map(|mention| Some(value(mention))).collect())
+        };
+        // The record a mention found is the version its key holds
+        // now that it is stored: content held before under the key
+        // and found again is a version of its own, and not the
+        // record the content first made.
+        tx.execute(
+            "INSERT INTO spool.extraction_found
+             SELECT $1, f.document_id::UUID, $2, $3, f.entity_type, f.record_key,
+                    r.record_id
+             FROM arrow($4) f
+             JOIN spool.record r
+               ON r.entity_type = f.entity_type AND r.source_id = f.source
+              AND r.source_key = f.record_key
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM spool.record later WHERE later.supersedes = r.record_id)",
+            params![
+                run.0 as i64,
+                extractor.name,
+                extractor.hash,
+                &ArrowBatchRegistration::new(build_batch(vec![
+                    (
+                        "document_id",
+                        column(|mention| mention.document.to_string())
+                    ),
+                    ("entity_type", column(|mention| mention.entity_type.clone())),
+                    ("source", column(|mention| mention.source.clone())),
+                    ("record_key", column(|mention| mention.key.clone())),
+                ])?)
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+/// The documents the extractor could not read, with why, by source and key.
+fn list_failed_documents(
+    failures: &HashMap<DocumentId, String>,
+    given: &HashMap<DocumentId, TaskDocument>,
+) -> Vec<FailedDocument> {
+    let mut failed: Vec<FailedDocument> = failures
+        .iter()
+        .map(|(id, reason)| FailedDocument {
+            document: *id,
+            source: given[id].source.clone(),
+            key: given[id].key.clone(),
+            reason: reason.clone(),
+        })
+        .collect();
+    failed.sort_by(|a, b| (&a.source, &a.key).cmp(&(&b.source, &b.key)));
+    failed
+}
+
+/// The mentions, without those found in a document the extractor could not
+/// read: nothing found there is kept.
+fn drop_failed_documents(
+    raw: Vec<RawMention>,
+    failures: &HashMap<DocumentId, String>,
+) -> Vec<RawMention> {
+    raw.into_iter()
+        .filter(|mention| {
+            mention
+                .document
+                .as_deref()
+                .and_then(|document| document.parse::<DocumentId>().ok())
+                .is_none_or(|document| !failures.contains_key(&document))
         })
         .collect()
 }

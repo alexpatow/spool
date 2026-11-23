@@ -75,42 +75,117 @@ pub(crate) fn judge_for_preview(
 /// Works out what the identities of `entity_type` would be, from the
 /// records in the scope table and the judgements in `judgements`, a
 /// relation with the columns of `spool.judgement`.
-#[expect(clippy::too_many_lines)]
 pub(crate) fn compute(
     conn: &Connection,
     entity_type: &EntityType,
     judgements: &str,
 ) -> Result<Outcome> {
-    let records: Vec<RecordId> = query_strings(
+    let records = read_scope_records(conn)?;
+    let (now, created) = read_memberships(conn)?;
+    let pairs_now = count_pairs_now(conn)?;
+    let (mut verdicts, rule_names) = read_verdicts(conn, entity_type, judgements)?;
+    let held = hold_what_people_said(conn, entity_type, &records, &now, &mut verdicts)?;
+    let (constraints, by_constraint) = read_constraints(conn, &mut verdicts)?;
+    let Grouped {
+        groups,
+        waiting,
+        kept_out,
+    } = group_by_policy(entity_type, &records, &verdicts, &held.sets)?;
+    let place = place_records(&groups, &waiting);
+    let blocked = find_contradictions(
+        &verdicts,
+        &place,
+        waiting.len(),
+        &by_constraint,
+        &rule_names,
+    );
+    let (keeper, merged) = choose_keepers(&now, &place, groups.len(), &created);
+
+    Ok(Outcome {
+        entity_type: entity_type.clone(),
+        records,
+        now,
+        groups,
+        waiting,
+        kept_out,
+        place,
+        keeper,
+        merged,
+        blocked,
+        labels: read_record_labels(conn)?,
+        shaped: shaped_by_people(conn)?,
+        approved: approved_placements(conn)?,
+        constraints,
+        held_together: held.groups,
+        dismissed_splits: held.dismissed_splits,
+        open_items: read_open_items(conn, entity_type)?,
+        pairs_now,
+    })
+}
+
+/// The verdict on each pair of records, the smaller ID first.
+type Verdicts = BTreeMap<(RecordId, RecordId), Verdict>;
+
+/// The decision of a person behind each `cannot_link`, by its pair.
+type ByConstraint = HashMap<(RecordId, RecordId), PersonDecision>;
+
+/// The rules that said `no_match` on a pair.
+type RuleNames = HashMap<(RecordId, RecordId), Vec<String>>;
+
+/// What people put together.
+struct Held {
+    /// The records, joined where people put them together.
+    sets: DisjointSets<RecordId>,
+    /// How many groups the identities hold together.
+    groups: u64,
+    /// How many dismissed `possible_split` items still hold records together.
+    dismissed_splits: u64,
+}
+
+/// What the default policy makes of the records.
+struct Grouped {
+    groups: Vec<Vec<RecordId>>,
+    waiting: Vec<Vec<RecordId>>,
+    kept_out: Vec<Option<RecordId>>,
+}
+
+/// The records in scope, in order.
+fn read_scope_records(conn: &Connection) -> Result<Vec<RecordId>> {
+    query_strings(
         conn,
         &format!("SELECT record_id::VARCHAR FROM {SCOPE} ORDER BY record_id"),
     )?
     .iter()
     .map(|id| parse_stored(id))
-    .collect::<Result<_>>()?;
+    .collect()
+}
 
+/// Which identity each record in scope belongs to now, and when each of
+/// those identities was created.
+fn read_memberships(
+    conn: &Connection,
+) -> Result<(HashMap<RecordId, IdentityId>, HashMap<IdentityId, i64>)> {
     let mut now: HashMap<RecordId, IdentityId> = HashMap::new();
     let mut created: HashMap<IdentityId, i64> = HashMap::new();
-    {
-        let mut statement = conn.prepare(&format!(
-            "SELECT m.record_id::VARCHAR, m.identity_id::VARCHAR, i.created_seq
-             FROM {SCOPE} s
-             JOIN spool.membership m ON m.record_id = s.record_id AND m.to_seq IS NULL
-             JOIN spool.identity i ON i.identity_id = m.identity_id"
-        ))?;
-        let mut rows = statement.query([])?;
-        while let Some(row) = rows.next()? {
-            let identity: IdentityId = parse_stored(&row.get::<_, String>(1)?)?;
-            now.insert(parse_stored(&row.get::<_, String>(0)?)?, identity);
-            created.insert(identity, row.get(2)?);
-        }
+    let mut statement = conn.prepare(&format!(
+        "SELECT m.record_id::VARCHAR, m.identity_id::VARCHAR, i.created_seq
+         FROM {SCOPE} s
+         JOIN spool.membership m ON m.record_id = s.record_id AND m.to_seq IS NULL
+         JOIN spool.identity i ON i.identity_id = m.identity_id"
+    ))?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        let identity: IdentityId = parse_stored(&row.get::<_, String>(1)?)?;
+        now.insert(parse_stored(&row.get::<_, String>(0)?)?, identity);
+        created.insert(identity, row.get(2)?);
     }
-    let identities: Vec<IdentityId> = {
-        let mut ids: Vec<IdentityId> = created.keys().copied().collect();
-        ids.sort();
-        ids
-    };
-    let pairs_now: u64 = conn.query_row(
+    Ok((now, created))
+}
+
+/// How many pairs of records share an identity now, among the identities
+/// a record in scope belongs to.
+fn count_pairs_now(conn: &Connection) -> Result<u64> {
+    Ok(conn.query_row(
         &format!(
             "SELECT coalesce(sum(n * (n - 1) // 2), 0)::BIGINT FROM (
                SELECT count(*) AS n FROM spool.membership
@@ -121,56 +196,79 @@ pub(crate) fn compute(
         ),
         [],
         |row| row.get::<_, i64>(0),
-    )? as u64;
+    )? as u64)
+}
 
+/// The verdict on each pair of records in scope that `judgements` judged,
+/// with the rules that said `no_match`, and the versions of a row as
+/// matches.
+fn read_verdicts(
+    conn: &Connection,
+    entity_type: &EntityType,
+    judgements: &str,
+) -> Result<(Verdicts, RuleNames)> {
     // The evidence, weakest first: what is read later wins.
     let mut verdicts: BTreeMap<(RecordId, RecordId), Verdict> = BTreeMap::new();
     let mut rule_names: HashMap<(RecordId, RecordId), Vec<String>> = HashMap::new();
-    {
-        let mut statement = conn.prepare(&format!(
-            "SELECT j.left_id::VARCHAR, j.right_id::VARCHAR, j.verdict,
-                    coalesce(to_json(j.detail->'no_match')::VARCHAR, '[]')
-             FROM {judgements} j
-             WHERE j.verdict <> 'unsure'
-               AND j.left_id IN (SELECT record_id FROM {SCOPE})
-               AND j.right_id IN (SELECT record_id FROM {SCOPE})"
-        ))?;
-        let mut rows = statement.query([])?;
-        while let Some(row) = rows.next()? {
-            let pair = sort_record_pair(
-                parse_stored(&row.get::<_, String>(0)?)?,
-                parse_stored(&row.get::<_, String>(1)?)?,
-            );
-            let verdict: Verdict = row
-                .get::<_, String>(2)?
-                .parse()
-                .map_err(|message: String| Error::Recompute(message))?;
-            if verdict == Verdict::NoMatch {
-                let names: Vec<String> =
-                    serde_json::from_str(&row.get::<_, String>(3)?).unwrap_or_default();
-                rule_names.insert(pair, names);
-            }
-            verdicts.insert(pair, verdict);
+    let mut statement = conn.prepare(&format!(
+        "SELECT j.left_id::VARCHAR, j.right_id::VARCHAR, j.verdict,
+                coalesce(to_json(j.detail->'no_match')::VARCHAR, '[]')
+         FROM {judgements} j
+         WHERE j.verdict <> 'unsure'
+           AND j.left_id IN (SELECT record_id FROM {SCOPE})
+           AND j.right_id IN (SELECT record_id FROM {SCOPE})"
+    ))?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        let pair = sort_record_pair(
+            parse_stored(&row.get::<_, String>(0)?)?,
+            parse_stored(&row.get::<_, String>(1)?)?,
+        );
+        let verdict: Verdict = row
+            .get::<_, String>(2)?
+            .parse()
+            .map_err(|message: String| Error::Recompute(message))?;
+        if verdict == Verdict::NoMatch {
+            let names: Vec<String> =
+                serde_json::from_str(&row.get::<_, String>(3)?).unwrap_or_default();
+            rule_names.insert(pair, names);
         }
+        verdicts.insert(pair, verdict);
     }
-    {
-        let mut statement = conn.prepare(&format!(
-            "SELECT record_id::VARCHAR, supersedes::VARCHAR FROM spool.record
-             WHERE entity_type = '{entity_type}' AND supersedes IS NOT NULL
-               AND record_id IN (SELECT record_id FROM {SCOPE})
-               AND supersedes IN (SELECT record_id FROM {SCOPE})"
-        ))?;
-        let mut rows = statement.query([])?;
-        while let Some(row) = rows.next()? {
-            let pair = sort_record_pair(
-                parse_stored(&row.get::<_, String>(0)?)?,
-                parse_stored(&row.get::<_, String>(1)?)?,
-            );
-            verdicts.insert(pair, Verdict::Match);
-        }
+    let mut statement = conn.prepare(&format!(
+        "SELECT record_id::VARCHAR, supersedes::VARCHAR FROM spool.record
+         WHERE entity_type = '{entity_type}' AND supersedes IS NOT NULL
+           AND record_id IN (SELECT record_id FROM {SCOPE})
+           AND supersedes IN (SELECT record_id FROM {SCOPE})"
+    ))?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        let pair = sort_record_pair(
+            parse_stored(&row.get::<_, String>(0)?)?,
+            parse_stored(&row.get::<_, String>(1)?)?,
+        );
+        verdicts.insert(pair, Verdict::Match);
     }
+    Ok((verdicts, rule_names))
+}
 
-    // What people put together stays together.
+/// What people put together, which stays together: the groups each
+/// identity holds, and those of a `possible_split` a reviewer dismissed.
+/// A `no_match` inside such a set gives way, and its records match.
+fn hold_what_people_said(
+    conn: &Connection,
+    entity_type: &EntityType,
+    records: &[RecordId],
+    now: &HashMap<RecordId, IdentityId>,
+    verdicts: &mut Verdicts,
+) -> Result<Held> {
+    // The identities of the records in scope, in order.
+    let identities: Vec<IdentityId> = now
+        .values()
+        .copied()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
     let mut held = DisjointSets::new(records.iter().copied());
     let mut held_together = 0;
     for groups in possible_split::held_together(conn, &identities)?.into_values() {
@@ -219,56 +317,77 @@ pub(crate) fn compute(
             verdicts.insert(sort_record_pair(root, record), Verdict::Match);
         }
     }
+    Ok(Held {
+        sets: held,
+        groups: held_together,
+        dismissed_splits,
+    })
+}
 
+/// The constraints in force between records in scope, each with the
+/// person's decision, and the verdict each says on its pair. A
+/// `cannot_link` is listed by its pair too.
+fn read_constraints(
+    conn: &Connection,
+    verdicts: &mut Verdicts,
+) -> Result<(Vec<ConstraintNote>, ByConstraint)> {
     let mut constraints = Vec::new();
-    let mut by_constraint: HashMap<(RecordId, RecordId), PersonDecision> = HashMap::new();
-    {
-        let mut statement = conn.prepare(&format!(
-            "SELECT c.record_a::VARCHAR, c.record_b::VARCHAR, c.kind, c.from_seq,
-                    ch.actor, ch.reason
-             FROM spool.constraint_link c
-             JOIN spool.changeset ch ON ch.seq = c.from_seq
-             WHERE c.to_seq IS NULL
-               AND c.record_a IN (SELECT record_id FROM {SCOPE})
-               AND c.record_b IN (SELECT record_id FROM {SCOPE})
-             ORDER BY c.record_a, c.record_b"
-        ))?;
-        let mut rows = statement.query([])?;
-        while let Some(row) = rows.next()? {
-            let pair = sort_record_pair(
-                parse_stored(&row.get::<_, String>(0)?)?,
-                parse_stored(&row.get::<_, String>(1)?)?,
-            );
-            let kind = match row.get::<_, String>(2)?.as_str() {
-                "must_link" => ConstraintKind::MustLink,
-                _ => ConstraintKind::CannotLink,
-            };
-            let decision = PersonDecision {
-                seq: Seq(row.get::<_, i64>(3)? as u64),
-                actor: parse_stored(&row.get::<_, String>(4)?)?,
-                reason: row.get(5)?,
-            };
-            verdicts.insert(
-                pair,
-                match kind {
-                    ConstraintKind::MustLink => Verdict::Match,
-                    ConstraintKind::CannotLink => Verdict::NoMatch,
-                },
-            );
-            if kind == ConstraintKind::CannotLink {
-                by_constraint.insert(pair, decision.clone());
-            }
-            constraints.push(ConstraintNote {
-                kind,
-                records: [pair.0, pair.1],
-                decision,
-            });
+    let mut by_constraint: ByConstraint = HashMap::new();
+    let mut statement = conn.prepare(&format!(
+        "SELECT c.record_a::VARCHAR, c.record_b::VARCHAR, c.kind, c.from_seq,
+                ch.actor, ch.reason
+         FROM spool.constraint_link c
+         JOIN spool.changeset ch ON ch.seq = c.from_seq
+         WHERE c.to_seq IS NULL
+           AND c.record_a IN (SELECT record_id FROM {SCOPE})
+           AND c.record_b IN (SELECT record_id FROM {SCOPE})
+         ORDER BY c.record_a, c.record_b"
+    ))?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        let pair = sort_record_pair(
+            parse_stored(&row.get::<_, String>(0)?)?,
+            parse_stored(&row.get::<_, String>(1)?)?,
+        );
+        let kind = match row.get::<_, String>(2)?.as_str() {
+            "must_link" => ConstraintKind::MustLink,
+            _ => ConstraintKind::CannotLink,
+        };
+        let decision = PersonDecision {
+            seq: Seq(row.get::<_, i64>(3)? as u64),
+            actor: parse_stored(&row.get::<_, String>(4)?)?,
+            reason: row.get(5)?,
+        };
+        verdicts.insert(
+            pair,
+            match kind {
+                ConstraintKind::MustLink => Verdict::Match,
+                ConstraintKind::CannotLink => Verdict::NoMatch,
+            },
+        );
+        if kind == ConstraintKind::CannotLink {
+            by_constraint.insert(pair, decision.clone());
         }
+        constraints.push(ConstraintNote {
+            kind,
+            records: [pair.0, pair.1],
+            decision,
+        });
     }
+    Ok((constraints, by_constraint))
+}
 
-    // The default policy, in an empty store where every record is new.
+/// The groups the default policy makes of the records, in an empty store
+/// where every record is new, and the groups that wait, each with the
+/// group kept out of it, if one was.
+fn group_by_policy(
+    entity_type: &EntityType,
+    records: &[RecordId],
+    verdicts: &Verdicts,
+    held: &DisjointSets<RecordId>,
+) -> Result<Grouped> {
     let mut state = MemoryState::new();
-    for record in &records {
+    for record in records {
         state.add_record(*record, entity_type.clone());
     }
     let evidence = EvidenceSummary {
@@ -332,7 +451,7 @@ pub(crate) fn compute(
     // The records of a group that is kept out are what the rest contradicts
     // itself about, so the item they wait in names its identity.
     let mut kept_out: Vec<Option<RecordId>> = vec![None; waiting.len()];
-    for set in collect_joined_sets(&held).into_values() {
+    for set in collect_joined_sets(held).into_values() {
         let Some(at) = waiting
             .iter()
             .position(|group| group.binary_search(&set[0]).is_ok())
@@ -358,7 +477,15 @@ pub(crate) fn compute(
     let (waiting, kept_out): (Vec<Vec<RecordId>>, Vec<Option<RecordId>>) =
         waiting_with.into_iter().unzip();
     groups.sort();
+    Ok(Grouped {
+        groups,
+        waiting,
+        kept_out,
+    })
+}
 
+/// Where each record goes: a group, or a group that waits.
+fn place_records(groups: &[Vec<RecordId>], waiting: &[Vec<RecordId>]) -> HashMap<RecordId, Place> {
     let mut place: HashMap<RecordId, Place> = HashMap::new();
     for (at, group) in groups.iter().enumerate() {
         for record in group {
@@ -370,11 +497,21 @@ pub(crate) fn compute(
             place.insert(*record, Place::Waiting(at));
         }
     }
+    place
+}
 
-    // The `no_match` pairs inside each waiting group, found from the
-    // verdicts rather than from every pair of its records.
-    let mut blocked: Vec<Vec<Contradiction>> = vec![Vec::new(); waiting.len()];
-    for ((a, b), verdict) in &verdicts {
+/// The `no_match` pairs inside each waiting group, found from the
+/// verdicts rather than from every pair of its records, a person's
+/// constraint first.
+fn find_contradictions(
+    verdicts: &Verdicts,
+    place: &HashMap<RecordId, Place>,
+    waiting: usize,
+    by_constraint: &ByConstraint,
+    rule_names: &RuleNames,
+) -> Vec<Vec<Contradiction>> {
+    let mut blocked: Vec<Vec<Contradiction>> = vec![Vec::new(); waiting];
+    for ((a, b), verdict) in verdicts {
         if *verdict != Verdict::NoMatch {
             continue;
         }
@@ -397,11 +534,20 @@ pub(crate) fn compute(
     for found in &mut blocked {
         found.sort_by_key(|contradiction| contradiction.constraint.is_none());
     }
+    blocked
+}
 
-    // Which identity each group becomes. An identity's home is the group
-    // that holds most of its records, on a tie the first group.
+/// Which identity each group becomes, and which identities merge into
+/// another. An identity's home is the group that holds most of its
+/// records, on a tie the first group.
+fn choose_keepers(
+    now: &HashMap<RecordId, IdentityId>,
+    place: &HashMap<RecordId, Place>,
+    groups: usize,
+    created: &HashMap<IdentityId, i64>,
+) -> (Vec<Option<IdentityId>>, BTreeMap<IdentityId, IdentityId>) {
     let mut counts: BTreeMap<IdentityId, BTreeMap<usize, u64>> = BTreeMap::new();
-    for (record, identity) in &now {
+    for (record, identity) in now {
         if let Some(Place::Group(at)) = place.get(record) {
             *counts.entry(*identity).or_default().entry(*at).or_default() += 1;
         }
@@ -415,7 +561,7 @@ pub(crate) fn compute(
             .expect("an identity counted here has a record in a group");
         claimants.entry(home).or_default().push((*identity, most));
     }
-    let mut keeper: Vec<Option<IdentityId>> = vec![None; groups.len()];
+    let mut keeper: Vec<Option<IdentityId>> = vec![None; groups];
     let mut merged: BTreeMap<IdentityId, IdentityId> = BTreeMap::new();
     for (home, mut identities) in claimants {
         // The most records there, then the oldest, then the smallest ID.
@@ -430,11 +576,13 @@ pub(crate) fn compute(
             merged.insert(*identity, kept);
         }
     }
+    (keeper, merged)
+}
 
-    let labels = read_record_labels(conn)?;
-    let shaped = shaped_by_people(conn)?;
-    let approved = approved_placements(conn)?;
-    let open_items: Vec<Vec<RecordId>> = query_strings(
+/// The records of each open review item of a type, other than a
+/// `possible_split`, oldest first.
+fn read_open_items(conn: &Connection, entity_type: &EntityType) -> Result<Vec<Vec<RecordId>>> {
+    Ok(query_strings(
         conn,
         &format!(
             "SELECT to_json(record_ids)::VARCHAR FROM spool.review_item
@@ -451,28 +599,7 @@ pub(crate) fn compute(
             .filter_map(|id| id.parse().ok())
             .collect()
     })
-    .collect();
-
-    Ok(Outcome {
-        entity_type: entity_type.clone(),
-        records,
-        now,
-        groups,
-        waiting,
-        kept_out,
-        place,
-        keeper,
-        merged,
-        blocked,
-        labels,
-        shaped,
-        approved,
-        constraints,
-        held_together,
-        dismissed_splits,
-        open_items,
-        pairs_now,
-    })
+    .collect())
 }
 
 fn sort_record_pair(a: RecordId, b: RecordId) -> (RecordId, RecordId) {

@@ -6,7 +6,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use duckdb::Connection;
 use sha2::{Digest, Sha256};
-use spool_core::{ConstraintKind, EntityType, IdGenerator, IdentityId, Op, RecordId, ReviewItem};
+use spool_core::{
+    ConstraintKind, DisjointSets, EntityType, IdGenerator, IdentityId, Op, RecordId, ReviewItem,
+};
 
 use super::{
     After, ApprovedPlacement, Before, Change, ChangeDetail, ChangeKind, Contradiction,
@@ -187,30 +189,32 @@ impl Outcome {
     }
 
     /// The changes, largest first, each with its records.
-    #[expect(clippy::too_many_lines)]
     fn changes(&self) -> Vec<(Change, Vec<RecordId>)> {
-        let mut nodes: Vec<Node> = Vec::new();
-        let mut index: HashMap<Node, usize> = HashMap::new();
-        let mut parent: Vec<usize> = Vec::new();
-        fn find_root(parent: &mut [usize], mut node: usize) -> usize {
-            while parent[node] != node {
-                parent[node] = parent[parent[node]];
-                node = parent[node];
-            }
-            node
-        }
-        let mut node = |node: Node, nodes: &mut Vec<Node>, parent: &mut Vec<usize>| -> usize {
-            *index.entry(node).or_insert_with(|| {
-                nodes.push(node);
-                parent.push(parent.len());
-                parent.len() - 1
-            })
-        };
         let mut merged_into: BTreeMap<IdentityId, Vec<IdentityId>> = BTreeMap::new();
         for (from, into) in &self.merged {
             merged_into.entry(*into).or_default().push(*from);
         }
-        let mut edges: Vec<(RecordId, usize, usize)> = Vec::new();
+        let mut changes: Vec<(Change, Vec<RecordId>)> = self
+            .parts()
+            .into_iter()
+            .filter_map(|(nodes, records)| self.change_of(&nodes, records, &merged_into))
+            .collect();
+        changes.sort_by(|(a, x), (b, y)| {
+            b.records
+                .cmp(&a.records)
+                .then_with(|| x.iter().min().cmp(&y.iter().min()))
+        });
+        for (rank, (change, _)) in changes.iter_mut().enumerate() {
+            change.rank = rank as u64 + 1;
+        }
+        changes
+    }
+
+    /// The parts of the graph that joins where each record is now to where
+    /// it would go, each with its nodes and its records.
+    fn parts(&self) -> Vec<(BTreeSet<Node>, Vec<RecordId>)> {
+        let mut joined = DisjointSets::default();
+        let mut edges: Vec<(RecordId, Node, Node)> = Vec::new();
         for record in &self.records {
             let Some(target) = self.target(*record) else {
                 continue;
@@ -223,157 +227,150 @@ impl Outcome {
                 Place::Group(at) => Node::Group(at),
                 Place::Waiting(at) => Node::Waiting(at),
             };
-            let (a, b) = (
-                node(source, &mut nodes, &mut parent),
-                node(target, &mut nodes, &mut parent),
-            );
-            let (ra, rb) = (find_root(&mut parent, a), find_root(&mut parent, b));
-            parent[ra.max(rb)] = ra.min(rb);
-            edges.push((*record, a, b));
+            joined.insert(source);
+            joined.insert(target);
+            joined.join(source, target);
+            edges.push((*record, source, target));
         }
-        let mut parts: BTreeMap<usize, (BTreeSet<Node>, Vec<RecordId>)> = BTreeMap::new();
-        for (record, a, b) in edges {
-            let root = find_root(&mut parent, a);
-            let part = parts.entry(root).or_default();
-            part.0.insert(nodes[a]);
-            part.0.insert(nodes[b]);
+        let mut parts: BTreeMap<Node, (BTreeSet<Node>, Vec<RecordId>)> = BTreeMap::new();
+        for (record, source, target) in edges {
+            let part = parts.entry(joined.root(source)).or_default();
+            part.0.extend([source, target]);
             part.1.push(record);
         }
+        parts.into_values().collect()
+    }
 
-        let mut changes = Vec::new();
-        for (nodes, records) in parts.into_values() {
-            let olds: Vec<IdentityId> = nodes
-                .iter()
-                .filter_map(|node| match node {
-                    Node::Identity(identity) => Some(*identity),
-                    _ => None,
-                })
-                .collect();
-            let groups: Vec<usize> = nodes
-                .iter()
-                .filter_map(|node| match node {
-                    Node::Group(at) => Some(*at),
-                    _ => None,
-                })
-                .collect();
-            let waits: Vec<usize> = nodes
-                .iter()
-                .filter_map(|node| match node {
-                    Node::Waiting(at) => Some(*at),
-                    _ => None,
-                })
-                .collect();
-            let unplaced = records
-                .iter()
-                .filter(|record| !self.now.contains_key(record))
-                .count() as u64;
-            // Nothing changes: one identity keeps exactly its records, or
-            // records that wait go on waiting.
-            if olds.is_empty() && groups.is_empty() {
-                continue;
-            }
-            if olds.len() == 1 && groups.len() == 1 && waits.is_empty() && unplaced == 0 {
-                continue;
-            }
-            let kind = match (olds.len(), groups.len(), waits.len()) {
-                (0, _, _) => ChangeKind::New,
-                (1, 0, _) => ChangeKind::Review,
-                (1, 1, 0) => ChangeKind::Gain,
-                (1, 1, _) => ChangeKind::Lose,
-                (1, _, _) => ChangeKind::Split,
-                (_, 0, _) => ChangeKind::Review,
-                (_, 1, 0) => ChangeKind::Merge,
-                _ => ChangeKind::Regroup,
-            };
-
-            let mut by_old: BTreeMap<Option<IdentityId>, Vec<RecordId>> = BTreeMap::new();
-            for record in &records {
-                by_old
-                    .entry(self.now.get(record).copied())
-                    .or_default()
-                    .push(*record);
-            }
-            let mut before: Vec<Before> = by_old
-                .iter()
-                .map(|(identity, members)| Before {
-                    identity: *identity,
-                    label: self.label_of(members.iter()),
-                    records: members.len() as u64,
-                })
-                .collect();
-            before.sort_by(|a, b| {
-                b.records
-                    .cmp(&a.records)
-                    .then_with(|| a.identity.is_none().cmp(&b.identity.is_none()))
-                    .then_with(|| a.identity.cmp(&b.identity))
-            });
-            let after: Vec<After> = self
-                .destinations(&records)
-                .iter()
-                .map(|(place, members)| {
-                    let (fate, identity, merged) = match place {
-                        Place::Group(at) => match self.keeper[*at] {
-                            Some(kept) => (
-                                Fate::Kept,
-                                Some(kept),
-                                merged_into.get(&kept).cloned().unwrap_or_default(),
-                            ),
-                            None => (Fate::New, None, Vec::new()),
-                        },
-                        Place::Waiting(_) => (Fate::Waiting, None, Vec::new()),
-                    };
-                    After {
-                        fate,
-                        identity,
-                        label: self.label_of(members.iter()),
-                        records: members.len() as u64,
-                        merged,
-                    }
-                })
-                .collect();
-            let moved = records
-                .iter()
-                .filter(|record| self.changes_identity(**record))
-                .count() as u64;
-            let mut shaped_by: Vec<PersonDecision> = olds
-                .iter()
-                .flat_map(|identity| self.shaped.get(identity).into_iter().flatten())
-                .cloned()
-                .collect();
-            shaped_by.sort_by_key(|decision| decision.seq);
-            shaped_by.dedup();
-            let approved_drafts = records
-                .iter()
-                .filter(|record| self.approved.contains_key(record))
-                .count() as u64;
-            let blocked_by: Vec<Contradiction> = waits
-                .iter()
-                .filter_map(|at| self.blocked[*at].first().cloned())
-                .collect();
-            changes.push((
-                Change {
-                    rank: 0,
-                    kind,
-                    records: records.len() as u64,
-                    moved,
-                    before,
-                    after,
-                    shaped_by,
-                    approved_drafts,
-                    blocked_by,
-                },
-                records,
-            ));
+    /// What one part of the graph changes, or `None` when it changes
+    /// nothing.
+    fn change_of(
+        &self,
+        nodes: &BTreeSet<Node>,
+        records: Vec<RecordId>,
+        merged_into: &BTreeMap<IdentityId, Vec<IdentityId>>,
+    ) -> Option<(Change, Vec<RecordId>)> {
+        let olds: Vec<IdentityId> = nodes
+            .iter()
+            .filter_map(|node| match node {
+                Node::Identity(identity) => Some(*identity),
+                _ => None,
+            })
+            .collect();
+        let groups: Vec<usize> = nodes
+            .iter()
+            .filter_map(|node| match node {
+                Node::Group(at) => Some(*at),
+                _ => None,
+            })
+            .collect();
+        let waits: Vec<usize> = nodes
+            .iter()
+            .filter_map(|node| match node {
+                Node::Waiting(at) => Some(*at),
+                _ => None,
+            })
+            .collect();
+        let unplaced = records
+            .iter()
+            .filter(|record| !self.now.contains_key(record))
+            .count() as u64;
+        // Nothing changes: one identity keeps exactly its records, or
+        // records that wait go on waiting.
+        if olds.is_empty() && groups.is_empty() {
+            return None;
         }
-        changes.sort_by(|(a, x), (b, y)| {
+        if olds.len() == 1 && groups.len() == 1 && waits.is_empty() && unplaced == 0 {
+            return None;
+        }
+        let kind = match (olds.len(), groups.len(), waits.len()) {
+            (0, _, _) => ChangeKind::New,
+            (1, 0, _) => ChangeKind::Review,
+            (1, 1, 0) => ChangeKind::Gain,
+            (1, 1, _) => ChangeKind::Lose,
+            (1, _, _) => ChangeKind::Split,
+            (_, 0, _) => ChangeKind::Review,
+            (_, 1, 0) => ChangeKind::Merge,
+            _ => ChangeKind::Regroup,
+        };
+
+        let mut by_old: BTreeMap<Option<IdentityId>, Vec<RecordId>> = BTreeMap::new();
+        for record in &records {
+            by_old
+                .entry(self.now.get(record).copied())
+                .or_default()
+                .push(*record);
+        }
+        let mut before: Vec<Before> = by_old
+            .iter()
+            .map(|(identity, members)| Before {
+                identity: *identity,
+                label: self.label_of(members.iter()),
+                records: members.len() as u64,
+            })
+            .collect();
+        before.sort_by(|a, b| {
             b.records
                 .cmp(&a.records)
-                .then_with(|| x.iter().min().cmp(&y.iter().min()))
+                .then_with(|| a.identity.is_none().cmp(&b.identity.is_none()))
+                .then_with(|| a.identity.cmp(&b.identity))
         });
-        for (rank, (change, _)) in changes.iter_mut().enumerate() {
-            change.rank = rank as u64 + 1;
-        }
-        changes
+        let after: Vec<After> = self
+            .destinations(&records)
+            .iter()
+            .map(|(place, members)| {
+                let (fate, identity, merged) = match place {
+                    Place::Group(at) => match self.keeper[*at] {
+                        Some(kept) => (
+                            Fate::Kept,
+                            Some(kept),
+                            merged_into.get(&kept).cloned().unwrap_or_default(),
+                        ),
+                        None => (Fate::New, None, Vec::new()),
+                    },
+                    Place::Waiting(_) => (Fate::Waiting, None, Vec::new()),
+                };
+                After {
+                    fate,
+                    identity,
+                    label: self.label_of(members.iter()),
+                    records: members.len() as u64,
+                    merged,
+                }
+            })
+            .collect();
+        let moved = records
+            .iter()
+            .filter(|record| self.changes_identity(**record))
+            .count() as u64;
+        let mut shaped_by: Vec<PersonDecision> = olds
+            .iter()
+            .flat_map(|identity| self.shaped.get(identity).into_iter().flatten())
+            .cloned()
+            .collect();
+        shaped_by.sort_by_key(|decision| decision.seq);
+        shaped_by.dedup();
+        let approved_drafts = records
+            .iter()
+            .filter(|record| self.approved.contains_key(record))
+            .count() as u64;
+        let blocked_by: Vec<Contradiction> = waits
+            .iter()
+            .filter_map(|at| self.blocked[*at].first().cloned())
+            .collect();
+        Some((
+            Change {
+                rank: 0,
+                kind,
+                records: records.len() as u64,
+                moved,
+                before,
+                after,
+                shaped_by,
+                approved_drafts,
+                blocked_by,
+            },
+            records,
+        ))
     }
 
     pub(crate) fn summary(&self) -> RecomputeSummary {

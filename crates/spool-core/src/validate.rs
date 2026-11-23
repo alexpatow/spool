@@ -239,6 +239,18 @@ struct Pending<'a> {
 }
 
 impl Pending<'_> {
+    /// The entity type of an identity an operation may give members to.
+    fn active_type(&self, identity: IdentityId) -> Result<&EntityType, Reason> {
+        match self.identity(&identity) {
+            Known::Missing => Err(Reason::UnknownIdentity { identity }),
+            Known::Merged(merged_into) => Err(Reason::IdentityNotActive {
+                identity,
+                merged_into,
+            }),
+            Known::Active(entity_type) => Ok(entity_type),
+        }
+    }
+
     fn identity(&self, id: &IdentityId) -> Known<'_> {
         let entity_type = match self.created.get(id) {
             Some(entity_type) => *entity_type,
@@ -279,450 +291,32 @@ impl Pending<'_> {
 /// - a changeset moves a record at most once, and merges or reinstates
 ///   an identity at most once, because history has one position per
 ///   changeset.
-#[expect(clippy::too_many_lines)]
 pub fn validate<S: IdentityState + ?Sized>(
     state: &S,
     changeset: Changeset,
 ) -> Result<Validated, ValidationError> {
-    let mut rejections = Vec::new();
-    macro_rules! reject {
-        ($op:expr, $reason:expr $(,)?) => {{
-            let op: Option<(usize, &Op)> = $op;
-            rejections.push(Rejection {
-                op_index: op.map(|(index, _)| index),
-                op: op.map(|(_, op)| op.clone()),
-                reason: $reason,
-            })
-        }};
-    }
-
-    if changeset.ops.is_empty() {
-        reject!(None, Reason::EmptyChangeset);
-    }
-    let head = state.head()?;
-    if changeset.base > head {
-        reject!(
-            None,
-            Reason::BaseAhead {
-                base: changeset.base,
-                head,
-            },
-        );
-    }
-    if let Some(seq) = state.changeset_seq(changeset.id)? {
-        reject!(None, Reason::AlreadyCommitted { seq });
-    }
-
-    let mut records = Vec::new();
-    let mut identities = Vec::new();
-    let mut merging = Vec::new();
-    let mut merged_away = Vec::new();
-    for op in &changeset.ops {
-        match op {
-            Op::CreateIdentity { identity, .. } | Op::Reinstate { identity } => {
-                identities.push(*identity);
-            }
-            Op::Assign { record, to, .. } => {
-                records.push(*record);
-                identities.extend(*to);
-            }
-            Op::Merge { from, into } => {
-                identities.extend([*from, *into]);
-                merging.extend([*from, *into]);
-                merged_away.push(*from);
-            }
-            Op::Constrain { a, b, .. } | Op::Unconstrain { a, b, .. } => {
-                records.extend([*a, *b]);
-            }
-        }
-    }
-    for ids in [&mut identities, &mut merging, &mut merged_away] {
-        ids.sort_unstable();
-        ids.dedup();
-    }
-    records.sort_unstable();
-    records.dedup();
-
-    let types: HashMap<_, _> = records
-        .iter()
-        .copied()
-        .zip(state.record_types(&records)?)
-        .collect();
-    let mut assigned: HashMap<_, _> = records
-        .iter()
-        .copied()
-        .zip(state.assignments(&records)?)
-        .collect();
-    let changed: HashMap<_, _> = merging
-        .iter()
-        .copied()
-        .zip(state.membership_changed(&merging)?)
-        .collect();
-
-    // The constraints this changeset names or could break: those on the
-    // records it names, and those on the members a merge moves.
-    let mut pending = Pending {
-        existing: identities
-            .iter()
-            .copied()
-            .zip(state.identities(&identities)?)
-            .collect(),
-        constraints: state
-            .constraints_on(&records)?
-            .into_iter()
-            .chain(state.constraints_of_members(&merged_away)?)
-            .collect(),
-        ..Pending::default()
-    };
-
+    let mut rejections = check_whole(state, &changeset)?
+        .into_iter()
+        .map(|reason| Rejection {
+            op_index: None,
+            op: None,
+            reason,
+        })
+        .collect::<Vec<_>>();
+    let mut check = Check::new(state, &changeset)?;
     for (index, op) in changeset.ops.iter().enumerate() {
-        let at = Some((index, op));
-        match op {
-            Op::CreateIdentity {
-                identity,
-                entity_type,
-            } => {
-                let exists = pending.existing.get(identity).is_some_and(Option::is_some);
-                if exists || pending.created.contains_key(identity) {
-                    reject!(
-                        at,
-                        Reason::IdentityExists {
-                            identity: *identity,
-                        },
-                    );
-                } else {
-                    pending.created.insert(*identity, entity_type);
-                }
-            }
-            Op::Assign { record, from, to } => {
-                let Some(record_type) = types.get(record).and_then(Option::as_ref) else {
-                    reject!(at, Reason::UnknownRecord { record: *record },);
-                    continue;
-                };
-                if let Some(first_op) = pending.assigned.get(record) {
-                    reject!(
-                        at,
-                        Reason::RecordAssignedTwice {
-                            record: *record,
-                            first_op: *first_op,
-                        },
-                    );
-                    continue;
-                }
-                pending.assigned.insert(*record, index);
-                // A merge earlier in the changeset moved the members of the
-                // identity it merged away.
-                let before = assigned.get(record).copied().flatten();
-                let moved = before.and_then(|identity| pending.merged.get(&identity).copied());
-                let actual = match moved {
-                    Some((into, _)) => Some(into),
-                    None => before,
-                };
-                if actual != *from {
-                    reject!(
-                        at,
-                        Reason::StaleAssignment {
-                            record: *record,
-                            expected: *from,
-                            actual,
-                        },
-                    );
-                    continue;
-                }
-                if let Some((_, first_op)) = moved {
-                    reject!(
-                        at,
-                        Reason::RecordAssignedTwice {
-                            record: *record,
-                            first_op,
-                        },
-                    );
-                    continue;
-                }
-                if from == to {
-                    reject!(at, Reason::NoChange { record: *record },);
-                    continue;
-                }
-                pending.placed.insert(*record, *to);
-                let Some(target) = to else { continue };
-                let identity_type = match pending.identity(target) {
-                    Known::Missing => {
-                        reject!(at, Reason::UnknownIdentity { identity: *target });
-                        continue;
-                    }
-                    Known::Merged(merged_into) => {
-                        reject!(
-                            at,
-                            Reason::IdentityNotActive {
-                                identity: *target,
-                                merged_into,
-                            },
-                        );
-                        continue;
-                    }
-                    Known::Active(entity_type) => entity_type.clone(),
-                };
-                if identity_type != *record_type {
-                    reject!(
-                        at,
-                        Reason::EntityTypeMismatch {
-                            record: *record,
-                            record_type: record_type.clone(),
-                            identity: *target,
-                            identity_type,
-                        },
-                    );
-                    continue;
-                }
-                pending.received.entry(*target).or_insert(index);
-            }
-            Op::Merge { from, into } => {
-                if from == into {
-                    reject!(at, Reason::MergeIntoItself { identity: *from });
-                    continue;
-                }
-                let mut entity_types = Vec::new();
-                for identity in [from, into] {
-                    match pending.identity(identity) {
-                        Known::Missing => reject!(
-                            at,
-                            Reason::UnknownIdentity {
-                                identity: *identity,
-                            },
-                        ),
-                        Known::Merged(merged_into) => reject!(
-                            at,
-                            Reason::IdentityNotActive {
-                                identity: *identity,
-                                merged_into,
-                            },
-                        ),
-                        Known::Active(entity_type) => entity_types.push(entity_type.clone()),
-                    }
-                }
-                let [from_type, into_type] = entity_types.as_slice() else {
-                    continue;
-                };
-                if from_type != into_type {
-                    reject!(
-                        at,
-                        Reason::IdentityTypeMismatch {
-                            from: *from,
-                            from_type: from_type.clone(),
-                            into: *into,
-                            into_type: into_type.clone(),
-                        },
-                    );
-                    continue;
-                }
-                if let Some(first_op) = pending.reinstated.get(from) {
-                    reject!(
-                        at,
-                        Reason::IdentityChangedTwice {
-                            identity: *from,
-                            first_op: *first_op,
-                        },
-                    );
-                    continue;
-                }
-                if let Some(first_op) = pending.received.get(from) {
-                    reject!(
-                        at,
-                        Reason::MembersMovedTwice {
-                            identity: *from,
-                            first_op: *first_op,
-                        },
-                    );
-                    continue;
-                }
-                let stale = [from, into].into_iter().find_map(|identity| {
-                    let changed = changed.get(identity).copied().unwrap_or(Seq::ZERO);
-                    (changed > changeset.base).then_some((*identity, changed))
-                });
-                if let Some((identity, changed)) = stale {
-                    reject!(
-                        at,
-                        Reason::StaleMerge {
-                            identity,
-                            changed,
-                            base: changeset.base,
-                        },
-                    );
-                    continue;
-                }
-                pending.merged.insert(*from, (*into, index));
-                pending.received.entry(*into).or_insert(index);
-            }
-            Op::Reinstate { identity } => {
-                let first_op = pending
-                    .merged
-                    .get(identity)
-                    .map(|(_, first_op)| *first_op)
-                    .or_else(|| pending.reinstated.get(identity).copied());
-                if let Some(first_op) = first_op {
-                    reject!(
-                        at,
-                        Reason::IdentityChangedTwice {
-                            identity: *identity,
-                            first_op,
-                        },
-                    );
-                    continue;
-                }
-                match pending.identity(identity) {
-                    Known::Missing => reject!(
-                        at,
-                        Reason::UnknownIdentity {
-                            identity: *identity,
-                        },
-                    ),
-                    Known::Active(_) => reject!(
-                        at,
-                        Reason::IdentityIsActive {
-                            identity: *identity,
-                        },
-                    ),
-                    Known::Merged(_) => {
-                        pending.reinstated.insert(*identity, index);
-                    }
-                }
-            }
-            Op::Constrain { kind, a, b } | Op::Unconstrain { kind, a, b } => {
-                if a == b {
-                    reject!(at, Reason::SameRecord { record: *a });
-                    continue;
-                }
-                let known = |record: &RecordId| types.get(record).and_then(Option::as_ref);
-                let (a_type, b_type) = match (known(a), known(b)) {
-                    (Some(a_type), Some(b_type)) => (a_type, b_type),
-                    (None, _) => {
-                        reject!(at, Reason::UnknownRecord { record: *a });
-                        continue;
-                    }
-                    (_, None) => {
-                        reject!(at, Reason::UnknownRecord { record: *b });
-                        continue;
-                    }
-                };
-                if a_type != b_type {
-                    reject!(
-                        at,
-                        Reason::ConstraintAcrossTypes {
-                            a: *a,
-                            a_type: a_type.clone(),
-                            b: *b,
-                            b_type: b_type.clone(),
-                        },
-                    );
-                    continue;
-                }
-                let constraint = Constraint::new(*kind, *a, *b);
-                if let Some(first_op) = pending.constrained.get(&constraint) {
-                    reject!(
-                        at,
-                        Reason::ConstraintChangedTwice {
-                            kind: *kind,
-                            a: *a,
-                            b: *b,
-                            first_op: *first_op,
-                        },
-                    );
-                    continue;
-                }
-                let in_force = pending.constraints.contains(&constraint);
-                if matches!(op, Op::Constrain { .. }) {
-                    // A pair has one constraint. Both kinds at once would
-                    // hold only while one of the two has no identity.
-                    let other = Constraint::new(
-                        match kind {
-                            ConstraintKind::MustLink => ConstraintKind::CannotLink,
-                            ConstraintKind::CannotLink => ConstraintKind::MustLink,
-                        },
-                        *a,
-                        *b,
-                    );
-                    let existing = if in_force {
-                        Some(*kind)
-                    } else if pending.constraints.contains(&other) {
-                        Some(other.kind)
-                    } else {
-                        None
-                    };
-                    if let Some(kind) = existing {
-                        reject!(at, Reason::ConstraintExists { kind, a: *a, b: *b },);
-                        continue;
-                    }
-                    pending.constraints.insert(constraint);
-                } else {
-                    if !in_force {
-                        reject!(
-                            at,
-                            Reason::UnknownConstraint {
-                                kind: *kind,
-                                a: *a,
-                                b: *b,
-                            },
-                        );
-                        continue;
-                    }
-                    pending.constraints.remove(&constraint);
-                }
-                pending.constrained.insert(constraint, index);
-            }
+        if let Err(Broken(reasons)) = check.op(index, op) {
+            rejections.extend(reasons.into_iter().map(|reason| Rejection {
+                op_index: Some(index),
+                op: Some(op.clone()),
+                reason,
+            }));
         }
     }
-
     // Each operation held. What is left is the state they add up to: no
     // constraint in force may be broken by it.
     if rejections.is_empty() {
-        let mut others: Vec<RecordId> = pending
-            .constraints
-            .iter()
-            .flat_map(|constraint| [constraint.a, constraint.b])
-            .filter(|record| !assigned.contains_key(record))
-            .collect();
-        others.sort_unstable();
-        others.dedup();
-        let found = state.assignments(&others)?;
-        assigned.extend(others.into_iter().zip(found));
-
-        // Where a record ends up, and the operation that moved it.
-        let end = |record: &RecordId| -> (Option<IdentityId>, Option<usize>) {
-            if let Some(to) = pending.placed.get(record) {
-                return (*to, pending.assigned.get(record).copied());
-            }
-            let before = assigned.get(record).copied().flatten();
-            match before.and_then(|identity| pending.merged.get(&identity)) {
-                Some((into, index)) => (Some(*into), Some(*index)),
-                None => (before, None),
-            }
-        };
-        for constraint in &pending.constraints {
-            let ((identity_a, moved_a), (identity_b, moved_b)) =
-                (end(&constraint.a), end(&constraint.b));
-            if constraint.holds(identity_a, identity_b) {
-                continue;
-            }
-            // The last operation that had a part in it is the one to name.
-            let index = [
-                moved_a,
-                moved_b,
-                pending.constrained.get(constraint).copied(),
-            ]
-            .into_iter()
-            .flatten()
-            .max();
-            reject!(
-                index.map(|index| (index, &changeset.ops[index])),
-                Reason::ConstraintViolated {
-                    kind: constraint.kind,
-                    a: constraint.a,
-                    b: constraint.b,
-                    identity_a,
-                    identity_b,
-                },
-            );
-        }
+        rejections = check.broken_constraints(state, &changeset.ops)?;
     }
 
     if rejections.is_empty() {
@@ -733,6 +327,436 @@ pub fn validate<S: IdentityState + ?Sized>(
         })
     } else {
         Err(ValidationError::Rejected(rejections))
+    }
+}
+
+/// What is wrong with a changeset as a whole.
+fn check_whole<S: IdentityState + ?Sized>(
+    state: &S,
+    changeset: &Changeset,
+) -> Result<Vec<Reason>, StateError> {
+    let mut reasons = Vec::new();
+    if changeset.ops.is_empty() {
+        reasons.push(Reason::EmptyChangeset);
+    }
+    let head = state.head()?;
+    if changeset.base > head {
+        reasons.push(Reason::BaseAhead {
+            base: changeset.base,
+            head,
+        });
+    }
+    if let Some(seq) = state.changeset_seq(changeset.id)? {
+        reasons.push(Reason::AlreadyCommitted { seq });
+    }
+    Ok(reasons)
+}
+
+/// What the operations of a changeset name, each list sorted and without
+/// repeats.
+#[derive(Default)]
+struct Named {
+    records: Vec<RecordId>,
+    identities: Vec<IdentityId>,
+    /// Both sides of every merge.
+    merging: Vec<IdentityId>,
+    merged_away: Vec<IdentityId>,
+}
+
+impl Named {
+    fn of(ops: &[Op]) -> Self {
+        let mut named = Named::default();
+        for op in ops {
+            match op {
+                Op::CreateIdentity { identity, .. } | Op::Reinstate { identity } => {
+                    named.identities.push(*identity);
+                }
+                Op::Assign { record, to, .. } => {
+                    named.records.push(*record);
+                    named.identities.extend(*to);
+                }
+                Op::Merge { from, into } => {
+                    named.identities.extend([*from, *into]);
+                    named.merging.extend([*from, *into]);
+                    named.merged_away.push(*from);
+                }
+                Op::Constrain { a, b, .. } | Op::Unconstrain { a, b, .. } => {
+                    named.records.extend([*a, *b]);
+                }
+            }
+        }
+        for ids in [
+            &mut named.identities,
+            &mut named.merging,
+            &mut named.merged_away,
+        ] {
+            ids.sort_unstable();
+            ids.dedup();
+        }
+        named.records.sort_unstable();
+        named.records.dedup();
+        named
+    }
+}
+
+/// Each of `keys` with what was read for it, in the same order.
+fn zip_with<K: Copy + Eq + std::hash::Hash, V>(keys: &[K], values: Vec<V>) -> HashMap<K, V> {
+    keys.iter().copied().zip(values).collect()
+}
+
+/// The rules an operation broke: one, or both identities of a merge that
+/// cannot be merged.
+struct Broken(Vec<Reason>);
+
+impl From<Reason> for Broken {
+    fn from(reason: Reason) -> Self {
+        Broken(vec![reason])
+    }
+}
+
+/// The state a changeset is checked against, read once, and what its
+/// operations checked so far have done to it.
+struct Check<'a> {
+    base: Seq,
+    types: HashMap<RecordId, Option<EntityType>>,
+    /// Where each record was before the changeset.
+    assigned: HashMap<RecordId, Option<IdentityId>>,
+    /// When the members of each identity a merge names last changed.
+    changed: HashMap<IdentityId, Seq>,
+    pending: Pending<'a>,
+}
+
+impl<'a> Check<'a> {
+    fn new<S: IdentityState + ?Sized>(
+        state: &S,
+        changeset: &'a Changeset,
+    ) -> Result<Self, StateError> {
+        let named = Named::of(&changeset.ops);
+        Ok(Check {
+            base: changeset.base,
+            types: zip_with(&named.records, state.record_types(&named.records)?),
+            assigned: zip_with(&named.records, state.assignments(&named.records)?),
+            changed: zip_with(&named.merging, state.membership_changed(&named.merging)?),
+            // The constraints this changeset names or could break: those on
+            // the records it names, and those on the members a merge moves.
+            pending: Pending {
+                existing: zip_with(&named.identities, state.identities(&named.identities)?),
+                constraints: state
+                    .constraints_on(&named.records)?
+                    .into_iter()
+                    .chain(state.constraints_of_members(&named.merged_away)?)
+                    .collect(),
+                ..Pending::default()
+            },
+        })
+    }
+
+    /// Checks one operation against what the ones before it left, and adds
+    /// what it does.
+    fn op(&mut self, index: usize, op: &'a Op) -> Result<(), Broken> {
+        match op {
+            Op::CreateIdentity {
+                identity,
+                entity_type,
+            } => self.create(*identity, entity_type),
+            Op::Assign { record, from, to } => self.assign(index, *record, *from, *to),
+            Op::Merge { from, into } => self.merge(index, *from, *into),
+            Op::Reinstate { identity } => self.reinstate(index, *identity),
+            Op::Constrain { kind, a, b } => self.constrain(index, *kind, *a, *b),
+            Op::Unconstrain { kind, a, b } => self.unconstrain(index, *kind, *a, *b),
+        }
+    }
+
+    fn create(&mut self, identity: IdentityId, entity_type: &'a EntityType) -> Result<(), Broken> {
+        let pending = &mut self.pending;
+        let exists = pending.existing.get(&identity).is_some_and(Option::is_some);
+        if exists || pending.created.contains_key(&identity) {
+            return Err(Reason::IdentityExists { identity }.into());
+        }
+        pending.created.insert(identity, entity_type);
+        Ok(())
+    }
+
+    fn assign(
+        &mut self,
+        index: usize,
+        record: RecordId,
+        from: Option<IdentityId>,
+        to: Option<IdentityId>,
+    ) -> Result<(), Broken> {
+        let Some(record_type) = self.types.get(&record).and_then(Option::as_ref) else {
+            return Err(Reason::UnknownRecord { record }.into());
+        };
+        let pending = &mut self.pending;
+        if let Some(first_op) = pending.assigned.get(&record) {
+            return Err(Reason::RecordAssignedTwice {
+                record,
+                first_op: *first_op,
+            }
+            .into());
+        }
+        pending.assigned.insert(record, index);
+        // A merge earlier in the changeset moved the members of the
+        // identity it merged away.
+        let before = self.assigned.get(&record).copied().flatten();
+        let moved = before.and_then(|identity| pending.merged.get(&identity).copied());
+        let actual = match moved {
+            Some((into, _)) => Some(into),
+            None => before,
+        };
+        if actual != from {
+            return Err(Reason::StaleAssignment {
+                record,
+                expected: from,
+                actual,
+            }
+            .into());
+        }
+        if let Some((_, first_op)) = moved {
+            return Err(Reason::RecordAssignedTwice { record, first_op }.into());
+        }
+        if from == to {
+            return Err(Reason::NoChange { record }.into());
+        }
+        pending.placed.insert(record, to);
+        let Some(target) = to else { return Ok(()) };
+        let identity_type = pending.active_type(target)?.clone();
+        if identity_type != *record_type {
+            return Err(Reason::EntityTypeMismatch {
+                record,
+                record_type: record_type.clone(),
+                identity: target,
+                identity_type,
+            }
+            .into());
+        }
+        pending.received.entry(target).or_insert(index);
+        Ok(())
+    }
+
+    fn merge(&mut self, index: usize, from: IdentityId, into: IdentityId) -> Result<(), Broken> {
+        if from == into {
+            return Err(Reason::MergeIntoItself { identity: from }.into());
+        }
+        let pending = &mut self.pending;
+        let (from_type, into_type) = match (pending.active_type(from), pending.active_type(into)) {
+            (Ok(from_type), Ok(into_type)) => (from_type.clone(), into_type.clone()),
+            (from_type, into_type) => {
+                return Err(Broken(
+                    [from_type.err(), into_type.err()]
+                        .into_iter()
+                        .flatten()
+                        .collect(),
+                ));
+            }
+        };
+        if from_type != into_type {
+            return Err(Reason::IdentityTypeMismatch {
+                from,
+                from_type,
+                into,
+                into_type,
+            }
+            .into());
+        }
+        if let Some(first_op) = pending.reinstated.get(&from) {
+            return Err(Reason::IdentityChangedTwice {
+                identity: from,
+                first_op: *first_op,
+            }
+            .into());
+        }
+        if let Some(first_op) = pending.received.get(&from) {
+            return Err(Reason::MembersMovedTwice {
+                identity: from,
+                first_op: *first_op,
+            }
+            .into());
+        }
+        let stale = [from, into].into_iter().find_map(|identity| {
+            let changed = self.changed.get(&identity).copied().unwrap_or(Seq::ZERO);
+            (changed > self.base).then_some((identity, changed))
+        });
+        if let Some((identity, changed)) = stale {
+            return Err(Reason::StaleMerge {
+                identity,
+                changed,
+                base: self.base,
+            }
+            .into());
+        }
+        pending.merged.insert(from, (into, index));
+        pending.received.entry(into).or_insert(index);
+        Ok(())
+    }
+
+    fn reinstate(&mut self, index: usize, identity: IdentityId) -> Result<(), Broken> {
+        let pending = &mut self.pending;
+        let first_op = pending
+            .merged
+            .get(&identity)
+            .map(|(_, first_op)| *first_op)
+            .or_else(|| pending.reinstated.get(&identity).copied());
+        if let Some(first_op) = first_op {
+            return Err(Reason::IdentityChangedTwice { identity, first_op }.into());
+        }
+        match pending.identity(&identity) {
+            Known::Missing => Err(Reason::UnknownIdentity { identity }.into()),
+            Known::Active(_) => Err(Reason::IdentityIsActive { identity }.into()),
+            Known::Merged(_) => {
+                pending.reinstated.insert(identity, index);
+                Ok(())
+            }
+        }
+    }
+
+    fn constrain(
+        &mut self,
+        index: usize,
+        kind: ConstraintKind,
+        a: RecordId,
+        b: RecordId,
+    ) -> Result<(), Broken> {
+        let constraint = self.check_pair(kind, a, b)?;
+        // A pair has one constraint. Both kinds at once would hold only
+        // while one of the two has no identity.
+        let other = Constraint::new(
+            match kind {
+                ConstraintKind::MustLink => ConstraintKind::CannotLink,
+                ConstraintKind::CannotLink => ConstraintKind::MustLink,
+            },
+            a,
+            b,
+        );
+        let pending = &mut self.pending;
+        let existing = if pending.constraints.contains(&constraint) {
+            Some(kind)
+        } else if pending.constraints.contains(&other) {
+            Some(other.kind)
+        } else {
+            None
+        };
+        if let Some(kind) = existing {
+            return Err(Reason::ConstraintExists { kind, a, b }.into());
+        }
+        pending.constraints.insert(constraint);
+        pending.constrained.insert(constraint, index);
+        Ok(())
+    }
+
+    fn unconstrain(
+        &mut self,
+        index: usize,
+        kind: ConstraintKind,
+        a: RecordId,
+        b: RecordId,
+    ) -> Result<(), Broken> {
+        let constraint = self.check_pair(kind, a, b)?;
+        let pending = &mut self.pending;
+        if !pending.constraints.remove(&constraint) {
+            return Err(Reason::UnknownConstraint { kind, a, b }.into());
+        }
+        pending.constrained.insert(constraint, index);
+        Ok(())
+    }
+
+    /// The constraint an operation adds or removes, if it may: its records
+    /// are two known records of one type, and no other operation changed it.
+    fn check_pair(
+        &self,
+        kind: ConstraintKind,
+        a: RecordId,
+        b: RecordId,
+    ) -> Result<Constraint, Reason> {
+        if a == b {
+            return Err(Reason::SameRecord { record: a });
+        }
+        let known = |record: RecordId| {
+            self.types
+                .get(&record)
+                .and_then(Option::as_ref)
+                .ok_or(Reason::UnknownRecord { record })
+        };
+        let a_type = known(a)?;
+        let b_type = known(b)?;
+        if a_type != b_type {
+            return Err(Reason::ConstraintAcrossTypes {
+                a,
+                a_type: a_type.clone(),
+                b,
+                b_type: b_type.clone(),
+            });
+        }
+        let constraint = Constraint::new(kind, a, b);
+        if let Some(first_op) = self.pending.constrained.get(&constraint) {
+            return Err(Reason::ConstraintChangedTwice {
+                kind,
+                a,
+                b,
+                first_op: *first_op,
+            });
+        }
+        Ok(constraint)
+    }
+
+    /// The constraints in force that the state the operations add up to
+    /// breaks, each named by the last operation that had a part in it.
+    fn broken_constraints<S: IdentityState + ?Sized>(
+        mut self,
+        state: &S,
+        ops: &[Op],
+    ) -> Result<Vec<Rejection>, StateError> {
+        let pending = &self.pending;
+        let mut others: Vec<RecordId> = pending
+            .constraints
+            .iter()
+            .flat_map(|constraint| [constraint.a, constraint.b])
+            .filter(|record| !self.assigned.contains_key(record))
+            .collect();
+        others.sort_unstable();
+        others.dedup();
+        let found = state.assignments(&others)?;
+        self.assigned.extend(others.into_iter().zip(found));
+
+        // Where a record ends up, and the operation that moved it.
+        let end = |record: &RecordId| -> (Option<IdentityId>, Option<usize>) {
+            if let Some(to) = pending.placed.get(record) {
+                return (*to, pending.assigned.get(record).copied());
+            }
+            let before = self.assigned.get(record).copied().flatten();
+            match before.and_then(|identity| pending.merged.get(&identity)) {
+                Some((into, index)) => (Some(*into), Some(*index)),
+                None => (before, None),
+            }
+        };
+        let mut rejections = Vec::new();
+        for constraint in &pending.constraints {
+            let ((identity_a, moved_a), (identity_b, moved_b)) =
+                (end(&constraint.a), end(&constraint.b));
+            if constraint.holds(identity_a, identity_b) {
+                continue;
+            }
+            let index = [
+                moved_a,
+                moved_b,
+                pending.constrained.get(constraint).copied(),
+            ]
+            .into_iter()
+            .flatten()
+            .max();
+            rejections.push(Rejection {
+                op_index: index,
+                op: index.map(|index| ops[index].clone()),
+                reason: Reason::ConstraintViolated {
+                    kind: constraint.kind,
+                    a: constraint.a,
+                    b: constraint.b,
+                    identity_a,
+                    identity_b,
+                },
+            });
+        }
+        Ok(rejections)
     }
 }
 
