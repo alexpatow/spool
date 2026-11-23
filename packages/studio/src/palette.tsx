@@ -81,27 +81,30 @@ export function Palette({
   // Which search is the latest: an answer to an earlier one is not shown.
   const asked = useRef(0);
 
-  useEffect(() => {
+  // What the last render was given, so that a change is answered while
+  // rendering rather than by an effect that renders again.
+  const [wasOpen, setWasOpen] = useState(open);
+  const [searched, setSearched] = useState(words);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    // A palette that closes forgets what was typed into it, for the next time it opens.
     if (!open) {
-      // A palette that closes forgets what was typed into it, for the next time it opens.
-      // oxlint-disable-next-line react/set-state-in-effect
       setTyped("");
       setResults(null);
       setProblem(null);
     }
-  }, [open]);
+  }
+  if (words !== searched) {
+    setSearched(words);
+    // Each search starts clean: the problem shown was the last search's.
+    setProblem(null);
+    if (words === "") setResults(null);
+    setBusy(words !== "");
+  }
 
   useEffect(() => {
     const mine = ++asked.current;
-    // Each search starts clean: the problem shown was the last search's.
-    // oxlint-disable-next-line react/set-state-in-effect
-    setProblem(null);
-    if (words === "") {
-      setResults(null);
-      setBusy(false);
-      return;
-    }
-    setBusy(true);
+    if (words === "") return;
     const timer = setTimeout(() => {
       Promise.all([client.identities({ q: words, limit: MOST }), client.records({ q: words, limit: MOST })]).then(
         ([identities, records]) => {

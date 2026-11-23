@@ -1,7 +1,6 @@
 # Source files over the budget of scripts/check-file-size.sh, each with the
 # most lines it may have. This list only shrinks: see the script.
 1299 crates/spool-bench/tests/it/scenario.rs
-825 crates/spool-cli/src/api.rs
 1329 crates/spool-cli/tests/it/commands.rs
 2084 crates/spool-cli/tests/it/first_extraction.rs
 1138 crates/spool-cli/tests/it/google.rs
